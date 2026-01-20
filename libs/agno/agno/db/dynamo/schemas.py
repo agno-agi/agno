@@ -4,8 +4,10 @@ from typing import Any, Dict
 
 SESSION_TABLE_SCHEMA = {
     "TableName": "agno_sessions",
-    "KeySchema": [{"AttributeName": "session_id", "KeyType": "HASH"}],
+    "KeySchema": [{"AttributeName": "pk", "KeyType": "HASH"}],
     "AttributeDefinitions": [
+        {"AttributeName": "pk", "AttributeType": "S"},  # format: tenant_id#session_id
+        {"AttributeName": "tenant_id", "AttributeType": "S"},
         {"AttributeName": "session_id", "AttributeType": "S"},
         {"AttributeName": "session_type", "AttributeType": "S"},
         {"AttributeName": "user_id", "AttributeType": "S"},
@@ -15,6 +17,15 @@ SESSION_TABLE_SCHEMA = {
         {"AttributeName": "created_at", "AttributeType": "N"},
     ],
     "GlobalSecondaryIndexes": [
+        {
+            "IndexName": "tenant_id-created_at-index",
+            "KeySchema": [
+                {"AttributeName": "tenant_id", "KeyType": "HASH"},
+                {"AttributeName": "created_at", "KeyType": "RANGE"},
+            ],
+            "Projection": {"ProjectionType": "ALL"},
+            "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
+        },
         {
             "IndexName": "session_type-created_at-index",
             "KeySchema": [
@@ -67,8 +78,10 @@ SESSION_TABLE_SCHEMA = {
 
 USER_MEMORY_TABLE_SCHEMA = {
     "TableName": "agno_user_memory",
-    "KeySchema": [{"AttributeName": "memory_id", "KeyType": "HASH"}],
+    "KeySchema": [{"AttributeName": "pk", "KeyType": "HASH"}],
     "AttributeDefinitions": [
+        {"AttributeName": "pk", "AttributeType": "S"},  # format: tenant_id#memory_id
+        {"AttributeName": "tenant_id", "AttributeType": "S"},
         {"AttributeName": "memory_id", "AttributeType": "S"},
         {"AttributeName": "user_id", "AttributeType": "S"},
         {"AttributeName": "agent_id", "AttributeType": "S"},
@@ -78,6 +91,15 @@ USER_MEMORY_TABLE_SCHEMA = {
         {"AttributeName": "updated_at", "AttributeType": "S"},
     ],
     "GlobalSecondaryIndexes": [
+        {
+            "IndexName": "tenant_id-created_at-index",
+            "KeySchema": [
+                {"AttributeName": "tenant_id", "KeyType": "HASH"},
+                {"AttributeName": "created_at", "KeyType": "RANGE"},
+            ],
+            "Projection": {"ProjectionType": "ALL"},
+            "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
+        },
         {
             "IndexName": "user_id-updated_at-index",
             "KeySchema": [
@@ -130,8 +152,10 @@ USER_MEMORY_TABLE_SCHEMA = {
 
 EVAL_TABLE_SCHEMA = {
     "TableName": "agno_eval",
-    "KeySchema": [{"AttributeName": "run_id", "KeyType": "HASH"}],
+    "KeySchema": [{"AttributeName": "pk", "KeyType": "HASH"}],
     "AttributeDefinitions": [
+        {"AttributeName": "pk", "AttributeType": "S"},  # format: tenant_id#run_id
+        {"AttributeName": "tenant_id", "AttributeType": "S"},
         {"AttributeName": "run_id", "AttributeType": "S"},
         {"AttributeName": "eval_type", "AttributeType": "S"},
         {"AttributeName": "agent_id", "AttributeType": "S"},
@@ -140,6 +164,15 @@ EVAL_TABLE_SCHEMA = {
         {"AttributeName": "created_at", "AttributeType": "N"},
     ],
     "GlobalSecondaryIndexes": [
+        {
+            "IndexName": "tenant_id-created_at-index",
+            "KeySchema": [
+                {"AttributeName": "tenant_id", "KeyType": "HASH"},
+                {"AttributeName": "created_at", "KeyType": "RANGE"},
+            ],
+            "Projection": {"ProjectionType": "ALL"},
+            "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
+        },
         {
             "IndexName": "eval_type-created_at-index",
             "KeySchema": [
@@ -183,8 +216,10 @@ EVAL_TABLE_SCHEMA = {
 
 KNOWLEDGE_TABLE_SCHEMA = {
     "TableName": "agno_knowledge",
-    "KeySchema": [{"AttributeName": "id", "KeyType": "HASH"}],
+    "KeySchema": [{"AttributeName": "pk", "KeyType": "HASH"}],
     "AttributeDefinitions": [
+        {"AttributeName": "pk", "AttributeType": "S"},  # format: tenant_id#id
+        {"AttributeName": "tenant_id", "AttributeType": "S"},
         {"AttributeName": "id", "AttributeType": "S"},
         {"AttributeName": "user_id", "AttributeType": "S"},
         {"AttributeName": "type", "AttributeType": "S"},
@@ -192,6 +227,15 @@ KNOWLEDGE_TABLE_SCHEMA = {
         {"AttributeName": "created_at", "AttributeType": "N"},
     ],
     "GlobalSecondaryIndexes": [
+        {
+            "IndexName": "tenant_id-created_at-index",
+            "KeySchema": [
+                {"AttributeName": "tenant_id", "KeyType": "HASH"},
+                {"AttributeName": "created_at", "KeyType": "RANGE"},
+            ],
+            "Projection": {"ProjectionType": "ALL"},
+            "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
+        },
         {
             "IndexName": "user_id-created_at-index",
             "KeySchema": [
@@ -226,14 +270,25 @@ KNOWLEDGE_TABLE_SCHEMA = {
 
 METRICS_TABLE_SCHEMA = {
     "TableName": "agno_metrics",
-    "KeySchema": [{"AttributeName": "id", "KeyType": "HASH"}],
+    "KeySchema": [{"AttributeName": "pk", "KeyType": "HASH"}],
     "AttributeDefinitions": [
+        {"AttributeName": "pk", "AttributeType": "S"},  # format: tenant_id#id
+        {"AttributeName": "tenant_id", "AttributeType": "S"},
         {"AttributeName": "id", "AttributeType": "S"},
         {"AttributeName": "date", "AttributeType": "S"},
         {"AttributeName": "aggregation_period", "AttributeType": "S"},
         {"AttributeName": "created_at", "AttributeType": "N"},
     ],
     "GlobalSecondaryIndexes": [
+        {
+            "IndexName": "tenant_id-created_at-index",
+            "KeySchema": [
+                {"AttributeName": "tenant_id", "KeyType": "HASH"},
+                {"AttributeName": "created_at", "KeyType": "RANGE"},
+            ],
+            "Projection": {"ProjectionType": "ALL"},
+            "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
+        },
         {
             "IndexName": "date-aggregation_period-index",
             "KeySchema": [
@@ -256,8 +311,10 @@ METRICS_TABLE_SCHEMA = {
 
 CULTURAL_KNOWLEDGE_TABLE_SCHEMA = {
     "TableName": "agno_cultural_knowledge",
-    "KeySchema": [{"AttributeName": "id", "KeyType": "HASH"}],
+    "KeySchema": [{"AttributeName": "pk", "KeyType": "HASH"}],
     "AttributeDefinitions": [
+        {"AttributeName": "pk", "AttributeType": "S"},  # format: tenant_id#id
+        {"AttributeName": "tenant_id", "AttributeType": "S"},
         {"AttributeName": "id", "AttributeType": "S"},
         {"AttributeName": "name", "AttributeType": "S"},
         {"AttributeName": "agent_id", "AttributeType": "S"},
@@ -265,6 +322,15 @@ CULTURAL_KNOWLEDGE_TABLE_SCHEMA = {
         {"AttributeName": "created_at", "AttributeType": "N"},
     ],
     "GlobalSecondaryIndexes": [
+        {
+            "IndexName": "tenant_id-created_at-index",
+            "KeySchema": [
+                {"AttributeName": "tenant_id", "KeyType": "HASH"},
+                {"AttributeName": "created_at", "KeyType": "RANGE"},
+            ],
+            "Projection": {"ProjectionType": "ALL"},
+            "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
+        },
         {
             "IndexName": "name-created_at-index",
             "KeySchema": [
@@ -299,8 +365,10 @@ CULTURAL_KNOWLEDGE_TABLE_SCHEMA = {
 
 TRACE_TABLE_SCHEMA = {
     "TableName": "agno_traces",
-    "KeySchema": [{"AttributeName": "trace_id", "KeyType": "HASH"}],
+    "KeySchema": [{"AttributeName": "pk", "KeyType": "HASH"}],
     "AttributeDefinitions": [
+        {"AttributeName": "pk", "AttributeType": "S"},  # format: tenant_id#trace_id
+        {"AttributeName": "tenant_id", "AttributeType": "S"},
         {"AttributeName": "trace_id", "AttributeType": "S"},
         {"AttributeName": "run_id", "AttributeType": "S"},
         {"AttributeName": "session_id", "AttributeType": "S"},
@@ -312,6 +380,15 @@ TRACE_TABLE_SCHEMA = {
         {"AttributeName": "start_time", "AttributeType": "S"},
     ],
     "GlobalSecondaryIndexes": [
+        {
+            "IndexName": "tenant_id-start_time-index",
+            "KeySchema": [
+                {"AttributeName": "tenant_id", "KeyType": "HASH"},
+                {"AttributeName": "start_time", "KeyType": "RANGE"},
+            ],
+            "Projection": {"ProjectionType": "ALL"},
+            "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
+        },
         {
             "IndexName": "run_id-start_time-index",
             "KeySchema": [
@@ -382,14 +459,25 @@ TRACE_TABLE_SCHEMA = {
 
 SPAN_TABLE_SCHEMA = {
     "TableName": "agno_spans",
-    "KeySchema": [{"AttributeName": "span_id", "KeyType": "HASH"}],
+    "KeySchema": [{"AttributeName": "pk", "KeyType": "HASH"}],
     "AttributeDefinitions": [
+        {"AttributeName": "pk", "AttributeType": "S"},  # format: tenant_id#span_id
+        {"AttributeName": "tenant_id", "AttributeType": "S"},
         {"AttributeName": "span_id", "AttributeType": "S"},
         {"AttributeName": "trace_id", "AttributeType": "S"},
         {"AttributeName": "parent_span_id", "AttributeType": "S"},
         {"AttributeName": "start_time", "AttributeType": "S"},
     ],
     "GlobalSecondaryIndexes": [
+        {
+            "IndexName": "tenant_id-start_time-index",
+            "KeySchema": [
+                {"AttributeName": "tenant_id", "KeyType": "HASH"},
+                {"AttributeName": "start_time", "KeyType": "RANGE"},
+            ],
+            "Projection": {"ProjectionType": "ALL"},
+            "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
+        },
         {
             "IndexName": "trace_id-start_time-index",
             "KeySchema": [

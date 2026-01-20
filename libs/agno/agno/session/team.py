@@ -25,6 +25,8 @@ class TeamSession:
     user_id: Optional[str] = None
     # ID of the workflow that this session is associated with
     workflow_id: Optional[str] = None
+    # Tenant ID for multi-tenancy
+    tenant_id: Optional[str] = None
 
     # Team Data: agent_id, name and model
     team_data: Optional[Dict[str, Any]] = None
@@ -74,6 +76,7 @@ class TeamSession:
             team_id=data.get("team_id"),
             user_id=data.get("user_id"),
             workflow_id=data.get("workflow_id"),
+            tenant_id=data.get("tenant_id"),
             team_data=data.get("team_data"),
             session_data=data.get("session_data"),
             metadata=data.get("metadata"),

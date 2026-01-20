@@ -27,6 +27,7 @@ class EvalRunRecord(BaseModel):
     workflow_id: Optional[str] = None
     name: Optional[str] = None
     evaluated_component_name: Optional[str] = None
+    tenant_id: Optional[str] = None
 
     run_id: str
     eval_type: EvalType

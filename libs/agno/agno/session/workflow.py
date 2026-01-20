@@ -27,6 +27,8 @@ class WorkflowSession:
     workflow_id: Optional[str] = None
     # Workflow name
     workflow_name: Optional[str] = None
+    # Tenant ID for multi-tenancy
+    tenant_id: Optional[str] = None
 
     # Workflow runs - stores WorkflowRunOutput objects in memory
     runs: Optional[List[WorkflowRunOutput]] = None
@@ -60,6 +62,7 @@ class WorkflowSession:
             "user_id": self.user_id,
             "workflow_id": self.workflow_id,
             "workflow_name": self.workflow_name,
+            "tenant_id": self.tenant_id,
             "runs": runs_data,
             "session_data": self.session_data,
             "workflow_data": self.workflow_data,
@@ -96,6 +99,7 @@ class WorkflowSession:
             user_id=data.get("user_id"),
             workflow_id=data.get("workflow_id"),
             workflow_name=data.get("workflow_name"),
+            tenant_id=data.get("tenant_id"),
             runs=runs,
             session_data=data.get("session_data"),
             workflow_data=data.get("workflow_data"),

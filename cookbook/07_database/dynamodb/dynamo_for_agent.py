@@ -11,6 +11,7 @@ from agno.agent import Agent
 from agno.db import DynamoDb
 
 # Setup the DynamoDB database
+# For multi-tenant deployments, specify tenant_id: DynamoDb(tenant_id="my-tenant")
 db = DynamoDb()
 
 # Setup a basic agent with the DynamoDB database

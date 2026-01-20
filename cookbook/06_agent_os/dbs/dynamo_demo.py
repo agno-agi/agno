@@ -18,6 +18,7 @@ from agno.os import AgentOS
 from agno.team.team import Team
 
 # Setup the DynamoDB database
+# For multi-tenant deployments, specify tenant_id: DynamoDb(tenant_id="my-tenant")
 db = DynamoDb()
 
 # Setup a basic agent and a basic team

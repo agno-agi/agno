@@ -1,5 +1,6 @@
 import json
 import time
+import uuid
 from datetime import date, datetime, timedelta, timezone
 from os import getenv
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
@@ -53,6 +54,7 @@ DYNAMO_BATCH_SIZE_LIMIT = 25
 class DynamoDb(BaseDb):
     def __init__(
         self,
+        tenant_id: str = "default",
         db_client=None,
         region_name: Optional[str] = None,
         aws_access_key_id: Optional[str] = None,
@@ -71,6 +73,9 @@ class DynamoDb(BaseDb):
         Interface for interacting with a DynamoDB database.
 
         Args:
+            tenant_id: The tenant ID for multi-tenancy. Used to isolate data between
+                       different tenants sharing the same tables. Defaults to "default"
+                       for single-tenant deployments.
             db_client: The DynamoDB client to use.
             region_name: AWS region name.
             aws_access_key_id: AWS access key ID.
@@ -85,12 +90,14 @@ class DynamoDb(BaseDb):
             spans_table: The name of the spans table.
             id: ID of the database.
         """
+
         if id is None:
             seed = str(db_client) if db_client else f"{region_name}_{aws_access_key_id}"
             id = generate_id(seed)
 
         super().__init__(
             id=id,
+            tenant_id=tenant_id,
             session_table=session_table,
             culture_table=culture_table,
             memory_table=memory_table,
@@ -120,6 +127,17 @@ class DynamoDb(BaseDb):
 
             session = boto3.Session(**session_kwargs)
             self.client = session.client("dynamodb")
+
+    def _make_pk(self, entity_id: str) -> str:
+        """Build composite partition key: tenant_id#entity_id
+
+        Args:
+            entity_id: The entity-specific ID (session_id, memory_id, etc.)
+
+        Returns:
+            The composite partition key in format tenant_id#entity_id
+        """
+        return f"{self.tenant_id}#{entity_id}"
 
     def table_exists(self, table_name: str) -> bool:
         """Check if a DynamoDB table exists.
@@ -223,7 +241,7 @@ class DynamoDb(BaseDb):
         try:
             self.client.delete_item(
                 TableName=self.session_table_name,
-                Key={"session_id": {"S": session_id}},
+                Key={"pk": {"S": self._make_pk(session_id)}},
             )
             return True
 
@@ -251,7 +269,7 @@ class DynamoDb(BaseDb):
                 delete_requests = []
 
                 for session_id in batch:
-                    delete_requests.append({"DeleteRequest": {"Key": {"session_id": {"S": session_id}}}})
+                    delete_requests.append({"DeleteRequest": {"Key": {"pk": {"S": self._make_pk(session_id)}}}})
 
                 if delete_requests:
                     self.client.batch_write_item(RequestItems={self.session_table_name: delete_requests})
@@ -286,7 +304,7 @@ class DynamoDb(BaseDb):
             table_name = self._get_table("sessions")
             response = self.client.get_item(
                 TableName=table_name,
-                Key={"session_id": {"S": session_id}},
+                Key={"pk": {"S": self._make_pk(session_id)}},
             )
 
             item = response.get("Item")
@@ -336,13 +354,18 @@ class DynamoDb(BaseDb):
             if table_name is None:
                 return [] if deserialize else ([], 0)
 
-            # Build filter expression for additional filters
+            # Build filter expression for additional filters (tenant_id filtering via GSI)
             filter_expression = None
             expression_attribute_names = {}
-            expression_attribute_values = {":session_type": {"S": session_type.value}}
+            expression_attribute_values = {":tenant_id": {"S": self.tenant_id}}
+
+            # Filter by session_type
+            filter_expression = "#session_type = :session_type"
+            expression_attribute_names["#session_type"] = "session_type"
+            expression_attribute_values[":session_type"] = {"S": session_type.value}
 
             if user_id:
-                filter_expression = "#user_id = :user_id"
+                filter_expression += " AND #user_id = :user_id"
                 expression_attribute_names["#user_id"] = "user_id"
                 expression_attribute_values[":user_id"] = {"S": user_id}
 
@@ -358,27 +381,20 @@ class DynamoDb(BaseDb):
                     component_filter = "#workflow_id = :component_id"
                     expression_attribute_names["#workflow_id"] = "workflow_id"
 
-                if component_filter:
-                    expression_attribute_values[":component_id"] = {"S": component_id}
-                    if filter_expression:
-                        filter_expression += f" AND {component_filter}"
-                    else:
-                        filter_expression = component_filter
+                expression_attribute_values[":component_id"] = {"S": component_id}
+                filter_expression += f" AND {component_filter}"
 
             if session_name:
                 name_filter = "#session_name = :session_name"
                 expression_attribute_names["#session_name"] = "session_name"
                 expression_attribute_values[":session_name"] = {"S": session_name}
-                if filter_expression:
-                    filter_expression += f" AND {name_filter}"
-                else:
-                    filter_expression = name_filter
+                filter_expression += f" AND {name_filter}"
 
-            # Use GSI query for session_type
+            # Use tenant_id-created_at-index GSI to filter by tenant_id
             query_kwargs = {
                 "TableName": table_name,
-                "IndexName": "session_type-created_at-index",
-                "KeyConditionExpression": "session_type = :session_type",
+                "IndexName": "tenant_id-created_at-index",
+                "KeyConditionExpression": "tenant_id = :tenant_id",
                 "ExpressionAttributeValues": expression_attribute_values,
             }
             if filter_expression:
@@ -465,7 +481,7 @@ class DynamoDb(BaseDb):
             # Get current session_data
             get_response = self.client.get_item(
                 TableName=self.session_table_name,
-                Key={"session_id": {"S": session_id}},
+                Key={"pk": {"S": self._make_pk(session_id)}},
             )
             current_item = get_response.get("Item")
             if not current_item:
@@ -476,7 +492,7 @@ class DynamoDb(BaseDb):
             session_data["session_name"] = session_name
             response = self.client.update_item(
                 TableName=self.session_table_name,
-                Key={"session_id": {"S": session_id}},
+                Key={"pk": {"S": self._make_pk(session_id)}},
                 UpdateExpression="SET session_data = :session_data, updated_at = :updated_at",
                 ConditionExpression="session_type = :session_type",
                 ExpressionAttributeValues={
@@ -526,14 +542,20 @@ class DynamoDb(BaseDb):
 
             # Get session if it already exists in the db.
             # We need to do this to handle updating nested fields.
-            response = self.client.get_item(TableName=table_name, Key={"session_id": {"S": session.session_id}})
+            response = self.client.get_item(TableName=table_name, Key={"pk": {"S": self._make_pk(session.session_id)}})
             existing_item = response.get("Item")
 
             # Prepare the session to upsert, merging with existing session if it exists.
             serialized_session = prepare_session_data(session)
+            # Add tenant_id and pk for multi-tenancy
+            serialized_session["pk"] = self._make_pk(session.session_id)
+            serialized_session["tenant_id"] = self.tenant_id
             if existing_item:
                 serialized_session = merge_with_existing_session(serialized_session, existing_item)
                 serialized_session["updated_at"] = int(time.time())
+                # Ensure pk and tenant_id are preserved after merge
+                serialized_session["pk"] = self._make_pk(session.session_id)
+                serialized_session["tenant_id"] = self.tenant_id
             else:
                 serialized_session["updated_at"] = serialized_session["created_at"]
 
@@ -602,7 +624,7 @@ class DynamoDb(BaseDb):
             if user_id:
                 response = self.client.get_item(
                     TableName=self.memory_table_name,
-                    Key={"memory_id": {"S": memory_id}},
+                    Key={"pk": {"S": self._make_pk(memory_id)}},
                 )
                 item = response.get("Item")
                 if item:
@@ -613,7 +635,7 @@ class DynamoDb(BaseDb):
 
             self.client.delete_item(
                 TableName=self.memory_table_name,
-                Key={"memory_id": {"S": memory_id}},
+                Key={"pk": {"S": self._make_pk(memory_id)}},
             )
             log_debug(f"Deleted user memory {memory_id}")
 
@@ -640,7 +662,7 @@ class DynamoDb(BaseDb):
                 for memory_id in memory_ids:
                     response = self.client.get_item(
                         TableName=self.memory_table_name,
-                        Key={"memory_id": {"S": memory_id}},
+                        Key={"pk": {"S": self._make_pk(memory_id)}},
                     )
                     item = response.get("Item")
                     if item:
@@ -654,7 +676,7 @@ class DynamoDb(BaseDb):
 
                 delete_requests = []
                 for memory_id in batch:
-                    delete_requests.append({"DeleteRequest": {"Key": {"memory_id": {"S": memory_id}}}})
+                    delete_requests.append({"DeleteRequest": {"Key": {"pk": {"S": self._make_pk(memory_id)}}}})
 
                 self.client.batch_write_item(RequestItems={self.memory_table_name: delete_requests})
 
@@ -662,7 +684,7 @@ class DynamoDb(BaseDb):
             log_error(f"Failed to delete user memories: {e}")
             raise e
 
-    def get_all_memory_topics(self) -> List[str]:
+    def get_all_memory_topics(self, user_id: Optional[str] = None) -> List[str]:
         """Get all memory topics from the database.
 
         Args:
@@ -676,17 +698,22 @@ class DynamoDb(BaseDb):
             if table_name is None:
                 return []
 
-            # Build filter expression for user_id if provided
-            scan_kwargs = {"TableName": table_name}
+            # Use tenant_id-created_at-index GSI to filter by tenant_id
+            query_kwargs = {
+                "TableName": table_name,
+                "IndexName": "tenant_id-created_at-index",
+                "KeyConditionExpression": "tenant_id = :tenant_id",
+                "ExpressionAttributeValues": {":tenant_id": {"S": self.tenant_id}},
+            }
 
-            # Scan the table to get memories
-            response = self.client.scan(**scan_kwargs)
+            # Query the table to get memories for this tenant_id
+            response = self.client.query(**query_kwargs)
             items = response.get("Items", [])
 
             # Handle pagination
             while "LastEvaluatedKey" in response:
-                scan_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
-                response = self.client.scan(**scan_kwargs)
+                query_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+                response = self.client.query(**query_kwargs)
                 items.extend(response.get("Items", []))
 
             # Extract topics from all memories
@@ -724,7 +751,7 @@ class DynamoDb(BaseDb):
         """
         try:
             table_name = self._get_table("memories")
-            response = self.client.get_item(TableName=table_name, Key={"memory_id": {"S": memory_id}})
+            response = self.client.get_item(TableName=table_name, Key={"pk": {"S": self._make_pk(memory_id)}})
 
             item = response.get("Item")
             if not item:
@@ -792,6 +819,13 @@ class DynamoDb(BaseDb):
                 expression_attribute_values,
             ) = build_query_filter_expression(filters={"agent_id": agent_id, "team_id": team_id})
 
+            # Add user_id filter if provided
+            if user_id:
+                user_filter = "#user_id = :user_id"
+                expression_attribute_names["#user_id"] = "user_id"
+                expression_attribute_values[":user_id"] = {"S": user_id}
+                filter_expression = f"{filter_expression} AND {user_filter}" if filter_expression else user_filter
+
             # Build topic filter expression if topics provided
             if topics:
                 topic_filter, topic_values = build_topic_filter_expression(topics)
@@ -804,62 +838,45 @@ class DynamoDb(BaseDb):
                 expression_attribute_values[":search_content"] = {"S": search_content}
                 filter_expression = f"{filter_expression} AND {search_filter}" if filter_expression else search_filter
 
-            # Determine whether to use GSI query or table scan
-            if user_id:
-                # Use GSI query when user_id is provided
-                key_condition_expression = "#user_id = :user_id"
+            # Use tenant_id-created_at-index GSI to filter by tenant_id
+            expression_attribute_values[":tenant_id"] = {"S": self.tenant_id}
 
-                # Set up expression attributes for GSI key condition
-                expression_attribute_names["#user_id"] = "user_id"
-                expression_attribute_values[":user_id"] = {"S": user_id}
+            query_kwargs = {
+                "TableName": table_name,
+                "IndexName": "tenant_id-created_at-index",
+                "KeyConditionExpression": "tenant_id = :tenant_id",
+                "ExpressionAttributeValues": expression_attribute_values,
+            }
 
-                # Execute query with pagination
-                items = execute_query_with_pagination(
-                    self.client,
-                    table_name,
-                    "user_id-updated_at-index",
-                    key_condition_expression,
-                    expression_attribute_names,
-                    expression_attribute_values,
-                    filter_expression,
-                    sort_by,
-                    sort_order,
-                    limit,
-                    page,
-                )
-            else:
-                # Use table scan when user_id is None
-                scan_kwargs = {"TableName": table_name}
+            if filter_expression:
+                query_kwargs["FilterExpression"] = filter_expression
+            if expression_attribute_names:
+                query_kwargs["ExpressionAttributeNames"] = expression_attribute_names  # type: ignore
 
-                if filter_expression:
-                    scan_kwargs["FilterExpression"] = filter_expression
-                if expression_attribute_names:
-                    scan_kwargs["ExpressionAttributeNames"] = expression_attribute_names  # type: ignore
-                if expression_attribute_values:
-                    scan_kwargs["ExpressionAttributeValues"] = expression_attribute_values  # type: ignore
+            # Execute query
+            response = self.client.query(**query_kwargs)
+            items = response.get("Items", [])
 
-                # Execute scan
-                response = self.client.scan(**scan_kwargs)
-                items = response.get("Items", [])
-
-                # Handle pagination for scan
-                while "LastEvaluatedKey" in response:
-                    scan_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
-                    response = self.client.scan(**scan_kwargs)
-                    items.extend(response.get("Items", []))
+            # Handle pagination for query
+            while "LastEvaluatedKey" in response:
+                query_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+                response = self.client.query(**query_kwargs)
+                items.extend(response.get("Items", []))
 
             items = [deserialize_from_dynamodb_item(item) for item in items]
 
             if sort_by and sort_by != "updated_at":
                 items = apply_sorting(items, sort_by, sort_order)
 
+            total_count = len(items)
+            paginated_items = items
             if page:
                 paginated_items = apply_pagination(items, limit, page)
 
             if not deserialize:
-                return paginated_items, len(items)
+                return paginated_items, total_count
 
-            return [UserMemory.from_dict(item) for item in items]
+            return [UserMemory.from_dict(item) for item in paginated_items]
 
         except Exception as e:
             log_error(f"Failed to get user memories: {e}")
@@ -898,24 +915,32 @@ class DynamoDb(BaseDb):
 
             # Build filter expression for user_id if provided
             filter_expression = None
-            expression_attribute_values = {}
+            expression_attribute_names = {}
+            expression_attribute_values = {":tenant_id": {"S": self.tenant_id}}
             if user_id:
-                filter_expression = "user_id = :user_id"
+                filter_expression = "#user_id = :user_id"
+                expression_attribute_names["#user_id"] = "user_id"
                 expression_attribute_values[":user_id"] = {"S": user_id}
 
-            scan_kwargs = {"TableName": table_name}
+            # Use tenant_id-created_at-index GSI to filter by tenant_id
+            query_kwargs = {
+                "TableName": table_name,
+                "IndexName": "tenant_id-created_at-index",
+                "KeyConditionExpression": "tenant_id = :tenant_id",
+                "ExpressionAttributeValues": expression_attribute_values,
+            }
             if filter_expression:
-                scan_kwargs["FilterExpression"] = filter_expression
-            if expression_attribute_values:
-                scan_kwargs["ExpressionAttributeValues"] = expression_attribute_values  # type: ignore
+                query_kwargs["FilterExpression"] = filter_expression
+            if expression_attribute_names:
+                query_kwargs["ExpressionAttributeNames"] = expression_attribute_names
 
-            response = self.client.scan(**scan_kwargs)
+            response = self.client.query(**query_kwargs)
             items = response.get("Items", [])
 
             # Handle pagination
             while "LastEvaluatedKey" in response:
-                scan_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
-                response = self.client.scan(**scan_kwargs)
+                query_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+                response = self.client.query(**query_kwargs)
                 items.extend(response.get("Items", []))
 
             # Aggregate stats by user_id
@@ -983,6 +1008,11 @@ class DynamoDb(BaseDb):
             table_name = self._get_table("memories", create_table_if_not_found=True)
             memory_dict = memory.to_dict()
             memory_dict["updated_at"] = datetime.now(timezone.utc).isoformat()
+            # Add pk and tenant_id for multi-tenancy
+            if memory.memory_id is None:
+                raise ValueError("memory_id is required for upsert_user_memory")
+            memory_dict["pk"] = self._make_pk(memory.memory_id)
+            memory_dict["tenant_id"] = self.tenant_id
             item = serialize_to_dynamo_item(memory_dict)
 
             self.client.put_item(TableName=table_name, Item=item)
@@ -1034,7 +1064,7 @@ class DynamoDb(BaseDb):
             return []
 
     def clear_memories(self) -> None:
-        """Delete all memories from the database.
+        """Delete all memories from the database for the current tenant_id.
 
         Raises:
             Exception: If an error occurs during deletion.
@@ -1042,13 +1072,21 @@ class DynamoDb(BaseDb):
         try:
             table_name = self._get_table("memories")
 
-            # Scan the table to get all items
-            response = self.client.scan(TableName=table_name)
+            # Use tenant_id-created_at-index GSI to get only items for this tenant_id
+            query_kwargs = {
+                "TableName": table_name,
+                "IndexName": "tenant_id-created_at-index",
+                "KeyConditionExpression": "tenant_id = :tenant_id",
+                "ExpressionAttributeValues": {":tenant_id": {"S": self.tenant_id}},
+            }
+
+            response = self.client.query(**query_kwargs)
             items = response.get("Items", [])
 
-            # Handle pagination for scan
+            # Handle pagination for query
             while "LastEvaluatedKey" in response:
-                response = self.client.scan(TableName=table_name, ExclusiveStartKey=response["LastEvaluatedKey"])
+                query_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+                response = self.client.query(**query_kwargs)
                 items.extend(response.get("Items", []))
 
             if not items:
@@ -1060,10 +1098,10 @@ class DynamoDb(BaseDb):
 
                 delete_requests = []
                 for item in batch:
-                    # Extract the memory_id from the item
-                    memory_id = item.get("memory_id", {}).get("S")
-                    if memory_id:
-                        delete_requests.append({"DeleteRequest": {"Key": {"memory_id": {"S": memory_id}}}})
+                    # Extract the pk from the item
+                    pk = item.get("pk", {}).get("S")
+                    if pk:
+                        delete_requests.append({"DeleteRequest": {"Key": {"pk": {"S": pk}}}})
 
                 if delete_requests:
                     self.client.batch_write_item(RequestItems={table_name: delete_requests})
@@ -1367,13 +1405,15 @@ class DynamoDb(BaseDb):
             Optional[Dict[str, Any]]: The existing record or None if not found
         """
         try:
-            # Query using the date-aggregation_period-index
+            # Query using the tenant_id-created_at-index and filter by date
             response = self.client.query(
                 TableName=table_name,
-                IndexName="date-aggregation_period-index",
-                KeyConditionExpression="#date = :date AND aggregation_period = :period",
+                IndexName="tenant_id-created_at-index",
+                KeyConditionExpression="tenant_id = :tenant_id",
+                FilterExpression="#date = :date AND aggregation_period = :period",
                 ExpressionAttributeNames={"#date": "date"},
                 ExpressionAttributeValues={
+                    ":tenant_id": {"S": self.tenant_id},
                     ":date": {"S": date_str},
                     ":period": {"S": "daily"},
                 },
@@ -1409,6 +1449,9 @@ class DynamoDb(BaseDb):
             # Use the existing record's ID
             new_record["id"] = existing_record["id"]
             new_record["updated_at"] = int(time.time())
+            # Add composite pk and tenant_id for multi-tenancy
+            new_record["pk"] = self._make_pk(new_record["id"])
+            new_record["tenant_id"] = self.tenant_id
 
             # Prepare and serialize the record
             prepared_record = self._prepare_metrics_record_for_dynamo(new_record)
@@ -1434,6 +1477,13 @@ class DynamoDb(BaseDb):
             Optional[Dict[str, Any]]: The created record or None if failed
         """
         try:
+            # Ensure record has an id
+            if "id" not in record:
+                record["id"] = str(uuid.uuid4())
+            # Add composite pk and tenant_id for multi-tenancy
+            record["pk"] = self._make_pk(record["id"])
+            record["tenant_id"] = self.tenant_id
+
             # Prepare and serialize the record
             prepared_record = self._prepare_metrics_record_for_dynamo(record)
             item = self._serialize_metrics_to_dynamo_item(prepared_record)
@@ -1528,33 +1578,44 @@ class DynamoDb(BaseDb):
             if table_name is None:
                 return ([], None)
 
-            # Build query parameters
-            scan_kwargs: Dict[str, Any] = {"TableName": table_name}
+            # Use tenant_id-created_at-index GSI to filter by tenant_id
+            key_values: Dict[str, Any] = {":tenant_id": {"S": self.tenant_id}}
 
-            if starting_date or ending_date:
-                filter_expressions = []
-                expression_values = {}
+            # Build filter expression for date filters
+            filter_expressions = []
+            filter_values: Dict[str, Any] = {}
+            expression_attr_names: Dict[str, str] = {}
 
-                if starting_date:
-                    filter_expressions.append("#date >= :start_date")
-                    expression_values[":start_date"] = {"S": starting_date.isoformat()}
+            if starting_date:
+                filter_expressions.append("#date >= :start_date")
+                filter_values[":start_date"] = {"S": starting_date.isoformat()}
+                expression_attr_names["#date"] = "date"
 
-                if ending_date:
-                    filter_expressions.append("#date <= :end_date")
-                    expression_values[":end_date"] = {"S": ending_date.isoformat()}
+            if ending_date:
+                filter_expressions.append("#date <= :end_date")
+                filter_values[":end_date"] = {"S": ending_date.isoformat()}
+                expression_attr_names["#date"] = "date"
 
-                scan_kwargs["FilterExpression"] = " AND ".join(filter_expressions)
-                scan_kwargs["ExpressionAttributeNames"] = {"#date": "date"}
-                scan_kwargs["ExpressionAttributeValues"] = expression_values
+            # Build query kwargs
+            query_kwargs: Dict[str, Any] = {
+                "TableName": table_name,
+                "IndexName": "tenant_id-created_at-index",
+                "KeyConditionExpression": "tenant_id = :tenant_id",
+                "ExpressionAttributeValues": {**key_values, **filter_values},
+            }
+            if filter_expressions:
+                query_kwargs["FilterExpression"] = " AND ".join(filter_expressions)
+            if expression_attr_names:
+                query_kwargs["ExpressionAttributeNames"] = expression_attr_names
 
-            # Execute scan
-            response = self.client.scan(**scan_kwargs)
+            # Execute query
+            response = self.client.query(**query_kwargs)
             items = response.get("Items", [])
 
             # Handle pagination
             while "LastEvaluatedKey" in response:
-                scan_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
-                response = self.client.scan(**scan_kwargs)
+                query_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+                response = self.client.query(**query_kwargs)
                 items.extend(response.get("Items", []))
 
             # Convert to metrics data
@@ -1584,7 +1645,7 @@ class DynamoDb(BaseDb):
         try:
             table_name = self._get_table("knowledge")
 
-            self.client.delete_item(TableName=table_name, Key={"id": {"S": id}})
+            self.client.delete_item(TableName=table_name, Key={"pk": {"S": self._make_pk(id)}})
 
             log_debug(f"Deleted knowledge content {id}")
 
@@ -1603,7 +1664,7 @@ class DynamoDb(BaseDb):
         """
         try:
             table_name = self._get_table("knowledge")
-            response = self.client.get_item(TableName=table_name, Key={"id": {"S": id}})
+            response = self.client.get_item(TableName=table_name, Key={"pk": {"S": self._make_pk(id)}})
 
             item = response.get("Item")
             if item:
@@ -1642,15 +1703,21 @@ class DynamoDb(BaseDb):
             if table_name is None:
                 return [], 0
 
-            response = self.client.scan(TableName=table_name)
+            # Use tenant_id-created_at-index GSI to filter by tenant_id
+            query_kwargs = {
+                "TableName": table_name,
+                "IndexName": "tenant_id-created_at-index",
+                "KeyConditionExpression": "tenant_id = :tenant_id",
+                "ExpressionAttributeValues": {":tenant_id": {"S": self.tenant_id}},
+            }
+
+            response = self.client.query(**query_kwargs)
             items = response.get("Items", [])
 
             # Handle pagination
             while "LastEvaluatedKey" in response:
-                response = self.client.scan(
-                    TableName=table_name,
-                    ExclusiveStartKey=response["LastEvaluatedKey"],
-                )
+                query_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+                response = self.client.query(**query_kwargs)
                 items.extend(response.get("Items", []))
 
             # Convert to knowledge rows
@@ -1698,7 +1765,9 @@ class DynamoDb(BaseDb):
         """
         try:
             table_name = self._get_table("knowledge", create_table_if_not_found=True)
-            item = serialize_knowledge_row(knowledge_row)
+            if knowledge_row.id is None:
+                raise ValueError("id is required for upsert_knowledge_content")
+            item = serialize_knowledge_row(knowledge_row, tenant_id=self.tenant_id, pk=self._make_pk(knowledge_row.id))
 
             self.client.put_item(TableName=table_name, Item=item)
 
@@ -1725,7 +1794,7 @@ class DynamoDb(BaseDb):
         try:
             table_name = self._get_table("evals", create_table_if_not_found=True)
 
-            item = serialize_eval_record(eval_run)
+            item = serialize_eval_record(eval_run, tenant_id=self.tenant_id, pk=self._make_pk(eval_run.run_id))
             current_time = int(datetime.now(timezone.utc).timestamp())
             item["created_at"] = {"N": str(current_time)}
             item["updated_at"] = {"N": str(current_time)}
@@ -1748,7 +1817,7 @@ class DynamoDb(BaseDb):
 
                 delete_requests = []
                 for eval_run_id in batch:
-                    delete_requests.append({"DeleteRequest": {"Key": {"run_id": {"S": eval_run_id}}}})
+                    delete_requests.append({"DeleteRequest": {"Key": {"pk": {"S": self._make_pk(eval_run_id)}}}})
 
                 self.client.batch_write_item(RequestItems={self.eval_table_name: delete_requests})
 
@@ -1761,7 +1830,9 @@ class DynamoDb(BaseDb):
             return None
 
         try:
-            response = self.client.get_item(TableName=self.eval_table_name, Key={"run_id": {"S": eval_run_id}})
+            response = self.client.get_item(
+                TableName=self.eval_table_name, Key={"pk": {"S": self._make_pk(eval_run_id)}}
+            )
 
             item = response.get("Item")
             if item:
@@ -1777,7 +1848,9 @@ class DynamoDb(BaseDb):
             return None
 
         try:
-            response = self.client.get_item(TableName=self.eval_table_name, Key={"run_id": {"S": eval_run_id}})
+            response = self.client.get_item(
+                TableName=self.eval_table_name, Key={"pk": {"S": self._make_pk(eval_run_id)}}
+            )
 
             item = response.get("Item")
             if item:
@@ -1807,10 +1880,8 @@ class DynamoDb(BaseDb):
             if table_name is None:
                 return [] if deserialize else ([], 0)
 
-            scan_kwargs = {"TableName": table_name}
-
             filter_expressions = []
-            expression_values = {}
+            expression_values = {":tenant_id": {"S": self.tenant_id}}
 
             if agent_id:
                 filter_expressions.append("agent_id = :agent_id")
@@ -1844,20 +1915,25 @@ class DynamoDb(BaseDb):
                 elif filter_type == EvalFilterType.WORKFLOW:
                     filter_expressions.append("attribute_exists(workflow_id)")
 
+            # Use tenant_id-created_at-index GSI to filter by tenant_id
+            query_kwargs = {
+                "TableName": table_name,
+                "IndexName": "tenant_id-created_at-index",
+                "KeyConditionExpression": "tenant_id = :tenant_id",
+                "ExpressionAttributeValues": expression_values,
+            }
+
             if filter_expressions:
-                scan_kwargs["FilterExpression"] = " AND ".join(filter_expressions)
+                query_kwargs["FilterExpression"] = " AND ".join(filter_expressions)
 
-            if expression_values:
-                scan_kwargs["ExpressionAttributeValues"] = expression_values  # type: ignore
-
-            # Execute scan
-            response = self.client.scan(**scan_kwargs)
+            # Execute query
+            response = self.client.query(**query_kwargs)
             items = response.get("Items", [])
 
             # Handle pagination
             while "LastEvaluatedKey" in response:
-                scan_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
-                response = self.client.scan(**scan_kwargs)
+                query_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+                response = self.client.query(**query_kwargs)
                 items.extend(response.get("Items", []))
 
             # Convert to eval data
@@ -1898,7 +1974,7 @@ class DynamoDb(BaseDb):
         try:
             response = self.client.update_item(
                 TableName=self.eval_table_name,
-                Key={"run_id": {"S": eval_run_id}},
+                Key={"pk": {"S": self._make_pk(eval_run_id)}},
                 UpdateExpression="SET #name = :name, updated_at = :updated_at",
                 ExpressionAttributeNames={"#name": "name"},
                 ExpressionAttributeValues={
@@ -1924,14 +2000,42 @@ class DynamoDb(BaseDb):
     # -- Culture methods --
 
     def clear_cultural_knowledge(self) -> None:
-        """Delete all cultural knowledge from the database."""
+        """Delete all cultural knowledge from the database for the current tenant_id."""
         try:
             table_name = self._get_table("culture")
-            response = self.client.scan(TableName=table_name, ProjectionExpression="id")
 
-            with self.client.batch_writer(table_name) as batch:
-                for item in response.get("Items", []):
-                    batch.delete_item(Key={"id": item["id"]})
+            # Use tenant_id-created_at-index GSI to get only items for this tenant_id
+            query_kwargs = {
+                "TableName": table_name,
+                "IndexName": "tenant_id-created_at-index",
+                "KeyConditionExpression": "tenant_id = :tenant_id",
+                "ExpressionAttributeValues": {":tenant_id": {"S": self.tenant_id}},
+            }
+
+            response = self.client.query(**query_kwargs)
+            items = response.get("Items", [])
+
+            # Handle pagination
+            while "LastEvaluatedKey" in response:
+                query_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+                response = self.client.query(**query_kwargs)
+                items.extend(response.get("Items", []))
+
+            if not items:
+                return
+
+            # Delete items in batches
+            for i in range(0, len(items), DYNAMO_BATCH_SIZE_LIMIT):
+                batch = items[i : i + DYNAMO_BATCH_SIZE_LIMIT]
+
+                delete_requests = []
+                for item in batch:
+                    pk = item.get("pk", {}).get("S")
+                    if pk:
+                        delete_requests.append({"DeleteRequest": {"Key": {"pk": {"S": pk}}}})
+
+                if delete_requests:
+                    self.client.batch_write_item(RequestItems={table_name: delete_requests})
         except Exception as e:
             log_error(f"Failed to clear cultural knowledge: {e}")
             raise e
@@ -1940,7 +2044,7 @@ class DynamoDb(BaseDb):
         """Delete a cultural knowledge entry from the database."""
         try:
             table_name = self._get_table("culture")
-            self.client.delete_item(TableName=table_name, Key={"id": {"S": id}})
+            self.client.delete_item(TableName=table_name, Key={"pk": {"S": self._make_pk(id)}})
         except Exception as e:
             log_error(f"Failed to delete cultural knowledge {id}: {e}")
             raise e
@@ -1951,7 +2055,7 @@ class DynamoDb(BaseDb):
         """Get a cultural knowledge entry from the database."""
         try:
             table_name = self._get_table("culture")
-            response = self.client.get_item(TableName=table_name, Key={"id": {"S": id}})
+            response = self.client.get_item(TableName=table_name, Key={"pk": {"S": self._make_pk(id)}})
 
             item = response.get("Item")
             if not item:
@@ -1983,11 +2087,13 @@ class DynamoDb(BaseDb):
 
             # Build filter expression
             filter_expressions = []
-            expression_values = {}
+            expression_values = {":tenant_id": {"S": self.tenant_id}}
+            expression_attribute_names = {}
 
             if name:
                 filter_expressions.append("#name = :name")
                 expression_values[":name"] = {"S": name}
+                expression_attribute_names["#name"] = "name"
             if agent_id:
                 filter_expressions.append("agent_id = :agent_id")
                 expression_values[":agent_id"] = {"S": agent_id}
@@ -1995,21 +2101,26 @@ class DynamoDb(BaseDb):
                 filter_expressions.append("team_id = :team_id")
                 expression_values[":team_id"] = {"S": team_id}
 
-            scan_kwargs: Dict[str, Any] = {"TableName": table_name}
+            # Use tenant_id-created_at-index GSI to filter by tenant_id
+            query_kwargs: Dict[str, Any] = {
+                "TableName": table_name,
+                "IndexName": "tenant_id-created_at-index",
+                "KeyConditionExpression": "tenant_id = :tenant_id",
+                "ExpressionAttributeValues": expression_values,
+            }
             if filter_expressions:
-                scan_kwargs["FilterExpression"] = " AND ".join(filter_expressions)
-                scan_kwargs["ExpressionAttributeValues"] = expression_values
-                if name:
-                    scan_kwargs["ExpressionAttributeNames"] = {"#name": "name"}
+                query_kwargs["FilterExpression"] = " AND ".join(filter_expressions)
+            if expression_attribute_names:
+                query_kwargs["ExpressionAttributeNames"] = expression_attribute_names
 
-            # Execute scan
-            response = self.client.scan(**scan_kwargs)
+            # Execute query
+            response = self.client.query(**query_kwargs)
             items = response.get("Items", [])
 
-            # Continue scanning if there's more data
+            # Continue querying if there's more data
             while "LastEvaluatedKey" in response:
-                scan_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
-                response = self.client.scan(**scan_kwargs)
+                query_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+                response = self.client.query(**query_kwargs)
                 items.extend(response.get("Items", []))
 
             # Deserialize items from DynamoDB format
@@ -2053,6 +2164,8 @@ class DynamoDb(BaseDb):
 
             # Create the item dict with serialized content
             item_dict = {
+                "pk": self._make_pk(cultural_knowledge.id),
+                "tenant_id": self.tenant_id,
                 "id": cultural_knowledge.id,
                 "name": cultural_knowledge.name,
                 "summary": cultural_knowledge.summary,
@@ -2090,7 +2203,7 @@ class DynamoDb(BaseDb):
             # Check if trace already exists
             response = self.client.get_item(
                 TableName=table_name,
-                Key={"trace_id": {"S": trace.trace_id}},
+                Key={"pk": {"S": self._make_pk(trace.trace_id)}},
             )
 
             existing_item = response.get("Item")
@@ -2169,7 +2282,7 @@ class DynamoDb(BaseDb):
 
                 self.client.update_item(
                     TableName=table_name,
-                    Key={"trace_id": {"S": trace.trace_id}},
+                    Key={"pk": {"S": self._make_pk(trace.trace_id)}},
                     UpdateExpression="SET " + ", ".join(update_parts),
                     ExpressionAttributeNames=expression_attr_names,
                     ExpressionAttributeValues=expression_attr_values,
@@ -2177,6 +2290,8 @@ class DynamoDb(BaseDb):
             else:
                 # Create new trace with initialized counters
                 trace_dict = trace.to_dict()
+                trace_dict["pk"] = self._make_pk(trace.trace_id)
+                trace_dict["tenant_id"] = self.tenant_id
                 trace_dict["total_spans"] = 0
                 trace_dict["error_count"] = 0
                 item = serialize_to_dynamo_item(trace_dict)
@@ -2214,7 +2329,7 @@ class DynamoDb(BaseDb):
                 # Direct lookup by primary key
                 response = self.client.get_item(
                     TableName=table_name,
-                    Key={"trace_id": {"S": trace_id}},
+                    Key={"pk": {"S": self._make_pk(trace_id)}},
                 )
                 item = response.get("Item")
                 if item:
@@ -2290,53 +2405,37 @@ class DynamoDb(BaseDb):
             if table_name is None:
                 return [], 0
 
-            # Determine if we can use a GSI query or need to scan
-            use_gsi = False
-            gsi_name = None
-            key_condition = None
-            key_values: Dict[str, Any] = {}
-
-            # Check for GSI-compatible filters (only one can be used as key condition)
-            if session_id:
-                use_gsi = True
-                gsi_name = "session_id-start_time-index"
-                key_condition = "session_id = :session_id"
-                key_values[":session_id"] = {"S": session_id}
-            elif user_id:
-                use_gsi = True
-                gsi_name = "user_id-start_time-index"
-                key_condition = "user_id = :user_id"
-                key_values[":user_id"] = {"S": user_id}
-            elif agent_id:
-                use_gsi = True
-                gsi_name = "agent_id-start_time-index"
-                key_condition = "agent_id = :agent_id"
-                key_values[":agent_id"] = {"S": agent_id}
-            elif team_id:
-                use_gsi = True
-                gsi_name = "team_id-start_time-index"
-                key_condition = "team_id = :team_id"
-                key_values[":team_id"] = {"S": team_id}
-            elif workflow_id:
-                use_gsi = True
-                gsi_name = "workflow_id-start_time-index"
-                key_condition = "workflow_id = :workflow_id"
-                key_values[":workflow_id"] = {"S": workflow_id}
-            elif run_id:
-                use_gsi = True
-                gsi_name = "run_id-start_time-index"
-                key_condition = "run_id = :run_id"
-                key_values[":run_id"] = {"S": run_id}
-            elif status:
-                use_gsi = True
-                gsi_name = "status-start_time-index"
-                key_condition = "#status = :status"
-                key_values[":status"] = {"S": status}
+            # Use tenant_id-start_time-index GSI to filter by tenant_id
+            key_values: Dict[str, Any] = {":tenant_id": {"S": self.tenant_id}}
 
             # Build filter expression for additional filters
             filter_parts = []
             filter_values: Dict[str, Any] = {}
             expression_attr_names: Dict[str, str] = {}
+
+            # Add additional filters as FilterExpression
+            if session_id:
+                filter_parts.append("session_id = :session_id")
+                filter_values[":session_id"] = {"S": session_id}
+            if user_id:
+                filter_parts.append("user_id = :user_id")
+                filter_values[":user_id"] = {"S": user_id}
+            if agent_id:
+                filter_parts.append("agent_id = :agent_id")
+                filter_values[":agent_id"] = {"S": agent_id}
+            if team_id:
+                filter_parts.append("team_id = :team_id")
+                filter_values[":team_id"] = {"S": team_id}
+            if workflow_id:
+                filter_parts.append("workflow_id = :workflow_id")
+                filter_values[":workflow_id"] = {"S": workflow_id}
+            if run_id:
+                filter_parts.append("run_id = :run_id")
+                filter_values[":run_id"] = {"S": run_id}
+            if status:
+                filter_parts.append("#status = :status")
+                filter_values[":status"] = {"S": status}
+                expression_attr_names["#status"] = "status"
 
             if start_time:
                 filter_parts.append("start_time >= :start_time")
@@ -2345,51 +2444,27 @@ class DynamoDb(BaseDb):
                 filter_parts.append("end_time <= :end_time")
                 filter_values[":end_time"] = {"S": end_time.isoformat()}
 
-            if status and gsi_name != "status-start_time-index":
-                filter_parts.append("#status = :filter_status")
-                filter_values[":filter_status"] = {"S": status}
-                expression_attr_names["#status"] = "status"
-
             items = []
-            if use_gsi and gsi_name and key_condition:
-                # Use GSI query
-                query_kwargs: Dict[str, Any] = {
-                    "TableName": table_name,
-                    "IndexName": gsi_name,
-                    "KeyConditionExpression": key_condition,
-                    "ExpressionAttributeValues": {**key_values, **filter_values},
-                    "ScanIndexForward": False,  # Descending order by start_time
-                }
-                if gsi_name == "status-start_time-index":
-                    expression_attr_names["#status"] = "status"
-                if expression_attr_names:
-                    query_kwargs["ExpressionAttributeNames"] = expression_attr_names
-                if filter_parts:
-                    query_kwargs["FilterExpression"] = " AND ".join(filter_parts)
+            # Use tenant_id-start_time-index GSI query
+            query_kwargs: Dict[str, Any] = {
+                "TableName": table_name,
+                "IndexName": "tenant_id-start_time-index",
+                "KeyConditionExpression": "tenant_id = :tenant_id",
+                "ExpressionAttributeValues": {**key_values, **filter_values},
+                "ScanIndexForward": False,  # Descending order by start_time
+            }
+            if expression_attr_names:
+                query_kwargs["ExpressionAttributeNames"] = expression_attr_names
+            if filter_parts:
+                query_kwargs["FilterExpression"] = " AND ".join(filter_parts)
 
+            response = self.client.query(**query_kwargs)
+            items.extend(response.get("Items", []))
+
+            while "LastEvaluatedKey" in response:
+                query_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
                 response = self.client.query(**query_kwargs)
                 items.extend(response.get("Items", []))
-
-                while "LastEvaluatedKey" in response:
-                    query_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
-                    response = self.client.query(**query_kwargs)
-                    items.extend(response.get("Items", []))
-            else:
-                # Use scan
-                scan_kwargs: Dict[str, Any] = {"TableName": table_name}
-                if filter_parts:
-                    scan_kwargs["FilterExpression"] = " AND ".join(filter_parts)
-                    scan_kwargs["ExpressionAttributeValues"] = filter_values
-                if expression_attr_names:
-                    scan_kwargs["ExpressionAttributeNames"] = expression_attr_names
-
-                response = self.client.scan(**scan_kwargs)
-                items.extend(response.get("Items", []))
-
-                while "LastEvaluatedKey" in response:
-                    scan_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
-                    response = self.client.scan(**scan_kwargs)
-                    items.extend(response.get("Items", []))
 
             # Deserialize items
             traces_data = [deserialize_from_dynamodb_item(item) for item in items]
@@ -2451,10 +2526,10 @@ class DynamoDb(BaseDb):
             if table_name is None:
                 return [], 0
 
-            # Fetch all traces and aggregate in memory (DynamoDB doesn't support GROUP BY)
-            scan_kwargs: Dict[str, Any] = {"TableName": table_name}
+            # Use tenant_id-start_time-index GSI to filter by tenant_id
+            key_values: Dict[str, Any] = {":tenant_id": {"S": self.tenant_id}}
 
-            # Build filter expression
+            # Build filter expression for additional filters
             filter_parts = []
             filter_values: Dict[str, Any] = {}
 
@@ -2480,19 +2555,24 @@ class DynamoDb(BaseDb):
             # Filter for records with session_id
             filter_parts.append("attribute_exists(session_id)")
 
+            # Build query kwargs
+            query_kwargs: Dict[str, Any] = {
+                "TableName": table_name,
+                "IndexName": "tenant_id-start_time-index",
+                "KeyConditionExpression": "tenant_id = :tenant_id",
+                "ExpressionAttributeValues": {**key_values, **filter_values},
+            }
             if filter_parts:
-                scan_kwargs["FilterExpression"] = " AND ".join(filter_parts)
-            if filter_values:
-                scan_kwargs["ExpressionAttributeValues"] = filter_values
+                query_kwargs["FilterExpression"] = " AND ".join(filter_parts)
 
-            # Scan all matching traces
+            # Query all matching traces
             items = []
-            response = self.client.scan(**scan_kwargs)
+            response = self.client.query(**query_kwargs)
             items.extend(response.get("Items", []))
 
             while "LastEvaluatedKey" in response:
-                scan_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
-                response = self.client.scan(**scan_kwargs)
+                query_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+                response = self.client.query(**query_kwargs)
                 items.extend(response.get("Items", []))
 
             # Aggregate by session_id
@@ -2567,6 +2647,9 @@ class DynamoDb(BaseDb):
                 return
 
             span_dict = span.to_dict()
+            # Add composite pk and tenant_id for multi-tenancy
+            span_dict["pk"] = self._make_pk(span.span_id)
+            span_dict["tenant_id"] = self.tenant_id
             # Serialize attributes as JSON string
             if "attributes" in span_dict and isinstance(span_dict["attributes"], dict):
                 span_dict["attributes"] = json.dumps(span_dict["attributes"])
@@ -2586,7 +2669,7 @@ class DynamoDb(BaseDb):
 
                     self.client.update_item(
                         TableName=traces_table_name,
-                        Key={"trace_id": {"S": span.trace_id}},
+                        Key={"pk": {"S": self._make_pk(span.trace_id)}},
                         UpdateExpression=update_expr,
                         ExpressionAttributeValues=expr_values,
                     )
@@ -2616,6 +2699,9 @@ class DynamoDb(BaseDb):
 
                 for span in batch:
                     span_dict = span.to_dict()
+                    # Add composite pk and tenant_id for multi-tenancy
+                    span_dict["pk"] = self._make_pk(span.span_id)
+                    span_dict["tenant_id"] = self.tenant_id
                     # Serialize attributes as JSON string
                     if "attributes" in span_dict and isinstance(span_dict["attributes"], dict):
                         span_dict["attributes"] = json.dumps(span_dict["attributes"])
@@ -2644,7 +2730,7 @@ class DynamoDb(BaseDb):
 
                     self.client.update_item(
                         TableName=traces_table_name,
-                        Key={"trace_id": {"S": trace_id}},
+                        Key={"pk": {"S": self._make_pk(trace_id)}},
                         UpdateExpression=update_expr,
                         ExpressionAttributeValues=expr_values,
                     )
@@ -2672,7 +2758,7 @@ class DynamoDb(BaseDb):
 
             response = self.client.get_item(
                 TableName=table_name,
-                Key={"span_id": {"S": span_id}},
+                Key={"pk": {"S": self._make_pk(span_id)}},
             )
 
             item = response.get("Item")
@@ -2711,59 +2797,41 @@ class DynamoDb(BaseDb):
             if table_name is None:
                 return []
 
-            items = []
+            # Use tenant_id-start_time-index GSI to filter by tenant_id
+            key_values: Dict[str, Any] = {":tenant_id": {"S": self.tenant_id}}
+
+            # Build filter expression for additional filters
+            filter_parts = []
+            filter_values: Dict[str, Any] = {}
 
             if trace_id:
-                # Use GSI query
-                query_kwargs: Dict[str, Any] = {
-                    "TableName": table_name,
-                    "IndexName": "trace_id-start_time-index",
-                    "KeyConditionExpression": "trace_id = :trace_id",
-                    "ExpressionAttributeValues": {":trace_id": {"S": trace_id}},
-                }
-                if limit:
-                    query_kwargs["Limit"] = limit
+                filter_parts.append("trace_id = :trace_id")
+                filter_values[":trace_id"] = {"S": trace_id}
+            if parent_span_id:
+                filter_parts.append("parent_span_id = :parent_span_id")
+                filter_values[":parent_span_id"] = {"S": parent_span_id}
 
+            # Build query kwargs
+            query_kwargs: Dict[str, Any] = {
+                "TableName": table_name,
+                "IndexName": "tenant_id-start_time-index",
+                "KeyConditionExpression": "tenant_id = :tenant_id",
+                "ExpressionAttributeValues": {**key_values, **filter_values},
+                "ScanIndexForward": False,  # Descending order by start_time
+            }
+            if filter_parts:
+                query_kwargs["FilterExpression"] = " AND ".join(filter_parts)
+            if limit:
+                query_kwargs["Limit"] = limit
+
+            items = []
+            response = self.client.query(**query_kwargs)
+            items.extend(response.get("Items", []))
+
+            while "LastEvaluatedKey" in response and (limit is None or len(items) < limit):
+                query_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
                 response = self.client.query(**query_kwargs)
                 items.extend(response.get("Items", []))
-
-                while "LastEvaluatedKey" in response and (limit is None or len(items) < limit):
-                    query_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
-                    response = self.client.query(**query_kwargs)
-                    items.extend(response.get("Items", []))
-
-            elif parent_span_id:
-                # Use GSI query
-                query_kwargs = {
-                    "TableName": table_name,
-                    "IndexName": "parent_span_id-start_time-index",
-                    "KeyConditionExpression": "parent_span_id = :parent_span_id",
-                    "ExpressionAttributeValues": {":parent_span_id": {"S": parent_span_id}},
-                }
-                if limit:
-                    query_kwargs["Limit"] = limit
-
-                response = self.client.query(**query_kwargs)
-                items.extend(response.get("Items", []))
-
-                while "LastEvaluatedKey" in response and (limit is None or len(items) < limit):
-                    query_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
-                    response = self.client.query(**query_kwargs)
-                    items.extend(response.get("Items", []))
-
-            else:
-                # Scan all spans
-                scan_kwargs: Dict[str, Any] = {"TableName": table_name}
-                if limit:
-                    scan_kwargs["Limit"] = limit
-
-                response = self.client.scan(**scan_kwargs)
-                items.extend(response.get("Items", []))
-
-                while "LastEvaluatedKey" in response and (limit is None or len(items) < limit):
-                    scan_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
-                    response = self.client.scan(**scan_kwargs)
-                    items.extend(response.get("Items", []))
 
             # Deserialize items
             spans = []

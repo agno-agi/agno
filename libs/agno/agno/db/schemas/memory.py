@@ -20,6 +20,7 @@ class UserMemory:
 
     agent_id: Optional[str] = None
     team_id: Optional[str] = None
+    tenant_id: Optional[str] = None
 
     def __post_init__(self) -> None:
         """Automatically set/normalize created_at and updated_at."""
@@ -40,6 +41,7 @@ class UserMemory:
             "user_id": self.user_id,
             "agent_id": self.agent_id,
             "team_id": self.team_id,
+            "tenant_id": self.tenant_id,
             "feedback": self.feedback,
         }
         return {k: v for k, v in _dict.items() if v is not None}

@@ -29,6 +29,7 @@ class CulturalKnowledge:
 
     agent_id: Optional[str] = None
     team_id: Optional[str] = None
+    tenant_id: Optional[str] = None
 
     def __post_init__(self):
         if self.name is not None and not self.name.strip():
@@ -69,6 +70,7 @@ class CulturalKnowledge:
             "updated_at": (_epoch_to_rfc3339_z(self.updated_at) if self.updated_at is not None else None),
             "agent_id": self.agent_id,
             "team_id": self.team_id,
+            "tenant_id": self.tenant_id,
         }
         return {k: v for k, v in _dict.items() if v is not None}
 

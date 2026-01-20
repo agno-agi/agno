@@ -64,24 +64,34 @@ def deserialize_from_dynamodb_item(item: Dict[str, Any]) -> Dict[str, Any]:
     return data
 
 
-def serialize_knowledge_row(knowledge: KnowledgeRow) -> Dict[str, Any]:
-    """Convert KnowledgeRow to DynamoDB item format."""
-    return serialize_to_dynamo_item(
-        {
-            "id": knowledge.id,
-            "name": knowledge.name,
-            "description": knowledge.description,
-            "type": getattr(knowledge, "type", None),
-            "status": getattr(knowledge, "status", None),
-            "status_message": getattr(knowledge, "status_message", None),
-            "metadata": getattr(knowledge, "metadata", None),
-            "size": getattr(knowledge, "size", None),
-            "linked_to": getattr(knowledge, "linked_to", None),
-            "access_count": getattr(knowledge, "access_count", None),
-            "created_at": int(knowledge.created_at) if knowledge.created_at else None,
-            "updated_at": int(knowledge.updated_at) if knowledge.updated_at else None,
-        }
-    )
+def serialize_knowledge_row(
+    knowledge: KnowledgeRow, tenant_id: Optional[str] = None, pk: Optional[str] = None
+) -> Dict[str, Any]:
+    """Convert KnowledgeRow to DynamoDB item format.
+
+    Args:
+        knowledge: The KnowledgeRow to serialize
+        tenant_id: The tenant ID for multi-tenancy
+        pk: The composite partition key (tenant_id#id)
+    """
+    data = {
+        "id": knowledge.id,
+        "name": knowledge.name,
+        "description": knowledge.description,
+        "type": getattr(knowledge, "type", None),
+        "status": getattr(knowledge, "status", None),
+        "status_message": getattr(knowledge, "status_message", None),
+        "metadata": getattr(knowledge, "metadata", None),
+        "size": getattr(knowledge, "size", None),
+        "linked_to": getattr(knowledge, "linked_to", None),
+        "access_count": getattr(knowledge, "access_count", None),
+        "created_at": int(knowledge.created_at) if knowledge.created_at else None,
+        "updated_at": int(knowledge.updated_at) if knowledge.updated_at else None,
+        "tenant_id": tenant_id or getattr(knowledge, "tenant_id", None),
+    }
+    if pk:
+        data["pk"] = pk
+    return serialize_to_dynamo_item(data)
 
 
 def deserialize_knowledge_row(item: Dict[str, Any]) -> KnowledgeRow:
@@ -100,25 +110,36 @@ def deserialize_knowledge_row(item: Dict[str, Any]) -> KnowledgeRow:
         status_message=data.get("status_message"),
         created_at=data.get("created_at"),
         updated_at=data.get("updated_at"),
+        tenant_id=data.get("tenant_id"),
     )
 
 
-def serialize_eval_record(eval_record: EvalRunRecord) -> Dict[str, Any]:
-    """Convert EvalRunRecord to DynamoDB item format."""
-    return serialize_to_dynamo_item(
-        {
-            "run_id": eval_record.run_id,
-            "eval_type": eval_record.eval_type,
-            "eval_data": eval_record.eval_data,
-            "name": getattr(eval_record, "name", None),
-            "agent_id": getattr(eval_record, "agent_id", None),
-            "team_id": getattr(eval_record, "team_id", None),
-            "workflow_id": getattr(eval_record, "workflow_id", None),
-            "model_id": getattr(eval_record, "model_id", None),
-            "model_provider": getattr(eval_record, "model_provider", None),
-            "evaluated_component_name": getattr(eval_record, "evaluated_component_name", None),
-        }
-    )
+def serialize_eval_record(
+    eval_record: EvalRunRecord, tenant_id: Optional[str] = None, pk: Optional[str] = None
+) -> Dict[str, Any]:
+    """Convert EvalRunRecord to DynamoDB item format.
+
+    Args:
+        eval_record: The EvalRunRecord to serialize
+        tenant_id: The tenant ID for multi-tenancy
+        pk: The composite partition key (tenant_id#run_id)
+    """
+    data = {
+        "run_id": eval_record.run_id,
+        "eval_type": eval_record.eval_type,
+        "eval_data": eval_record.eval_data,
+        "name": getattr(eval_record, "name", None),
+        "agent_id": getattr(eval_record, "agent_id", None),
+        "team_id": getattr(eval_record, "team_id", None),
+        "workflow_id": getattr(eval_record, "workflow_id", None),
+        "model_id": getattr(eval_record, "model_id", None),
+        "model_provider": getattr(eval_record, "model_provider", None),
+        "evaluated_component_name": getattr(eval_record, "evaluated_component_name", None),
+        "tenant_id": tenant_id or getattr(eval_record, "tenant_id", None),
+    }
+    if pk:
+        data["pk"] = pk
+    return serialize_to_dynamo_item(data)
 
 
 def deserialize_eval_record(item: Dict[str, Any]) -> EvalRunRecord:
@@ -129,7 +150,19 @@ def deserialize_eval_record(item: Dict[str, Any]) -> EvalRunRecord:
         data["created_at"] = datetime.fromtimestamp(data["created_at"], tz=timezone.utc)
     if "updated_at" in data and data["updated_at"]:
         data["updated_at"] = datetime.fromtimestamp(data["updated_at"], tz=timezone.utc)
-    return EvalRunRecord(run_id=data["run_id"], eval_type=data["eval_type"], eval_data=data["eval_data"])
+    return EvalRunRecord(
+        run_id=data["run_id"],
+        eval_type=data["eval_type"],
+        eval_data=data["eval_data"],
+        tenant_id=data.get("tenant_id"),
+        agent_id=data.get("agent_id"),
+        team_id=data.get("team_id"),
+        workflow_id=data.get("workflow_id"),
+        model_id=data.get("model_id"),
+        model_provider=data.get("model_provider"),
+        name=data.get("name"),
+        evaluated_component_name=data.get("evaluated_component_name"),
+    )
 
 
 # -- DB Utils --
@@ -762,5 +795,6 @@ def deserialize_cultural_knowledge_from_db(db_row: Dict[str, Any]) -> CulturalKn
             "updated_at": db_row.get("updated_at"),
             "agent_id": db_row.get("agent_id"),
             "team_id": db_row.get("team_id"),
+            "tenant_id": db_row.get("tenant_id"),
         }
     )
