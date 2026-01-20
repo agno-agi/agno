@@ -516,8 +516,10 @@ class OpenAIResponses(Model):
                             mime_type = file.mime_type
                             if not mime_type and file.filepath:
                                 mime_type = mimetypes.guess_type(str(file.filepath))[0]
-                            if not mime_type and (file.filename or file.name):
-                                mime_type = mimetypes.guess_type(file.filename or file.name)[0]
+                            if not mime_type:
+                                filename = file.filename or file.name
+                                if filename:
+                                    mime_type = mimetypes.guess_type(filename)[0]
                             mime_type = mime_type or "application/octet-stream"
 
                             message_dict["content"].append(
