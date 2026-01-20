@@ -148,7 +148,12 @@ See `.cursorrules` for detailed patterns. Key rules:
 
 ## Running Code
 
+**Always use the `.venv` virtual environment when running any code:**
+
 ```bash
+# Activate the virtual environment first
+source .venv/bin/activate
+
 # Run a cookbook example
 python cookbook/03_agents/basic.py
 
@@ -157,6 +162,13 @@ pytest libs/agno/tests/
 
 # Run a specific test file
 pytest libs/agno/tests/unit/test_agent.py
+```
+
+Or use the full path directly:
+
+```bash
+.venv/bin/python cookbook/03_agents/basic.py
+.venv/bin/pytest libs/agno/tests/
 ```
 
 ---

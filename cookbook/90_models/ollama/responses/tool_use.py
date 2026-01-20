@@ -12,9 +12,8 @@ from agno.models.ollama import OllamaResponses
 from agno.tools.duckduckgo import DuckDuckGoTools
 
 agent = Agent(
-    model=OllamaResponses(id="llama3.1:8b"),
+    model=OllamaResponses(id="llama3.1:8b", host="http://localhost:11434"),
     tools=[DuckDuckGoTools()],
-    show_tool_calls=True,
     markdown=True,
 )
 
