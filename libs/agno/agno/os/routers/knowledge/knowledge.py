@@ -206,6 +206,127 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
         )
         return response
 
+    @router.post(
+        "/knowledge/content/remote",
+        response_model=ContentResponseSchema,
+        status_code=202,
+        operation_id="upload_remote_content",
+        summary="Upload Remote Content",
+        description=(
+            "Upload content from a remote source (S3, GCS, SharePoint, GitHub) to the knowledge base. "
+            "Content is processed asynchronously in the background. "
+            "Use the /knowledge/config endpoint to see available remote content sources."
+        ),
+        responses={
+            202: {
+                "description": "Remote content upload accepted for processing",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "id": "content-456",
+                            "name": "reports/q1-2024.pdf",
+                            "description": "Q1 Report from S3",
+                            "metadata": {"source": "s3-docs"},
+                            "status": "processing",
+                        }
+                    }
+                },
+            },
+            400: {
+                "description": "Invalid request - unknown source or missing path",
+                "model": BadRequestResponse,
+            },
+            422: {"description": "Validation error in request body", "model": ValidationErrorResponse},
+        },
+    )
+    async def upload_remote_content(
+        request: Request,
+        background_tasks: BackgroundTasks,
+        source_id: str = Form(..., description="ID of the configured remote content source (from /knowledge/config)"),
+        file_path: Optional[str] = Form(None, description="Path to file in the remote source"),
+        folder_path: Optional[str] = Form(None, description="Path to folder in the remote source"),
+        branch: Optional[str] = Form(None, description="Branch name (GitHub only)"),
+        name: Optional[str] = Form(None, description="Content name (auto-generated if not provided)"),
+        description: Optional[str] = Form(None, description="Content description"),
+        metadata: Optional[str] = Form(None, description="JSON metadata object"),
+        reader_id: Optional[str] = Form(None, description="ID of the reader to use for processing"),
+        chunker: Optional[str] = Form(None, description="Chunking strategy to apply"),
+        chunk_size: Optional[int] = Form(None, description="Chunk size for processing"),
+        chunk_overlap: Optional[int] = Form(None, description="Chunk overlap for processing"),
+        db_id: Optional[str] = Query(default=None, description="Database ID to use for content storage"),
+    ):
+        knowledge = get_knowledge_instance_by_db_id(knowledge_instances, db_id)
+
+        if isinstance(knowledge, RemoteKnowledge):
+            # TODO: Forward to remote knowledge instance
+            raise HTTPException(status_code=501, detail="Remote content upload not yet supported for RemoteKnowledge")
+
+        # Validate that the source_id exists in configured sources
+        config = knowledge._get_remote_config_by_id(source_id)
+        if config is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unknown content source: {source_id}. Check /knowledge/config for available sources.",
+            )
+
+        # Validate that either file_path or folder_path is provided
+        if not file_path and not folder_path:
+            raise HTTPException(
+                status_code=400,
+                detail="Either file_path or folder_path must be provided",
+            )
+
+        # Parse metadata if provided
+        parsed_metadata = None
+        if metadata:
+            try:
+                parsed_metadata = json.loads(metadata)
+            except json.JSONDecodeError:
+                parsed_metadata = {"value": metadata}
+
+        # Use the config's factory methods to create the remote content object
+        # Pass branch for GitHub configs that support it
+        if file_path:
+            if hasattr(config, "file"):
+                if "branch" in config.file.__code__.co_varnames:
+                    remote_content = config.file(file_path, branch=branch)
+                else:
+                    remote_content = config.file(file_path)
+            else:
+                raise HTTPException(status_code=400, detail=f"Config {source_id} does not support file uploads")
+        else:
+            if hasattr(config, "folder"):
+                if "branch" in config.folder.__code__.co_varnames:
+                    remote_content = config.folder(folder_path, branch=branch)  # type: ignore
+                else:
+                    remote_content = config.folder(folder_path)  # type: ignore
+            else:
+                raise HTTPException(status_code=400, detail=f"Config {source_id} does not support folder uploads")
+
+        # Set name from file/folder path if not provided
+        content_name = name or file_path or folder_path
+
+        content = Content(
+            name=content_name,
+            description=description,
+            metadata=parsed_metadata,
+            remote_content=remote_content,
+        )
+        content_hash = knowledge._build_content_hash(content)
+        content.content_hash = content_hash
+        content.id = generate_id(content_hash)
+
+        background_tasks.add_task(process_content, knowledge, content, reader_id, chunker, chunk_size, chunk_overlap)
+
+        response = ContentResponseSchema(
+            id=content.id,
+            name=content_name,
+            description=description,
+            metadata=parsed_metadata,
+            status=ContentStatus.PROCESSING,
+        )
+        return response
+
     @router.patch(
         "/knowledge/content/{content_id}",
         response_model=ContentResponseSchema,
@@ -1048,12 +1169,29 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
                 )
             )
         filters = await knowledge.aget_valid_filters()
+
+        # Get remote content sources if available
+        remote_content_sources = None
+        if hasattr(knowledge, "_get_remote_configs") and callable(knowledge._get_remote_configs):
+            remote_configs = knowledge._get_remote_configs()
+            if remote_configs:
+                from agno.os.routers.knowledge.schemas import RemoteContentSourceSchema
+
+                remote_content_sources = [
+                    RemoteContentSourceSchema(
+                        id=config.id,
+                        name=config.name,
+                        type=config.__class__.__name__.replace("Config", "").lower(),
+                    )
+                    for config in remote_configs
+                ]
         return ConfigResponseSchema(
             readers=reader_schemas,
             vector_dbs=vector_dbs,
             readersForType=types_of_readers,
             chunkers=chunkers_dict,
             filters=filters,
+            remote_content_sources=remote_content_sources,
         )
 
     return router
