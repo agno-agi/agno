@@ -53,6 +53,15 @@ sharepoint = SharePointConfig(
     hostname="hostname_1",
 )
 
+sharepoint2 = SharePointConfig(
+    id="sharepoint_2",
+    name="Product Data",
+    tenant_id="tenant_id_1",  # or os.getenv("SHAREPOINT_TENANT_ID")
+    client_id="client_id_1",
+    client_secret="client_secret_1",
+    hostname="hostname_1",
+)
+
 github_docs = GitHubConfig(
     id="github-docs",
     name="GitHub Documentation",
@@ -66,7 +75,7 @@ knowledge = Knowledge(
     description="Unified knowledge from multiple sources",
     contents_db=contents_db,
     vector_db=vector_db,
-    content_sources=[s3_docs, gcs_data, sharepoint, github_docs],
+    content_sources=[s3_docs, gcs_data, sharepoint, sharepoint2, github_docs],
 )
 
 # Insert content using factory methods
