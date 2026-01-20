@@ -1,3 +1,4 @@
+import hashlib
 from abc import ABC, abstractmethod
 from enum import Enum
 from typing import List, Optional
@@ -11,6 +12,27 @@ class ChunkingStrategy(ABC):
     @abstractmethod
     def chunk(self, document: Document) -> List[Document]:
         raise NotImplementedError
+
+    def _generate_chunk_id(self, document: Document, chunk_number: int, content: Optional[str] = None) -> Optional[str]:
+        """Generate a chunk ID with fallback to content hash when document lacks id/name.
+
+        Fallback chain: document.id -> document.name -> content hash
+
+        This ensures unique chunk IDs for vector DB deduplication (skip_if_exists).
+        Without this, documents lacking both id and name would produce chunks with
+        id=None, causing insert failures or incorrect deduplication.
+        """
+        if document.id:
+            return f"{document.id}_{chunk_number}"
+        elif document.name:
+            return f"{document.name}_{chunk_number}"
+        else:
+            # Hash the chunk content for a deterministic ID when no identifier exists
+            hash_source = content if content else document.content
+            if hash_source:
+                content_hash = hashlib.md5(hash_source.encode()).hexdigest()[:12]
+                return f"chunk_{content_hash}_{chunk_number}"
+            return None
 
     async def achunk(self, document: Document) -> List[Document]:
         """Async version of chunk. Override for truly async implementations."""
