@@ -1,6 +1,7 @@
 import asyncio
 import csv
 import io
+from datetime import date, datetime
 from pathlib import Path
 from typing import IO, Any, Iterable, List, Optional, Sequence, Tuple, Union
 from uuid import uuid4
@@ -20,6 +21,18 @@ from agno.utils.log import log_debug, log_error
 _EXCEL_SUFFIXES = {ContentType.XLSX.value, ContentType.XLS.value}
 
 
+def _get_workbook_name(file: Union[Path, IO[Any]], name: Optional[str]) -> str:
+    """Extract workbook name from file path or name parameter.
+
+    Priority: explicit name > file path stem > file object name attribute > "workbook"
+    """
+    if name:
+        return Path(name).stem
+    if isinstance(file, Path):
+        return file.stem
+    return Path(getattr(file, "name", "workbook")).stem
+
+
 def _infer_file_extension(file: Union[Path, IO[Any]], name: Optional[str]) -> str:
     if isinstance(file, Path):
         return file.suffix.lower()
@@ -37,6 +50,12 @@ def _infer_file_extension(file: Union[Path, IO[Any]], name: Optional[str]) -> st
 def _stringify_spreadsheet_cell_value(value: Any) -> str:
     if value is None:
         return ""
+
+    # Handle datetime/date before float check (datetime is not a float)
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
 
     if isinstance(value, float) and value.is_integer():
         return str(int(value))
@@ -66,6 +85,7 @@ def _excel_rows_to_documents(
                 lines.append(line)
 
         if not lines:
+            log_debug(f"Sheet '{sheet_name}' is empty, skipping")
             continue
 
         documents.append(
@@ -108,13 +128,7 @@ class CSVReader(Reader):
         try:
             file_extension = _infer_file_extension(file, name)
             if file_extension in _EXCEL_SUFFIXES:
-                workbook_name: str
-                if name:
-                    workbook_name = Path(name).stem
-                elif isinstance(file, Path):
-                    workbook_name = file.stem
-                else:
-                    workbook_name = Path(getattr(file, "name", "workbook")).stem
+                workbook_name = _get_workbook_name(file, name)
 
                 if file_extension == ContentType.XLSX.value:
                     documents = self._read_xlsx(file, workbook_name=workbook_name)
@@ -161,8 +175,17 @@ class CSVReader(Reader):
                     chunked_documents.extend(self.chunk_document(document))
                 return chunked_documents
             return documents
+        except FileNotFoundError:
+            raise
+        except ImportError:
+            raise
+        except UnicodeDecodeError as e:
+            file_desc = getattr(file, "name", str(file)) if isinstance(file, IO) else file
+            log_error(f"Encoding error reading {file_desc}: {e}. Try specifying a different encoding.")
+            return []
         except Exception as e:
-            log_error(f"Error reading: {getattr(file, 'name', str(file)) if isinstance(file, IO) else file}: {e}")
+            file_desc = getattr(file, "name", str(file)) if isinstance(file, IO) else file
+            log_error(f"Error reading {file_desc}: {e}")
             return []
 
     async def async_read(
@@ -188,13 +211,7 @@ class CSVReader(Reader):
         try:
             file_extension = _infer_file_extension(file, name)
             if file_extension in _EXCEL_SUFFIXES:
-                workbook_name: str
-                if name:
-                    workbook_name = Path(name).stem
-                elif isinstance(file, Path):
-                    workbook_name = file.stem
-                else:
-                    workbook_name = Path(getattr(file, "name", "workbook")).stem
+                workbook_name = _get_workbook_name(file, name)
 
                 if file_extension == ContentType.XLSX.value:
                     documents = await asyncio.to_thread(self._read_xlsx, file, workbook_name=workbook_name)
@@ -258,8 +275,17 @@ class CSVReader(Reader):
                 documents = await self.chunk_documents_async(documents)
 
             return documents
+        except FileNotFoundError:
+            raise
+        except ImportError:
+            raise
+        except UnicodeDecodeError as e:
+            file_desc = getattr(file, "name", str(file)) if isinstance(file, IO) else file
+            log_error(f"Encoding error reading {file_desc}: {e}. Try specifying a different encoding.")
+            return []
         except Exception as e:
-            log_error(f"Error reading async: {getattr(file, 'name', str(file)) if isinstance(file, IO) else file}: {e}")
+            file_desc = getattr(file, "name", str(file)) if isinstance(file, IO) else file
+            log_error(f"Error reading {file_desc}: {e}")
             return []
 
     def _read_xlsx(self, file: Union[Path, IO[Any]], *, workbook_name: str) -> List[Document]:

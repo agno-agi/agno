@@ -63,6 +63,7 @@ dev = [
   "mcp",
   "openai",
   "fakeredis",
+  "xlwt",
 ]
 
 os = ["fastapi", "uvicorn", "PyJWT"]
