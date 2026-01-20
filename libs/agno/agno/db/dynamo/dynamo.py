@@ -295,6 +295,11 @@ class DynamoDb(BaseDb):
 
             session = deserialize_from_dynamodb_item(item)
 
+            # Filter by session_type to ensure we get the correct session type
+            session_type_value = session_type.value if isinstance(session_type, SessionType) else session_type
+            if session.get("session_type") != session_type_value:
+                return None
+
             if user_id and session.get("user_id") != user_id:
                 return None
 

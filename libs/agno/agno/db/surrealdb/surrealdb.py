@@ -284,7 +284,9 @@ class SurrealDb(BaseDb):
         """
         sessions_table = self._get_table("sessions")
         record = RecordID(sessions_table, session_id)
-        where = WhereClause()
+        # Filter by session_type to ensure we get the correct session type
+        session_type_value = session_type.value if isinstance(session_type, SessionType) else session_type
+        where = WhereClause().and_("session_type", session_type_value)
         if user_id is not None:
             where = where.and_("user_id", user_id)
         where_clause, where_vars = where.build()

@@ -331,6 +331,10 @@ class FirestoreDb(BaseDb):
             collection_ref = self._get_collection(table_type="sessions")
             query = collection_ref.where(filter=FieldFilter("session_id", "==", session_id))
 
+            # Filter by session_type to ensure we get the correct session type
+            session_type_value = session_type.value if isinstance(session_type, SessionType) else session_type
+            query = query.where(filter=FieldFilter("session_type", "==", session_type_value))
+
             if user_id is not None:
                 query = query.where(filter=FieldFilter("user_id", "==", user_id))
 

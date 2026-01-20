@@ -353,6 +353,11 @@ class RedisDb(BaseDb):
             if session is None:
                 return None
 
+            # Filter by session_type to ensure we get the correct session type
+            session_type_value = session_type.value if isinstance(session_type, SessionType) else session_type
+            if session.get("session_type") != session_type_value:
+                return None
+
             # Apply filters
             if user_id is not None and session.get("user_id") != user_id:
                 return None

@@ -120,6 +120,11 @@ class InMemoryDb(BaseDb):
         try:
             for session_data in self._sessions:
                 if session_data.get("session_id") == session_id:
+                    # Filter by session_type to ensure we get the correct session type
+                    session_type_value = session_type.value if isinstance(session_type, SessionType) else session_type
+                    if session_data.get("session_type") != session_type_value:
+                        continue
+
                     if user_id is not None and session_data.get("user_id") != user_id:
                         continue
 
