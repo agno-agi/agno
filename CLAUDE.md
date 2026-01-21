@@ -17,11 +17,26 @@ agno/
 
 ---
 
+## Virtual Environments
+
+This project uses two virtual environments:
+
+| Environment | Purpose | Setup |
+|-------------|---------|-------|
+| `.venv/` | Development: tests, formatting, validation | `uv sync` or standard setup |
+| `.venvs/demo/` | Cookbooks: has all demo dependencies | `./scripts/demo_setup.sh` |
+
+**Use `.venv`** for development tasks (`pytest`, `./scripts/format.sh`, `./scripts/validate.sh`).
+
+**Use `.venvs/demo`** for running cookbook examples.
+
+---
+
 ## Testing Cookbooks
 
 Apart from implementing features, your most important task will be to test and maintain the cookbooks in `cookbook/` directory.
 
-> See `cookbook/15_learning/` for the golden standard.
+> See `cookbook/08_learning/` for the golden standard.
 
 ### Quick Reference
 
@@ -50,7 +65,7 @@ Each cookbook folder should have the following files:
 - `CLAUDE.md` — Project-specific instructions (most cookbooks won't have this yet).
 - `TEST_LOG.md` — Test results log.
 
-When testing a cookbook folder, first check for the `CLAUDE.md` file. If it doesn't exist, ask the user if they'd like you to create it. Use `cookbook/15_learning/CLAUDE.md` as a reference.
+When testing a cookbook folder, first check for the `CLAUDE.md` file. If it doesn't exist, ask the user if they'd like you to create it. Use `cookbook/08_learning/CLAUDE.md` as a reference.
 
 ### Testing Workflow
 
@@ -148,11 +163,14 @@ See `.cursorrules` for detailed patterns. Key rules:
 
 ## Running Code
 
+**Running cookbooks:**
 ```bash
-# Run a cookbook example
-python cookbook/03_agents/basic.py
+.venvs/demo/bin/python cookbook/<folder>/<file>.py
+```
 
-# Run tests
+**Running tests:**
+```bash
+source .venv/bin/activate
 pytest libs/agno/tests/
 
 # Run a specific test file
@@ -187,6 +205,28 @@ source .venv/bin/activate
 
 Both scripts must pass with no errors before code review.
 
+**PR Title Format:**
+
+PR titles must follow one of these formats:
+- `[type] description` — e.g., `[feat] add workflow serialization`
+- `type: description` — e.g., `feat: add workflow serialization`
+- `type-kebab-case` — e.g., `feat-workflow-serialization`
+
+Valid types: `feat`, `fix`, `cookbook`, `test`, `refactor`, `build`, `ci`, `chore`, `perf`, `style`, `revert`
+
+**PR Description:**
+
+Always follow the PR template in `.github/pull_request_template.md`. Include:
+- Summary of changes
+- Type of change (bug fix, new feature, etc.)
+- Completed checklist items
+- Any additional context
+
+**Updating a PR description:**
+```bash
+gh api repos/agno-agi/agno/pulls/{PR_NUMBER} -X PATCH -f body="new description"
+```
+
 ---
 
 ## GitHub Operations
@@ -212,3 +252,4 @@ gh api repos/agno-agi/agno/pulls/<PR_NUMBER> -X PATCH -f body="$(cat /path/to/bo
 - Don't use emojis in examples and print lines
 - Don't skip async variants of public methods
 - Don't push code without running `./scripts/format.sh` and `./scripts/validate.sh`
+- Don't submit a PR without a detailed PR description. Always follow the PR template provided in `.github/pull_request_template.md` add to it. 
