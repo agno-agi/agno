@@ -1,10 +1,7 @@
-"""Agno Demo - Showcasing the power of AI agents, teams, and workflows."""
+"""Agno Demo - Showcasing the power of Agno."""
 
 from pathlib import Path
 
-# ============================================================================
-# Import Agents
-# ============================================================================
 from agents.deep_knowledge_agent import deep_knowledge_agent
 from agents.finance_agent import finance_agent
 from agents.knowledge_agent import knowledge_agent
@@ -14,16 +11,9 @@ from agents.report_writer_agent import report_writer_agent
 from agents.research_agent import research_agent
 from agents.web_intelligence_agent import web_intelligence_agent
 from agno.os import AgentOS
-
-# ============================================================================
-# Import Teams
-# ============================================================================
+from db import demo_db
 from teams.due_diligence_team import due_diligence_team
 from teams.investment_team import investment_team
-
-# ============================================================================
-# Import Workflows
-# ============================================================================
 from workflows.deep_research_workflow import deep_research_workflow
 from workflows.startup_analyst_workflow import startup_analyst_workflow
 
@@ -37,27 +27,26 @@ config_path = str(Path(__file__).parent.joinpath("config.yaml"))
 # ============================================================================
 agent_os = AgentOS(
     agents=[
-        # === Flagship Agents ===
-        pal_agent,  # Plan and Learn - stateful planning
-        research_agent,  # Professional research
-        finance_agent,  # Financial analysis
-        # === Knowledge & Intelligence ===
-        deep_knowledge_agent,  # RAG with iterative reasoning
-        web_intelligence_agent,  # Website analysis
-        report_writer_agent,  # Report generation
-        knowledge_agent,  # General RAG agent
-        mcp_agent,  # General MCP agent
+        pal_agent,
+        research_agent,
+        finance_agent,
+        deep_knowledge_agent,
+        web_intelligence_agent,
+        report_writer_agent,
+        knowledge_agent,
+        mcp_agent,
     ],
     teams=[
-        investment_team,  # Finance + Research + Report Writer
-        due_diligence_team,  # Full due diligence with debate
+        investment_team,
+        due_diligence_team,
     ],
     workflows=[
-        deep_research_workflow,  # 4-phase research pipeline
-        startup_analyst_workflow,  # VC-style due diligence
+        deep_research_workflow,
+        startup_analyst_workflow,
     ],
     config=config_path,
     tracing=True,
+    db=demo_db,
 )
 app = agent_os.get_app()
 
