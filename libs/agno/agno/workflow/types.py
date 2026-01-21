@@ -327,10 +327,10 @@ class StepOutput:
             "executor_type": self.executor_type,
             "executor_name": self.executor_name,
             "step_run_id": self.step_run_id,
-            "images": [img.to_dict() for img in self.images] if self.images else None,
-            "videos": [vid.to_dict() for vid in self.videos] if self.videos else None,
-            "audio": [aud.to_dict() for aud in self.audio] if self.audio else None,
-            "metrics": self.metrics.to_dict() if self.metrics else None,
+            "images": [img.to_dict() if hasattr(img, "to_dict") else img for img in self.images] if self.images else None,
+            "videos": [vid.to_dict() if hasattr(vid, "to_dict") else vid for vid in self.videos] if self.videos else None,
+            "audio": [aud.to_dict() if hasattr(aud, "to_dict") else aud for aud in self.audio] if self.audio else None,
+            "metrics": self.metrics.to_dict() if self.metrics and hasattr(self.metrics, "to_dict") else self.metrics,
             "success": self.success,
             "error": self.error,
             "stop": self.stop,
@@ -339,7 +339,7 @@ class StepOutput:
 
         # Add nested steps if they exist
         if self.steps:
-            result["steps"] = [step.to_dict() for step in self.steps]
+            result["steps"] = [step.to_dict() if hasattr(step, "to_dict") else step for step in self.steps]
 
         return result
 
@@ -356,10 +356,15 @@ class StepOutput:
         metrics = None
         if metrics_data:
             if isinstance(metrics_data, dict):
-                # Convert dict to Metrics object
+                # Convert dict to Metrics object, filtering out unknown keys
                 from agno.models.metrics import Metrics
+                import dataclasses
 
-                metrics = Metrics(**metrics_data)
+                # Get valid field names for Metrics
+                valid_fields = {f.name for f in dataclasses.fields(Metrics)}
+                # Filter metrics_data to only include valid fields
+                filtered_metrics = {k: v for k, v in metrics_data.items() if k in valid_fields}
+                metrics = Metrics(**filtered_metrics)
             else:
                 # Already a Metrics object
                 metrics = metrics_data
@@ -417,10 +422,15 @@ class StepMetrics:
         metrics = None
         if metrics_data:
             if isinstance(metrics_data, dict):
-                # Convert dict to Metrics object
+                # Convert dict to Metrics object, filtering out unknown keys
                 from agno.models.metrics import Metrics
+                import dataclasses
 
-                metrics = Metrics(**metrics_data)
+                # Get valid field names for Metrics
+                valid_fields = {f.name for f in dataclasses.fields(Metrics)}
+                # Filter metrics_data to only include valid fields
+                filtered_metrics = {k: v for k, v in metrics_data.items() if k in valid_fields}
+                metrics = Metrics(**filtered_metrics)
             else:
                 # Already a Metrics object
                 metrics = metrics_data
@@ -481,3 +491,4 @@ class StepType(str, Enum):
     PARALLEL = "Parallel"
     CONDITION = "Condition"
     ROUTER = "Router"
+    WORKFLOW = "Workflow"

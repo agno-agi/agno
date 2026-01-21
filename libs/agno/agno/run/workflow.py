@@ -76,7 +76,8 @@ class BaseWorkflowRunOutputEvent(BaseRunOutputEvent):
     parent_step_id: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
-        _dict = {k: v for k, v in asdict(self).items() if v is not None}
+        # Exclude run_output from serialization - it's only used at runtime for nested workflows
+        _dict = {k: v for k, v in asdict(self).items() if v is not None and k != "run_output"}
 
         if hasattr(self, "content") and self.content and isinstance(self.content, BaseModel):
             _dict["content"] = self.content.model_dump(exclude_none=True)
@@ -155,6 +156,9 @@ class WorkflowCompletedEvent(BaseWorkflowRunOutputEvent):
     # Store actual step execution results as StepOutput objects
     step_results: List[StepOutput] = field(default_factory=list)
     metadata: Optional[Dict[str, Any]] = None
+
+    # Full workflow run output for nested workflows
+    run_output: Optional["WorkflowRunOutput"] = None
 
 
 @dataclass
@@ -502,6 +506,10 @@ class WorkflowRunOutput:
     session_id: Optional[str] = None
     user_id: Optional[str] = None
 
+    # For nested workflows: parent workflow run ID and step ID
+    parent_run_id: Optional[str] = None
+    workflow_step_id: Optional[str] = None
+
     # Media content fields
     images: Optional[List[Image]] = None
     videos: Optional[List[Video]] = None
@@ -511,8 +519,9 @@ class WorkflowRunOutput:
     # Store actual step execution results as StepOutput objects
     step_results: List[Union[StepOutput, List[StepOutput]]] = field(default_factory=list)
 
-    # Store agent/team responses separately with parent_run_id references
-    step_executor_runs: Optional[List[Union[RunOutput, TeamRunOutput]]] = None
+    # Store agent/team/workflow responses separately with parent_run_id references
+    # Includes nested WorkflowRunOutput for workflow-as-step execution
+    step_executor_runs: Optional[List[Union[RunOutput, TeamRunOutput, "WorkflowRunOutput"]]] = None
 
     # Workflow agent run - stores the full agent RunOutput when workflow agent is used
     # The agent's parent_run_id will point to this workflow run's run_id to establish the relationship
@@ -560,36 +569,47 @@ class WorkflowRunOutput:
             _dict["metadata"] = self.metadata
 
         if self.images is not None:
-            _dict["images"] = [img.to_dict() for img in self.images]
+            _dict["images"] = [img.to_dict() if hasattr(img, "to_dict") else img for img in self.images]
 
         if self.videos is not None:
-            _dict["videos"] = [vid.to_dict() for vid in self.videos]
+            _dict["videos"] = [vid.to_dict() if hasattr(vid, "to_dict") else vid for vid in self.videos]
 
         if self.audio is not None:
-            _dict["audio"] = [aud.to_dict() for aud in self.audio]
+            _dict["audio"] = [aud.to_dict() if hasattr(aud, "to_dict") else aud for aud in self.audio]
 
         if self.response_audio is not None:
-            _dict["response_audio"] = self.response_audio.to_dict()
+            _dict["response_audio"] = (
+                self.response_audio.to_dict() if hasattr(self.response_audio, "to_dict") else self.response_audio
+            )
 
         if self.step_results:
             flattened_responses = []
             for step_response in self.step_results:
                 if isinstance(step_response, list):
                     # Handle List[StepOutput] from workflow components like Steps
-                    flattened_responses.extend([s.to_dict() for s in step_response])
-                else:
+                    flattened_responses.extend([
+                        s.to_dict() if hasattr(s, "to_dict") else s for s in step_response
+                    ])
+                elif hasattr(step_response, "to_dict"):
                     # Handle single StepOutput
                     flattened_responses.append(step_response.to_dict())
+                else:
+                    # Already a dict
+                    flattened_responses.append(step_response)
             _dict["step_results"] = flattened_responses
 
         if self.step_executor_runs:
-            _dict["step_executor_runs"] = [run.to_dict() for run in self.step_executor_runs]
+            _dict["step_executor_runs"] = [
+                run.to_dict() if hasattr(run, "to_dict") else run for run in self.step_executor_runs
+            ]
 
         if self.workflow_agent_run is not None:
-            _dict["workflow_agent_run"] = self.workflow_agent_run.to_dict()
+            _dict["workflow_agent_run"] = (
+                self.workflow_agent_run.to_dict() if hasattr(self.workflow_agent_run, "to_dict") else self.workflow_agent_run
+            )
 
         if self.metrics is not None:
-            _dict["metrics"] = self.metrics.to_dict()
+            _dict["metrics"] = self.metrics.to_dict() if hasattr(self.metrics, "to_dict") else self.metrics
 
         if self.input is not None:
             if isinstance(self.input, BaseModel):
@@ -601,7 +621,7 @@ class WorkflowRunOutput:
             _dict["content"] = self.content.model_dump(exclude_none=True, mode="json")
 
         if self.events is not None:
-            _dict["events"] = [e.to_dict() for e in self.events]
+            _dict["events"] = [e.to_dict() if hasattr(e, "to_dict") else e for e in self.events]
 
         return _dict
 
@@ -626,11 +646,14 @@ class WorkflowRunOutput:
 
         # Parse step_executor_runs
         step_executor_runs_data = data.pop("step_executor_runs", [])
-        step_executor_runs: List[Union[RunOutput, TeamRunOutput]] = []
+        step_executor_runs: List[Union[RunOutput, TeamRunOutput, "WorkflowRunOutput"]] = []
         if step_executor_runs_data:
             step_executor_runs = []
             for run_data in step_executor_runs_data:
-                if "team_id" in run_data or "team_name" in run_data:
+                if "workflow_id" in run_data or "workflow_name" in run_data:
+                    # Nested workflow run
+                    step_executor_runs.append(cls.from_dict(run_data))
+                elif "team_id" in run_data or "team_name" in run_data:
                     step_executor_runs.append(TeamRunOutput.from_dict(run_data))
                 else:
                     step_executor_runs.append(RunOutput.from_dict(run_data))
