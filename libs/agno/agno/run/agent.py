@@ -485,6 +485,8 @@ class CompressionCompletedEvent(BaseAgentRunEvent):
 @dataclass
 class CustomEvent(BaseAgentRunEvent):
     event: str = RunEvent.custom_event.value
+    # tool_call_id for ToolExecution
+    tool_call_id: Optional[str] = None
 
     def __init__(self, **kwargs):
         # Store arbitrary attributes directly on the instance

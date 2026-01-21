@@ -212,6 +212,62 @@ def test_intermediate_steps_with_custom_events():
     assert events[RunEvent.custom_event][0].to_dict()["city"] == "Tokyo"
     assert events[RunEvent.custom_event][0].to_dict()["temperature"] == 70
 
+    # Verify tool_call_id is injected and matches the tool call
+    custom_event = events[RunEvent.custom_event][0]
+    tool_started_event = events[RunEvent.tool_call_started][0]
+    assert custom_event.tool_call_id is not None, "tool_call_id should not be None"
+    assert custom_event.tool_call_id == tool_started_event.tool.tool_call_id
+
+
+@pytest.mark.asyncio
+async def test_async_intermediate_steps_with_custom_events():
+    """Test that the agent streams custom events asynchronously with tool_call_id."""
+
+    @dataclass
+    class WeatherRequestEvent(CustomEvent):
+        city: str = ""
+        temperature: int = 0
+
+    def get_weather(city: str):
+        yield WeatherRequestEvent(city=city, temperature=70)
+
+    agent = Agent(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        tools=[get_weather],
+        telemetry=False,
+    )
+
+    events = {}
+    async for run_response_delta in agent.arun("What is the weather in Tokyo?", stream=True, stream_events=True):
+        if run_response_delta.event not in events:
+            events[run_response_delta.event] = []
+        events[run_response_delta.event].append(run_response_delta)
+
+    assert events.keys() == {
+        RunEvent.run_started,
+        RunEvent.model_request_started,
+        RunEvent.model_request_completed,
+        RunEvent.tool_call_started,
+        RunEvent.custom_event,
+        RunEvent.tool_call_completed,
+        RunEvent.run_content,
+        RunEvent.run_content_completed,
+        RunEvent.run_completed,
+    }
+
+    assert len(events[RunEvent.run_content]) > 1
+    assert len(events[RunEvent.custom_event]) == 1
+    assert events[RunEvent.custom_event][0].city == "Tokyo"
+    assert events[RunEvent.custom_event][0].temperature == 70
+    assert events[RunEvent.custom_event][0].to_dict()["city"] == "Tokyo"
+    assert events[RunEvent.custom_event][0].to_dict()["temperature"] == 70
+
+    # Verify tool_call_id is injected and matches the tool call
+    custom_event = events[RunEvent.custom_event][0]
+    tool_started_event = events[RunEvent.tool_call_started][0]
+    assert custom_event.tool_call_id is not None, "tool_call_id should not be None"
+    assert custom_event.tool_call_id == tool_started_event.tool.tool_call_id
+
 
 def test_intermediate_steps_with_reasoning():
     """Test that the agent streams events."""
