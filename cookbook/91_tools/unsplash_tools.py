@@ -25,7 +25,6 @@ agent = Agent(
         "When presenting image results, include the image URL, author name, and description.",
         "Always credit the photographer by including their name and Unsplash profile link.",
     ],
-    show_tool_calls=True,
     markdown=True,
 )
 
