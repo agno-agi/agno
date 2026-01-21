@@ -10,7 +10,7 @@ Environment:
     export GROQ_API_KEY="gsk_..."
 
 Usage:
-    python cookbook/reasoning/models/groq/fast_reasoning.py
+    python cookbook/81_reasoning/models/groq/fast_reasoning.py
 
 What to expect:
     - Sub-second response times with reasoning
