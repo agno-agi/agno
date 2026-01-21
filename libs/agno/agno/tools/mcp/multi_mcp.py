@@ -471,6 +471,8 @@ class MultiMCPTools(Toolkit):
 
                 # Handle Streamable HTTP connections
                 elif isinstance(server_params, StreamableHTTPClientParams):
+                    if "headers" not in server_params and self.header_provider is not None:
+                        server_params["headers"] = self._call_header_provider()
                     client_connection = await self._async_exit_stack.enter_async_context(
                         streamablehttp_client(**asdict(server_params))
                     )
