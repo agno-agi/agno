@@ -1226,10 +1226,7 @@ async def process_content(
         await knowledge._aload_content(content, upsert=False, skip_if_exists=True)
         log_info(f"Content {content.id} processed successfully")
     except Exception as e:
-        import traceback
 
-        print(f"[process_content] Error: {e}")
-        print(f"[process_content] Traceback:\n{traceback.format_exc()}")
         log_info(f"Error processing content: {e}")
         # Mark content as failed in the contents DB
         try:
