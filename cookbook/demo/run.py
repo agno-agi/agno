@@ -11,12 +11,11 @@ from agents.report_writer_agent import report_writer_agent
 from agents.research_agent import research_agent
 from agents.web_intelligence_agent import web_intelligence_agent
 from agno.os import AgentOS
+from db import demo_db
 from teams.due_diligence_team import due_diligence_team
 from teams.investment_team import investment_team
 from workflows.deep_research_workflow import deep_research_workflow
 from workflows.startup_analyst_workflow import startup_analyst_workflow
-
-from db import demo_db
 
 # ============================================================================
 # AgentOS Config
