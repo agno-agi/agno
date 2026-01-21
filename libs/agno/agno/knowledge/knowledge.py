@@ -1161,7 +1161,7 @@ class Knowledge:
         import inspect
 
         read_signature = inspect.signature(reader.read)
-        if password and "password" in read_signature.parameters:
+        if password is not None and "password" in read_signature.parameters:
             if isinstance(source, BytesIO):
                 return reader.read(source, name=name, password=password)
             else:
@@ -1194,7 +1194,7 @@ class Knowledge:
         import inspect
 
         read_signature = inspect.signature(reader.async_read)
-        if password and "password" in read_signature.parameters:
+        if password is not None and "password" in read_signature.parameters:
             return await reader.async_read(source, name=name, password=password)
         else:
             if isinstance(source, BytesIO):
@@ -1285,7 +1285,7 @@ class Knowledge:
                     log_debug(f"Using Reader: {reader.__class__.__name__}")
 
                 if reader:
-                    password = content.auth.password if content.auth and content.auth.password else None
+                    password = content.auth.password if content.auth and content.auth.password is not None else None
                     read_documents = await self._aread(reader, path, name=content.name or path.name, password=password)
                 else:
                     read_documents = []
@@ -1366,7 +1366,7 @@ class Knowledge:
                     log_debug(f"Using Reader: {reader.__class__.__name__}")
 
                 if reader:
-                    password = content.auth.password if content.auth and content.auth.password else None
+                    password = content.auth.password if content.auth and content.auth.password is not None else None
                     read_documents = self._read(reader, path, name=content.name or path.name, password=password)
                 else:
                     read_documents = []
@@ -1485,7 +1485,7 @@ class Knowledge:
                 if reader.__class__.__name__ == "YouTubeReader":
                     read_documents = await reader.async_read(content.url, name=name)
                 else:
-                    password = content.auth.password if content.auth and content.auth.password else None
+                    password = content.auth.password if content.auth and content.auth.password is not None else None
                     source = bytes_content if bytes_content else content.url
                     read_documents = await self._aread(reader, source, name=name, password=password)
 
@@ -1583,7 +1583,7 @@ class Knowledge:
                 if reader.__class__.__name__ == "YouTubeReader":
                     read_documents = reader.read(content.url, name=name)
                 else:
-                    password = content.auth.password if content.auth and content.auth.password else None
+                    password = content.auth.password if content.auth and content.auth.password is not None else None
                     source = bytes_content if bytes_content else content.url
                     read_documents = self._read(reader, source, name=name, password=password)
 
