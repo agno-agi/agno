@@ -861,6 +861,63 @@ def test_read_xls_basic(temp_dir):
     assert documents[0].meta_data["sheet_name"] == "Data"
 
 
+def test_read_xls_datetime_handling(temp_dir):
+    """Test that xls date cells are formatted as ISO 8601, not Excel serial numbers."""
+    xlwt = pytest.importorskip("xlwt")
+    from datetime import datetime
+
+    workbook = xlwt.Workbook()
+    sheet = workbook.add_sheet("Dates")
+    sheet.write(0, 0, "event")
+    sheet.write(0, 1, "date")
+
+    # Write date as Excel serial number with date format
+    date_format = xlwt.XFStyle()
+    date_format.num_format_str = "YYYY-MM-DD HH:MM:SS"
+
+    def datetime_to_excel_serial(d: datetime) -> float:
+        excel_epoch = datetime(1899, 12, 30)
+        delta = d - excel_epoch
+        return delta.days + delta.seconds / 86400.0
+
+    sheet.write(1, 0, "Meeting")
+    sheet.write(1, 1, datetime_to_excel_serial(datetime(2024, 1, 20, 14, 30, 0)), date_format)
+
+    file_path = temp_dir / "dates.xls"
+    workbook.save(str(file_path))
+
+    reader = FieldLabeledCSVReader()
+    documents = reader.read(file_path)
+
+    assert len(documents) == 1
+    assert "Event: Meeting" in documents[0].content
+    assert "Date: 2024-01-20T14:30:00" in documents[0].content
+
+
+def test_read_xls_boolean_handling(temp_dir):
+    """Test that xls boolean cells show True/False, not 1/0."""
+    xlwt = pytest.importorskip("xlwt")
+
+    workbook = xlwt.Workbook()
+    sheet = workbook.add_sheet("Booleans")
+    sheet.write(0, 0, "name")
+    sheet.write(0, 1, "active")
+    sheet.write(1, 0, "Widget")
+    sheet.write(1, 1, True)
+    sheet.write(2, 0, "Gadget")
+    sheet.write(2, 1, False)
+
+    file_path = temp_dir / "booleans.xls"
+    workbook.save(str(file_path))
+
+    reader = FieldLabeledCSVReader()
+    documents = reader.read(file_path)
+
+    assert len(documents) == 2
+    assert "Active: True" in documents[0].content
+    assert "Active: False" in documents[1].content
+
+
 @pytest.mark.asyncio
 async def test_async_read_xlsx(temp_dir):
     """Test async reading of .xlsx file."""
@@ -1003,3 +1060,71 @@ def test_read_xlsx_document_id_format(temp_dir):
     # IDs should include workbook name, sheet name, and row number
     assert documents[0].id == "id_test_MySheet_row_1"
     assert documents[1].id == "id_test_MySheet_row_2"
+
+
+def test_read_csv_carriage_return_normalized():
+    """Test that carriage returns in CSV cells are normalized to spaces."""
+    csv_content = 'name,notes\nAlice,"line1\rline2"\nBob,"line1\r\nline2"'
+
+    file_obj = io.BytesIO(csv_content.encode("utf-8"))
+    file_obj.name = "cr_test.csv"
+
+    reader = FieldLabeledCSVReader()
+    documents = reader.read(file_obj)
+
+    assert len(documents) == 2
+    # CR and CRLF should be converted to spaces
+    assert documents[0].content == "Name: Alice\nNotes: line1 line2"
+    assert documents[1].content == "Name: Bob\nNotes: line1 line2"
+
+
+def test_read_xlsx_carriage_return_normalized(temp_dir):
+    """Test that carriage returns in xlsx cells are normalized to spaces."""
+    openpyxl = pytest.importorskip("openpyxl")
+
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "Data"
+    sheet.append(["name", "notes"])
+    sheet.append(["Alice", "line1\rline2"])
+    sheet.append(["Bob", "line1\r\nline2"])
+
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    workbook.close()
+
+    file_path = temp_dir / "cr_test.xlsx"
+    file_path.write_bytes(buffer.getvalue())
+
+    reader = FieldLabeledCSVReader()
+    documents = reader.read(file_path)
+
+    assert len(documents) == 2
+    # CR and CRLF should be converted to spaces
+    assert documents[0].content == "Name: Alice\nNotes: line1 line2"
+    assert documents[1].content == "Name: Bob\nNotes: line1 line2"
+
+
+def test_read_xls_carriage_return_normalized(temp_dir):
+    """Test that carriage returns in xls cells are normalized to spaces."""
+    xlwt = pytest.importorskip("xlwt")
+
+    workbook = xlwt.Workbook()
+    sheet = workbook.add_sheet("Data")
+    sheet.write(0, 0, "name")
+    sheet.write(0, 1, "notes")
+    sheet.write(1, 0, "Alice")
+    sheet.write(1, 1, "line1\rline2")
+    sheet.write(2, 0, "Bob")
+    sheet.write(2, 1, "line1\r\nline2")
+
+    file_path = temp_dir / "cr_test.xls"
+    workbook.save(str(file_path))
+
+    reader = FieldLabeledCSVReader()
+    documents = reader.read(file_path)
+
+    assert len(documents) == 2
+    # CR and CRLF should be converted to spaces
+    assert documents[0].content == "Name: Alice\nNotes: line1 line2"
+    assert documents[1].content == "Name: Bob\nNotes: line1 line2"

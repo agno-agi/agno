@@ -402,7 +402,8 @@ def test_csv_reader_xlsx_handles_special_characters(tmp_path: Path):
     content = documents[0].content
     assert "a,b,c" in content
     assert 'say "hello"' in content
-    assert "line1\nline2" in content
+    # Newlines in cells are converted to spaces to preserve row integrity
+    assert "line1 line2" in content
 
 
 def test_csv_reader_xlsx_datetime_cells_formatted_as_iso(tmp_path: Path):
@@ -509,3 +510,176 @@ def test_csv_reader_xlsx_file_not_found_raises_error(tmp_path: Path):
     # For Excel files, openpyxl raises its own FileNotFoundError
     with pytest.raises(FileNotFoundError):
         reader.read(file_path)
+
+
+def test_csv_reader_xls_boolean_cells(tmp_path: Path):
+    """Test that xls boolean cells show True/False, not 1/0."""
+    xlwt = pytest.importorskip("xlwt")
+
+    workbook = xlwt.Workbook()
+    sheet = workbook.add_sheet("Booleans")
+    sheet.write(0, 0, "name")
+    sheet.write(0, 1, "in_stock")
+    sheet.write(1, 0, "Widget")
+    sheet.write(1, 1, True)
+    sheet.write(2, 0, "Gadget")
+    sheet.write(2, 1, False)
+
+    file_path = tmp_path / "booleans.xls"
+    workbook.save(str(file_path))
+
+    reader = CSVReader(chunk=False)
+    documents = reader.read(file_path)
+
+    assert len(documents) == 1
+    lines = documents[0].content.splitlines()
+    assert lines[0] == "name, in_stock"
+    assert lines[1] == "Widget, True"
+    assert lines[2] == "Gadget, False"
+
+
+def test_csv_reader_xls_multiline_content_preserved_as_space(tmp_path: Path):
+    """Test that multiline cell content is converted to spaces to preserve row integrity."""
+    xlwt = pytest.importorskip("xlwt")
+
+    workbook = xlwt.Workbook()
+    sheet = workbook.add_sheet("Multiline")
+    sheet.write(0, 0, "id")
+    sheet.write(0, 1, "description")
+    sheet.write(1, 0, "1")
+    sheet.write(1, 1, "Line1\nLine2\nLine3")
+
+    file_path = tmp_path / "multiline.xls"
+    workbook.save(str(file_path))
+
+    reader = CSVReader(chunk=False)
+    documents = reader.read(file_path)
+
+    assert len(documents) == 1
+    lines = documents[0].content.splitlines()
+    # Multiline content should be on a single line with spaces instead of newlines
+    assert len(lines) == 2
+    assert lines[1] == "1, Line1 Line2 Line3"
+
+
+def test_csv_reader_xlsx_multiline_content_preserved_as_space(tmp_path: Path):
+    """Test that multiline cell content is converted to spaces in xlsx files too."""
+    openpyxl = pytest.importorskip("openpyxl")
+
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.append(["id", "description"])
+    sheet.append([1, "Line1\nLine2\nLine3"])
+
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    workbook.close()
+
+    file_path = tmp_path / "multiline.xlsx"
+    file_path.write_bytes(buffer.getvalue())
+
+    reader = CSVReader(chunk=False)
+    documents = reader.read(file_path)
+
+    assert len(documents) == 1
+    lines = documents[0].content.splitlines()
+    # Multiline content should be on a single line with spaces instead of newlines
+    assert len(lines) == 2
+    assert lines[1] == "1, Line1 Line2 Line3"
+
+
+def test_csv_reader_xlsx_carriage_return_normalized(tmp_path: Path):
+    """Test that carriage return (CR) in xlsx cells is converted to space."""
+    openpyxl = pytest.importorskip("openpyxl")
+
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.append(["type", "value"])
+    sheet.append(["cr_only", "line1\rline2"])
+    sheet.append(["crlf", "line1\r\nline2"])
+
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    workbook.close()
+
+    file_path = tmp_path / "carriage_return.xlsx"
+    file_path.write_bytes(buffer.getvalue())
+
+    reader = CSVReader(chunk=False)
+    documents = reader.read(file_path)
+
+    assert len(documents) == 1
+    lines = documents[0].content.splitlines()
+    # All line endings should be normalized to spaces
+    assert len(lines) == 3
+    assert lines[1] == "cr_only, line1 line2"
+    assert lines[2] == "crlf, line1 line2"
+
+
+def test_csv_reader_xls_carriage_return_normalized(tmp_path: Path):
+    """Test that carriage return (CR) in xls cells is converted to space."""
+    xlwt = pytest.importorskip("xlwt")
+
+    workbook = xlwt.Workbook()
+    sheet = workbook.add_sheet("LineEndings")
+    sheet.write(0, 0, "type")
+    sheet.write(0, 1, "value")
+    sheet.write(1, 0, "cr_only")
+    sheet.write(1, 1, "line1\rline2")
+    sheet.write(2, 0, "crlf")
+    sheet.write(2, 1, "line1\r\nline2")
+
+    file_path = tmp_path / "carriage_return.xls"
+    workbook.save(str(file_path))
+
+    reader = CSVReader(chunk=False)
+    documents = reader.read(file_path)
+
+    assert len(documents) == 1
+    lines = documents[0].content.splitlines()
+    # All line endings should be normalized to spaces
+    assert len(lines) == 3
+    assert lines[1] == "cr_only, line1 line2"
+    assert lines[2] == "crlf, line1 line2"
+
+
+def test_csv_reader_csv_multiline_cells_normalized(tmp_path: Path):
+    """Test that embedded newlines in CSV cells are converted to spaces."""
+    csv_content = """type,value
+lf,"line1
+line2"
+normal,simple"""
+
+    file_path = tmp_path / "multiline.csv"
+    file_path.write_text(csv_content, encoding="utf-8")
+
+    reader = CSVReader(chunk=False)
+    documents = reader.read(file_path)
+
+    assert len(documents) == 1
+    lines = documents[0].content.strip().splitlines()
+    # Embedded newlines should be converted to spaces
+    assert len(lines) == 3
+    assert lines[0] == "type, value"
+    assert lines[1] == "lf, line1 line2"
+    assert lines[2] == "normal, simple"
+
+
+def test_csv_reader_csv_carriage_return_normalized(tmp_path: Path):
+    """Test that carriage returns in CSV cells are converted to spaces."""
+    # Create CSV with CR and CRLF embedded in cells
+    csv_content = 'type,value\r\ncr_only,"line1\rline2"\r\ncrlf,"line1\r\nline2"'
+
+    file_path = tmp_path / "cr_cells.csv"
+    # Write in binary mode to preserve exact bytes
+    file_path.write_bytes(csv_content.encode("utf-8"))
+
+    reader = CSVReader(chunk=False)
+    documents = reader.read(file_path)
+
+    assert len(documents) == 1
+    lines = documents[0].content.strip().splitlines()
+    # All line endings inside cells should be normalized to spaces
+    assert len(lines) == 3
+    assert lines[1] == "cr_only, line1 line2"
+    assert lines[2] == "crlf, line1 line2"

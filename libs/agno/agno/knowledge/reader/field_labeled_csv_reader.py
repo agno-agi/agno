@@ -13,6 +13,7 @@ from agno.knowledge.chunking.strategy import ChunkingStrategyType
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
 from agno.knowledge.reader.csv_reader import (
+    _convert_xls_cell_value,
     _get_workbook_name,
     _infer_file_extension,
     _stringify_spreadsheet_cell_value,
@@ -89,7 +90,8 @@ class FieldLabeledCSVReader(Reader):
             lines.append(title)
 
         for i, (header, value) in enumerate(zip(headers, row)):
-            clean_value = value.strip() if value else ""
+            # Normalize line endings before stripping to handle embedded newlines
+            clean_value = _stringify_spreadsheet_cell_value(value).strip() if value else ""
 
             if self.skip_empty_fields and not clean_value:
                 continue
@@ -220,9 +222,16 @@ class FieldLabeledCSVReader(Reader):
         for sheet_index in range(workbook.nsheets):
             sheet = workbook.sheet_by_index(sheet_index)
 
-            def _iter_sheet_rows(_sheet: Any = sheet) -> Iterable[Sequence[Any]]:
+            def _iter_sheet_rows(_sheet: Any = sheet, _datemode: int = workbook.datemode) -> Iterable[Sequence[Any]]:
                 for row_index in range(_sheet.nrows):
-                    yield _sheet.row_values(row_index)
+                    yield [
+                        _convert_xls_cell_value(
+                            _sheet.cell_value(row_index, col_index),
+                            _sheet.cell_type(row_index, col_index),
+                            _datemode,
+                        )
+                        for col_index in range(_sheet.ncols)
+                    ]
 
             sheets.append((sheet.name, _iter_sheet_rows()))
 

@@ -45,6 +45,28 @@ def _infer_file_extension(file: Union[Path, IO[Any]], name: Optional[str]) -> st
     return ""
 
 
+def _convert_xls_cell_value(cell_value: Any, cell_type: int, datemode: int) -> Any:
+    """Convert xlrd cell value to Python type.
+
+    xlrd returns dates as Excel serial numbers and booleans as 0/1 integers.
+    This converts them to proper Python types for consistent handling with openpyxl.
+    """
+    try:
+        import xlrd
+    except ImportError:
+        return cell_value
+
+    if cell_type == xlrd.XL_CELL_DATE:
+        try:
+            date_tuple = xlrd.xldate_as_tuple(cell_value, datemode)
+            return datetime(*date_tuple)
+        except Exception:
+            return cell_value
+    if cell_type == xlrd.XL_CELL_BOOLEAN:
+        return bool(cell_value)
+    return cell_value
+
+
 def _stringify_spreadsheet_cell_value(value: Any) -> str:
     if value is None:
         return ""
@@ -58,7 +80,13 @@ def _stringify_spreadsheet_cell_value(value: Any) -> str:
     if isinstance(value, float) and value.is_integer():
         return str(int(value))
 
-    return str(value)
+    result = str(value)
+    # Normalize all line endings to space to preserve row integrity in CSV-like output
+    # Must handle CRLF first before individual CR/LF to avoid double-spacing
+    result = result.replace("\r\n", " ")  # Windows (CRLF)
+    result = result.replace("\r", " ")  # Old Mac (CR)
+    result = result.replace("\n", " ")  # Unix (LF)
+    return result
 
 
 def _row_values_to_csv_line(row_values: Sequence[Any]) -> str:
@@ -154,17 +182,18 @@ class CSVReader(Reader):
                 file.seek(0)
                 file_content = io.StringIO(file.read().decode(self.encoding or "utf-8"))
 
-            csv_content = ""
+            csv_lines: List[str] = []
             with file_content as csvfile:
                 csv_reader = csv.reader(csvfile, delimiter=delimiter, quotechar=quotechar)
                 for row in csv_reader:
-                    csv_content += ", ".join(row) + "\n"
+                    # Use stringify to normalize line endings in CSV cells
+                    csv_lines.append(", ".join(_stringify_spreadsheet_cell_value(cell) for cell in row))
 
             documents = [
                 Document(
                     name=csv_name,
                     id=str(uuid4()),
-                    content=csv_content,
+                    content="\n".join(csv_lines),
                 )
             ]
             if self.chunk:
@@ -240,7 +269,10 @@ class CSVReader(Reader):
             total_rows = len(rows)
 
             if total_rows <= 10:
-                csv_content = " ".join(", ".join(row) for row in rows)
+                # Use stringify to normalize line endings in CSV cells
+                csv_content = " ".join(
+                    ", ".join(_stringify_spreadsheet_cell_value(cell) for cell in row) for row in rows
+                )
                 documents = [
                     Document(
                         name=csv_name,
@@ -256,7 +288,10 @@ class CSVReader(Reader):
                 async def _process_page(page_number: int, page_rows: List[List[str]]) -> Document:
                     """Process a page of rows into a document"""
                     start_row = (page_number - 1) * page_size + 1
-                    page_content = " ".join(", ".join(row) for row in page_rows)
+                    # Use stringify to normalize line endings in CSV cells
+                    page_content = " ".join(
+                        ", ".join(_stringify_spreadsheet_cell_value(cell) for cell in row) for row in page_rows
+                    )
 
                     return Document(
                         name=csv_name,
@@ -332,9 +367,16 @@ class CSVReader(Reader):
         for sheet_index in range(workbook.nsheets):
             sheet = workbook.sheet_by_index(sheet_index)
 
-            def _iter_sheet_rows(_sheet: Any = sheet) -> Iterable[Sequence[Any]]:
+            def _iter_sheet_rows(_sheet: Any = sheet, _datemode: int = workbook.datemode) -> Iterable[Sequence[Any]]:
                 for row_index in range(_sheet.nrows):
-                    yield _sheet.row_values(row_index)
+                    yield [
+                        _convert_xls_cell_value(
+                            _sheet.cell_value(row_index, col_index),
+                            _sheet.cell_type(row_index, col_index),
+                            _datemode,
+                        )
+                        for col_index in range(_sheet.ncols)
+                    ]
 
             sheets.append((sheet.name, _iter_sheet_rows()))
 
