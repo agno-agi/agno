@@ -63,6 +63,7 @@ dev = [
   "mcp",
   "openai",
   "fakeredis",
+  "xlwt",
 ]
 
 os = ["fastapi", "uvicorn", "PyJWT"]
@@ -172,7 +173,7 @@ pdf = ["pypdf", "rapidocr_onnxruntime"]
 docx = ["python-docx"]
 pptx = ["python-pptx"]
 text = ["aiofiles"]
-csv = ["aiofiles"]
+csv = ["aiofiles", "openpyxl", "xlrd"]
 markdown = ["unstructured", "markdown", "aiofiles"]
 chonkie = ["chonkie[semantic]", "chonkie[code]", "chonkie"]
 
@@ -548,6 +549,7 @@ module = [
   "redshift_connector.*",
   "reportlab.*",
   "surrealdb.*",
-  "trafilatura.*"
+  "trafilatura.*",
+  "xlrd.*"
 ]
 ignore_missing_imports = true
