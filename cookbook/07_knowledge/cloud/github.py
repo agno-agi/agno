@@ -55,27 +55,21 @@ if __name__ == "__main__":
     # Insert a single file
     print("Inserting single file from GitHub...")
     knowledge.insert(
-        Content(
-            name="README",
-            remote_content=github_config.file("README.md"),
-        )
+        name="README",
+        remote_content=github_config.file("README.md"),
     )
 
     # Insert an entire folder (recursive)
     # Use trailing slash or just the folder name - both work
     print("Inserting folder from GitHub...")
     knowledge.insert(
-        Content(
-            name="Cookbook Examples",
-            remote_content=github_config.folder("cookbook/01_basics"),
-        )
+        name="Cookbook Examples",
+        remote_content=github_config.folder("cookbook/01_basics"),
     )
 
     # Insert from a different branch
     print("Inserting from specific branch...")
     knowledge.insert(
-        Content(
-            name="Dev Docs",
-            remote_content=github_config.file("docs/index.md", branch="dev"),
-        )
+        name="Dev Docs",
+        remote_content=github_config.file("docs/index.md", branch="dev"),
     )

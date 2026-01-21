@@ -80,4 +80,4 @@ app = agent_os.get_app()
 # ============================================================================
 if __name__ == "__main__":
     # Serves a FastAPI app exposed by AgentOS. Use reload=True for local dev.
-    agent_os.serve(app="cloud:app", reload=True)
+    agent_os.serve(app="cloud_agentos:app", reload=True)

@@ -72,17 +72,13 @@ if __name__ == "__main__":
     # Insert a single file from SharePoint
     print("Inserting single file from SharePoint...")
     knowledge.insert(
-        Content(
-            name="Q1 Report",
-            remote_content=sharepoint_config.file("Shared Documents/Reports/q1-2024.pdf"),
-        )
+        name="Q1 Report",
+        remote_content=sharepoint_config.file("Shared Documents/Reports/q1-2024.pdf"),
     )
 
     # Insert an entire folder (recursive)
     print("Inserting folder from SharePoint...")
     knowledge.insert(
-        Content(
-            name="Policy Documents",
-            remote_content=sharepoint_config.folder("Shared Documents/Policies"),
-        )
+        name="Policy Documents",
+        remote_content=sharepoint_config.folder("Shared Documents/Policies"),
     )
