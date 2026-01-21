@@ -1988,6 +1988,12 @@ class Knowledge:
         from agno.cloud.aws.s3.bucket import S3Bucket
         from agno.cloud.aws.s3.object import S3Object
 
+        # Note: S3 support has limited features compared to GitHub/SharePoint
+        log_warning(
+            "S3 content loading has limited features. "
+            "Recursive folder traversal, rich metadata, and improved naming are coming in a future release."
+        )
+
         remote_content: S3Content = cast(S3Content, content.remote_content)
 
         # Get or create bucket with credentials from config
@@ -2090,6 +2096,12 @@ class Knowledge:
                 "The `google-cloud-storage` package is not installed. "
                 "Please install it via `pip install google-cloud-storage`."
             )
+
+        # Note: GCS support has limited features compared to GitHub/SharePoint
+        log_warning(
+            "GCS content loading has limited features. "
+            "Recursive folder traversal, rich metadata, and improved naming are coming in a future release."
+        )
 
         remote_content: GCSContent = cast(GCSContent, content.remote_content)
 
@@ -2207,6 +2219,12 @@ class Knowledge:
         from agno.cloud.aws.s3.bucket import S3Bucket
         from agno.cloud.aws.s3.object import S3Object
 
+        # Note: S3 support has limited features compared to GitHub/SharePoint
+        log_warning(
+            "S3 content loading has limited features. "
+            "Recursive folder traversal, rich metadata, and improved naming are coming in a future release."
+        )
+
         remote_content: S3Content = cast(S3Content, content.remote_content)
 
         # Get or create bucket with credentials from config
@@ -2307,6 +2325,12 @@ class Knowledge:
                 "The `google-cloud-storage` package is not installed. "
                 "Please install it via `pip install google-cloud-storage`."
             )
+
+        # Note: GCS support has limited features compared to GitHub/SharePoint
+        log_warning(
+            "GCS content loading has limited features. "
+            "Recursive folder traversal, rich metadata, and improved naming are coming in a future release."
+        )
 
         remote_content: GCSContent = cast(GCSContent, content.remote_content)
 

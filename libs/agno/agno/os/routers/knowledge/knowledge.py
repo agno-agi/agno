@@ -207,7 +207,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
         return response
 
     @router.post(
-        "/knowledge/content/remote",
+        "/knowledge/remote-content",
         response_model=ContentResponseSchema,
         status_code=202,
         operation_id="upload_remote_content",
@@ -1226,7 +1226,6 @@ async def process_content(
         await knowledge._aload_content(content, upsert=False, skip_if_exists=True)
         log_info(f"Content {content.id} processed successfully")
     except Exception as e:
-
         log_info(f"Error processing content: {e}")
         # Mark content as failed in the contents DB
         try:
