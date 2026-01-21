@@ -1988,6 +1988,7 @@ class Model(ABC):
 
                         if isinstance(item, CustomEvent):
                             function_call_output += str(item)
+                            item.tool_call_id = function_call.call_id
 
                         # For WorkflowCompletedEvent, extract content for final output
                         from agno.run.workflow import WorkflowCompletedEvent
@@ -2430,6 +2431,7 @@ class Model(ABC):
 
                         if isinstance(item, CustomEvent):
                             function_call_output += str(item)
+                            item.tool_call_id = function_call.call_id
 
                             # For WorkflowCompletedEvent, extract content for final output
                             from agno.run.workflow import WorkflowCompletedEvent
@@ -2558,6 +2560,10 @@ class Model(ABC):
                                 if function_call.function.show_result and item.content is not None:
                                     yield ModelResponse(content=item.content)
                                     continue
+
+                            elif isinstance(item, CustomEvent):
+                                function_call_output += str(item)
+                                item.tool_call_id = function_call.call_id
 
                             # Yield the event itself to bubble it up
                             yield item
