@@ -86,6 +86,7 @@ agent.print_response(
 
 agent_os = AgentOS(
     knowledge=[knowledge],
+    agents=[agent],
 )
 app = agent_os.get_app()
 
