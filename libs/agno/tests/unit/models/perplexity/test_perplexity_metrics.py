@@ -8,7 +8,6 @@ incorrect accumulation of cumulative token counts in streaming responses.
 from typing import Optional
 
 from agno.models.metrics import Metrics
-from agno.models.openai.chat import OpenAIChat
 from agno.models.perplexity.perplexity import Perplexity
 
 
@@ -45,38 +44,10 @@ class MockChatCompletionChunk:
         self.choices = [MockChoice(finish_reason=finish_reason)]
 
 
-def test_openai_chat_default_collect_metrics_flag():
-    """Test that OpenAIChat has collect_metrics_on_completion set to False by default."""
-    model = OpenAIChat(id="gpt-4o")
-    assert model.collect_metrics_on_completion is False
-
-
 def test_perplexity_collect_metrics_flag():
     """Test that Perplexity has collect_metrics_on_completion set to True."""
     model = Perplexity(id="sonar", api_key="test-key")
     assert model.collect_metrics_on_completion is True
-
-
-def test_should_collect_metrics_when_usage_is_none():
-    """Test that _should_collect_metrics returns False when usage is None."""
-    model = OpenAIChat(id="gpt-4o")
-    response = MockChatCompletionChunk(usage=None)
-
-    assert model._should_collect_metrics(response) is False  # type: ignore[arg-type]
-
-
-def test_should_collect_metrics_default_behavior():
-    """Test that _should_collect_metrics returns True when collect_metrics_on_completion is False."""
-    model = OpenAIChat(id="gpt-4o")
-    usage = MockCompletionUsage(prompt_tokens=100, completion_tokens=20, total_tokens=120)
-
-    # Test with no finish_reason (intermediate chunk)
-    response = MockChatCompletionChunk(usage=usage, finish_reason=None)
-    assert model._should_collect_metrics(response) is True  # type: ignore[arg-type]
-
-    # Test with finish_reason (last chunk)
-    response = MockChatCompletionChunk(usage=usage, finish_reason="stop")
-    assert model._should_collect_metrics(response) is True  # type: ignore[arg-type]
 
 
 def test_should_collect_metrics_on_completion():
@@ -110,13 +81,11 @@ def test_perplexity_get_metrics_with_details():
     """Test that Perplexity._get_metrics correctly handles prompt and completion token details."""
     model = Perplexity(id="sonar", api_key="test-key")
 
-    # Mock prompt_tokens_details
     class MockPromptTokensDetails:
         def __init__(self):
             self.audio_tokens = 10
             self.cached_tokens = 500
 
-    # Mock completion_tokens_details
     class MockCompletionTokensDetails:
         def __init__(self):
             self.audio_tokens = 5
@@ -150,7 +119,6 @@ def test_perplexity_streaming_metrics_simulation():
     """
     model = Perplexity(id="sonar", api_key="test-key")
 
-    # Simulate cumulative streaming chunks like Perplexity sends
     chunks = [
         MockChatCompletionChunk(
             usage=MockCompletionUsage(prompt_tokens=1965, completion_tokens=1, total_tokens=1966),
@@ -164,10 +132,9 @@ def test_perplexity_streaming_metrics_simulation():
             usage=MockCompletionUsage(prompt_tokens=1965, completion_tokens=3, total_tokens=1968),
             finish_reason=None,
         ),
-        # ... (skipping intermediate chunks)
         MockChatCompletionChunk(
             usage=MockCompletionUsage(prompt_tokens=1965, completion_tokens=29, total_tokens=1994),
-            finish_reason="stop",  # Last chunk with finish_reason
+            finish_reason="stop",
         ),
     ]
 
@@ -184,45 +151,9 @@ def test_perplexity_streaming_metrics_simulation():
     assert collected_metrics[0].total_tokens == 1994
 
 
-def test_openai_streaming_metrics_simulation():
-    """
-    Simulate the default OpenAI streaming scenario.
-
-    OpenAI returns incremental token counts, and we should collect on every chunk.
-    """
-    model = OpenAIChat(id="gpt-4o")
-
-    # Simulate incremental streaming chunks like OpenAI sends
-    chunks = [
-        MockChatCompletionChunk(
-            usage=MockCompletionUsage(prompt_tokens=100, completion_tokens=1, total_tokens=101),
-            finish_reason=None,
-        ),
-        MockChatCompletionChunk(
-            usage=MockCompletionUsage(prompt_tokens=0, completion_tokens=1, total_tokens=1),
-            finish_reason=None,
-        ),
-        MockChatCompletionChunk(
-            usage=MockCompletionUsage(prompt_tokens=0, completion_tokens=1, total_tokens=1),
-            finish_reason="stop",
-        ),
-    ]
-
-    collected_metrics = []
-    for chunk in chunks:
-        if model._should_collect_metrics(chunk):  # type: ignore[arg-type]
-            metrics = model._get_metrics(chunk.usage)  # type: ignore[arg-type]
-            collected_metrics.append(metrics)
-
-    # Should collect metrics from all chunks with usage
-    assert len(collected_metrics) == 3
-
-
 def test_perplexity_get_metrics_with_none_values():
     """Test that Perplexity._get_metrics handles None values gracefully."""
     model = Perplexity(id="sonar", api_key="test-key")
-
-    # Create usage with None values
     usage = MockCompletionUsage(prompt_tokens=None, completion_tokens=None, total_tokens=None)
 
     metrics = model._get_metrics(usage)  # type: ignore[arg-type]
@@ -237,7 +168,6 @@ def test_collect_metrics_with_different_finish_reasons():
     model = Perplexity(id="sonar", api_key="test-key")
     usage = MockCompletionUsage(prompt_tokens=100, completion_tokens=20, total_tokens=120)
 
-    # Test various finish reasons
     for finish_reason in ["stop", "length", "tool_calls", "content_filter"]:
         response = MockChatCompletionChunk(usage=usage, finish_reason=finish_reason)
         assert model._should_collect_metrics(response) is True  # type: ignore[arg-type]

@@ -43,6 +43,7 @@ class OpenAIChat(Model):
     name: str = "OpenAIChat"
     provider: str = "OpenAI"
     supports_native_structured_outputs: bool = True
+    # If True, only collect metrics on the final streaming chunk (for providers with cumulative token counts)
     collect_metrics_on_completion: bool = False
 
     # Request parameters
@@ -759,7 +760,7 @@ class OpenAIChat(Model):
         if not response.choices:
             return False
 
-        return response.choices[-1].finish_reason is not None
+        return response.choices[0].finish_reason is not None
 
     def _parse_provider_response(
         self,
