@@ -120,6 +120,6 @@ if __name__ == "__main__":
         print(f"  Steps: {len(loaded_workflow.steps) if loaded_workflow.steps else 0}")
 
         # Uncomment to run the loaded workflow
-        # loaded_workflow.print_response(input="Latest AI developments in machine learning")
+        # loaded_workflow.print_response(input="Latest AI developments in machine learning", stream=True)
     else:
         print("Workflow not found")
