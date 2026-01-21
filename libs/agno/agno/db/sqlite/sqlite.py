@@ -3490,15 +3490,17 @@ class SqliteDb(BaseDb):
 
             with self.Session() as sess:
                 # Always verify component exists and is not deleted
-                component = sess.execute(
+                component_row = sess.execute(
                     select(components_table.c.current_version, components_table.c.component_id).where(
                         components_table.c.component_id == component_id,
                         components_table.c.deleted_at.is_(None),
                     )
-                ).fetchone()
+                ).mappings().one_or_none()
 
-                if component is None:
+                if component_row is None:
                     return None
+
+                current_version = component_row["current_version"]
 
                 if version is not None:
                     stmt = select(configs_table).where(
@@ -3510,11 +3512,11 @@ class SqliteDb(BaseDb):
                         configs_table.c.component_id == component_id,
                         configs_table.c.label == label,
                     )
-                elif component.current_version is not None:
+                elif current_version is not None:
                     # Use the current published version
                     stmt = select(configs_table).where(
                         configs_table.c.component_id == component_id,
-                        configs_table.c.version == component.current_version,
+                        configs_table.c.version == current_version,
                     )
                 else:
                     # No current_version set (draft only) - get the latest version

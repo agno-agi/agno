@@ -3613,12 +3613,12 @@ class PostgresDb(BaseDb):
                         components_table.c.component_id == component_id,
                         components_table.c.deleted_at.is_(None),
                     )
-                ).one_or_none()
+                ).mappings().one_or_none()
 
                 if component_row is None:
                     return None
 
-                current_version = component_row.current_version
+                current_version = component_row["current_version"]
 
                 if version is not None:
                     stmt = select(configs_table).where(
