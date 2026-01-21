@@ -176,6 +176,7 @@ class RemoteContentSourceSchema(BaseModel):
     id: str = Field(..., description="Unique identifier for the content source")
     name: str = Field(..., description="Display name for the content source")
     type: str = Field(..., description="Type of content source (s3, gcs, sharepoint, github)")
+    metadata: Optional[Dict[str, Any]] = Field(None, description="Custom metadata for the content source")
 
 
 class ConfigResponseSchema(BaseModel):

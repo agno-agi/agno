@@ -18,6 +18,7 @@ class RemoteContentConfig(BaseModel):
 
     id: str
     name: str
+    metadata: Optional[dict] = None
 
     class Config:
         extra = "allow"
@@ -118,6 +119,7 @@ class SharePointConfig(RemoteContentConfig):
     client_secret: str
     hostname: str
     site_path: Optional[str] = None
+    site_id: Optional[str] = None  # Full site ID (e.g., "contoso.sharepoint.com,guid1,guid2")
     folder_path: Optional[str] = None
 
     def file(self, file_path: str, site_path: Optional[str] = None) -> "SharePointContent":

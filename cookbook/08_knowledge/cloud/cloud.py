@@ -38,6 +38,7 @@ s3_docs = S3Config(
     id="s3-docs",
     name="S3 Documents",
     bucket_name="acme-company-docs",
+    metadata={"description": "S3 documents for the company"},
 )
 
 # For public buckets - no credentials needed
@@ -57,11 +58,13 @@ gcs_data = GcsConfig(
 sharepoint = SharePointConfig(
     id="sharepoint",
     name="Product Data",
-    tenant_id="tenant_id_1",  # or os.getenv("SHAREPOINT_TENANT_ID")
-    client_id="client_id_1",
-    client_secret="client_secret_1",
-    hostname="hostname_1",
+    tenant_id=getenv("SHAREPOINT_TENANT_ID"),  # or os.getenv("SHAREPOINT_TENANT_ID")
+    client_id=getenv("SHAREPOINT_CLIENT_ID"),
+    client_secret=getenv("SHAREPOINT_CLIENT_SECRET"),
+    hostname=getenv("SHAREPOINT_HOSTNAME"),
+    site_id=getenv("SHAREPOINT_SITE_ID"),
 )
+
 github_docs = GitHubConfig(
     id="dealer-sync",
     name="Dealer Sync",
@@ -69,6 +72,14 @@ github_docs = GitHubConfig(
     token=getenv("GITHUB_TESTING_TOKEN"),  # Fine-grained PAT with Contents: read
     branch="main",
 )
+
+# azure_blob = AzureBlobConfig(
+#     id="azure-blob",
+#     name="Azure Blob",
+#     container_name="container_name",
+#     account_name="account_name",
+#     account_key="account_key",
+# )
 
 # Create Knowledge with content sources
 knowledge = Knowledge(
@@ -90,10 +101,10 @@ knowledge = Knowledge(
 # knowledge.insert(remote_content=gcs_data.folder("training-data/"))
 
 # Insert from SharePoint
-# knowledge.insert(remote_content=sharepoint.file("Documents/product-spec.docx"))
+# knowledge.insert(remote_content=sharepoint.file("/test.pdf"))
 
 # Insert from GitHub
-knowledge.insert(remote_content=github_docs.file("README.md", branch="main"))
+# knowledge.insert(remote_content=github_docs.file("main.py", branch="backup"))
 
 agent_os = AgentOS(
     knowledge=[knowledge],

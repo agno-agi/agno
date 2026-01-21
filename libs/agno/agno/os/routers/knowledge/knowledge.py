@@ -233,7 +233,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
                 },
             },
             400: {
-                "description": "Invalid request - unknown source or missing path",
+                "description": "Invalid request - unknown config or missing path",
                 "model": BadRequestResponse,
             },
             422: {"description": "Validation error in request body", "model": ValidationErrorResponse},
@@ -242,10 +242,8 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
     async def upload_remote_content(
         request: Request,
         background_tasks: BackgroundTasks,
-        source_id: str = Form(..., description="ID of the configured remote content source (from /knowledge/config)"),
-        file_path: Optional[str] = Form(None, description="Path to file in the remote source"),
-        folder_path: Optional[str] = Form(None, description="Path to folder in the remote source"),
-        branch: Optional[str] = Form(None, description="Branch name (GitHub only)"),
+        config_id: str = Form(..., description="ID of the configured remote content source (from /knowledge/config)"),
+        path: str = Form(..., description="Path to file or folder in the remote source"),
         name: Optional[str] = Form(None, description="Content name (auto-generated if not provided)"),
         description: Optional[str] = Form(None, description="Content description"),
         metadata: Optional[str] = Form(None, description="JSON metadata object"),
@@ -261,19 +259,12 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
             # TODO: Forward to remote knowledge instance
             raise HTTPException(status_code=501, detail="Remote content upload not yet supported for RemoteKnowledge")
 
-        # Validate that the source_id exists in configured sources
-        config = knowledge._get_remote_config_by_id(source_id)
+        # Validate that the config_id exists in configured sources
+        config = knowledge._get_remote_config_by_id(config_id)
         if config is None:
             raise HTTPException(
                 status_code=400,
-                detail=f"Unknown content source: {source_id}. Check /knowledge/config for available sources.",
-            )
-
-        # Validate that either file_path or folder_path is provided
-        if not file_path and not folder_path:
-            raise HTTPException(
-                status_code=400,
-                detail="Either file_path or folder_path must be provided",
+                detail=f"Unknown content source: {config_id}. Check /knowledge/config for available sources.",
             )
 
         # Parse metadata if provided
@@ -285,26 +276,21 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
                 parsed_metadata = {"value": metadata}
 
         # Use the config's factory methods to create the remote content object
-        # Pass branch for GitHub configs that support it
-        if file_path:
-            if hasattr(config, "file"):
-                if "branch" in config.file.__code__.co_varnames:
-                    remote_content = config.file(file_path, branch=branch)
-                else:
-                    remote_content = config.file(file_path)
-            else:
-                raise HTTPException(status_code=400, detail=f"Config {source_id} does not support file uploads")
-        else:
+        # If path ends with '/', treat as folder, otherwise treat as file
+        is_folder = path.endswith("/")
+        if is_folder:
             if hasattr(config, "folder"):
-                if "branch" in config.folder.__code__.co_varnames:
-                    remote_content = config.folder(folder_path, branch=branch)  # type: ignore
-                else:
-                    remote_content = config.folder(folder_path)  # type: ignore
+                remote_content = config.folder(path.rstrip("/"))
             else:
-                raise HTTPException(status_code=400, detail=f"Config {source_id} does not support folder uploads")
+                raise HTTPException(status_code=400, detail=f"Config {config_id} does not support folder uploads")
+        else:
+            if hasattr(config, "file"):
+                remote_content = config.file(path)
+            else:
+                raise HTTPException(status_code=400, detail=f"Config {config_id} does not support file uploads")
 
-        # Set name from file/folder path if not provided
-        content_name = name or file_path or folder_path
+        # Set name from path if not provided
+        content_name = name or path
 
         content = Content(
             name=content_name,
@@ -1182,6 +1168,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
                         id=config.id,
                         name=config.name,
                         type=config.__class__.__name__.replace("Config", "").lower(),
+                        metadata=config.metadata,
                     )
                     for config in remote_configs
                 ]
@@ -1239,6 +1226,10 @@ async def process_content(
         await knowledge._aload_content(content, upsert=False, skip_if_exists=True)
         log_info(f"Content {content.id} processed successfully")
     except Exception as e:
+        import traceback
+
+        print(f"[process_content] Error: {e}")
+        print(f"[process_content] Traceback:\n{traceback.format_exc()}")
         log_info(f"Error processing content: {e}")
         # Mark content as failed in the contents DB
         try:
