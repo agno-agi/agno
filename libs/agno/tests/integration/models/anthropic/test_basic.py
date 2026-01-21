@@ -9,7 +9,7 @@ from agno.models.anthropic import Claude
 @pytest.fixture(scope="module")
 def claude_model():
     """Fixture that provides a Claude model and reuses it across all tests in the module."""
-    return Claude(id="claude-3-5-haiku-20241022")
+    return Claude(id="claude-sonnet-4-20250514")
 
 
 def _assert_metrics(response: RunOutput):

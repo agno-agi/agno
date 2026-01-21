@@ -7,7 +7,7 @@ import requests
 from agno.agent.agent import Agent, RunOutput
 from agno.media import Audio, File, Image, Video
 from agno.team.team import Team, TeamRunOutput
-from agno.utils.log import log_info, log_warning
+from agno.utils.log import log_info, log_warning, log_error
 from agno.utils.message import get_text_from_message
 
 try:
@@ -126,6 +126,9 @@ class DiscordClient:
                         audio=[Audio(url=message_audio)] if message_audio else None,
                         files=[File(content=message_file)] if message_file else None,
                     )
+                    if agent_response.status == "ERROR":
+                        log_error(agent_response.content)
+                        agent_response.content = "Sorry, there was an error processing your message. Please try again later."
                     await self._handle_response_in_thread(agent_response, thread)
                 elif self.team:
                     self.team.additional_context = additional_context
@@ -138,6 +141,10 @@ class DiscordClient:
                         audio=[Audio(url=message_audio)] if message_audio else None,
                         files=[File(content=message_file)] if message_file else None,
                     )
+                    if team_response.status == "ERROR":
+                        log_error(team_response.content)
+                        team_response.content = "Sorry, there was an error processing your message. Please try again later."
+                         
                     await self._handle_response_in_thread(team_response, thread)
 
     async def handle_hitl(

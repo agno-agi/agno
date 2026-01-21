@@ -16,7 +16,7 @@ def _get_thinking_agent(**kwargs):
     """Create an agent with thinking enabled using consistent settings."""
     default_config = {
         "model": Claude(
-            id="claude-3-7-sonnet-20250219",
+            id="claude-sonnet-4-20250514",
             thinking={"type": "enabled", "budget_tokens": 1024},
         ),
         "markdown": True,
@@ -158,7 +158,7 @@ async def test_thinking_with_storage():
     """Test that thinking content is stored and retrievable."""
     with tempfile.TemporaryDirectory() as storage_dir:
         agent = Agent(
-            model=Claude(id="claude-3-7-sonnet-20250219", thinking={"type": "enabled", "budget_tokens": 1024}),
+            model=Claude(id="claude-sonnet-4-20250514", thinking={"type": "enabled", "budget_tokens": 1024}),
             db=JsonDb(db_path=storage_dir, session_table="test_session"),
             user_id="test_user",
             session_id="test_session",
@@ -200,7 +200,7 @@ async def test_thinking_with_streaming_storage():
     """Test thinking content with streaming and storage."""
     with tempfile.TemporaryDirectory() as storage_dir:
         agent = Agent(
-            model=Claude(id="claude-3-7-sonnet-20250219", thinking={"type": "enabled", "budget_tokens": 1024}),
+            model=Claude(id="claude-sonnet-4-20250514", thinking={"type": "enabled", "budget_tokens": 1024}),
             db=JsonDb(db_path=storage_dir, session_table="test_session_stream"),
             user_id="test_user_stream",
             session_id="test_session_stream",
@@ -436,7 +436,7 @@ def test_interleaved_thinking_vs_regular_thinking():
     assert interleaved_response.content is not None
 
     # Verify the models are different
-    assert regular_agent.model.id == "claude-3-7-sonnet-20250219"  # type: ignore
+    assert regular_agent.model.id == "claude-sonnet-4-20250514"  # type: ignore
     assert interleaved_agent.model.id == "claude-sonnet-4-20250514"  # type: ignore
 
     # Verify the headers are different
