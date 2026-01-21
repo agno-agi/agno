@@ -2063,9 +2063,7 @@ class Knowledge:
             read_documents = await reader.async_read(readable_content, name=obj_name)
 
             # 7. Prepare and insert the content in the vector database
-            if not content.id:
-                content.id = generate_id(content.content_hash or "")
-            self._prepare_documents_for_insert(read_documents, content.id)
+            self._prepare_documents_for_insert(read_documents, content_entry.id)
             await self._ahandle_vector_db_insert(content_entry, read_documents, upsert)
 
             # 8. Remove temporary file if needed
@@ -2157,9 +2155,7 @@ class Knowledge:
             read_documents = await reader.async_read(readable_content, name=name)
 
             # 7. Prepare and insert the content in the vector database
-            if not content.id:
-                content.id = generate_id(content.content_hash or "")
-            self._prepare_documents_for_insert(read_documents, content.id)
+            self._prepare_documents_for_insert(read_documents, content_entry.id)
             await self._ahandle_vector_db_insert(content_entry, read_documents, upsert)
 
     def _load_from_remote_content(
@@ -2291,9 +2287,7 @@ class Knowledge:
             read_documents = reader.read(readable_content, name=obj_name)
 
             # 7. Prepare and insert the content in the vector database
-            if not content.id:
-                content.id = generate_id(content.content_hash or "")
-            self._prepare_documents_for_insert(read_documents, content.id)
+            self._prepare_documents_for_insert(read_documents, content_entry.id)
             self._handle_vector_db_insert(content_entry, read_documents, upsert)
 
             # 8. Remove temporary file if needed
@@ -2386,9 +2380,7 @@ class Knowledge:
             read_documents = reader.read(readable_content, name=name)
 
             # 7. Prepare and insert the content in the vector database
-            if not content.id:
-                content.id = generate_id(content.content_hash or "")
-            self._prepare_documents_for_insert(read_documents, content.id)
+            self._prepare_documents_for_insert(read_documents, content_entry.id)
             self._handle_vector_db_insert(content_entry, read_documents, upsert)
 
     # --- SharePoint loaders ---
@@ -2690,9 +2682,7 @@ class Knowledge:
             read_documents = await reader.async_read(file_content, name=file_name)
 
             # Prepare and insert to vector database
-            if not content.id:
-                content.id = generate_id(content.content_hash or "")
-            self._prepare_documents_for_insert(read_documents, content.id)
+            self._prepare_documents_for_insert(read_documents, content_entry.id)
             await self._ahandle_vector_db_insert(content_entry, read_documents, upsert)
 
     def _load_from_sharepoint(
@@ -2843,9 +2833,7 @@ class Knowledge:
             read_documents = reader.read(file_content, name=file_name)
 
             # Prepare and insert to vector database
-            if not content.id:
-                content.id = generate_id(content.content_hash or "")
-            self._prepare_documents_for_insert(read_documents, content.id)
+            self._prepare_documents_for_insert(read_documents, content_entry.id)
             self._handle_vector_db_insert(content_entry, read_documents, upsert)
 
     # --- GitHub loaders ---

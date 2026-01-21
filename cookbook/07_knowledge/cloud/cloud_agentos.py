@@ -23,6 +23,8 @@ from agno.knowledge.remote_content import (
 )
 from agno.os import AgentOS
 from agno.vectordb.pgvector import PgVector
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
 
 # Database connections
 contents_db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
@@ -69,6 +71,18 @@ knowledge.insert(remote_content=sharepoint.file("/test.pdf"))
 
 # Insert from GitHub
 knowledge.insert(remote_content=github_docs.file("main.py", branch="main"))
+
+agent = Agent(
+    model=OpenAIChat(id="gpt-4o-mini"),
+    knowledge=knowledge,
+    search_knowledge=True,
+)
+
+agent.print_response(
+    "What is the content of the main.py file?",
+    markdown=True,
+    stream=True,
+)
 
 agent_os = AgentOS(
     knowledge=[knowledge],
