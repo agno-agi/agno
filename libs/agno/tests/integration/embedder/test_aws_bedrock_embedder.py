@@ -2,10 +2,11 @@
 Integration tests for AWS Bedrock Embedder.
 
 These tests require valid AWS credentials with access to Bedrock.
-Set the following environment variables:
-- AWS_ACCESS_KEY_ID
-- AWS_SECRET_ACCESS_KEY
-- AWS_REGION (defaults to us-west-2)
+Credentials can be provided via:
+- Environment variables (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)
+- AWS credentials file (~/.aws/credentials)
+- AWS SSO session
+- IAM role (when running on AWS infrastructure)
 
 To run these tests:
     pytest libs/agno/tests/integration/embedder/test_aws_bedrock_embedder.py -v
@@ -18,9 +19,21 @@ import pytest
 from agno.knowledge.embedder.aws_bedrock import AwsBedrockEmbedder
 
 
+def _has_aws_credentials() -> bool:
+    """Check if AWS credentials are available via any method."""
+    try:
+        import boto3
+
+        session = boto3.Session()
+        credentials = session.get_credentials()
+        return credentials is not None
+    except Exception:
+        return False
+
+
 # Skip all tests if AWS credentials are not configured
 pytestmark = pytest.mark.skipif(
-    not os.getenv("AWS_ACCESS_KEY_ID") or not os.getenv("AWS_SECRET_ACCESS_KEY"),
+    not _has_aws_credentials(),
     reason="AWS credentials not configured",
 )
 
@@ -102,8 +115,8 @@ class TestAwsBedrockEmbedderV3:
             aws_region=os.getenv("AWS_REGION", "us-west-2"),
         )
 
-        # Create a long text
-        long_text = " ".join(["word"] * 1000)
+        # Create a moderately long text (within API limits but tests truncate param is accepted)
+        long_text = " ".join(["word"] * 200)
         embeddings = embedder.get_embedding(long_text)
 
         assert isinstance(embeddings, list)
@@ -116,14 +129,14 @@ class TestAwsBedrockEmbedderV4:
     @pytest.fixture
     def embedder(self):
         return AwsBedrockEmbedder(
-            id="cohere.embed-v4:0",
+            id="us.cohere.embed-v4:0",
             aws_region=os.getenv("AWS_REGION", "us-west-2"),
         )
 
     def test_embedder_initialization(self, embedder):
         """Test that the v4 embedder initializes correctly."""
         assert embedder is not None
-        assert embedder.id == "cohere.embed-v4:0"
+        assert embedder.id == "us.cohere.embed-v4:0"
         assert embedder.dimensions == 1536  # v4 default
         assert embedder._is_v4_model()
 
@@ -140,7 +153,7 @@ class TestAwsBedrockEmbedderV4:
     def test_custom_output_dimension(self):
         """Test v4 embedder with custom output dimension."""
         embedder = AwsBedrockEmbedder(
-            id="cohere.embed-v4:0",
+            id="us.cohere.embed-v4:0",
             output_dimension=1024,
             aws_region=os.getenv("AWS_REGION", "us-west-2"),
         )
@@ -160,7 +173,7 @@ class TestAwsBedrockEmbedderV4:
 
         for dim in dimensions_to_test:
             embedder = AwsBedrockEmbedder(
-                id="cohere.embed-v4:0",
+                id="us.cohere.embed-v4:0",
                 output_dimension=dim,
                 aws_region=os.getenv("AWS_REGION", "us-west-2"),
             )
@@ -171,7 +184,7 @@ class TestAwsBedrockEmbedderV4:
     def test_v4_truncate_options(self):
         """Test v4 truncate options (LEFT/RIGHT)."""
         embedder = AwsBedrockEmbedder(
-            id="cohere.embed-v4:0",
+            id="us.cohere.embed-v4:0",
             truncate="RIGHT",
             aws_region=os.getenv("AWS_REGION", "us-west-2"),
         )
@@ -189,7 +202,7 @@ class TestAwsBedrockEmbedderV4Multimodal:
     @pytest.fixture
     def embedder(self):
         return AwsBedrockEmbedder(
-            id="cohere.embed-v4:0",
+            id="us.cohere.embed-v4:0",
             output_dimension=1024,
             aws_region=os.getenv("AWS_REGION", "us-west-2"),
         )

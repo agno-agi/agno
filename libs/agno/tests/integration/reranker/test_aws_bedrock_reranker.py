@@ -2,10 +2,11 @@
 Integration tests for AWS Bedrock Reranker.
 
 These tests require valid AWS credentials with access to Bedrock.
-Set the following environment variables:
-- AWS_ACCESS_KEY_ID
-- AWS_SECRET_ACCESS_KEY
-- AWS_REGION (defaults to us-west-2)
+Credentials can be provided via:
+- Environment variables (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)
+- AWS credentials file (~/.aws/credentials)
+- AWS SSO session
+- IAM role (when running on AWS infrastructure)
 
 To run these tests:
     pytest libs/agno/tests/integration/reranker/test_aws_bedrock_reranker.py -v
@@ -29,9 +30,21 @@ from agno.knowledge.reranker.aws_bedrock import (
 )
 
 
+def _has_aws_credentials() -> bool:
+    """Check if AWS credentials are available via any method."""
+    try:
+        import boto3
+
+        session = boto3.Session()
+        credentials = session.get_credentials()
+        return credentials is not None
+    except Exception:
+        return False
+
+
 # Skip all tests if AWS credentials are not configured
 pytestmark = pytest.mark.skipif(
-    not os.getenv("AWS_ACCESS_KEY_ID") or not os.getenv("AWS_SECRET_ACCESS_KEY"),
+    not _has_aws_credentials(),
     reason="AWS credentials not configured",
 )
 

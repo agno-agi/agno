@@ -111,6 +111,12 @@ class AwsBedrockEmbedder(Embedder):
         """
         Returns an AWS Bedrock client.
 
+        Credentials are resolved in the following order:
+        1. Explicit session parameter
+        2. Explicit aws_access_key_id and aws_secret_access_key parameters
+        3. Environment variables (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)
+        4. Default boto3 credential chain (~/.aws/credentials, SSO, IAM role, etc.)
+
         Returns:
             AwsClient: An instance of the AWS Bedrock client.
         """
@@ -121,28 +127,38 @@ class AwsBedrockEmbedder(Embedder):
             self.client = self.session.client("bedrock-runtime")
             return self.client
 
+        # Try explicit credentials or environment variables
         self.aws_access_key_id = self.aws_access_key_id or getenv("AWS_ACCESS_KEY_ID")
         self.aws_secret_access_key = self.aws_secret_access_key or getenv("AWS_SECRET_ACCESS_KEY")
         self.aws_region = self.aws_region or getenv("AWS_REGION")
 
-        if not self.aws_access_key_id or not self.aws_secret_access_key:
-            raise AgnoError(
-                message="AWS credentials not found. Please set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables or provide a boto3 session.",
-                status_code=400,
+        if self.aws_access_key_id and self.aws_secret_access_key:
+            # Use explicit credentials
+            self.client = AwsClient(
+                service_name="bedrock-runtime",
+                region_name=self.aws_region,
+                aws_access_key_id=self.aws_access_key_id,
+                aws_secret_access_key=self.aws_secret_access_key,
+                **(self.client_params or {}),
             )
-
-        self.client = AwsClient(
-            service_name="bedrock-runtime",
-            region_name=self.aws_region,
-            aws_access_key_id=self.aws_access_key_id,
-            aws_secret_access_key=self.aws_secret_access_key,
-            **(self.client_params or {}),
-        )
+        else:
+            # Fall back to default credential chain (SSO, credentials file, IAM role, etc.)
+            self.client = AwsClient(
+                service_name="bedrock-runtime",
+                region_name=self.aws_region,
+                **(self.client_params or {}),
+            )
         return self.client
 
     def get_async_client(self):
         """
         Returns an async AWS Bedrock client using aioboto3.
+
+        Credentials are resolved in the following order:
+        1. Explicit session parameter
+        2. Explicit aws_access_key_id and aws_secret_access_key parameters
+        3. Environment variables (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)
+        4. Default credential chain (~/.aws/credentials, SSO, IAM role, etc.)
 
         Returns:
             An aioboto3 bedrock-runtime client context manager.
@@ -162,21 +178,21 @@ class AwsBedrockEmbedder(Embedder):
                 region_name=self.session.region_name,
             )
         else:
+            # Try explicit credentials or environment variables
             self.aws_access_key_id = self.aws_access_key_id or getenv("AWS_ACCESS_KEY_ID")
             self.aws_secret_access_key = self.aws_secret_access_key or getenv("AWS_SECRET_ACCESS_KEY")
             self.aws_region = self.aws_region or getenv("AWS_REGION")
 
-            if not self.aws_access_key_id or not self.aws_secret_access_key:
-                raise AgnoError(
-                    message="AWS credentials not found. Please set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables or provide a boto3 session.",
-                    status_code=400,
+            if self.aws_access_key_id and self.aws_secret_access_key:
+                # Use explicit credentials
+                aio_session = aioboto3.Session(
+                    aws_access_key_id=self.aws_access_key_id,
+                    aws_secret_access_key=self.aws_secret_access_key,
+                    region_name=self.aws_region,
                 )
-
-            aio_session = aioboto3.Session(
-                aws_access_key_id=self.aws_access_key_id,
-                aws_secret_access_key=self.aws_secret_access_key,
-                region_name=self.aws_region,
-            )
+            else:
+                # Fall back to default credential chain (SSO, credentials file, IAM role, etc.)
+                aio_session = aioboto3.Session(region_name=self.aws_region)
 
         return aio_session.client("bedrock-runtime", **(self.client_params or {}))
 
