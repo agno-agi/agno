@@ -26,7 +26,6 @@ Run this cookbook:
 
 from os import getenv
 
-from agno.knowledge.content import Content
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.remote_content import GitHubConfig
 from agno.vectordb.pgvector import PgVector

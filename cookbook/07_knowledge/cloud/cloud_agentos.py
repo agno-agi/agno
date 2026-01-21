@@ -15,16 +15,16 @@ Key Concepts:
 
 from os import getenv
 
+from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.remote_content import (
     GitHubConfig,
     SharePointConfig,
 )
+from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.vectordb.pgvector import PgVector
-from agno.agent import Agent
-from agno.models.openai import OpenAIChat
 
 # Database connections
 contents_db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
