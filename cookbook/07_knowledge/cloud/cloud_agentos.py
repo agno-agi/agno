@@ -18,9 +18,7 @@ from os import getenv
 from agno.db.postgres import PostgresDb
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.remote_content import (
-    GcsConfig,
     GitHubConfig,
-    S3Config,
     SharePointConfig,
 )
 from agno.os import AgentOS
@@ -34,26 +32,6 @@ vector_db = PgVector(
 )
 
 # Define content source configs (credentials can come from env vars)
-s3_docs = S3Config(
-    id="s3-docs",
-    name="S3 Documents",
-    bucket_name="acme-company-docs",
-    metadata={"description": "S3 documents for the company"},
-)
-
-# For public buckets - no credentials needed
-s3_public = S3Config(
-    id="s3-public",
-    name="Public Recipes",
-    bucket_name="agno-public",
-)
-
-gcs_data = GcsConfig(
-    id="gcs-data",
-    name="GCS Training Data",
-    bucket_name="acme-ml-data",
-    project="acme-ml",
-)
 
 sharepoint = SharePointConfig(
     id="sharepoint",
@@ -73,13 +51,6 @@ github_docs = GitHubConfig(
     branch="main",
 )
 
-# azure_blob = AzureBlobConfig(
-#     id="azure-blob",
-#     name="Azure Blob",
-#     container_name="container_name",
-#     account_name="account_name",
-#     account_key="account_key",
-# )
 
 # Create Knowledge with content sources
 knowledge = Knowledge(
@@ -87,24 +58,17 @@ knowledge = Knowledge(
     description="Unified knowledge from multiple sources",
     contents_db=contents_db,
     vector_db=vector_db,
-    content_sources=[s3_docs, s3_public, gcs_data, sharepoint, github_docs],
+    content_sources=[sharepoint, github_docs],
 )
 
 # Insert content using factory methods
 # The config knows the bucket/credentials, you just specify the file path
-# knowledge.insert(remote_content=s3_docs.file("reports/q1-2024.pdf"))
-
-# Insert from public bucket (no credentials needed)
-# knowledge.insert(remote_content=s3_public.file("recipes/ThaiRecipes.pdf"))
-
-# Insert a folder of files
-# knowledge.insert(remote_content=gcs_data.folder("training-data/"))
 
 # Insert from SharePoint
-# knowledge.insert(remote_content=sharepoint.file("/test.pdf"))
+knowledge.insert(remote_content=sharepoint.file("/test.pdf"))
 
 # Insert from GitHub
-# knowledge.insert(remote_content=github_docs.file("main.py", branch="backup"))
+knowledge.insert(remote_content=github_docs.file("main.py", branch="main"))
 
 agent_os = AgentOS(
     knowledge=[knowledge],
