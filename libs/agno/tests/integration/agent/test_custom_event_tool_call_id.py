@@ -1,4 +1,4 @@
-"""from dataclasses import dataclass
+from dataclasses import dataclass
 from typing import Optional
 
 import pytest
@@ -49,4 +49,3 @@ def test_custom_event_has_tool_call_id_and_matches_tool_call_started():
     assert getattr(tool_started_event.tool, "tool_call_id", None) is not None
 
     assert custom_event.tool_call_id == tool_started_event.tool.tool_call_id
-"""
