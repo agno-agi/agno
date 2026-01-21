@@ -1,8 +1,8 @@
+import inspect
 import time
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field
 
 from agno.os.auth import get_authentication_dependency
 from agno.os.schema import (
@@ -11,6 +11,8 @@ from agno.os.schema import (
     NotFoundResponse,
     PaginatedResponse,
     PaginationInfo,
+    RegistryContentResponse,
+    RegistryContentType,
     UnauthenticatedResponse,
     ValidationErrorResponse,
 )
@@ -19,29 +21,6 @@ from agno.registry import Registry
 from agno.tools.function import Function
 from agno.tools.toolkit import Toolkit
 from agno.utils.log import log_error
-
-ComponentType = Literal["tool", "toolkit", "model", "db", "vector_db", "schema"]
-
-
-# ============================================
-# Response Schema
-# ============================================
-
-
-class ComponentResponse(BaseModel):
-    name: str
-    component_type: ComponentType
-    description: Optional[str] = None
-    metadata: Dict[str, Any] = Field(default_factory=dict)
-    # Tool-specific fields (matching config format)
-    parameters: Optional[Dict[str, Any]] = None
-    requires_confirmation: Optional[bool] = None
-    external_execution: Optional[bool] = None
-
-
-# ============================================
-# Router
-# ============================================
 
 
 def get_registry_router(registry: Registry, settings: AgnoAPISettings = AgnoAPISettings()) -> APIRouter:
@@ -78,8 +57,7 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
         return f"{cls.__module__}.{cls.__name__}"
 
     def _maybe_jsonable(value: Any) -> Any:
-        # Best-effort: keep only data that is likely JSON serializable
-        # If your Function.parameters is a Pydantic model or custom object, this avoids 500s.
+        # Keep only data that is likely JSON serializable
         if value is None:
             return None
         if isinstance(value, (str, int, float, bool)):
@@ -94,8 +72,8 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
         # Fallback to string to avoid serialization errors
         return str(value)
 
-    def _get_all_components(include_schema: bool) -> List[ComponentResponse]:
-        components: List[ComponentResponse] = []
+    def _get_all_components() -> List[RegistryContentResponse]:
+        components: List[RegistryContentResponse] = []
 
         # Tools
         for tool in getattr(registry, "tools", []) or []:
@@ -104,9 +82,9 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
                 functions = getattr(tool, "functions", {}) or {}
 
                 components.append(
-                    ComponentResponse(
+                    RegistryContentResponse(
                         name=toolkit_name,
-                        component_type="toolkit",
+                        type="toolkit",
                         description=_safe_str(getattr(tool, "description", None)),
                         metadata={
                             "class_path": _class_path(tool),
@@ -144,17 +122,17 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
                             pass
 
                     components.append(
-                        ComponentResponse(
+                        RegistryContentResponse(
                             name=func_name,
-                            component_type="tool",
+                            type="tool",
                             description=_safe_str(getattr(func, "description", None)),
-                            parameters=_maybe_jsonable(func_params),
-                            requires_confirmation=requires_confirmation,
-                            external_execution=external_execution,
                             metadata={
                                 "class_path": _class_path(func),
                                 "toolkit": toolkit_name,
                                 "has_entrypoint": bool(getattr(func, "entrypoint", None)),
+                                "parameters": _maybe_jsonable(func_params),
+                                "requires_confirmation": requires_confirmation,
+                                "external_execution": external_execution,
                             },
                         )
                     )
@@ -179,16 +157,16 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
                         pass
 
                 components.append(
-                    ComponentResponse(
+                    RegistryContentResponse(
                         name=func_name,
-                        component_type="tool",
+                        type="tool",
                         description=_safe_str(getattr(tool, "description", None)),
-                        parameters=_maybe_jsonable(func_params),
-                        requires_confirmation=requires_confirmation,
-                        external_execution=external_execution,
                         metadata={
                             "class_path": _class_path(tool),
                             "has_entrypoint": bool(getattr(tool, "entrypoint", None)),
+                            "parameters": _maybe_jsonable(func_params),
+                            "requires_confirmation": requires_confirmation,
+                            "external_execution": external_execution,
                         },
                     )
                 )
@@ -196,9 +174,9 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
             elif callable(tool):
                 call_name = getattr(tool, "__name__", None) or tool.__class__.__name__
                 components.append(
-                    ComponentResponse(
+                    RegistryContentResponse(
                         name=str(call_name),
-                        component_type="tool",
+                        type="tool",
                         description=_safe_str(getattr(tool, "__doc__", None)),
                         metadata={"class_path": _class_path(tool)},
                     )
@@ -212,9 +190,9 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
                 or model.__class__.__name__
             )
             components.append(
-                ComponentResponse(
+                RegistryContentResponse(
                     name=model_name,
-                    component_type="model",
+                    type="model",
                     description=_safe_str(getattr(model, "description", None)),
                     metadata={
                         "class_path": _class_path(model),
@@ -233,9 +211,9 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
                 or db.__class__.__name__
             )
             components.append(
-                ComponentResponse(
+                RegistryContentResponse(
                     name=db_name,
-                    component_type="db",
+                    type="db",
                     metadata={
                         "class_path": _class_path(db),
                         "db_id": _safe_str(getattr(db, "id", None)),
@@ -254,9 +232,9 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
                 or vdb.__class__.__name__
             )
             components.append(
-                ComponentResponse(
+                RegistryContentResponse(
                     name=vdb_name,
-                    component_type="vector_db",
+                    type="vector_db",
                     metadata={
                         "class_path": _class_path(vdb),
                         "vector_db_id": _safe_str(getattr(vdb, "id", None)),
@@ -270,27 +248,63 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
         for schema in getattr(registry, "schemas", []) or []:
             schema_name = schema.__name__
             meta: Dict[str, Any] = {"class_path": _class_path(schema)}
-            if include_schema:
-                try:
-                    meta["schema"] = schema.model_json_schema() if hasattr(schema, "model_json_schema") else {}
-                except Exception as e:
-                    meta["schema_error"] = str(e)
+            try:
+                meta["schema"] = schema.model_json_schema() if hasattr(schema, "model_json_schema") else {}
+            except Exception as e:
+                meta["schema_error"] = str(e)
 
             components.append(
-                ComponentResponse(
+                RegistryContentResponse(
                     name=schema_name,
-                    component_type="schema",
+                    type="schema",
                     metadata=meta,
                 )
             )
 
+        # Functions (raw callables used for workflow conditions, selectors, etc.)
+        for func in getattr(registry, "functions", []) or []:
+            func_name = getattr(func, "__name__", None) or "anonymous"
+            func_meta: Dict[str, Any] = {
+                "module": getattr(func, "__module__", None),
+                "qualname": getattr(func, "__qualname__", None),
+            }
+
+            # Try to extract signature and parameter info
+            try:
+                sig = inspect.signature(func)
+                func_meta["signature"] = str(sig)
+                func_meta["parameters"] = {
+                    param_name: {
+                        "kind": str(param.kind.name),
+                        "default": str(param.default) if param.default is not inspect.Parameter.empty else None,
+                        "annotation": str(param.annotation)
+                        if param.annotation is not inspect.Parameter.empty
+                        else None,
+                    }
+                    for param_name, param in sig.parameters.items()
+                }
+                if sig.return_annotation is not inspect.Signature.empty:
+                    func_meta["return_annotation"] = str(sig.return_annotation)
+            except (ValueError, TypeError):
+                # Some callables don't support signature inspection
+                pass
+
+            components.append(
+                RegistryContentResponse(
+                    name=func_name,
+                    type="function",
+                    description=_safe_str(getattr(func, "__doc__", None)),
+                    metadata=func_meta,
+                )
+            )
+
         # Stable ordering helps pagination
-        components.sort(key=lambda c: (c.component_type, c.name))
+        components.sort(key=lambda c: (c.type, c.name))
         return components
 
     @router.get(
         "/registry",
-        response_model=PaginatedResponse[ComponentResponse],
+        response_model=PaginatedResponse[RegistryContentResponse],
         response_model_exclude_none=True,
         status_code=200,
         operation_id="list_registry",
@@ -298,18 +312,17 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
         description="List all components in the registry with optional filtering.",
     )
     async def list_registry(
-        component_type: Optional[ComponentType] = Query(None, description="Filter by component type"),
+        component_type: Optional[RegistryContentType] = Query(None, description="Filter by component type"),
         name: Optional[str] = Query(None, description="Filter by name (partial match)"),
-        include_schema: bool = Query(False, description="Include JSON schema for schema components"),
         page: int = Query(1, ge=1, description="Page number"),
         limit: int = Query(20, ge=1, le=100, description="Items per page"),
-    ) -> PaginatedResponse[ComponentResponse]:
+    ) -> PaginatedResponse[RegistryContentResponse]:
         try:
             start_time_ms = time.time() * 1000
-            components = _get_all_components(include_schema=include_schema)
+            components = _get_all_components()
 
             if component_type:
-                components = [c for c in components if c.component_type == component_type]
+                components = [c for c in components if c.type == component_type]
 
             if name:
                 needle = name.lower().strip()

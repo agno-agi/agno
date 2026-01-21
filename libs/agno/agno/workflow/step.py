@@ -118,6 +118,7 @@ class Step:
     def to_dict(self) -> Dict[str, Any]:
         """Convert step to a dictionary representation."""
         result = {
+            "type": "Step",
             "name": self.name,
             "step_id": self.step_id,
             "description": self.description,
@@ -132,7 +133,8 @@ class Step:
             result["agent_id"] = self.agent.id
         if self.team is not None:
             result["team_id"] = self.team.id
-        # TODO: Add support for custom executors
+        if self.executor is not None:
+            result["executor_ref"] = self.executor.__name__
 
         return result
 
@@ -171,14 +173,14 @@ class Step:
                 agent = get_agent_by_id(db=db, id=agent_id, registry=registry)
 
         # --- Handle Team reconstruction ---
-        # if "team_id" in config and config["team_id"] and registry:
-        #     from agno.team.team import get_team_by_id
-        #     team = get_team_by_id(db=db, id=config["team_id"])
+        if "team_id" in config and config["team_id"] and registry:
+            from agno.team.team import get_team_by_id
+
+            team = get_team_by_id(db=db, id=config["team_id"])
 
         # --- Handle Executor reconstruction ---
-        # TODO: Implement executor reconstruction
-        # if "executor_ref" in config and config["executor_ref"] and registry:
-        #     executor = registry.rehydrate_function(config["executor_ref"])
+        if "executor_ref" in config and config["executor_ref"] and registry:
+            executor = registry.get_function(config["executor_ref"])
 
         return cls(
             name=config.get("name"),

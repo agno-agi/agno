@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union
 from uuid import uuid4
 
+from agno.registry import Registry
 from agno.run.agent import RunOutputEvent
 from agno.run.base import RunContext
 from agno.run.team import TeamRunOutputEvent
@@ -59,6 +60,74 @@ class Loop:
         self.description = description
         self.max_iterations = max_iterations
         self.end_condition = end_condition
+
+    def to_dict(self) -> Dict[str, Any]:
+        result: Dict[str, Any] = {
+            "type": "Loop",
+            "name": self.name,
+            "description": self.description,
+            "steps": [step.to_dict() for step in self.steps if hasattr(step, "to_dict")],
+            "max_iterations": self.max_iterations,
+        }
+        # Serialize end_condition
+        if self.end_condition is None:
+            result["end_condition"] = None
+        elif callable(self.end_condition):
+            result["end_condition"] = self.end_condition.__name__
+        else:
+            raise ValueError(f"Invalid end_condition type: {type(self.end_condition).__name__}")
+
+        return result
+
+    @classmethod
+    def from_dict(
+        cls,
+        data: Dict[str, Any],
+        registry: Optional["Registry"] = None,
+        db: Optional[Any] = None,
+        links: Optional[List[Dict[str, Any]]] = None,
+    ) -> "Loop":
+        from agno.workflow.condition import Condition
+        from agno.workflow.parallel import Parallel
+        from agno.workflow.router import Router
+        from agno.workflow.steps import Steps
+
+        def deserialize_step(step_data: Dict[str, Any]) -> Any:
+            step_type = step_data.get("type", "Step")
+            if step_type == "Loop":
+                return cls.from_dict(step_data, registry=registry, db=db, links=links)
+            elif step_type == "Parallel":
+                return Parallel.from_dict(step_data, registry=registry, db=db, links=links)
+            elif step_type == "Steps":
+                return Steps.from_dict(step_data, registry=registry, db=db, links=links)
+            elif step_type == "Condition":
+                return Condition.from_dict(step_data, registry=registry, db=db, links=links)
+            elif step_type == "Router":
+                return Router.from_dict(step_data, registry=registry, db=db, links=links)
+            else:
+                return Step.from_dict(step_data, registry=registry, db=db, links=links)
+
+        # Deserialize end_condition
+        end_condition_data = data.get("end_condition")
+        end_condition: Optional[Callable[[List[StepOutput]], bool]] = None
+
+        if end_condition_data is None:
+            end_condition = None
+        elif isinstance(end_condition_data, str):
+            if registry:
+                end_condition = registry.get_function(end_condition_data)
+                if end_condition is None:
+                    raise ValueError(f"End condition function '{end_condition_data}' not found in registry")
+            else:
+                raise ValueError(f"Registry required to deserialize end_condition function '{end_condition_data}'")
+
+        return cls(
+            name=data.get("name"),
+            description=data.get("description"),
+            steps=[deserialize_step(step) for step in data.get("steps", [])],
+            max_iterations=data.get("max_iterations", 3),
+            end_condition=end_condition,
+        )
 
     def _prepare_steps(self):
         """Prepare the steps for execution - mirrors workflow logic"""

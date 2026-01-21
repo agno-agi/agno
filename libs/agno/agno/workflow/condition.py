@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union
 from uuid import uuid4
 
+from agno.registry import Registry
 from agno.run.agent import RunOutputEvent
 from agno.run.base import RunContext
 from agno.run.team import TeamRunOutputEvent
@@ -46,6 +47,74 @@ class Condition:
 
     name: Optional[str] = None
     description: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        result: Dict[str, Any] = {
+            "type": "Condition",
+            "name": self.name,
+            "description": self.description,
+            "steps": [step.to_dict() for step in self.steps if hasattr(step, "to_dict")],
+        }
+        if callable(self.evaluator):
+            result["evaluator"] = self.evaluator.__name__
+        elif isinstance(self.evaluator, bool):
+            result["evaluator"] = self.evaluator
+        else:
+            # TODO: Add support for lambda functions
+            raise ValueError(f"Invalid evaluator type: {type(self.evaluator).__name__}")
+
+        return result
+
+    @classmethod
+    def from_dict(
+        cls,
+        data: Dict[str, Any],
+        registry: Optional["Registry"] = None,
+        db: Optional[Any] = None,
+        links: Optional[List[Dict[str, Any]]] = None,
+    ) -> "Condition":
+        from agno.workflow.loop import Loop
+        from agno.workflow.parallel import Parallel
+        from agno.workflow.router import Router
+        from agno.workflow.steps import Steps
+
+        def deserialize_step(step_data: Dict[str, Any]) -> Any:
+            step_type = step_data.get("type", "Step")
+            if step_type == "Loop":
+                return Loop.from_dict(step_data, registry=registry, db=db, links=links)
+            elif step_type == "Parallel":
+                return Parallel.from_dict(step_data, registry=registry, db=db, links=links)
+            elif step_type == "Steps":
+                return Steps.from_dict(step_data, registry=registry, db=db, links=links)
+            elif step_type == "Condition":
+                return cls.from_dict(step_data, registry=registry, db=db, links=links)
+            elif step_type == "Router":
+                return Router.from_dict(step_data, registry=registry, db=db, links=links)
+            else:
+                return Step.from_dict(step_data, registry=registry, db=db, links=links)
+
+        evaluator_data = data.get("evaluator", True)
+        evaluator: Union[Callable[[StepInput], bool], Callable[[StepInput], Awaitable[bool]], bool]
+
+        if isinstance(evaluator_data, bool):
+            evaluator = evaluator_data
+        elif isinstance(evaluator_data, str):
+            if registry:
+                func = registry.get_function(evaluator_data)
+                if func is None:
+                    raise ValueError(f"Evaluator function '{evaluator_data}' not found in registry")
+                evaluator = func
+            else:
+                raise ValueError(f"Registry required to deserialize evaluator function '{evaluator_data}'")
+        else:
+            raise ValueError(f"Invalid evaluator type in data: {type(evaluator_data).__name__}")
+
+        return cls(
+            evaluator=evaluator,
+            steps=[deserialize_step(step) for step in data.get("steps", [])],
+            name=data.get("name"),
+            description=data.get("description"),
+        )
 
     def _prepare_steps(self):
         """Prepare the steps for execution - mirrors workflow logic"""

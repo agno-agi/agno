@@ -11,13 +11,30 @@ from agno.registry import Registry
 from agno.tools.calculator import CalculatorTools
 from agno.tools.parallel import ParallelTools
 from agno.tools.youtube import YouTubeTools
+from pydantic import BaseModel
 
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai", id="postgres_db")
+
+
+def custom_function(input: str) -> str:
+    return input + "Hello, world!"
+
+
+class CustomInputSchema(BaseModel):
+    input: str
+    description: str
+
+
+class CustomOutputSchema(BaseModel):
+    output: str
+    description: str
 
 
 registry = Registry(
     name="Agno Registry",
     tools=[ParallelTools(), CalculatorTools(), YouTubeTools()],
+    functions=[custom_function],
+    schemas=[CustomInputSchema, CustomOutputSchema],
     models=[
         OpenAIChat(id="gpt-5-mini"),
         OpenAIChat(id="gpt-5"),

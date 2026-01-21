@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Dict, Generic, List, Optional, TypeVar, Union
+from typing import Any, Dict, Generic, List, Literal, Optional, TypeVar, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -626,3 +626,13 @@ class ConfigUpdate(BaseModel):
     stage: Optional[str] = None
     notes: Optional[str] = None
     links: Optional[List[Dict[str, Any]]] = None
+
+
+RegistryContentType = Literal["tool", "toolkit", "model", "db", "vector_db", "schema", "function"]
+
+
+class RegistryContentResponse(BaseModel):
+    name: str
+    type: RegistryContentType
+    description: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
