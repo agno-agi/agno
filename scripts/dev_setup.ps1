@@ -73,8 +73,8 @@ uv pip install -r "$AgnoInfraDir\requirements.txt"
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 Print-Heading "Installing agno-infra in editable mode with dev dependencies"
-Print-Info "VIRTUAL_ENV=$VenvDir uv pip install -e $AgnoInfraDir[dev]"
-uv pip install -e "${AgnoInfraDir}[dev]"
+Print-Info "VIRTUAL_ENV=$VenvDir uv pip install -U -e $AgnoInfraDir[dev]"
+uv pip install -U -e "${AgnoInfraDir}[dev]"
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 Print-Heading "uv pip list"
