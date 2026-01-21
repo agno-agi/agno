@@ -2,6 +2,7 @@ import os
 from unittest.mock import patch
 
 import pytest
+
 from agno.exceptions import ModelAuthenticationError
 from agno.models.n1n import N1N
 
@@ -18,7 +19,7 @@ def test_n1n_initialization_without_api_key():
         model = N1N(id="gpt-4o")
         client_params = None
         with pytest.raises(ModelAuthenticationError):
-             client_params = model._get_client_params()
+            client_params = model._get_client_params()
         assert client_params is None
 
 
