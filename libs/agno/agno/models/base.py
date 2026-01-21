@@ -2507,8 +2507,12 @@ class Model(ABC):
                                 if async_gen_index in async_generator_outputs:
                                     _, async_function_call_output, error = async_generator_outputs[async_gen_index]
                                     if error:
-                                        log_error(f"Error in async generator: {error}")
-                                        raise error
+                                        # Handle async generator exceptions gracefully like sync generators
+                                        log_error(
+                                            f"Error while iterating async generator for {function_call.function.name}: {error}"
+                                        )
+                                        function_call.error = str(error)
+                                        function_call_success = False
                                 break
                             async_gen_index += 1
 
