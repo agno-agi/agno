@@ -3494,12 +3494,16 @@ class SqliteDb(BaseDb):
 
             with self.Session() as sess:
                 # Always verify component exists and is not deleted
-                component_row = sess.execute(
-                    select(components_table.c.current_version, components_table.c.component_id).where(
-                        components_table.c.component_id == component_id,
-                        components_table.c.deleted_at.is_(None),
+                component_row = (
+                    sess.execute(
+                        select(components_table.c.current_version, components_table.c.component_id).where(
+                            components_table.c.component_id == component_id,
+                            components_table.c.deleted_at.is_(None),
+                        )
                     )
-                ).mappings().one_or_none()
+                    .mappings()
+                    .one_or_none()
+                )
 
                 if component_row is None:
                     return None

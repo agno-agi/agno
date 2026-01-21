@@ -168,7 +168,6 @@ def attach_routes(
                 )
                 log_error(response.content)
                 return
-            
 
             if response.reasoning_content:
                 await _send_whatsapp_message(phone_number, f"Reasoning: \n{response.reasoning_content}", italics=True)
