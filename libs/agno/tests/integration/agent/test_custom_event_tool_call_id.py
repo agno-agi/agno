@@ -1,7 +1,5 @@
 from dataclasses import dataclass
-from typing import Optional
 
-import pytest
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
