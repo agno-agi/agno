@@ -94,7 +94,7 @@ def get_vertexai_reasoning_stream(
     redacted_reasoning_content: Optional[str] = None
 
     try:
-        for event in reasoning_agent.run(input=messages, stream=True, stream_intermediate_steps=True):
+        for event in reasoning_agent.run(input=messages, stream=True, stream_events=True):
             if hasattr(event, "event"):
                 if event.event == RunEvent.run_content:
                     # Stream reasoning content as it arrives
@@ -136,7 +136,7 @@ async def aget_vertexai_reasoning_stream(
     redacted_reasoning_content: Optional[str] = None
 
     try:
-        async for event in reasoning_agent.arun(input=messages, stream=True, stream_intermediate_steps=True):
+        async for event in reasoning_agent.arun(input=messages, stream=True, stream_events=True):
             if hasattr(event, "event"):
                 if event.event == RunEvent.run_content:
                     # Stream reasoning content as it arrives
