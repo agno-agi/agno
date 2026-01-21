@@ -222,11 +222,6 @@ Always follow the PR template in `.github/pull_request_template.md`. Include:
 - Completed checklist items
 - Any additional context
 
-**Updating a PR description:**
-```bash
-gh api repos/agno-agi/agno/pulls/{PR_NUMBER} -X PATCH -f body="new description"
-```
-
 ---
 
 ## GitHub Operations
