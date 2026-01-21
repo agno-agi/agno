@@ -78,12 +78,6 @@ agent = Agent(
     search_knowledge=True,
 )
 
-agent.print_response(
-    "What is the content of the main.py file?",
-    markdown=True,
-    stream=True,
-)
-
 agent_os = AgentOS(
     knowledge=[knowledge],
     agents=[agent],
