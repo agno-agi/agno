@@ -3593,7 +3593,7 @@ class PostgresDb(BaseDb):
 
         Args:
             component_id: The component ID.
-            version: Specific version number. If None, uses current.
+            version: Specific version number. If None, uses current or latest draft.
             label: Config label to lookup. Ignored if version is provided.
 
         Returns:
@@ -3607,16 +3607,18 @@ class PostgresDb(BaseDb):
                 return None
 
             with self.Session() as sess:
-                # Always verify component exists and is not deleted
-                component = sess.execute(
-                    select(components_table.c.current_version).where(
+                # Verify component exists and get current_version
+                component_row = sess.execute(
+                    select(components_table.c.component_id, components_table.c.current_version).where(
                         components_table.c.component_id == component_id,
                         components_table.c.deleted_at.is_(None),
                     )
-                ).scalar_one_or_none()
+                ).mappings().one_or_none()
 
-                if component is None:
+                if component_row is None:
                     return None
+
+                current_version = component_row["current_version"]
 
                 if version is not None:
                     stmt = select(configs_table).where(
@@ -3628,12 +3630,19 @@ class PostgresDb(BaseDb):
                         configs_table.c.component_id == component_id,
                         configs_table.c.label == label,
                     )
-                else:
-                    if component is None:  # current_version is NULL
-                        return None
+                elif current_version is not None:
+                    # Use the current published version
                     stmt = select(configs_table).where(
                         configs_table.c.component_id == component_id,
-                        configs_table.c.version == component,
+                        configs_table.c.version == current_version,
+                    )
+                else:
+                    # No current_version set (draft only) - get the latest version
+                    stmt = (
+                        select(configs_table)
+                        .where(configs_table.c.component_id == component_id)
+                        .order_by(configs_table.c.version.desc())
+                        .limit(1)
                     )
 
                 row = sess.execute(stmt).mappings().one_or_none()
