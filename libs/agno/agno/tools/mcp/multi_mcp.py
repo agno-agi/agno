@@ -1,3 +1,4 @@
+import asyncio
 import inspect
 import time
 import warnings
@@ -165,6 +166,11 @@ class MultiMCPTools(Toolkit):
         self._run_session_contexts: Dict[Tuple[str, int], Any] = {}  # Maps (run_id, server_idx) to context managers
         self._session_ttl_seconds: float = 300.0  # 5 minutes default TTL
 
+        # Locks for thread-safe session creation per (run_id, server_idx)
+        # This prevents race conditions when parallel tool calls try to create sessions simultaneously
+        self._session_creation_locks: Dict[Tuple[str, int], asyncio.Lock] = {}
+        self._locks_lock = asyncio.Lock()  # Protects access to _session_creation_locks
+
         self.allow_partial_failure = allow_partial_failure
 
         def cleanup():
@@ -276,6 +282,9 @@ class MultiMCPTools(Toolkit):
         If header_provider is configured and run_context is provided, this creates
         a new session with dynamic headers for this specific agent run and server.
 
+        Uses double-checked locking to prevent race conditions when multiple parallel
+        tool calls try to create sessions simultaneously for the same (run_id, server_idx).
+
         Args:
             run_context: The RunContext containing user_id, metadata, etc.
             server_idx: Index of the server in self._sessions list
@@ -295,68 +304,82 @@ class MultiMCPTools(Toolkit):
         # Lazy cleanup of stale sessions
         await self._cleanup_stale_sessions()
 
-        # Check if we already have a session for this (run_id, server_idx)
         run_id = run_context.run_id
         cache_key = (run_id, server_idx)
+
+        # Quick check without lock (optimization for common case)
         if cache_key in self._run_sessions:
             session, _ = self._run_sessions[cache_key]
             return session
 
-        # Create a new session with dynamic headers for this run and server
-        log_debug(f"Creating new session for run_id={run_id}, server_idx={server_idx} with dynamic headers")
+        # Get or create a lock for this specific cache_key
+        async with self._locks_lock:
+            if cache_key not in self._session_creation_locks:
+                self._session_creation_locks[cache_key] = asyncio.Lock()
+            cache_lock = self._session_creation_locks[cache_key]
 
-        # Generate dynamic headers from the provider
-        dynamic_headers = self._call_header_provider(run_context=run_context, agent=agent, team=team)
+        # Acquire the lock for this specific cache_key to prevent parallel session creation
+        async with cache_lock:
+            # Double-check after acquiring lock (another task may have created the session)
+            if cache_key in self._run_sessions:
+                session, _ = self._run_sessions[cache_key]
+                return session
 
-        # Get the server params for this server index
-        if server_idx >= len(self.server_params_list):
-            raise ValueError(f"Server index {server_idx} out of range")
+            # Create a new session with dynamic headers for this run and server
+            log_debug(f"Creating new session for run_id={run_id}, server_idx={server_idx} with dynamic headers")
 
-        server_params = self.server_params_list[server_idx]
+            # Generate dynamic headers from the provider
+            dynamic_headers = self._call_header_provider(run_context=run_context, agent=agent, team=team)
 
-        # Create new session with merged headers based on transport type
-        if isinstance(server_params, SSEClientParams):
-            params_dict = asdict(server_params)
-            existing_headers = params_dict.get("headers") or {}
-            params_dict["headers"] = {**existing_headers, **dynamic_headers}
+            # Get the server params for this server index
+            if server_idx >= len(self.server_params_list):
+                raise ValueError(f"Server index {server_idx} out of range")
 
-            context = sse_client(**params_dict)  # type: ignore
-            client_timeout = min(self.timeout_seconds, params_dict.get("timeout", self.timeout_seconds))
+            server_params = self.server_params_list[server_idx]
 
-        elif isinstance(server_params, StreamableHTTPClientParams):
-            params_dict = asdict(server_params)
-            existing_headers = params_dict.get("headers") or {}
-            params_dict["headers"] = {**existing_headers, **dynamic_headers}
+            # Create new session with merged headers based on transport type
+            if isinstance(server_params, SSEClientParams):
+                params_dict = asdict(server_params)
+                existing_headers = params_dict.get("headers") or {}
+                params_dict["headers"] = {**existing_headers, **dynamic_headers}
 
-            context = streamablehttp_client(**params_dict)  # type: ignore
-            params_timeout = params_dict.get("timeout", self.timeout_seconds)
-            if isinstance(params_timeout, timedelta):
-                params_timeout = int(params_timeout.total_seconds())
-            client_timeout = min(self.timeout_seconds, params_timeout)
-        else:
-            # stdio doesn't support headers, fall back to default session
-            log_warning(
-                f"Cannot use dynamic headers with stdio transport for server {server_idx}, using default session"
-            )
-            if server_idx < len(self._sessions):
-                return self._sessions[server_idx]
-            raise ValueError(f"Server index {server_idx} out of range")
+                context = sse_client(**params_dict)  # type: ignore
+                client_timeout = min(self.timeout_seconds, params_dict.get("timeout", self.timeout_seconds))
 
-        # Enter the context and create session
-        session_params = await context.__aenter__()  # type: ignore
-        read, write = session_params[0:2]
+            elif isinstance(server_params, StreamableHTTPClientParams):
+                params_dict = asdict(server_params)
+                existing_headers = params_dict.get("headers") or {}
+                params_dict["headers"] = {**existing_headers, **dynamic_headers}
 
-        session_context = ClientSession(read, write, read_timeout_seconds=timedelta(seconds=client_timeout))  # type: ignore
-        session = await session_context.__aenter__()  # type: ignore
+                context = streamablehttp_client(**params_dict)  # type: ignore
+                params_timeout = params_dict.get("timeout", self.timeout_seconds)
+                if isinstance(params_timeout, timedelta):
+                    params_timeout = int(params_timeout.total_seconds())
+                client_timeout = min(self.timeout_seconds, params_timeout)
+            else:
+                # stdio doesn't support headers, fall back to default session
+                log_warning(
+                    f"Cannot use dynamic headers with stdio transport for server {server_idx}, using default session"
+                )
+                if server_idx < len(self._sessions):
+                    return self._sessions[server_idx]
+                raise ValueError(f"Server index {server_idx} out of range")
 
-        # Initialize the session
-        await session.initialize()
+            # Enter the context and create session
+            session_params = await context.__aenter__()  # type: ignore
+            read, write = session_params[0:2]
 
-        # Store the session with timestamp and context for cleanup
-        self._run_sessions[cache_key] = (session, time.time())
-        self._run_session_contexts[cache_key] = (context, session_context)
+            session_context = ClientSession(read, write, read_timeout_seconds=timedelta(seconds=client_timeout))  # type: ignore
+            session = await session_context.__aenter__()  # type: ignore
 
-        return session
+            # Initialize the session
+            await session.initialize()
+
+            # Store the session with timestamp and context for cleanup
+            self._run_sessions[cache_key] = (session, time.time())
+            self._run_session_contexts[cache_key] = (context, session_context)
+
+            return session
 
     async def cleanup_run_session(self, run_id: str, server_idx: int) -> None:
         """Clean up a per-run session."""
@@ -385,6 +408,8 @@ class MultiMCPTools(Toolkit):
             # Remove from cache
             self._run_sessions.pop(cache_key, None)
             self._run_session_contexts.pop(cache_key, None)
+            # Clean up the lock for this cache_key
+            self._session_creation_locks.pop(cache_key, None)
 
     async def connect(self, force: bool = False):
         """Initialize a MultiMCPTools instance and connect to the MCP servers"""
