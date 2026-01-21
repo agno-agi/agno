@@ -8,5 +8,4 @@ agent = Agent(
     tools=[WebSearchTools()],
 )
 
-# Print the response in the terminal
 agent.print_response("What is happening in France?", stream=True)
