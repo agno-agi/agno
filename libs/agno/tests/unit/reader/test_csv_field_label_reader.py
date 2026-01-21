@@ -546,10 +546,7 @@ LATIN1_CSV = "name,city\nJosé,São Paulo\nFrançois,Montréal"
 
 
 def test_read_bytesio_with_custom_encoding():
-    """Test reading BytesIO with custom encoding (Latin-1).
-
-    This tests the fix for BUG-007 where BytesIO reads were hardcoded to UTF-8.
-    """
+    """Test reading BytesIO with custom encoding (Latin-1)."""
     latin1_bytes = LATIN1_CSV.encode("latin-1")
     file_obj = io.BytesIO(latin1_bytes)
     file_obj.name = "latin1.csv"
@@ -588,10 +585,7 @@ def test_read_bytesio_wrong_encoding_fails():
 
 @pytest.mark.asyncio
 async def test_async_read_bytesio_with_custom_encoding():
-    """Test async reading BytesIO with custom encoding (Latin-1).
-
-    This tests the fix for BUG-007 in the async path.
-    """
+    """Test async reading BytesIO with custom encoding (Latin-1)."""
     latin1_bytes = LATIN1_CSV.encode("latin-1")
     file_obj = io.BytesIO(latin1_bytes)
     file_obj.name = "latin1.csv"
@@ -603,11 +597,6 @@ async def test_async_read_bytesio_with_custom_encoding():
     content = documents[0].content
     assert "José" in content
     assert "São Paulo" in content
-
-
-# =============================================================================
-# Excel (.xlsx and .xls) Tests
-# =============================================================================
 
 
 def test_read_xlsx_basic(temp_dir):
