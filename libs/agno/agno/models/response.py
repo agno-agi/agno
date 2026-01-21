@@ -16,6 +16,10 @@ class ModelResponseEvent(str, Enum):
     tool_call_started = "ToolCallStarted"
     tool_call_completed = "ToolCallCompleted"
     assistant_response = "AssistantResponse"
+    compression_started = "CompressionStarted"
+    compression_completed = "CompressionCompleted"
+    model_request_started = "ModelRequestStarted"
+    model_request_completed = "ModelRequestCompleted"
 
 
 @dataclass
@@ -123,6 +127,18 @@ class ModelResponse:
     extra: Optional[Dict[str, Any]] = None
 
     updated_session_state: Optional[Dict[str, Any]] = None
+
+    # Compression stats
+    compression_stats: Optional[Dict[str, Any]] = None
+
+    # Model request metrics (for model_request_completed events)
+    input_tokens: Optional[int] = None
+    output_tokens: Optional[int] = None
+    total_tokens: Optional[int] = None
+    time_to_first_token: Optional[float] = None
+    reasoning_tokens: Optional[int] = None
+    cache_read_tokens: Optional[int] = None
+    cache_write_tokens: Optional[int] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Serialize ModelResponse to dictionary for caching."""

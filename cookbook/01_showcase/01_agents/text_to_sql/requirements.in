@@ -1,0 +1,16 @@
+# Text-to-SQL Agent Dependencies
+# uv pip install -r requirements.in
+
+agno
+
+# Database
+psycopg[binary]
+sqlalchemy
+pgvector
+
+# Data loading
+pandas
+requests
+
+# Models
+openai
