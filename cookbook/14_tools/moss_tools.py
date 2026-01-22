@@ -4,15 +4,17 @@ from agno.tools.moss import MossTools
 
 # Initialize Moss Tools
 # Ensure MOSS_PROJECT_ID and MOSS_PROJECT_KEY are set in your environment
+# Get your ENV credentials from https://www.usemoss.dev/
 moss_tools = MossTools(default_index_name="moss-demo")
 
 # Create Agent with MossTools
 agent = Agent(
     model=Gemini(id="gemini-2.5-flash"),
+    # Add MossTools to the agent's toolkit to enable index management and semantic search
     tools=[moss_tools],
-    description="You are a helpful assistant that can manage and search information in a Moss vector database.",
+    description="You are a helpful assistant that can manage and search information in a Moss index.",
     instructions=[
-        "Use Moss tools to manage and search information in a Moss vector database.",
+        "Use Moss tools to manage and search information in a Moss index.",
     ],
 )
 
