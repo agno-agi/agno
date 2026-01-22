@@ -109,6 +109,7 @@ duckdb = ["duckdb"]
 elevenlabs = ["elevenlabs"]
 evm = ["web3"]
 exa = ["exa_py"]
+seltz = ["seltz"]
 fal = ["fal_client"]
 firecrawl = ["firecrawl-py==3.4.0"]
 tavily = ["tavily-python"]
@@ -226,6 +227,7 @@ tools = [
   "agno[arxiv]",
   # "agno[brave]",  # It clashes with other dependencies
   "agno[exa]",
+  "agno[seltz]",
   "agno[cartesia]",
   "agno[ddg]",
   "agno[duckdb]",
@@ -445,6 +447,7 @@ module = [
   "e2b_code_interpreter.*",
   "eth_account.*",
   "exa_py.*",
+  "seltz.*",
   "fastapi.*",
   "fastembed.*",
   "fastmcp.*",
