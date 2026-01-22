@@ -18,18 +18,7 @@ from agno.utils.log import log_debug, log_error
 
 
 class ExcelReader(Reader):
-    """Reader for Excel files (.xlsx and .xls).
-
-    Converts Excel workbooks to documents, with one document per sheet by default.
-    Supports filtering to specific sheets and optional chunking.
-
-    Args:
-        sheets: List of sheet names or 0-based indices to include. None = all sheets.
-        include_empty_sheets: Whether to include sheets with no data. Default False.
-        skip_hidden_sheets: Whether to skip hidden sheets (xlsx only). Default True.
-        chunking_strategy: Strategy for chunking documents. Default is RowChunking.
-        **kwargs: Additional arguments passed to base Reader.
-    """
+    """Reader for Excel files (.xlsx and .xls)."""
 
     def __init__(
         self,
