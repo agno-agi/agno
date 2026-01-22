@@ -47,10 +47,10 @@ sharepoint = SharePointConfig(
 )
 
 github_docs = GitHubConfig(
-    id="dealer-sync",
-    name="Dealer Sync",
-    repo="willemcdejongh/dealer-sync",
-    token=getenv("GITHUB_TESTING_TOKEN"),  # Fine-grained PAT with Contents: read
+    id="my-repo",
+    name="My Repository",
+    repo="private/repo",
+    token=getenv("GITHUB_TOKEN"),  # Fine-grained PAT with Contents: read
     branch="main",
 )
 
@@ -92,3 +92,33 @@ app = agent_os.get_app()
 if __name__ == "__main__":
     # Serves a FastAPI app exposed by AgentOS. Use reload=True for local dev.
     agent_os.serve(app="cloud_agentos:app", reload=True)
+
+
+# ============================================================================
+# Using the Knowledge API
+# ============================================================================
+"""
+Once AgentOS is running, use the Knowledge API to upload content from remote sources.
+
+## Step 1: Get available content sources
+
+    curl -s http://localhost:7777/v1/knowledge/company-knowledge-base/config | jq
+
+Response:
+    {
+      "remote_content_sources": [
+        {"id": "my-repo", "name": "My Repository", "type": "github"},
+        ...
+      ]
+    }
+
+## Step 2: Upload content
+
+    curl -X POST http://localhost:7777/v1/knowledge/company-knowledge-base/remote-content \\
+      -H "Content-Type: application/json" \\
+      -d '{
+        "name": "Documentation",
+        "config_id": "my-repo",
+        "path": "docs/README.md"
+      }'
+"""
