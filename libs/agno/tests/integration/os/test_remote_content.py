@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from agno.knowledge.content import Content
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.remote_content.config import (
+    AzureBlobConfig,
     GcsConfig,
     GitHubConfig,
     S3Config,
@@ -47,6 +48,15 @@ def mock_knowledge_with_remote_configs():
             client_secret="secret-789",
             hostname="contoso.sharepoint.com",
             site_id="contoso.sharepoint.com,guid1,guid2",
+        ),
+        AzureBlobConfig(
+            id="azure-docs",
+            name="Azure Documents",
+            tenant_id="tenant-123",
+            client_id="client-456",
+            client_secret="secret-789",
+            storage_account="mystorageaccount",
+            container="mycontainer",
         ),
     ]
 
@@ -189,6 +199,43 @@ def test_upload_sharepoint_file_success(test_app):
         assert response.status_code == 202
         data = response.json()
         assert "id" in data
+        mock_process.assert_called_once()
+
+
+def test_upload_azure_blob_file_success(test_app):
+    """Test successful Azure Blob file upload."""
+    with patch("agno.os.routers.knowledge.knowledge.process_content") as mock_process:
+        response = test_app.post(
+            "/knowledge/remote-content",
+            data={
+                "config_id": "azure-docs",
+                "path": "documents/report.pdf",
+                "name": "Azure Report",
+            },
+        )
+
+        assert response.status_code == 202
+        data = response.json()
+        assert "id" in data
+        assert data["name"] == "Azure Report"
+        mock_process.assert_called_once()
+
+
+def test_upload_azure_blob_folder_success(test_app):
+    """Test successful Azure Blob folder upload (path ends with /)."""
+    with patch("agno.os.routers.knowledge.knowledge.process_content") as mock_process:
+        response = test_app.post(
+            "/knowledge/remote-content",
+            data={
+                "config_id": "azure-docs",
+                "path": "documents/reports/",
+                "name": "All Azure Reports",
+            },
+        )
+
+        assert response.status_code == 202
+        data = response.json()
+        assert data["name"] == "All Azure Reports"
         mock_process.assert_called_once()
 
 
@@ -345,7 +392,7 @@ def test_config_returns_remote_sources(test_app, mock_knowledge_with_remote_conf
     # Verify remote sources are included (field name is snake_case)
     assert "remote_content_sources" in data
     sources = data["remote_content_sources"]
-    assert len(sources) == 4
+    assert len(sources) == 5
 
     # Verify source structure
     source_ids = [s["id"] for s in sources]
@@ -353,6 +400,7 @@ def test_config_returns_remote_sources(test_app, mock_knowledge_with_remote_conf
     assert "gcs-data" in source_ids
     assert "github-repo" in source_ids
     assert "sharepoint-docs" in source_ids
+    assert "azure-docs" in source_ids
 
     # Verify source details
     s3_source = next(s for s in sources if s["id"] == "s3-docs")
@@ -362,6 +410,10 @@ def test_config_returns_remote_sources(test_app, mock_knowledge_with_remote_conf
     github_source = next(s for s in sources if s["id"] == "github-repo")
     assert github_source["name"] == "GitHub Repository"
     assert github_source["type"] == "github"
+
+    azure_source = next(s for s in sources if s["id"] == "azure-docs")
+    assert azure_source["name"] == "Azure Documents"
+    assert azure_source["type"] == "azureblob"
 
 
 # =============================================================================
@@ -394,6 +446,22 @@ async def test_process_content_with_remote_github(mock_knowledge_with_remote_con
     # Create content with GitHub remote source
     gh_content = GitHubContent(config_id="github-repo", file_path="docs/README.md", branch="main")
     content = Content(name="README", remote_content=gh_content)
+
+    # Mock the loading method
+    with patch.object(mock_knowledge_with_remote_configs, "_aload_content", new_callable=AsyncMock) as mock_load:
+        await process_content(mock_knowledge_with_remote_configs, content, None)
+        mock_load.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_process_content_with_remote_azure_blob(mock_knowledge_with_remote_configs):
+    """Test processing content from Azure Blob Storage."""
+    from agno.knowledge.remote_content.remote_content import AzureBlobContent
+    from agno.os.routers.knowledge.knowledge import process_content
+
+    # Create content with Azure Blob remote source
+    azure_content = AzureBlobContent(config_id="azure-docs", blob_name="documents/report.pdf")
+    content = Content(name="Azure Report", remote_content=azure_content)
 
     # Mock the loading method
     with patch.object(mock_knowledge_with_remote_configs, "_aload_content", new_callable=AsyncMock) as mock_load:
