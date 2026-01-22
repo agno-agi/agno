@@ -1,8 +1,9 @@
 import json
-from typing import Any, Dict, cast
+from typing import Any, Dict, Optional, cast
 from uuid import uuid4
 
 from fastapi import HTTPException
+from pydantic import BaseModel
 from typing_extensions import AsyncIterator, List, Union
 
 from agno.run.team import MemoryUpdateCompletedEvent as TeamMemoryUpdateCompletedEvent
@@ -176,6 +177,22 @@ async def map_a2a_request_to_run_input(request_body: dict, stream: bool = True) 
     )
 
 
+def _map_content_to_part(content: Any) -> Optional[Part]:
+    if content is None:
+        return None
+
+    if isinstance(content, BaseModel):
+        return Part(root=DataPart(data=content.model_dump(exclude_none=True)))
+
+    if isinstance(content, dict):
+        return Part(root=DataPart(data=content))
+
+    text = str(content)
+    if not text:
+        return None
+    return Part(root=TextPart(text=text))
+
+
 def map_run_output_to_a2a_task(run_output: Union[RunOutput, WorkflowRunOutput]) -> Task:
     """Map the given RunOutput or WorkflowRunOutput into an A2A Task.
 
@@ -193,8 +210,9 @@ def map_run_output_to_a2a_task(run_output: Union[RunOutput, WorkflowRunOutput]) 
     parts: List[Part] = []
 
     # 1. Handle output content
-    if run_output.content:
-        parts.append(Part(root=TextPart(text=str(run_output.content))))
+    content_part = _map_content_to_part(run_output.content)
+    if content_part is not None:
+        parts.append(content_part)
 
     # 2. Handle output media
     artifacts: List[Artifact] = []
@@ -305,6 +323,7 @@ async def stream_a2a_response(
     context_id: str = str(uuid4())
     message_id: str = str(uuid4())
     accumulated_content = ""
+    last_content_part: Optional[Part] = None
     completion_event = None
     cancelled_event = None
 
@@ -329,12 +348,17 @@ async def stream_a2a_response(
         # 2. Send all content and secondary events
 
         # Send content events
-        elif isinstance(event, (RunContentEvent, TeamRunContentEvent)) and event.content:
-            accumulated_content += event.content
+        elif isinstance(event, (RunContentEvent, TeamRunContentEvent)) and event.content is not None:
+            if isinstance(event.content, str):
+                accumulated_content += event.content
+            content_part = _map_content_to_part(event.content)
+            if content_part is None:
+                continue
+            last_content_part = content_part
             message = A2AMessage(
                 message_id=message_id,
                 role=Role.agent,
-                parts=[Part(root=TextPart(text=event.content))],
+                parts=[content_part],
                 context_id=context_id,
                 task_id=task_id,
                 metadata={"agno_content_category": "content"},
@@ -759,6 +783,8 @@ async def stream_a2a_response(
         parts: List[Part] = []
         if accumulated_content:
             parts.append(Part(root=TextPart(text=accumulated_content)))
+        elif last_content_part is not None:
+            parts.append(last_content_part)
         parts.append(Part(root=TextPart(text=cancel_message)))
 
         final_message = A2AMessage(
@@ -785,8 +811,11 @@ async def stream_a2a_response(
         final_content = completion_event.content if completion_event.content else accumulated_content
 
         final_parts: List[Part] = []
-        if final_content:
-            final_parts.append(Part(root=TextPart(text=str(final_content))))
+        content_part = _map_content_to_part(final_content)
+        if content_part is not None:
+            final_parts.append(content_part)
+        elif last_content_part is not None:
+            final_parts.append(last_content_part)
 
         # Handle all media artifacts
         artifacts: List[Artifact] = []
