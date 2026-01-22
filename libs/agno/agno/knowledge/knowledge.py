@@ -3323,12 +3323,30 @@ class Knowledge:
 
         container_client = blob_service.get_container_client(azure_config.container)
 
+        # Helper to list blobs with a given prefix
+        def list_blobs_with_prefix(prefix: str) -> List[Dict[str, Any]]:
+            """List all blobs under a given prefix (folder)."""
+            results: List[Dict[str, Any]] = []
+            normalized_prefix = prefix.rstrip("/") + "/" if not prefix.endswith("/") else prefix
+            blobs = container_client.list_blobs(name_starts_with=normalized_prefix)
+            for blob in blobs:
+                # Skip "directory" markers (blobs ending with /)
+                if not blob.name.endswith("/"):
+                    results.append(
+                        {
+                            "name": blob.name,
+                            "size": blob.size,
+                            "content_type": blob.content_settings.content_type if blob.content_settings else None,
+                        }
+                    )
+            return results
+
         # Identify blobs to process
         blobs_to_process: List[Dict[str, Any]] = []
 
         try:
             if remote_content.blob_name:
-                # Single blob
+                # Try to get as a single blob first
                 blob_client = container_client.get_blob_client(remote_content.blob_name)
                 try:
                     props = blob_client.get_blob_properties()
@@ -3339,27 +3357,19 @@ class Knowledge:
                             "content_type": props.content_settings.content_type if props.content_settings else None,
                         }
                     )
-                except Exception as e:
-                    log_error(f"Error getting blob {remote_content.blob_name}: {e}")
-                    return
+                except Exception:
+                    # Blob doesn't exist - check if it's actually a folder (prefix)
+                    log_debug(f"Blob {remote_content.blob_name} not found, checking if it's a folder...")
+                    blobs_to_process = list_blobs_with_prefix(remote_content.blob_name)
+                    if not blobs_to_process:
+                        log_error(
+                            f"No blob or folder found at path: {remote_content.blob_name}. "
+                            "If this is a folder, ensure files exist inside it."
+                        )
+                        return
             elif remote_content.prefix:
                 # List blobs with prefix
-                prefix = (
-                    remote_content.prefix.rstrip("/") + "/"
-                    if not remote_content.prefix.endswith("/")
-                    else remote_content.prefix
-                )
-                blobs = container_client.list_blobs(name_starts_with=prefix)
-                for blob in blobs:
-                    # Skip "directory" markers (blobs ending with /)
-                    if not blob.name.endswith("/"):
-                        blobs_to_process.append(
-                            {
-                                "name": blob.name,
-                                "size": blob.size,
-                                "content_type": blob.content_settings.content_type if blob.content_settings else None,
-                            }
-                        )
+                blobs_to_process = list_blobs_with_prefix(remote_content.prefix)
         except Exception as e:
             log_error(f"Error listing Azure blobs: {e}")
             return
@@ -3367,6 +3377,10 @@ class Knowledge:
         if not blobs_to_process:
             log_warning(f"No blobs found in Azure container: {azure_config.container}")
             return
+
+        # For single file uploads, use the original content object to preserve the ID
+        # returned by the API. For folder uploads, create new content entries for each file.
+        is_folder_upload = len(blobs_to_process) > 1
 
         # Process each blob
         for blob_info in blobs_to_process:
@@ -3389,28 +3403,36 @@ class Knowledge:
             merged_metadata = {**azure_metadata, **(content.metadata or {})}
 
             # Setup Content object
-            is_folder_upload = len(blobs_to_process) > 1
             if is_folder_upload:
-                # Compute relative path from the upload root
+                # For folder uploads, create new content entries for each file
                 relative_path = blob_name
                 if remote_content.prefix and blob_name.startswith(remote_content.prefix):
                     relative_path = blob_name[len(remote_content.prefix) :].lstrip("/")
                 content_name = f"{content.name}/{relative_path}" if content.name else blob_name
+
+                content_entry = Content(
+                    name=content_name,
+                    description=content.description,
+                    path=virtual_path,
+                    status=ContentStatus.PROCESSING,
+                    metadata=merged_metadata,
+                    file_type="azure_blob",
+                )
+                content_entry.content_hash = self._build_content_hash(content_entry)
+                content_entry.id = generate_id(content_entry.content_hash)
             else:
-                content_name = content.name or file_name
+                # For single file uploads, use the original content object to preserve ID
+                content_entry = content
+                content_entry.path = virtual_path
+                content_entry.status = ContentStatus.PROCESSING
+                content_entry.metadata = merged_metadata
+                content_entry.file_type = "azure_blob"
+                # Use existing id and content_hash from the original content if available
+                if not content_entry.content_hash:
+                    content_entry.content_hash = self._build_content_hash(content_entry)
+                if not content_entry.id:
+                    content_entry.id = generate_id(content_entry.content_hash)
 
-            content_entry = Content(
-                name=content_name,
-                description=content.description,
-                path=virtual_path,
-                status=ContentStatus.PROCESSING,
-                metadata=merged_metadata,
-                file_type="azure_blob",
-            )
-
-            # Hash content and add to contents database
-            content_entry.content_hash = self._build_content_hash(content_entry)
-            content_entry.id = generate_id(content_entry.content_hash)
             await self._ainsert_contents_db(content_entry)
 
             if self._should_skip(content_entry.content_hash, skip_if_exists):
@@ -3482,12 +3504,30 @@ class Knowledge:
 
         container_client = blob_service.get_container_client(azure_config.container)
 
+        # Helper to list blobs with a given prefix
+        def list_blobs_with_prefix(prefix: str) -> List[Dict[str, Any]]:
+            """List all blobs under a given prefix (folder)."""
+            results: List[Dict[str, Any]] = []
+            normalized_prefix = prefix.rstrip("/") + "/" if not prefix.endswith("/") else prefix
+            blobs = container_client.list_blobs(name_starts_with=normalized_prefix)
+            for blob in blobs:
+                # Skip "directory" markers (blobs ending with /)
+                if not blob.name.endswith("/"):
+                    results.append(
+                        {
+                            "name": blob.name,
+                            "size": blob.size,
+                            "content_type": blob.content_settings.content_type if blob.content_settings else None,
+                        }
+                    )
+            return results
+
         # Identify blobs to process
         blobs_to_process: List[Dict[str, Any]] = []
 
         try:
             if remote_content.blob_name:
-                # Single blob
+                # Try to get as a single blob first
                 blob_client = container_client.get_blob_client(remote_content.blob_name)
                 try:
                     props = blob_client.get_blob_properties()
@@ -3498,27 +3538,19 @@ class Knowledge:
                             "content_type": props.content_settings.content_type if props.content_settings else None,
                         }
                     )
-                except Exception as e:
-                    log_error(f"Error getting blob {remote_content.blob_name}: {e}")
-                    return
+                except Exception:
+                    # Blob doesn't exist - check if it's actually a folder (prefix)
+                    log_debug(f"Blob {remote_content.blob_name} not found, checking if it's a folder...")
+                    blobs_to_process = list_blobs_with_prefix(remote_content.blob_name)
+                    if not blobs_to_process:
+                        log_error(
+                            f"No blob or folder found at path: {remote_content.blob_name}. "
+                            "If this is a folder, ensure files exist inside it."
+                        )
+                        return
             elif remote_content.prefix:
                 # List blobs with prefix
-                prefix = (
-                    remote_content.prefix.rstrip("/") + "/"
-                    if not remote_content.prefix.endswith("/")
-                    else remote_content.prefix
-                )
-                blobs = container_client.list_blobs(name_starts_with=prefix)
-                for blob in blobs:
-                    # Skip "directory" markers (blobs ending with /)
-                    if not blob.name.endswith("/"):
-                        blobs_to_process.append(
-                            {
-                                "name": blob.name,
-                                "size": blob.size,
-                                "content_type": blob.content_settings.content_type if blob.content_settings else None,
-                            }
-                        )
+                blobs_to_process = list_blobs_with_prefix(remote_content.prefix)
         except Exception as e:
             log_error(f"Error listing Azure blobs: {e}")
             return
@@ -3526,6 +3558,10 @@ class Knowledge:
         if not blobs_to_process:
             log_warning(f"No blobs found in Azure container: {azure_config.container}")
             return
+
+        # For single file uploads, use the original content object to preserve the ID
+        # returned by the API. For folder uploads, create new content entries for each file.
+        is_folder_upload = len(blobs_to_process) > 1
 
         # Process each blob
         for blob_info in blobs_to_process:
@@ -3548,28 +3584,36 @@ class Knowledge:
             merged_metadata = {**azure_metadata, **(content.metadata or {})}
 
             # Setup Content object
-            is_folder_upload = len(blobs_to_process) > 1
             if is_folder_upload:
-                # Compute relative path from the upload root
+                # For folder uploads, create new content entries for each file
                 relative_path = blob_name
                 if remote_content.prefix and blob_name.startswith(remote_content.prefix):
                     relative_path = blob_name[len(remote_content.prefix) :].lstrip("/")
                 content_name = f"{content.name}/{relative_path}" if content.name else blob_name
+
+                content_entry = Content(
+                    name=content_name,
+                    description=content.description,
+                    path=virtual_path,
+                    status=ContentStatus.PROCESSING,
+                    metadata=merged_metadata,
+                    file_type="azure_blob",
+                )
+                content_entry.content_hash = self._build_content_hash(content_entry)
+                content_entry.id = generate_id(content_entry.content_hash)
             else:
-                content_name = content.name or file_name
+                # For single file uploads, use the original content object to preserve ID
+                content_entry = content
+                content_entry.path = virtual_path
+                content_entry.status = ContentStatus.PROCESSING
+                content_entry.metadata = merged_metadata
+                content_entry.file_type = "azure_blob"
+                # Use existing id and content_hash from the original content if available
+                if not content_entry.content_hash:
+                    content_entry.content_hash = self._build_content_hash(content_entry)
+                if not content_entry.id:
+                    content_entry.id = generate_id(content_entry.content_hash)
 
-            content_entry = Content(
-                name=content_name,
-                description=content.description,
-                path=virtual_path,
-                status=ContentStatus.PROCESSING,
-                metadata=merged_metadata,
-                file_type="azure_blob",
-            )
-
-            # Hash content and add to contents database
-            content_entry.content_hash = self._build_content_hash(content_entry)
-            content_entry.id = generate_id(content_entry.content_hash)
             self._insert_contents_db(content_entry)
 
             if self._should_skip(content_entry.content_hash, skip_if_exists):

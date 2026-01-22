@@ -19,6 +19,7 @@ from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.remote_content import (
+    AzureBlobConfig,
     GitHubConfig,
     SharePointConfig,
 )
@@ -53,6 +54,15 @@ github_docs = GitHubConfig(
     branch="main",
 )
 
+azure_blob = AzureBlobConfig(
+    id="azure-blob",
+    name="Azure Blob",
+    tenant_id=getenv("AZURE_TENANT_ID"),
+    client_id=getenv("AZURE_CLIENT_ID"),
+    client_secret=getenv("AZURE_CLIENT_SECRET"),
+    storage_account=getenv("AZURE_STORAGE_ACCOUNT_NAME"),
+    container=getenv("AZURE_CONTAINER_NAME"),
+)
 
 # Create Knowledge with content sources
 knowledge = Knowledge(
@@ -60,17 +70,9 @@ knowledge = Knowledge(
     description="Unified knowledge from multiple sources",
     contents_db=contents_db,
     vector_db=vector_db,
-    content_sources=[sharepoint, github_docs],
+    content_sources=[sharepoint, github_docs, azure_blob],
 )
 
-# Insert content using factory methods
-# The config knows the bucket/credentials, you just specify the file path
-
-# Insert from SharePoint
-knowledge.insert(remote_content=sharepoint.file("/test.pdf"))
-
-# Insert from GitHub
-knowledge.insert(remote_content=github_docs.file("main.py", branch="main"))
 
 agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
