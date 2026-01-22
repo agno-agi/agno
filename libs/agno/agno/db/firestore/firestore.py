@@ -121,93 +121,85 @@ class FirestoreDb(BaseDb):
             CollectionReference: The collection reference.
         """
         if table_type == "sessions":
-            if not hasattr(self, "session_collection"):
-                if self.session_table_name is None:
-                    raise ValueError("Session collection was not provided on initialization")
-                self.session_collection = self._get_or_create_collection(
-                    collection_name=self.session_table_name,
-                    collection_type="sessions",
-                    create_collection_if_not_found=create_collection_if_not_found,
-                )
+            if self.session_table_name is None:
+                raise ValueError("Session collection was not provided on initialization")
+            self.session_collection = self._get_or_create_collection(
+                collection_name=self.session_table_name,
+                collection_type="sessions",
+                create_collection_if_not_found=create_collection_if_not_found,
+            )
             return self.session_collection
 
         if table_type == "memories":
-            if not hasattr(self, "memory_collection"):
-                if self.memory_table_name is None:
-                    raise ValueError("Memory collection was not provided on initialization")
-                self.memory_collection = self._get_or_create_collection(
-                    collection_name=self.memory_table_name,
-                    collection_type="memories",
-                    create_collection_if_not_found=create_collection_if_not_found,
-                )
+            if self.memory_table_name is None:
+                raise ValueError("Memory collection was not provided on initialization")
+            self.memory_collection = self._get_or_create_collection(
+                collection_name=self.memory_table_name,
+                collection_type="memories",
+                create_collection_if_not_found=create_collection_if_not_found,
+            )
             return self.memory_collection
 
         if table_type == "metrics":
-            if not hasattr(self, "metrics_collection"):
-                if self.metrics_table_name is None:
-                    raise ValueError("Metrics collection was not provided on initialization")
-                self.metrics_collection = self._get_or_create_collection(
-                    collection_name=self.metrics_table_name,
-                    collection_type="metrics",
-                    create_collection_if_not_found=create_collection_if_not_found,
-                )
+            if self.metrics_table_name is None:
+                raise ValueError("Metrics collection was not provided on initialization")
+            self.metrics_collection = self._get_or_create_collection(
+                collection_name=self.metrics_table_name,
+                collection_type="metrics",
+                create_collection_if_not_found=create_collection_if_not_found,
+            )
             return self.metrics_collection
 
         if table_type == "evals":
-            if not hasattr(self, "eval_collection"):
-                if self.eval_table_name is None:
-                    raise ValueError("Eval collection was not provided on initialization")
-                self.eval_collection = self._get_or_create_collection(
-                    collection_name=self.eval_table_name,
-                    collection_type="evals",
-                    create_collection_if_not_found=create_collection_if_not_found,
-                )
+            if self.eval_table_name is None:
+                raise ValueError("Eval collection was not provided on initialization")
+            self.eval_collection = self._get_or_create_collection(
+                collection_name=self.eval_table_name,
+                collection_type="evals",
+                create_collection_if_not_found=create_collection_if_not_found,
+            )
             return self.eval_collection
 
         if table_type == "knowledge":
-            if not hasattr(self, "knowledge_collection"):
-                if self.knowledge_table_name is None:
-                    raise ValueError("Knowledge collection was not provided on initialization")
-                self.knowledge_collection = self._get_or_create_collection(
-                    collection_name=self.knowledge_table_name,
-                    collection_type="knowledge",
-                    create_collection_if_not_found=create_collection_if_not_found,
-                )
+            if self.knowledge_table_name is None:
+                raise ValueError("Knowledge collection was not provided on initialization")
+            self.knowledge_collection = self._get_or_create_collection(
+                collection_name=self.knowledge_table_name,
+                collection_type="knowledge",
+                create_collection_if_not_found=create_collection_if_not_found,
+            )
             return self.knowledge_collection
 
         if table_type == "culture":
-            if not hasattr(self, "culture_collection"):
-                if self.culture_table_name is None:
-                    raise ValueError("Culture collection was not provided on initialization")
-                self.culture_collection = self._get_or_create_collection(
-                    collection_name=self.culture_table_name,
-                    collection_type="culture",
-                    create_collection_if_not_found=create_collection_if_not_found,
-                )
+            if self.culture_table_name is None:
+                raise ValueError("Culture collection was not provided on initialization")
+            self.culture_collection = self._get_or_create_collection(
+                collection_name=self.culture_table_name,
+                collection_type="culture",
+                create_collection_if_not_found=create_collection_if_not_found,
+            )
             return self.culture_collection
 
         if table_type == "traces":
-            if not hasattr(self, "traces_collection"):
-                if self.trace_table_name is None:
-                    raise ValueError("Traces collection was not provided on initialization")
-                self.traces_collection = self._get_or_create_collection(
-                    collection_name=self.trace_table_name,
-                    collection_type="traces",
-                    create_collection_if_not_found=create_collection_if_not_found,
-                )
+            if self.trace_table_name is None:
+                raise ValueError("Traces collection was not provided on initialization")
+            self.traces_collection = self._get_or_create_collection(
+                collection_name=self.trace_table_name,
+                collection_type="traces",
+                create_collection_if_not_found=create_collection_if_not_found,
+            )
             return self.traces_collection
 
         if table_type == "spans":
             # Ensure traces collection exists first (spans reference traces)
             self._get_collection("traces", create_collection_if_not_found=create_collection_if_not_found)
-            if not hasattr(self, "spans_collection"):
-                if self.span_table_name is None:
-                    raise ValueError("Spans collection was not provided on initialization")
-                self.spans_collection = self._get_or_create_collection(
-                    collection_name=self.span_table_name,
-                    collection_type="spans",
-                    create_collection_if_not_found=create_collection_if_not_found,
-                )
+            if self.span_table_name is None:
+                raise ValueError("Spans collection was not provided on initialization")
+            self.spans_collection = self._get_or_create_collection(
+                collection_name=self.span_table_name,
+                collection_type="spans",
+                create_collection_if_not_found=create_collection_if_not_found,
+            )
             return self.spans_collection
 
         raise ValueError(f"Unknown table type: {table_type}")
