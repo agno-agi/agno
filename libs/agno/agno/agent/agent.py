@@ -2041,7 +2041,7 @@ class Agent:
                     run_context.session_state = self._load_session_state(
                         session=agent_session,
                         session_state=run_context.session_state if run_context.session_state is not None else {},
-                        )
+                    )
 
                     # 3. Resolve dependencies
                     if run_context.dependencies is not None:
@@ -2404,7 +2404,7 @@ class Agent:
                     run_context.session_state = self._load_session_state(
                         session=agent_session,
                         session_state=run_context.session_state if run_context.session_state is not None else {},
-                        )
+                    )
 
                     # 3. Resolve dependencies
                     if run_context.dependencies is not None:
@@ -3961,10 +3961,10 @@ class Agent:
                     self._update_metadata(session=agent_session)
 
                     # Initialize session state. Get it from DB if relevant.
-                        run_context.session_state = self._load_session_state(
+                    run_context.session_state = self._load_session_state(
                         session=agent_session,
                         session_state=run_context.session_state if run_context.session_state is not None else {},
-                        )
+                    )
 
                     # 4. Prepare run response
                     if run_response is not None:
@@ -4263,10 +4263,10 @@ class Agent:
                     self._update_metadata(session=agent_session)
 
                     # Initialize session state. Get it from DB if relevant.
-                        run_context.session_state = self._load_session_state(
+                    run_context.session_state = self._load_session_state(
                         session=agent_session,
                         session_state=run_context.session_state if run_context.session_state is not None else {},
-                        )
+                    )
 
                     # 3. Resolve dependencies
                     if run_context.dependencies is not None:
@@ -5674,7 +5674,7 @@ class Agent:
         # Update the RunOutput metrics
         run_response.metrics = self._calculate_run_metrics(
             messages=messages_for_run_response, current_run_metrics=run_response.metrics
-            )
+        )
 
         # Determine reasoning completed
         if stream_events and reasoning_state["reasoning_started"]:
@@ -5696,7 +5696,7 @@ class Agent:
                     run_response,
                     events_to_skip=self.events_to_skip,  # type: ignore
                     store_events=self.store_events,
-        )
+                )
 
         # Update the run_response audio if streaming
         if model_response.audio is not None:
@@ -5849,7 +5849,7 @@ class Agent:
                     run_response,
                     events_to_skip=self.events_to_skip,  # type: ignore
                     store_events=self.store_events,
-        )
+                )
 
         # Update the run_response audio if streaming
         if model_response.audio is not None:
@@ -6658,26 +6658,26 @@ class Agent:
             get_tools_fn = getattr(self.knowledge, "get_tools", None)
             if callable(get_tools_fn):
                 knowledge_tools = get_tools_fn(
-                            run_response=run_response,
-                            run_context=run_context,
+                    run_response=run_response,
+                    run_context=run_context,
                     knowledge_filters=run_context.knowledge_filters,
                     async_mode=False,
                     enable_agentic_filters=self.enable_agentic_knowledge_filters,
                     agent=self,
-                        )
+                )
                 agent_tools.extend(knowledge_tools)
         elif self.knowledge_retriever is not None and self.search_knowledge:
             # Create search tool using custom knowledge_retriever
-                    agent_tools.append(
+            agent_tools.append(
                 self._create_knowledge_retriever_search_tool(
-                            run_response=run_response,
-                            run_context=run_context,
+                    run_response=run_response,
+                    run_context=run_context,
                     async_mode=False,
-                        )
-                    )
+                )
+            )
 
         if self.knowledge is not None and self.update_knowledge:
-                agent_tools.append(self.add_to_knowledge)
+            agent_tools.append(self.add_to_knowledge)
 
         # Add tools for accessing skills
         if self.skills is not None:
@@ -6770,9 +6770,9 @@ class Agent:
 
             if callable(aget_tools_fn):
                 knowledge_tools = await aget_tools_fn(
-                            run_response=run_response,
+                    run_response=run_response,
                     run_context=run_context,
-                            knowledge_filters=run_context.knowledge_filters,
+                    knowledge_filters=run_context.knowledge_filters,
                     async_mode=True,
                     enable_agentic_filters=self.enable_agentic_knowledge_filters,
                     agent=self,
@@ -6781,25 +6781,25 @@ class Agent:
             elif callable(get_tools_fn):
                 knowledge_tools = get_tools_fn(
                     run_response=run_response,
-                            run_context=run_context,
+                    run_context=run_context,
                     knowledge_filters=run_context.knowledge_filters,
                     async_mode=True,
                     enable_agentic_filters=self.enable_agentic_knowledge_filters,
                     agent=self,
-                        )
+                )
                 agent_tools.extend(knowledge_tools)
         elif self.knowledge_retriever is not None and self.search_knowledge:
             # Create search tool using custom knowledge_retriever
-                    agent_tools.append(
+            agent_tools.append(
                 self._create_knowledge_retriever_search_tool(
-                            run_response=run_response,
-                            run_context=run_context,
+                    run_response=run_response,
+                    run_context=run_context,
                     async_mode=True,
-                        )
-                    )
+                )
+            )
 
         if self.knowledge is not None and self.update_knowledge:
-                agent_tools.append(self.add_to_knowledge)
+            agent_tools.append(self.add_to_knowledge)
 
         # Add tools for accessing skills
         if self.skills is not None:
@@ -6818,89 +6818,89 @@ class Agent:
         _functions: List[Union[Function, dict]] = []
         self._tool_instructions = []
 
-            # Get output_schema from run_context
-            output_schema = run_context.output_schema if run_context else None
+        # Get output_schema from run_context
+        output_schema = run_context.output_schema if run_context else None
 
-            # Check if we need strict mode for the functions for the model
-            strict = False
-            if (
-                output_schema is not None
-                and (self.structured_outputs or (not self.use_json_mode))
-                and model.supports_native_structured_outputs
-            ):
-                strict = True
+        # Check if we need strict mode for the functions for the model
+        strict = False
+        if (
+            output_schema is not None
+            and (self.structured_outputs or (not self.use_json_mode))
+            and model.supports_native_structured_outputs
+        ):
+            strict = True
 
         for tool in tools:
-                if isinstance(tool, Dict):
-                    # If a dict is passed, it is a builtin tool
-                    # that is run by the model provider and not the Agent
-                    _functions.append(tool)
-                    log_debug(f"Included builtin tool {tool}")
+            if isinstance(tool, Dict):
+                # If a dict is passed, it is a builtin tool
+                # that is run by the model provider and not the Agent
+                _functions.append(tool)
+                log_debug(f"Included builtin tool {tool}")
 
-                elif isinstance(tool, Toolkit):
-                    # For each function in the toolkit and process entrypoint
+            elif isinstance(tool, Toolkit):
+                # For each function in the toolkit and process entrypoint
                 toolkit_functions = tool.get_async_functions() if async_mode else tool.get_functions()
                 for name, _func in toolkit_functions.items():
-                        if name in _function_names:
-                            continue
-                        _function_names.append(name)
-                        _func = _func.model_copy(deep=True)
-                        _func._agent = self
+                    if name in _function_names:
+                        continue
+                    _function_names.append(name)
+                    _func = _func.model_copy(deep=True)
+                    _func._agent = self
                     # Respect the function's explicit strict setting if set
                     effective_strict = strict if _func.strict is None else _func.strict
                     _func.process_entrypoint(strict=effective_strict)
-                        if strict and _func.strict is None:
-                            _func.strict = True
-                        if self.tool_hooks is not None:
-                            _func.tool_hooks = self.tool_hooks
-                        _functions.append(_func)
-                        log_debug(f"Added tool {name} from {tool.name}")
+                    if strict and _func.strict is None:
+                        _func.strict = True
+                    if self.tool_hooks is not None:
+                        _func.tool_hooks = self.tool_hooks
+                    _functions.append(_func)
+                    log_debug(f"Added tool {name} from {tool.name}")
 
-                    # Add instructions from the toolkit
-                    if tool.add_instructions and tool.instructions is not None:
-                        self._tool_instructions.append(tool.instructions)
+                # Add instructions from the toolkit
+                if tool.add_instructions and tool.instructions is not None:
+                    self._tool_instructions.append(tool.instructions)
 
-                elif isinstance(tool, Function):
-                    if tool.name in _function_names:
-                        continue
-                    _function_names.append(tool.name)
+            elif isinstance(tool, Function):
+                if tool.name in _function_names:
+                    continue
+                _function_names.append(tool.name)
 
                 # Respect the function's explicit strict setting if set
                 effective_strict = strict if tool.strict is None else tool.strict
                 tool.process_entrypoint(strict=effective_strict)
-                    tool = tool.model_copy(deep=True)
+                tool = tool.model_copy(deep=True)
 
-                    tool._agent = self
-                    if strict and tool.strict is None:
-                        tool.strict = True
+                tool._agent = self
+                if strict and tool.strict is None:
+                    tool.strict = True
+                if self.tool_hooks is not None:
+                    tool.tool_hooks = self.tool_hooks
+                _functions.append(tool)
+                log_debug(f"Added tool {tool.name}")
+
+                # Add instructions from the Function
+                if tool.add_instructions and tool.instructions is not None:
+                    self._tool_instructions.append(tool.instructions)
+
+            elif callable(tool):
+                try:
+                    function_name = tool.__name__
+
+                    if function_name in _function_names:
+                        continue
+                    _function_names.append(function_name)
+
+                    _func = Function.from_callable(tool, strict=strict)
+                    _func = _func.model_copy(deep=True)
+                    _func._agent = self
+                    if strict:
+                        _func.strict = True
                     if self.tool_hooks is not None:
-                        tool.tool_hooks = self.tool_hooks
-                    _functions.append(tool)
-                    log_debug(f"Added tool {tool.name}")
-
-                    # Add instructions from the Function
-                    if tool.add_instructions and tool.instructions is not None:
-                        self._tool_instructions.append(tool.instructions)
-
-                elif callable(tool):
-                    try:
-                        function_name = tool.__name__
-
-                        if function_name in _function_names:
-                            continue
-                        _function_names.append(function_name)
-
-                        _func = Function.from_callable(tool, strict=strict)
-                        _func = _func.model_copy(deep=True)
-                        _func._agent = self
-                        if strict:
-                            _func.strict = True
-                        if self.tool_hooks is not None:
-                            _func.tool_hooks = self.tool_hooks
-                        _functions.append(_func)
-                        log_debug(f"Added tool {_func.name}")
-                    except Exception as e:
-                        log_warning(f"Could not add tool {tool}: {e}")
+                        _func.tool_hooks = self.tool_hooks
+                    _functions.append(_func)
+                    log_debug(f"Added tool {_func.name}")
+                except Exception as e:
+                    log_warning(f"Could not add tool {tool}: {e}")
 
         return _functions
 
@@ -8867,13 +8867,13 @@ class Agent:
         # 3.3.3 Then add instructions for the Agent
         if len(instructions) > 0:
             if self.use_instruction_tags:
-            system_message_content += "<instructions>"
-            if len(instructions) > 1:
-                for _upi in instructions:
-                    system_message_content += f"\n- {_upi}"
-            else:
-                system_message_content += "\n" + instructions[0]
-            system_message_content += "\n</instructions>\n\n"
+                system_message_content += "<instructions>"
+                if len(instructions) > 1:
+                    for _upi in instructions:
+                        system_message_content += f"\n- {_upi}"
+                else:
+                    system_message_content += "\n" + instructions[0]
+                system_message_content += "\n</instructions>\n\n"
             else:
                 if len(instructions) > 1:
                     for _upi in instructions:
@@ -9212,13 +9212,13 @@ class Agent:
         # 3.3.3 Then add instructions for the Agent
         if len(instructions) > 0:
             if self.use_instruction_tags:
-            system_message_content += "<instructions>"
-            if len(instructions) > 1:
-                for _upi in instructions:
-                    system_message_content += f"\n- {_upi}"
-            else:
-                system_message_content += "\n" + instructions[0]
-            system_message_content += "\n</instructions>\n\n"
+                system_message_content += "<instructions>"
+                if len(instructions) > 1:
+                    for _upi in instructions:
+                        system_message_content += f"\n- {_upi}"
+                else:
+                    system_message_content += "\n" + instructions[0]
+                system_message_content += "\n</instructions>\n\n"
             else:
                 if len(instructions) > 1:
                     for _upi in instructions:
@@ -10415,8 +10415,8 @@ class Agent:
 
             if callable(aretrieve_fn):
                 relevant_docs: List[Document] = await aretrieve_fn(
-                query=query, max_results=num_documents, filters=filters
-            )
+                    query=query, max_results=num_documents, filters=filters
+                )
             elif callable(retrieve_fn):
                 relevant_docs = retrieve_fn(query=query, max_results=num_documents, filters=filters)
             else:
@@ -10501,7 +10501,7 @@ class Agent:
             field_value = getattr(self, f.name)
             if field_value is not None:
                 try:
-                fields_for_new_agent[f.name] = self._deep_copy_field(f.name, field_value)
+                    fields_for_new_agent[f.name] = self._deep_copy_field(f.name, field_value)
                 except Exception as e:
                     log_warning(f"Failed to deep copy field '{f.name}': {e}. Using original value.")
                     fields_for_new_agent[f.name] = field_value
@@ -10512,9 +10512,9 @@ class Agent:
 
         # Create a new Agent
         try:
-        new_agent = self.__class__(**fields_for_new_agent)
-        log_debug(f"Created new {self.__class__.__name__}")
-        return new_agent
+            new_agent = self.__class__(**fields_for_new_agent)
+            log_debug(f"Created new {self.__class__.__name__}")
+            return new_agent
         except Exception as e:
             log_error(f"Failed to create deep copy of {self.__class__.__name__}: {e}")
             raise
@@ -10540,16 +10540,16 @@ class Agent:
                         if is_mcp_tool:
                             copied_tools.append(tool)
                         else:
-            try:
+                            try:
                                 copied_tools.append(deepcopy(tool))
                             except Exception:
                                 # Tool can't be deep copied, share by reference
                                 copied_tools.append(tool)
-            except Exception:
+                    except Exception:
                         # MCP detection failed, share tool by reference to be safe
                         copied_tools.append(tool)
                 return copied_tools
-                except Exception as e:
+            except Exception as e:
                 # If entire tools processing fails, log and return original list
                 log_warning(f"Failed to process tools for deep copy: {e}")
                 return field_value
@@ -10569,7 +10569,7 @@ class Agent:
             "learning",
             "skills",
         ):
-                    return field_value
+            return field_value
 
         # For compound types, attempt a deep copy
         if isinstance(field_value, (list, dict, set)):
