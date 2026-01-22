@@ -298,3 +298,82 @@ def test_clean_page_numbers_untrustable(p_nr_format):
     assert not clean_content[0].endswith(p_nr_format["end"].format(page_nr=1))
     assert not clean_content[0].startswith(p_nr_format["start"].format(page_nr=2))
     assert not clean_content[0].endswith(p_nr_format["end"].format(page_nr=2))
+
+
+def _create_encrypted_pdf_with_empty_password() -> BytesIO:
+    from pypdf import PdfWriter
+
+    writer = PdfWriter()
+    writer.add_blank_page(width=612, height=792)
+    writer.encrypt(user_password="", owner_password="owner123")
+
+    buffer = BytesIO()
+    writer.write(buffer)
+    buffer.seek(0)
+    buffer.name = "encrypted_empty_password.pdf"
+    return buffer
+
+
+def _create_encrypted_pdf_with_password(password: str) -> BytesIO:
+    from pypdf import PdfWriter
+
+    writer = PdfWriter()
+    writer.add_blank_page(width=612, height=792)
+    writer.encrypt(user_password=password, owner_password="owner123")
+
+    buffer = BytesIO()
+    writer.write(buffer)
+    buffer.seek(0)
+    buffer.name = "encrypted.pdf"
+    return buffer
+
+
+def test_pdf_reader_decrypt_with_empty_password():
+    pdf = _create_encrypted_pdf_with_empty_password()
+
+    reader = PDFReader()
+    docs = reader.read(pdf, password="")
+    assert docs is not None
+    assert len(docs) >= 0
+
+
+def test_pdf_reader_password_none_falls_back_to_instance():
+    pdf = _create_encrypted_pdf_with_empty_password()
+
+    reader = PDFReader(password="")
+    docs = reader.read(pdf, password=None)
+    assert docs is not None
+
+
+def test_pdf_reader_explicit_password_overrides_instance():
+    pdf = _create_encrypted_pdf_with_empty_password()
+
+    reader = PDFReader(password="wrong")
+    docs = reader.read(pdf, password="")
+    assert docs is not None
+
+
+def test_pdf_reader_no_password_for_encrypted_pdf_returns_empty():
+    pdf = _create_encrypted_pdf_with_password("secret123")
+
+    reader = PDFReader()
+    docs = reader.read(pdf)
+    assert docs == []
+
+
+@pytest.mark.asyncio
+async def test_pdf_reader_async_decrypt_with_empty_password():
+    pdf = _create_encrypted_pdf_with_empty_password()
+
+    reader = PDFReader()
+    docs = await reader.async_read(pdf, password="")
+    assert docs is not None
+
+
+@pytest.mark.asyncio
+async def test_pdf_reader_async_password_none_falls_back_to_instance():
+    pdf = _create_encrypted_pdf_with_empty_password()
+
+    reader = PDFReader(password="")
+    docs = await reader.async_read(pdf, password=None)
+    assert docs is not None

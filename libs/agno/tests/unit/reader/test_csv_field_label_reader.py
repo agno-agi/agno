@@ -540,3 +540,591 @@ def test_reader_factory_integration():
     assert isinstance(reader, FieldLabeledCSVReader)
     assert reader.name == "Field Labeled CSV Reader"
     assert "field-labeled text format" in reader.description
+
+
+LATIN1_CSV = "name,city\nJosé,São Paulo\nFrançois,Montréal"
+
+
+def test_read_bytesio_with_custom_encoding():
+    """Test reading BytesIO with custom encoding (Latin-1)."""
+    latin1_bytes = LATIN1_CSV.encode("latin-1")
+    file_obj = io.BytesIO(latin1_bytes)
+    file_obj.name = "latin1.csv"
+
+    reader = FieldLabeledCSVReader(encoding="latin-1")
+    documents = reader.read(file_obj)
+
+    assert len(documents) == 2
+    content = documents[0].content
+
+    # Verify accented characters are correctly decoded
+    assert "José" in content
+    assert "São Paulo" in content
+
+
+def test_read_bytesio_wrong_encoding_fails():
+    """Test that reading Latin-1 bytes as UTF-8 fails or corrupts data.
+
+    This demonstrates why the encoding parameter is important.
+    """
+    latin1_bytes = LATIN1_CSV.encode("latin-1")
+    file_obj = io.BytesIO(latin1_bytes)
+    file_obj.name = "latin1.csv"
+
+    reader = FieldLabeledCSVReader()  # Uses UTF-8 by default
+
+    # This should either raise an error or produce corrupted output
+    documents = reader.read(file_obj)
+
+    # If it didn't raise, the content should be corrupted (mojibake)
+    if documents:
+        content = documents[0].content
+        # The accented characters should NOT be correctly decoded
+        assert "José" not in content or "São Paulo" not in content
+
+
+@pytest.mark.asyncio
+async def test_async_read_bytesio_with_custom_encoding():
+    """Test async reading BytesIO with custom encoding (Latin-1)."""
+    latin1_bytes = LATIN1_CSV.encode("latin-1")
+    file_obj = io.BytesIO(latin1_bytes)
+    file_obj.name = "latin1.csv"
+
+    reader = FieldLabeledCSVReader(encoding="latin-1")
+    documents = await reader.async_read(file_obj)
+
+    assert len(documents) == 2
+    content = documents[0].content
+    assert "José" in content
+    assert "São Paulo" in content
+
+
+def test_read_xlsx_basic(temp_dir):
+    """Test reading .xlsx file with field-labeled output."""
+    openpyxl = pytest.importorskip("openpyxl")
+
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "Data"
+    sheet.append(["name", "age", "city"])
+    sheet.append(["Alice", 30, "New York"])
+    sheet.append(["Bob", 25, "San Francisco"])
+
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    workbook.close()
+
+    file_path = temp_dir / "test.xlsx"
+    file_path.write_bytes(buffer.getvalue())
+
+    reader = FieldLabeledCSVReader()
+    documents = reader.read(file_path)
+
+    assert len(documents) == 2
+
+    # Check first document
+    expected_content_1 = "Name: Alice\nAge: 30\nCity: New York"
+    assert documents[0].content == expected_content_1
+    assert documents[0].name == "test"
+    assert documents[0].meta_data["sheet_name"] == "Data"
+    assert documents[0].meta_data["row_index"] == 0
+
+    # Check second document
+    expected_content_2 = "Name: Bob\nAge: 25\nCity: San Francisco"
+    assert documents[1].content == expected_content_2
+
+
+def test_read_xlsx_with_custom_field_names(temp_dir):
+    """Test reading .xlsx with custom field names and title."""
+    openpyxl = pytest.importorskip("openpyxl")
+
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "Employees"
+    sheet.append(["name", "age", "city"])
+    sheet.append(["Alice", 30, "New York"])
+
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    workbook.close()
+
+    file_path = temp_dir / "employees.xlsx"
+    file_path.write_bytes(buffer.getvalue())
+
+    reader = FieldLabeledCSVReader(
+        chunk_title="Employee Info",
+        field_names=["Full Name", "Years Old", "Location"],
+    )
+    documents = reader.read(file_path)
+
+    assert len(documents) == 1
+    expected_content = "Employee Info\nFull Name: Alice\nYears Old: 30\nLocation: New York"
+    assert documents[0].content == expected_content
+
+
+def test_read_xlsx_multiple_sheets(temp_dir):
+    """Test reading .xlsx with multiple sheets."""
+    openpyxl = pytest.importorskip("openpyxl")
+
+    workbook = openpyxl.Workbook()
+
+    # First sheet
+    sheet1 = workbook.active
+    sheet1.title = "Sheet1"
+    sheet1.append(["name", "value"])
+    sheet1.append(["item1", 100])
+
+    # Second sheet
+    sheet2 = workbook.create_sheet("Sheet2")
+    sheet2.append(["product", "price"])
+    sheet2.append(["widget", 50])
+
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    workbook.close()
+
+    file_path = temp_dir / "multi_sheet.xlsx"
+    file_path.write_bytes(buffer.getvalue())
+
+    reader = FieldLabeledCSVReader()
+    documents = reader.read(file_path)
+
+    assert len(documents) == 2
+
+    sheet_names = {doc.meta_data["sheet_name"] for doc in documents}
+    assert sheet_names == {"Sheet1", "Sheet2"}
+
+    # Find documents by sheet
+    sheet1_doc = next(d for d in documents if d.meta_data["sheet_name"] == "Sheet1")
+    sheet2_doc = next(d for d in documents if d.meta_data["sheet_name"] == "Sheet2")
+
+    assert sheet1_doc.content == "Name: item1\nValue: 100"
+    assert sheet2_doc.content == "Product: widget\nPrice: 50"
+
+
+def test_read_xlsx_skips_empty_sheets(temp_dir):
+    """Test that empty sheets are skipped."""
+    openpyxl = pytest.importorskip("openpyxl")
+
+    workbook = openpyxl.Workbook()
+
+    # First sheet with data
+    sheet1 = workbook.active
+    sheet1.title = "Data"
+    sheet1.append(["name", "value"])
+    sheet1.append(["test", 42])
+
+    # Empty sheet
+    workbook.create_sheet("Empty")
+
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    workbook.close()
+
+    file_path = temp_dir / "with_empty.xlsx"
+    file_path.write_bytes(buffer.getvalue())
+
+    reader = FieldLabeledCSVReader()
+    documents = reader.read(file_path)
+
+    assert len(documents) == 1
+    assert documents[0].meta_data["sheet_name"] == "Data"
+
+
+def test_read_xlsx_skips_empty_rows(temp_dir):
+    """Test that empty rows are skipped."""
+    openpyxl = pytest.importorskip("openpyxl")
+
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "Data"
+    sheet.append(["name", "value"])
+    sheet.append(["item1", 100])
+    sheet.append([None, None])  # Empty row
+    sheet.append(["item2", 200])
+
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    workbook.close()
+
+    file_path = temp_dir / "sparse.xlsx"
+    file_path.write_bytes(buffer.getvalue())
+
+    reader = FieldLabeledCSVReader()
+    documents = reader.read(file_path)
+
+    assert len(documents) == 2
+    assert documents[0].content == "Name: item1\nValue: 100"
+    assert documents[1].content == "Name: item2\nValue: 200"
+
+
+def test_read_xlsx_datetime_handling(temp_dir):
+    """Test that datetime cells are formatted as ISO strings."""
+    openpyxl = pytest.importorskip("openpyxl")
+    from datetime import datetime
+
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "Dates"
+    sheet.append(["event", "date"])
+    sheet.append(["Meeting", datetime(2024, 1, 20, 14, 30, 0)])
+
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    workbook.close()
+
+    file_path = temp_dir / "dates.xlsx"
+    file_path.write_bytes(buffer.getvalue())
+
+    reader = FieldLabeledCSVReader()
+    documents = reader.read(file_path)
+
+    assert len(documents) == 1
+    assert "Event: Meeting" in documents[0].content
+    assert "Date: 2024-01-20T14:30:00" in documents[0].content
+
+
+def test_read_xlsx_data_types(temp_dir):
+    """Test handling of various data types."""
+    openpyxl = pytest.importorskip("openpyxl")
+
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "Types"
+    sheet.append(["type", "value"])
+    sheet.append(["string", "hello"])
+    sheet.append(["integer_float", 30.0])  # Should be "30"
+    sheet.append(["float", 3.14])
+    sheet.append(["boolean", True])
+
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    workbook.close()
+
+    file_path = temp_dir / "types.xlsx"
+    file_path.write_bytes(buffer.getvalue())
+
+    reader = FieldLabeledCSVReader()
+    documents = reader.read(file_path)
+
+    assert len(documents) == 4
+    assert documents[0].content == "Type: string\nValue: hello"
+    assert documents[1].content == "Type: integer_float\nValue: 30"  # Integer display
+    assert documents[2].content == "Type: float\nValue: 3.14"
+    assert documents[3].content == "Type: boolean\nValue: True"
+
+
+def test_read_xlsx_from_bytesio(temp_dir):
+    """Test reading .xlsx from BytesIO object."""
+    openpyxl = pytest.importorskip("openpyxl")
+
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "Data"
+    sheet.append(["name", "value"])
+    sheet.append(["test", 42])
+
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    workbook.close()
+
+    buffer.seek(0)
+    buffer.name = "memory.xlsx"
+
+    reader = FieldLabeledCSVReader()
+    documents = reader.read(buffer)
+
+    assert len(documents) == 1
+    assert documents[0].name == "memory"
+    assert documents[0].content == "Name: test\nValue: 42"
+
+
+def test_read_xls_basic(temp_dir):
+    """Test reading .xls file with field-labeled output."""
+    xlwt = pytest.importorskip("xlwt")
+
+    workbook = xlwt.Workbook()
+    sheet = workbook.add_sheet("Data")
+    sheet.write(0, 0, "name")
+    sheet.write(0, 1, "age")
+    sheet.write(1, 0, "Alice")
+    sheet.write(1, 1, 30)
+
+    file_path = temp_dir / "test.xls"
+    workbook.save(str(file_path))
+
+    reader = FieldLabeledCSVReader()
+    documents = reader.read(file_path)
+
+    assert len(documents) == 1
+    assert documents[0].content == "Name: Alice\nAge: 30"
+    assert documents[0].meta_data["sheet_name"] == "Data"
+
+
+def test_read_xls_datetime_handling(temp_dir):
+    """Test that xls date cells are formatted as ISO 8601, not Excel serial numbers."""
+    xlwt = pytest.importorskip("xlwt")
+    from datetime import datetime
+
+    workbook = xlwt.Workbook()
+    sheet = workbook.add_sheet("Dates")
+    sheet.write(0, 0, "event")
+    sheet.write(0, 1, "date")
+
+    # Write date as Excel serial number with date format
+    date_format = xlwt.XFStyle()
+    date_format.num_format_str = "YYYY-MM-DD HH:MM:SS"
+
+    def datetime_to_excel_serial(d: datetime) -> float:
+        excel_epoch = datetime(1899, 12, 30)
+        delta = d - excel_epoch
+        return delta.days + delta.seconds / 86400.0
+
+    sheet.write(1, 0, "Meeting")
+    sheet.write(1, 1, datetime_to_excel_serial(datetime(2024, 1, 20, 14, 30, 0)), date_format)
+
+    file_path = temp_dir / "dates.xls"
+    workbook.save(str(file_path))
+
+    reader = FieldLabeledCSVReader()
+    documents = reader.read(file_path)
+
+    assert len(documents) == 1
+    assert "Event: Meeting" in documents[0].content
+    assert "Date: 2024-01-20T14:30:00" in documents[0].content
+
+
+def test_read_xls_boolean_handling(temp_dir):
+    """Test that xls boolean cells show True/False, not 1/0."""
+    xlwt = pytest.importorskip("xlwt")
+
+    workbook = xlwt.Workbook()
+    sheet = workbook.add_sheet("Booleans")
+    sheet.write(0, 0, "name")
+    sheet.write(0, 1, "active")
+    sheet.write(1, 0, "Widget")
+    sheet.write(1, 1, True)
+    sheet.write(2, 0, "Gadget")
+    sheet.write(2, 1, False)
+
+    file_path = temp_dir / "booleans.xls"
+    workbook.save(str(file_path))
+
+    reader = FieldLabeledCSVReader()
+    documents = reader.read(file_path)
+
+    assert len(documents) == 2
+    assert "Active: True" in documents[0].content
+    assert "Active: False" in documents[1].content
+
+
+@pytest.mark.asyncio
+async def test_async_read_xlsx(temp_dir):
+    """Test async reading of .xlsx file."""
+    openpyxl = pytest.importorskip("openpyxl")
+
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "Data"
+    sheet.append(["name", "value"])
+    sheet.append(["async_test", 123])
+
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    workbook.close()
+
+    file_path = temp_dir / "async.xlsx"
+    file_path.write_bytes(buffer.getvalue())
+
+    reader = FieldLabeledCSVReader()
+    documents = await reader.async_read(file_path)
+
+    assert len(documents) == 1
+    assert documents[0].content == "Name: async_test\nValue: 123"
+
+
+@pytest.mark.asyncio
+async def test_async_read_xls(temp_dir):
+    """Test async reading of .xls file."""
+    xlwt = pytest.importorskip("xlwt")
+
+    workbook = xlwt.Workbook()
+    sheet = workbook.add_sheet("Data")
+    sheet.write(0, 0, "name")
+    sheet.write(0, 1, "value")
+    sheet.write(1, 0, "async_xls_test")
+    sheet.write(1, 1, 456)
+
+    file_path = temp_dir / "async.xls"
+    workbook.save(str(file_path))
+
+    reader = FieldLabeledCSVReader()
+    documents = await reader.async_read(file_path)
+
+    assert len(documents) == 1
+    assert documents[0].content == "Name: async_xls_test\nValue: 456"
+
+
+def test_read_xlsx_all_empty_sheets(temp_dir):
+    """Test reading .xlsx where all sheets are empty."""
+    openpyxl = pytest.importorskip("openpyxl")
+
+    workbook = openpyxl.Workbook()
+    workbook.active.title = "Empty1"
+    workbook.create_sheet("Empty2")
+
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    workbook.close()
+
+    file_path = temp_dir / "all_empty.xlsx"
+    file_path.write_bytes(buffer.getvalue())
+
+    reader = FieldLabeledCSVReader()
+    documents = reader.read(file_path)
+
+    assert documents == []
+
+
+def test_read_xlsx_headers_only(temp_dir):
+    """Test reading .xlsx with headers but no data rows."""
+    openpyxl = pytest.importorskip("openpyxl")
+
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "HeadersOnly"
+    sheet.append(["name", "value", "description"])
+
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    workbook.close()
+
+    file_path = temp_dir / "headers_only.xlsx"
+    file_path.write_bytes(buffer.getvalue())
+
+    reader = FieldLabeledCSVReader()
+    documents = reader.read(file_path)
+
+    assert documents == []
+
+
+def test_read_xlsx_skip_empty_fields(temp_dir):
+    """Test skip_empty_fields option with Excel."""
+    openpyxl = pytest.importorskip("openpyxl")
+
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "Data"
+    sheet.append(["name", "description", "value"])
+    sheet.append(["item1", None, 100])  # Missing description
+
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    workbook.close()
+
+    file_path = temp_dir / "empty_fields.xlsx"
+    file_path.write_bytes(buffer.getvalue())
+
+    # With skip_empty_fields=True (default)
+    reader = FieldLabeledCSVReader(skip_empty_fields=True)
+    documents = reader.read(file_path)
+    assert documents[0].content == "Name: item1\nValue: 100"
+
+    # With skip_empty_fields=False
+    reader_no_skip = FieldLabeledCSVReader(skip_empty_fields=False)
+    documents_no_skip = reader_no_skip.read(file_path)
+    assert documents_no_skip[0].content == "Name: item1\nDescription: \nValue: 100"
+
+
+def test_read_xlsx_document_id_format(temp_dir):
+    """Test document ID format for Excel files."""
+    openpyxl = pytest.importorskip("openpyxl")
+
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "MySheet"
+    sheet.append(["name"])
+    sheet.append(["item1"])
+    sheet.append(["item2"])
+
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    workbook.close()
+
+    file_path = temp_dir / "id_test.xlsx"
+    file_path.write_bytes(buffer.getvalue())
+
+    reader = FieldLabeledCSVReader()
+    documents = reader.read(file_path)
+
+    # IDs should include workbook name, sheet name, and row number
+    assert documents[0].id == "id_test_MySheet_row_1"
+    assert documents[1].id == "id_test_MySheet_row_2"
+
+
+def test_read_csv_carriage_return_normalized():
+    """Test that carriage returns in CSV cells are normalized to spaces."""
+    csv_content = 'name,notes\nAlice,"line1\rline2"\nBob,"line1\r\nline2"'
+
+    file_obj = io.BytesIO(csv_content.encode("utf-8"))
+    file_obj.name = "cr_test.csv"
+
+    reader = FieldLabeledCSVReader()
+    documents = reader.read(file_obj)
+
+    assert len(documents) == 2
+    # CR and CRLF should be converted to spaces
+    assert documents[0].content == "Name: Alice\nNotes: line1 line2"
+    assert documents[1].content == "Name: Bob\nNotes: line1 line2"
+
+
+def test_read_xlsx_carriage_return_normalized(temp_dir):
+    """Test that carriage returns in xlsx cells are normalized to spaces."""
+    openpyxl = pytest.importorskip("openpyxl")
+
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "Data"
+    sheet.append(["name", "notes"])
+    sheet.append(["Alice", "line1\rline2"])
+    sheet.append(["Bob", "line1\r\nline2"])
+
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    workbook.close()
+
+    file_path = temp_dir / "cr_test.xlsx"
+    file_path.write_bytes(buffer.getvalue())
+
+    reader = FieldLabeledCSVReader()
+    documents = reader.read(file_path)
+
+    assert len(documents) == 2
+    # CR and CRLF should be converted to spaces
+    assert documents[0].content == "Name: Alice\nNotes: line1 line2"
+    assert documents[1].content == "Name: Bob\nNotes: line1 line2"
+
+
+def test_read_xls_carriage_return_normalized(temp_dir):
+    """Test that carriage returns in xls cells are normalized to spaces."""
+    xlwt = pytest.importorskip("xlwt")
+
+    workbook = xlwt.Workbook()
+    sheet = workbook.add_sheet("Data")
+    sheet.write(0, 0, "name")
+    sheet.write(0, 1, "notes")
+    sheet.write(1, 0, "Alice")
+    sheet.write(1, 1, "line1\rline2")
+    sheet.write(2, 0, "Bob")
+    sheet.write(2, 1, "line1\r\nline2")
+
+    file_path = temp_dir / "cr_test.xls"
+    workbook.save(str(file_path))
+
+    reader = FieldLabeledCSVReader()
+    documents = reader.read(file_path)
+
+    assert len(documents) == 2
+    # CR and CRLF should be converted to spaces
+    assert documents[0].content == "Name: Alice\nNotes: line1 line2"
+    assert documents[1].content == "Name: Bob\nNotes: line1 line2"
