@@ -234,6 +234,57 @@ def test_excel_reader_reads_xlsx_from_bytesio_without_name():
     assert documents[0].content.splitlines() == ["col1, col2", "a, b"]
 
 
+def test_excel_reader_fails_gracefully_when_name_has_no_extension():
+    """When BytesIO has no name and name param has no extension, reader returns empty list."""
+    openpyxl = pytest.importorskip("openpyxl")
+
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "Sheet1"
+    sheet.append(["col1", "col2"])
+    sheet.append(["a", "b"])
+
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    workbook.close()
+
+    buffer.seek(0)
+
+    reader = ExcelReader(chunk=False)
+    # This simulates the old bug: name="Lorcan_data" (no extension)
+    documents = reader.read(buffer, name="Lorcan_data")
+
+    # Reader returns empty list when extension can't be determined
+    assert len(documents) == 0
+
+
+def test_excel_reader_succeeds_when_name_has_extension():
+    """When BytesIO has no name but name param has extension, reader works correctly."""
+    openpyxl = pytest.importorskip("openpyxl")
+
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "Products"
+    sheet.append(["product", "price"])
+    sheet.append(["Widget", 19.99])
+    sheet.append(["Gadget", 29.99])
+
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    workbook.close()
+
+    buffer.seek(0)
+
+    reader = ExcelReader(chunk=False)
+    # This is the FIXED scenario: name="Lorcan_data.xlsx" (with extension)
+    documents = reader.read(buffer, name="Lorcan_data.xlsx")
+
+    assert len(documents) == 1
+    assert documents[0].name == "Lorcan_data"
+    assert "Widget" in documents[0].content
+    assert "19.99" in documents[0].content
+
+
 def test_excel_reader_xlsx_data_types(tmp_path: Path):
     openpyxl = pytest.importorskip("openpyxl")
 
@@ -1704,3 +1755,107 @@ def test_excel_reader_xls_large_cell_content(tmp_path: Path):
     content = documents[0].content
     assert "Enterprise Widget" in content
     assert "AI-powered automation" in content
+
+
+def test_excel_reader_xlsx_non_ascii_via_bytesio():
+    """Non-ASCII Unicode content should be preserved when reading via BytesIO."""
+    openpyxl = pytest.importorskip("openpyxl")
+
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "International"
+    sheet.append(["language", "greeting", "description"])
+    sheet.append(["Chinese", "你好世界", "中文描述"])
+    sheet.append(["Japanese", "こんにちは", "日本語の説明"])
+    sheet.append(["Korean", "안녕하세요", "한국어 설명"])
+    sheet.append(["Arabic", "مرحبا", "وصف عربي"])
+    sheet.append(["Russian", "Привет", "Русское описание"])
+    sheet.append(["Emoji", "Hello 👋🌍", "Description with 🎉 emoji"])
+
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    workbook.close()
+
+    buffer.seek(0)
+    buffer.name = "international.xlsx"
+
+    reader = ExcelReader(chunk=False)
+    documents = reader.read(buffer)
+
+    assert len(documents) == 1
+    content = documents[0].content
+
+    # All non-ASCII characters should be preserved
+    assert "你好世界" in content
+    assert "こんにちは" in content
+    assert "안녕하세요" in content
+    assert "مرحبا" in content
+    assert "Привет" in content
+    assert "👋🌍" in content
+    assert "🎉" in content
+
+
+def test_excel_reader_xls_non_ascii_via_bytesio():
+    """XLS: Non-ASCII Unicode content should be preserved when reading via BytesIO."""
+    xlwt = pytest.importorskip("xlwt")
+
+    workbook = xlwt.Workbook()
+    sheet = workbook.add_sheet("International")
+    sheet.write(0, 0, "language")
+    sheet.write(0, 1, "greeting")
+    sheet.write(1, 0, "Chinese")
+    sheet.write(1, 1, "你好世界")
+    sheet.write(2, 0, "Japanese")
+    sheet.write(2, 1, "こんにちは")
+    sheet.write(3, 0, "Russian")
+    sheet.write(3, 1, "Привет мир")
+    sheet.write(4, 0, "German")
+    sheet.write(4, 1, "Größenmaßstab")
+
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    buffer.seek(0)
+    buffer.name = "international.xls"
+
+    reader = ExcelReader(chunk=False)
+    documents = reader.read(buffer)
+
+    assert len(documents) == 1
+    content = documents[0].content
+
+    # All non-ASCII characters should be preserved
+    assert "你好世界" in content
+    assert "こんにちは" in content
+    assert "Привет" in content
+    assert "Größenmaßstab" in content
+
+
+@pytest.mark.asyncio
+async def test_excel_reader_xlsx_non_ascii_via_bytesio_async():
+    """Async: Non-ASCII Unicode content should be preserved when reading via BytesIO."""
+    openpyxl = pytest.importorskip("openpyxl")
+
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "International"
+    sheet.append(["language", "greeting"])
+    sheet.append(["Chinese", "你好世界"])
+    sheet.append(["Japanese", "こんにちは"])
+    sheet.append(["Emoji", "Hello 👋🌍"])
+
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    workbook.close()
+
+    buffer.seek(0)
+    buffer.name = "international.xlsx"
+
+    reader = ExcelReader(chunk=False)
+    documents = await reader.async_read(buffer)
+
+    assert len(documents) == 1
+    content = documents[0].content
+
+    assert "你好世界" in content
+    assert "こんにちは" in content
+    assert "👋🌍" in content

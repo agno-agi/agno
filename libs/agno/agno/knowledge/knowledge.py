@@ -1697,8 +1697,9 @@ class Knowledge:
                     reader = content.reader
                 else:
                     reader = self._select_reader(content.file_data.type)
-                name = content.name if content.name else f"content_{content.file_data.type}"
-                read_documents = await reader.async_read(content_io, name=name)
+                # Use file_data.filename for reader (preserves extension for format detection)
+                reader_name = content.file_data.filename or content.name or f"content_{content.file_data.type}"
+                read_documents = await reader.async_read(content_io, name=reader_name)
                 if not content.id:
                     content.id = generate_id(content.content_hash or "")
                 self._prepare_documents_for_insert(read_documents, content.id, metadata=content.metadata)
@@ -1794,8 +1795,9 @@ class Knowledge:
                     reader = content.reader
                 else:
                     reader = self._select_reader(content.file_data.type)
-                name = content.name if content.name else f"content_{content.file_data.type}"
-                read_documents = reader.read(content_io, name=name)
+                # Use file_data.filename for reader (preserves extension for format detection)
+                reader_name = content.file_data.filename or content.name or f"content_{content.file_data.type}"
+                read_documents = reader.read(content_io, name=reader_name)
                 if not content.id:
                     content.id = generate_id(content.content_hash or "")
                 self._prepare_documents_for_insert(read_documents, content.id, metadata=content.metadata)

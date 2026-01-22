@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from agno.agent import Agent
+from agno.db.postgres import PostgresDb
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader.excel_reader import ExcelReader
 from agno.models.openai import OpenAIChat
@@ -9,18 +10,21 @@ from agno.vectordb.pgvector import PgVector
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
-# Excel knowledge base with row-level chunking (default)
+db = PostgresDb(db_url=db_url)
+
 excel_knowledge = Knowledge(
+    name="Excel Products",
+    contents_db=db,  # Required for UI to show knowledge
     vector_db=PgVector(
         db_url=db_url,
         table_name="agentos_excel_knowledge",
     ),
 )
 
-# Agent for querying Excel data
 excel_agent = Agent(
     name="Excel Data Agent",
     model=OpenAIChat(id="gpt-4o-mini"),
+    db=db,  # For session storage
     knowledge=excel_knowledge,
     search_knowledge=True,
     markdown=True,

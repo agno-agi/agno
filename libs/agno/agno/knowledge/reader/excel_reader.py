@@ -89,9 +89,7 @@ class ExcelReader(Reader):
         try:
             import openpyxl
         except ImportError as e:
-            raise ImportError(
-                "`openpyxl` not installed. Please install it via `pip install agno[excel]` or `pip install openpyxl`."
-            ) from e
+            raise ImportError("`openpyxl` not installed. Please install it via `pip install openpyxl`.") from e
 
         if isinstance(file, Path):
             workbook = openpyxl.load_workbook(filename=str(file), read_only=True, data_only=True)
@@ -123,9 +121,7 @@ class ExcelReader(Reader):
         try:
             import xlrd
         except ImportError as e:
-            raise ImportError(
-                "`xlrd` not installed. Please install it via `pip install agno[excel]` or `pip install xlrd`."
-            ) from e
+            raise ImportError("`xlrd` not installed. Please install it via `pip install xlrd`.") from e
 
         if isinstance(file, Path):
             workbook = xlrd.open_workbook(filename=str(file))
