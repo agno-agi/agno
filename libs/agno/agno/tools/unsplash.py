@@ -35,7 +35,6 @@ class UnsplashTools(Toolkit):
         agent = Agent(
             model=OpenAIChat(id="gpt-4o"),
             tools=[UnsplashTools()],
-            show_tool_calls=True,
         )
         agent.print_response("Find me 3 photos of mountains at sunset")
         ```
