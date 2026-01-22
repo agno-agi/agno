@@ -8,7 +8,7 @@ from agno.agent import Agent
 from agno.models.openrouter import OpenRouterResponses
 
 agent = Agent(
-    model=OpenRouterResponses(id="anthropic/claude-sonnet-4"),
+    model=OpenRouterResponses(id="openai/gpt-oss-20b", reasoning=True),
     markdown=True,
 )
 

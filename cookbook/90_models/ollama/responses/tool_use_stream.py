@@ -17,4 +17,4 @@ agent = Agent(
     markdown=True,
 )
 
-agent.print_response("What is the latest news about AI?")
+agent.print_response("What is the latest news about AI?", stream=True)

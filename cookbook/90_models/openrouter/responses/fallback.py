@@ -13,11 +13,11 @@ from agno.models.openrouter import OpenRouterResponses
 
 agent = Agent(
     model=OpenRouterResponses(
-        id="anthropic/claude-sonnet-4",
+        id="openai/gpt-oss-20b",
         # Fallback models if primary fails
         models=[
+            "openai/gpt-oss-20b",
             "openai/gpt-4o",
-            "google/gemini-2.0-flash",
         ],
     ),
     markdown=True,

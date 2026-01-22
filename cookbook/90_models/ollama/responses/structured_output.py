@@ -35,7 +35,7 @@ class MovieScript(BaseModel):
 
 
 agent = Agent(
-    model=OllamaResponses(id="llama3:8b", host="http://localhost:11434"),
+    model=OllamaResponses(id="gpt-oss:20b"),
     description="You write movie scripts.",
     output_schema=MovieScript,
 )

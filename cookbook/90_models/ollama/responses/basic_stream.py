@@ -11,7 +11,7 @@ from agno.agent import Agent
 from agno.models.ollama import OllamaResponses
 
 agent = Agent(
-    model=OllamaResponses(id="llama3:8b", host="http://localhost:11434"),
+    model=OllamaResponses(id="gpt-oss:20b"),
     markdown=True,
 )
 
