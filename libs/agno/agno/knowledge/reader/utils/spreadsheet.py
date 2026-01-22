@@ -7,6 +7,28 @@ from agno.knowledge.document.base import Document
 from agno.utils.log import log_debug
 
 
+def stringify_cell_value(value: Any) -> str:
+    """Convert cell value to string, normalizing dates and line endings."""
+    if value is None:
+        return ""
+
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+
+    result = str(value)
+    # Normalize all line endings to space to preserve row integrity in CSV-like output
+    # Must handle CRLF first before individual CR/LF to avoid double-spacing
+    result = result.replace("\r\n", " ")  # Windows (CRLF)
+    result = result.replace("\r", " ")  # Old Mac (CR)
+    result = result.replace("\n", " ")  # Unix (LF)
+    return result
+
+
 def get_workbook_name(file: Union[Path, IO[Any]], name: Optional[str]) -> str:
     """Extract workbook name from file path or name parameter."""
     if name:
@@ -47,28 +69,6 @@ def convert_xls_cell_value(cell_value: Any, cell_type: int, datemode: int) -> An
     if cell_type == xlrd.XL_CELL_BOOLEAN:
         return bool(cell_value)
     return cell_value
-
-
-def stringify_cell_value(value: Any) -> str:
-    """Convert cell value to string, normalizing dates and line endings."""
-    if value is None:
-        return ""
-
-    if isinstance(value, datetime):
-        return value.isoformat()
-    if isinstance(value, date):
-        return value.isoformat()
-
-    if isinstance(value, float) and value.is_integer():
-        return str(int(value))
-
-    result = str(value)
-    # Normalize all line endings to space to preserve row integrity in CSV-like output
-    # Must handle CRLF first before individual CR/LF to avoid double-spacing
-    result = result.replace("\r\n", " ")  # Windows (CRLF)
-    result = result.replace("\r", " ")  # Old Mac (CR)
-    result = result.replace("\n", " ")  # Unix (LF)
-    return result
 
 
 def row_to_csv_line(row_values: Sequence[Any]) -> str:
