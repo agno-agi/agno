@@ -2,7 +2,7 @@ import asyncio
 import csv
 import io
 from pathlib import Path
-from typing import IO, Any, Iterable, List, Optional, Sequence, Tuple, Union
+from typing import IO, Any, List, Optional, Union
 
 try:
     import aiofiles
@@ -12,18 +12,42 @@ except ImportError:
 from agno.knowledge.chunking.strategy import ChunkingStrategyType
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
-from agno.knowledge.reader.csv_reader import (
-    _convert_xls_cell_value,
-    _get_workbook_name,
-    _infer_file_extension,
-    _stringify_spreadsheet_cell_value,
-)
+from agno.knowledge.reader.spreadsheet_utils import stringify_cell_value
 from agno.knowledge.types import ContentType
 from agno.utils.log import log_debug, log_error, log_warning
 
 
 class FieldLabeledCSVReader(Reader):
-    """Reader for CSV files that converts each row to a field-labeled document."""
+    """Reader for CSV files that converts each row to a field-labeled document.
+
+    Each data row becomes a separate Document with field labels (column headers)
+    prefixed to each value. This format is useful for semantic search and retrieval
+    as it provides context for each field value.
+
+    For Excel files (.xlsx, .xls), use ExcelReader instead.
+
+    Args:
+        chunk_title: Optional title to prepend to each document. Can be a string
+            (same title for all) or a list of strings (rotates through titles).
+        field_names: Optional custom field names to use instead of CSV headers.
+        format_headers: Whether to format headers (replace underscores, title case).
+            Default is True.
+        skip_empty_fields: Whether to skip fields with empty values. Default is True.
+        **kwargs: Additional arguments passed to base Reader.
+
+    Example:
+        ```python
+        from agno.knowledge.reader.field_labeled_csv_reader import FieldLabeledCSVReader
+
+        reader = FieldLabeledCSVReader()
+        docs = reader.read("products.csv")
+
+        # Each row becomes a document like:
+        # "Product Name: Widget
+        #  Price: 29.99
+        #  Category: Electronics"
+        ```
+    """
 
     def __init__(
         self,
@@ -47,7 +71,7 @@ class FieldLabeledCSVReader(Reader):
     @classmethod
     def get_supported_content_types(cls) -> List[ContentType]:
         """Get the list of supported content types."""
-        return [ContentType.CSV, ContentType.XLSX, ContentType.XLS]
+        return [ContentType.CSV]
 
     def _format_field_name(self, field_name: str) -> str:
         """Format field name to be more readable."""
@@ -72,8 +96,7 @@ class FieldLabeledCSVReader(Reader):
         return None
 
     def _convert_row_to_labeled_text(self, headers: List[str], row: List[str], entry_index: int) -> str:
-        """
-        Convert a CSV row to field-labeled text format.
+        """Convert a CSV row to field-labeled text format.
 
         Args:
             headers: Column headers
@@ -91,7 +114,7 @@ class FieldLabeledCSVReader(Reader):
 
         for i, (header, value) in enumerate(zip(headers, row)):
             # Normalize line endings before stripping to handle embedded newlines
-            clean_value = _stringify_spreadsheet_cell_value(value).strip() if value else ""
+            clean_value = stringify_cell_value(value).strip() if value else ""
 
             if self.skip_empty_fields and not clean_value:
                 continue
@@ -105,155 +128,24 @@ class FieldLabeledCSVReader(Reader):
 
         return "\n".join(lines)
 
-    def _excel_rows_to_field_labeled_documents(
-        self,
-        *,
-        workbook_name: str,
-        sheets: Iterable[Tuple[str, Iterable[Sequence[Any]]]],
-    ) -> List[Document]:
-        """Convert Excel rows to field-labeled documents (one document per data row).
-
-        For each sheet: first row = headers, subsequent rows = data.
-        Each data row becomes a Document with field-labeled content.
-        """
-        documents = []
-        global_row_index = 0
-
-        for sheet_index, (sheet_name, rows) in enumerate(sheets, start=1):
-            rows_list = list(rows)
-
-            if not rows_list:
-                log_debug(f"Sheet '{sheet_name}' is empty, skipping")
-                continue
-
-            # First row is headers
-            headers = [_stringify_spreadsheet_cell_value(h).strip() for h in rows_list[0]]
-            if not any(headers):
-                log_debug(f"Sheet '{sheet_name}' has no valid headers, skipping")
-                continue
-
-            data_rows = rows_list[1:]
-            if not data_rows:
-                log_debug(f"Sheet '{sheet_name}' has only headers, skipping")
-                continue
-
-            log_debug(f"Processing sheet '{sheet_name}' with {len(headers)} headers and {len(data_rows)} rows")
-
-            for row_in_sheet, row in enumerate(data_rows):
-                # Convert cell values to strings
-                str_row = [_stringify_spreadsheet_cell_value(v) for v in row]
-
-                # Normalize row length
-                normalized_row = str_row[: len(headers)]
-                while len(normalized_row) < len(headers):
-                    normalized_row.append("")
-
-                # Skip entirely empty rows
-                if not any(v.strip() for v in normalized_row):
-                    continue
-
-                labeled_text = self._convert_row_to_labeled_text(headers, normalized_row, global_row_index)
-
-                if labeled_text.strip():
-                    doc_id = f"{workbook_name}_{sheet_name}_row_{row_in_sheet + 1}"
-                    documents.append(
-                        Document(
-                            id=doc_id,
-                            name=workbook_name,
-                            meta_data={
-                                "sheet_name": sheet_name,
-                                "sheet_index": sheet_index,
-                                "row_index": row_in_sheet,
-                                "headers": headers,
-                                "source": "field_labeled_csv_reader",
-                            },
-                            content=labeled_text,
-                        )
-                    )
-                    global_row_index += 1
-
-        return documents
-
-    def _read_xlsx(self, file: Union[Path, IO[Any]], *, workbook_name: str) -> List[Document]:
-        """Read .xlsx file and convert rows to field-labeled documents."""
-        try:
-            import openpyxl  # type: ignore
-        except ImportError as e:
-            raise ImportError(
-                "`openpyxl` not installed. Please install it via `pip install agno[csv]` or `pip install openpyxl`."
-            ) from e
-
-        if isinstance(file, Path):
-            workbook = openpyxl.load_workbook(filename=str(file), read_only=True, data_only=True)
-        else:
-            file.seek(0)
-            raw = file.read()
-            if isinstance(raw, str):
-                raw = raw.encode("utf-8", errors="replace")
-            workbook = openpyxl.load_workbook(filename=io.BytesIO(raw), read_only=True, data_only=True)
-
-        try:
-            return self._excel_rows_to_field_labeled_documents(
-                workbook_name=workbook_name,
-                sheets=[(worksheet.title, worksheet.iter_rows(values_only=True)) for worksheet in workbook.worksheets],
-            )
-        finally:
-            workbook.close()
-
-    def _read_xls(self, file: Union[Path, IO[Any]], *, workbook_name: str) -> List[Document]:
-        """Read .xls file and convert rows to field-labeled documents."""
-        try:
-            import xlrd  # type: ignore
-        except ImportError as e:
-            raise ImportError(
-                "`xlrd` not installed. Please install it via `pip install agno[csv]` or `pip install xlrd`."
-            ) from e
-
-        if isinstance(file, Path):
-            workbook = xlrd.open_workbook(filename=str(file))
-        else:
-            file.seek(0)
-            raw = file.read()
-            if isinstance(raw, str):
-                raw = raw.encode("utf-8", errors="replace")
-            workbook = xlrd.open_workbook(file_contents=raw)
-
-        sheets: List[Tuple[str, Iterable[Sequence[Any]]]] = []
-        for sheet_index in range(workbook.nsheets):
-            sheet = workbook.sheet_by_index(sheet_index)
-
-            def _iter_sheet_rows(_sheet: Any = sheet, _datemode: int = workbook.datemode) -> Iterable[Sequence[Any]]:
-                for row_index in range(_sheet.nrows):
-                    yield [
-                        _convert_xls_cell_value(
-                            _sheet.cell_value(row_index, col_index),
-                            _sheet.cell_type(row_index, col_index),
-                            _datemode,
-                        )
-                        for col_index in range(_sheet.ncols)
-                    ]
-
-            sheets.append((sheet.name, _iter_sheet_rows()))
-
-        return self._excel_rows_to_field_labeled_documents(workbook_name=workbook_name, sheets=sheets)
-
     def read(
         self, file: Union[Path, IO[Any]], delimiter: str = ",", quotechar: str = '"', name: Optional[str] = None
     ) -> List[Document]:
+        """Read a CSV file and convert each row to a field-labeled document.
+
+        Args:
+            file: Path to CSV file or file-like object.
+            delimiter: CSV field delimiter. Default is comma.
+            quotechar: CSV quote character. Default is double quote.
+            name: Optional name override for the documents.
+
+        Returns:
+            List of Document objects, one per data row.
+
+        Raises:
+            FileNotFoundError: If the file path doesn't exist.
+        """
         try:
-            file_extension = _infer_file_extension(file, name)
-
-            # Handle Excel files
-            if file_extension in {ContentType.XLSX, ContentType.XLS}:
-                workbook_name = _get_workbook_name(file, name)
-                log_debug(f"Reading Excel file: {workbook_name}{file_extension}")
-
-                if file_extension == ContentType.XLSX:
-                    return self._read_xlsx(file, workbook_name=workbook_name)
-                else:
-                    return self._read_xls(file, workbook_name=workbook_name)
-
-            # Handle CSV files
             if isinstance(file, Path):
                 if not file.exists():
                     raise FileNotFoundError(f"Could not find file: {file}")
@@ -318,6 +210,8 @@ class FieldLabeledCSVReader(Reader):
             log_debug(f"Successfully created {len(documents)} labeled documents from CSV")
             return documents
 
+        except FileNotFoundError:
+            raise
         except Exception as e:
             log_error(f"Error reading: {getattr(file, 'name', str(file)) if isinstance(file, IO) else file}: {e}")
             return []
@@ -330,20 +224,22 @@ class FieldLabeledCSVReader(Reader):
         page_size: int = 1000,
         name: Optional[str] = None,
     ) -> List[Document]:
+        """Read a CSV file asynchronously and convert each row to a field-labeled document.
+
+        Args:
+            file: Path to CSV file or file-like object.
+            delimiter: CSV field delimiter. Default is comma.
+            quotechar: CSV quote character. Default is double quote.
+            page_size: Number of rows per page for large files.
+            name: Optional name override for the documents.
+
+        Returns:
+            List of Document objects, one per data row.
+
+        Raises:
+            FileNotFoundError: If the file path doesn't exist.
+        """
         try:
-            file_extension = _infer_file_extension(file, name)
-
-            # Handle Excel files (use asyncio.to_thread for sync openpyxl/xlrd)
-            if file_extension in {ContentType.XLSX, ContentType.XLS}:
-                workbook_name = _get_workbook_name(file, name)
-                log_debug(f"Reading Excel file async: {workbook_name}{file_extension}")
-
-                if file_extension == ContentType.XLSX:
-                    return await asyncio.to_thread(self._read_xlsx, file, workbook_name=workbook_name)
-                else:
-                    return await asyncio.to_thread(self._read_xls, file, workbook_name=workbook_name)
-
-            # Handle CSV files
             if isinstance(file, Path):
                 if not file.exists():
                     raise FileNotFoundError(f"Could not find file: {file}")
@@ -399,12 +295,13 @@ class FieldLabeledCSVReader(Reader):
                         )
                         documents.append(document)
             else:
+                # Large files: paginate and process in parallel
                 pages = []
                 for i in range(0, total_rows, page_size):
                     pages.append(data_rows[i : i + page_size])
 
                 async def _process_page(page_number: int, page_rows: List[List[str]]) -> List[Document]:
-                    """Process a page of rows into documents"""
+                    """Process a page of rows into documents."""
                     page_documents = []
                     start_row_index = (page_number - 1) * page_size
 
@@ -443,6 +340,8 @@ class FieldLabeledCSVReader(Reader):
             log_debug(f"Successfully created {len(documents)} labeled documents from CSV")
             return documents
 
+        except FileNotFoundError:
+            raise
         except Exception as e:
             log_error(f"Error reading async: {getattr(file, 'name', str(file)) if isinstance(file, IO) else file}: {e}")
             return []

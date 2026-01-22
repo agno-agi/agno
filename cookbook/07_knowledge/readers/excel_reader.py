@@ -1,27 +1,16 @@
-"""
-Excel Reader Example
-
-Demonstrates reading Excel (.xlsx/.xls) files with the Knowledge system.
-CSVReader automatically handles Excel files - each sheet becomes a separate document
-with sheet metadata (sheet_name, sheet_index).
-
-Features demonstrated:
-- Multi-sheet workbook handling
-- Various data types (strings, numbers, booleans, dates)
-- Sheet metadata preservation
-- Integration with Knowledge and Agent
-"""
-
 from agno.agent import Agent
 from agno.knowledge.knowledge import Knowledge
-from agno.knowledge.reader.csv_reader import CSVReader
+from agno.knowledge.reader.excel_reader import ExcelReader
 from agno.models.openai import OpenAIChat
 from agno.vectordb.pgvector import PgVector
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
-# CSVReader handles Excel files automatically (.xlsx and .xls)
-reader = CSVReader()
+# ExcelReader with Excel-specific options
+# - sheets: Filter to specific sheets by name or 0-based index
+# - skip_hidden_sheets: Skip hidden sheets (default: True, xlsx only)
+# - include_empty_sheets: Include sheets with no data (default: False)
+reader = ExcelReader()
 
 knowledge_base = Knowledge(
     vector_db=PgVector(
@@ -30,7 +19,7 @@ knowledge_base = Knowledge(
     ),
 )
 
-# Insert Excel file - the reader detects .xlsx extension and uses openpyxl
+# Insert Excel file - ExcelReader uses openpyxl for .xlsx, xlrd for .xls
 knowledge_base.insert(
     path="cookbook/07_knowledge/testing_resources/sample_products.xlsx",
     reader=reader,

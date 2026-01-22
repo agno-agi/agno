@@ -6,23 +6,23 @@ from unittest.mock import patch
 
 import pytest
 
-from agno.knowledge.reader.csv_reader import CSVReader
+from agno.knowledge.reader.excel_reader import ExcelReader
 from agno.knowledge.reader.reader_factory import ReaderFactory
 
 
-def test_reader_factory_routes_xlsx_to_csv_reader():
+def test_reader_factory_routes_xlsx_to_excel_reader():
     ReaderFactory.clear_cache()
     reader = ReaderFactory.get_reader_for_extension(".xlsx")
-    assert isinstance(reader, CSVReader)
+    assert isinstance(reader, ExcelReader)
 
 
-def test_reader_factory_routes_xls_to_csv_reader():
+def test_reader_factory_routes_xls_to_excel_reader():
     ReaderFactory.clear_cache()
     reader = ReaderFactory.get_reader_for_extension(".xls")
-    assert isinstance(reader, CSVReader)
+    assert isinstance(reader, ExcelReader)
 
 
-def test_csv_reader_reads_xlsx_as_per_sheet_documents(tmp_path: Path):
+def test_excel_reader_reads_xlsx_as_per_sheet_documents(tmp_path: Path):
     openpyxl = pytest.importorskip("openpyxl")
 
     workbook = openpyxl.Workbook()
@@ -44,7 +44,7 @@ def test_csv_reader_reads_xlsx_as_per_sheet_documents(tmp_path: Path):
     file_path = tmp_path / "workbook.xlsx"
     file_path.write_bytes(buffer.getvalue())
 
-    reader = CSVReader(chunk=False)
+    reader = ExcelReader(chunk=False)
     documents = reader.read(file_path)
 
     assert len(documents) == 2
@@ -55,7 +55,7 @@ def test_csv_reader_reads_xlsx_as_per_sheet_documents(tmp_path: Path):
     assert first_doc.content.splitlines() == ["name, age", "alice, 30"]
 
 
-def test_csv_reader_reads_xlsx_preserves_cell_whitespace_when_chunk_disabled(tmp_path: Path):
+def test_excel_reader_reads_xlsx_preserves_cell_whitespace_when_chunk_disabled(tmp_path: Path):
     openpyxl = pytest.importorskip("openpyxl")
 
     workbook = openpyxl.Workbook()
@@ -71,14 +71,14 @@ def test_csv_reader_reads_xlsx_preserves_cell_whitespace_when_chunk_disabled(tmp
     file_path = tmp_path / "whitespace.xlsx"
     file_path.write_bytes(buffer.getvalue())
 
-    reader = CSVReader(chunk=False)
+    reader = ExcelReader(chunk=False)
     documents = reader.read(file_path)
 
     assert len(documents) == 1
     assert documents[0].content.splitlines() == ["  name, age  ", "  alice, 30  "]
 
 
-def test_csv_reader_chunks_xlsx_rows_and_preserves_sheet_metadata(tmp_path: Path):
+def test_excel_reader_chunks_xlsx_rows_and_preserves_sheet_metadata(tmp_path: Path):
     openpyxl = pytest.importorskip("openpyxl")
 
     workbook = openpyxl.Workbook()
@@ -98,7 +98,7 @@ def test_csv_reader_chunks_xlsx_rows_and_preserves_sheet_metadata(tmp_path: Path
     file_path = tmp_path / "workbook.xlsx"
     file_path.write_bytes(buffer.getvalue())
 
-    reader = CSVReader()  # chunk=True by default
+    reader = ExcelReader()  # chunk=True by default
     chunked_documents = reader.read(file_path)
 
     assert len(chunked_documents) == 4
@@ -110,7 +110,7 @@ def test_csv_reader_chunks_xlsx_rows_and_preserves_sheet_metadata(tmp_path: Path
     assert first_rows == [1, 2]
 
 
-def test_csv_reader_reads_xls_as_per_sheet_documents(tmp_path: Path):
+def test_excel_reader_reads_xls_as_per_sheet_documents(tmp_path: Path):
     xlwt = pytest.importorskip("xlwt")
 
     workbook = xlwt.Workbook()
@@ -129,7 +129,7 @@ def test_csv_reader_reads_xls_as_per_sheet_documents(tmp_path: Path):
     file_path = tmp_path / "workbook.xls"
     workbook.save(str(file_path))
 
-    reader = CSVReader(chunk=False)
+    reader = ExcelReader(chunk=False)
     documents = reader.read(file_path)
 
     assert len(documents) == 2
@@ -141,7 +141,7 @@ def test_csv_reader_reads_xls_as_per_sheet_documents(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_csv_reader_async_reads_xlsx(tmp_path: Path):
+async def test_excel_reader_async_reads_xlsx(tmp_path: Path):
     openpyxl = pytest.importorskip("openpyxl")
 
     workbook = openpyxl.Workbook()
@@ -157,7 +157,7 @@ async def test_csv_reader_async_reads_xlsx(tmp_path: Path):
     file_path = tmp_path / "async_test.xlsx"
     file_path.write_bytes(buffer.getvalue())
 
-    reader = CSVReader(chunk=False)
+    reader = ExcelReader(chunk=False)
     documents = await reader.async_read(file_path)
 
     assert len(documents) == 1
@@ -166,7 +166,7 @@ async def test_csv_reader_async_reads_xlsx(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_csv_reader_async_reads_xls(tmp_path: Path):
+async def test_excel_reader_async_reads_xls(tmp_path: Path):
     xlwt = pytest.importorskip("xlwt")
 
     workbook = xlwt.Workbook()
@@ -179,7 +179,7 @@ async def test_csv_reader_async_reads_xls(tmp_path: Path):
     file_path = tmp_path / "async_test.xls"
     workbook.save(str(file_path))
 
-    reader = CSVReader(chunk=False)
+    reader = ExcelReader(chunk=False)
     documents = await reader.async_read(file_path)
 
     assert len(documents) == 1
@@ -187,7 +187,7 @@ async def test_csv_reader_async_reads_xls(tmp_path: Path):
     assert documents[0].content.splitlines() == ["name, value", "test, 42"]
 
 
-def test_csv_reader_reads_xlsx_from_bytesio_with_name(tmp_path: Path):
+def test_excel_reader_reads_xlsx_from_bytesio_with_name(tmp_path: Path):
     openpyxl = pytest.importorskip("openpyxl")
 
     workbook = openpyxl.Workbook()
@@ -203,7 +203,7 @@ def test_csv_reader_reads_xlsx_from_bytesio_with_name(tmp_path: Path):
     buffer.seek(0)
     buffer.name = "named_workbook.xlsx"
 
-    reader = CSVReader(chunk=False)
+    reader = ExcelReader(chunk=False)
     documents = reader.read(buffer)
 
     assert len(documents) == 1
@@ -211,7 +211,7 @@ def test_csv_reader_reads_xlsx_from_bytesio_with_name(tmp_path: Path):
     assert documents[0].content.splitlines() == ["col1, col2", "a, b"]
 
 
-def test_csv_reader_reads_xlsx_from_bytesio_without_name():
+def test_excel_reader_reads_xlsx_from_bytesio_without_name():
     openpyxl = pytest.importorskip("openpyxl")
 
     workbook = openpyxl.Workbook()
@@ -226,7 +226,7 @@ def test_csv_reader_reads_xlsx_from_bytesio_without_name():
 
     buffer.seek(0)
 
-    reader = CSVReader(chunk=False)
+    reader = ExcelReader(chunk=False)
     documents = reader.read(buffer, name="fallback.xlsx")
 
     assert len(documents) == 1
@@ -234,7 +234,7 @@ def test_csv_reader_reads_xlsx_from_bytesio_without_name():
     assert documents[0].content.splitlines() == ["col1, col2", "a, b"]
 
 
-def test_csv_reader_xlsx_data_types(tmp_path: Path):
+def test_excel_reader_xlsx_data_types(tmp_path: Path):
     openpyxl = pytest.importorskip("openpyxl")
 
     workbook = openpyxl.Workbook()
@@ -255,7 +255,7 @@ def test_csv_reader_xlsx_data_types(tmp_path: Path):
     file_path = tmp_path / "types.xlsx"
     file_path.write_bytes(buffer.getvalue())
 
-    reader = CSVReader(chunk=False)
+    reader = ExcelReader(chunk=False)
     documents = reader.read(file_path)
 
     assert len(documents) == 1
@@ -269,7 +269,7 @@ def test_csv_reader_xlsx_data_types(tmp_path: Path):
     assert lines[6] == "string, hello"
 
 
-def test_csv_reader_xlsx_unicode_content(tmp_path: Path):
+def test_excel_reader_xlsx_unicode_content(tmp_path: Path):
     openpyxl = pytest.importorskip("openpyxl")
 
     workbook = openpyxl.Workbook()
@@ -287,7 +287,7 @@ def test_csv_reader_xlsx_unicode_content(tmp_path: Path):
     file_path = tmp_path / "unicode.xlsx"
     file_path.write_bytes(buffer.getvalue())
 
-    reader = CSVReader(chunk=False)
+    reader = ExcelReader(chunk=False)
     documents = reader.read(file_path)
 
     assert len(documents) == 1
@@ -297,7 +297,7 @@ def test_csv_reader_xlsx_unicode_content(tmp_path: Path):
     assert lines[3] == "Chinese, 你好"
 
 
-def test_csv_reader_xlsx_all_empty_sheets_returns_empty_list(tmp_path: Path):
+def test_excel_reader_xlsx_all_empty_sheets_returns_empty_list(tmp_path: Path):
     openpyxl = pytest.importorskip("openpyxl")
 
     workbook = openpyxl.Workbook()
@@ -312,13 +312,13 @@ def test_csv_reader_xlsx_all_empty_sheets_returns_empty_list(tmp_path: Path):
     file_path = tmp_path / "all_empty.xlsx"
     file_path.write_bytes(buffer.getvalue())
 
-    reader = CSVReader(chunk=False)
+    reader = ExcelReader(chunk=False)
     documents = reader.read(file_path)
 
     assert documents == []
 
 
-def test_csv_reader_xlsx_trims_trailing_empty_cells(tmp_path: Path):
+def test_excel_reader_xlsx_trims_trailing_empty_cells(tmp_path: Path):
     openpyxl = pytest.importorskip("openpyxl")
 
     workbook = openpyxl.Workbook()
@@ -341,7 +341,7 @@ def test_csv_reader_xlsx_trims_trailing_empty_cells(tmp_path: Path):
     file_path = tmp_path / "trailing.xlsx"
     file_path.write_bytes(buffer.getvalue())
 
-    reader = CSVReader(chunk=False)
+    reader = ExcelReader(chunk=False)
     documents = reader.read(file_path)
 
     assert len(documents) == 1
@@ -350,7 +350,7 @@ def test_csv_reader_xlsx_trims_trailing_empty_cells(tmp_path: Path):
     assert lines[1] == "x"
 
 
-def test_csv_reader_xlsx_skips_empty_rows(tmp_path: Path):
+def test_excel_reader_xlsx_skips_empty_rows(tmp_path: Path):
     openpyxl = pytest.importorskip("openpyxl")
 
     workbook = openpyxl.Workbook()
@@ -369,7 +369,7 @@ def test_csv_reader_xlsx_skips_empty_rows(tmp_path: Path):
     file_path = tmp_path / "sparse.xlsx"
     file_path.write_bytes(buffer.getvalue())
 
-    reader = CSVReader(chunk=False)
+    reader = ExcelReader(chunk=False)
     documents = reader.read(file_path)
 
     assert len(documents) == 1
@@ -377,7 +377,7 @@ def test_csv_reader_xlsx_skips_empty_rows(tmp_path: Path):
     assert lines == ["header", "data", "more_data"]
 
 
-def test_csv_reader_xlsx_handles_special_characters(tmp_path: Path):
+def test_excel_reader_xlsx_handles_special_characters(tmp_path: Path):
     openpyxl = pytest.importorskip("openpyxl")
 
     workbook = openpyxl.Workbook()
@@ -395,7 +395,7 @@ def test_csv_reader_xlsx_handles_special_characters(tmp_path: Path):
     file_path = tmp_path / "special.xlsx"
     file_path.write_bytes(buffer.getvalue())
 
-    reader = CSVReader(chunk=False)
+    reader = ExcelReader(chunk=False)
     documents = reader.read(file_path)
 
     assert len(documents) == 1
@@ -406,7 +406,7 @@ def test_csv_reader_xlsx_handles_special_characters(tmp_path: Path):
     assert "line1 line2" in content
 
 
-def test_csv_reader_xlsx_datetime_cells_formatted_as_iso(tmp_path: Path):
+def test_excel_reader_xlsx_datetime_cells_formatted_as_iso(tmp_path: Path):
     openpyxl = pytest.importorskip("openpyxl")
 
     workbook = openpyxl.Workbook()
@@ -423,7 +423,7 @@ def test_csv_reader_xlsx_datetime_cells_formatted_as_iso(tmp_path: Path):
     file_path = tmp_path / "dates.xlsx"
     file_path.write_bytes(buffer.getvalue())
 
-    reader = CSVReader(chunk=False)
+    reader = ExcelReader(chunk=False)
     documents = reader.read(file_path)
 
     assert len(documents) == 1
@@ -435,7 +435,7 @@ def test_csv_reader_xlsx_datetime_cells_formatted_as_iso(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_csv_reader_async_xlsx_with_chunking(tmp_path: Path):
+async def test_excel_reader_async_xlsx_with_chunking(tmp_path: Path):
     openpyxl = pytest.importorskip("openpyxl")
 
     workbook = openpyxl.Workbook()
@@ -453,7 +453,7 @@ async def test_csv_reader_async_xlsx_with_chunking(tmp_path: Path):
     file_path = tmp_path / "async_chunk.xlsx"
     file_path.write_bytes(buffer.getvalue())
 
-    reader = CSVReader(chunk=True)
+    reader = ExcelReader(chunk=True)
     documents = await reader.async_read(file_path)
 
     assert len(documents) == 4
@@ -462,58 +462,48 @@ async def test_csv_reader_async_xlsx_with_chunking(tmp_path: Path):
     assert row_numbers == [1, 2, 3, 4]
 
 
-def test_csv_reader_xlsx_raises_import_error_when_openpyxl_missing(tmp_path: Path):
+def test_excel_reader_xlsx_raises_import_error_when_openpyxl_missing(tmp_path: Path):
     file_path = tmp_path / "test.xlsx"
     file_path.write_bytes(b"dummy")
 
     with patch.dict(sys.modules, {"openpyxl": None}):
-        reader = CSVReader(chunk=False)
+        reader = ExcelReader(chunk=False)
         with pytest.raises(ImportError, match="openpyxl"):
             reader.read(file_path)
 
 
-def test_csv_reader_xls_raises_import_error_when_xlrd_missing(tmp_path: Path):
+def test_excel_reader_xls_raises_import_error_when_xlrd_missing(tmp_path: Path):
     file_path = tmp_path / "test.xls"
     file_path.write_bytes(b"dummy")
 
     with patch.dict(sys.modules, {"xlrd": None}):
-        reader = CSVReader(chunk=False)
+        reader = ExcelReader(chunk=False)
         with pytest.raises(ImportError, match="xlrd"):
             reader.read(file_path)
 
 
-def test_csv_reader_xlsx_corrupted_file_returns_empty_list(tmp_path: Path):
+def test_excel_reader_xlsx_corrupted_file_returns_empty_list(tmp_path: Path):
     pytest.importorskip("openpyxl")
 
     file_path = tmp_path / "corrupted.xlsx"
     file_path.write_bytes(b"not a valid xlsx file content")
 
-    reader = CSVReader(chunk=False)
+    reader = ExcelReader(chunk=False)
     documents = reader.read(file_path)
 
     assert documents == []
 
 
-def test_csv_reader_csv_file_not_found_raises_error(tmp_path: Path):
-    file_path = tmp_path / "nonexistent.csv"
-
-    reader = CSVReader(chunk=False)
-    with pytest.raises(FileNotFoundError, match="Could not find file"):
-        reader.read(file_path)
-
-
-def test_csv_reader_xlsx_file_not_found_raises_error(tmp_path: Path):
+def test_excel_reader_xlsx_file_not_found_raises_error(tmp_path: Path):
     pytest.importorskip("openpyxl")
     file_path = tmp_path / "nonexistent.xlsx"
 
-    reader = CSVReader(chunk=False)
-    # For Excel files, openpyxl raises its own FileNotFoundError
+    reader = ExcelReader(chunk=False)
     with pytest.raises(FileNotFoundError):
         reader.read(file_path)
 
 
-def test_csv_reader_xls_boolean_cells(tmp_path: Path):
-    """Test that xls boolean cells show True/False, not 1/0."""
+def test_excel_reader_xls_boolean_cells(tmp_path: Path):
     xlwt = pytest.importorskip("xlwt")
 
     workbook = xlwt.Workbook()
@@ -528,7 +518,7 @@ def test_csv_reader_xls_boolean_cells(tmp_path: Path):
     file_path = tmp_path / "booleans.xls"
     workbook.save(str(file_path))
 
-    reader = CSVReader(chunk=False)
+    reader = ExcelReader(chunk=False)
     documents = reader.read(file_path)
 
     assert len(documents) == 1
@@ -538,8 +528,7 @@ def test_csv_reader_xls_boolean_cells(tmp_path: Path):
     assert lines[2] == "Gadget, False"
 
 
-def test_csv_reader_xls_multiline_content_preserved_as_space(tmp_path: Path):
-    """Test that multiline cell content is converted to spaces to preserve row integrity."""
+def test_excel_reader_xls_multiline_content_preserved_as_space(tmp_path: Path):
     xlwt = pytest.importorskip("xlwt")
 
     workbook = xlwt.Workbook()
@@ -552,7 +541,7 @@ def test_csv_reader_xls_multiline_content_preserved_as_space(tmp_path: Path):
     file_path = tmp_path / "multiline.xls"
     workbook.save(str(file_path))
 
-    reader = CSVReader(chunk=False)
+    reader = ExcelReader(chunk=False)
     documents = reader.read(file_path)
 
     assert len(documents) == 1
@@ -562,8 +551,7 @@ def test_csv_reader_xls_multiline_content_preserved_as_space(tmp_path: Path):
     assert lines[1] == "1, Line1 Line2 Line3"
 
 
-def test_csv_reader_xlsx_multiline_content_preserved_as_space(tmp_path: Path):
-    """Test that multiline cell content is converted to spaces in xlsx files too."""
+def test_excel_reader_xlsx_multiline_content_preserved_as_space(tmp_path: Path):
     openpyxl = pytest.importorskip("openpyxl")
 
     workbook = openpyxl.Workbook()
@@ -578,7 +566,7 @@ def test_csv_reader_xlsx_multiline_content_preserved_as_space(tmp_path: Path):
     file_path = tmp_path / "multiline.xlsx"
     file_path.write_bytes(buffer.getvalue())
 
-    reader = CSVReader(chunk=False)
+    reader = ExcelReader(chunk=False)
     documents = reader.read(file_path)
 
     assert len(documents) == 1
@@ -588,8 +576,7 @@ def test_csv_reader_xlsx_multiline_content_preserved_as_space(tmp_path: Path):
     assert lines[1] == "1, Line1 Line2 Line3"
 
 
-def test_csv_reader_xlsx_carriage_return_normalized(tmp_path: Path):
-    """Test that carriage return (CR) in xlsx cells is converted to space."""
+def test_excel_reader_xlsx_carriage_return_normalized(tmp_path: Path):
     openpyxl = pytest.importorskip("openpyxl")
 
     workbook = openpyxl.Workbook()
@@ -605,7 +592,7 @@ def test_csv_reader_xlsx_carriage_return_normalized(tmp_path: Path):
     file_path = tmp_path / "carriage_return.xlsx"
     file_path.write_bytes(buffer.getvalue())
 
-    reader = CSVReader(chunk=False)
+    reader = ExcelReader(chunk=False)
     documents = reader.read(file_path)
 
     assert len(documents) == 1
@@ -616,8 +603,7 @@ def test_csv_reader_xlsx_carriage_return_normalized(tmp_path: Path):
     assert lines[2] == "crlf, line1 line2"
 
 
-def test_csv_reader_xls_carriage_return_normalized(tmp_path: Path):
-    """Test that carriage return (CR) in xls cells is converted to space."""
+def test_excel_reader_xls_carriage_return_normalized(tmp_path: Path):
     xlwt = pytest.importorskip("xlwt")
 
     workbook = xlwt.Workbook()
@@ -632,7 +618,7 @@ def test_csv_reader_xls_carriage_return_normalized(tmp_path: Path):
     file_path = tmp_path / "carriage_return.xls"
     workbook.save(str(file_path))
 
-    reader = CSVReader(chunk=False)
+    reader = ExcelReader(chunk=False)
     documents = reader.read(file_path)
 
     assert len(documents) == 1
@@ -643,43 +629,601 @@ def test_csv_reader_xls_carriage_return_normalized(tmp_path: Path):
     assert lines[2] == "crlf, line1 line2"
 
 
-def test_csv_reader_csv_multiline_cells_normalized(tmp_path: Path):
-    """Test that embedded newlines in CSV cells are converted to spaces."""
-    csv_content = """type,value
-lf,"line1
-line2"
-normal,simple"""
+# ============================================================================
+# ExcelReader-specific tests (sheet filtering, hidden sheets)
+# ============================================================================
 
-    file_path = tmp_path / "multiline.csv"
-    file_path.write_text(csv_content, encoding="utf-8")
 
-    reader = CSVReader(chunk=False)
+def test_excel_reader_filter_sheets_by_name(tmp_path: Path):
+    openpyxl = pytest.importorskip("openpyxl")
+
+    workbook = openpyxl.Workbook()
+    first_sheet = workbook.active
+    first_sheet.title = "First"
+    first_sheet.append(["a", "b"])
+
+    second_sheet = workbook.create_sheet("Second")
+    second_sheet.append(["c", "d"])
+
+    third_sheet = workbook.create_sheet("Third")
+    third_sheet.append(["e", "f"])
+
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    workbook.close()
+
+    file_path = tmp_path / "filter.xlsx"
+    file_path.write_bytes(buffer.getvalue())
+
+    # Read only "First" and "Third" sheets
+    reader = ExcelReader(chunk=False, sheets=["First", "Third"])
+    documents = reader.read(file_path)
+
+    assert len(documents) == 2
+    assert {doc.meta_data["sheet_name"] for doc in documents} == {"First", "Third"}
+
+
+def test_excel_reader_filter_sheets_by_index(tmp_path: Path):
+    openpyxl = pytest.importorskip("openpyxl")
+
+    workbook = openpyxl.Workbook()
+    first_sheet = workbook.active
+    first_sheet.title = "First"
+    first_sheet.append(["a", "b"])
+
+    second_sheet = workbook.create_sheet("Second")
+    second_sheet.append(["c", "d"])
+
+    third_sheet = workbook.create_sheet("Third")
+    third_sheet.append(["e", "f"])
+
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    workbook.close()
+
+    file_path = tmp_path / "filter.xlsx"
+    file_path.write_bytes(buffer.getvalue())
+
+    # Read only sheets at index 0 and 2 (First and Third)
+    reader = ExcelReader(chunk=False, sheets=[0, 2])
+    documents = reader.read(file_path)
+
+    assert len(documents) == 2
+    assert {doc.meta_data["sheet_name"] for doc in documents} == {"First", "Third"}
+
+
+def test_excel_reader_skip_hidden_sheets_by_default(tmp_path: Path):
+    openpyxl = pytest.importorskip("openpyxl")
+
+    workbook = openpyxl.Workbook()
+    visible_sheet = workbook.active
+    visible_sheet.title = "Visible"
+    visible_sheet.append(["visible", "data"])
+
+    hidden_sheet = workbook.create_sheet("Hidden")
+    hidden_sheet.append(["hidden", "data"])
+    hidden_sheet.sheet_state = "hidden"
+
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    workbook.close()
+
+    file_path = tmp_path / "hidden.xlsx"
+    file_path.write_bytes(buffer.getvalue())
+
+    # Default: skip hidden sheets
+    reader = ExcelReader(chunk=False)
     documents = reader.read(file_path)
 
     assert len(documents) == 1
-    lines = documents[0].content.strip().splitlines()
-    # Embedded newlines should be converted to spaces
-    assert len(lines) == 3
+    assert documents[0].meta_data["sheet_name"] == "Visible"
+
+
+def test_excel_reader_include_hidden_sheets_when_configured(tmp_path: Path):
+    openpyxl = pytest.importorskip("openpyxl")
+
+    workbook = openpyxl.Workbook()
+    visible_sheet = workbook.active
+    visible_sheet.title = "Visible"
+    visible_sheet.append(["visible", "data"])
+
+    hidden_sheet = workbook.create_sheet("Hidden")
+    hidden_sheet.append(["hidden", "data"])
+    hidden_sheet.sheet_state = "hidden"
+
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    workbook.close()
+
+    file_path = tmp_path / "hidden.xlsx"
+    file_path.write_bytes(buffer.getvalue())
+
+    # Include hidden sheets
+    reader = ExcelReader(chunk=False, skip_hidden_sheets=False)
+    documents = reader.read(file_path)
+
+    assert len(documents) == 2
+    assert {doc.meta_data["sheet_name"] for doc in documents} == {"Visible", "Hidden"}
+
+
+def test_excel_reader_unsupported_extension_returns_empty(tmp_path: Path):
+    file_path = tmp_path / "file.txt"
+    file_path.write_text("not an excel file")
+
+    reader = ExcelReader(chunk=False)
+    documents = reader.read(file_path)
+
+    assert documents == []
+
+
+# ============================================================================
+# XLS-specific edge case tests
+# ============================================================================
+
+
+def test_excel_reader_xls_date_cells_converted_to_iso(tmp_path: Path):
+    """XLS stores dates as serial numbers - verify they convert to ISO format."""
+    xlwt = pytest.importorskip("xlwt")
+
+    workbook = xlwt.Workbook()
+    sheet = workbook.add_sheet("Dates")
+    sheet.write(0, 0, "type")
+    sheet.write(0, 1, "value")
+
+    # xlwt requires xlrd-style date tuples or datetime objects
+    # Write dates using xlwt's date format
+    date_format = xlwt.XFStyle()
+    date_format.num_format_str = "YYYY-MM-DD"
+
+    datetime_format = xlwt.XFStyle()
+    datetime_format.num_format_str = "YYYY-MM-DD HH:MM:SS"
+
+    sheet.write(1, 0, "date")
+    sheet.write(1, 1, datetime(2024, 1, 20), date_format)
+
+    sheet.write(2, 0, "datetime")
+    sheet.write(2, 1, datetime(2024, 12, 25, 14, 30, 45), datetime_format)
+
+    file_path = tmp_path / "dates.xls"
+    workbook.save(str(file_path))
+
+    reader = ExcelReader(chunk=False)
+    documents = reader.read(file_path)
+
+    assert len(documents) == 1
+    lines = documents[0].content.splitlines()
     assert lines[0] == "type, value"
-    assert lines[1] == "lf, line1 line2"
-    assert lines[2] == "normal, simple"
+    # Dates should be converted to ISO format (not raw serial numbers)
+    assert "2024-01-20" in lines[1]
+    assert "2024-12-25" in lines[2]
 
 
-def test_csv_reader_csv_carriage_return_normalized(tmp_path: Path):
-    """Test that carriage returns in CSV cells are converted to spaces."""
-    # Create CSV with CR and CRLF embedded in cells
-    csv_content = 'type,value\r\ncr_only,"line1\rline2"\r\ncrlf,"line1\r\nline2"'
+def test_excel_reader_xls_corrupted_file_returns_empty_list(tmp_path: Path):
+    pytest.importorskip("xlrd")
 
-    file_path = tmp_path / "cr_cells.csv"
-    # Write in binary mode to preserve exact bytes
-    file_path.write_bytes(csv_content.encode("utf-8"))
+    file_path = tmp_path / "corrupted.xls"
+    file_path.write_bytes(b"not a valid xls file content")
 
-    reader = CSVReader(chunk=False)
+    reader = ExcelReader(chunk=False)
+    documents = reader.read(file_path)
+
+    assert documents == []
+
+
+def test_excel_reader_xls_file_not_found_raises_error(tmp_path: Path):
+    pytest.importorskip("xlrd")
+    file_path = tmp_path / "nonexistent.xls"
+
+    reader = ExcelReader(chunk=False)
+    with pytest.raises(FileNotFoundError):
+        reader.read(file_path)
+
+
+def test_excel_reader_xls_unicode_content(tmp_path: Path):
+    xlwt = pytest.importorskip("xlwt")
+
+    workbook = xlwt.Workbook()
+    sheet = workbook.add_sheet("Unicode")
+    sheet.write(0, 0, "language")
+    sheet.write(0, 1, "greeting")
+    sheet.write(1, 0, "Japanese")
+    sheet.write(1, 1, "こんにちは")
+    sheet.write(2, 0, "Chinese")
+    sheet.write(2, 1, "你好")
+    sheet.write(3, 0, "German")
+    sheet.write(3, 1, "Größe")
+
+    file_path = tmp_path / "unicode.xls"
+    workbook.save(str(file_path))
+
+    reader = ExcelReader(chunk=False)
     documents = reader.read(file_path)
 
     assert len(documents) == 1
-    lines = documents[0].content.strip().splitlines()
-    # All line endings inside cells should be normalized to spaces
-    assert len(lines) == 3
-    assert lines[1] == "cr_only, line1 line2"
-    assert lines[2] == "crlf, line1 line2"
+    lines = documents[0].content.splitlines()
+    assert lines[1] == "Japanese, こんにちは"
+    assert lines[2] == "Chinese, 你好"
+    assert lines[3] == "German, Größe"
+
+
+def test_excel_reader_xls_filter_sheets_by_name(tmp_path: Path):
+    xlwt = pytest.importorskip("xlwt")
+
+    workbook = xlwt.Workbook()
+    first_sheet = workbook.add_sheet("First")
+    first_sheet.write(0, 0, "a")
+    first_sheet.write(0, 1, "b")
+
+    second_sheet = workbook.add_sheet("Second")
+    second_sheet.write(0, 0, "c")
+    second_sheet.write(0, 1, "d")
+
+    third_sheet = workbook.add_sheet("Third")
+    third_sheet.write(0, 0, "e")
+    third_sheet.write(0, 1, "f")
+
+    file_path = tmp_path / "filter.xls"
+    workbook.save(str(file_path))
+
+    # Read only "First" and "Third" sheets
+    reader = ExcelReader(chunk=False, sheets=["First", "Third"])
+    documents = reader.read(file_path)
+
+    assert len(documents) == 2
+    assert {doc.meta_data["sheet_name"] for doc in documents} == {"First", "Third"}
+
+
+def test_excel_reader_xls_filter_sheets_by_index(tmp_path: Path):
+    xlwt = pytest.importorskip("xlwt")
+
+    workbook = xlwt.Workbook()
+    first_sheet = workbook.add_sheet("First")
+    first_sheet.write(0, 0, "a")
+    first_sheet.write(0, 1, "b")
+
+    second_sheet = workbook.add_sheet("Second")
+    second_sheet.write(0, 0, "c")
+    second_sheet.write(0, 1, "d")
+
+    third_sheet = workbook.add_sheet("Third")
+    third_sheet.write(0, 0, "e")
+    third_sheet.write(0, 1, "f")
+
+    file_path = tmp_path / "filter.xls"
+    workbook.save(str(file_path))
+
+    # Read only sheets at index 0 and 2 (First and Third)
+    reader = ExcelReader(chunk=False, sheets=[0, 2])
+    documents = reader.read(file_path)
+
+    assert len(documents) == 2
+    assert {doc.meta_data["sheet_name"] for doc in documents} == {"First", "Third"}
+
+
+def test_excel_reader_xls_from_bytesio(tmp_path: Path):
+    xlwt = pytest.importorskip("xlwt")
+
+    workbook = xlwt.Workbook()
+    sheet = workbook.add_sheet("Data")
+    sheet.write(0, 0, "col1")
+    sheet.write(0, 1, "col2")
+    sheet.write(1, 0, "a")
+    sheet.write(1, 1, "b")
+
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    buffer.seek(0)
+    buffer.name = "test.xls"
+
+    reader = ExcelReader(chunk=False)
+    documents = reader.read(buffer)
+
+    assert len(documents) == 1
+    assert documents[0].name == "test"
+    assert documents[0].content.splitlines() == ["col1, col2", "a, b"]
+
+
+def test_excel_reader_xls_data_types(tmp_path: Path):
+    xlwt = pytest.importorskip("xlwt")
+
+    workbook = xlwt.Workbook()
+    sheet = workbook.add_sheet("Types")
+    sheet.write(0, 0, "type")
+    sheet.write(0, 1, "value")
+    sheet.write(1, 0, "float")
+    sheet.write(1, 1, 3.14)
+    sheet.write(2, 0, "int_float")
+    sheet.write(2, 1, 30.0)
+    sheet.write(3, 0, "string")
+    sheet.write(3, 1, "hello")
+    sheet.write(4, 0, "empty")
+    sheet.write(4, 1, None)
+
+    file_path = tmp_path / "types.xls"
+    workbook.save(str(file_path))
+
+    reader = ExcelReader(chunk=False)
+    documents = reader.read(file_path)
+
+    assert len(documents) == 1
+    lines = documents[0].content.splitlines()
+    assert lines[0] == "type, value"
+    assert lines[1] == "float, 3.14"
+    assert lines[2] == "int_float, 30"
+    assert lines[3] == "string, hello"
+    assert lines[4] == "empty"
+
+
+def test_excel_reader_xls_special_characters(tmp_path: Path):
+    xlwt = pytest.importorskip("xlwt")
+
+    workbook = xlwt.Workbook()
+    sheet = workbook.add_sheet("Special")
+    sheet.write(0, 0, "type")
+    sheet.write(0, 1, "value")
+    sheet.write(1, 0, "comma")
+    sheet.write(1, 1, "a,b,c")
+    sheet.write(2, 0, "quote")
+    sheet.write(2, 1, 'say "hello"')
+
+    file_path = tmp_path / "special.xls"
+    workbook.save(str(file_path))
+
+    reader = ExcelReader(chunk=False)
+    documents = reader.read(file_path)
+
+    assert len(documents) == 1
+    content = documents[0].content
+    assert "a,b,c" in content
+    assert 'say "hello"' in content
+
+
+def test_excel_reader_xls_trims_trailing_empty_cells(tmp_path: Path):
+    xlwt = pytest.importorskip("xlwt")
+
+    workbook = xlwt.Workbook()
+    sheet = workbook.add_sheet("Trailing")
+    sheet.write(0, 0, "a")
+    sheet.write(0, 1, "b")
+    # Cells C1, D1, E1 left empty (trailing)
+
+    sheet.write(1, 0, "x")
+    # Cells B2, C2 left empty (trailing)
+
+    file_path = tmp_path / "trailing.xls"
+    workbook.save(str(file_path))
+
+    reader = ExcelReader(chunk=False)
+    documents = reader.read(file_path)
+
+    assert len(documents) == 1
+    lines = documents[0].content.splitlines()
+    assert lines[0] == "a, b"
+    assert lines[1] == "x"
+
+
+def test_excel_reader_xls_skips_empty_rows(tmp_path: Path):
+    xlwt = pytest.importorskip("xlwt")
+
+    workbook = xlwt.Workbook()
+    sheet = workbook.add_sheet("Sparse")
+    sheet.write(0, 0, "header")
+    # Row 1 left empty
+    sheet.write(2, 0, "data")
+    # Row 3 left empty
+    sheet.write(4, 0, "more_data")
+
+    file_path = tmp_path / "sparse.xls"
+    workbook.save(str(file_path))
+
+    reader = ExcelReader(chunk=False)
+    documents = reader.read(file_path)
+
+    assert len(documents) == 1
+    lines = documents[0].content.splitlines()
+    assert lines == ["header", "data", "more_data"]
+
+
+def test_excel_reader_xls_all_empty_sheets_returns_empty_list(tmp_path: Path):
+    xlwt = pytest.importorskip("xlwt")
+
+    workbook = xlwt.Workbook()
+    workbook.add_sheet("Empty1")
+    workbook.add_sheet("Empty2")
+
+    file_path = tmp_path / "all_empty.xls"
+    workbook.save(str(file_path))
+
+    reader = ExcelReader(chunk=False)
+    documents = reader.read(file_path)
+
+    assert documents == []
+
+
+# ============================================================================
+# Practical edge cases for knowledge/RAG applications
+# ============================================================================
+
+
+def test_excel_reader_xls_chunks_rows_for_rag(tmp_path: Path):
+    """XLS files with chunking for vector DB ingestion."""
+    xlwt = pytest.importorskip("xlwt")
+
+    workbook = xlwt.Workbook()
+    sheet = workbook.add_sheet("Products")
+    sheet.write(0, 0, "name")
+    sheet.write(0, 1, "category")
+    sheet.write(0, 2, "price")
+    sheet.write(1, 0, "Widget A")
+    sheet.write(1, 1, "Electronics")
+    sheet.write(1, 2, 99.99)
+    sheet.write(2, 0, "Widget B")
+    sheet.write(2, 1, "Home")
+    sheet.write(2, 2, 49.99)
+    sheet.write(3, 0, "Widget C")
+    sheet.write(3, 1, "Electronics")
+    sheet.write(3, 2, 149.99)
+
+    file_path = tmp_path / "products.xls"
+    workbook.save(str(file_path))
+
+    reader = ExcelReader(chunk=True)  # Default chunking
+    documents = reader.read(file_path)
+
+    assert len(documents) == 4  # Header + 3 data rows
+    assert all(doc.meta_data.get("sheet_name") == "Products" for doc in documents)
+    row_numbers = sorted(doc.meta_data.get("row_number") for doc in documents)
+    assert row_numbers == [1, 2, 3, 4]
+
+
+@pytest.mark.asyncio
+async def test_excel_reader_xls_async_with_chunking(tmp_path: Path):
+    """Async XLS reading with chunking for non-blocking ingestion."""
+    xlwt = pytest.importorskip("xlwt")
+
+    workbook = xlwt.Workbook()
+    sheet = workbook.add_sheet("Data")
+    sheet.write(0, 0, "id")
+    sheet.write(0, 1, "value")
+    sheet.write(1, 0, "1")
+    sheet.write(1, 1, "first")
+    sheet.write(2, 0, "2")
+    sheet.write(2, 1, "second")
+
+    file_path = tmp_path / "async_chunk.xls"
+    workbook.save(str(file_path))
+
+    reader = ExcelReader(chunk=True)
+    documents = await reader.async_read(file_path)
+
+    assert len(documents) == 3
+    assert all(doc.meta_data.get("sheet_name") == "Data" for doc in documents)
+
+
+def test_excel_reader_xls_numeric_edge_cases(tmp_path: Path):
+    """Financial data: large numbers, negative values, scientific notation."""
+    xlwt = pytest.importorskip("xlwt")
+
+    workbook = xlwt.Workbook()
+    sheet = workbook.add_sheet("Financial")
+    sheet.write(0, 0, "type")
+    sheet.write(0, 1, "amount")
+
+    # Large number (revenue)
+    sheet.write(1, 0, "revenue")
+    sheet.write(1, 1, 1234567890.50)
+
+    # Negative number (refund)
+    sheet.write(2, 0, "refund")
+    sheet.write(2, 1, -5000.25)
+
+    # Scientific notation (market cap)
+    sheet.write(3, 0, "market_cap")
+    sheet.write(3, 1, 1.5e12)
+
+    # Very small number (interest rate)
+    sheet.write(4, 0, "rate")
+    sheet.write(4, 1, 0.0325)
+
+    file_path = tmp_path / "financial.xls"
+    workbook.save(str(file_path))
+
+    reader = ExcelReader(chunk=False)
+    documents = reader.read(file_path)
+
+    assert len(documents) == 1
+    lines = documents[0].content.splitlines()
+    assert "1234567890.5" in lines[1]
+    assert "-5000.25" in lines[2]
+    assert "1500000000000" in lines[3] or "1.5e" in lines[3].lower()
+    assert "0.0325" in lines[4]
+
+
+def test_excel_reader_xls_long_text_cells(tmp_path: Path):
+    """Product catalogs often have long descriptions."""
+    xlwt = pytest.importorskip("xlwt")
+
+    workbook = xlwt.Workbook()
+    sheet = workbook.add_sheet("Products")
+    sheet.write(0, 0, "name")
+    sheet.write(0, 1, "description")
+
+    long_description = (
+        "This premium widget features advanced technology with "
+        "multiple connectivity options including WiFi, Bluetooth, "
+        "and NFC. Perfect for home automation, smart home integration, "
+        "and IoT applications. Includes 2-year warranty and 24/7 support."
+    )
+    sheet.write(1, 0, "Smart Widget Pro")
+    sheet.write(1, 1, long_description)
+
+    file_path = tmp_path / "catalog.xls"
+    workbook.save(str(file_path))
+
+    reader = ExcelReader(chunk=False)
+    documents = reader.read(file_path)
+
+    assert len(documents) == 1
+    content = documents[0].content
+    assert "Smart Widget Pro" in content
+    assert "premium widget" in content
+    assert "24/7 support" in content
+    assert len(content) > 200
+
+
+def test_excel_reader_xls_multi_sheet_chunking(tmp_path: Path):
+    """Multiple sheets with chunking - common for department reports."""
+    xlwt = pytest.importorskip("xlwt")
+
+    workbook = xlwt.Workbook()
+
+    sales_sheet = workbook.add_sheet("Sales")
+    sales_sheet.write(0, 0, "product")
+    sales_sheet.write(0, 1, "amount")
+    sales_sheet.write(1, 0, "Widget")
+    sales_sheet.write(1, 1, 1000)
+
+    inventory_sheet = workbook.add_sheet("Inventory")
+    inventory_sheet.write(0, 0, "item")
+    inventory_sheet.write(0, 1, "stock")
+    inventory_sheet.write(1, 0, "Widget")
+    inventory_sheet.write(1, 1, 50)
+
+    file_path = tmp_path / "report.xls"
+    workbook.save(str(file_path))
+
+    reader = ExcelReader(chunk=True)
+    documents = reader.read(file_path)
+
+    # 2 rows per sheet = 4 total documents
+    assert len(documents) == 4
+    sheet_names = {doc.meta_data["sheet_name"] for doc in documents}
+    assert sheet_names == {"Sales", "Inventory"}
+
+
+def test_excel_reader_xls_wide_table(tmp_path: Path):
+    """Wide tables with many columns - common in enterprise reports."""
+    xlwt = pytest.importorskip("xlwt")
+
+    workbook = xlwt.Workbook()
+    sheet = workbook.add_sheet("Wide")
+
+    # Create 20 columns
+    num_cols = 20
+    for col in range(num_cols):
+        sheet.write(0, col, f"col_{col}")
+        sheet.write(1, col, f"val_{col}")
+
+    file_path = tmp_path / "wide.xls"
+    workbook.save(str(file_path))
+
+    reader = ExcelReader(chunk=False)
+    documents = reader.read(file_path)
+
+    assert len(documents) == 1
+    lines = documents[0].content.splitlines()
+    # All columns should be present
+    assert "col_0" in lines[0]
+    assert "col_19" in lines[0]
+    assert "val_0" in lines[1]
+    assert "val_19" in lines[1]
