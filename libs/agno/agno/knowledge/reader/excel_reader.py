@@ -74,7 +74,6 @@ class ExcelReader(Reader):
         if self.sheets is None:
             return True
 
-        # Check if sheet matches any filter
         for sheet_filter in self.sheets:
             if isinstance(sheet_filter, int):
                 if sheet_index == sheet_filter:

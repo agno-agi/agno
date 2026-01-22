@@ -54,7 +54,6 @@ def stringify_cell_value(value: Any) -> str:
     if value is None:
         return ""
 
-    # Handle datetime/date before float check (datetime is not a float)
     if isinstance(value, datetime):
         return value.isoformat()
     if isinstance(value, date):
@@ -75,7 +74,6 @@ def stringify_cell_value(value: Any) -> str:
 def row_to_csv_line(row_values: Sequence[Any]) -> str:
     """Convert row values to CSV-like string, trimming trailing empty cells."""
     values = [stringify_cell_value(v) for v in row_values]
-    # Trim trailing empty cells
     while values and values[-1] == "":
         values.pop()
 
