@@ -192,7 +192,8 @@ class FirestoreDb(BaseDb):
 
         if table_type == "spans":
             # Ensure traces collection exists first (spans reference traces)
-            self._get_collection("traces", create_collection_if_not_found=True)
+            if create_collection_if_not_found:
+                self._get_collection("traces", create_collection_if_not_found=True)
             if self.span_table_name is None:
                 raise ValueError("Spans collection was not provided on initialization")
             self.spans_collection = self._get_or_create_collection(
