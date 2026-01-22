@@ -28,6 +28,17 @@ ComponentType = Literal["tool", "toolkit", "model", "db", "vector_db", "schema"]
 # ============================================
 
 
+class FunctionDetailResponse(BaseModel):
+    """Detailed information about a function within a toolkit."""
+
+    name: str
+    description: Optional[str] = None
+    parameters: Optional[Dict[str, Any]] = None
+    requires_confirmation: Optional[bool] = None
+    external_execution: Optional[bool] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
 class ComponentResponse(BaseModel):
     name: str
     component_type: ComponentType
@@ -37,6 +48,9 @@ class ComponentResponse(BaseModel):
     parameters: Optional[Dict[str, Any]] = None
     requires_confirmation: Optional[bool] = None
     external_execution: Optional[bool] = None
+    # Toolkit-specific field: detailed function information as key-value pairs
+    # Key is the function name, value is the function details
+    functions_details: Optional[Dict[str, FunctionDetailResponse]] = None
 
 
 # ============================================
@@ -97,11 +111,61 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
     def _get_all_components(include_schema: bool) -> List[ComponentResponse]:
         components: List[ComponentResponse] = []
 
+        # Helper function to extract function details
+        def _get_function_details(
+            func: Function, toolkit_name: str, toolkit: Optional[Toolkit] = None
+        ) -> FunctionDetailResponse:
+            func_name = _safe_name(func, fallback=func.__class__.__name__)
+            # Check if function requires confirmation or external execution
+            # First check function-level settings, then toolkit-level settings
+            requires_confirmation = getattr(func, "requires_confirmation", None)
+            external_execution = getattr(func, "external_execution", None)
+
+            # If not set on function, check toolkit settings
+            if toolkit is not None:
+                if requires_confirmation is None and hasattr(toolkit, "requires_confirmation_tools"):
+                    requires_confirmation = func_name in (toolkit.requires_confirmation_tools or [])
+                if external_execution is None and hasattr(toolkit, "external_execution_required_tools"):
+                    external_execution = func_name in (toolkit.external_execution_required_tools or [])
+
+            # Get parameters - ensure they're processed if needed
+            func_params = func.parameters
+            # If parameters are empty/default and function has entrypoint, try to process it
+            default_params = {"type": "object", "properties": {}, "required": []}
+            if func_params == default_params and func.entrypoint and not func.skip_entrypoint_processing:
+                try:
+                    # Create a copy to avoid modifying the original
+                    func_copy = func.model_copy(deep=False)
+                    func_copy.process_entrypoint(strict=False)
+                    func_params = func_copy.parameters
+                except Exception:
+                    # If processing fails, use original parameters
+                    pass
+
+            return FunctionDetailResponse(
+                name=func_name,
+                description=_safe_str(getattr(func, "description", None)),
+                parameters=_maybe_jsonable(func_params),
+                requires_confirmation=requires_confirmation,
+                external_execution=external_execution,
+                metadata={
+                    "class_path": _class_path(func),
+                    "toolkit": toolkit_name,
+                    "has_entrypoint": bool(getattr(func, "entrypoint", None)),
+                },
+            )
+
         # Tools
         for tool in getattr(registry, "tools", []) or []:
             if isinstance(tool, Toolkit):
                 toolkit_name = _safe_name(tool, fallback=tool.__class__.__name__)
                 functions = getattr(tool, "functions", {}) or {}
+
+                # Build detailed function information for the toolkit as a dictionary
+                functions_details: Dict[str, FunctionDetailResponse] = {}
+                for func in functions.values():
+                    func_detail = _get_function_details(func, toolkit_name, toolkit=tool)
+                    functions_details[func_detail.name] = func_detail
 
                 components.append(
                     ComponentResponse(
@@ -112,50 +176,21 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
                             "class_path": _class_path(tool),
                             "functions": sorted(list(functions.keys())),
                         },
+                        functions_details=functions_details,
                     )
                 )
 
-                # Also expose individual functions within toolkit
-                for func in functions.values():
-                    func_name = _safe_name(func, fallback=func.__class__.__name__)
-                    # Check if function requires confirmation or external execution
-                    # First check function-level settings, then toolkit-level settings
-                    requires_confirmation = getattr(func, "requires_confirmation", None)
-                    external_execution = getattr(func, "external_execution", None)
-
-                    # If not set on function, check toolkit settings
-                    if requires_confirmation is None and hasattr(tool, "requires_confirmation_tools"):
-                        requires_confirmation = func_name in (tool.requires_confirmation_tools or [])
-                    if external_execution is None and hasattr(tool, "external_execution_required_tools"):
-                        external_execution = func_name in (tool.external_execution_required_tools or [])
-
-                    # Get parameters - ensure they're processed if needed
-                    func_params = func.parameters
-                    # If parameters are empty/default and function has entrypoint, try to process it
-                    default_params = {"type": "object", "properties": {}, "required": []}
-                    if func_params == default_params and func.entrypoint and not func.skip_entrypoint_processing:
-                        try:
-                            # Create a copy to avoid modifying the original
-                            func_copy = func.model_copy(deep=False)
-                            func_copy.process_entrypoint(strict=False)
-                            func_params = func_copy.parameters
-                        except Exception:
-                            # If processing fails, use original parameters
-                            pass
-
+                # Also expose individual functions within toolkit as separate tool components
+                for func_detail in functions_details.values():
                     components.append(
                         ComponentResponse(
-                            name=func_name,
+                            name=func_detail.name,
                             component_type="tool",
-                            description=_safe_str(getattr(func, "description", None)),
-                            parameters=_maybe_jsonable(func_params),
-                            requires_confirmation=requires_confirmation,
-                            external_execution=external_execution,
-                            metadata={
-                                "class_path": _class_path(func),
-                                "toolkit": toolkit_name,
-                                "has_entrypoint": bool(getattr(func, "entrypoint", None)),
-                            },
+                            description=func_detail.description,
+                            parameters=func_detail.parameters,
+                            requires_confirmation=func_detail.requires_confirmation,
+                            external_execution=func_detail.external_execution,
+                            metadata=func_detail.metadata,
                         )
                     )
 
