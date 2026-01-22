@@ -177,13 +177,6 @@ pytest libs/agno/tests/
 pytest libs/agno/tests/unit/test_agent.py
 ```
 
-Or use the full path directly:
-
-```bash
-.venv/bin/python cookbook/03_agents/basic.py
-.venv/bin/pytest libs/agno/tests/
-```
-
 ---
 
 ## When Implementing Features
@@ -244,43 +237,6 @@ gh api repos/agno-agi/agno/pulls/<PR_NUMBER> -X PATCH -f body="<PR_BODY>"
 # Or with a file
 gh api repos/agno-agi/agno/pulls/<PR_NUMBER> -X PATCH -f body="$(cat /path/to/body.md)"
 ```
-
----
-
-## Branch and PR Naming
-
-### Branch Names
-
-Use the format: `<type>/<short-description>`
-
-Examples:
-- `feat/add-openresponses-support`
-- `fix/memory-leak-in-agent`
-- `cookbook/update-ollama-examples`
-
-### PR Titles
-
-PR titles must follow one of these formats (enforced by CI):
-
-```
-[type] description
-type: description
-type-description
-```
-
-**Valid types:** `feat`, `fix`, `cookbook`, `test`, `refactor`, `build`, `ci`, `chore`, `perf`, `style`, `revert`
-
-Examples:
-- `[feat] add OpenResponses base class`
-- `fix: handle empty password in knowledge`
-- `cookbook-update-ollama-responses`
-
-### PR Descriptions
-
-Always include a description in your PR body explaining:
-- What the change does
-- Why it's needed
-- Any notable implementation details
 
 ---
 
