@@ -283,7 +283,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             log_error(f"Could not create table {self.db_schema}.{table_name}: {e}")
             raise
 
-    async def _get_table(self, table_type: str, create_table_if_not_found: Optional[bool] = False) -> Optional[Table]:
+    async def _get_table(self, table_type: str, create_table_if_not_found: Optional[bool] = False) -> Table:
         if table_type == "sessions":
             self.session_table = await self._get_or_create_table(
                 table_name=self.session_table_name,
