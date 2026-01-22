@@ -22,7 +22,7 @@ class DummyModel(Model):
         raise NotImplementedError
 
 
-def test_stream_tool_call_event_emitted_when_args_ready():
+def test_stream_tool_call_args_delta_emitted_when_args_ready():
     model = DummyModel(id="dummy-model")
     stream_data = MessageData()
 
@@ -37,16 +37,15 @@ def test_stream_tool_call_event_emitted_when_args_ready():
     tool_call_events = [ev for ev in events if ev.event == ModelResponseEvent.tool_call_started.value]
     args_delta_events = [ev for ev in events if ev.event == ModelResponseEvent.tool_call_args_delta.value]
 
-    assert len(tool_call_events) == 1
-    assert tool_call_events[0].tool_executions is not None
-    assert tool_call_events[0].tool_executions[0].tool_name == "do_thing"
-    assert tool_call_events[0].tool_executions[0].tool_args == {"value": 1}
+    # Streaming tool call deltas should not emit ToolCallStarted; that event is reserved for actual tool execution.
+    assert len(tool_call_events) == 0
     assert len(args_delta_events) == 1
     assert args_delta_events[0].tool_call_id == "call_1"
+    assert args_delta_events[0].tool_name == "do_thing"
     assert args_delta_events[0].tool_args_delta == '{"value": 1}'
 
 
-def test_stream_tool_call_event_emitted_with_partial_args():
+def test_stream_tool_call_args_delta_emitted_with_partial_args():
     model = DummyModel(id="dummy-model")
     stream_data = MessageData()
 
@@ -61,10 +60,48 @@ def test_stream_tool_call_event_emitted_with_partial_args():
     tool_call_events = [ev for ev in events if ev.event == ModelResponseEvent.tool_call_started.value]
     args_delta_events = [ev for ev in events if ev.event == ModelResponseEvent.tool_call_args_delta.value]
 
-    assert len(tool_call_events) == 1
-    assert tool_call_events[0].tool_executions is not None
-    assert tool_call_events[0].tool_executions[0].tool_name == "do_thing"
-    assert tool_call_events[0].tool_executions[0].tool_args == {}
+    assert len(tool_call_events) == 0
     assert len(args_delta_events) == 1
     assert args_delta_events[0].tool_call_id == "call_2"
+    assert args_delta_events[0].tool_name == "do_thing"
     assert args_delta_events[0].tool_args_delta == '{"value":'
+
+
+def test_stream_tool_call_args_delta_resolves_tool_call_id_by_index():
+    model = DummyModel(id="dummy-model")
+    stream_data = MessageData()
+
+    # First chunk includes id/name and establishes index -> id mapping.
+    response_delta_1 = ModelResponse(
+        tool_calls=[
+            {
+                "id": "call_3",
+                "index": 0,
+                "type": "function",
+                "function": {"name": "do_thing", "arguments": "{"},
+            }
+        ]
+    )
+    events_1 = list(model._populate_stream_data(stream_data, response_delta_1))
+    args_events_1 = [ev for ev in events_1 if ev.event == ModelResponseEvent.tool_call_args_delta.value]
+    assert len(args_events_1) == 1
+    assert args_events_1[0].tool_call_id == "call_3"
+    assert args_events_1[0].tool_name == "do_thing"
+    assert args_events_1[0].tool_args_delta == "{"
+
+    # Second chunk omits id/name but includes the same index; id/name should be resolved from prior chunk.
+    response_delta_2 = ModelResponse(
+        tool_calls=[
+            {
+                "index": 0,
+                "type": "function",
+                "function": {"arguments": '"value": 1}'},
+            }
+        ]
+    )
+    events_2 = list(model._populate_stream_data(stream_data, response_delta_2))
+    args_events_2 = [ev for ev in events_2 if ev.event == ModelResponseEvent.tool_call_args_delta.value]
+    assert len(args_events_2) == 1
+    assert args_events_2[0].tool_call_id == "call_3"
+    assert args_events_2[0].tool_name == "do_thing"
+    assert args_events_2[0].tool_args_delta == '"value": 1}'

@@ -1041,6 +1041,9 @@ class Claude(Model):
                     function_def["arguments"] = json.dumps(tool_input)
 
                 model_response.extra = model_response.extra or {}
+                # Claude streams tool input via `input_json_delta`; avoid duplicating deltas when the full tool call
+                # object is emitted at block stop.
+                model_response.extra["skip_tool_call_args_delta"] = True
 
                 model_response.tool_calls = [
                     {
