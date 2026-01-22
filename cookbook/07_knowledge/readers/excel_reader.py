@@ -6,10 +6,6 @@ from agno.vectordb.pgvector import PgVector
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
-# ExcelReader with Excel-specific options
-# - sheets: Filter to specific sheets by name or 0-based index
-# - skip_hidden_sheets: Skip hidden sheets (default: True, xlsx only)
-# - include_empty_sheets: Include sheets with no data (default: False)
 reader = ExcelReader()
 
 knowledge_base = Knowledge(

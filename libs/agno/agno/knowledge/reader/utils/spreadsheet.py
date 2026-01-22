@@ -35,7 +35,11 @@ def get_workbook_name(file: Union[Path, IO[Any]], name: Optional[str]) -> str:
         return Path(name).stem
     if isinstance(file, Path):
         return file.stem
-    return Path(getattr(file, "name", "workbook")).stem
+    # getattr returns None when attribute exists but is None, so check explicitly
+    file_name = getattr(file, "name", None)
+    if file_name:
+        return Path(file_name).stem
+    return "workbook"
 
 
 def infer_file_extension(file: Union[Path, IO[Any]], name: Optional[str]) -> str:
@@ -83,11 +87,11 @@ def row_to_csv_line(row_values: Sequence[Any]) -> str:
 def excel_rows_to_documents(
     *,
     workbook_name: str,
-    sheets: Iterable[Tuple[str, Iterable[Sequence[Any]]]],
+    sheets: Iterable[Tuple[str, int, Iterable[Sequence[Any]]]],
 ) -> List[Document]:
     """Convert Excel sheet rows to Documents (one per sheet)."""
     documents = []
-    for sheet_index, (sheet_name, rows) in enumerate(sheets, start=1):
+    for sheet_name, sheet_index, rows in sheets:
         lines = []
         for row in rows:
             line = row_to_csv_line(row)

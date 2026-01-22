@@ -23,15 +23,11 @@ class ExcelReader(Reader):
     def __init__(
         self,
         sheets: Optional[List[Union[str, int]]] = None,
-        include_empty_sheets: bool = False,
-        skip_hidden_sheets: bool = True,
         chunking_strategy: Optional[ChunkingStrategy] = RowChunking(),
         **kwargs,
     ):
         super().__init__(chunking_strategy=chunking_strategy, **kwargs)
         self.sheets = sheets
-        self.include_empty_sheets = include_empty_sheets
-        self.skip_hidden_sheets = skip_hidden_sheets
 
     @classmethod
     def get_supported_chunking_strategies(cls) -> List[ChunkingStrategyType]:
@@ -54,12 +50,8 @@ class ExcelReader(Reader):
         self,
         sheet_name: str,
         sheet_index: int,
-        is_hidden: bool = False,
     ) -> bool:
         """Check if sheet passes the configured filters."""
-        if is_hidden and self.skip_hidden_sheets:
-            return False
-
         if self.sheets is None:
             return True
 
@@ -90,16 +82,13 @@ class ExcelReader(Reader):
             workbook = openpyxl.load_workbook(filename=io.BytesIO(raw), read_only=True, data_only=True)
 
         try:
-            sheets: List[Tuple[str, Iterable[Sequence[Any]]]] = []
+            sheets: List[Tuple[str, int, Iterable[Sequence[Any]]]] = []
             for sheet_index, worksheet in enumerate(workbook.worksheets):
-                # Check visibility (xlsx supports hidden sheets)
-                is_hidden = worksheet.sheet_state != "visible"
-
-                if not self._should_include_sheet(worksheet.title, sheet_index, is_hidden):
+                if not self._should_include_sheet(worksheet.title, sheet_index):
                     log_debug(f"Skipping sheet '{worksheet.title}' (filtered out)")
                     continue
 
-                sheets.append((worksheet.title, worksheet.iter_rows(values_only=True)))
+                sheets.append((worksheet.title, sheet_index + 1, worksheet.iter_rows(values_only=True)))
 
             return excel_rows_to_documents(workbook_name=workbook_name, sheets=sheets)
         finally:
@@ -121,12 +110,11 @@ class ExcelReader(Reader):
                 raw = raw.encode("utf-8", errors="replace")
             workbook = xlrd.open_workbook(file_contents=raw)
 
-        sheets: List[Tuple[str, Iterable[Sequence[Any]]]] = []
+        sheets: List[Tuple[str, int, Iterable[Sequence[Any]]]] = []
         for sheet_index in range(workbook.nsheets):
             sheet = workbook.sheet_by_index(sheet_index)
 
-            # Note: xlrd doesn't expose hidden sheet info easily, so we skip that check
-            if not self._should_include_sheet(sheet.name, sheet_index, is_hidden=False):
+            if not self._should_include_sheet(sheet.name, sheet_index):
                 log_debug(f"Skipping sheet '{sheet.name}' (filtered out)")
                 continue
 
@@ -141,7 +129,7 @@ class ExcelReader(Reader):
                         for col_index in range(_sheet.ncols)
                     ]
 
-            sheets.append((sheet.name, _iter_sheet_rows()))
+            sheets.append((sheet.name, sheet_index + 1, _iter_sheet_rows()))
 
         return excel_rows_to_documents(workbook_name=workbook_name, sheets=sheets)
 
