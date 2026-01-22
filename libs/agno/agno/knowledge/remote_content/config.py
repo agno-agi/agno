@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 if TYPE_CHECKING:
     from agno.knowledge.remote_content.remote_content import (
@@ -21,8 +21,7 @@ class RemoteContentConfig(BaseModel):
     name: str
     metadata: Optional[dict] = None
 
-    class Config:
-        extra = "allow"
+    model_config = ConfigDict(extra="allow")
 
 
 class S3Config(RemoteContentConfig):
