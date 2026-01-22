@@ -4,9 +4,16 @@ import pytest
 
 from agno.agent import Agent  # noqa
 from agno.models.lmstudio import LMStudio
-from agno.tools.duckduckgo import DuckDuckGoTools
-from agno.tools.exa import ExaTools
+from agno.tools.websearch import WebSearchTools
 from agno.tools.yfinance import YFinanceTools
+
+# Check if exa_py is available for tests that need ExaTools
+try:
+    from agno.tools.exa import ExaTools
+
+    EXA_AVAILABLE = True
+except ImportError:
+    EXA_AVAILABLE = False
 
 
 def test_tool_use():
@@ -109,7 +116,7 @@ def test_parallel_tool_calls():
 def test_multiple_tool_calls():
     agent = Agent(
         model=LMStudio(id="qwen2.5-7b-instruct-1m"),
-        tools=[YFinanceTools(cache_results=True), DuckDuckGoTools(cache_results=True)],
+        tools=[YFinanceTools(cache_results=True), WebSearchTools(cache_results=True)],
         markdown=True,
         telemetry=False,
     )
@@ -124,7 +131,7 @@ def test_multiple_tool_calls():
             tool_calls.extend(msg.tool_calls)
     assert len([call for call in tool_calls if call.get("type", "") == "function"]) >= 2  # Total of 2 tool calls made
     assert response.content is not None
-    assert "TSLA" in response.content and "duckduckgo_news" in response.content.lower()
+    assert "TSLA" in response.content and "news" in response.content.lower()
 
 
 def test_tool_call_custom_tool_no_parameters():
@@ -179,6 +186,7 @@ def test_tool_call_custom_tool_optional_parameters():
     assert "70" in response.content
 
 
+@pytest.mark.skipif(not EXA_AVAILABLE, reason="exa_py not installed")
 def test_tool_call_list_parameters():
     agent = Agent(
         model=LMStudio(id="qwen2.5-7b-instruct-1m"),

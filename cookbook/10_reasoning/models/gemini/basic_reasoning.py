@@ -10,7 +10,7 @@ Environment:
     export GOOGLE_API_KEY="AIza..."
 
 Usage:
-    python cookbook/reasoning/models/gemini/basic_reasoning.py
+    python cookbook/81_reasoning/models/gemini/basic_reasoning.py
 
 What to expect:
     - Gemini will use thinking budget to reason through problems
