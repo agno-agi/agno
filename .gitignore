@@ -80,6 +80,9 @@ agno_json_data/
 specs
 projects
 
+# Private Claude coding session preferences
+CLAUDE_PRIVATE.md
+
 # ignore pyrightconfig.json
 pyrightconfig.json
 .python-version

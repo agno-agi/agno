@@ -5,8 +5,12 @@ from agno.models.message import Citations
 from agno.models.response import ToolExecution
 from agno.reasoning.step import ReasoningStep
 from agno.run.agent import (
+    CompressionCompletedEvent,
+    CompressionStartedEvent,
     MemoryUpdateCompletedEvent,
     MemoryUpdateStartedEvent,
+    ModelRequestCompletedEvent,
+    ModelRequestStartedEvent,
     OutputModelResponseCompletedEvent,
     OutputModelResponseStartedEvent,
     ParserModelResponseCompletedEvent,
@@ -38,8 +42,12 @@ from agno.run.agent import (
     ToolCallStartedEvent,
 )
 from agno.run.requirement import RunRequirement
+from agno.run.team import CompressionCompletedEvent as TeamCompressionCompletedEvent
+from agno.run.team import CompressionStartedEvent as TeamCompressionStartedEvent
 from agno.run.team import MemoryUpdateCompletedEvent as TeamMemoryUpdateCompletedEvent
 from agno.run.team import MemoryUpdateStartedEvent as TeamMemoryUpdateStartedEvent
+from agno.run.team import ModelRequestCompletedEvent as TeamModelRequestCompletedEvent
+from agno.run.team import ModelRequestStartedEvent as TeamModelRequestStartedEvent
 from agno.run.team import OutputModelResponseCompletedEvent as TeamOutputModelResponseCompletedEvent
 from agno.run.team import OutputModelResponseStartedEvent as TeamOutputModelResponseStartedEvent
 from agno.run.team import ParserModelResponseCompletedEvent as TeamParserModelResponseCompletedEvent
@@ -349,21 +357,27 @@ def create_team_memory_update_started_event(from_run_response: TeamRunOutput) ->
     )
 
 
-def create_memory_update_completed_event(from_run_response: RunOutput) -> MemoryUpdateCompletedEvent:
+def create_memory_update_completed_event(
+    from_run_response: RunOutput, memories: Optional[List[Any]] = None
+) -> MemoryUpdateCompletedEvent:
     return MemoryUpdateCompletedEvent(
         session_id=from_run_response.session_id,
         agent_id=from_run_response.agent_id,  # type: ignore
         agent_name=from_run_response.agent_name,  # type: ignore
         run_id=from_run_response.run_id,
+        memories=memories,
     )
 
 
-def create_team_memory_update_completed_event(from_run_response: TeamRunOutput) -> TeamMemoryUpdateCompletedEvent:
+def create_team_memory_update_completed_event(
+    from_run_response: TeamRunOutput, memories: Optional[List[Any]] = None
+) -> TeamMemoryUpdateCompletedEvent:
     return TeamMemoryUpdateCompletedEvent(
         session_id=from_run_response.session_id,
         team_id=from_run_response.team_id,  # type: ignore
         team_name=from_run_response.team_name,  # type: ignore
         run_id=from_run_response.run_id,
+        memories=memories,
     )
 
 
@@ -756,6 +770,150 @@ def create_team_output_model_response_completed_event(
         team_id=from_run_response.team_id,  # type: ignore
         team_name=from_run_response.team_name,  # type: ignore
         run_id=from_run_response.run_id,
+    )
+
+
+def create_model_request_started_event(
+    from_run_response: RunOutput,
+    model: Optional[str] = None,
+    model_provider: Optional[str] = None,
+) -> ModelRequestStartedEvent:
+    return ModelRequestStartedEvent(
+        session_id=from_run_response.session_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
+        agent_name=from_run_response.agent_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        model=model,
+        model_provider=model_provider,
+    )
+
+
+def create_model_request_completed_event(
+    from_run_response: RunOutput,
+    model: Optional[str] = None,
+    model_provider: Optional[str] = None,
+    input_tokens: Optional[int] = None,
+    output_tokens: Optional[int] = None,
+    total_tokens: Optional[int] = None,
+    time_to_first_token: Optional[float] = None,
+    reasoning_tokens: Optional[int] = None,
+    cache_read_tokens: Optional[int] = None,
+    cache_write_tokens: Optional[int] = None,
+) -> ModelRequestCompletedEvent:
+    return ModelRequestCompletedEvent(
+        session_id=from_run_response.session_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
+        agent_name=from_run_response.agent_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        model=model,
+        model_provider=model_provider,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        total_tokens=total_tokens,
+        time_to_first_token=time_to_first_token,
+        reasoning_tokens=reasoning_tokens,
+        cache_read_tokens=cache_read_tokens,
+        cache_write_tokens=cache_write_tokens,
+    )
+
+
+def create_team_model_request_started_event(
+    from_run_response: TeamRunOutput,
+    model: Optional[str] = None,
+    model_provider: Optional[str] = None,
+) -> TeamModelRequestStartedEvent:
+    return TeamModelRequestStartedEvent(
+        session_id=from_run_response.session_id,
+        team_id=from_run_response.team_id,  # type: ignore
+        team_name=from_run_response.team_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        model=model,
+        model_provider=model_provider,
+    )
+
+
+def create_team_model_request_completed_event(
+    from_run_response: TeamRunOutput,
+    model: Optional[str] = None,
+    model_provider: Optional[str] = None,
+    input_tokens: Optional[int] = None,
+    output_tokens: Optional[int] = None,
+    total_tokens: Optional[int] = None,
+    time_to_first_token: Optional[float] = None,
+    reasoning_tokens: Optional[int] = None,
+    cache_read_tokens: Optional[int] = None,
+    cache_write_tokens: Optional[int] = None,
+) -> TeamModelRequestCompletedEvent:
+    return TeamModelRequestCompletedEvent(
+        session_id=from_run_response.session_id,
+        team_id=from_run_response.team_id,  # type: ignore
+        team_name=from_run_response.team_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        model=model,
+        model_provider=model_provider,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        total_tokens=total_tokens,
+        time_to_first_token=time_to_first_token,
+        reasoning_tokens=reasoning_tokens,
+        cache_read_tokens=cache_read_tokens,
+        cache_write_tokens=cache_write_tokens,
+    )
+
+
+def create_compression_started_event(
+    from_run_response: RunOutput,
+) -> CompressionStartedEvent:
+    return CompressionStartedEvent(
+        session_id=from_run_response.session_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
+        agent_name=from_run_response.agent_name,  # type: ignore
+        run_id=from_run_response.run_id,
+    )
+
+
+def create_compression_completed_event(
+    from_run_response: RunOutput,
+    tool_results_compressed: Optional[int] = None,
+    original_size: Optional[int] = None,
+    compressed_size: Optional[int] = None,
+) -> CompressionCompletedEvent:
+    return CompressionCompletedEvent(
+        session_id=from_run_response.session_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
+        agent_name=from_run_response.agent_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        tool_results_compressed=tool_results_compressed,
+        original_size=original_size,
+        compressed_size=compressed_size,
+    )
+
+
+def create_team_compression_started_event(
+    from_run_response: TeamRunOutput,
+) -> TeamCompressionStartedEvent:
+    return TeamCompressionStartedEvent(
+        session_id=from_run_response.session_id,
+        team_id=from_run_response.team_id,  # type: ignore
+        team_name=from_run_response.team_name,  # type: ignore
+        run_id=from_run_response.run_id,
+    )
+
+
+def create_team_compression_completed_event(
+    from_run_response: TeamRunOutput,
+    tool_results_compressed: Optional[int] = None,
+    original_size: Optional[int] = None,
+    compressed_size: Optional[int] = None,
+) -> TeamCompressionCompletedEvent:
+    return TeamCompressionCompletedEvent(
+        session_id=from_run_response.session_id,
+        team_id=from_run_response.team_id,  # type: ignore
+        team_name=from_run_response.team_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        tool_results_compressed=tool_results_compressed,
+        original_size=original_size,
+        compressed_size=compressed_size,
     )
 
 
