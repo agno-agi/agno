@@ -171,6 +171,25 @@ def test_name_exists(milvus_db, mock_milvus_client):
     mock_milvus_client.query.return_value = [[]]
     assert milvus_db.name_exists("nonexistent") is False
 
+    # Verify output_fields is passed
+    _, kwargs = mock_milvus_client.query.call_args
+    assert kwargs.get("output_fields") == ["id"]
+
+
+def test_content_hash_exists(milvus_db, mock_milvus_client):
+    """Test content hash existence check"""
+    # Test when content hash exists
+    mock_milvus_client.query.return_value = [[Mock()]]
+    assert milvus_db.content_hash_exists("test_hash") is True
+
+    # Test when content hash doesn't exist
+    mock_milvus_client.query.return_value = [[]]
+    assert milvus_db.content_hash_exists("nonexistent_hash") is False
+
+    # Verify output_fields is passed
+    _, kwargs = mock_milvus_client.query.call_args
+    assert kwargs.get("output_fields") == ["id"]
+
 
 def test_id_exists(milvus_db, mock_milvus_client):
     """Test ID existence check"""
