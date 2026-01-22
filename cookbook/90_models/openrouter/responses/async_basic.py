@@ -12,7 +12,7 @@ from agno.agent import Agent
 from agno.models.openrouter import OpenRouterResponses
 
 agent = Agent(
-    model=OpenRouterResponses(id="openai/gpt-oss-20b", reasoning=True),
+    model=OpenRouterResponses(id="openai/gpt-oss-20b", enable_reasoning=True),
     markdown=True,
 )
 

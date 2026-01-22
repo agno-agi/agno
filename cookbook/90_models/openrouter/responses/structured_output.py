@@ -34,7 +34,7 @@ class MovieScript(BaseModel):
 
 
 agent = Agent(
-    model=OpenRouterResponses(id="openai/gpt-oss-20b", reasoning=True),
+    model=OpenRouterResponses(id="openai/gpt-oss-20b", enable_reasoning=True),
     description="You write movie scripts.",
     output_schema=MovieScript,
 )

@@ -11,7 +11,7 @@ from agno.models.openrouter import OpenRouterResponses
 from agno.tools.duckduckgo import DuckDuckGoTools
 
 agent = Agent(
-    model=OpenRouterResponses(id="openai/gpt-oss-20b", reasoning=True),
+    model=OpenRouterResponses(id="openai/gpt-oss-20b", enable_reasoning=True),
     tools=[DuckDuckGoTools()],
     markdown=True,
 )

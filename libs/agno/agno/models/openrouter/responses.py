@@ -59,7 +59,9 @@ class OpenRouterResponses(OpenResponses):
 
     # OpenRouter's Responses API is stateless
     store: Optional[bool] = False
-    reasoning: Optional[bool] = False
+
+    # Enable reasoning for supported models
+    enable_reasoning: bool = False
 
     def _get_client_params(self) -> Dict[str, Any]:
         """
@@ -148,15 +150,13 @@ class OpenRouterResponses(OpenResponses):
 
     def _set_reasoning_request_param(self, base_params: Dict[str, Any]) -> Dict[str, Any]:
         """Set the reasoning request parameter."""
-        if self.reasoning: 
-            base_params["reasoning"] = {
-                "enabled": True
-            }
+        if self.enable_reasoning:
+            base_params["reasoning"] = {"enabled": True}
 
-        if self.reasoning_effort is not None:
-            base_params["reasoning"]["effort"] = self.reasoning_effort
+            if self.reasoning_effort is not None:
+                base_params["reasoning"]["effort"] = self.reasoning_effort
 
-        if self.reasoning_summary is not None:
-            base_params["reasoning"]["summary"] = self.reasoning_summary
+            if self.reasoning_summary is not None:
+                base_params["reasoning"]["summary"] = self.reasoning_summary
 
         return base_params
