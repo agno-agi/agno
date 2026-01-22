@@ -3266,8 +3266,8 @@ class Knowledge:
         Requires the `azure-identity` and `azure-storage-blob` packages.
         """
         try:
-            from azure.identity import ClientSecretCredential
-            from azure.storage.blob import BlobServiceClient
+            from azure.identity import ClientSecretCredential # type: ignore
+            from azure.storage.blob import BlobServiceClient # type: ignore
         except ImportError:
             raise ImportError(
                 "The `azure-identity` and `azure-storage-blob` packages are not installed. "
