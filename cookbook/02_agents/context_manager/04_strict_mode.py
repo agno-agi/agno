@@ -41,4 +41,4 @@ prompt = context_manager_flexible.get(
     role="an engineer",
     # Missing variables will remain as {domain}, {level}, {style}
 )
-print(f"Non-strict mode with missing variables:\n{prompt}")
+print(f"\nNon-strict mode with missing variables:\n{prompt}")

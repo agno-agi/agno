@@ -178,7 +178,7 @@ class SingleStoreDb(BaseDb):
                 columns.append(Column(*column_args, **column_kwargs))
 
             # Create the table object without constraints to avoid autoload issues
-            table = Table(table_name, self.metadata, *columns, schema=self.db_schema)
+            table = Table(table_name, self.metadata, *columns, schema=self.db_schema, extend_existing=True)
 
             return table
 
@@ -246,7 +246,7 @@ class SingleStoreDb(BaseDb):
                 columns.append(Column(*column_args, **column_kwargs))
 
             # Create the table object
-            table = Table(table_name, self.metadata, *columns, schema=self.db_schema)
+            table = Table(table_name, self.metadata, *columns, schema=self.db_schema, extend_existing=True)
 
             # Add multi-column unique constraints with table-specific names
             for constraint in schema_unique_constraints:
@@ -387,7 +387,6 @@ class SingleStoreDb(BaseDb):
             self.context_table = self._get_or_create_table(
                 table_name=self.context_table_name,
                 table_type="context",
-                db_schema=self.db_schema,
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.context_table

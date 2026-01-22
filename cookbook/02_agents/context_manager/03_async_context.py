@@ -34,7 +34,6 @@ async def main():
     print(agent.system_message)
     await agent.aprint_response(
         "Explain async/await in Python",
-        stream=True,
         markdown=True,
     )
 

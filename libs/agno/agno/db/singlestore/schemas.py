@@ -206,8 +206,8 @@ def get_table_schema_definition(
         "traces": TRACE_TABLE_SCHEMA,
         "context": CONTEXT_ITEM_TABLE_SCHEMA,
     }
-    schema = schemas.get(table_type, {})
 
+    schema = schemas.get(table_type, {})
     if not schema:
         raise ValueError(f"Unknown table type: {table_type}")
 

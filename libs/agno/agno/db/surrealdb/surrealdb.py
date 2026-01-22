@@ -28,12 +28,10 @@ from agno.db.surrealdb.models import (
     deserialize_cultural_knowledge,
     deserialize_eval_run_record,
     deserialize_knowledge_row,
-    deserialize_record_id,
     deserialize_session,
     deserialize_sessions,
     deserialize_user_memories,
     deserialize_user_memory,
-    desurrealize_dates,
     desurrealize_eval_run_record,
     desurrealize_session,
     desurrealize_user_memory,
@@ -2005,27 +2003,15 @@ class SurrealDb(BaseDb):
         """
         table = self._get_table("context")
         rec_id = RecordID(table, id)
-        result = self.client.select(rec_id)
+        result = self._query_one("SELECT * FROM ONLY $record", {"record": rec_id}, dict)
 
         if result is None:
             return None
 
-        # Convert RecordID to string id
-        if hasattr(result.get("id"), "id"):
-            result["id"] = result["id"].id
-        elif isinstance(result.get("id"), RecordID):
-            result["id"] = str(result["id"].id)
-
-        # Convert datetime objects to timestamps
-        if isinstance(result.get("created_at"), datetime):
-            result["created_at"] = int(result["created_at"].timestamp())
-        if isinstance(result.get("updated_at"), datetime):
-            result["updated_at"] = int(result["updated_at"].timestamp())
-
         if not deserialize:
-            return result
+            return result  # type: ignore
 
-        return ContextItem.from_dict(result)
+        return deserialize_context_item(result)  # type: ignore
 
     def get_all_context_items(
         self,
@@ -2080,19 +2066,12 @@ class SurrealDb(BaseDb):
             {order_limit_start_clause}
         """)
 
-        results = self._query(query, where_vars, dict)
-
-        # Transform results using helper functions
-        transformed_results = []
-        for r in results:
-            transformed = deserialize_record_id(dict(r), "id")
-            transformed = desurrealize_dates(transformed)
-            transformed_results.append(transformed)
+        results = self._query(query, where_vars, dict) or []
 
         if not deserialize:
-            return transformed_results, total_count
+            return list(results), total_count  # type: ignore
 
-        return [deserialize_context_item(r) for r in results]
+        return [deserialize_context_item(r) for r in results]  # type: ignore
 
     def upsert_context_item(
         self, context_item: ContextItem, deserialize: Optional[bool] = True
@@ -2117,18 +2096,19 @@ class SurrealDb(BaseDb):
 
             context_item.id = str(uuid4())
 
-        # Serialize the context item using the helper function
         serialized = serialize_context_item(context_item, table)
+        rec_id = serialized["id"]
 
-        result = self.client.upsert(serialized["id"], serialized)
+        result = self._query_one(
+            "UPSERT ONLY $record CONTENT $content",
+            {"record": rec_id, "content": serialized},
+            dict,
+        )
 
         if result is None:
             return None
 
         if not deserialize:
-            # Still need to desurrealize for raw dict return
-            result_copy = deserialize_record_id(result, "id")
-            result_copy = desurrealize_dates(result_copy)
-            return result_copy
+            return result  # type: ignore
 
-        return deserialize_context_item(result)
+        return deserialize_context_item(result)  # type: ignore

@@ -357,7 +357,6 @@ class MySQLDb(BaseDb):
             self.context_table = self._get_or_create_table(
                 table_name=self.context_table_name,
                 table_type="context",
-                db_schema=self.db_schema,
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.context_table

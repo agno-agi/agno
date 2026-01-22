@@ -4445,15 +4445,21 @@ class SqliteDb(BaseDb):
                 # Filtering
                 if name is not None:
                     stmt = stmt.where(table.c.name == name)
-                if metadata is not None:
-                    # Use JSON contain for metadata filtering
-                    stmt = stmt.where(table.c.metadata.contains(metadata))
 
                 result = sess.execute(stmt).fetchall()
                 if not result:
                     return []
 
                 db_rows = [dict(record._mapping) for record in result]
+
+            # Filter by metadata in Python since SQLite doesn't support JSON containment
+            if metadata is not None:
+                filtered_rows = []
+                for row in db_rows:
+                    row_metadata = row.get("metadata", {}) or {}
+                    if all(row_metadata.get(k) == v for k, v in metadata.items()):
+                        filtered_rows.append(row)
+                db_rows = filtered_rows
 
             return [ContextItem.from_dict(row) for row in db_rows]
 

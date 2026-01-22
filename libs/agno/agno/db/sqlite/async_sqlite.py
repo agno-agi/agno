@@ -376,8 +376,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         table_name: str,
         table_type: str,
         create_table_if_not_found: Optional[bool] = False,
-        create_table_if_not_found: Optional[bool] = False,
-    ) -> Optional[Optional[Table]]:
+    ) -> Optional[Table]:
         """
         Check if the table exists and is valid, else create it.
 
@@ -3282,9 +3281,6 @@ class AsyncSqliteDb(AsyncBaseDb):
                 # Apply filters
                 if name is not None:
                     stmt = stmt.where(table.c.name == name)
-                if metadata is not None:
-                    # Use JSON contain for metadata filtering
-                    stmt = stmt.where(table.c.metadata.contains(metadata))
 
                 result = (await sess.execute(stmt)).fetchall()
 
@@ -3292,6 +3288,15 @@ class AsyncSqliteDb(AsyncBaseDb):
                     return []
 
                 db_rows = [dict(record._mapping) for record in result]
+
+            # Filter by metadata in Python since SQLite doesn't support JSON containment
+            if metadata is not None:
+                filtered_rows = []
+                for row in db_rows:
+                    row_metadata = row.get("metadata", {}) or {}
+                    if all(row_metadata.get(k) == v for k, v in metadata.items()):
+                        filtered_rows.append(row)
+                db_rows = filtered_rows
 
             return [ContextItem.from_dict(row) for row in db_rows]
 

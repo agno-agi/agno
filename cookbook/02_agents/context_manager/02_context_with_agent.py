@@ -4,7 +4,6 @@ from agno.agent import Agent
 from agno.context.manager import ContextManager
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
-from agno.team.team import Team
 
 db = SqliteDb(db_file="tmp/context.db", context_table="context_items")
 context_manager = ContextManager(db=db)
@@ -32,37 +31,4 @@ agent = Agent(
         output_style="concise and actionable",
     ),
 )
-agent.print_response("What is FastAPI?", stream=True, markdown=True)
-
-# Use with Team
-researcher = Agent(
-    name="Researcher",
-    model=OpenAIChat(id="gpt-4o"),
-    system_message=context_manager.get(
-        name="system_template",
-        role="a research analyst",
-        domain="AI technologies",
-        output_style="detailed and well-researched",
-    ),
-)
-
-writer = Agent(
-    name="Writer",
-    model=OpenAIChat(id="gpt-4o"),
-    system_message=context_manager.get(
-        name="system_template",
-        role="a technical writer",
-        domain="software documentation",
-        output_style="clear and structured",
-    ),
-)
-
-team = Team(
-    name="Content Team",
-    model=OpenAIChat(id="gpt-4o"),
-    members=[researcher, writer],
-)
-
-team.print_response(
-    "Explain context managers in AI", stream=True, markdown=True, debug_mode=True
-)
+agent.print_response("What is FastAPI?", stream=True, markdown=True, debug_mode=True)
