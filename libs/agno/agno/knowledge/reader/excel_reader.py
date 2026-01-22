@@ -29,23 +29,6 @@ class ExcelReader(Reader):
         skip_hidden_sheets: Whether to skip hidden sheets (xlsx only). Default True.
         chunking_strategy: Strategy for chunking documents. Default is RowChunking.
         **kwargs: Additional arguments passed to base Reader.
-
-    Example:
-        ```python
-        from agno.knowledge.reader.excel_reader import ExcelReader
-
-        # Read all sheets
-        reader = ExcelReader()
-        docs = reader.read("workbook.xlsx")
-
-        # Read only specific sheets
-        reader = ExcelReader(sheets=["Sales", "Inventory"])
-        docs = reader.read("workbook.xlsx")
-
-        # Read by sheet index (0-based)
-        reader = ExcelReader(sheets=[0, 2])  # First and third sheets
-        docs = reader.read("workbook.xlsx")
-        ```
     """
 
     def __init__(
@@ -84,16 +67,7 @@ class ExcelReader(Reader):
         sheet_index: int,
         is_hidden: bool = False,
     ) -> bool:
-        """Determine if a sheet should be included based on filters.
-
-        Args:
-            sheet_name: The name of the sheet.
-            sheet_index: The 0-based index of the sheet.
-            is_hidden: Whether the sheet is hidden (xlsx only).
-
-        Returns:
-            True if the sheet should be included, False otherwise.
-        """
+        """Check if sheet passes the configured filters."""
         if is_hidden and self.skip_hidden_sheets:
             return False
 
@@ -112,15 +86,7 @@ class ExcelReader(Reader):
         return False
 
     def _read_xlsx(self, file: Union[Path, IO[Any]], *, workbook_name: str) -> List[Document]:
-        """Read .xlsx file and return documents (one per sheet).
-
-        Args:
-            file: Path to Excel file or file-like object.
-            workbook_name: Name to use for the documents.
-
-        Returns:
-            List of Document objects, one per included sheet.
-        """
+        """Read .xlsx file using openpyxl."""
         try:
             import openpyxl
         except ImportError as e:
@@ -154,15 +120,7 @@ class ExcelReader(Reader):
             workbook.close()
 
     def _read_xls(self, file: Union[Path, IO[Any]], *, workbook_name: str) -> List[Document]:
-        """Read .xls file and return documents (one per sheet).
-
-        Args:
-            file: Path to Excel file or file-like object.
-            workbook_name: Name to use for the documents.
-
-        Returns:
-            List of Document objects, one per included sheet.
-        """
+        """Read .xls file using xlrd."""
         try:
             import xlrd
         except ImportError as e:
@@ -208,19 +166,7 @@ class ExcelReader(Reader):
         file: Union[Path, IO[Any]],
         name: Optional[str] = None,
     ) -> List[Document]:
-        """Read an Excel file and return a list of documents.
-
-        Args:
-            file: Path to Excel file or file-like object.
-            name: Optional name override for the workbook.
-
-        Returns:
-            List of Document objects, one per sheet (unless filtered).
-
-        Raises:
-            FileNotFoundError: If the file path doesn't exist.
-            ImportError: If openpyxl (for .xlsx) or xlrd (for .xls) is not installed.
-        """
+        """Read an Excel file and return documents (one per sheet)."""
         try:
             file_extension = infer_file_extension(file, name)
             workbook_name = get_workbook_name(file, name)
@@ -261,19 +207,7 @@ class ExcelReader(Reader):
         file: Union[Path, IO[Any]],
         name: Optional[str] = None,
     ) -> List[Document]:
-        """Asynchronously read an Excel file and return a list of documents.
-
-        Args:
-            file: Path to Excel file or file-like object.
-            name: Optional name override for the workbook.
-
-        Returns:
-            List of Document objects, one per sheet (unless filtered).
-
-        Raises:
-            FileNotFoundError: If the file path doesn't exist.
-            ImportError: If openpyxl (for .xlsx) or xlrd (for .xls) is not installed.
-        """
+        """Async version of read()."""
         try:
             file_extension = infer_file_extension(file, name)
             workbook_name = get_workbook_name(file, name)

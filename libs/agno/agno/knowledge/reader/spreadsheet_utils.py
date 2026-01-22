@@ -8,10 +8,7 @@ from agno.utils.log import log_debug
 
 
 def get_workbook_name(file: Union[Path, IO[Any]], name: Optional[str]) -> str:
-    """Extract workbook name from file path or name parameter.
-
-    Priority: explicit name > file path stem > file object name attribute > "workbook"
-    """
+    """Extract workbook name from file path or name parameter."""
     if name:
         return Path(name).stem
     if isinstance(file, Path):
@@ -20,11 +17,7 @@ def get_workbook_name(file: Union[Path, IO[Any]], name: Optional[str]) -> str:
 
 
 def infer_file_extension(file: Union[Path, IO[Any]], name: Optional[str]) -> str:
-    """Infer file extension from Path, IO object, or explicit name.
-
-    Returns lowercase extension including the dot (e.g., ".xlsx", ".csv").
-    Returns empty string if extension cannot be determined.
-    """
+    """Infer file extension from Path, IO object, or explicit name."""
     if isinstance(file, Path):
         return file.suffix.lower()
 
@@ -39,19 +32,7 @@ def infer_file_extension(file: Union[Path, IO[Any]], name: Optional[str]) -> str
 
 
 def convert_xls_cell_value(cell_value: Any, cell_type: int, datemode: int) -> Any:
-    """Convert xlrd cell value to Python type.
-
-    xlrd returns dates as Excel serial numbers and booleans as 0/1 integers.
-    This converts them to proper Python types for consistent handling with openpyxl.
-
-    Args:
-        cell_value: The raw cell value from xlrd.
-        cell_type: The xlrd cell type constant (XL_CELL_DATE, XL_CELL_BOOLEAN, etc.).
-        datemode: The workbook's datemode (0 for 1900-based, 1 for 1904-based).
-
-    Returns:
-        Converted Python value (datetime for dates, bool for booleans, unchanged otherwise).
-    """
+    """Convert xlrd cell value to Python type (dates and booleans need conversion)."""
     try:
         import xlrd
     except ImportError:
@@ -69,21 +50,7 @@ def convert_xls_cell_value(cell_value: Any, cell_type: int, datemode: int) -> An
 
 
 def stringify_cell_value(value: Any) -> str:
-    """Convert a spreadsheet cell value to string.
-
-    Handles special types:
-    - None -> empty string
-    - datetime -> ISO format string
-    - date -> ISO format string
-    - float with integer value -> integer string (e.g., 30.0 -> "30")
-    - All line endings normalized to spaces (preserves row integrity)
-
-    Args:
-        value: Any cell value from a spreadsheet.
-
-    Returns:
-        String representation of the value.
-    """
+    """Convert cell value to string, normalizing dates and line endings."""
     if value is None:
         return ""
 
@@ -106,17 +73,7 @@ def stringify_cell_value(value: Any) -> str:
 
 
 def row_to_csv_line(row_values: Sequence[Any]) -> str:
-    """Convert a row of cell values to a CSV-like line.
-
-    Converts all values to strings, trims trailing empty cells,
-    and joins with ", " delimiter.
-
-    Args:
-        row_values: Sequence of cell values from a spreadsheet row.
-
-    Returns:
-        CSV-like string with values joined by ", ".
-    """
+    """Convert row values to CSV-like string, trimming trailing empty cells."""
     values = [stringify_cell_value(v) for v in row_values]
     # Trim trailing empty cells
     while values and values[-1] == "":
@@ -130,16 +87,7 @@ def excel_rows_to_documents(
     workbook_name: str,
     sheets: Iterable[Tuple[str, Iterable[Sequence[Any]]]],
 ) -> List[Document]:
-    """Convert Excel sheet rows to Document objects (one Document per sheet).
-
-    Args:
-        workbook_name: Name to use for the documents.
-        sheets: Iterable of (sheet_name, rows) tuples where rows is an
-            iterable of sequences (row values).
-
-    Returns:
-        List of Document objects, one per non-empty sheet.
-    """
+    """Convert Excel sheet rows to Documents (one per sheet)."""
     documents = []
     for sheet_index, (sheet_name, rows) in enumerate(sheets, start=1):
         lines = []
