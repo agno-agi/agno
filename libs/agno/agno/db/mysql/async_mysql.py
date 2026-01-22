@@ -280,7 +280,7 @@ class AsyncMySQLDb(AsyncBaseDb):
                 table_name=table_name, table_type=table_type, create_table_if_not_found=True
             )
 
-    async def _get_table(self, table_type: str, create_table_if_not_found: Optional[bool] = False) -> Table:
+    async def _get_table(self, table_type: str, create_table_if_not_found: Optional[bool] = False) -> Optional[Table]:
         if table_type == "sessions":
             self.session_table = await self._get_or_create_table(
                 table_name=self.session_table_name,
