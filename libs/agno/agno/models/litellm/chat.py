@@ -18,6 +18,7 @@ from agno.utils.openai import (
     images_to_message,
 )
 from agno.utils.tokens import count_schema_tokens
+from agno.utils.models.schema_utils import get_response_schema_for_provider
 
 try:
     import litellm
@@ -237,9 +238,9 @@ class LiteLLM(Model):
 
         # If it's a Pydantic model class, convert to JSON schema format
         if isinstance(response_format, type) and issubclass(response_format, BaseModel):
-            schema = response_format.model_json_schema()
-            # Add additionalProperties: false for strict mode compliance (required by OpenAI)
-            schema = self._add_additional_properties_false(schema)
+            # Use existing schema utility to get provider-normalized schema
+            # This handles additionalProperties: false and other OpenAI requirements
+            schema = get_response_schema_for_provider(response_format, "openai")
             return {
                 "type": "json_schema",
                 "json_schema": {
@@ -250,64 +251,6 @@ class LiteLLM(Model):
             }
 
         return None
-
-    def _add_additional_properties_false(
-        self, schema: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """
-        Recursively add 'additionalProperties: false' to all object schemas.
-
-        This is required by OpenAI's strict mode for structured outputs.
-        Without this, the API returns a 400 error.
-
-        Args:
-            schema: The JSON schema dict to modify.
-
-        Returns:
-            The modified schema with additionalProperties: false added to all objects.
-        """
-        if not isinstance(schema, dict):
-            return schema
-
-        # Create a copy to avoid modifying the original
-        schema = schema.copy()
-
-        # If this is an object type with properties, add additionalProperties: false
-        if schema.get("type") == "object" and "properties" in schema:
-            schema["additionalProperties"] = False
-
-            # Recursively process nested properties
-            for prop_name, prop_schema in schema.get("properties", {}).items():
-                schema["properties"][prop_name] = self._add_additional_properties_false(
-                    prop_schema
-                )
-
-        # Handle arrays with item schemas
-        if schema.get("type") == "array" and "items" in schema:
-            schema["items"] = self._add_additional_properties_false(schema["items"])
-
-        # Handle $defs (Pydantic v2 style for nested models)
-        if "$defs" in schema:
-            schema["$defs"] = {
-                name: self._add_additional_properties_false(def_schema)
-                for name, def_schema in schema["$defs"].items()
-            }
-
-        # Handle definitions (older JSON schema style)
-        if "definitions" in schema:
-            schema["definitions"] = {
-                name: self._add_additional_properties_false(def_schema)
-                for name, def_schema in schema["definitions"].items()
-            }
-
-        # Handle anyOf, oneOf, allOf
-        for key in ["anyOf", "oneOf", "allOf"]:
-            if key in schema:
-                schema[key] = [
-                    self._add_additional_properties_false(s) for s in schema[key]
-                ]
-
-        return schema
 
     def invoke(
         self,
