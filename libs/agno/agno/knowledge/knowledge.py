@@ -19,6 +19,7 @@ from agno.knowledge.content import Content, ContentAuth, ContentStatus, FileData
 from agno.knowledge.document import Document
 from agno.knowledge.reader import Reader, ReaderFactory
 from agno.knowledge.remote_content.config import (
+    AzureBlobConfig,
     GcsConfig,
     GitHubConfig,
     RemoteContentConfig,
@@ -26,6 +27,7 @@ from agno.knowledge.remote_content.config import (
     SharePointConfig,
 )
 from agno.knowledge.remote_content.remote_content import (
+    AzureBlobContent,
     GCSContent,
     GitHubContent,
     RemoteContent,
@@ -1964,6 +1966,9 @@ class Knowledge:
         elif isinstance(remote_content, GitHubContent):
             await self._aload_from_github(content, upsert, skip_if_exists, config)
 
+        elif isinstance(remote_content, AzureBlobContent):
+            await self._aload_from_azure_blob(content, upsert, skip_if_exists, config)
+
         else:
             log_warning(f"Unsupported remote content type: {type(remote_content)}")
 
@@ -2189,6 +2194,9 @@ class Knowledge:
 
         elif isinstance(remote_content, GitHubContent):
             self._load_from_github(content, upsert, skip_if_exists, config)
+
+        elif isinstance(remote_content, AzureBlobContent):
+            self._load_from_azure_blob(content, upsert, skip_if_exists, config)
 
         else:
             log_warning(f"Unsupported remote content type: {type(remote_content)}")
@@ -3249,6 +3257,355 @@ class Knowledge:
                     content_entry.id = generate_id(content_entry.content_hash or "")
                 self._prepare_documents_for_insert(read_documents, content_entry.id)
                 self._handle_vector_db_insert(content_entry, read_documents, upsert)
+
+    # --- Azure Blob Storage loaders ---
+
+    def _get_azure_blob_client(self, azure_config: AzureBlobConfig):
+        """Get an Azure Blob Service Client using client credentials flow.
+
+        Requires the `azure-identity` and `azure-storage-blob` packages.
+        """
+        try:
+            from azure.identity import ClientSecretCredential
+            from azure.storage.blob import BlobServiceClient
+        except ImportError:
+            raise ImportError(
+                "The `azure-identity` and `azure-storage-blob` packages are not installed. "
+                "Please install them via `pip install azure-identity azure-storage-blob`."
+            )
+
+        credential = ClientSecretCredential(
+            tenant_id=azure_config.tenant_id,
+            client_id=azure_config.client_id,
+            client_secret=azure_config.client_secret,
+        )
+
+        blob_service = BlobServiceClient(
+            account_url=f"https://{azure_config.storage_account}.blob.core.windows.net",
+            credential=credential,
+        )
+
+        return blob_service
+
+    async def _aload_from_azure_blob(
+        self,
+        content: Content,
+        upsert: bool,
+        skip_if_exists: bool,
+        config: Optional[RemoteContentConfig] = None,
+    ):
+        """Load content from Azure Blob Storage.
+
+        Requires the AzureBlobConfig to contain tenant_id, client_id, client_secret,
+        storage_account, and container.
+
+        1. Authenticate with Azure AD using client credentials
+        2. List blobs in container (by prefix or single blob)
+        3. Download and process each blob
+        4. Insert to vector database
+        """
+        remote_content: AzureBlobContent = cast(AzureBlobContent, content.remote_content)
+        azure_config = cast(AzureBlobConfig, config) if isinstance(config, AzureBlobConfig) else None
+
+        if azure_config is None:
+            log_error(f"Azure Blob config not found for config_id: {remote_content.config_id}")
+            return
+
+        # Get blob service client
+        try:
+            blob_service = self._get_azure_blob_client(azure_config)
+        except ImportError as e:
+            log_error(str(e))
+            return
+        except Exception as e:
+            log_error(f"Error creating Azure Blob client: {e}")
+            return
+
+        container_client = blob_service.get_container_client(azure_config.container)
+
+        # Identify blobs to process
+        blobs_to_process: List[Dict[str, Any]] = []
+
+        try:
+            if remote_content.blob_name:
+                # Single blob
+                blob_client = container_client.get_blob_client(remote_content.blob_name)
+                try:
+                    props = blob_client.get_blob_properties()
+                    blobs_to_process.append(
+                        {
+                            "name": remote_content.blob_name,
+                            "size": props.size,
+                            "content_type": props.content_settings.content_type if props.content_settings else None,
+                        }
+                    )
+                except Exception as e:
+                    log_error(f"Error getting blob {remote_content.blob_name}: {e}")
+                    return
+            elif remote_content.prefix:
+                # List blobs with prefix
+                prefix = (
+                    remote_content.prefix.rstrip("/") + "/"
+                    if not remote_content.prefix.endswith("/")
+                    else remote_content.prefix
+                )
+                blobs = container_client.list_blobs(name_starts_with=prefix)
+                for blob in blobs:
+                    # Skip "directory" markers (blobs ending with /)
+                    if not blob.name.endswith("/"):
+                        blobs_to_process.append(
+                            {
+                                "name": blob.name,
+                                "size": blob.size,
+                                "content_type": blob.content_settings.content_type if blob.content_settings else None,
+                            }
+                        )
+        except Exception as e:
+            log_error(f"Error listing Azure blobs: {e}")
+            return
+
+        if not blobs_to_process:
+            log_warning(f"No blobs found in Azure container: {azure_config.container}")
+            return
+
+        # Process each blob
+        for blob_info in blobs_to_process:
+            blob_name = blob_info["name"]
+            file_name = blob_name.split("/")[-1]
+
+            # Build a unique virtual path for hashing
+            virtual_path = f"azure://{azure_config.storage_account}/{azure_config.container}/{blob_name}"
+
+            # Build metadata
+            azure_metadata = {
+                "source_type": "azure_blob",
+                "source_config_id": azure_config.id,
+                "source_config_name": azure_config.name,
+                "azure_storage_account": azure_config.storage_account,
+                "azure_container": azure_config.container,
+                "azure_blob_name": blob_name,
+                "azure_filename": file_name,
+            }
+            merged_metadata = {**azure_metadata, **(content.metadata or {})}
+
+            # Setup Content object
+            is_folder_upload = len(blobs_to_process) > 1
+            if is_folder_upload:
+                # Compute relative path from the upload root
+                relative_path = blob_name
+                if remote_content.prefix and blob_name.startswith(remote_content.prefix):
+                    relative_path = blob_name[len(remote_content.prefix) :].lstrip("/")
+                content_name = f"{content.name}/{relative_path}" if content.name else blob_name
+            else:
+                content_name = content.name or file_name
+
+            content_entry = Content(
+                name=content_name,
+                description=content.description,
+                path=virtual_path,
+                status=ContentStatus.PROCESSING,
+                metadata=merged_metadata,
+                file_type="azure_blob",
+            )
+
+            # Hash content and add to contents database
+            content_entry.content_hash = self._build_content_hash(content_entry)
+            content_entry.id = generate_id(content_entry.content_hash)
+            await self._ainsert_contents_db(content_entry)
+
+            if self._should_skip(content_entry.content_hash, skip_if_exists):
+                content_entry.status = ContentStatus.COMPLETED
+                await self._aupdate_content(content_entry)
+                continue
+
+            # Download blob
+            try:
+                blob_client = container_client.get_blob_client(blob_name)
+                download_stream = blob_client.download_blob()
+                file_content = BytesIO(download_stream.readall())
+            except Exception as e:
+                log_error(f"Error downloading Azure blob {blob_name}: {e}")
+                content_entry.status = ContentStatus.FAILED
+                content_entry.status_message = str(e)
+                await self._aupdate_content(content_entry)
+                continue
+
+            # Select reader and read content
+            reader = self._select_reader_by_uri(file_name, content.reader)
+            if reader is None:
+                log_warning(f"No reader found for file: {file_name}")
+                content_entry.status = ContentStatus.FAILED
+                content_entry.status_message = "No suitable reader found"
+                await self._aupdate_content(content_entry)
+                continue
+
+            reader = cast(Reader, reader)
+            read_documents = await reader.async_read(file_content, name=file_name)
+
+            # Prepare and insert into vector database
+            if not content_entry.id:
+                content_entry.id = generate_id(content_entry.content_hash or "")
+            self._prepare_documents_for_insert(read_documents, content_entry.id)
+            await self._ahandle_vector_db_insert(content_entry, read_documents, upsert)
+
+    def _load_from_azure_blob(
+        self,
+        content: Content,
+        upsert: bool,
+        skip_if_exists: bool,
+        config: Optional[RemoteContentConfig] = None,
+    ):
+        """Synchronous version of _load_from_azure_blob.
+
+        Load content from Azure Blob Storage:
+        1. Authenticate with Azure AD using client credentials
+        2. List blobs in container (by prefix or single blob)
+        3. Download and process each blob
+        4. Insert to vector database
+        """
+        remote_content: AzureBlobContent = cast(AzureBlobContent, content.remote_content)
+        azure_config = cast(AzureBlobConfig, config) if isinstance(config, AzureBlobConfig) else None
+
+        if azure_config is None:
+            log_error(f"Azure Blob config not found for config_id: {remote_content.config_id}")
+            return
+
+        # Get blob service client
+        try:
+            blob_service = self._get_azure_blob_client(azure_config)
+        except ImportError as e:
+            log_error(str(e))
+            return
+        except Exception as e:
+            log_error(f"Error creating Azure Blob client: {e}")
+            return
+
+        container_client = blob_service.get_container_client(azure_config.container)
+
+        # Identify blobs to process
+        blobs_to_process: List[Dict[str, Any]] = []
+
+        try:
+            if remote_content.blob_name:
+                # Single blob
+                blob_client = container_client.get_blob_client(remote_content.blob_name)
+                try:
+                    props = blob_client.get_blob_properties()
+                    blobs_to_process.append(
+                        {
+                            "name": remote_content.blob_name,
+                            "size": props.size,
+                            "content_type": props.content_settings.content_type if props.content_settings else None,
+                        }
+                    )
+                except Exception as e:
+                    log_error(f"Error getting blob {remote_content.blob_name}: {e}")
+                    return
+            elif remote_content.prefix:
+                # List blobs with prefix
+                prefix = (
+                    remote_content.prefix.rstrip("/") + "/"
+                    if not remote_content.prefix.endswith("/")
+                    else remote_content.prefix
+                )
+                blobs = container_client.list_blobs(name_starts_with=prefix)
+                for blob in blobs:
+                    # Skip "directory" markers (blobs ending with /)
+                    if not blob.name.endswith("/"):
+                        blobs_to_process.append(
+                            {
+                                "name": blob.name,
+                                "size": blob.size,
+                                "content_type": blob.content_settings.content_type if blob.content_settings else None,
+                            }
+                        )
+        except Exception as e:
+            log_error(f"Error listing Azure blobs: {e}")
+            return
+
+        if not blobs_to_process:
+            log_warning(f"No blobs found in Azure container: {azure_config.container}")
+            return
+
+        # Process each blob
+        for blob_info in blobs_to_process:
+            blob_name = blob_info["name"]
+            file_name = blob_name.split("/")[-1]
+
+            # Build a unique virtual path for hashing
+            virtual_path = f"azure://{azure_config.storage_account}/{azure_config.container}/{blob_name}"
+
+            # Build metadata
+            azure_metadata = {
+                "source_type": "azure_blob",
+                "source_config_id": azure_config.id,
+                "source_config_name": azure_config.name,
+                "azure_storage_account": azure_config.storage_account,
+                "azure_container": azure_config.container,
+                "azure_blob_name": blob_name,
+                "azure_filename": file_name,
+            }
+            merged_metadata = {**azure_metadata, **(content.metadata or {})}
+
+            # Setup Content object
+            is_folder_upload = len(blobs_to_process) > 1
+            if is_folder_upload:
+                # Compute relative path from the upload root
+                relative_path = blob_name
+                if remote_content.prefix and blob_name.startswith(remote_content.prefix):
+                    relative_path = blob_name[len(remote_content.prefix) :].lstrip("/")
+                content_name = f"{content.name}/{relative_path}" if content.name else blob_name
+            else:
+                content_name = content.name or file_name
+
+            content_entry = Content(
+                name=content_name,
+                description=content.description,
+                path=virtual_path,
+                status=ContentStatus.PROCESSING,
+                metadata=merged_metadata,
+                file_type="azure_blob",
+            )
+
+            # Hash content and add to contents database
+            content_entry.content_hash = self._build_content_hash(content_entry)
+            content_entry.id = generate_id(content_entry.content_hash)
+            self._insert_contents_db(content_entry)
+
+            if self._should_skip(content_entry.content_hash, skip_if_exists):
+                content_entry.status = ContentStatus.COMPLETED
+                self._update_content(content_entry)
+                continue
+
+            # Download blob
+            try:
+                blob_client = container_client.get_blob_client(blob_name)
+                download_stream = blob_client.download_blob()
+                file_content = BytesIO(download_stream.readall())
+            except Exception as e:
+                log_error(f"Error downloading Azure blob {blob_name}: {e}")
+                content_entry.status = ContentStatus.FAILED
+                content_entry.status_message = str(e)
+                self._update_content(content_entry)
+                continue
+
+            # Select reader and read content
+            reader = self._select_reader_by_uri(file_name, content.reader)
+            if reader is None:
+                log_warning(f"No reader found for file: {file_name}")
+                content_entry.status = ContentStatus.FAILED
+                content_entry.status_message = "No suitable reader found"
+                self._update_content(content_entry)
+                continue
+
+            reader = cast(Reader, reader)
+            read_documents = reader.read(file_content, name=file_name)
+
+            # Prepare and insert into vector database
+            if not content_entry.id:
+                content_entry.id = generate_id(content_entry.content_hash or "")
+            self._prepare_documents_for_insert(read_documents, content_entry.id)
+            self._handle_vector_db_insert(content_entry, read_documents, upsert)
 
     async def _ahandle_vector_db_insert(self, content: Content, read_documents, upsert):
         from agno.vectordb import VectorDb
