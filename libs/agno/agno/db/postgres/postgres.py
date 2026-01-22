@@ -3608,12 +3608,16 @@ class PostgresDb(BaseDb):
 
             with self.Session() as sess:
                 # Verify component exists and get current_version
-                component_row = sess.execute(
-                    select(components_table.c.component_id, components_table.c.current_version).where(
-                        components_table.c.component_id == component_id,
-                        components_table.c.deleted_at.is_(None),
+                component_row = (
+                    sess.execute(
+                        select(components_table.c.component_id, components_table.c.current_version).where(
+                            components_table.c.component_id == component_id,
+                            components_table.c.deleted_at.is_(None),
+                        )
                     )
-                ).mappings().one_or_none()
+                    .mappings()
+                    .one_or_none()
+                )
 
                 if component_row is None:
                     return None
