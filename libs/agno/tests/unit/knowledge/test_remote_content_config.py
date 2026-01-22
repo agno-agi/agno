@@ -4,6 +4,7 @@ import pytest
 from pydantic import ValidationError
 
 from agno.knowledge.remote_content.config import (
+    AzureBlobConfig,
     GcsConfig,
     GitHubConfig,
     RemoteContentConfig,
@@ -363,4 +364,135 @@ def test_github_config_with_metadata():
     """Test GitHubConfig with metadata."""
     metadata = {"visibility": "private", "language": "python"}
     config = GitHubConfig(id="gh", name="GH", repo="owner/repo", metadata=metadata)
+    assert config.metadata == metadata
+
+
+# =============================================================================
+# AzureBlobConfig Tests
+# =============================================================================
+
+
+def test_azure_blob_config_creation():
+    """Test creating an Azure Blob config with required fields."""
+    config = AzureBlobConfig(
+        id="azure-source",
+        name="My Azure Storage",
+        tenant_id="tenant-123",
+        client_id="client-456",
+        client_secret="secret-789",
+        storage_account="mystorageaccount",
+        container="mycontainer",
+    )
+    assert config.id == "azure-source"
+    assert config.name == "My Azure Storage"
+    assert config.tenant_id == "tenant-123"
+    assert config.client_id == "client-456"
+    assert config.client_secret == "secret-789"
+    assert config.storage_account == "mystorageaccount"
+    assert config.container == "mycontainer"
+    assert config.prefix is None
+
+
+def test_azure_blob_config_with_prefix():
+    """Test creating an Azure Blob config with a prefix."""
+    config = AzureBlobConfig(
+        id="azure-source",
+        name="My Azure Storage",
+        tenant_id="tenant-123",
+        client_id="client-456",
+        client_secret="secret-789",
+        storage_account="mystorageaccount",
+        container="mycontainer",
+        prefix="documents/",
+    )
+    assert config.prefix == "documents/"
+
+
+def test_azure_blob_config_file_method():
+    """Test the file() method creates correct AzureBlobContent."""
+    config = AzureBlobConfig(
+        id="azure-source",
+        name="My Azure Storage",
+        tenant_id="tenant-123",
+        client_id="client-456",
+        client_secret="secret-789",
+        storage_account="mystorageaccount",
+        container="mycontainer",
+    )
+    content = config.file("path/to/document.pdf")
+
+    assert content.config_id == "azure-source"
+    assert content.blob_name == "path/to/document.pdf"
+    assert content.prefix is None
+
+
+def test_azure_blob_config_folder_method():
+    """Test the folder() method creates correct AzureBlobContent."""
+    config = AzureBlobConfig(
+        id="azure-source",
+        name="My Azure Storage",
+        tenant_id="tenant-123",
+        client_id="client-456",
+        client_secret="secret-789",
+        storage_account="mystorageaccount",
+        container="mycontainer",
+    )
+    content = config.folder("documents/2024/")
+
+    assert content.config_id == "azure-source"
+    assert content.prefix == "documents/2024/"
+    assert content.blob_name is None
+
+
+def test_azure_blob_config_missing_required_fields():
+    """Test that missing required fields raise ValidationError."""
+    with pytest.raises(ValidationError):
+        AzureBlobConfig(
+            id="azure-source",
+            name="My Azure Storage",
+            # Missing tenant_id, client_id, client_secret, storage_account, container
+        )
+
+
+def test_azure_blob_config_missing_storage_account():
+    """Test that missing storage_account raises ValidationError."""
+    with pytest.raises(ValidationError):
+        AzureBlobConfig(
+            id="azure-source",
+            name="My Azure Storage",
+            tenant_id="tenant-123",
+            client_id="client-456",
+            client_secret="secret-789",
+            container="mycontainer",
+            # Missing storage_account
+        )
+
+
+def test_azure_blob_config_missing_container():
+    """Test that missing container raises ValidationError."""
+    with pytest.raises(ValidationError):
+        AzureBlobConfig(
+            id="azure-source",
+            name="My Azure Storage",
+            tenant_id="tenant-123",
+            client_id="client-456",
+            client_secret="secret-789",
+            storage_account="mystorageaccount",
+            # Missing container
+        )
+
+
+def test_azure_blob_config_with_metadata():
+    """Test AzureBlobConfig with metadata."""
+    metadata = {"environment": "production", "department": "finance"}
+    config = AzureBlobConfig(
+        id="azure",
+        name="Azure",
+        tenant_id="t",
+        client_id="c",
+        client_secret="s",
+        storage_account="account",
+        container="container",
+        metadata=metadata,
+    )
     assert config.metadata == metadata
