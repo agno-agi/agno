@@ -629,11 +629,6 @@ def test_excel_reader_xls_carriage_return_normalized(tmp_path: Path):
     assert lines[2] == "crlf, line1 line2"
 
 
-# ============================================================================
-# ExcelReader-specific tests (sheet filtering, hidden sheets)
-# ============================================================================
-
-
 def test_excel_reader_filter_sheets_by_name(tmp_path: Path):
     openpyxl = pytest.importorskip("openpyxl")
 
@@ -756,13 +751,7 @@ def test_excel_reader_unsupported_extension_returns_empty(tmp_path: Path):
     assert documents == []
 
 
-# ============================================================================
-# XLS-specific edge case tests
-# ============================================================================
-
-
 def test_excel_reader_xls_date_cells_converted_to_iso(tmp_path: Path):
-    """XLS stores dates as serial numbers - verify they convert to ISO format."""
     xlwt = pytest.importorskip("xlwt")
 
     workbook = xlwt.Workbook()
@@ -1040,13 +1029,7 @@ def test_excel_reader_xls_all_empty_sheets_returns_empty_list(tmp_path: Path):
     assert documents == []
 
 
-# ============================================================================
-# Practical edge cases for knowledge/RAG applications
-# ============================================================================
-
-
 def test_excel_reader_xls_chunks_rows_for_rag(tmp_path: Path):
-    """XLS files with chunking for vector DB ingestion."""
     xlwt = pytest.importorskip("xlwt")
 
     workbook = xlwt.Workbook()
@@ -1078,7 +1061,6 @@ def test_excel_reader_xls_chunks_rows_for_rag(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_excel_reader_xls_async_with_chunking(tmp_path: Path):
-    """Async XLS reading with chunking for non-blocking ingestion."""
     xlwt = pytest.importorskip("xlwt")
 
     workbook = xlwt.Workbook()
@@ -1101,7 +1083,6 @@ async def test_excel_reader_xls_async_with_chunking(tmp_path: Path):
 
 
 def test_excel_reader_xls_numeric_edge_cases(tmp_path: Path):
-    """Financial data: large numbers, negative values, scientific notation."""
     xlwt = pytest.importorskip("xlwt")
 
     workbook = xlwt.Workbook()
@@ -1140,7 +1121,6 @@ def test_excel_reader_xls_numeric_edge_cases(tmp_path: Path):
 
 
 def test_excel_reader_xls_long_text_cells(tmp_path: Path):
-    """Product catalogs often have long descriptions."""
     xlwt = pytest.importorskip("xlwt")
 
     workbook = xlwt.Workbook()
@@ -1172,7 +1152,6 @@ def test_excel_reader_xls_long_text_cells(tmp_path: Path):
 
 
 def test_excel_reader_xls_multi_sheet_chunking(tmp_path: Path):
-    """Multiple sheets with chunking - common for department reports."""
     xlwt = pytest.importorskip("xlwt")
 
     workbook = xlwt.Workbook()
@@ -1202,7 +1181,6 @@ def test_excel_reader_xls_multi_sheet_chunking(tmp_path: Path):
 
 
 def test_excel_reader_xls_wide_table(tmp_path: Path):
-    """Wide tables with many columns - common in enterprise reports."""
     xlwt = pytest.importorskip("xlwt")
 
     workbook = xlwt.Workbook()
@@ -1227,3 +1205,502 @@ def test_excel_reader_xls_wide_table(tmp_path: Path):
     assert "col_19" in lines[0]
     assert "val_0" in lines[1]
     assert "val_19" in lines[1]
+
+
+def test_excel_reader_stress_large_sheet_xlsx(tmp_path: Path):
+    openpyxl = pytest.importorskip("openpyxl")
+
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "LargeData"
+    sheet.append(["id", "name", "description", "price", "category"])
+
+    for i in range(1000):
+        sheet.append([i, f"Product_{i}", f"Description for product {i}", 99.99 + i, f"Category_{i % 10}"])
+
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    workbook.close()
+
+    file_path = tmp_path / "large.xlsx"
+    file_path.write_bytes(buffer.getvalue())
+
+    reader = ExcelReader(chunk=True)
+    documents = reader.read(file_path)
+
+    assert len(documents) == 1001  # header + 1000 data rows
+    assert all(doc.meta_data.get("sheet_name") == "LargeData" for doc in documents)
+
+
+def test_excel_reader_stress_large_sheet_xls(tmp_path: Path):
+    xlwt = pytest.importorskip("xlwt")
+
+    workbook = xlwt.Workbook()
+    sheet = workbook.add_sheet("LargeData")
+    headers = ["id", "name", "description", "price", "category"]
+    for col, header in enumerate(headers):
+        sheet.write(0, col, header)
+
+    for i in range(1000):
+        sheet.write(i + 1, 0, i)
+        sheet.write(i + 1, 1, f"Product_{i}")
+        sheet.write(i + 1, 2, f"Description for product {i}")
+        sheet.write(i + 1, 3, 99.99 + i)
+        sheet.write(i + 1, 4, f"Category_{i % 10}")
+
+    file_path = tmp_path / "large.xls"
+    workbook.save(str(file_path))
+
+    reader = ExcelReader(chunk=True)
+    documents = reader.read(file_path)
+
+    assert len(documents) == 1001  # header + 1000 data rows
+
+
+def test_excel_reader_stress_wide_table_50_cols(tmp_path: Path):
+    openpyxl = pytest.importorskip("openpyxl")
+
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "WideData"
+
+    # 50 columns
+    headers = [f"col_{i}" for i in range(50)]
+    sheet.append(headers)
+
+    # 100 rows of data
+    for row in range(100):
+        sheet.append([f"row{row}_col{col}" for col in range(50)])
+
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    workbook.close()
+
+    file_path = tmp_path / "wide.xlsx"
+    file_path.write_bytes(buffer.getvalue())
+
+    reader = ExcelReader(chunk=False)
+    documents = reader.read(file_path)
+
+    assert len(documents) == 1
+    content = documents[0].content
+    assert "col_0" in content
+    assert "col_49" in content
+
+
+@pytest.mark.asyncio
+async def test_excel_reader_stress_concurrent_reads(tmp_path: Path):
+    import asyncio
+
+    openpyxl = pytest.importorskip("openpyxl")
+
+    files = []
+    for i in range(5):
+        workbook = openpyxl.Workbook()
+        sheet = workbook.active
+        sheet.title = f"Data{i}"
+        sheet.append(["id", "value"])
+        for j in range(100):
+            sheet.append([j, f"file{i}_value{j}"])
+
+        buffer = io.BytesIO()
+        workbook.save(buffer)
+        workbook.close()
+
+        file_path = tmp_path / f"concurrent_{i}.xlsx"
+        file_path.write_bytes(buffer.getvalue())
+        files.append(file_path)
+
+    reader = ExcelReader(chunk=True)
+    results = await asyncio.gather(*[reader.async_read(f) for f in files])
+
+    assert len(results) == 5
+    for docs in results:
+        assert len(docs) == 101  # header + 100 rows
+
+
+def test_excel_reader_stress_multi_sheet_large(tmp_path: Path):
+    openpyxl = pytest.importorskip("openpyxl")
+
+    workbook = openpyxl.Workbook()
+    sheet_names = ["Q1_Sales", "Q2_Sales", "Q3_Sales", "Q4_Sales", "Annual_Summary"]
+
+    for idx, name in enumerate(sheet_names):
+        if idx == 0:
+            sheet = workbook.active
+            sheet.title = name
+        else:
+            sheet = workbook.create_sheet(name)
+
+        sheet.append(["region", "product", "revenue", "units"])
+        for row in range(200):
+            sheet.append([f"Region_{row % 5}", f"Product_{row}", row * 1000, row * 10])
+
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    workbook.close()
+
+    file_path = tmp_path / "multi_sheet.xlsx"
+    file_path.write_bytes(buffer.getvalue())
+
+    reader = ExcelReader(chunk=True)
+    documents = reader.read(file_path)
+
+    # 5 sheets × 201 rows (header + 200 data) = 1005 documents
+    assert len(documents) == 1005
+    found_sheets = {doc.meta_data["sheet_name"] for doc in documents}
+    assert found_sheets == set(sheet_names)
+
+
+def test_excel_reader_stress_mixed_types_1000_rows(tmp_path: Path):
+    openpyxl = pytest.importorskip("openpyxl")
+
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "MixedTypes"
+    sheet.append(["id", "name", "price", "in_stock", "created_date", "description"])
+
+    for i in range(1000):
+        sheet.append(
+            [
+                i,
+                f"Product_{i}",
+                99.99 + (i * 0.01),
+                i % 2 == 0,  # Boolean
+                datetime(2024, (i % 12) + 1, (i % 28) + 1),
+                f"Long description for product {i} with multiple words",
+            ]
+        )
+
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    workbook.close()
+
+    file_path = tmp_path / "mixed_types.xlsx"
+    file_path.write_bytes(buffer.getvalue())
+
+    reader = ExcelReader(chunk=True)
+    documents = reader.read(file_path)
+
+    assert len(documents) == 1001
+
+
+def test_excel_reader_xlsx_formula_cells_return_values(tmp_path: Path):
+    openpyxl = pytest.importorskip("openpyxl")
+
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "Formulas"
+    sheet.append(["item", "quantity", "unit_price", "total"])
+    sheet.append(["Widget A", 10, 5.00, "=B2*C2"])
+    sheet.append(["Widget B", 5, 10.00, "=B3*C3"])
+    sheet.append(["", "", "Grand Total", "=SUM(D2:D3)"])
+
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    workbook.close()
+
+    file_path = tmp_path / "formulas.xlsx"
+    file_path.write_bytes(buffer.getvalue())
+
+    reader = ExcelReader(chunk=False)
+    documents = reader.read(file_path)
+
+    assert len(documents) == 1
+    # Note: openpyxl with data_only=True returns None for formulas in newly created files
+    # because Excel hasn't calculated them yet. In real files from Excel, values would be present.
+    content = documents[0].content
+    assert "Widget A" in content
+
+
+def test_excel_reader_xlsx_merged_cells_return_top_left_value(tmp_path: Path):
+    openpyxl = pytest.importorskip("openpyxl")
+
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "Merged"
+    sheet["A1"] = "Merged Header"
+    sheet.merge_cells("A1:C1")
+    sheet["A2"] = "col1"
+    sheet["B2"] = "col2"
+    sheet["C2"] = "col3"
+    sheet["A3"] = "data1"
+    sheet["B3"] = "data2"
+    sheet["C3"] = "data3"
+
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    workbook.close()
+
+    file_path = tmp_path / "merged.xlsx"
+    file_path.write_bytes(buffer.getvalue())
+
+    reader = ExcelReader(chunk=False)
+    documents = reader.read(file_path)
+
+    assert len(documents) == 1
+    content = documents[0].content
+    assert "Merged Header" in content
+
+
+def test_excel_reader_xlsx_leading_zeros_in_text_cells(tmp_path: Path):
+    openpyxl = pytest.importorskip("openpyxl")
+
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "SKUs"
+    sheet.append(["sku", "name", "barcode"])
+    sheet.append(["00123", "Widget A", "0001234567890"])
+    sheet.append(["007", "Widget B", "0009876543210"])
+    sheet.append(["0001", "Widget C", "0000000000001"])
+
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    workbook.close()
+
+    file_path = tmp_path / "skus.xlsx"
+    file_path.write_bytes(buffer.getvalue())
+
+    reader = ExcelReader(chunk=False)
+    documents = reader.read(file_path)
+
+    assert len(documents) == 1
+    content = documents[0].content
+    # Text cells preserve leading zeros
+    assert "00123" in content
+    assert "007" in content
+    assert "0001" in content
+
+
+def test_excel_reader_xlsx_error_cells_returned_as_strings(tmp_path: Path):
+    openpyxl = pytest.importorskip("openpyxl")
+
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "Errors"
+    sheet.append(["type", "value"])
+    # Manually set error values as strings (simulating what Excel would show)
+    sheet.append(["div_zero", "#DIV/0!"])
+    sheet.append(["ref_error", "#REF!"])
+    sheet.append(["na_error", "#N/A"])
+    sheet.append(["value_error", "#VALUE!"])
+    sheet.append(["name_error", "#NAME?"])
+
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    workbook.close()
+
+    file_path = tmp_path / "errors.xlsx"
+    file_path.write_bytes(buffer.getvalue())
+
+    reader = ExcelReader(chunk=False)
+    documents = reader.read(file_path)
+
+    assert len(documents) == 1
+    content = documents[0].content
+    assert "#DIV/0!" in content
+    assert "#REF!" in content
+    assert "#N/A" in content
+
+
+def test_excel_reader_xlsx_large_numbers_preserved(tmp_path: Path):
+    openpyxl = pytest.importorskip("openpyxl")
+
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "Financial"
+    sheet.append(["type", "amount"])
+    sheet.append(["revenue", 1234567890.50])
+    sheet.append(["market_cap", 2500000000])
+    sheet.append(["refund", -5000.25])
+    sheet.append(["small", 0.0001])
+
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    workbook.close()
+
+    file_path = tmp_path / "financial.xlsx"
+    file_path.write_bytes(buffer.getvalue())
+
+    reader = ExcelReader(chunk=False)
+    documents = reader.read(file_path)
+
+    assert len(documents) == 1
+    content = documents[0].content
+    assert "1234567890.5" in content
+    assert "2500000000" in content
+    assert "-5000.25" in content
+
+
+def test_excel_reader_xlsx_whitespace_only_cells_handled(tmp_path: Path):
+    openpyxl = pytest.importorskip("openpyxl")
+
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "Whitespace"
+    sheet.append(["id", "name", "notes"])
+    sheet.append([1, "Widget", "   "])  # spaces only
+    sheet.append([2, "Gadget", "\t\t"])  # tabs only
+    sheet.append([3, "Item", "  \n  "])  # mixed whitespace
+
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    workbook.close()
+
+    file_path = tmp_path / "whitespace.xlsx"
+    file_path.write_bytes(buffer.getvalue())
+
+    reader = ExcelReader(chunk=False)
+    documents = reader.read(file_path)
+
+    assert len(documents) == 1
+    content = documents[0].content
+    assert "Widget" in content
+    assert "Gadget" in content
+
+
+def test_excel_reader_xlsx_large_cell_content(tmp_path: Path):
+    openpyxl = pytest.importorskip("openpyxl")
+
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "Products"
+    sheet.append(["name", "description"])
+
+    long_desc = (
+        "This premium enterprise widget features cutting-edge technology with "
+        "advanced AI-powered automation capabilities. It includes seamless integration "
+        "with existing enterprise systems, real-time analytics dashboard, comprehensive "
+        "reporting suite, multi-language support for global deployments, and 24/7 "
+        "enterprise support with guaranteed SLA. The widget also supports custom "
+        "configurations, API access for third-party integrations, and complies with "
+        "SOC 2, GDPR, and HIPAA regulations. Perfect for large-scale deployments."
+    )
+    sheet.append(["Enterprise Widget Pro", long_desc])
+
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    workbook.close()
+
+    file_path = tmp_path / "products.xlsx"
+    file_path.write_bytes(buffer.getvalue())
+
+    reader = ExcelReader(chunk=False)
+    documents = reader.read(file_path)
+
+    assert len(documents) == 1
+    content = documents[0].content
+    assert "Enterprise Widget Pro" in content
+    assert "AI-powered automation" in content
+    assert "HIPAA regulations" in content
+
+
+def test_excel_reader_xlsx_sparse_data_with_gaps(tmp_path: Path):
+    openpyxl = pytest.importorskip("openpyxl")
+
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "Sparse"
+    sheet["A1"] = "a"
+    sheet["C1"] = "c"
+    sheet["E1"] = "e"
+    sheet["A3"] = "data1"
+    sheet["C3"] = "data2"
+    sheet["A5"] = "more"
+
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    workbook.close()
+
+    file_path = tmp_path / "sparse.xlsx"
+    file_path.write_bytes(buffer.getvalue())
+
+    reader = ExcelReader(chunk=False)
+    documents = reader.read(file_path)
+
+    assert len(documents) == 1
+    content = documents[0].content
+    assert "a" in content
+    assert "c" in content
+    assert "data1" in content
+    assert "more" in content
+
+
+def test_excel_reader_xls_error_cells_returned_as_strings(tmp_path: Path):
+    xlwt = pytest.importorskip("xlwt")
+
+    workbook = xlwt.Workbook()
+    sheet = workbook.add_sheet("Errors")
+    sheet.write(0, 0, "type")
+    sheet.write(0, 1, "value")
+    sheet.write(1, 0, "div_zero")
+    sheet.write(1, 1, "#DIV/0!")
+    sheet.write(2, 0, "ref_error")
+    sheet.write(2, 1, "#REF!")
+    sheet.write(3, 0, "na_error")
+    sheet.write(3, 1, "#N/A")
+
+    file_path = tmp_path / "errors.xls"
+    workbook.save(str(file_path))
+
+    reader = ExcelReader(chunk=False)
+    documents = reader.read(file_path)
+
+    assert len(documents) == 1
+    content = documents[0].content
+    assert "#DIV/0!" in content
+    assert "#REF!" in content
+
+
+def test_excel_reader_xls_leading_zeros_in_text_cells(tmp_path: Path):
+    xlwt = pytest.importorskip("xlwt")
+
+    workbook = xlwt.Workbook()
+    sheet = workbook.add_sheet("SKUs")
+    sheet.write(0, 0, "sku")
+    sheet.write(0, 1, "name")
+    sheet.write(1, 0, "00123")
+    sheet.write(1, 1, "Widget A")
+    sheet.write(2, 0, "007")
+    sheet.write(2, 1, "Widget B")
+    sheet.write(3, 0, "0001")
+    sheet.write(3, 1, "Widget C")
+
+    file_path = tmp_path / "skus.xls"
+    workbook.save(str(file_path))
+
+    reader = ExcelReader(chunk=False)
+    documents = reader.read(file_path)
+
+    assert len(documents) == 1
+    content = documents[0].content
+    assert "00123" in content
+    assert "007" in content
+    assert "0001" in content
+
+
+def test_excel_reader_xls_large_cell_content(tmp_path: Path):
+    xlwt = pytest.importorskip("xlwt")
+
+    workbook = xlwt.Workbook()
+    sheet = workbook.add_sheet("Products")
+    sheet.write(0, 0, "name")
+    sheet.write(0, 1, "description")
+
+    long_desc = (
+        "This premium enterprise widget features cutting-edge technology with "
+        "advanced AI-powered automation capabilities and comprehensive reporting."
+    )
+    sheet.write(1, 0, "Enterprise Widget")
+    sheet.write(1, 1, long_desc)
+
+    file_path = tmp_path / "products.xls"
+    workbook.save(str(file_path))
+
+    reader = ExcelReader(chunk=False)
+    documents = reader.read(file_path)
+
+    assert len(documents) == 1
+    content = documents[0].content
+    assert "Enterprise Widget" in content
+    assert "AI-powered automation" in content

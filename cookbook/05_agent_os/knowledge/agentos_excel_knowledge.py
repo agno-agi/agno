@@ -1,16 +1,3 @@
-"""AgentOS with Excel Knowledge - REST API for querying Excel data.
-
-This example demonstrates using ExcelReader with AgentOS to:
-- Load Excel files into a vector database
-- Expose an agent via REST API
-- Query Excel data through HTTP endpoints
-
-Run with:
-    uv run --no-sync python cookbook/05_agent_os/knowledge/agentos_excel_knowledge.py
-
-Then test at: http://localhost:7777/
-"""
-
 from pathlib import Path
 
 from agno.agent import Agent
@@ -53,23 +40,15 @@ agent_os = AgentOS(
 app = agent_os.get_app()
 
 if __name__ == "__main__":
-    # Determine paths relative to repo root
     repo_root = Path(__file__).parent.parent.parent.parent
-    excel_samples = repo_root / "cookbook/07_knowledge/testing_resources/excel_samples"
+    sample_file = (
+        repo_root / "cookbook/07_knowledge/testing_resources/sample_products.xlsx"
+    )
 
-    # Load sample Excel files
-    if (excel_samples / "Employee Sample Data.xlsx").exists():
-        print("Loading Employee Sample Data...")
+    if sample_file.exists():
+        print("Loading sample products data...")
         excel_knowledge.insert(
-            path=str(excel_samples / "Employee Sample Data.xlsx"),
-            reader=ExcelReader(),
-            skip_if_exists=True,
-        )
-
-    if (excel_samples / "Financials Sample Data.xlsx").exists():
-        print("Loading Financials Sample Data...")
-        excel_knowledge.insert(
-            path=str(excel_samples / "Financials Sample Data.xlsx"),
+            path=str(sample_file),
             reader=ExcelReader(),
             skip_if_exists=True,
         )
@@ -77,8 +56,7 @@ if __name__ == "__main__":
     print("\nStarting AgentOS server...")
     print("Test at: http://localhost:7777/")
     print("\nExample queries:")
-    print("  - List employees in the IT department")
-    print("  - What are the sales figures for Q1?")
-    print("  - Who are the Technical Architects?")
+    print("  - What electronics products are in stock?")
+    print("  - What is the price of the Bluetooth speaker?")
 
     agent_os.serve(app="agentos_excel_knowledge:app", reload=True)

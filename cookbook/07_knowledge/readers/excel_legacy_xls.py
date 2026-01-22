@@ -20,12 +20,7 @@ knowledge_base = Knowledge(
     ),
 )
 
-data_path = (
-    Path(__file__).parent.parent
-    / "testing_resources"
-    / "excel_samples"
-    / "legacy_data.xls"
-)
+data_path = Path(__file__).parent.parent / "testing_resources" / "legacy_data.xls"
 
 knowledge_base.insert(
     path=str(data_path),
