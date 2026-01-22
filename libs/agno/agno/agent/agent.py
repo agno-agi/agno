@@ -146,6 +146,7 @@ from agno.utils.events import (
     create_run_started_event,
     create_session_summary_completed_event,
     create_session_summary_started_event,
+    create_tool_call_args_delta_event,
     create_tool_call_completed_event,
     create_tool_call_error_event,
     create_tool_call_started_event,
@@ -6068,21 +6069,50 @@ class Agent:
             ):  # Add tool calls to the run_response
                 tool_executions_list = model_response_event.tool_executions
                 if tool_executions_list is not None:
-                    # Add tool calls to the agent.run_response
                     if run_response.tools is None:
-                        run_response.tools = tool_executions_list
-                    else:
-                        run_response.tools.extend(tool_executions_list)
+                        run_response.tools = []
 
-                    # Yield each tool call started event
-                    if stream_events:
-                        for tool in tool_executions_list:
+                    tool_call_index_map = {
+                        tc.tool_call_id: i for i, tc in enumerate(run_response.tools) if tc.tool_call_id is not None
+                    }
+
+                    for tool in tool_executions_list:
+                        tool_call_id = tool.tool_call_id
+                        if tool_call_id and tool_call_id in tool_call_index_map:
+                            existing_tool = run_response.tools[tool_call_index_map[tool_call_id]]
+                            if not existing_tool.tool_name and tool.tool_name:
+                                existing_tool.tool_name = tool.tool_name
+                            if (not existing_tool.tool_args) and tool.tool_args:
+                                existing_tool.tool_args = tool.tool_args
+                            if existing_tool.tool_call_error is None and tool.tool_call_error is not None:
+                                existing_tool.tool_call_error = tool.tool_call_error
+                            continue
+
+                        run_response.tools.append(tool)
+                        if tool_call_id:
+                            tool_call_index_map[tool_call_id] = len(run_response.tools) - 1
+
+                        if stream_events:
                             yield handle_event(  # type: ignore
                                 create_tool_call_started_event(from_run_response=run_response, tool=tool),
                                 run_response,
                                 events_to_skip=self.events_to_skip,  # type: ignore
                                 store_events=self.store_events,
                             )
+
+            elif model_response_event.event == ModelResponseEvent.tool_call_args_delta.value:
+                if stream_events:
+                    yield handle_event(  # type: ignore
+                        create_tool_call_args_delta_event(
+                            from_run_response=run_response,
+                            tool_call_id=model_response_event.tool_call_id,
+                            tool_name=model_response_event.tool_name,
+                            delta=model_response_event.tool_args_delta,
+                        ),
+                        run_response,
+                        events_to_skip=self.events_to_skip,  # type: ignore
+                        store_events=self.store_events,
+                    )
 
             # If the model response is a tool_call_completed, update the existing tool call in the run_response
             elif model_response_event.event == ModelResponseEvent.tool_call_completed.value:

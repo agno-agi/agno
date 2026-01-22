@@ -1,3 +1,4 @@
+import ast
 import asyncio
 import collections.abc
 import json
@@ -17,6 +18,7 @@ from typing import (
     Literal,
     Optional,
     Sequence,
+    Set,
     Tuple,
     Type,
     Union,
@@ -53,6 +55,9 @@ class MessageData:
     response_redacted_reasoning_content: Any = ""
     response_citations: Optional[Citations] = None
     response_tool_calls: List[Dict[str, Any]] = field(default_factory=list)
+    emitted_tool_call_ids: Set[str] = field(default_factory=set)
+    tool_call_id_map: Dict[int, str] = field(default_factory=dict)
+    tool_call_name_map: Dict[str, str] = field(default_factory=dict)
 
     response_audio: Optional[Audio] = None
     response_image: Optional[Image] = None
@@ -1237,6 +1242,10 @@ class Model(ABC):
             ):
                 yield model_response_delta
 
+        # Emit any remaining tool call started events that never completed parsing during the stream
+        for tool_call_event in self._iter_stream_tool_call_events(stream_data, final=True):
+            yield tool_call_event
+
         # Populate assistant message from stream data after the stream ends
         self._populate_assistant_message_from_stream_data(assistant_message=assistant_message, stream_data=stream_data)
 
@@ -1480,6 +1489,10 @@ class Model(ABC):
                 model_response_delta=response_delta,
             ):
                 yield model_response_delta
+
+        # Emit any remaining tool call started events that never completed parsing during the stream
+        for tool_call_event in self._iter_stream_tool_call_events(stream_data, final=True):
+            yield tool_call_event
 
         # Populate assistant message from stream data after the stream ends
         self._populate_assistant_message_from_stream_data(assistant_message=assistant_message, stream_data=stream_data)
@@ -1733,6 +1746,10 @@ class Model(ABC):
     ) -> Iterator[ModelResponse]:
         """Update the stream data and assistant message with the model response."""
 
+        if model_response_delta.event == ModelResponseEvent.tool_call_args_delta.value:
+            yield model_response_delta
+            return
+
         should_yield = False
         if model_response_delta.role is not None:
             stream_data.response_role = model_response_delta.role  # type: ignore
@@ -1770,6 +1787,15 @@ class Model(ABC):
                 stream_data.response_tool_calls = []
             stream_data.response_tool_calls.extend(model_response_delta.tool_calls)
             should_yield = True
+            # Emit tool call started events when tool calls are ready
+            for tool_call_event in self._iter_stream_tool_call_events(stream_data):
+                yield tool_call_event
+            # Emit tool call argument delta events
+            if not (model_response_delta.extra and model_response_delta.extra.get("skip_tool_call_args_delta")):
+                for tool_call_event in self._iter_tool_call_arg_deltas(
+                    stream_data=stream_data, tool_calls_delta=model_response_delta.tool_calls
+                ):
+                    yield tool_call_event
 
         if model_response_delta.audio is not None and isinstance(model_response_delta.audio, Audio):
             if stream_data.response_audio is None:
@@ -1824,6 +1850,139 @@ class Model(ABC):
         Parse the tool calls from the model provider into a list of tool calls.
         """
         return tool_calls_data
+
+    def _extract_tool_call_fields(
+        self, tool_call: Any
+    ) -> Tuple[Optional[str], Optional[int], Optional[str], Optional[Any]]:
+        """Extract tool call id, index, name, and arguments from a provider tool call delta."""
+        if isinstance(tool_call, dict):
+            tool_call_id = tool_call.get("id") or tool_call.get("call_id")
+            tool_call_index = tool_call.get("index")
+            function_def = tool_call.get("function") or {}
+            tool_name = function_def.get("name")
+            arguments = function_def.get("arguments")
+            return tool_call_id, tool_call_index, tool_name, arguments
+
+        tool_call_id = getattr(tool_call, "id", None)
+        tool_call_index = getattr(tool_call, "index", None)
+        function_def = getattr(tool_call, "function", None)
+        tool_name = None
+        arguments = None
+        if function_def is not None:
+            tool_name = getattr(function_def, "name", None)
+            arguments = getattr(function_def, "arguments", None)
+        return tool_call_id, tool_call_index, tool_name, arguments
+
+    def _parse_tool_call_arguments(self, arguments: Any) -> Tuple[Optional[Dict[str, Any]], bool]:
+        """Parse tool call arguments into a dict when possible."""
+        if arguments is None:
+            return None, False
+        if isinstance(arguments, dict):
+            return arguments, True
+        if isinstance(arguments, str):
+            if arguments.strip() == "":
+                return None, False
+            try:
+                parsed_args = json.loads(arguments)
+            except Exception:
+                try:
+                    parsed_args = ast.literal_eval(arguments)
+                except Exception:
+                    return None, False
+            if isinstance(parsed_args, dict):
+                return parsed_args, True
+            return None, False
+        return None, False
+
+    def _build_tool_execution_from_tool_call(self, tool_call: Dict[str, Any]) -> Tuple[Optional[ToolExecution], bool]:
+        """Build a ToolExecution from a tool call dict. Returns (tool_execution, args_ready)."""
+        if tool_call.get("type") != "function":
+            return None, False
+
+        function_def = tool_call.get("function") or {}
+        tool_name = function_def.get("name") or ""
+        if not tool_name:
+            return None, False
+
+        tool_call_id = tool_call.get("id") or tool_call.get("call_id")
+        if not tool_call_id:
+            return None, False
+
+        parsed_args, args_ready = self._parse_tool_call_arguments(function_def.get("arguments"))
+        if parsed_args is None:
+            parsed_args = {}
+
+        return (
+            ToolExecution(tool_call_id=tool_call_id, tool_name=tool_name, tool_args=parsed_args),
+            args_ready,
+        )
+
+    def _iter_tool_call_arg_deltas(
+        self, stream_data: MessageData, tool_calls_delta: List[Any]
+    ) -> Iterator[ModelResponse]:
+        """Emit tool call argument delta events from streaming tool call data."""
+        if not tool_calls_delta:
+            return
+
+        for tool_call in tool_calls_delta:
+            tool_call_id, tool_call_index, tool_name, arguments = self._extract_tool_call_fields(tool_call)
+
+            if tool_call_index is not None and tool_call_id:
+                stream_data.tool_call_id_map[tool_call_index] = tool_call_id
+
+            if tool_call_id is None and tool_call_index is not None:
+                tool_call_id = stream_data.tool_call_id_map.get(tool_call_index)
+
+            if tool_call_id and tool_name:
+                existing_name = stream_data.tool_call_name_map.get(tool_call_id)
+                if not existing_name or (tool_name and len(tool_name) > len(existing_name)):
+                    stream_data.tool_call_name_map[tool_call_id] = tool_name
+
+            if tool_call_id is None or arguments is None:
+                continue
+
+            if isinstance(arguments, dict):
+                arguments_delta = json.dumps(arguments)
+            else:
+                arguments_delta = str(arguments)
+            if arguments_delta == "":
+                continue
+
+            yield ModelResponse(
+                event=ModelResponseEvent.tool_call_args_delta.value,
+                tool_call_id=tool_call_id,
+                tool_name=stream_data.tool_call_name_map.get(tool_call_id),
+                tool_args_delta=arguments_delta,
+            )
+
+    def _iter_stream_tool_call_events(self, stream_data: MessageData, final: bool = False) -> Iterator[ModelResponse]:
+        """Emit tool call started events from streaming tool call deltas."""
+        if not stream_data.response_tool_calls:
+            return
+
+        tool_calls = self.parse_tool_calls(stream_data.response_tool_calls)
+        for tool_call in tool_calls:
+            tool_call_id = tool_call.get("id") or tool_call.get("call_id")
+            if not tool_call_id or tool_call_id in stream_data.emitted_tool_call_ids:
+                continue
+
+            tool_execution, args_ready = self._build_tool_execution_from_tool_call(tool_call)
+            if tool_execution is None:
+                continue
+            if tool_execution.tool_name:
+                existing_name = stream_data.tool_call_name_map.get(tool_call_id)
+                if not existing_name or len(tool_execution.tool_name) > len(existing_name):
+                    stream_data.tool_call_name_map[tool_call_id] = tool_execution.tool_name
+
+            if not args_ready and not final:
+                # Still emit started event with empty args; deltas will stream separately.
+                tool_execution.tool_args = {}
+
+            stream_data.emitted_tool_call_ids.add(tool_call_id)
+            yield ModelResponse(
+                event=ModelResponseEvent.tool_call_started.value,
+                tool_executions=[tool_execution],
+            )
 
     def get_function_call_to_run_from_tool_execution(
         self,
