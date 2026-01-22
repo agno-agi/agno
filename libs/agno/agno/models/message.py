@@ -125,7 +125,9 @@ class Message(BaseModel):
         if isinstance(self.content, str):
             return self.content
         if isinstance(self.content, list):
-            if len(self.content) > 0 and isinstance(self.content[0], dict) and "text" in self.content[0]:
+            if len(self.content) == 0:
+                return ""
+            if isinstance(self.content[0], dict) and "text" in self.content[0]:
                 return self.content[0].get("text", "")
             else:
                 return json.dumps(self.content)
