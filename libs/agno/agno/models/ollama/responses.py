@@ -25,26 +25,14 @@ class OllamaResponses(OpenResponses):
     For more information, see: https://docs.ollama.com/api/openai-compatibility
 
     Attributes:
-        id (str): The model id. Defaults to "llama3.1".
+        id (str): The model id. Defaults to "gpt-oss:20b".
         name (str): The model name. Defaults to "OllamaResponses".
         provider (str): The provider name. Defaults to "Ollama".
         host (Optional[str]): The Ollama server host. Defaults to "http://localhost:11434".
         api_key (Optional[str]): The API key for Ollama Cloud. Not required for local usage.
-
-    Example:
-        ```python
-        from agno.agent import Agent
-        from agno.models.ollama import OllamaResponses
-
-        agent = Agent(
-            model=OllamaResponses(id="llama3.1"),
-            markdown=True,
-        )
-        agent.print_response("Write a haiku about coding")
-        ```
     """
 
-    id: str = "llama3.1"
+    id: str = "gpt-oss:20b"
     name: str = "OllamaResponses"
     provider: str = "Ollama"
 

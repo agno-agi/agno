@@ -7,7 +7,7 @@ def test_ollama_responses_default_config():
     """Test OllamaResponses default configuration."""
     model = OllamaResponses()
 
-    assert model.id == "llama3.1"
+    assert model.id == "gpt-oss:20b"
     assert model.name == "OllamaResponses"
     assert model.provider == "Ollama"
     assert model.store is False  # Stateless by default

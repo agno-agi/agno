@@ -11,7 +11,7 @@ def test_openrouter_responses_default_config():
     with patch.dict("os.environ", {"OPENROUTER_API_KEY": "test-key"}):
         model = OpenRouterResponses()
 
-        assert model.id == "openai/gpt-4o"
+        assert model.id == "openai/gpt-oss-20b"
         assert model.name == "OpenRouterResponses"
         assert model.provider == "OpenRouter"
         assert model.base_url == "https://openrouter.ai/api/v1"

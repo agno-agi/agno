@@ -6,7 +6,7 @@ from pydantic import BaseModel
 
 from agno.exceptions import ModelAuthenticationError
 from agno.models.openai.open_responses import OpenResponses
-from agno.run.agent import RunOutput
+from agno.models.message import Message
 
 
 @dataclass
@@ -24,7 +24,7 @@ class OpenRouterResponses(OpenResponses):
     For more information, see: https://openrouter.ai/docs/api/reference/responses/overview
 
     Attributes:
-        id (str): The model id. Defaults to "openai/gpt-4o".
+        id (str): The model id. Defaults to "openai/gpt-oss-20b".
         name (str): The model name. Defaults to "OpenRouterResponses".
         provider (str): The provider name. Defaults to "OpenRouter".
         api_key (Optional[str]): The API key. Uses OPENROUTER_API_KEY env var if not set.
@@ -46,7 +46,7 @@ class OpenRouterResponses(OpenResponses):
         ```
     """
 
-    id: str = "openai/gpt-4o"
+    id: str = "openai/gpt-oss-20b"
     name: str = "OpenRouterResponses"
     provider: str = "OpenRouter"
 
@@ -59,6 +59,7 @@ class OpenRouterResponses(OpenResponses):
 
     # OpenRouter's Responses API is stateless
     store: Optional[bool] = False
+    reasoning: Optional[bool] = False
 
     def _get_client_params(self) -> Dict[str, Any]:
         """
@@ -101,11 +102,10 @@ class OpenRouterResponses(OpenResponses):
 
     def get_request_params(
         self,
-        messages: Optional[List[Any]] = None,
+        messages: Optional[List[Message]] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-        run_response: Optional[RunOutput] = None,
     ) -> Dict[str, Any]:
         """
         Returns keyword arguments for API requests, including fallback models configuration.
@@ -145,3 +145,18 @@ class OpenRouterResponses(OpenResponses):
         if self.id.startswith("openai/o3") or self.id.startswith("openai/o4"):
             return True
         return False
+
+    def _set_reasoning_request_param(self, base_params: Dict[str, Any]) -> Dict[str, Any]:
+        """Set the reasoning request parameter."""
+        if self.reasoning: 
+            base_params["reasoning"] = {
+                "enabled": True
+            }
+
+        if self.reasoning_effort is not None:
+            base_params["reasoning"]["effort"] = self.reasoning_effort
+
+        if self.reasoning_summary is not None:
+            base_params["reasoning"]["summary"] = self.reasoning_summary
+
+        return base_params
