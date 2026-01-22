@@ -100,7 +100,7 @@ class TestResponseFormatConversion:
 
     def test_pydantic_model_includes_additional_properties_false(self):
         """Test that converted schema includes additionalProperties: false.
-        
+
         This is required by OpenAI's strict mode for structured outputs.
         Without this, the API returns a 400 error.
         """
@@ -172,7 +172,7 @@ class TestLiteLLMInvokeWithResponseFormat:
     @patch("agno.models.litellm.chat.litellm")
     def test_invoke_does_not_pass_response_format_when_not_supported(self, mock_litellm):
         """Test that invoke does NOT pass response_format when supports_native_structured_outputs=False.
-        
+
         This is critical for providers like Anthropic that don't support response_format.
         """
         # Setup mock
@@ -276,12 +276,12 @@ class TestAgentWithLiteLLMStructuredOutput:
             id="gpt-4o-mini",
             supports_native_structured_outputs=True,
         )
-        
+
         # Anthropic model with structured outputs disabled (default)
         anthropic_model = LiteLLM(
             id="claude-sonnet-4-20250514",
         )
-        
+
         # Gemini model with structured outputs enabled
         gemini_model = LiteLLM(
             id="gemini-2.5-flash",
