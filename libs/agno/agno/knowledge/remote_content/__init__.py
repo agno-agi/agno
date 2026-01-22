@@ -1,4 +1,5 @@
 from agno.knowledge.remote_content.config import (
+    AzureBlobConfig,
     GcsConfig,
     GitHubConfig,
     RemoteContentConfig,
@@ -6,6 +7,7 @@ from agno.knowledge.remote_content.config import (
     SharePointConfig,
 )
 from agno.knowledge.remote_content.remote_content import (
+    AzureBlobContent,
     GCSContent,
     GitHubContent,
     RemoteContent,
@@ -20,10 +22,12 @@ __all__ = [
     "GcsConfig",
     "SharePointConfig",
     "GitHubConfig",
+    "AzureBlobConfig",
     # Content classes
     "RemoteContent",
     "S3Content",
     "GCSContent",
     "SharePointContent",
     "GitHubContent",
+    "AzureBlobContent",
 ]
