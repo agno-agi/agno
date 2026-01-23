@@ -311,8 +311,8 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
                     class_path=_class_path(model),
                     provider=_safe_str(getattr(model, "provider", None)),
                     model_id=_safe_str(getattr(model, "id", None)),
-                    supports_tools=getattr(model, "supports_tools", None),
-                    supports_structured_outputs=getattr(model, "supports_structured_outputs", None),
+                    supports_native_structured_outputs=getattr(model, "supports_native_structured_outputs", None),
+                    supports_json_schema_outputs=getattr(model, "supports_json_schema_outputs", None),
                 )
                 components.append(
                     RegistryContentResponse(

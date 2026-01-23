@@ -681,9 +681,11 @@ class ModelMetadata(BaseModel):
     class_path: str = Field(..., description="Full module path to the model class")
     provider: Optional[str] = Field(None, description="Model provider (e.g., openai, anthropic)")
     model_id: Optional[str] = Field(None, description="Model identifier")
-    supports_tools: Optional[bool] = Field(None, description="Whether the model supports tool calling")
-    supports_structured_outputs: Optional[bool] = Field(
-        None, description="Whether the model supports structured outputs"
+    supports_native_structured_outputs: Optional[bool] = Field(
+        None, description="Whether the model supports structured outputs natively"
+    )
+    supports_json_schema_outputs: Optional[bool] = Field(
+        None, description="Whether the model requires JSON schema for structured outputs"
     )
 
 
