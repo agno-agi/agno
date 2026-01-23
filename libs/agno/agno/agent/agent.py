@@ -9311,17 +9311,42 @@ class Agent:
 
             # Inject dependencies into the last user message if enabled
             if add_dependencies_to_context and run_context and run_context.dependencies:
+                dependencies_block = (
+                    "\n\n<additional context>\n"
+                    + self._convert_dependencies_to_string(run_context.dependencies)
+                    + "\n</additional context>"
+                )
                 for i in range(len(converted_messages) - 1, -1, -1):
                     msg = converted_messages[i]
-                    if msg.role == "user" and isinstance(msg.content, str):
-                        dependencies_str = self._convert_dependencies_to_string(run_context.dependencies)
-                        msg.content = (
-                            msg.content
-                            + "\n\n<additional context>\n"
-                            + dependencies_str
-                            + "\n</additional context>"
-                        )
-                        break
+                    if msg.role == "user":
+                        if isinstance(msg.content, str):
+                            msg.content = msg.content + dependencies_block
+                            break
+                        elif (
+                            isinstance(msg.content, list) and len(msg.content) > 0 and isinstance(msg.content[0], dict)
+                        ):
+                            # Multimodal with "type" key (OpenAI format)
+                            if "type" in msg.content[0]:
+                                for part in reversed(msg.content):
+                                    if (
+                                        isinstance(part, dict)
+                                        and part.get("type") == "text"
+                                        and isinstance(part.get("text"), str)
+                                    ):
+                                        part["text"] += dependencies_block
+                                        break
+                                else:
+                                    msg.content.append({"type": "text", "text": dependencies_block.lstrip("\n")})
+                                break
+                            # Dicts with "text" but no "type" key (some providers)
+                            if "text" in msg.content[0]:
+                                for part in reversed(msg.content):
+                                    if isinstance(part, dict) and isinstance(part.get("text"), str):
+                                        part["text"] += dependencies_block
+                                        break
+                                else:
+                                    msg.content.append({"text": dependencies_block.lstrip("\n")})
+                                break
 
             # Add all messages to run_messages
             for msg in converted_messages:
@@ -9539,17 +9564,42 @@ class Agent:
 
             # Inject dependencies into the last user message if enabled
             if add_dependencies_to_context and dependencies:
+                dependencies_block = (
+                    "\n\n<additional context>\n"
+                    + self._convert_dependencies_to_string(dependencies)
+                    + "\n</additional context>"
+                )
                 for i in range(len(converted_messages) - 1, -1, -1):
                     msg = converted_messages[i]
-                    if msg.role == "user" and isinstance(msg.content, str):
-                        dependencies_str = self._convert_dependencies_to_string(dependencies)
-                        msg.content = (
-                            msg.content
-                            + "\n\n<additional context>\n"
-                            + dependencies_str
-                            + "\n</additional context>"
-                        )
-                        break
+                    if msg.role == "user":
+                        if isinstance(msg.content, str):
+                            msg.content = msg.content + dependencies_block
+                            break
+                        elif (
+                            isinstance(msg.content, list) and len(msg.content) > 0 and isinstance(msg.content[0], dict)
+                        ):
+                            # Multimodal with "type" key (OpenAI format)
+                            if "type" in msg.content[0]:
+                                for part in reversed(msg.content):
+                                    if (
+                                        isinstance(part, dict)
+                                        and part.get("type") == "text"
+                                        and isinstance(part.get("text"), str)
+                                    ):
+                                        part["text"] += dependencies_block
+                                        break
+                                else:
+                                    msg.content.append({"type": "text", "text": dependencies_block.lstrip("\n")})
+                                break
+                            # Dicts with "text" but no "type" key (some providers)
+                            if "text" in msg.content[0]:
+                                for part in reversed(msg.content):
+                                    if isinstance(part, dict) and isinstance(part.get("text"), str):
+                                        part["text"] += dependencies_block
+                                        break
+                                else:
+                                    msg.content.append({"text": dependencies_block.lstrip("\n")})
+                                break
 
             # Add all messages to run_messages
             for msg in converted_messages:
