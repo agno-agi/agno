@@ -21,6 +21,7 @@ def is_openai_reasoning_model(reasoning_model: Model) -> bool:
             or ("o1" in reasoning_model.id)
             or ("4.1" in reasoning_model.id)
             or ("4.5" in reasoning_model.id)
+            or ("5.1" in reasoning_model.id)
             or ("5.2" in reasoning_model.id)
         )
     ) or (isinstance(reasoning_model, OpenAILike) and "deepseek-r1" in reasoning_model.id.lower())
@@ -111,7 +112,7 @@ def get_openai_reasoning_stream(
     reasoning_content: str = ""
 
     try:
-        for event in reasoning_agent.run(input=messages, stream=True, stream_intermediate_steps=True):
+        for event in reasoning_agent.run(input=messages, stream=True, stream_events=True):
             if hasattr(event, "event"):
                 if event.event == RunEvent.run_content:
                     # Check for reasoning_content attribute first (native reasoning)
@@ -167,7 +168,7 @@ async def aget_openai_reasoning_stream(
     reasoning_content: str = ""
 
     try:
-        async for event in reasoning_agent.arun(input=messages, stream=True, stream_intermediate_steps=True):
+        async for event in reasoning_agent.arun(input=messages, stream=True, stream_events=True):
             if hasattr(event, "event"):
                 if event.event == RunEvent.run_content:
                     # Check for reasoning_content attribute first (native reasoning)

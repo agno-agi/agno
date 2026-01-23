@@ -18,8 +18,7 @@ agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     tools=[ReasoningTools(add_instructions=True)],
     instructions=dedent("""\
-        You are an expert problem-solving assistant with strong analytical skills! 🧠
-        Use step-by-step reasoning to solve the problem.
+        You are an expert problem-solving assistant with strong analytical skills!         Use step-by-step reasoning to solve the problem.
         \
     """),
 )
@@ -30,7 +29,7 @@ response = agent.run("What is the sum of the first 10 natural numbers?", stream=
 
 # Check reasoning_content
 if hasattr(response, "reasoning_content") and response.reasoning_content:
-    print("✅ reasoning_content FOUND in non-streaming response")
+    print("[OK] reasoning_content FOUND in non-streaming response")
     print(f"   Length: {len(response.reasoning_content)} characters")
     print("\n=== reasoning_content preview (non-streaming) ===")
     preview = response.reasoning_content[:1000]
@@ -38,7 +37,7 @@ if hasattr(response, "reasoning_content") and response.reasoning_content:
         preview += "..."
     print(preview)
 else:
-    print("❌ reasoning_content NOT FOUND in non-streaming response")
+    print("[NOT FOUND] reasoning_content NOT FOUND in non-streaming response")
 
 # Process streaming responses to find the final one
 print("\n\n=== Test 2: Processing stream to find final response ===\n")
@@ -48,8 +47,7 @@ streaming_agent_alt = Agent(
     model=OpenAIChat(id="gpt-4o"),
     tools=[ReasoningTools(add_instructions=True)],
     instructions=dedent("""\
-        You are an expert problem-solving assistant with strong analytical skills! 🧠
-        Use step-by-step reasoning to solve the problem.
+        You are an expert problem-solving assistant with strong analytical skills!         Use step-by-step reasoning to solve the problem.
         \
     """),
 )
@@ -71,7 +69,7 @@ if (
     and hasattr(final_response, "reasoning_content")
     and final_response.reasoning_content
 ):
-    print("✅ reasoning_content FOUND in final stream event")
+    print("[OK] reasoning_content FOUND in final stream event")
     print(f"   Length: {len(final_response.reasoning_content)} characters")
     print("\n=== reasoning_content preview (final stream event) ===")
     preview = final_response.reasoning_content[:1000]
@@ -79,4 +77,4 @@ if (
         preview += "..."
     print(preview)
 else:
-    print("❌ reasoning_content NOT FOUND in final stream event")
+    print("[NOT FOUND] reasoning_content NOT FOUND in final stream event")

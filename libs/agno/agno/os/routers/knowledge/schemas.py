@@ -156,7 +156,7 @@ class VectorSearchRequestSchema(BaseModel):
     class Meta(BaseModel):
         """Inline metadata schema for pagination."""
 
-        limit: int = Field(20, description="Number of results per page", ge=1, le=100)
+        limit: int = Field(20, description="Number of results per page", ge=1)
         page: int = Field(1, description="Page number", ge=1)
 
     query: str = Field(..., description="The search query text")
@@ -170,9 +170,21 @@ class VectorSearchRequestSchema(BaseModel):
     )
 
 
+class RemoteContentSourceSchema(BaseModel):
+    """Schema for remote content source configuration."""
+
+    id: str = Field(..., description="Unique identifier for the content source")
+    name: str = Field(..., description="Display name for the content source")
+    type: str = Field(..., description="Type of content source (s3, gcs, sharepoint, github, azureblob)")
+    metadata: Optional[Dict[str, Any]] = Field(None, description="Custom metadata for the content source")
+
+
 class ConfigResponseSchema(BaseModel):
     readers: Optional[Dict[str, ReaderSchema]] = Field(None, description="Available content readers")
     readersForType: Optional[Dict[str, List[str]]] = Field(None, description="Mapping of content types to reader IDs")
     chunkers: Optional[Dict[str, ChunkerSchema]] = Field(None, description="Available chunking strategies")
     filters: Optional[List[str]] = Field(None, description="Available filter tags")
     vector_dbs: Optional[List[VectorDbSchema]] = Field(None, description="Configured vector databases")
+    remote_content_sources: Optional[List[RemoteContentSourceSchema]] = Field(
+        None, description="Configured remote content sources (S3, GCS, SharePoint, GitHub)"
+    )

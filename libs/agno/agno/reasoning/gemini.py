@@ -13,9 +13,13 @@ def is_gemini_reasoning_model(reasoning_model: Model) -> bool:
     if not is_gemini_class:
         return False
 
-    # Check if it's a Gemini 2.5+ model (supports thinking)
+    # Check if it's a Gemini model with thinking support
+    # - Gemini 2.5+ models support thinking
+    # - Gemini 3+ models support thinking (including DeepThink variants)
     model_id = reasoning_model.id.lower()
-    has_thinking_support = "2.5" in model_id
+    has_thinking_support = (
+        "2.5" in model_id or "3.0" in model_id or "3.5" in model_id or "deepthink" in model_id or "gemini-3" in model_id
+    )
 
     # Also check if thinking parameters are set
     # Note: thinking_budget=0 explicitly disables thinking mode per Google's API docs
@@ -90,7 +94,7 @@ def get_gemini_reasoning_stream(
     reasoning_content: str = ""
 
     try:
-        for event in reasoning_agent.run(input=messages, stream=True, stream_intermediate_steps=True):
+        for event in reasoning_agent.run(input=messages, stream=True, stream_events=True):
             if hasattr(event, "event"):
                 if event.event == RunEvent.run_content:
                     # Stream reasoning content as it arrives
@@ -130,7 +134,7 @@ async def aget_gemini_reasoning_stream(
     reasoning_content: str = ""
 
     try:
-        async for event in reasoning_agent.arun(input=messages, stream=True, stream_intermediate_steps=True):
+        async for event in reasoning_agent.arun(input=messages, stream=True, stream_events=True):
             if hasattr(event, "event"):
                 if event.event == RunEvent.run_content:
                     # Stream reasoning content as it arrives

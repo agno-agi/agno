@@ -16,7 +16,7 @@ from agno.os import AgentOS
 from agno.os.middleware.jwt import JWTMiddleware
 from agno.team.team import Team
 from agno.tools.calculator import CalculatorTools
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 from agno.vectordb.pgvector import PgVector
 from agno.workflow.step import Step
 from agno.workflow.workflow import Workflow
@@ -47,7 +47,7 @@ knowledge = Knowledge(
     description="A knowledge base for the remote server",
     vector_db=PgVector(
         db_url=os.getenv("DATABASE_URL", "postgresql+psycopg://ai:ai@postgres:5432/ai"),
-        table_name="system_test_knowledge",
+        table_name="remote_test_knowledge",
         embedder=OpenAIEmbedder(id="text-embedding-3-small"),
     ),
     contents_db=db,
@@ -70,7 +70,7 @@ assistant = Agent(
         "You have access to a knowledge base - search it when asked about documents.",
     ],
     markdown=True,
-    enable_user_memories=True,
+    update_memory_on_run=True,
     tools=[CalculatorTools()],
     knowledge=knowledge,
     search_knowledge=True,
@@ -82,7 +82,7 @@ researcher = Agent(
     id="researcher-agent",
     description="A research assistant with web search capabilities.",
     model=OpenAIChat(id="gpt-5-mini"),
-    enable_user_memories=True,
+    update_memory_on_run=True,
     db=db,
     instructions=[
         "You are a research assistant.",
@@ -90,7 +90,7 @@ researcher = Agent(
         "Provide well-researched, accurate responses.",
     ],
     markdown=True,
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
 )
 
 # =============================================================================
@@ -110,7 +110,7 @@ research_team = Team(
         "Combine insights from team members for comprehensive answers.",
     ],
     markdown=True,
-    enable_user_memories=True,
+    update_memory_on_run=True,
     db=db,
 )
 
@@ -143,7 +143,7 @@ agent_os = AgentOS(
     workflows=[qa_workflow],
     knowledge=[knowledge],
     tracing=True,
-    tracing_db=db,
+    db=db,
 )
 
 # FastAPI app instance (for uvicorn)

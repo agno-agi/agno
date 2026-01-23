@@ -5,6 +5,7 @@ on:
     branches:
       - "*release*" # Run on release-* format
       - "release/*" # Run on release/1.2.3 branch format
+      - "v2.4-with-cookbooks" # Enable full tests for v2.4-with-cookbooks branch
   workflow_dispatch: # Allows manual triggering
     inputs:
       branch:
@@ -1101,6 +1102,7 @@ jobs:
       fail-fast: true
     env:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
     steps:
       - uses: actions/checkout@v3
       - name: Set up Python ${{ matrix.python-version }}
@@ -1111,6 +1113,15 @@ jobs:
         run: |
           curl -LsSf https://astral.sh/uv/install.sh | sh
           echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - name: Create virtual environment
+        working-directory: ./libs/agno/tests/system
+        run: |
+          VIRTUAL_ENV=.venv uv venv --python 3.12
+      - name: Install test dependencies
+        working-directory: ./libs/agno/tests/system
+        run: |
+          source .venv/bin/activate
+          VIRTUAL_ENV=.venv uv pip install -r requirements.txt
       - name: Start Docker Compose services
         working-directory: ./libs/agno/tests/system
         run: |
@@ -1144,16 +1155,14 @@ jobs:
             docker compose logs
             exit 1
           fi
-      - name: Install test dependencies
-        run: |
-          pip install pytest pytest-asyncio httpx python-dotenv PyJWT
       - name: Run system tests
         working-directory: ./libs/agno/tests/system
         env:
           GATEWAY_URL: http://localhost:7001
           AGNO_TELEMETRY: false
         run: |
-          pytest test_agentos_routes.py -v --tb=short
+          source .venv/bin/activate
+          python -m pytest ./tests -v --tb=short
       - name: Show container logs on failure
         if: failure()
         working-directory: ./libs/agno/tests/system
@@ -1164,8 +1173,12 @@ jobs:
           echo "=== Remote Server Logs ==="
           docker compose logs remote-server --tail=100
           echo ""
-          echo "=== PostgreSQL Logs ==="
-          docker compose logs postgres --tail=50
+          echo "=== A2A Server Logs ==="
+          docker compose logs agno-a2a-server --tail=100
+          echo ""
+          echo "=== ADK Server Logs ==="
+          docker compose logs adk-server --tail=100
+          echo ""
       - name: Cleanup Docker resources
         if: always()
         working-directory: ./libs/agno/tests/system
