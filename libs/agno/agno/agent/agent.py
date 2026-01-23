@@ -5300,7 +5300,7 @@ class Agent:
             elif isinstance(call_result, CustomEvent):
                 if stream_events:
                     yield call_result  # type: ignore
-                    
+
         if len(function_call_results) > 0:
             run_messages.messages.extend(function_call_results)
 

@@ -60,6 +60,5 @@ if __name__ == "__main__":
     print("Query 3: Issue details")
     print("-" * 40)
 
-
     # Uncomment for interactive mode
     # linear_agent.cli_app(stream=True)

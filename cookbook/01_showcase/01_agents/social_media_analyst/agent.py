@@ -21,11 +21,12 @@ Usage:
 """
 
 from agno.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.tools.reasoning import ReasoningTools
 from agno.tools.x import XTools
 from schemas import SocialMediaReport
-from agno.db.sqlite import SqliteDb
+
 # ============================================================================
 # System Message
 # ============================================================================

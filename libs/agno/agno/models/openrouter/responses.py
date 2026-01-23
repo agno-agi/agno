@@ -5,8 +5,8 @@ from typing import Any, Dict, List, Optional, Type, Union
 from pydantic import BaseModel
 
 from agno.exceptions import ModelAuthenticationError
-from agno.models.openai.open_responses import OpenResponses
 from agno.models.message import Message
+from agno.models.openai.open_responses import OpenResponses
 
 
 @dataclass
