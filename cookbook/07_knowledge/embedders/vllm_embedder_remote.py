@@ -49,7 +49,7 @@ def main():
     try:
         asyncio.run(
             knowledge.ainsert(
-                path="cookbook/08_knowledge/testing_resources/cv_1.pdf",
+                path="cookbook/07_knowledge/testing_resources/cv_1.pdf",
             )
         )
         print("   ✓ Documents loaded")

@@ -65,4 +65,4 @@ Create it as a draft so I can review before sending.""",
     )
 
     # Uncomment for interactive mode
-    # inbox_agent.cli(stream=True)
+    # inbox_agent.cli_app(stream=True)

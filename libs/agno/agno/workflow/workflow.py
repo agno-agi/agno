@@ -3855,7 +3855,7 @@ class Workflow:
         images: Optional[List[Image]] = None,
         videos: Optional[List[Video]] = None,
         files: Optional[List[File]] = None,
-        stream: bool = False,
+        stream: Optional[bool] = None,
         stream_events: Optional[bool] = None,
         background: Optional[bool] = False,
         background_tasks: Optional[Any] = None,
@@ -3901,8 +3901,9 @@ class Workflow:
 
         log_debug(f"Workflow Run Start: {self.name}", center=True)
 
-        # Use simple defaults
-        stream = stream or self.stream or False
+        # Use stream override value when necessary
+        if stream is None:
+            stream = self.stream or False
         stream_events = stream_events or self.stream_events
 
         # Can't stream events if streaming is disabled
@@ -4038,7 +4039,7 @@ class Workflow:
         images: Optional[List[Image]] = None,
         videos: Optional[List[Video]] = None,
         files: Optional[List[File]] = None,
-        stream: bool = False,
+        stream: Optional[bool] = None,
         stream_events: Optional[bool] = None,
         background: Optional[bool] = False,
         websocket: Optional[WebSocket] = None,
@@ -4112,8 +4113,9 @@ class Workflow:
 
         log_debug(f"Async Workflow Run Start: {self.name}", center=True)
 
-        # Use simple defaults
-        stream = stream or self.stream or False
+        # Use stream override value when necessary
+        if stream is None:
+            stream = self.stream or False
         stream_events = stream_events or self.stream_events
 
         # Can't stream events if streaming is disabled
