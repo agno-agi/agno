@@ -27,6 +27,7 @@ Usage:
 from typing import Literal
 
 from agno.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.tools.parallel import ParallelTools
 from agno.tools.reasoning import ReasoningTools
@@ -171,6 +172,7 @@ def create_research_agent(depth: str = "standard") -> Agent:
         num_history_runs=5,
         enable_agentic_memory=True,
         markdown=True,
+        db=SqliteDb(db_file="tmp/data.db"),
     )
 
 
@@ -234,4 +236,4 @@ __all__ = [
 ]
 
 if __name__ == "__main__":
-    research_agent.cli(stream=True)
+    research_agent.cli_app(stream=True)
