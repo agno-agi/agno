@@ -631,6 +631,106 @@ class ConfigUpdate(BaseModel):
 RegistryContentType = Literal["tool", "model", "db", "vector_db", "schema", "function"]
 
 
+# ============================================================================
+# Registry Component Metadata Schemas
+# ============================================================================
+
+
+class CallableMetadata(BaseModel):
+    """Common metadata for callable components (tools, functions)."""
+
+    class_path: str = Field(..., description="Full module path to the class/function")
+    module: Optional[str] = Field(None, description="Module where the callable is defined")
+    qualname: Optional[str] = Field(None, description="Qualified name of the callable")
+    has_entrypoint: bool = Field(..., description="Whether the callable has an executable entrypoint")
+    parameters: Dict[str, Any] = Field(default_factory=dict, description="JSON schema of parameters")
+    requires_confirmation: Optional[bool] = Field(None, description="Whether execution requires user confirmation")
+    external_execution: Optional[bool] = Field(None, description="Whether execution happens externally")
+    signature: Optional[str] = Field(None, description="Function signature string")
+    return_annotation: Optional[str] = Field(None, description="Return type annotation")
+
+
+class ToolFunctionDetail(CallableMetadata):
+    """Metadata for a function within a toolkit."""
+
+    name: str = Field(..., description="Function name")
+    description: Optional[str] = Field(None, description="Function description")
+
+
+class ToolMetadata(BaseModel):
+    """Metadata for tool registry components."""
+
+    class_path: str = Field(..., description="Full module path to the tool class")
+    is_toolkit: bool = Field(False, description="Whether this is a toolkit containing multiple functions")
+    functions: Optional[List[ToolFunctionDetail]] = Field(
+        None, description="Functions in the toolkit (if is_toolkit=True)"
+    )
+
+    # Fields for non-toolkit tools (Function or raw callable)
+    module: Optional[str] = Field(None, description="Module where the callable is defined")
+    qualname: Optional[str] = Field(None, description="Qualified name of the callable")
+    has_entrypoint: Optional[bool] = Field(None, description="Whether the tool has an executable entrypoint")
+    parameters: Optional[Dict[str, Any]] = Field(None, description="JSON schema of parameters")
+    requires_confirmation: Optional[bool] = Field(None, description="Whether execution requires user confirmation")
+    external_execution: Optional[bool] = Field(None, description="Whether execution happens externally")
+    signature: Optional[str] = Field(None, description="Function signature string")
+    return_annotation: Optional[str] = Field(None, description="Return type annotation")
+
+
+class ModelMetadata(BaseModel):
+    """Metadata for model registry components."""
+
+    class_path: str = Field(..., description="Full module path to the model class")
+    provider: Optional[str] = Field(None, description="Model provider (e.g., openai, anthropic)")
+    model_id: Optional[str] = Field(None, description="Model identifier")
+    supports_tools: Optional[bool] = Field(None, description="Whether the model supports tool calling")
+    supports_structured_outputs: Optional[bool] = Field(
+        None, description="Whether the model supports structured outputs"
+    )
+
+
+class DbMetadata(BaseModel):
+    """Metadata for database registry components."""
+
+    class_path: str = Field(..., description="Full module path to the database class")
+    db_id: Optional[str] = Field(None, description="Database identifier")
+    table_name: Optional[str] = Field(None, description="Table name")
+
+
+class VectorDbMetadata(BaseModel):
+    """Metadata for vector database registry components."""
+
+    class_path: str = Field(..., description="Full module path to the vector database class")
+    vector_db_id: Optional[str] = Field(None, description="Vector database identifier")
+    collection: Optional[str] = Field(None, description="Collection name")
+    table_name: Optional[str] = Field(None, description="Table name (for SQL-based vector stores)")
+
+
+class SchemaMetadata(BaseModel):
+    """Metadata for schema registry components."""
+
+    class_path: str = Field(..., description="Full module path to the schema class")
+    schema_: Optional[Dict[str, Any]] = Field(None, alias="schema", description="JSON schema definition")
+    schema_error: Optional[str] = Field(None, description="Error message if schema generation failed")
+
+
+class FunctionMetadata(CallableMetadata):
+    """Metadata for function registry components (workflow conditions, selectors, etc.)."""
+
+    pass
+
+
+# Union of all metadata types for type hints
+RegistryMetadata = Union[
+    ToolMetadata,
+    ModelMetadata,
+    DbMetadata,
+    VectorDbMetadata,
+    SchemaMetadata,
+    FunctionMetadata,
+]
+
+
 class RegistryContentResponse(BaseModel):
     name: str
     type: RegistryContentType
