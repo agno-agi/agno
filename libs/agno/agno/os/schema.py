@@ -628,7 +628,7 @@ class ConfigUpdate(BaseModel):
     links: Optional[List[Dict[str, Any]]] = None
 
 
-RegistryContentType = Literal["tool", "toolkit", "model", "db", "vector_db", "schema", "function"]
+RegistryContentType = Literal["tool", "model", "db", "vector_db", "schema", "function"]
 
 
 class RegistryContentResponse(BaseModel):
