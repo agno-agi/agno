@@ -27,11 +27,12 @@ Usage:
 from typing import Literal
 
 from agno.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.tools.parallel import ParallelTools
 from agno.tools.reasoning import ReasoningTools
 from schemas import ResearchReport
-from agno.db.sqlite import SqliteDb
+
 # ============================================================================
 # Research Depth Configuration
 # ============================================================================
