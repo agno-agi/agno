@@ -2,6 +2,7 @@ import json
 from os import getenv
 from typing import Any, Dict, List, Optional, Union
 
+from agno.run import RunContext
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_error, log_warning
 
@@ -68,13 +69,13 @@ class Mem0Tools(Toolkit):
     def _get_user_id(
         self,
         method_name: str,
-        session_state: Dict[str, Any],
+        run_context: RunContext,
     ) -> str:
         """Resolve the user ID"""
         resolved_user_id = self.user_id
         if not resolved_user_id:
             try:
-                resolved_user_id = session_state.get("current_user_id")
+                resolved_user_id = run_context.user_id
             except Exception:
                 pass
         if not resolved_user_id:
@@ -85,7 +86,7 @@ class Mem0Tools(Toolkit):
 
     def add_memory(
         self,
-        session_state,
+        run_context: RunContext,
         content: Union[str, Dict[str, str]],
     ) -> str:
         """Add facts to the user's memory.
@@ -98,7 +99,7 @@ class Mem0Tools(Toolkit):
             str: JSON-encoded Mem0 response or an error message.
         """
 
-        resolved_user_id = self._get_user_id("add_memory", session_state=session_state)
+        resolved_user_id = self._get_user_id("add_memory", run_context=run_context)
         if isinstance(resolved_user_id, str) and resolved_user_id.startswith("Error in add_memory:"):
             return resolved_user_id
         try:
@@ -121,12 +122,12 @@ class Mem0Tools(Toolkit):
 
     def search_memory(
         self,
-        session_state: Dict[str, Any],
+        run_context: RunContext,
         query: str,
     ) -> str:
         """Semantic search for *query* across the user's stored memories."""
 
-        resolved_user_id = self._get_user_id("search_memory", session_state=session_state)
+        resolved_user_id = self._get_user_id("search_memory", run_context=run_context)
         if isinstance(resolved_user_id, str) and resolved_user_id.startswith("Error in search_memory:"):
             return resolved_user_id
         try:
@@ -151,10 +152,10 @@ class Mem0Tools(Toolkit):
             log_error(f"Error searching memory: {e}")
             return f"Error searching memory: {e}"
 
-    def get_all_memories(self, session_state: Dict[str, Any]) -> str:
+    def get_all_memories(self, run_context: RunContext) -> str:
         """Return **all** memories for the current user as a JSON string."""
 
-        resolved_user_id = self._get_user_id("get_all_memories", session_state=session_state)
+        resolved_user_id = self._get_user_id("get_all_memories", run_context=run_context)
         if isinstance(resolved_user_id, str) and resolved_user_id.startswith("Error in get_all_memories:"):
             return resolved_user_id
         try:
@@ -177,10 +178,10 @@ class Mem0Tools(Toolkit):
             log_error(f"Error getting all memories: {e}")
             return f"Error getting all memories: {e}"
 
-    def delete_all_memories(self, session_state: Dict[str, Any]) -> str:
+    def delete_all_memories(self, run_context: RunContext) -> str:
         """Delete *all* memories associated with the current user"""
 
-        resolved_user_id = self._get_user_id("delete_all_memories", session_state=session_state)
+        resolved_user_id = self._get_user_id("delete_all_memories", run_context=run_context)
         if isinstance(resolved_user_id, str) and resolved_user_id.startswith("Error in delete_all_memories:"):
             error_msg = resolved_user_id
             log_error(error_msg)

@@ -55,7 +55,8 @@ class DocumentChunking(ChunkingStrategy):
 
                 # Split oversized paragraph by sentences
                 import re
-                sentences = re.split(r'(?<=[.!?])\s+', para)
+
+                sentences = re.split(r"(?<=[.!?])\s+", para)
                 for sentence in sentences:
                     sentence = sentence.strip()
                     if not sentence:
@@ -77,7 +78,10 @@ class DocumentChunking(ChunkingStrategy):
                             meta_data["chunk_size"] = len(" ".join(current_chunk))
                             chunks.append(
                                 Document(
-                                    id=chunk_id, name=document.name, meta_data=meta_data, content=" ".join(current_chunk)
+                                    id=chunk_id,
+                                    name=document.name,
+                                    meta_data=meta_data,
+                                    content=" ".join(current_chunk),
                                 )
                             )
                             chunk_number += 1

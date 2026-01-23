@@ -206,6 +206,113 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
         )
         return response
 
+    @router.post(
+        "/knowledge/remote-content",
+        response_model=ContentResponseSchema,
+        status_code=202,
+        operation_id="upload_remote_content",
+        summary="Upload Remote Content",
+        description=(
+            "Upload content from a remote source (S3, GCS, SharePoint, GitHub) to the knowledge base. "
+            "Content is processed asynchronously in the background. "
+            "Use the /knowledge/config endpoint to see available remote content sources."
+        ),
+        responses={
+            202: {
+                "description": "Remote content upload accepted for processing",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "id": "content-456",
+                            "name": "reports/q1-2024.pdf",
+                            "description": "Q1 Report from S3",
+                            "metadata": {"source": "s3-docs"},
+                            "status": "processing",
+                        }
+                    }
+                },
+            },
+            400: {
+                "description": "Invalid request - unknown config or missing path",
+                "model": BadRequestResponse,
+            },
+            422: {"description": "Validation error in request body", "model": ValidationErrorResponse},
+        },
+    )
+    async def upload_remote_content(
+        request: Request,
+        background_tasks: BackgroundTasks,
+        config_id: str = Form(..., description="ID of the configured remote content source (from /knowledge/config)"),
+        path: str = Form(..., description="Path to file or folder in the remote source"),
+        name: Optional[str] = Form(None, description="Content name (auto-generated if not provided)"),
+        description: Optional[str] = Form(None, description="Content description"),
+        metadata: Optional[str] = Form(None, description="JSON metadata object"),
+        reader_id: Optional[str] = Form(None, description="ID of the reader to use for processing"),
+        chunker: Optional[str] = Form(None, description="Chunking strategy to apply"),
+        chunk_size: Optional[int] = Form(None, description="Chunk size for processing"),
+        chunk_overlap: Optional[int] = Form(None, description="Chunk overlap for processing"),
+        db_id: Optional[str] = Query(default=None, description="Database ID to use for content storage"),
+    ):
+        knowledge = get_knowledge_instance_by_db_id(knowledge_instances, db_id)
+
+        if isinstance(knowledge, RemoteKnowledge):
+            # TODO: Forward to remote knowledge instance
+            raise HTTPException(status_code=501, detail="Remote content upload not yet supported for RemoteKnowledge")
+
+        # Validate that the config_id exists in configured sources
+        config = knowledge._get_remote_config_by_id(config_id)
+        if config is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unknown content source: {config_id}. Check /knowledge/config for available sources.",
+            )
+
+        # Parse metadata if provided
+        parsed_metadata = None
+        if metadata:
+            try:
+                parsed_metadata = json.loads(metadata)
+            except json.JSONDecodeError:
+                parsed_metadata = {"value": metadata}
+
+        # Use the config's factory methods to create the remote content object
+        # If path ends with '/', treat as folder, otherwise treat as file
+        is_folder = path.endswith("/")
+        if is_folder:
+            if hasattr(config, "folder"):
+                remote_content = config.folder(path.rstrip("/"))
+            else:
+                raise HTTPException(status_code=400, detail=f"Config {config_id} does not support folder uploads")
+        else:
+            if hasattr(config, "file"):
+                remote_content = config.file(path)
+            else:
+                raise HTTPException(status_code=400, detail=f"Config {config_id} does not support file uploads")
+
+        # Set name from path if not provided
+        content_name = name or path
+
+        content = Content(
+            name=content_name,
+            description=description,
+            metadata=parsed_metadata,
+            remote_content=remote_content,
+        )
+        content_hash = knowledge._build_content_hash(content)
+        content.content_hash = content_hash
+        content.id = generate_id(content_hash)
+
+        background_tasks.add_task(process_content, knowledge, content, reader_id, chunker, chunk_size, chunk_overlap)
+
+        response = ContentResponseSchema(
+            id=content.id,
+            name=content_name,
+            description=description,
+            metadata=parsed_metadata,
+            status=ContentStatus.PROCESSING,
+        )
+        return response
+
     @router.patch(
         "/knowledge/content/{content_id}",
         response_model=ContentResponseSchema,
@@ -671,7 +778,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
         # Use max_results if specified, otherwise use a higher limit for search then paginate
         search_limit = request.max_results
 
-        results = await knowledge.async_search(
+        results = await knowledge.asearch(
             query=request.query, max_results=search_limit, filters=request.filters, search_type=request.search_type
         )
 
@@ -860,6 +967,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
                                     "name": "TextReader",
                                     "description": "Reads text files",
                                     "chunkers": [
+                                        "CodeChunker",
                                         "FixedSizeChunker",
                                         "AgenticChunker",
                                         "DocumentChunker",
@@ -881,9 +989,11 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
                                 "text": ["web_search"],
                                 "topic": ["arxiv"],
                                 "file": ["csv", "gcs"],
-                                ".csv": ["csv"],
-                                ".xlsx": ["csv"],
-                                ".xls": ["csv"],
+                                ".csv": ["csv", "field_labeled_csv"],
+                                ".xlsx": ["excel"],
+                                ".xls": ["excel"],
+                                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ["excel"],
+                                "application/vnd.ms-excel": ["excel"],
                                 ".docx": ["docx"],
                                 ".doc": ["docx"],
                                 ".json": ["json"],
@@ -897,6 +1007,12 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
                                     "name": "AgenticChunker",
                                     "description": "Chunking strategy that uses an LLM to determine natural breakpoints in the text",
                                     "metadata": {"chunk_size": 5000},
+                                },
+                                "CodeChunker": {
+                                    "key": "CodeChunker",
+                                    "name": "CodeChunker",
+                                    "description": "The CodeChunker splits code into chunks based on its structure, leveraging Abstract Syntax Trees (ASTs) to create contextually relevant segments",
+                                    "metadata": {"chunk_size": 2048},
                                 },
                                 "DocumentChunker": {
                                     "key": "DocumentChunker",
@@ -1040,13 +1156,31 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
                     search_types=search_types,
                 )
             )
-        filters = await knowledge.async_get_valid_filters()
+        filters = await knowledge.aget_valid_filters()
+
+        # Get remote content sources if available
+        remote_content_sources = None
+        if hasattr(knowledge, "_get_remote_configs") and callable(knowledge._get_remote_configs):
+            remote_configs = knowledge._get_remote_configs()
+            if remote_configs:
+                from agno.os.routers.knowledge.schemas import RemoteContentSourceSchema
+
+                remote_content_sources = [
+                    RemoteContentSourceSchema(
+                        id=config.id,
+                        name=config.name,
+                        type=config.__class__.__name__.replace("Config", "").lower(),
+                        metadata=config.metadata,
+                    )
+                    for config in remote_configs
+                ]
         return ConfigResponseSchema(
             readers=reader_schemas,
             vector_dbs=vector_dbs,
             readersForType=types_of_readers,
             chunkers=chunkers_dict,
             filters=filters,
+            remote_content_sources=remote_content_sources,
         )
 
     return router
@@ -1091,7 +1225,7 @@ async def process_content(
             log_debug(f"Set chunking strategy: {chunker}")
 
         log_debug(f"Using reader: {content.reader.__class__.__name__}")
-        await knowledge._load_content_async(content, upsert=False, skip_if_exists=True)
+        await knowledge._aload_content(content, upsert=False, skip_if_exists=True)
         log_info(f"Content {content.id} processed successfully")
     except Exception as e:
         log_info(f"Error processing content: {e}")

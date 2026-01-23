@@ -23,6 +23,19 @@ class RemoteAgent(BaseRemote):
     # Private cache for agent config with TTL: (config, timestamp)
     _cached_agent_config: Optional[Tuple["AgentResponse", float]] = field(default=None, init=False, repr=False)
 
+    knowledge_filters: Optional[Dict[str, Any]] = None
+    enable_agentic_knowledge_filters: Optional[bool] = False
+    output_schema: Optional[Any] = None
+    store_media: bool = True
+    store_tool_messages: bool = True
+    store_history_messages: bool = True
+    send_media_to_model: bool = True
+    add_history_to_context: bool = False
+    num_history_runs: Optional[int] = None
+    num_history_messages: Optional[int] = None
+    debug_mode: bool = False
+    debug_level: Literal[1, 2] = 1
+
     def __init__(
         self,
         base_url: str,

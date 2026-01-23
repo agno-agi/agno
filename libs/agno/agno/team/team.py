@@ -4,13 +4,11 @@ import asyncio
 import contextlib
 import json
 import time
-import warnings
 from collections import ChainMap, deque
 from concurrent.futures import Future
 from copy import copy
 from dataclasses import dataclass
 from os import getenv
-from textwrap import dedent
 from typing import (
     Any,
     AsyncIterator,
@@ -35,7 +33,8 @@ from pydantic import BaseModel
 
 from agno.agent import Agent
 from agno.compression.manager import CompressionManager
-from agno.db.base import AsyncBaseDb, BaseDb, SessionType, UserMemory
+from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, SessionType, UserMemory
+from agno.db.utils import db_from_dict
 from agno.eval.base import BaseEval
 from agno.exceptions import (
     InputCheckError,
@@ -44,7 +43,7 @@ from agno.exceptions import (
 )
 from agno.filters import FilterExpr
 from agno.guardrails import BaseGuardrail
-from agno.knowledge.knowledge import Knowledge
+from agno.knowledge.protocol import KnowledgeProtocol
 from agno.knowledge.types import KnowledgeFilter
 from agno.media import Audio, File, Image, Video
 from agno.memory import MemoryManager
@@ -54,6 +53,7 @@ from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse, ModelResponseEvent
 from agno.models.utils import get_model
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
+from agno.registry.registry import Registry
 from agno.run import RunContext, RunStatus
 from agno.run.agent import RunEvent, RunOutput, RunOutputEvent
 from agno.run.cancel import (
@@ -118,6 +118,10 @@ from agno.utils.agent import (
 from agno.utils.common import is_typed_dict
 from agno.utils.events import (
     add_team_error_event,
+    create_team_compression_completed_event,
+    create_team_compression_started_event,
+    create_team_model_request_completed_event,
+    create_team_model_request_started_event,
     create_team_parser_model_response_completed_event,
     create_team_parser_model_response_started_event,
     create_team_post_hook_completed_event,
@@ -266,6 +270,8 @@ class Team:
     description: Optional[str] = None
     # List of instructions for the team.
     instructions: Optional[Union[str, List[str], Callable]] = None
+    # If True, wrap instructions in <instructions> tags. Default is False.
+    use_instruction_tags: bool = False
     # Provide the expected output from the Team.
     expected_output: Optional[str] = None
     # Additional context added to the end of the system message.
@@ -314,7 +320,7 @@ class Team:
     add_dependencies_to_context: bool = False
 
     # --- Agent Knowledge ---
-    knowledge: Optional[Knowledge] = None
+    knowledge: Optional[KnowledgeProtocol] = None
     # Add knowledge_filters to the Agent class attributes
     knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
     # Let the agent choose the knowledge filters
@@ -395,7 +401,9 @@ class Team:
     # Enable the agent to manage memories of the user
     enable_agentic_memory: bool = False
     # If True, the agent creates/updates user memories at the end of runs
-    enable_user_memories: bool = False
+    update_memory_on_run: bool = False
+    # Soon to be deprecated. Use update_memory_on_run
+    enable_user_memories: Optional[bool] = None
     # If True, the agent adds a reference to the user memories in the response
     add_memories_to_context: Optional[bool] = None
     # If True, the agent creates/updates session summaries at the end of runs
@@ -427,6 +435,8 @@ class Team:
     # --- Team Storage ---
     # Metadata stored with this team
     metadata: Optional[Dict[str, Any]] = None
+    # Version of the team config (set when loaded from DB)
+    version: Optional[int] = None
 
     # --- Team Reasoning ---
     reasoning: bool = False
@@ -440,8 +450,6 @@ class Team:
     stream: Optional[bool] = None
     # Stream the intermediate steps from the Agent
     stream_events: Optional[bool] = None
-    # [Deprecated] Stream the intermediate steps from the Agent
-    stream_intermediate_steps: Optional[bool] = None
     # Stream the member events from the Team
     stream_member_events: bool = True
 
@@ -473,9 +481,6 @@ class Team:
     # This helps us improve the Teams implementation and provide better support
     telemetry: bool = True
 
-    # Deprecated. Use delegate_to_all_members instead.
-    delegate_task_to_all_members: bool = False
-
     def __init__(
         self,
         members: List[Union[Agent, "Team"]],
@@ -485,7 +490,6 @@ class Team:
         role: Optional[str] = None,
         respond_directly: bool = False,
         determine_input_for_members: bool = True,
-        delegate_task_to_all_members: bool = False,
         delegate_to_all_members: bool = False,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
@@ -501,6 +505,7 @@ class Team:
         num_history_sessions: Optional[int] = None,
         description: Optional[str] = None,
         instructions: Optional[Union[str, List[str], Callable]] = None,
+        use_instruction_tags: bool = False,
         expected_output: Optional[str] = None,
         additional_context: Optional[str] = None,
         markdown: bool = False,
@@ -515,7 +520,7 @@ class Team:
         additional_input: Optional[List[Union[str, Dict, BaseModel, Message]]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: bool = False,
-        knowledge: Optional[Knowledge] = None,
+        knowledge: Optional[KnowledgeProtocol] = None,
         knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         add_knowledge_to_context: bool = False,
         enable_agentic_knowledge_filters: Optional[bool] = False,
@@ -550,7 +555,8 @@ class Team:
         parse_response: bool = True,
         db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
         enable_agentic_memory: bool = False,
-        enable_user_memories: bool = False,
+        update_memory_on_run: bool = False,
+        enable_user_memories: Optional[bool] = None,  # Soon to be deprecated. Use update_memory_on_run
         add_memories_to_context: Optional[bool] = None,
         memory_manager: Optional[MemoryManager] = None,
         enable_session_summaries: bool = False,
@@ -566,7 +572,6 @@ class Team:
         reasoning_max_steps: int = 10,
         stream: Optional[bool] = None,
         stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         store_events: bool = False,
         events_to_skip: Optional[List[Union[RunEvent, TeamRunEvent]]] = None,
         store_member_responses: bool = False,
@@ -579,13 +584,6 @@ class Team:
         exponential_backoff: bool = False,
         telemetry: bool = True,
     ):
-        if delegate_task_to_all_members:
-            warnings.warn(
-                "The 'delegate_task_to_all_members' parameter is deprecated and will be removed in future versions. Use 'delegate_to_all_members' instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-
         self.members = members
 
         self.model = model  # type: ignore[assignment]
@@ -596,7 +594,7 @@ class Team:
 
         self.respond_directly = respond_directly
         self.determine_input_for_members = determine_input_for_members
-        self.delegate_to_all_members = delegate_to_all_members or delegate_task_to_all_members
+        self.delegate_to_all_members = delegate_to_all_members
 
         self.user_id = user_id
         self.session_id = session_id
@@ -627,6 +625,7 @@ class Team:
 
         self.description = description
         self.instructions = instructions
+        self.use_instruction_tags = use_instruction_tags
         self.expected_output = expected_output
         self.additional_context = additional_context
         self.markdown = markdown
@@ -682,7 +681,13 @@ class Team:
         self.db = db
 
         self.enable_agentic_memory = enable_agentic_memory
-        self.enable_user_memories = enable_user_memories
+
+        if enable_user_memories is not None:
+            self.update_memory_on_run = enable_user_memories
+        else:
+            self.update_memory_on_run = update_memory_on_run
+        self.enable_user_memories = self.update_memory_on_run  # Soon to be deprecated. Use update_memory_on_run
+
         self.add_memories_to_context = add_memories_to_context
         self.memory_manager = memory_manager
         self.enable_session_summaries = enable_session_summaries
@@ -702,7 +707,7 @@ class Team:
         self.reasoning_max_steps = reasoning_max_steps
 
         self.stream = stream
-        self.stream_events = stream_events or stream_intermediate_steps
+        self.stream_events = stream_events
         self.store_events = store_events
         self.store_member_responses = store_member_responses
 
@@ -874,7 +879,7 @@ class Team:
 
         if self.add_memories_to_context is None:
             self.add_memories_to_context = (
-                self.enable_user_memories or self.enable_agentic_memory or self.memory_manager is not None
+                self.update_memory_on_run or self.enable_agentic_memory or self.memory_manager is not None
             )
 
     def _set_session_summary_manager(self) -> None:
@@ -978,7 +983,7 @@ class Team:
         self.set_id()
 
         # Set the memory manager and session summary manager
-        if self.enable_user_memories or self.enable_agentic_memory or self.memory_manager is not None:
+        if self.update_memory_on_run or self.enable_agentic_memory or self.memory_manager is not None:
             self._set_memory_manager()
         if self.enable_session_summaries or self.session_summary_manager is not None:
             self._set_session_summary_manager()
@@ -1102,9 +1107,6 @@ class Team:
             "team": self,
             "session": session,
             "user_id": user_id,
-            "metadata": run_context.metadata,
-            "session_state": run_context.session_state,
-            "dependencies": run_context.dependencies,
             "debug_mode": debug_mode or self.debug_mode,
         }
 
@@ -1194,9 +1196,6 @@ class Team:
             "team": self,
             "session": session,
             "user_id": user_id,
-            "session_state": run_context.session_state,
-            "dependencies": run_context.dependencies,
-            "metadata": run_context.metadata,
             "debug_mode": debug_mode or self.debug_mode,
         }
 
@@ -1291,9 +1290,6 @@ class Team:
             "team": self,
             "session": session,
             "user_id": user_id,
-            "session_state": run_context.session_state,
-            "dependencies": run_context.dependencies,
-            "metadata": run_context.metadata,
             "debug_mode": debug_mode or self.debug_mode,
         }
 
@@ -1377,9 +1373,6 @@ class Team:
             "team": self,
             "session": session,
             "user_id": user_id,
-            "session_state": run_context.session_state,
-            "dependencies": run_context.dependencies,
-            "metadata": run_context.metadata,
             "debug_mode": debug_mode or self.debug_mode,
         }
 
@@ -1556,7 +1549,9 @@ class Team:
                     raise_if_cancelled(run_response.run_id)  # type: ignore
 
                     # 5. Reason about the task if reasoning is enabled
-                    self._handle_reasoning(run_response=run_response, run_messages=run_messages)
+                    self._handle_reasoning(
+                        run_response=run_response, run_messages=run_messages, run_context=run_context
+                    )
 
                     # Check for cancellation before model call
                     raise_if_cancelled(run_response.run_id)  # type: ignore
@@ -1829,6 +1824,7 @@ class Team:
                     yield from self._handle_reasoning_stream(
                         run_response=run_response,
                         run_messages=run_messages,
+                        run_context=run_context,
                         stream_events=stream_events,
                     )
 
@@ -1919,6 +1915,7 @@ class Team:
                         stream_events=stream_events,
                         events_to_skip=self.events_to_skip,  # type: ignore
                         store_events=self.store_events,
+                        get_memories_callback=lambda: self.get_user_memories(user_id=user_id),
                     )
 
                     raise_if_cancelled(run_response.run_id)  # type: ignore
@@ -2061,7 +2058,6 @@ class Team:
         *,
         stream: Literal[False] = False,
         stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
@@ -2088,7 +2084,6 @@ class Team:
         *,
         stream: Literal[True] = True,
         stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         run_context: Optional[RunContext] = None,
@@ -2105,7 +2100,6 @@ class Team:
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
-        yield_run_response: Optional[bool] = None,  # To be deprecated: use yield_run_output instead
         yield_run_output: bool = False,
         output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
         **kwargs: Any,
@@ -2117,7 +2111,6 @@ class Team:
         *,
         stream: Optional[bool] = None,
         stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         run_context: Optional[RunContext] = None,
@@ -2134,7 +2127,6 @@ class Team:
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
-        yield_run_response: Optional[bool] = None,  # To be deprecated: use yield_run_output instead
         yield_run_output: bool = False,
         output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
         **kwargs: Any,
@@ -2153,14 +2145,6 @@ class Team:
             log_warning(
                 "add_history_to_context is True, but no database has been assigned to the team. History will not be added to the context."
             )
-
-        if yield_run_response is not None:
-            warnings.warn(
-                "The 'yield_run_response' parameter is deprecated and will be removed in future versions. Use 'yield_run_output' instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            yield_run_output = yield_run_output or yield_run_response  # For backwards compatibility
 
         # Register run for cancellation tracking
         register_run(run_id)  # type: ignore
@@ -2252,9 +2236,6 @@ class Team:
         # Use stream override value when necessary
         if stream is None:
             stream = False if self.stream is None else self.stream
-
-        # Considering both stream_events and stream_intermediate_steps (deprecated)
-        stream_events = stream_events or stream_intermediate_steps
 
         # Can't stream events if streaming is disabled
         if stream is False:
@@ -2473,7 +2454,9 @@ class Team:
 
                     await araise_if_cancelled(run_response.run_id)  # type: ignore
                     # 7. Reason about the task if reasoning is enabled
-                    await self._ahandle_reasoning(run_response=run_response, run_messages=run_messages)
+                    await self._ahandle_reasoning(
+                        run_response=run_response, run_messages=run_messages, run_context=run_context
+                    )
 
                     # Check for cancellation before model call
                     await araise_if_cancelled(run_response.run_id)  # type: ignore
@@ -2640,7 +2623,6 @@ class Team:
         user_id: Optional[str] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_events: bool = False,
-        stream_intermediate_steps: bool = False,
         yield_run_output: bool = False,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
@@ -2774,9 +2756,6 @@ class Team:
                         existing_task=memory_task,
                     )
 
-                    # Considering both stream_events and stream_intermediate_steps (deprecated)
-                    stream_events = stream_events or stream_intermediate_steps
-
                     # Yield the run started event
                     if stream_events:
                         yield handle_event(  # type: ignore
@@ -2790,6 +2769,7 @@ class Team:
                     async for item in self._ahandle_reasoning_stream(
                         run_response=run_response,
                         run_messages=run_messages,
+                        run_context=run_context,
                         stream_events=stream_events,
                     ):
                         await araise_if_cancelled(run_response.run_id)  # type: ignore
@@ -2888,6 +2868,7 @@ class Team:
                         stream_events=stream_events,
                         events_to_skip=self.events_to_skip,  # type: ignore
                         store_events=self.store_events,
+                        get_memories_callback=lambda: self.aget_user_memories(user_id=user_id),
                     ):
                         yield event
 
@@ -3032,7 +3013,6 @@ class Team:
         *,
         stream: Literal[False] = False,
         stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         run_id: Optional[str] = None,
@@ -3060,7 +3040,6 @@ class Team:
         *,
         stream: Literal[True] = True,
         stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         run_id: Optional[str] = None,
@@ -3077,7 +3056,6 @@ class Team:
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
-        yield_run_response: Optional[bool] = None,  # To be deprecated: use yield_run_output instead
         yield_run_output: bool = False,
         output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
         **kwargs: Any,
@@ -3089,7 +3067,6 @@ class Team:
         *,
         stream: Optional[bool] = None,
         stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         run_id: Optional[str] = None,
@@ -3106,7 +3083,6 @@ class Team:
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
-        yield_run_response: Optional[bool] = None,  # To be deprecated: use yield_run_output instead
         yield_run_output: bool = False,
         output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
         **kwargs: Any,
@@ -3120,15 +3096,6 @@ class Team:
             log_warning(
                 "add_history_to_context is True, but no database has been assigned to the team. History will not be added to the context."
             )
-
-        if yield_run_response is not None:
-            warnings.warn(
-                "The 'yield_run_response' parameter is deprecated and will be removed in future versions. Use 'yield_run_output' instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-
-            yield_run_output = yield_run_output or yield_run_response  # For backwards compatibility
 
         background_tasks = kwargs.pop("background_tasks", None)
         if background_tasks is not None:
@@ -3180,15 +3147,6 @@ class Team:
         # Use stream override value when necessary
         if stream is None:
             stream = False if self.stream is None else self.stream
-
-        # Considering both stream_events and stream_intermediate_steps (deprecated)
-        if stream_intermediate_steps is not None:
-            warnings.warn(
-                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-        stream_events = stream_events or stream_intermediate_steps
 
         # Can't stream events if streaming is disabled
         if stream is False:
@@ -3252,7 +3210,7 @@ class Team:
         run_response.metrics = Metrics()
         run_response.metrics.start_timer()
 
-        yield_run_output = bool(yield_run_output or yield_run_response)  # For backwards compatibility
+        yield_run_output = yield_run_output
 
         if stream:
             return self._arun_stream(  # type: ignore
@@ -3397,6 +3355,70 @@ class Team:
             send_media_to_model=self.send_media_to_model,
             compression_manager=self.compression_manager if self.compress_tool_results else None,
         ):
+            # Handle LLM request events and compression events from ModelResponse
+            if isinstance(model_response_event, ModelResponse):
+                if model_response_event.event == ModelResponseEvent.model_request_started.value:
+                    if stream_events:
+                        yield handle_event(  # type: ignore
+                            create_team_model_request_started_event(
+                                from_run_response=run_response,
+                                model=self.model.id,
+                                model_provider=self.model.provider,
+                            ),
+                            run_response,
+                            events_to_skip=self.events_to_skip,
+                            store_events=self.store_events,
+                        )
+                    continue
+
+                if model_response_event.event == ModelResponseEvent.model_request_completed.value:
+                    if stream_events:
+                        yield handle_event(  # type: ignore
+                            create_team_model_request_completed_event(
+                                from_run_response=run_response,
+                                model=self.model.id,
+                                model_provider=self.model.provider,
+                                input_tokens=model_response_event.input_tokens,
+                                output_tokens=model_response_event.output_tokens,
+                                total_tokens=model_response_event.total_tokens,
+                                time_to_first_token=model_response_event.time_to_first_token,
+                                reasoning_tokens=model_response_event.reasoning_tokens,
+                                cache_read_tokens=model_response_event.cache_read_tokens,
+                                cache_write_tokens=model_response_event.cache_write_tokens,
+                            ),
+                            run_response,
+                            events_to_skip=self.events_to_skip,
+                            store_events=self.store_events,
+                        )
+                    continue
+
+                # Handle compression events
+                if model_response_event.event == ModelResponseEvent.compression_started.value:
+                    if stream_events:
+                        yield handle_event(  # type: ignore
+                            create_team_compression_started_event(from_run_response=run_response),
+                            run_response,
+                            events_to_skip=self.events_to_skip,
+                            store_events=self.store_events,
+                        )
+                    continue
+
+                if model_response_event.event == ModelResponseEvent.compression_completed.value:
+                    if stream_events:
+                        stats = model_response_event.compression_stats or {}
+                        yield handle_event(  # type: ignore
+                            create_team_compression_completed_event(
+                                from_run_response=run_response,
+                                tool_results_compressed=stats.get("tool_results_compressed"),
+                                original_size=stats.get("original_size"),
+                                compressed_size=stats.get("compressed_size"),
+                            ),
+                            run_response,
+                            events_to_skip=self.events_to_skip,
+                            store_events=self.store_events,
+                        )
+                    continue
+
             yield from self._handle_model_response_chunk(
                 session=session,
                 run_response=run_response,
@@ -3492,6 +3514,70 @@ class Team:
             compression_manager=self.compression_manager if self.compress_tool_results else None,
         )  # type: ignore
         async for model_response_event in model_stream:
+            # Handle LLM request events and compression events from ModelResponse
+            if isinstance(model_response_event, ModelResponse):
+                if model_response_event.event == ModelResponseEvent.model_request_started.value:
+                    if stream_events:
+                        yield handle_event(  # type: ignore
+                            create_team_model_request_started_event(
+                                from_run_response=run_response,
+                                model=self.model.id,
+                                model_provider=self.model.provider,
+                            ),
+                            run_response,
+                            events_to_skip=self.events_to_skip,
+                            store_events=self.store_events,
+                        )
+                    continue
+
+                if model_response_event.event == ModelResponseEvent.model_request_completed.value:
+                    if stream_events:
+                        yield handle_event(  # type: ignore
+                            create_team_model_request_completed_event(
+                                from_run_response=run_response,
+                                model=self.model.id,
+                                model_provider=self.model.provider,
+                                input_tokens=model_response_event.input_tokens,
+                                output_tokens=model_response_event.output_tokens,
+                                total_tokens=model_response_event.total_tokens,
+                                time_to_first_token=model_response_event.time_to_first_token,
+                                reasoning_tokens=model_response_event.reasoning_tokens,
+                                cache_read_tokens=model_response_event.cache_read_tokens,
+                                cache_write_tokens=model_response_event.cache_write_tokens,
+                            ),
+                            run_response,
+                            events_to_skip=self.events_to_skip,
+                            store_events=self.store_events,
+                        )
+                    continue
+
+                # Handle compression events
+                if model_response_event.event == ModelResponseEvent.compression_started.value:
+                    if stream_events:
+                        yield handle_event(  # type: ignore
+                            create_team_compression_started_event(from_run_response=run_response),
+                            run_response,
+                            events_to_skip=self.events_to_skip,
+                            store_events=self.store_events,
+                        )
+                    continue
+
+                if model_response_event.event == ModelResponseEvent.compression_completed.value:
+                    if stream_events:
+                        stats = model_response_event.compression_stats or {}
+                        yield handle_event(  # type: ignore
+                            create_team_compression_completed_event(
+                                from_run_response=run_response,
+                                tool_results_compressed=stats.get("tool_results_compressed"),
+                                original_size=stats.get("original_size"),
+                                compressed_size=stats.get("compressed_size"),
+                            ),
+                            run_response,
+                            events_to_skip=self.events_to_skip,
+                            store_events=self.store_events,
+                        )
+                    continue
+
             for event in self._handle_model_response_chunk(
                 session=session,
                 run_response=run_response,
@@ -3984,7 +4070,7 @@ class Team:
             user_message_str is not None
             and user_message_str.strip() != ""
             and self.memory_manager is not None
-            and self.enable_user_memories
+            and self.update_memory_on_run
         ):
             log_debug("Managing user memories")
             self.memory_manager.create_user_memories(
@@ -4005,7 +4091,7 @@ class Team:
             user_message_str is not None
             and user_message_str.strip() != ""
             and self.memory_manager is not None
-            and self.enable_user_memories
+            and self.update_memory_on_run
         ):
             log_debug("Managing user memories")
             await self.memory_manager.acreate_user_memories(
@@ -4042,7 +4128,7 @@ class Team:
         if (
             run_messages.user_message is not None
             and self.memory_manager is not None
-            and self.enable_user_memories
+            and self.update_memory_on_run
             and not self.enable_agentic_memory
         ):
             log_debug("Starting memory creation in background task.")
@@ -4074,7 +4160,7 @@ class Team:
         if (
             run_messages.user_message is not None
             and self.memory_manager is not None
-            and self.enable_user_memories
+            and self.update_memory_on_run
             and not self.enable_agentic_memory
         ):
             log_debug("Starting memory creation in background thread.")
@@ -4497,8 +4583,6 @@ class Team:
         add_session_state_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
-        stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         debug_mode: Optional[bool] = None,
         show_message: bool = True,
         show_reasoning: bool = True,
@@ -4508,20 +4592,6 @@ class Team:
         tags_to_include_in_markdown: Optional[Set[str]] = None,
         **kwargs: Any,
     ) -> None:
-        if stream_events is not None:
-            warnings.warn(
-                "The 'stream_events' parameter is deprecated and will be removed in future versions. Event streaming is always enabled using the print_response function.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-
-        if stream_intermediate_steps is not None:
-            warnings.warn(
-                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Event streaming is always enabled using the print_response function.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-
         if self._has_async_db():
             raise Exception(
                 "This method is not supported with an async DB. Please use the async version of this method."
@@ -4623,8 +4693,6 @@ class Team:
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
         metadata: Optional[Dict[str, Any]] = None,
-        stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         debug_mode: Optional[bool] = None,
         show_message: bool = True,
         show_reasoning: bool = True,
@@ -4634,20 +4702,6 @@ class Team:
         tags_to_include_in_markdown: Optional[Set[str]] = None,
         **kwargs: Any,
     ) -> None:
-        if stream_events is not None:
-            warnings.warn(
-                "The 'stream_events' parameter is deprecated and will be removed in future versions. Event streaming is always enabled using the aprint_response function.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-
-        if stream_intermediate_steps is not None:
-            warnings.warn(
-                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Event streaming is always enabled using the aprint_response function.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-
         if not tags_to_include_in_markdown:
             tags_to_include_in_markdown = {"think", "thinking"}
 
@@ -4861,40 +4915,56 @@ class Team:
     # Helpers
     ###########################################################################
 
-    def _handle_reasoning(self, run_response: TeamRunOutput, run_messages: RunMessages):
+    def _handle_reasoning(
+        self, run_response: TeamRunOutput, run_messages: RunMessages, run_context: Optional[RunContext] = None
+    ) -> None:
         if self.reasoning or self.reasoning_model is not None:
             reasoning_generator = self._reason(
-                run_response=run_response, run_messages=run_messages, stream_events=False
+                run_response=run_response, run_messages=run_messages, run_context=run_context, stream_events=False
             )
 
             # Consume the generator without yielding
             deque(reasoning_generator, maxlen=0)
 
     def _handle_reasoning_stream(
-        self, run_response: TeamRunOutput, run_messages: RunMessages, stream_events: bool
+        self,
+        run_response: TeamRunOutput,
+        run_messages: RunMessages,
+        run_context: Optional[RunContext] = None,
+        stream_events: bool = False,
     ) -> Iterator[TeamRunOutputEvent]:
         if self.reasoning or self.reasoning_model is not None:
             reasoning_generator = self._reason(
                 run_response=run_response,
                 run_messages=run_messages,
+                run_context=run_context,
                 stream_events=stream_events,
             )
             yield from reasoning_generator
 
-    async def _ahandle_reasoning(self, run_response: TeamRunOutput, run_messages: RunMessages) -> None:
+    async def _ahandle_reasoning(
+        self, run_response: TeamRunOutput, run_messages: RunMessages, run_context: Optional[RunContext] = None
+    ) -> None:
         if self.reasoning or self.reasoning_model is not None:
-            reason_generator = self._areason(run_response=run_response, run_messages=run_messages, stream_events=False)
+            reason_generator = self._areason(
+                run_response=run_response, run_messages=run_messages, run_context=run_context, stream_events=False
+            )
             # Consume the generator without yielding
             async for _ in reason_generator:
                 pass
 
     async def _ahandle_reasoning_stream(
-        self, run_response: TeamRunOutput, run_messages: RunMessages, stream_events: bool
+        self,
+        run_response: TeamRunOutput,
+        run_messages: RunMessages,
+        run_context: Optional[RunContext] = None,
+        stream_events: bool = False,
     ) -> AsyncIterator[TeamRunOutputEvent]:
         if self.reasoning or self.reasoning_model is not None:
             reason_generator = self._areason(
                 run_response=run_response,
                 run_messages=run_messages,
+                run_context=run_context,
                 stream_events=stream_events,
             )
             async for item in reason_generator:
@@ -4937,14 +5007,6 @@ class Team:
         session_metrics.time_to_first_token = None
         if session.session_data is not None:
             session.session_data["session_metrics"] = session_metrics
-
-    def _get_reasoning_agent(self, reasoning_model: Model) -> Optional[Agent]:
-        return Agent(
-            model=reasoning_model,
-            telemetry=self.telemetry,
-            debug_mode=self.debug_mode,
-            debug_level=self.debug_level,
-        )
 
     def _format_reasoning_step_content(self, run_response: TeamRunOutput, reasoning_step: ReasoningStep) -> str:
         """Format content for a reasoning step without changing any existing logic."""
@@ -5054,7 +5116,8 @@ class Team:
         self,
         run_response: TeamRunOutput,
         run_messages: RunMessages,
-        stream_events: bool,
+        run_context: Optional[RunContext] = None,
+        stream_events: bool = False,
     ) -> Iterator[TeamRunOutputEvent]:
         """
         Run reasoning using the ReasoningManager.
@@ -5084,9 +5147,7 @@ class Team:
                 telemetry=self.telemetry,
                 debug_mode=self.debug_mode,
                 debug_level=self.debug_level,
-                session_state=self.session_state,
-                dependencies=self.dependencies,
-                metadata=self.metadata,
+                run_context=run_context,
             )
         )
 
@@ -5098,7 +5159,8 @@ class Team:
         self,
         run_response: TeamRunOutput,
         run_messages: RunMessages,
-        stream_events: bool,
+        run_context: Optional[RunContext] = None,
+        stream_events: bool = False,
     ) -> AsyncIterator[TeamRunOutputEvent]:
         """
         Run reasoning asynchronously using the ReasoningManager.
@@ -5128,9 +5190,7 @@ class Team:
                 telemetry=self.telemetry,
                 debug_mode=self.debug_mode,
                 debug_level=self.debug_level,
-                session_state=self.session_state,
-                dependencies=self.dependencies,
-                metadata=self.metadata,
+                run_context=run_context,
             )
         )
 
@@ -5286,36 +5346,20 @@ class Team:
                 )
             )
 
-        if self.knowledge is not None or self.knowledge_retriever is not None:
-            # Check if knowledge retriever is an async function but used in sync mode
-            from inspect import iscoroutinefunction
-
-            if self.knowledge_retriever is not None and iscoroutinefunction(self.knowledge_retriever):
-                log_warning(
-                    "Async knowledge retriever function is being used with synchronous agent.run() or agent.print_response(). "
-                    "It is recommended to use agent.arun() or agent.aprint_response() instead."
+        # Add tools for accessing knowledge
+        if self.knowledge is not None and self.search_knowledge:
+            # Use knowledge protocol's get_tools method
+            get_tools_fn = getattr(self.knowledge, "get_tools", None)
+            if callable(get_tools_fn):
+                knowledge_tools = get_tools_fn(
+                    run_response=run_response,
+                    run_context=run_context,
+                    knowledge_filters=run_context.knowledge_filters,
+                    async_mode=async_mode,
+                    enable_agentic_filters=self.enable_agentic_knowledge_filters,
+                    agent=self,
                 )
-
-            if self.search_knowledge:
-                # Use async or sync search based on async_mode
-                if self.enable_agentic_knowledge_filters:
-                    _tools.append(
-                        self._get_search_knowledge_base_with_agentic_filters_function(
-                            run_response=run_response,
-                            knowledge_filters=run_context.knowledge_filters,
-                            async_mode=async_mode,
-                            run_context=run_context,
-                        )
-                    )
-                else:
-                    _tools.append(
-                        self._get_search_knowledge_base_function(
-                            run_response=run_response,
-                            knowledge_filters=run_context.knowledge_filters,
-                            async_mode=async_mode,
-                            run_context=run_context,
-                        )
-                    )
+                _tools.extend(knowledge_tools)
 
         if self.knowledge is not None and self.update_knowledge:
             _tools.append(self.add_to_knowledge)
@@ -5394,8 +5438,10 @@ class Team:
                     _func = _func.model_copy(deep=True)
 
                     _func._team = self
-                    _func.process_entrypoint(strict=strict)
-                    if strict:
+                    # Respect the function's explicit strict setting if set
+                    effective_strict = strict if _func.strict is None else _func.strict
+                    _func.process_entrypoint(strict=effective_strict)
+                    if strict and _func.strict is None:
                         _func.strict = True
                     if self.tool_hooks:
                         _func.tool_hooks = self.tool_hooks
@@ -5414,7 +5460,9 @@ class Team:
                 _function_names.append(tool.name)
                 tool = tool.model_copy(deep=True)
                 tool._team = self
-                tool.process_entrypoint(strict=strict)
+                # Respect the function's explicit strict setting if set
+                effective_strict = strict if tool.strict is None else tool.strict
+                tool.process_entrypoint(strict=effective_strict)
                 if strict and tool.strict is None:
                     tool.strict = True
                 if self.tool_hooks:
@@ -5466,8 +5514,6 @@ class Team:
             for func in _functions:  # type: ignore
                 if isinstance(func, Function):
                     func._run_context = run_context
-                    func._session_state = run_context.session_state
-                    func._dependencies = run_context.dependencies
                     func._images = joint_images
                     func._files = joint_files
                     func._audios = joint_audios
@@ -5515,16 +5561,12 @@ class Team:
         self,
         session: TeamSession,
         run_context: Optional[RunContext] = None,
-        user_id: Optional[str] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         tools: Optional[List[Union[Function, dict]]] = None,
         add_session_state_to_context: Optional[bool] = None,
-        session_state: Optional[Dict[str, Any]] = None,  # Deprecated
-        dependencies: Optional[Dict[str, Any]] = None,  # Deprecated
-        metadata: Optional[Dict[str, Any]] = None,  # Deprecated
     ) -> Optional[Message]:
         """Get the system message for the team.
 
@@ -5533,11 +5575,9 @@ class Team:
         3. Build and return the default system message for the Team.
         """
 
-        # Consider both run_context and session_state, dependencies, metadata (deprecated fields)
-        if run_context is not None:
-            session_state = run_context.session_state or session_state
-            dependencies = run_context.dependencies or dependencies
-            metadata = run_context.metadata or metadata
+        # Extract values from run_context
+        session_state = run_context.session_state if run_context else None
+        user_id = run_context.user_id if run_context else None
 
         # Get output_schema from run_context
         output_schema = run_context.output_schema if run_context else None
@@ -5565,10 +5605,7 @@ class Team:
             if self.resolve_in_context:
                 sys_message_content = self._format_message_with_state_variables(
                     sys_message_content,
-                    user_id=user_id,
-                    session_state=session_state,
-                    dependencies=dependencies,
-                    metadata=metadata,
+                    run_context=run_context,
                 )
 
             # type: ignore
@@ -5638,26 +5675,15 @@ class Team:
         if self.name is not None and self.add_name_to_context:
             additional_information.append(f"Your name is: {self.name}.")
 
-        if self.knowledge is not None and self.enable_agentic_knowledge_filters:
-            valid_filters = self.knowledge.get_valid_filters()
-            if valid_filters:
-                valid_filters_str = ", ".join(valid_filters)
-                additional_information.append(
-                    dedent(f"""
-                    The knowledge base contains documents with these metadata filters: {valid_filters_str}.
-                    Always use filters when the user query indicates specific metadata.
-                    Examples:
-                    1. If the user asks about a specific person like "Jordan Mitchell", you MUST use the search_knowledge_base tool with the filters parameter set to {{'<valid key like user_id>': '<valid value based on the user query>'}}.
-                    2. If the user asks about a specific document type like "contracts", you MUST use the search_knowledge_base tool with the filters parameter set to {{'document_type': 'contract'}}.
-                    4. If the user asks about a specific location like "documents from New York", you MUST use the search_knowledge_base tool with the filters parameter set to {{'<valid key like location>': 'New York'}}.
-                    General Guidelines:
-                    - Always analyze the user query to identify relevant metadata.
-                    - Use the most specific filter(s) possible to narrow down results.
-                    - If multiple filters are relevant, combine them in the filters parameter (e.g., {{'name': 'Jordan Mitchell', 'document_type': 'contract'}}).
-                    - Ensure the filter keys match the valid metadata filters: {valid_filters_str}.
-                    You can use the search_knowledge_base tool to search the knowledge base and get the most relevant documents. Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUCTURE STRICTLY.
-                """)
+        # Add knowledge context using protocol's build_context
+        if self.knowledge is not None:
+            build_context_fn = getattr(self.knowledge, "build_context", None)
+            if callable(build_context_fn):
+                knowledge_context = build_context_fn(
+                    enable_agentic_filters=self.enable_agentic_knowledge_filters,
                 )
+                if knowledge_context:
+                    additional_information.append(knowledge_context)
 
         # 2 Build the default system message for the Agent.
         system_message_content: str = ""
@@ -5768,15 +5794,22 @@ class Team:
         if self.role is not None:
             system_message_content += f"\n<your_role>\n{self.role}\n</your_role>\n\n"
 
-        # 3.3.5 Then add instructions for the Agent
+        # 3.3.5 Then add instructions for the Team
         if len(instructions) > 0:
-            system_message_content += "<instructions>"
-            if len(instructions) > 1:
-                for _upi in instructions:
-                    system_message_content += f"\n- {_upi}"
+            if self.use_instruction_tags:
+                system_message_content += "<instructions>"
+                if len(instructions) > 1:
+                    for _upi in instructions:
+                        system_message_content += f"\n- {_upi}"
+                else:
+                    system_message_content += "\n" + instructions[0]
+                system_message_content += "\n</instructions>\n\n"
             else:
-                system_message_content += "\n" + instructions[0]
-            system_message_content += "\n</instructions>\n\n"
+                if len(instructions) > 1:
+                    for _upi in instructions:
+                        system_message_content += f"- {_upi}\n"
+                else:
+                    system_message_content += instructions[0] + "\n\n"
         # 3.3.6 Add additional information
         if len(additional_information) > 0:
             system_message_content += "<additional_information>"
@@ -5792,10 +5825,7 @@ class Team:
         if self.resolve_in_context:
             system_message_content = self._format_message_with_state_variables(
                 system_message_content,
-                user_id=user_id,
-                session_state=session_state,
-                dependencies=dependencies,
-                metadata=metadata,
+                run_context=run_context,
             )
 
         system_message_from_model = self.model.get_system_message_for_model(tools)
@@ -5832,24 +5862,18 @@ class Team:
         self,
         session: TeamSession,
         run_context: Optional[RunContext] = None,
-        user_id: Optional[str] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         tools: Optional[List[Union[Function, dict]]] = None,
         add_session_state_to_context: Optional[bool] = None,
-        session_state: Optional[Dict[str, Any]] = None,  # Deprecated
-        dependencies: Optional[Dict[str, Any]] = None,  # Deprecated
-        metadata: Optional[Dict[str, Any]] = None,  # Deprecated
     ) -> Optional[Message]:
         """Get the system message for the team."""
 
-        # Consider both run_context and session_state, dependencies, metadata (deprecated fields)
-        if run_context is not None:
-            session_state = run_context.session_state or session_state
-            dependencies = run_context.dependencies or dependencies
-            metadata = run_context.metadata or metadata
+        # Extract values from run_context
+        session_state = run_context.session_state if run_context else None
+        user_id = run_context.user_id if run_context else None
 
         # Get output_schema from run_context
         output_schema = run_context.output_schema if run_context else None
@@ -5877,10 +5901,7 @@ class Team:
             if self.resolve_in_context:
                 sys_message_content = self._format_message_with_state_variables(
                     sys_message_content,
-                    user_id=user_id,
-                    session_state=session_state,
-                    dependencies=dependencies,
-                    metadata=metadata,
+                    run_context=run_context,
                 )
 
             # type: ignore
@@ -5950,26 +5971,15 @@ class Team:
         if self.name is not None and self.add_name_to_context:
             additional_information.append(f"Your name is: {self.name}.")
 
-        if self.knowledge is not None and self.enable_agentic_knowledge_filters:
-            valid_filters = await self.knowledge.async_get_valid_filters()
-            if valid_filters:
-                valid_filters_str = ", ".join(valid_filters)
-                additional_information.append(
-                    dedent(f"""
-                    The knowledge base contains documents with these metadata filters: {valid_filters_str}.
-                    Always use filters when the user query indicates specific metadata.
-                    Examples:
-                    1. If the user asks about a specific person like "Jordan Mitchell", you MUST use the search_knowledge_base tool with the filters parameter set to {{'<valid key like user_id>': '<valid value based on the user query>'}}.
-                    2. If the user asks about a specific document type like "contracts", you MUST use the search_knowledge_base tool with the filters parameter set to {{'document_type': 'contract'}}.
-                    4. If the user asks about a specific location like "documents from New York", you MUST use the search_knowledge_base tool with the filters parameter set to {{'<valid key like location>': 'New York'}}.
-                    General Guidelines:
-                    - Always analyze the user query to identify relevant metadata.
-                    - Use the most specific filter(s) possible to narrow down results.
-                    - If multiple filters are relevant, combine them in the filters parameter (e.g., {{'name': 'Jordan Mitchell', 'document_type': 'contract'}}).
-                    - Ensure the filter keys match the valid metadata filters: {valid_filters_str}.
-                    You can use the search_knowledge_base tool to search the knowledge base and get the most relevant documents. Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUCTURE STRICTLY.
-                """)
+        # Add knowledge context using protocol's build_context
+        if self.knowledge is not None:
+            build_context_fn = getattr(self.knowledge, "build_context", None)
+            if callable(build_context_fn):
+                knowledge_context = build_context_fn(
+                    enable_agentic_filters=self.enable_agentic_knowledge_filters,
                 )
+                if knowledge_context:
+                    additional_information.append(knowledge_context)
 
         # 2 Build the default system message for the Agent.
         system_message_content: str = ""
@@ -6085,15 +6095,22 @@ class Team:
         if self.role is not None:
             system_message_content += f"\n<your_role>\n{self.role}\n</your_role>\n\n"
 
-        # 3.3.5 Then add instructions for the Agent
+        # 3.3.5 Then add instructions for the Team
         if len(instructions) > 0:
-            system_message_content += "<instructions>"
-            if len(instructions) > 1:
-                for _upi in instructions:
-                    system_message_content += f"\n- {_upi}"
+            if self.use_instruction_tags:
+                system_message_content += "<instructions>"
+                if len(instructions) > 1:
+                    for _upi in instructions:
+                        system_message_content += f"\n- {_upi}"
+                else:
+                    system_message_content += "\n" + instructions[0]
+                system_message_content += "\n</instructions>\n\n"
             else:
-                system_message_content += "\n" + instructions[0]
-            system_message_content += "\n</instructions>\n\n"
+                if len(instructions) > 1:
+                    for _upi in instructions:
+                        system_message_content += f"- {_upi}\n"
+                else:
+                    system_message_content += instructions[0] + "\n\n"
         # 3.3.6 Add additional information
         if len(additional_information) > 0:
             system_message_content += "<additional_information>"
@@ -6109,10 +6126,7 @@ class Team:
         if self.resolve_in_context:
             system_message_content = self._format_message_with_state_variables(
                 system_message_content,
-                user_id=user_id,
-                session_state=session_state,
-                dependencies=dependencies,
-                metadata=metadata,
+                run_context=run_context,
             )
 
         system_message_from_model = self.model.get_system_message_for_model(tools)
@@ -6186,7 +6200,6 @@ class Team:
         system_message = self.get_system_message(
             session=session,
             run_context=run_context,
-            user_id=user_id,
             images=images,
             audio=audio,
             videos=videos,
@@ -6319,7 +6332,6 @@ class Team:
         system_message = await self.aget_system_message(
             session=session,
             run_context=run_context,
-            user_id=user_id,
             images=images,
             audio=audio,
             videos=videos,
@@ -6419,7 +6431,6 @@ class Team:
         run_response: TeamRunOutput,
         run_context: RunContext,
         input_message: Optional[Union[str, List, Dict, Message, BaseModel, List[Message]]] = None,
-        user_id: Optional[str] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -6595,10 +6606,7 @@ class Team:
                 if self.resolve_in_context:
                     user_msg_content = self._format_message_with_state_variables(
                         user_msg_content,
-                        user_id=user_id,
-                        session_state=run_context.session_state,
-                        dependencies=run_context.dependencies,
-                        metadata=run_context.metadata,
+                        run_context=run_context,
                     )
 
                 # Convert to string for concatenation operations
@@ -6641,7 +6649,6 @@ class Team:
         run_response: TeamRunOutput,
         run_context: RunContext,
         input_message: Optional[Union[str, List, Dict, Message, BaseModel, List[Message]]] = None,
-        user_id: Optional[str] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -6817,10 +6824,7 @@ class Team:
                 if self.resolve_in_context:
                     user_msg_content = self._format_message_with_state_variables(
                         user_msg_content,
-                        user_id=user_id,
-                        session_state=run_context.session_state,
-                        dependencies=run_context.dependencies,
-                        metadata=run_context.metadata,
+                        run_context=run_context,
                     )
 
                 # Convert to string for concatenation operations
@@ -6930,17 +6934,21 @@ class Team:
     def _format_message_with_state_variables(
         self,
         message: Any,
-        session_state: Optional[Dict[str, Any]] = None,
-        dependencies: Optional[Dict[str, Any]] = None,
-        metadata: Optional[Dict[str, Any]] = None,
-        user_id: Optional[str] = None,
+        run_context: Optional[RunContext] = None,
     ) -> Any:
-        """Format a message with the session state variables."""
+        """Format a message with the session state variables from run_context."""
         import re
         import string
 
         if not isinstance(message, str):
             return message
+
+        # Extract values from run_context
+        session_state = run_context.session_state if run_context else None
+        dependencies = run_context.dependencies if run_context else None
+        metadata = run_context.metadata if run_context else None
+        user_id = run_context.user_id if run_context else None
+
         # Should already be resolved and passed from run() method
         format_variables = ChainMap(
             session_state if session_state is not None else {},
@@ -7972,7 +7980,7 @@ class Team:
                         stream_events=stream_events or self.stream_member_events,
                         debug_mode=debug_mode,
                         knowledge_filters=run_context.knowledge_filters
-                        if not member_agent.knowledge_filters and member_agent.knowledge
+                        if not agent.knowledge_filters and agent.knowledge
                         else None,
                         dependencies=run_context.dependencies,
                         add_dependencies_to_context=add_dependencies_to_context,
@@ -7997,7 +8005,7 @@ class Team:
                     finally:
                         _process_delegate_task_to_member(
                             member_agent_run_response,
-                            member_agent,
+                            agent,
                             member_agent_task,  # type: ignore
                             member_session_state_copy,  # type: ignore
                         )
@@ -8035,10 +8043,15 @@ class Team:
                     current_agent = member_agent
                     member_agent_task, history = _setup_delegate_task_to_member(member_agent=current_agent, task=task)
 
-                    async def run_member_agent(agent=current_agent) -> str:
+                    async def run_member_agent(
+                        member_agent=current_agent,
+                        member_agent_task=member_agent_task,
+                        history=history,
+                        member_agent_index=member_agent_index,
+                    ) -> str:
                         member_session_state_copy = copy(run_context.session_state)
 
-                        member_agent_run_response = await agent.arun(
+                        member_agent_run_response = await member_agent.arun(
                             input=member_agent_task if not history else history,
                             user_id=user_id,
                             # All members have the same session_id
@@ -8344,6 +8357,719 @@ class Team:
                 merge_dictionaries(session.metadata, self.metadata)
             # Update the current metadata with the metadata from the database which is updated in place
             self.metadata = session.metadata
+
+    # -*- Serialization Functions
+    def to_dict(self) -> Dict[str, Any]:
+        """
+        Convert the Team to a dictionary.
+
+        Returns:
+            Dict[str, Any]: Dictionary representation of the team configuration
+        """
+        config: Dict[str, Any] = {}
+
+        # --- Team Settings ---
+        if self.id is not None:
+            config["id"] = self.id
+        if self.name is not None:
+            config["name"] = self.name
+        if self.role is not None:
+            config["role"] = self.role
+        if self.description is not None:
+            config["description"] = self.description
+
+        # --- Model ---
+        if self.model is not None:
+            config["model"] = self.model.to_dict() if isinstance(self.model, Model) else str(self.model)
+
+        # --- Members ---
+        if self.members:
+            serialized_members = []
+            for member in self.members:
+                if isinstance(member, Agent):
+                    serialized_members.append({"type": "agent", "agent_id": member.id})
+                elif isinstance(member, Team):
+                    serialized_members.append({"type": "team", "team_id": member.id})
+            if serialized_members:
+                config["members"] = serialized_members
+
+        # --- Execution settings (only if non-default) ---
+        if self.respond_directly:
+            config["respond_directly"] = self.respond_directly
+        if self.delegate_to_all_members:
+            config["delegate_to_all_members"] = self.delegate_to_all_members
+        if not self.determine_input_for_members:  # default is True
+            config["determine_input_for_members"] = self.determine_input_for_members
+
+        # --- User settings ---
+        if self.user_id is not None:
+            config["user_id"] = self.user_id
+
+        # --- Session settings ---
+        if self.session_id is not None:
+            config["session_id"] = self.session_id
+        if self.session_state is not None:
+            config["session_state"] = self.session_state
+        if self.add_session_state_to_context:
+            config["add_session_state_to_context"] = self.add_session_state_to_context
+        if self.enable_agentic_state:
+            config["enable_agentic_state"] = self.enable_agentic_state
+        if self.overwrite_db_session_state:
+            config["overwrite_db_session_state"] = self.overwrite_db_session_state
+        if self.cache_session:
+            config["cache_session"] = self.cache_session
+
+        # --- Team history settings ---
+        if self.add_team_history_to_members:
+            config["add_team_history_to_members"] = self.add_team_history_to_members
+        if self.num_team_history_runs != 3:  # default is 3
+            config["num_team_history_runs"] = self.num_team_history_runs
+        if self.share_member_interactions:
+            config["share_member_interactions"] = self.share_member_interactions
+        if self.search_session_history:
+            config["search_session_history"] = self.search_session_history
+        if self.num_history_sessions is not None:
+            config["num_history_sessions"] = self.num_history_sessions
+        if self.read_chat_history:
+            config["read_chat_history"] = self.read_chat_history
+
+        # --- System message settings ---
+        if self.system_message is not None and isinstance(self.system_message, str):
+            config["system_message"] = self.system_message
+        if self.system_message_role != "system":  # default is "system"
+            config["system_message_role"] = self.system_message_role
+        if self.introduction is not None:
+            config["introduction"] = self.introduction
+        if self.instructions is not None and not callable(self.instructions):
+            config["instructions"] = self.instructions
+        if self.expected_output is not None:
+            config["expected_output"] = self.expected_output
+        if self.additional_context is not None:
+            config["additional_context"] = self.additional_context
+
+        # --- Context settings ---
+        if self.markdown:
+            config["markdown"] = self.markdown
+        if self.add_datetime_to_context:
+            config["add_datetime_to_context"] = self.add_datetime_to_context
+        if self.add_location_to_context:
+            config["add_location_to_context"] = self.add_location_to_context
+        if self.timezone_identifier is not None:
+            config["timezone_identifier"] = self.timezone_identifier
+        if self.add_name_to_context:
+            config["add_name_to_context"] = self.add_name_to_context
+        if self.add_member_tools_to_context:
+            config["add_member_tools_to_context"] = self.add_member_tools_to_context
+        if not self.resolve_in_context:  # default is True
+            config["resolve_in_context"] = self.resolve_in_context
+
+        # --- Database settings ---
+        if self.db is not None and hasattr(self.db, "to_dict"):
+            config["db"] = self.db.to_dict()
+
+        # --- Dependencies ---
+        if self.dependencies is not None:
+            config["dependencies"] = self.dependencies
+        if self.add_dependencies_to_context:
+            config["add_dependencies_to_context"] = self.add_dependencies_to_context
+
+        # --- Knowledge settings ---
+        # TODO: implement knowledge serialization
+        # if self.knowledge is not None:
+        #     config["knowledge"] = self.knowledge.to_dict()
+        if self.knowledge_filters is not None:
+            config["knowledge_filters"] = self.knowledge_filters
+        if self.enable_agentic_knowledge_filters:
+            config["enable_agentic_knowledge_filters"] = self.enable_agentic_knowledge_filters
+        if self.update_knowledge:
+            config["update_knowledge"] = self.update_knowledge
+        if self.add_knowledge_to_context:
+            config["add_knowledge_to_context"] = self.add_knowledge_to_context
+        if not self.search_knowledge:  # default is True
+            config["search_knowledge"] = self.search_knowledge
+        if self.references_format != "json":  # default is "json"
+            config["references_format"] = self.references_format
+
+        # --- Tools ---
+        if self.tools:
+            serialized_tools = []
+            for tool in self.tools:
+                try:
+                    if isinstance(tool, Function):
+                        serialized_tools.append(tool.to_dict())
+                    elif isinstance(tool, Toolkit):
+                        for func in tool.functions.values():
+                            serialized_tools.append(func.to_dict())
+                    elif callable(tool):
+                        func = Function.from_callable(tool)
+                        serialized_tools.append(func.to_dict())
+                except Exception as e:
+                    log_warning(f"Could not serialize tool {tool}: {e}")
+            if serialized_tools:
+                config["tools"] = serialized_tools
+        if self.tool_choice is not None:
+            config["tool_choice"] = self.tool_choice
+        if self.tool_call_limit is not None:
+            config["tool_call_limit"] = self.tool_call_limit
+        if self.get_member_information_tool:
+            config["get_member_information_tool"] = self.get_member_information_tool
+
+        # --- Schema settings ---
+        if self.input_schema is not None:
+            if issubclass(self.input_schema, BaseModel):
+                config["input_schema"] = self.input_schema.__name__
+            elif isinstance(self.input_schema, dict):
+                config["input_schema"] = self.input_schema
+        if self.output_schema is not None:
+            if isinstance(self.output_schema, type) and issubclass(self.output_schema, BaseModel):
+                config["output_schema"] = self.output_schema.__name__
+            elif isinstance(self.output_schema, dict):
+                config["output_schema"] = self.output_schema
+
+        # --- Parser and output settings ---
+        if self.parser_model is not None:
+            if isinstance(self.parser_model, Model):
+                config["parser_model"] = self.parser_model.to_dict()
+            else:
+                config["parser_model"] = str(self.parser_model)
+        if self.parser_model_prompt is not None:
+            config["parser_model_prompt"] = self.parser_model_prompt
+        if self.output_model is not None:
+            if isinstance(self.output_model, Model):
+                config["output_model"] = self.output_model.to_dict()
+            else:
+                config["output_model"] = str(self.output_model)
+        if self.output_model_prompt is not None:
+            config["output_model_prompt"] = self.output_model_prompt
+        if self.use_json_mode:
+            config["use_json_mode"] = self.use_json_mode
+        if not self.parse_response:  # default is True
+            config["parse_response"] = self.parse_response
+
+        # --- Memory settings ---
+        # TODO: implement memory manager serialization
+        # if self.memory_manager is not None:
+        #     config["memory_manager"] = self.memory_manager.to_dict()
+        if self.enable_agentic_memory:
+            config["enable_agentic_memory"] = self.enable_agentic_memory
+        if self.enable_user_memories:
+            config["enable_user_memories"] = self.enable_user_memories
+        if self.add_memories_to_context is not None:
+            config["add_memories_to_context"] = self.add_memories_to_context
+        if self.enable_session_summaries:
+            config["enable_session_summaries"] = self.enable_session_summaries
+        if self.add_session_summary_to_context is not None:
+            config["add_session_summary_to_context"] = self.add_session_summary_to_context
+        # TODO: implement session summary manager serialization
+        # if self.session_summary_manager is not None:
+        #     config["session_summary_manager"] = self.session_summary_manager.to_dict()
+
+        # --- History settings ---
+        if self.add_history_to_context:
+            config["add_history_to_context"] = self.add_history_to_context
+        if self.num_history_runs is not None:
+            config["num_history_runs"] = self.num_history_runs
+        if self.num_history_messages is not None:
+            config["num_history_messages"] = self.num_history_messages
+        if self.max_tool_calls_from_history is not None:
+            config["max_tool_calls_from_history"] = self.max_tool_calls_from_history
+
+        # --- Media/storage settings ---
+        if not self.send_media_to_model:  # default is True
+            config["send_media_to_model"] = self.send_media_to_model
+        if not self.store_media:  # default is True
+            config["store_media"] = self.store_media
+        if not self.store_tool_messages:  # default is True
+            config["store_tool_messages"] = self.store_tool_messages
+        if not self.store_history_messages:  # default is True
+            config["store_history_messages"] = self.store_history_messages
+
+        # --- Compression settings ---
+        if self.compress_tool_results:
+            config["compress_tool_results"] = self.compress_tool_results
+        # TODO: implement compression manager serialization
+        # if self.compression_manager is not None:
+        #     config["compression_manager"] = self.compression_manager.to_dict()
+
+        # --- Reasoning settings ---
+        if self.reasoning:
+            config["reasoning"] = self.reasoning
+        # TODO: implement reasoning model serialization
+        # if self.reasoning_model is not None:
+        #     config["reasoning_model"] = self.reasoning_model.to_dict() if isinstance(self.reasoning_model, Model) else str(self.reasoning_model)
+        if self.reasoning_min_steps != 1:  # default is 1
+            config["reasoning_min_steps"] = self.reasoning_min_steps
+        if self.reasoning_max_steps != 10:  # default is 10
+            config["reasoning_max_steps"] = self.reasoning_max_steps
+
+        # --- Streaming settings ---
+        if self.stream is not None:
+            config["stream"] = self.stream
+        if self.stream_events is not None:
+            config["stream_events"] = self.stream_events
+        if not self.stream_member_events:  # default is True
+            config["stream_member_events"] = self.stream_member_events
+        if self.store_events:
+            config["store_events"] = self.store_events
+        if self.store_member_responses:
+            config["store_member_responses"] = self.store_member_responses
+
+        # --- Retry settings ---
+        if self.retries > 0:
+            config["retries"] = self.retries
+        if self.delay_between_retries != 1:  # default is 1
+            config["delay_between_retries"] = self.delay_between_retries
+        if self.exponential_backoff:
+            config["exponential_backoff"] = self.exponential_backoff
+
+        # --- Metadata ---
+        if self.metadata is not None:
+            config["metadata"] = self.metadata
+
+        # --- Debug and telemetry settings ---
+        if self.debug_mode:
+            config["debug_mode"] = self.debug_mode
+        if self.debug_level != 1:  # default is 1
+            config["debug_level"] = self.debug_level
+        if self.show_members_responses:
+            config["show_members_responses"] = self.show_members_responses
+        if not self.telemetry:  # default is True
+            config["telemetry"] = self.telemetry
+
+        return config
+
+    @classmethod
+    def from_dict(
+        cls,
+        data: Dict[str, Any],
+        db: Optional["BaseDb"] = None,
+        registry: Optional["Registry"] = None,
+    ) -> "Team":
+        """
+        Create a Team from a dictionary.
+
+        Args:
+            data: Dictionary containing team configuration
+            db: Optional database for loading agents in members
+            registry: Optional registry for rehydrating tools
+
+        Returns:
+            Team: Reconstructed team instance
+        """
+        config = data.copy()
+
+        # --- Handle Model reconstruction ---
+        if "model" in config:
+            model_data = config["model"]
+            if isinstance(model_data, dict) and "id" in model_data:
+                config["model"] = get_model(f"{model_data['provider']}:{model_data['id']}")
+            elif isinstance(model_data, str):
+                config["model"] = get_model(model_data)
+
+        # --- Handle Members reconstruction ---
+        members: Optional[List[Union[Agent, "Team"]]] = None
+        from agno.agent import get_agent_by_id
+        from agno.team import get_team_by_id
+
+        if "members" in config and config["members"]:
+            members = []
+            for member_data in config["members"]:
+                member_type = member_data.get("type")
+                if member_type == "agent":
+                    # TODO: Make sure to pass the correct version to get_agent_by_id. Right now its returning the latest version.
+                    if db is None:
+                        log_warning(f"Cannot load member agent {member_data['agent_id']}: db is None")
+                        continue
+                    agent = get_agent_by_id(id=member_data["agent_id"], db=db, registry=registry)
+                    if agent:
+                        members.append(agent)
+                    else:
+                        log_warning(f"Agent not found: {member_data['agent_id']}")
+                elif member_type == "team":
+                    # Handle nested teams as members
+                    if db is None:
+                        log_warning(f"Cannot load member team {member_data['team_id']}: db is None")
+                        continue
+                    nested_team = get_team_by_id(id=member_data["team_id"], db=db, registry=registry)
+                    if nested_team:
+                        members.append(nested_team)
+                    else:
+                        log_warning(f"Team not found: {member_data['team_id']}")
+
+        # --- Handle reasoning_model reconstruction ---
+        # TODO: implement reasoning model deserialization
+        # if "reasoning_model" in config:
+        #     model_data = config["reasoning_model"]
+        #     if isinstance(model_data, dict) and "id" in model_data:
+        #         config["reasoning_model"] = get_model(f"{model_data['provider']}:{model_data['id']}")
+        #     elif isinstance(model_data, str):
+        #         config["reasoning_model"] = get_model(model_data)
+
+        # --- Handle parser_model reconstruction ---
+        # TODO: implement parser model deserialization
+        # if "parser_model" in config:
+        #     model_data = config["parser_model"]
+        #     if isinstance(model_data, dict) and "id" in model_data:
+        #         config["parser_model"] = get_model(f"{model_data['provider']}:{model_data['id']}")
+        #     elif isinstance(model_data, str):
+        #         config["parser_model"] = get_model(model_data)
+
+        # --- Handle output_model reconstruction ---
+        # TODO: implement output model deserialization
+        # if "output_model" in config:
+        #     model_data = config["output_model"]
+        #     if isinstance(model_data, dict) and "id" in model_data:
+        #         config["output_model"] = get_model(f"{model_data['provider']}:{model_data['id']}")
+        #     elif isinstance(model_data, str):
+        #         config["output_model"] = get_model(model_data)
+
+        # --- Handle tools reconstruction ---
+        if "tools" in config and config["tools"]:
+            if registry:
+                config["tools"] = [registry.rehydrate_function(t) for t in config["tools"]]
+            else:
+                log_warning("No registry provided, tools will not be rehydrated.")
+                del config["tools"]
+
+        # --- Handle DB reconstruction ---
+        if "db" in config and isinstance(config["db"], dict):
+            db_data = config["db"]
+            db_id = db_data.get("id")
+
+            # First try to get the db from the registry (preferred - reuses existing connection)
+            if registry and db_id:
+                registry_db = registry.get_db(db_id)
+                if registry_db is not None:
+                    config["db"] = registry_db
+                else:
+                    del config["db"]
+            else:
+                # No registry or no db_id, fall back to creating from dict
+                config["db"] = db_from_dict(db_data)
+                if config["db"] is None:
+                    del config["db"]
+
+        # --- Handle Schema reconstruction ---
+        if "input_schema" in config and isinstance(config["input_schema"], str):
+            schema_cls = registry.get_schema(config["input_schema"]) if registry else None
+            if schema_cls:
+                config["input_schema"] = schema_cls
+            else:
+                log_warning(f"Input schema {config['input_schema']} not found in registry, skipping.")
+                del config["input_schema"]
+
+        if "output_schema" in config and isinstance(config["output_schema"], str):
+            schema_cls = registry.get_schema(config["output_schema"]) if registry else None
+            if schema_cls:
+                config["output_schema"] = schema_cls
+            else:
+                log_warning(f"Output schema {config['output_schema']} not found in registry, skipping.")
+                del config["output_schema"]
+
+        # --- Handle MemoryManager reconstruction ---
+        # TODO: implement memory manager deserialization
+        # if "memory_manager" in config and isinstance(config["memory_manager"], dict):
+        #     from agno.memory import MemoryManager
+        #     config["memory_manager"] = MemoryManager.from_dict(config["memory_manager"])
+
+        # --- Handle SessionSummaryManager reconstruction ---
+        # TODO: implement session summary manager deserialization
+        # if "session_summary_manager" in config and isinstance(config["session_summary_manager"], dict):
+        #     from agno.session import SessionSummaryManager
+        #     config["session_summary_manager"] = SessionSummaryManager.from_dict(config["session_summary_manager"])
+
+        # --- Handle Knowledge reconstruction ---
+        # TODO: implement knowledge deserialization
+        # if "knowledge" in config and isinstance(config["knowledge"], dict):
+        #     from agno.knowledge import Knowledge
+        #     config["knowledge"] = Knowledge.from_dict(config["knowledge"])
+
+        # --- Handle CompressionManager reconstruction ---
+        # TODO: implement compression manager deserialization
+        # if "compression_manager" in config and isinstance(config["compression_manager"], dict):
+        #     from agno.compression.manager import CompressionManager
+        #     config["compression_manager"] = CompressionManager.from_dict(config["compression_manager"])
+
+        return cls(
+            # --- Team settings ---
+            id=config.get("id"),
+            name=config.get("name"),
+            role=config.get("role"),
+            description=config.get("description"),
+            # --- Model ---
+            model=config.get("model"),
+            # --- Members ---
+            members=members or [],
+            # --- Execution settings ---
+            respond_directly=config.get("respond_directly", False),
+            delegate_to_all_members=config.get("delegate_to_all_members", False),
+            determine_input_for_members=config.get("determine_input_for_members", True),
+            # --- User settings ---
+            user_id=config.get("user_id"),
+            # --- Session settings ---
+            session_id=config.get("session_id"),
+            session_state=config.get("session_state"),
+            add_session_state_to_context=config.get("add_session_state_to_context", False),
+            enable_agentic_state=config.get("enable_agentic_state", False),
+            overwrite_db_session_state=config.get("overwrite_db_session_state", False),
+            cache_session=config.get("cache_session", False),
+            add_team_history_to_members=config.get("add_team_history_to_members", False),
+            num_team_history_runs=config.get("num_team_history_runs", 3),
+            share_member_interactions=config.get("share_member_interactions", False),
+            search_session_history=config.get("search_session_history", False),
+            num_history_sessions=config.get("num_history_sessions"),
+            read_chat_history=config.get("read_chat_history", False),
+            # --- System message settings ---
+            system_message=config.get("system_message"),
+            system_message_role=config.get("system_message_role", "system"),
+            introduction=config.get("introduction"),
+            instructions=config.get("instructions"),
+            expected_output=config.get("expected_output"),
+            additional_context=config.get("additional_context"),
+            markdown=config.get("markdown", False),
+            add_datetime_to_context=config.get("add_datetime_to_context", False),
+            add_location_to_context=config.get("add_location_to_context", False),
+            timezone_identifier=config.get("timezone_identifier"),
+            add_name_to_context=config.get("add_name_to_context", False),
+            add_member_tools_to_context=config.get("add_member_tools_to_context", False),
+            resolve_in_context=config.get("resolve_in_context", True),
+            # --- Database settings ---
+            db=config.get("db"),
+            # --- Dependencies ---
+            dependencies=config.get("dependencies"),
+            add_dependencies_to_context=config.get("add_dependencies_to_context", False),
+            # --- Knowledge settings ---
+            # knowledge=config.get("knowledge"),  # TODO
+            knowledge_filters=config.get("knowledge_filters"),
+            enable_agentic_knowledge_filters=config.get("enable_agentic_knowledge_filters", False),
+            add_knowledge_to_context=config.get("add_knowledge_to_context", False),
+            update_knowledge=config.get("update_knowledge", False),
+            search_knowledge=config.get("search_knowledge", True),
+            references_format=config.get("references_format", "json"),
+            # --- Tools ---
+            tools=config.get("tools"),
+            tool_call_limit=config.get("tool_call_limit"),
+            tool_choice=config.get("tool_choice"),
+            get_member_information_tool=config.get("get_member_information_tool", False),
+            # --- Schema settings ---
+            # input_schema=config.get("input_schema"),  # TODO
+            # output_schema=config.get("output_schema"),  # TODO
+            # --- Parser and output settings ---
+            # parser_model=config.get("parser_model"),  # TODO
+            parser_model_prompt=config.get("parser_model_prompt"),
+            # output_model=config.get("output_model"),  # TODO
+            output_model_prompt=config.get("output_model_prompt"),
+            use_json_mode=config.get("use_json_mode", False),
+            parse_response=config.get("parse_response", True),
+            # --- Memory settings ---
+            # memory_manager=config.get("memory_manager"),  # TODO
+            enable_agentic_memory=config.get("enable_agentic_memory", False),
+            enable_user_memories=config.get("enable_user_memories", False),
+            add_memories_to_context=config.get("add_memories_to_context"),
+            enable_session_summaries=config.get("enable_session_summaries", False),
+            add_session_summary_to_context=config.get("add_session_summary_to_context"),
+            # session_summary_manager=config.get("session_summary_manager"),  # TODO
+            # --- History settings ---
+            add_history_to_context=config.get("add_history_to_context", False),
+            num_history_runs=config.get("num_history_runs"),
+            num_history_messages=config.get("num_history_messages"),
+            max_tool_calls_from_history=config.get("max_tool_calls_from_history"),
+            # --- Compression settings ---
+            compress_tool_results=config.get("compress_tool_results", False),
+            # compression_manager=config.get("compression_manager"),  # TODO
+            # --- Reasoning settings ---
+            reasoning=config.get("reasoning", False),
+            # reasoning_model=config.get("reasoning_model"),  # TODO
+            reasoning_min_steps=config.get("reasoning_min_steps", 1),
+            reasoning_max_steps=config.get("reasoning_max_steps", 10),
+            # --- Streaming settings ---
+            stream=config.get("stream"),
+            stream_events=config.get("stream_events"),
+            stream_member_events=config.get("stream_member_events", True),
+            store_events=config.get("store_events", False),
+            store_member_responses=config.get("store_member_responses", False),
+            # --- Media settings ---
+            send_media_to_model=config.get("send_media_to_model", True),
+            store_media=config.get("store_media", True),
+            store_tool_messages=config.get("store_tool_messages", True),
+            store_history_messages=config.get("store_history_messages", True),
+            # --- Retry settings ---
+            retries=config.get("retries", 0),
+            delay_between_retries=config.get("delay_between_retries", 1),
+            exponential_backoff=config.get("exponential_backoff", False),
+            # --- Metadata ---
+            metadata=config.get("metadata"),
+            # --- Debug and telemetry settings ---
+            debug_mode=config.get("debug_mode", False),
+            debug_level=config.get("debug_level", 1),
+            show_members_responses=config.get("show_members_responses", False),
+            telemetry=config.get("telemetry", True),
+        )
+
+    def save(
+        self,
+        *,
+        db: Optional["BaseDb"] = None,
+        stage: str = "published",
+        label: Optional[str] = None,
+        notes: Optional[str] = None,
+    ) -> Optional[int]:
+        """
+        Save the team component and config to the database, including member agents/teams.
+
+        Args:
+            db: The database to save the component and config to.
+            stage: The stage of the component. Defaults to "published".
+            label: The label of the component.
+            notes: The notes of the component.
+
+        Returns:
+            Optional[int]: The version number of the saved config.
+        """
+        from agno.agent.agent import Agent
+
+        db_ = db or self.db
+        if not db_:
+            raise ValueError("Db not initialized or provided")
+        if not isinstance(db_, BaseDb):
+            raise ValueError("Async databases not yet supported for save(). Use a sync database.")
+        if self.id is None:
+            self.id = generate_id_from_name(self.name)
+
+        try:
+            # Collect all links for members
+            all_links: List[Dict[str, Any]] = []
+
+            # Save each member (Agent or nested Team) and collect links
+            for position, member in enumerate(self.members or []):
+                # Save member first - returns version
+                member_version = member.save(db=db_, stage=stage, label=label, notes=notes)
+
+                # Add link
+                all_links.append(
+                    {
+                        "link_kind": "member",
+                        "link_key": f"member_{position}",
+                        "child_component_id": member.id,
+                        "child_version": member_version,
+                        "position": position,
+                        "meta": {"type": "agent" if isinstance(member, Agent) else "team"},
+                    }
+                )
+
+            # Create or update component
+            db_.upsert_component(
+                component_id=self.id,
+                component_type=ComponentType.TEAM,
+                name=getattr(self, "name", self.id),
+                description=getattr(self, "description", None),
+                metadata=getattr(self, "metadata", None),
+            )
+
+            # Create or update config with links
+            config = db_.upsert_config(
+                component_id=self.id,
+                config=self.to_dict(),
+                links=all_links if all_links else None,
+                label=label,
+                stage=stage,
+                notes=notes,
+            )
+
+            return config["version"]
+
+        except Exception as e:
+            log_error(f"Error saving Team to database: {e}")
+            raise
+
+    @classmethod
+    def load(
+        cls,
+        id: str,
+        *,
+        db: "BaseDb",
+        registry: Optional["Registry"] = None,
+        label: Optional[str] = None,
+        version: Optional[int] = None,
+    ) -> Optional["Team"]:
+        """
+        Load a team by id, with hydrated members.
+
+        Args:
+            id: The id of the team to load.
+            db: The database to load the team from.
+            label: The label of the team to load.
+
+        Returns:
+            The team loaded from the database with hydrated members, or None if not found.
+        """
+        from agno.agent.agent import Agent
+
+        # Use graph to load team + all members
+        graph = db.load_component_graph(id, version=version, label=label)
+        if graph is None:
+            return None
+
+        config = graph["config"].get("config")
+        if config is None:
+            return None
+
+        team = cls.from_dict(config, db=db, registry=registry)
+        team.id = id
+        team.db = db
+
+        # Hydrate members from graph children
+        team.members = []
+        for child in graph.get("children", []):
+            child_graph = child.get("graph")
+            if child_graph is None:
+                continue
+
+            child_config = child_graph["config"].get("config")
+            if child_config is None:
+                continue
+
+            link_meta = child["link"].get("meta", {})
+            member_type = link_meta.get("type")
+
+            if member_type == "agent":
+                agent = Agent.from_dict(child_config)
+                agent.id = child_graph["component"]["component_id"]
+                agent.db = db
+                team.members.append(agent)
+            elif member_type == "team":
+                # Recursive load for nested teams
+                nested_team = cls.load(child_graph["component"]["component_id"], db=db)
+                if nested_team:
+                    team.members.append(nested_team)
+
+        return team
+
+    def delete(
+        self,
+        *,
+        db: Optional["BaseDb"] = None,
+        hard_delete: bool = False,
+    ) -> bool:
+        """
+        Delete the team component.
+
+        Args:
+            db: The database to delete the component from.
+            hard_delete: Whether to hard delete the component.
+
+        Returns:
+            True if the component was deleted, False otherwise.
+        """
+        db_ = db or self.db
+        if not db_:
+            raise ValueError("Db not initialized or provided")
+        if not isinstance(db_, BaseDb):
+            raise ValueError("Async databases not yet supported for delete(). Use a sync database.")
+        if self.id is None:
+            raise ValueError("Cannot delete team without an id")
+
+        return db_.delete_component(component_id=self.id, hard_delete=hard_delete)
 
     # -*- Public convenience functions
     def get_run_output(
@@ -8992,6 +9718,7 @@ class Team:
                 title=title,
                 reasoning=thought,
                 action=action,
+                result=None,
                 next_action=NextAction.CONTINUE,
                 confidence=confidence,
             )
@@ -9027,6 +9754,7 @@ class Team:
             # Create a reasoning step
             reasoning_step = ReasoningStep(
                 title=title,
+                action=None,
                 result=result,
                 reasoning=analysis,
                 next_action=next_action_enum,
@@ -9055,7 +9783,10 @@ class Team:
             thought = tool_args["thought"]
             reasoning_step = ReasoningStep(
                 title="Thinking",
+                action=None,
+                result=None,
                 reasoning=thought,
+                next_action=None,
                 confidence=None,
             )
             formatted_content = f"## Thinking\n{thought}\n\n"
@@ -9083,16 +9814,17 @@ class Team:
             log_warning("Knowledge is not set, cannot add to knowledge")
             return "Knowledge is not set, cannot add to knowledge"
 
-        if self.knowledge.vector_db is None:
-            log_warning("Knowledge vector database is not set, cannot add to knowledge")
-            return "Knowledge vector database is not set, cannot add to knowledge"
+        insert_method = getattr(self.knowledge, "insert", None)
+        if not callable(insert_method):
+            log_warning("Knowledge base does not support adding content")
+            return "Knowledge base does not support adding content"
 
         document_name = query.replace(" ", "_").replace("?", "").replace("!", "").replace(".", "")
         document_content = json.dumps({"query": query, "result": result})
         log_info(f"Adding document to Knowledge: {document_name}: {document_content}")
         from agno.knowledge.reader.text_reader import TextReader
 
-        self.knowledge.add_content(name=document_name, text_content=document_content, reader=TextReader())
+        insert_method(name=document_name, text_content=document_content, reader=TextReader())
         return "Successfully added to knowledge base"
 
     def get_relevant_docs_from_knowledge(
@@ -9110,25 +9842,26 @@ class Team:
         dependencies = run_context.dependencies if run_context else None
 
         if num_documents is None and self.knowledge is not None:
-            num_documents = self.knowledge.max_results
+            num_documents = getattr(self.knowledge, "max_results", None)
 
         # Validate the filters against known valid filter keys
-        if self.knowledge is not None:
-            valid_filters, invalid_keys = self.knowledge.validate_filters(filters)  # type: ignore
+        if self.knowledge is not None and filters is not None:
+            validate_filters_method = getattr(self.knowledge, "validate_filters", None)
+            if callable(validate_filters_method):
+                valid_filters, invalid_keys = validate_filters_method(filters)
 
-            # Warn about invalid filter keys
-            if invalid_keys:
-                # type: ignore
-                log_warning(f"Invalid filter keys provided: {invalid_keys}. These filters will be ignored.")
+                # Warn about invalid filter keys
+                if invalid_keys:
+                    log_warning(f"Invalid filter keys provided: {invalid_keys}. These filters will be ignored.")
 
-                # Only use valid filters
-                filters = valid_filters
-                if not filters:
-                    log_warning("No valid filters remain after validation. Search will proceed without filters.")
+                    # Only use valid filters
+                    filters = valid_filters
+                    if not filters:
+                        log_warning("No valid filters remain after validation. Search will proceed without filters.")
 
-            if invalid_keys == [] and valid_filters == {}:
-                log_debug("No valid filters provided. Search will proceed without filters.")
-                filters = None
+                if invalid_keys == [] and valid_filters == {}:
+                    log_debug("No valid filters provided. Search will proceed without filters.")
+                    filters = None
 
         if self.knowledge_retriever is not None and callable(self.knowledge_retriever):
             from inspect import signature
@@ -9150,17 +9883,22 @@ class Team:
             except Exception as e:
                 log_warning(f"Knowledge retriever failed: {e}")
                 raise e
+        # Use knowledge protocol's retrieve method
         try:
-            if self.knowledge is None or self.knowledge.vector_db is None:
+            if self.knowledge is None:
+                return None
+
+            # Use protocol retrieve() method if available
+            retrieve_fn = getattr(self.knowledge, "retrieve", None)
+            if not callable(retrieve_fn):
+                log_debug("Knowledge does not implement retrieve()")
                 return None
 
             if num_documents is None:
-                num_documents = self.knowledge.max_results
+                num_documents = getattr(self.knowledge, "max_results", 10)
 
-            log_debug(f"Searching knowledge base with filters: {filters}")
-            relevant_docs: List[Document] = self.knowledge.search(
-                query=query, max_results=num_documents, filters=filters
-            )
+            log_debug(f"Retrieving from knowledge base with filters: {filters}")
+            relevant_docs: List[Document] = retrieve_fn(query=query, max_results=num_documents, filters=filters)
 
             if not relevant_docs or len(relevant_docs) == 0:
                 log_debug("No relevant documents found for query")
@@ -9168,7 +9906,7 @@ class Team:
 
             return [doc.to_dict() for doc in relevant_docs]
         except Exception as e:
-            log_warning(f"Error searching knowledge base: {e}")
+            log_warning(f"Error retrieving from knowledge base: {e}")
             raise e
 
     async def aget_relevant_docs_from_knowledge(
@@ -9186,25 +9924,26 @@ class Team:
         dependencies = run_context.dependencies if run_context else None
 
         if num_documents is None and self.knowledge is not None:
-            num_documents = self.knowledge.max_results
+            num_documents = getattr(self.knowledge, "max_results", None)
 
         # Validate the filters against known valid filter keys
-        if self.knowledge is not None:
-            valid_filters, invalid_keys = await self.knowledge.async_validate_filters(filters)  # type: ignore
+        if self.knowledge is not None and filters is not None:
+            avalidate_filters_method = getattr(self.knowledge, "avalidate_filters", None)
+            if callable(avalidate_filters_method):
+                valid_filters, invalid_keys = await avalidate_filters_method(filters)
 
-            # Warn about invalid filter keys
-            if invalid_keys:
-                # type: ignore
-                log_warning(f"Invalid filter keys provided: {invalid_keys}. These filters will be ignored.")
+                # Warn about invalid filter keys
+                if invalid_keys:
+                    log_warning(f"Invalid filter keys provided: {invalid_keys}. These filters will be ignored.")
 
-                # Only use valid filters
-                filters = valid_filters
-                if not filters:
-                    log_warning("No valid filters remain after validation. Search will proceed without filters.")
+                    # Only use valid filters
+                    filters = valid_filters
+                    if not filters:
+                        log_warning("No valid filters remain after validation. Search will proceed without filters.")
 
-            if invalid_keys == [] and valid_filters == {}:
-                log_debug("No valid filters provided. Search will proceed without filters.")
-                filters = None
+                if invalid_keys == [] and valid_filters == {}:
+                    log_debug("No valid filters provided. Search will proceed without filters.")
+                    filters = None
 
         if self.knowledge_retriever is not None and callable(self.knowledge_retriever):
             from inspect import isawaitable, signature
@@ -9233,17 +9972,32 @@ class Team:
                 log_warning(f"Knowledge retriever failed: {e}")
                 raise e
 
+        # Use knowledge protocol's retrieve method
         try:
-            if self.knowledge is None or self.knowledge.vector_db is None:
+            if self.knowledge is None:
+                return None
+
+            # Use protocol aretrieve() or retrieve() method if available
+            aretrieve_fn = getattr(self.knowledge, "aretrieve", None)
+            retrieve_fn = getattr(self.knowledge, "retrieve", None)
+
+            if not callable(aretrieve_fn) and not callable(retrieve_fn):
+                log_debug("Knowledge does not implement retrieve()")
                 return None
 
             if num_documents is None:
-                num_documents = self.knowledge.max_results
+                num_documents = getattr(self.knowledge, "max_results", 10)
 
-            log_debug(f"Searching knowledge base with filters: {filters}")
-            relevant_docs: List[Document] = await self.knowledge.async_search(
-                query=query, max_results=num_documents, filters=filters
-            )
+            log_debug(f"Retrieving from knowledge base with filters: {filters}")
+
+            if callable(aretrieve_fn):
+                relevant_docs: List[Document] = await aretrieve_fn(
+                    query=query, max_results=num_documents, filters=filters
+                )
+            elif callable(retrieve_fn):
+                relevant_docs = retrieve_fn(query=query, max_results=num_documents, filters=filters)
+            else:
+                return None
 
             if not relevant_docs or len(relevant_docs) == 0:
                 log_debug("No relevant documents found for query")
@@ -9251,7 +10005,7 @@ class Team:
 
             return [doc.to_dict() for doc in relevant_docs]
         except Exception as e:
-            log_warning(f"Error searching knowledge base: {e}")
+            log_warning(f"Error retrieving from knowledge base: {e}")
             raise e
 
     def _convert_documents_to_string(self, docs: List[Union[Dict[str, Any], str]]) -> str:
@@ -9520,3 +10274,215 @@ class Team:
             )
         except Exception as e:
             log_debug(f"Could not create Team run telemetry event: {e}")
+
+    def deep_copy(self, *, update: Optional[Dict[str, Any]] = None) -> "Team":
+        """Create and return a deep copy of this Team, optionally updating fields.
+
+        This creates a fresh Team instance with isolated mutable state while sharing
+        heavy resources like database connections and models. Member agents are also
+        deep copied to ensure complete isolation.
+
+        Args:
+            update: Optional dictionary of fields to override in the new Team.
+
+        Returns:
+            Team: A new Team instance with copied state.
+        """
+        from dataclasses import fields
+
+        # Extract the fields to set for the new Team
+        fields_for_new_team: Dict[str, Any] = {}
+
+        for f in fields(self):
+            # Skip private fields (not part of __init__ signature)
+            if f.name.startswith("_"):
+                continue
+
+            field_value = getattr(self, f.name)
+            if field_value is not None:
+                try:
+                    fields_for_new_team[f.name] = self._deep_copy_field(f.name, field_value)
+                except Exception as e:
+                    log_warning(f"Failed to deep copy field '{f.name}': {e}. Using original value.")
+                    fields_for_new_team[f.name] = field_value
+
+        # Update fields if provided
+        if update:
+            fields_for_new_team.update(update)
+
+        # Create a new Team
+        try:
+            new_team = self.__class__(**fields_for_new_team)
+            log_debug(f"Created new {self.__class__.__name__}")
+            return new_team
+        except Exception as e:
+            log_error(f"Failed to create deep copy of {self.__class__.__name__}: {e}")
+            raise
+
+    def _deep_copy_field(self, field_name: str, field_value: Any) -> Any:
+        """Helper method to deep copy a field based on its type."""
+        from copy import copy, deepcopy
+
+        # For members, deep copy each agent/team
+        if field_name == "members" and field_value is not None:
+            copied_members = []
+            for member in field_value:
+                if hasattr(member, "deep_copy"):
+                    copied_members.append(member.deep_copy())
+                else:
+                    copied_members.append(member)
+            return copied_members
+
+        # For tools, share MCP tools but copy others
+        if field_name == "tools" and field_value is not None:
+            try:
+                copied_tools = []
+                for tool in field_value:
+                    try:
+                        # Share MCP tools (they maintain server connections)
+                        is_mcp_tool = hasattr(type(tool), "__mro__") and any(
+                            c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
+                        )
+                        if is_mcp_tool:
+                            copied_tools.append(tool)
+                        else:
+                            try:
+                                copied_tools.append(deepcopy(tool))
+                            except Exception:
+                                # Tool can't be deep copied, share by reference
+                                copied_tools.append(tool)
+                    except Exception:
+                        # MCP detection failed, share tool by reference to be safe
+                        copied_tools.append(tool)
+                return copied_tools
+            except Exception as e:
+                # If entire tools processing fails, log and return original list
+                log_warning(f"Failed to process tools for deep copy: {e}")
+                return field_value
+
+        # Share heavy resources - these maintain connections/pools that shouldn't be duplicated
+        if field_name in (
+            "db",
+            "model",
+            "reasoning_model",
+            "knowledge",
+            "memory_manager",
+            "parser_model",
+            "output_model",
+            "session_summary_manager",
+            "culture_manager",
+            "compression_manager",
+            "learning",
+            "skills",
+        ):
+            return field_value
+
+        # For compound types, attempt a deep copy
+        if isinstance(field_value, (list, dict, set)):
+            try:
+                return deepcopy(field_value)
+            except Exception:
+                try:
+                    return copy(field_value)
+                except Exception as e:
+                    log_warning(f"Failed to copy field: {field_name} - {e}")
+                    return field_value
+
+        # For pydantic models, attempt a model_copy
+        if isinstance(field_value, BaseModel):
+            try:
+                return field_value.model_copy(deep=True)
+            except Exception:
+                try:
+                    return field_value.model_copy(deep=False)
+                except Exception as e:
+                    log_warning(f"Failed to copy field: {field_name} - {e}")
+                    return field_value
+
+        # For other types, attempt a shallow copy first
+        try:
+            return copy(field_value)
+        except Exception:
+            # If copy fails, return as is
+            return field_value
+
+
+def get_team_by_id(
+    db: "BaseDb",
+    id: str,
+    version: Optional[int] = None,
+    label: Optional[str] = None,
+    registry: Optional["Registry"] = None,
+) -> Optional["Team"]:
+    """
+    Get a Team by id from the database.
+
+    Resolution order:
+    - if version is provided: load that version
+    - elif label is provided: load that labeled version
+    - else: load component.current_version
+
+    Args:
+        db: Database handle.
+        id: Team component_id.
+        version: Optional integer config version.
+        label: Optional version_label.
+        registry: Optional Registry for reconstructing unserializable components.
+
+    Returns:
+        Team instance or None.
+    """
+    try:
+        row = db.get_config(component_id=id, version=version, label=label)
+        if row is None:
+            return None
+
+        cfg = row.get("config") if isinstance(row, dict) else None
+        if cfg is None:
+            raise ValueError(f"Invalid config found for team {id}")
+
+        team = Team.from_dict(cfg, db=db, registry=registry)
+        # Ensure team.id is set to the component_id
+        team.id = id
+
+        return team
+
+    except Exception as e:
+        log_error(f"Error loading Team {id} from database: {e}")
+        return None
+
+
+def get_teams(
+    db: "BaseDb",
+    registry: Optional["Registry"] = None,
+) -> List["Team"]:
+    """
+    Get all teams from the database.
+
+    Args:
+        db: Database to load teams from
+        registry: Optional registry for rehydrating tools
+
+    Returns:
+        List of Team instances loaded from the database
+    """
+    teams: List[Team] = []
+    try:
+        components, _ = db.list_components(component_type=ComponentType.TEAM)
+        for component in components:
+            component_id = component["component_id"]
+            config = db.get_config(component_id=component_id)
+            if config is not None:
+                team_config = config.get("config")
+                if team_config is not None:
+                    if "id" not in team_config:
+                        team_config["id"] = component_id
+                    team = Team.from_dict(team_config, db=db, registry=registry)
+                    # Ensure team.id is set to the component_id
+                    team.id = component_id
+                    teams.append(team)
+        return teams
+
+    except Exception as e:
+        log_error(f"Error loading Teams from database: {e}")
+        return []
