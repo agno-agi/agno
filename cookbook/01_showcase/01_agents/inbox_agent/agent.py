@@ -17,14 +17,14 @@ Usage:
     inbox_agent.print_response("Triage my 10 most recent unread emails", stream=True)
 
     # Interactive mode
-    inbox_agent.cli(stream=True)
+    inbox_agent.cli_app(stream=True)
 """
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIResponses
 from agno.tools.gmail import GmailTools
 from agno.tools.reasoning import ReasoningTools
-
+from agno.db.sqlite import SqliteDb
 # ============================================================================
 # System Message
 # ============================================================================
@@ -113,6 +113,7 @@ inbox_agent = Agent(
     read_chat_history=True,
     enable_agentic_memory=True,
     markdown=True,
+    db=SqliteDb(db_file="tmp/data.db"),
 )
 
 
@@ -124,4 +125,4 @@ __all__ = [
 ]
 
 if __name__ == "__main__":
-    inbox_agent.cli(stream=True)
+    inbox_agent.cli_app(stream=True)
