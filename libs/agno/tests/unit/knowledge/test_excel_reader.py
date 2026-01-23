@@ -1952,3 +1952,77 @@ def test_excel_reader_bytesio_no_name_no_param_uses_default():
 
     assert len(documents) == 1
     assert documents[0].name == "data"
+
+
+def test_sheets_filter_with_nonexistent_sheet_returns_empty(tmp_path: Path):
+    """Filtering to a nonexistent sheet returns empty list."""
+    openpyxl = pytest.importorskip("openpyxl")
+
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "Data"
+    sheet.append(["col1", "col2"])
+
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    workbook.close()
+
+    file_path = tmp_path / "test.xlsx"
+    file_path.write_bytes(buffer.getvalue())
+
+    reader = ExcelReader(chunk=False, sheets=["NonexistentSheet"])
+    docs = reader.read(file_path)
+
+    assert docs == []
+
+
+def test_sheets_filter_with_out_of_range_index_returns_empty(tmp_path: Path):
+    """Filtering to an out-of-range index returns empty list."""
+    openpyxl = pytest.importorskip("openpyxl")
+
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "Data"
+    sheet.append(["col1", "col2"])
+
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    workbook.close()
+
+    file_path = tmp_path / "test.xlsx"
+    file_path.write_bytes(buffer.getvalue())
+
+    reader = ExcelReader(chunk=False, sheets=[99])
+    docs = reader.read(file_path)
+
+    assert docs == []
+
+
+def test_mixed_sheet_name_and_index_filter(tmp_path: Path):
+    """Filtering with both names and indices works."""
+    openpyxl = pytest.importorskip("openpyxl")
+
+    workbook = openpyxl.Workbook()
+    first_sheet = workbook.active
+    first_sheet.title = "First"
+    first_sheet.append(["first"])
+
+    second_sheet = workbook.create_sheet("Second")
+    second_sheet.append(["second"])
+
+    third_sheet = workbook.create_sheet("Third")
+    third_sheet.append(["third"])
+
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    workbook.close()
+
+    file_path = tmp_path / "test.xlsx"
+    file_path.write_bytes(buffer.getvalue())
+
+    # Mix name ("First") and 1-based index (3=Third)
+    reader = ExcelReader(chunk=False, sheets=["First", 3])
+    docs = reader.read(file_path)
+
+    assert len(docs) == 2
+    assert {doc.meta_data["sheet_name"] for doc in docs} == {"First", "Third"}
