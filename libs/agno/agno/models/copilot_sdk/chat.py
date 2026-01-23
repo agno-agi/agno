@@ -11,7 +11,7 @@ from agno.exceptions import ModelProviderError
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.metrics import Metrics
-from agno.models.response import ModelResponse
+from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
 from agno.run.agent import RunOutput
 from agno.run.team import TeamRunOutput
 from agno.utils.log import log_debug, log_error
@@ -48,6 +48,8 @@ class CopilotChat(Model):
     """
 
     # Model configuration
+    # Note: SDK supports "gpt-5", "claude-sonnet-4", "claude-sonnet-4.5", "claude-haiku-4.5"
+    # Using "gpt-4o" may require provider configuration (BYOK)
     id: str = "gpt-4o"  # Default Copilot model
     name: str = "CopilotChat"
     provider: str = "GitHub Copilot"
@@ -58,6 +60,13 @@ class CopilotChat(Model):
     use_stdio: bool = True  # Use stdio for communication
     log_level: str = "info"  # Logging level for SDK
     session_timeout: float = 60.0  # Session timeout in seconds
+
+    # Session configuration (maps to SessionConfig in Copilot SDK)
+    session_id: Optional[str] = None  # Optional custom session ID
+    system_message: Optional[str] = None  # System message for the session
+    mcp_servers: Optional[Dict[str, Any]] = None  # MCP server configurations for Copilot SDK's native MCP support
+    provider_config: Optional[Dict[str, Any]] = None  # Custom provider configuration (BYOK)
+    config_dir: Optional[str] = None  # Override default configuration directory
 
     # Cached client
     _client: Optional[CopilotClient] = field(default=None, init=False, repr=False)
@@ -161,6 +170,11 @@ class CopilotChat(Model):
                 "use_stdio": self.use_stdio,
                 "log_level": self.log_level,
                 "session_timeout": self.session_timeout,
+                "session_id": self.session_id,
+                "system_message": self.system_message,
+                "mcp_servers": self.mcp_servers,
+                "provider_config": self.provider_config,
+                "config_dir": self.config_dir,
             }
         )
         cleaned_dict = {k: v for k, v in model_dict.items() if v is not None}
@@ -178,6 +192,86 @@ class CopilotChat(Model):
             CopilotChat: A new CopilotChat instance.
         """
         return cls(**data)
+
+    def _build_session_config(
+        self,
+        streaming: bool,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Build Copilot SDK SessionConfig from model configuration and Agent parameters.
+
+        Maps Agent's tool_choice parameter to Copilot SDK's available_tools/excluded_tools.
+
+        Args:
+            streaming: Whether to enable streaming.
+            tools: Optional list of tool definitions from Agent.
+            tool_choice: Optional tool choice strategy from Agent.
+                - "none": Disables all tools (available_tools=[])
+                - "auto": Lets model decide (no restrictions)
+                - "required": Forces tool use (no restrictions, model will decide which tool)
+                - {"type": "function", "function": {"name": "tool_name"}}: Restricts to specific tool
+
+        Returns:
+            Dict with SessionConfig parameters.
+        """
+        session_config: Dict[str, Any] = {
+            "model": self.id,
+            "streaming": streaming,
+        }
+
+        # Add optional session ID
+        if self.session_id:
+            session_config["session_id"] = self.session_id
+
+        # Add system message if provided
+        if self.system_message:
+            session_config["system_message"] = {"content": self.system_message}
+
+        # Add tools if provided
+        tool_names = []
+        if tools:
+            copilot_tools = self._convert_tools(tools)
+            if copilot_tools:
+                session_config["tools"] = copilot_tools
+                tool_names = [t.name for t in copilot_tools]
+                log_debug(f"Added {len(copilot_tools)} tools to Copilot session config: {tool_names}")
+            else:
+                log_debug("No tools were converted from provided tools")
+        else:
+            log_debug("No tools provided to _build_session_config")
+
+        # Map tool_choice to SDK's tool filtering
+        # IMPORTANT: If tools are registered but available_tools is not set,
+        # the SDK may not enable them by default. We need to explicitly enable them.
+        if tool_choice:
+            if tool_choice == "none":
+                # Disable all tools
+                session_config["available_tools"] = []
+            elif isinstance(tool_choice, dict) and "function" in tool_choice:
+                # Restrict to specific tool
+                tool_name = tool_choice.get("function", {}).get("name")
+                if tool_name:
+                    session_config["available_tools"] = [tool_name]
+            # For "auto" and "required": enable all registered tools
+            elif tool_names:
+                session_config["available_tools"] = tool_names
+                log_debug(f"Enabled all {len(tool_names)} tools via available_tools")
+        elif tool_names:
+            # No tool_choice specified - enable all registered tools by default
+            session_config["available_tools"] = tool_names
+            log_debug(f"Enabled all {len(tool_names)} tools via available_tools (no tool_choice specified)")
+
+        # Add provider configuration (BYOK)
+        if self.provider_config:
+            session_config["provider"] = self.provider_config
+
+        # Add config directory
+        if self.config_dir:
+            session_config["config_dir"] = self.config_dir
+
+        return session_config
 
     def _format_message(self, message: Message, compress_tool_results: bool = False) -> str:
         """
@@ -291,6 +385,7 @@ class CopilotChat(Model):
         Returns:
             List[Tool]: List of Copilot Tool objects.
         """
+        log_debug(f"Converting {len(tools)} tools to Copilot format")
         copilot_tools = []
 
         # Clear registry for this request
@@ -298,12 +393,14 @@ class CopilotChat(Model):
 
         for tool_dict in tools:
             if tool_dict.get("type") != "function":
+                log_debug(f"Skipping tool with type: {tool_dict.get('type')}")
                 continue
 
             func_def = tool_dict.get("function", {})
             tool_name = func_def.get("name")
 
             if not tool_name:
+                log_debug(f"Skipping tool without name: {tool_dict}")
                 continue
 
             # Store original tool info for Agno's execution
@@ -320,14 +417,23 @@ class CopilotChat(Model):
                 return ToolResult(textResultForLlm="Tool execution handled by Agno", resultType="success")
 
             # Create Copilot Tool
+            tool_description = func_def.get("description", "")
+            tool_parameters = func_def.get("parameters", {})
+
+            log_debug(f"Creating Copilot tool: name={tool_name}")
+            log_debug(f"  description={tool_description}")
+            log_debug(f"  parameters={tool_parameters}")
+
             copilot_tool = Tool(
                 name=tool_name,
-                description=func_def.get("description", ""),
+                description=tool_description,
                 handler=tool_handler,
-                parameters=func_def.get("parameters", {}),
+                parameters=tool_parameters,
             )
             copilot_tools.append(copilot_tool)
+            log_debug(f"Converted tool: {tool_name}")
 
+        log_debug(f"Converted {len(copilot_tools)} tools successfully")
         return copilot_tools
 
     async def _collect_response_from_events(
@@ -395,16 +501,19 @@ class CopilotChat(Model):
             elif event_type == SessionEventType.TOOL_EXECUTION_START:
                 # Tool is about to be called - extract details for Agno to execute
                 if hasattr(event.data, "tool_call_id") and hasattr(event.data, "tool_name"):
-                    tool_calls.append(
-                        {
-                            "id": event.data.tool_call_id,
-                            "type": "function",
-                            "function": {
-                                "name": event.data.tool_name,
-                                "arguments": json.dumps(getattr(event.data, "arguments", {})),
-                            },
-                        }
-                    )
+                    tool_call = {
+                        "id": event.data.tool_call_id,
+                        "type": "function",
+                        "function": {
+                            "name": event.data.tool_name,
+                            "arguments": json.dumps(getattr(event.data, "arguments", {})),
+                        },
+                    }
+                    tool_calls.append(tool_call)
+
+            elif event_type == SessionEventType.TOOL_EXECUTION_COMPLETE:
+                # Tool execution completed
+                pass
 
             elif event_type == SessionEventType.SESSION_IDLE:
                 # Session finished processing
@@ -487,11 +596,15 @@ class CopilotChat(Model):
         Args:
             messages: List of conversation messages.
             assistant_message: Message object to track metrics.
-            response_format: Optional structured output format (not fully supported).
-            tools: Optional list of tool definitions.
-            tool_choice: Optional tool choice strategy (not fully supported).
+            response_format: Optional structured output format (not supported by Copilot SDK).
+            tools: Optional list of tool definitions from Agent.
+            tool_choice: Optional tool choice strategy. Mapped to SDK's available_tools:
+                - "none": Disables all tools
+                - "auto": Lets model decide (no restrictions)
+                - "required": Forces tool use (no restrictions)
+                - {"type": "function", "function": {"name": "x"}}: Restricts to specific tool
             run_response: Optional run output for context.
-            compress_tool_results: Whether to compress tool results (not used).
+            compress_tool_results: Whether to compress tool results.
 
         Returns:
             ModelResponse: Complete model response.
@@ -500,22 +613,16 @@ class CopilotChat(Model):
             ModelProviderError: If invocation fails.
         """
         try:
+            if run_response and run_response.metrics:
+                run_response.metrics.set_time_to_first_token()
+
             assistant_message.metrics.start_timer()
 
             client = await self.get_async_client()
             prompt = self._format_messages(messages, compress_tool_results=compress_tool_results)
 
-            # Create session config
-            session_config = {
-                "model": self.id,
-                "streaming": False,  # Non-streaming for ainvoke
-            }
-
-            # Add tools if provided
-            if tools:
-                copilot_tools = self._convert_tools(tools)
-                if copilot_tools:
-                    session_config["tools"] = copilot_tools
+            # Build session configuration
+            session_config = self._build_session_config(streaming=False, tools=tools, tool_choice=tool_choice)
 
             # Create session
             session = await client.create_session(session_config)
@@ -563,11 +670,15 @@ class CopilotChat(Model):
         Args:
             messages: List of conversation messages.
             assistant_message: Message object to track metrics.
-            response_format: Optional structured output format (not fully supported).
-            tools: Optional list of tool definitions.
-            tool_choice: Optional tool choice strategy (not fully supported).
+            response_format: Optional structured output format (not supported by Copilot SDK).
+            tools: Optional list of tool definitions from Agent.
+            tool_choice: Optional tool choice strategy. Mapped to SDK's available_tools:
+                - "none": Disables all tools
+                - "auto": Lets model decide (no restrictions)
+                - "required": Forces tool use (no restrictions)
+                - {"type": "function", "function": {"name": "x"}}: Restricts to specific tool
             run_response: Optional run output for context.
-            compress_tool_results: Whether to compress tool results (not used).
+            compress_tool_results: Whether to compress tool results.
 
         Yields:
             ModelResponse: Streaming response deltas.
@@ -575,24 +686,24 @@ class CopilotChat(Model):
         Raises:
             ModelProviderError: If streaming fails.
         """
+        if run_response and run_response.metrics:
+            run_response.metrics.set_time_to_first_token()
+
+        assistant_message.metrics.start_timer()
+
         client = await self.get_async_client()
         prompt = self._format_messages(messages, compress_tool_results=compress_tool_results)
 
-        session_config = {
-            "model": self.id,
-            "streaming": True,  # Enable streaming
-        }
-
-        if tools:
-            copilot_tools = self._convert_tools(tools)
-            if copilot_tools:
-                session_config["tools"] = copilot_tools
+        # Build session configuration
+        session_config = self._build_session_config(streaming=True, tools=tools, tool_choice=tool_choice)
 
         session = await client.create_session(session_config)
 
         try:
             done_event = asyncio.Event()
             delta_queue: asyncio.Queue = asyncio.Queue()
+            # Track tool executions to link start/complete events
+            active_tool_executions: Dict[str, ToolExecution] = {}
 
             def on_event(event: SessionEvent):
                 event_type = event.type
@@ -609,6 +720,59 @@ class CopilotChat(Model):
                         delta_response = ModelResponse()
                         delta_response.reasoning_content = event.data.delta_content
                         asyncio.create_task(delta_queue.put(delta_response))
+
+                elif event_type == SessionEventType.TOOL_EXECUTION_START:
+                    # Emit tool_call_started event for agent to display
+                    if hasattr(event.data, "tool_call_id") and hasattr(event.data, "tool_name"):
+                        tool_call_id = event.data.tool_call_id
+                        tool_name = event.data.tool_name
+                        tool_args = getattr(event.data, "arguments", {})
+
+                        # Create ToolExecution object
+                        tool_execution = ToolExecution(
+                            tool_call_id=tool_call_id,
+                            tool_name=tool_name,
+                            tool_args=tool_args,
+                        )
+
+                        # Store for later completion
+                        active_tool_executions[tool_call_id] = tool_execution
+
+                        # Emit tool_call_started event
+                        delta_response = ModelResponse()
+                        delta_response.event = ModelResponseEvent.tool_call_started.value
+                        delta_response.tool_executions = [tool_execution]
+                        asyncio.create_task(delta_queue.put(delta_response))
+
+                elif event_type == SessionEventType.TOOL_EXECUTION_COMPLETE:
+                    # Emit tool_call_completed event for agent to display
+                    if hasattr(event.data, "tool_call_id"):
+                        tool_call_id = event.data.tool_call_id
+                        tool_name = getattr(event.data, "tool_name", "unknown")
+                        result = getattr(event.data, "result", None)
+
+                        # Get or create ToolExecution object
+                        tool_execution = active_tool_executions.get(tool_call_id)
+                        if tool_execution:
+                            # Update with result
+                            tool_execution.result = str(result) if result else None
+                        else:
+                            # Create new one if we missed the start event
+                            tool_execution = ToolExecution(
+                                tool_call_id=tool_call_id,
+                                tool_name=tool_name,
+                                result=str(result) if result else None,
+                            )
+
+                        # Emit tool_call_completed event
+                        delta_response = ModelResponse()
+                        delta_response.event = ModelResponseEvent.tool_call_completed.value
+                        delta_response.tool_executions = [tool_execution]
+                        asyncio.create_task(delta_queue.put(delta_response))
+
+                        # Clean up
+                        if tool_call_id in active_tool_executions:
+                            del active_tool_executions[tool_call_id]
 
                 elif event_type == SessionEventType.SESSION_IDLE:
                     # Signal completion
@@ -656,6 +820,8 @@ class CopilotChat(Model):
             finally:
                 unsubscribe()
 
+            assistant_message.metrics.stop_timer()
+
         finally:
             await session.destroy()
 
@@ -678,11 +844,15 @@ class CopilotChat(Model):
         Args:
             messages: List of conversation messages.
             assistant_message: Message object to track metrics.
-            response_format: Optional structured output format (not fully supported).
-            tools: Optional list of tool definitions.
-            tool_choice: Optional tool choice strategy (not fully supported).
+            response_format: Optional structured output format (not supported by Copilot SDK).
+            tools: Optional list of tool definitions from Agent.
+            tool_choice: Optional tool choice strategy. Mapped to SDK's available_tools:
+                - "none": Disables all tools
+                - "auto": Lets model decide (no restrictions)
+                - "required": Forces tool use (no restrictions)
+                - {"type": "function", "function": {"name": "x"}}: Restricts to specific tool
             run_response: Optional run output for context.
-            compress_tool_results: Whether to compress tool results (not used).
+            compress_tool_results: Whether to compress tool results.
 
         Returns:
             ModelResponse: Complete model response.
@@ -736,11 +906,15 @@ class CopilotChat(Model):
         Args:
             messages: List of conversation messages.
             assistant_message: Message object to track metrics.
-            response_format: Optional structured output format (not fully supported).
-            tools: Optional list of tool definitions.
-            tool_choice: Optional tool choice strategy (not fully supported).
+            response_format: Optional structured output format (not supported by Copilot SDK).
+            tools: Optional list of tool definitions from Agent.
+            tool_choice: Optional tool choice strategy. Mapped to SDK's available_tools:
+                - "none": Disables all tools
+                - "auto": Lets model decide (no restrictions)
+                - "required": Forces tool use (no restrictions)
+                - {"type": "function", "function": {"name": "x"}}: Restricts to specific tool
             run_response: Optional run output for context.
-            compress_tool_results: Whether to compress tool results (not used).
+            compress_tool_results: Whether to compress tool results.
 
         Yields:
             ModelResponse: Streaming response deltas.
