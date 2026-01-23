@@ -68,38 +68,55 @@ class CopilotChat(Model):
         """
         Get or create cached async client.
 
+        Returns the cached client if available and started, otherwise creates
+        a new client instance following the same pattern as OpenAI/Claude models.
+
         Returns:
             CopilotClient: The Copilot client instance.
 
         Raises:
             ModelProviderError: If client creation or startup fails.
         """
+        # Return cached client if it exists and is started
         if self._client is not None and self._client_started:
+            log_debug(f"Reusing existing GitHub Copilot client for model {self.id}")
             return self._client
+
+        # Clean up any existing but not started client
+        if self._client is not None and not self._client_started:
+            log_debug("Cleaning up invalid client before creating new one")
+            try:
+                await self._cleanup_client()
+            except Exception as e:
+                log_error(f"Error cleaning up invalid client: {e}")
 
         try:
             log_debug(f"Creating new GitHub Copilot client for model {self.id}")
 
-            # Create client configuration
-            client_config = {
+            # Create client configuration with only non-None values
+            client_config: Dict[str, Any] = {
                 "use_stdio": self.use_stdio,
                 "log_level": self.log_level,
             }
 
-            # Add optional parameters
+            # Add optional parameters if provided
             if self.cli_path:
                 client_config["cli_path"] = self.cli_path
             if self.cli_url:
                 client_config["cli_url"] = self.cli_url
+
+            log_debug(f"Copilot client config: {client_config}")
 
             # Create and start client
             self._client = CopilotClient(client_config)
             await self._client.start()
             self._client_started = True
 
+            log_debug("GitHub Copilot client started successfully")
             return self._client
 
         except FileNotFoundError as e:
+            log_error(f"Copilot CLI not found at '{self.cli_path}'")
             raise ModelProviderError(
                 message=f"Copilot CLI not found at '{self.cli_path}'. "
                 "Ensure GitHub Copilot CLI is installed and available in PATH.",
@@ -107,6 +124,10 @@ class CopilotChat(Model):
                 model_id=self.id,
             ) from e
         except Exception as e:
+            log_error(f"Failed to start Copilot client: {str(e)}")
+            # Clean up failed client
+            self._client = None
+            self._client_started = False
             raise ModelProviderError(
                 message=f"Failed to start Copilot client: {str(e)}",
                 model_name=self.name,
@@ -125,29 +146,135 @@ class CopilotChat(Model):
                 self._client_started = False
                 self._client = None
 
-    def _format_messages(self, messages: List[Message]) -> str:
+    def to_dict(self) -> Dict[str, Any]:
+        """
+        Convert the model to a dictionary.
+
+        Returns:
+            Dict[str, Any]: The dictionary representation of the model.
+        """
+        model_dict = super().to_dict()
+        model_dict.update(
+            {
+                "cli_path": self.cli_path,
+                "cli_url": self.cli_url,
+                "use_stdio": self.use_stdio,
+                "log_level": self.log_level,
+                "session_timeout": self.session_timeout,
+            }
+        )
+        cleaned_dict = {k: v for k, v in model_dict.items() if v is not None}
+        return cleaned_dict
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "CopilotChat":
+        """
+        Create a CopilotChat model from a dictionary.
+
+        Args:
+            data: Dictionary containing model configuration.
+
+        Returns:
+            CopilotChat: A new CopilotChat instance.
+        """
+        return cls(**data)
+
+    def _format_message(self, message: Message, compress_tool_results: bool = False) -> str:
+        """
+        Format a single message into a string representation for Copilot.
+
+        Handles multimodal content including images, audio, files, and tool results.
+
+        Args:
+            message: The message to format.
+            compress_tool_results: Whether to use compressed content for tool results.
+
+        Returns:
+            str: Formatted message string.
+        """
+        role = message.role
+        content = message.get_content(use_compressed_content=compress_tool_results) or ""
+
+        # Build content parts list
+        content_parts = []
+
+        # Add text content
+        if content:
+            content_parts.append(content)
+
+        # Handle images
+        if message.images is not None and len(message.images) > 0:
+            for idx, image in enumerate(message.images):
+                if hasattr(image, "url") and image.url:
+                    content_parts.append(f"[Image {idx + 1}: {image.url}]")
+                elif hasattr(image, "data") and image.data:
+                    content_parts.append(f"[Image {idx + 1}: base64 data]")
+                else:
+                    content_parts.append(f"[Image {idx + 1}]")
+
+        # Handle audio
+        if message.audio is not None and len(message.audio) > 0:
+            for idx, audio in enumerate(message.audio):
+                if hasattr(audio, "url") and audio.url:
+                    content_parts.append(f"[Audio {idx + 1}: {audio.url}]")
+                elif hasattr(audio, "data") and audio.data:
+                    content_parts.append(f"[Audio {idx + 1}: base64 data]")
+                else:
+                    content_parts.append(f"[Audio {idx + 1}]")
+
+        # Handle files
+        if message.files is not None and len(message.files) > 0:
+            for idx, file in enumerate(message.files):
+                if hasattr(file, "name") and file.name:
+                    content_parts.append(f"[File {idx + 1}: {file.name}]")
+                else:
+                    content_parts.append(f"[File {idx + 1}]")
+
+        # Handle audio output
+        if message.audio_output is not None:
+            content_parts.append(f"[Audio output: {message.audio_output.id}]")
+
+        # Handle tool calls
+        if message.tool_calls is not None and len(message.tool_calls) > 0:
+            for tool_call in message.tool_calls:
+                tool_name = tool_call.get("function", {}).get("name", "unknown")
+                content_parts.append(f"[Tool call: {tool_name}]")
+
+        # Combine all parts
+        formatted_content = " ".join(content_parts) if content_parts else ""
+
+        # Format with role prefix
+        if role == "system":
+            return f"System: {formatted_content}"
+        elif role == "user":
+            return f"User: {formatted_content}"
+        elif role == "assistant":
+            return f"Assistant: {formatted_content}"
+        elif role == "tool":
+            # Include tool call ID for context if available
+            if message.tool_call_id:
+                return f"Tool result ({message.tool_call_id}): {formatted_content}"
+            return f"Tool result: {formatted_content}"
+        else:
+            # Fallback for unknown roles
+            return f"{role.capitalize()}: {formatted_content}"
+
+    def _format_messages(self, messages: List[Message], compress_tool_results: bool = False) -> str:
         """
         Convert Agno Messages to Copilot prompt string.
 
         Args:
             messages: List of Agno Message objects.
+            compress_tool_results: Whether to compress tool results.
 
         Returns:
             str: Formatted prompt string for Copilot.
         """
         parts = []
         for msg in messages:
-            role = msg.role
-            content = msg.content or ""
-
-            if role == "system":
-                parts.append(f"System: {content}")
-            elif role == "user":
-                parts.append(f"User: {content}")
-            elif role == "assistant":
-                parts.append(f"Assistant: {content}")
-            elif role == "tool":
-                parts.append(f"Tool result: {content}")
+            formatted = self._format_message(msg, compress_tool_results=compress_tool_results)
+            if formatted:
+                parts.append(formatted)
 
         return "\n\n".join(parts)
 
@@ -376,7 +503,7 @@ class CopilotChat(Model):
             assistant_message.metrics.start_timer()
 
             client = await self.get_async_client()
-            prompt = self._format_messages(messages)
+            prompt = self._format_messages(messages, compress_tool_results=compress_tool_results)
 
             # Create session config
             session_config = {
@@ -449,7 +576,7 @@ class CopilotChat(Model):
             ModelProviderError: If streaming fails.
         """
         client = await self.get_async_client()
-        prompt = self._format_messages(messages)
+        prompt = self._format_messages(messages, compress_tool_results=compress_tool_results)
 
         session_config = {
             "model": self.id,
