@@ -639,6 +639,8 @@ RegistryContentType = Literal["tool", "model", "db", "vector_db", "schema", "fun
 class CallableMetadata(BaseModel):
     """Common metadata for callable components (tools, functions)."""
 
+    name: str = Field(..., description="Callable name")
+    description: Optional[str] = Field(None, description="Callable description")
     class_path: str = Field(..., description="Full module path to the class/function")
     module: Optional[str] = Field(None, description="Module where the callable is defined")
     qualname: Optional[str] = Field(None, description="Qualified name of the callable")
@@ -650,11 +652,8 @@ class CallableMetadata(BaseModel):
     return_annotation: Optional[str] = Field(None, description="Return type annotation")
 
 
-class ToolFunctionDetail(CallableMetadata):
-    """Metadata for a function within a toolkit."""
-
-    name: str = Field(..., description="Function name")
-    description: Optional[str] = Field(None, description="Function description")
+# Alias for toolkit functions - same structure as CallableMetadata
+ToolFunctionDetail = CallableMetadata
 
 
 class ToolMetadata(BaseModel):

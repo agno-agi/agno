@@ -412,7 +412,10 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
                 except (ValueError, TypeError):
                     pass
 
+                func_description = _safe_str(getattr(func, "__doc__", None))
                 reg_func_metadata = FunctionMetadata(
+                    name=func_name,
+                    description=func_description,
                     class_path=f"{func_module}.{func_name}",
                     module=func_module,
                     qualname=getattr(func, "__qualname__", None),
@@ -427,7 +430,7 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
                     RegistryContentResponse(
                         name=func_name,
                         type="function",
-                        description=_safe_str(getattr(func, "__doc__", None)),
+                        description=func_description,
                         metadata=reg_func_metadata.model_dump(exclude_none=True),
                     )
                 )
