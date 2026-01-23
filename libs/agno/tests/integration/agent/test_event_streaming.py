@@ -1254,3 +1254,52 @@ async def test_async_compression_events(shared_db):
         assert hasattr(compression_completed, "tool_results_compressed")
         assert hasattr(compression_completed, "original_size")
         assert hasattr(compression_completed, "compressed_size")
+
+
+def test_custom_event_properties_persist_after_db_reload(shared_db):
+    """Test that custom event subclass properties persist after loading from database."""
+    from dataclasses import field
+    from typing import Any, Dict
+
+    @dataclass
+    class MimeEvent(CustomEvent):
+        mime_type: str = ""
+        data: Dict[str, Any] = field(default_factory=dict)
+
+    def get_chart(city: str):
+        """Get a chart for the given city."""
+        yield MimeEvent(
+            mime_type="application/echart+json",
+            data={"title": "Test Chart", "series": [{"type": "pie"}]},
+        )
+
+    agent = Agent(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        db=shared_db,
+        tools=[get_chart],
+        store_events=True,
+        telemetry=False,
+    )
+
+    response_generator = agent.run("Get a chart for Tokyo", stream=True, stream_events=True)
+
+    events = {}
+    for run_response_delta in response_generator:
+        if run_response_delta.event not in events:
+            events[run_response_delta.event] = []
+        events[run_response_delta.event].append(run_response_delta)
+
+    assert RunEvent.custom_event in events
+    assert events[RunEvent.custom_event][0].mime_type == "application/echart+json"
+    assert events[RunEvent.custom_event][0].data["title"] == "Test Chart"
+
+    # Check stored events from DB
+    stored_session = shared_db.get_sessions(session_type=SessionType.AGENT)[0]
+    stored_run = stored_session.runs[0]
+
+    custom_events = [e for e in stored_run.events if e.event == RunEvent.custom_event]
+    assert len(custom_events) >= 1
+    assert hasattr(custom_events[0], "mime_type")
+    assert hasattr(custom_events[0], "data")
+    assert custom_events[0].mime_type == "application/echart+json"
+    assert custom_events[0].data["title"] == "Test Chart"
