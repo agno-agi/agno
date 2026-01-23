@@ -1293,6 +1293,10 @@ class Knowledge:
             if self._should_include_file(str(path), include, exclude):
                 log_debug(f"Adding file {path} due to include/exclude filters")
 
+                # Set name from path if not provided
+                if not content.name:
+                    content.name = path.name
+
                 await self._ainsert_contents_db(content)
                 if self._should_skip(content.content_hash, skip_if_exists):  # type: ignore[arg-type]
                     content.status = ContentStatus.COMPLETED
@@ -1373,6 +1377,10 @@ class Knowledge:
         if path.is_file():
             if self._should_include_file(str(path), include, exclude):
                 log_debug(f"Adding file {path} due to include/exclude filters")
+
+                # Set name from path if not provided
+                if not content.name:
+                    content.name = path.name
 
                 self._insert_contents_db(content)
                 if self._should_skip(content.content_hash, skip_if_exists):  # type: ignore[arg-type]
@@ -1458,6 +1466,14 @@ class Knowledge:
 
         if not content.url:
             raise ValueError("No url provided")
+
+        # Set name from URL if not provided
+        if not content.name and content.url:
+            from urllib.parse import urlparse
+
+            parsed = urlparse(content.url)
+            url_path = Path(parsed.path)
+            content.name = url_path.name if url_path.name else content.url
 
         # 1. Add content to contents database
         await self._ainsert_contents_db(content)
@@ -1556,6 +1572,14 @@ class Knowledge:
         if not content.url:
             raise ValueError("No url provided")
 
+        # Set name from URL if not provided
+        if not content.name and content.url:
+            from urllib.parse import urlparse
+
+            parsed = urlparse(content.url)
+            url_path = Path(parsed.path)
+            content.name = url_path.name if url_path.name else content.url
+
         # 1. Add content to contents database
         self._insert_contents_db(content)
         if self._should_skip(content.content_hash, skip_if_exists):  # type: ignore[arg-type]
@@ -1642,6 +1666,8 @@ class Knowledge:
 
         if content.name:
             name = content.name
+        elif content.file_data and content.file_data.filename:
+            name = content.file_data.filename
         elif content.file_data and content.file_data.content:
             if isinstance(content.file_data.content, bytes):
                 name = content.file_data.content[:10].decode("utf-8", errors="ignore")
@@ -1747,6 +1773,8 @@ class Knowledge:
 
         if content.name:
             name = content.name
+        elif content.file_data and content.file_data.filename:
+            name = content.file_data.filename
         elif content.file_data and content.file_data.content:
             if isinstance(content.file_data.content, bytes):
                 name = content.file_data.content[:10].decode("utf-8", errors="ignore")
