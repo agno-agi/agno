@@ -460,7 +460,6 @@ def test_content_hash_exists(lance_db, sample_documents):
 
 def test_update_metadata_preserves_vector(lance_db, sample_documents):
     """Test that update_metadata preserves the vector embedding"""
-    import json
 
     sample_documents[0].content_id = "test_doc"
     lance_db.insert(documents=sample_documents[:1], content_hash="test_hash")
