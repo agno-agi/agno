@@ -17,8 +17,15 @@ from agno.run.team import TeamRunOutput
 from agno.utils.log import log_debug, log_error
 
 try:
-    from copilot import CopilotClient, CopilotSession, SessionEvent, Tool, ToolInvocation, ToolResult
-    from copilot.generated.session_events import SessionEventType
+    from copilot import (  # type: ignore[import-not-found]
+        CopilotClient,
+        CopilotSession,
+        SessionEvent,
+        Tool,
+        ToolInvocation,
+        ToolResult,
+    )
+    from copilot.generated.session_events import SessionEventType  # type: ignore[import-not-found]
 except (ImportError, ModuleNotFoundError):
     raise ImportError("GitHub Copilot SDK not installed. Install with: pip install github-copilot-sdk")
 
@@ -117,7 +124,7 @@ class CopilotChat(Model):
             log_debug(f"Copilot client config: {client_config}")
 
             # Create and start client
-            self._client = CopilotClient(client_config)
+            self._client = CopilotClient(client_config)  # type: ignore[arg-type]
             await self._client.start()
             self._client_started = True
 
@@ -287,14 +294,18 @@ class CopilotChat(Model):
             str: Formatted message string.
         """
         role = message.role
-        content = message.get_content(use_compressed_content=compress_tool_results) or ""
+        content = message.get_content(use_compressed_content=compress_tool_results)
 
         # Build content parts list
-        content_parts = []
+        content_parts: List[str] = []
 
         # Add text content
         if content:
-            content_parts.append(content)
+            if isinstance(content, str):
+                content_parts.append(content)
+            elif isinstance(content, list):
+                # Handle list content (convert to string)
+                content_parts.append(str(content))
 
         # Handle images
         if message.images is not None and len(message.images) > 0:
@@ -465,7 +476,7 @@ class CopilotChat(Model):
 
         content_parts = []
         reasoning_parts = []
-        tool_calls = []
+        tool_calls: List[Dict[str, Any]] = []
         usage_data = None
 
         def on_event(event: SessionEvent):
@@ -545,7 +556,8 @@ class CopilotChat(Model):
             # Assemble response
             model_response.content = "".join(content_parts) if content_parts else None
             model_response.reasoning_content = "".join(reasoning_parts) if reasoning_parts else None
-            model_response.tool_calls = tool_calls if tool_calls else None
+            if tool_calls:
+                model_response.tool_calls = tool_calls
 
             # Extract usage metrics if available
             if usage_data:
@@ -625,7 +637,7 @@ class CopilotChat(Model):
             session_config = self._build_session_config(streaming=False, tools=tools, tool_choice=tool_choice)
 
             # Create session
-            session = await client.create_session(session_config)
+            session = await client.create_session(session_config)  # type: ignore[arg-type]
 
             try:
                 # Collect response from events
@@ -697,7 +709,7 @@ class CopilotChat(Model):
         # Build session configuration
         session_config = self._build_session_config(streaming=True, tools=tools, tool_choice=tool_choice)
 
-        session = await client.create_session(session_config)
+        session = await client.create_session(session_config)  # type: ignore[arg-type]
 
         try:
             done_event = asyncio.Event()
@@ -728,6 +740,10 @@ class CopilotChat(Model):
                         tool_name = event.data.tool_name
                         tool_args = getattr(event.data, "arguments", {})
 
+                        # Type guard to ensure tool_call_id is str
+                        if tool_call_id is None:
+                            return
+
                         # Create ToolExecution object
                         tool_execution = ToolExecution(
                             tool_call_id=tool_call_id,
@@ -747,32 +763,38 @@ class CopilotChat(Model):
                 elif event_type == SessionEventType.TOOL_EXECUTION_COMPLETE:
                     # Emit tool_call_completed event for agent to display
                     if hasattr(event.data, "tool_call_id"):
-                        tool_call_id = event.data.tool_call_id
-                        tool_name = getattr(event.data, "tool_name", "unknown")
-                        result = getattr(event.data, "result", None)
+                        completed_tool_call_id = event.data.tool_call_id
+                        completed_tool_name = getattr(event.data, "tool_name", "unknown")
+                        completed_result = getattr(event.data, "result", None)
+
+                        # Type guard to ensure tool_call_id is str
+                        if completed_tool_call_id is None:
+                            return
 
                         # Get or create ToolExecution object
-                        tool_execution = active_tool_executions.get(tool_call_id)
-                        if tool_execution:
+                        completed_tool_execution: Optional[ToolExecution] = active_tool_executions.get(
+                            completed_tool_call_id
+                        )
+                        if completed_tool_execution:
                             # Update with result
-                            tool_execution.result = str(result) if result else None
+                            completed_tool_execution.result = str(completed_result) if completed_result else None
                         else:
                             # Create new one if we missed the start event
-                            tool_execution = ToolExecution(
-                                tool_call_id=tool_call_id,
-                                tool_name=tool_name,
-                                result=str(result) if result else None,
+                            completed_tool_execution = ToolExecution(
+                                tool_call_id=completed_tool_call_id,
+                                tool_name=completed_tool_name,
+                                result=str(completed_result) if completed_result else None,
                             )
 
                         # Emit tool_call_completed event
                         delta_response = ModelResponse()
                         delta_response.event = ModelResponseEvent.tool_call_completed.value
-                        delta_response.tool_executions = [tool_execution]
+                        delta_response.tool_executions = [completed_tool_execution]
                         asyncio.create_task(delta_queue.put(delta_response))
 
                         # Clean up
-                        if tool_call_id in active_tool_executions:
-                            del active_tool_executions[tool_call_id]
+                        if completed_tool_call_id in active_tool_executions:
+                            del active_tool_executions[completed_tool_call_id]
 
                 elif event_type == SessionEventType.SESSION_IDLE:
                     # Signal completion
