@@ -652,16 +652,12 @@ class CallableMetadata(BaseModel):
     return_annotation: Optional[str] = Field(None, description="Return type annotation")
 
 
-# Alias for toolkit functions - same structure as CallableMetadata
-ToolFunctionDetail = CallableMetadata
-
-
 class ToolMetadata(BaseModel):
     """Metadata for tool registry components."""
 
     class_path: str = Field(..., description="Full module path to the tool class")
     is_toolkit: bool = Field(False, description="Whether this is a toolkit containing multiple functions")
-    functions: Optional[List[ToolFunctionDetail]] = Field(
+    functions: Optional[List[CallableMetadata]] = Field(
         None, description="Functions in the toolkit (if is_toolkit=True)"
     )
 

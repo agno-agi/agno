@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from agno.os.auth import get_authentication_dependency
 from agno.os.schema import (
     BadRequestResponse,
+    CallableMetadata,
     DbMetadata,
     FunctionMetadata,
     InternalServerErrorResponse,
@@ -17,7 +18,6 @@ from agno.os.schema import (
     RegistryContentResponse,
     RegistryContentType,
     SchemaMetadata,
-    ToolFunctionDetail,
     ToolMetadata,
     UnauthenticatedResponse,
     ValidationErrorResponse,
@@ -137,7 +137,7 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
                     functions = getattr(tool, "functions", {}) or {}
 
                     # Build full function details for each function in the toolkit
-                    function_details: List[ToolFunctionDetail] = []
+                    function_details: List[CallableMetadata] = []
                     for func in functions.values():
                         func_name = _safe_name(func, fallback=func.__class__.__name__)
                         # Check if function requires confirmation or external execution
@@ -179,7 +179,7 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
                                 pass
 
                         function_details.append(
-                            ToolFunctionDetail(
+                            CallableMetadata(
                                 name=func_name,
                                 description=_safe_str(getattr(func, "description", None)),
                                 class_path=_class_path(func),
