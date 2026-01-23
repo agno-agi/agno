@@ -31,11 +31,12 @@ agent = Agent(
 - **[CSV Async](./csv_reader_async.py)** - Asynchronous CSV processing
 - **[CSV from URL Async](./csv_reader_url_async.py)** - CSV files from URLs
 - **[Document Knowledge Base](./doc_kb_async.py)** - Multiple document sources
+- **[Excel](./excel_reader.py)** - Excel workbooks (.xlsx, .xls)
+- **[Excel Legacy XLS](./excel_legacy_xls.py)** - Legacy .xls format support
 - **[Firecrawl](./firecrawl_reader.py)** - Advanced web scraping
 - **[JSON](./json_reader.py)** - JSON data and API responses
 - **[Markdown Async](./markdown_reader_async.py)** - Markdown documentation
 - **[PDF Async](./pdf_reader_async.py)** - PDF documents with OCR
 - **[PPTX](./pptx_reader.py)** - PowerPoint presentation files
 - **[PPTX Async](./pptx_reader_async.py)** - Asynchronous PowerPoint processing
-- **[Web](./web_reader.py)** - Website crawling and scraping
-- 
+- **[Web](./web_reader.py)** - Website crawling and scraping 
