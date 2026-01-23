@@ -76,4 +76,4 @@ Users have been asking for this. Nice to have, not urgent.""",
     )
 
     # Uncomment for interactive mode
-    # linear_agent.cli(stream=True)
+    # linear_agent.cli_app(stream=True)
