@@ -2026,3 +2026,25 @@ def test_mixed_sheet_name_and_index_filter(tmp_path: Path):
 
     assert len(docs) == 2
     assert {doc.meta_data["sheet_name"] for doc in docs} == {"First", "Third"}
+
+
+def test_excel_reader_xls_encoding_parameter_passed_to_xlrd(tmp_path: Path):
+    """Encoding parameter should be passed through to xlrd."""
+    xlwt = pytest.importorskip("xlwt")
+
+    workbook = xlwt.Workbook()
+    sheet = workbook.add_sheet("Data")
+    sheet.write(0, 0, "header")
+    sheet.write(0, 1, "value")
+    sheet.write(1, 0, "name")
+    sheet.write(1, 1, "test")
+
+    file_path = tmp_path / "encoding_test.xls"
+    workbook.save(str(file_path))
+
+    reader = ExcelReader(encoding="utf-8", chunk=False)
+    docs = reader.read(file_path)
+
+    assert len(docs) == 1
+    assert "name" in docs[0].content
+    assert "test" in docs[0].content

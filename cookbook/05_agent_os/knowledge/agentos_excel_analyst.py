@@ -63,4 +63,4 @@ if __name__ == "__main__":
     print("  - What electronics products are in stock?")
     print("  - What is the price of the Bluetooth speaker?")
 
-    agent_os.serve(app="agentos_excel_knowledge:app", reload=True)
+    agent_os.serve(app="agentos_excel_analyst:app", reload=True)

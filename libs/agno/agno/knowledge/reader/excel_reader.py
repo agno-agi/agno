@@ -119,13 +119,13 @@ class ExcelReader(Reader):
             raise ImportError("`xlrd` not installed. Please install it via `pip install xlrd`.") from e
 
         if isinstance(file, Path):
-            workbook = xlrd.open_workbook(filename=str(file))
+            workbook = xlrd.open_workbook(filename=str(file), encoding_override=self.encoding)
         else:
             file.seek(0)
             raw = file.read()
             if isinstance(raw, str):
                 raw = raw.encode("utf-8", errors="replace")
-            workbook = xlrd.open_workbook(file_contents=raw)
+            workbook = xlrd.open_workbook(file_contents=raw, encoding_override=self.encoding)
 
         sheets: List[Tuple[str, int, Iterable[Sequence[Any]]]] = []
         for sheet_index in range(workbook.nsheets):
