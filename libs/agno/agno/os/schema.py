@@ -628,12 +628,15 @@ class ConfigUpdate(BaseModel):
     links: Optional[List[Dict[str, Any]]] = None
 
 
-RegistryContentType = Literal["tool", "model", "db", "vector_db", "schema", "function"]
+class RegistryContentType(str, Enum):
+    """Types of components that can be stored in a registry."""
 
-
-# ============================================================================
-# Registry Component Metadata Schemas
-# ============================================================================
+    TOOL = "tool"
+    MODEL = "model"
+    DB = "db"
+    VECTOR_DB = "vector_db"
+    SCHEMA = "schema"
+    FUNCTION = "function"
 
 
 class CallableMetadata(BaseModel):

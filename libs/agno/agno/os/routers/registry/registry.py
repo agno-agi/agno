@@ -130,7 +130,7 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
         components: List[RegistryContentResponse] = []
 
         # Tools
-        if component_type is None or component_type == "tool":
+        if component_type is None or component_type == RegistryContentType.TOOL:
             for tool in getattr(registry, "tools", []) or []:
                 if isinstance(tool, Toolkit):
                     toolkit_name = _safe_name(tool, fallback=tool.__class__.__name__)
@@ -202,7 +202,7 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
                     components.append(
                         RegistryContentResponse(
                             name=toolkit_name,
-                            type="tool",
+                            type=RegistryContentType.TOOL,
                             description=_safe_str(getattr(tool, "description", None)),
                             metadata=toolkit_metadata.model_dump(exclude_none=True),
                         )
@@ -258,7 +258,7 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
                     components.append(
                         RegistryContentResponse(
                             name=func_name,
-                            type="tool",
+                            type=RegistryContentType.TOOL,
                             description=_safe_str(getattr(tool, "description", None)),
                             metadata=func_tool_metadata.model_dump(exclude_none=True),
                         )
@@ -293,14 +293,14 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
                     components.append(
                         RegistryContentResponse(
                             name=str(call_name),
-                            type="tool",
+                            type=RegistryContentType.TOOL,
                             description=_safe_str(getattr(tool, "__doc__", None)),
                             metadata=callable_metadata.model_dump(exclude_none=True),
                         )
                     )
 
         # Models
-        if component_type is None or component_type == "model":
+        if component_type is None or component_type == RegistryContentType.MODEL:
             for model in getattr(registry, "models", []) or []:
                 model_name = (
                     _safe_str(getattr(model, "id", None))
@@ -317,14 +317,14 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
                 components.append(
                     RegistryContentResponse(
                         name=model_name,
-                        type="model",
+                        type=RegistryContentType.MODEL,
                         description=_safe_str(getattr(model, "description", None)),
                         metadata=model_metadata.model_dump(exclude_none=True),
                     )
                 )
 
         # Databases
-        if component_type is None or component_type == "db":
+        if component_type is None or component_type == RegistryContentType.DB:
             for db in getattr(registry, "dbs", []) or []:
                 db_name = (
                     _safe_str(getattr(db, "name", None))
@@ -340,14 +340,14 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
                 components.append(
                     RegistryContentResponse(
                         name=db_name,
-                        type="db",
+                        type=RegistryContentType.DB,
                         description=_safe_str(getattr(db, "description", None)),
                         metadata=db_metadata.model_dump(exclude_none=True),
                     )
                 )
 
         # Vector databases
-        if component_type is None or component_type == "vector_db":
+        if component_type is None or component_type == RegistryContentType.VECTOR_DB:
             for vdb in getattr(registry, "vector_dbs", []) or []:
                 vdb_name = (
                     _safe_str(getattr(vdb, "name", None))
@@ -365,14 +365,14 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
                 components.append(
                     RegistryContentResponse(
                         name=vdb_name,
-                        type="vector_db",
+                        type=RegistryContentType.VECTOR_DB,
                         description=_safe_str(getattr(vdb, "description", None)),
                         metadata=vdb_metadata.model_dump(exclude_none=True),
                     )
                 )
 
         # Schemas
-        if component_type is None or component_type == "schema":
+        if component_type is None or component_type == RegistryContentType.SCHEMA:
             for schema in getattr(registry, "schemas", []) or []:
                 schema_name = schema.__name__
                 schema_json: Optional[Dict[str, Any]] = None
@@ -390,13 +390,13 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
                 components.append(
                     RegistryContentResponse(
                         name=schema_name,
-                        type="schema",
+                        type=RegistryContentType.SCHEMA,
                         metadata=schema_metadata.model_dump(exclude_none=True, by_alias=True),
                     )
                 )
 
         # Functions (raw callables used for workflow conditions, selectors, etc.)
-        if component_type is None or component_type == "function":
+        if component_type is None or component_type == RegistryContentType.FUNCTION:
             for func in getattr(registry, "functions", []) or []:
                 func_name = getattr(func, "__name__", None) or "anonymous"
                 func_module = getattr(func, "__module__", "unknown")
@@ -429,7 +429,7 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
                 components.append(
                     RegistryContentResponse(
                         name=func_name,
-                        type="function",
+                        type=RegistryContentType.FUNCTION,
                         description=func_description,
                         metadata=reg_func_metadata.model_dump(exclude_none=True),
                     )
