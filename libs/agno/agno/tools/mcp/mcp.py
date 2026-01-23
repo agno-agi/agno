@@ -459,6 +459,8 @@ class MCPTools(Toolkit):
             streamable_http_params = asdict(self.server_params) if self.server_params is not None else {}  # type: ignore
             if "url" not in streamable_http_params:
                 streamable_http_params["url"] = self.url
+            if "headers" not in streamable_http_params and self.header_provider is not None:
+                streamable_http_params["headers"] = self._call_header_provider()
             self._context = streamablehttp_client(**streamable_http_params)  # type: ignore
             params_timeout = streamable_http_params.get("timeout", self.timeout_seconds)
             if isinstance(params_timeout, timedelta):
