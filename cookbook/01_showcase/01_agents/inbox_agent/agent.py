@@ -24,7 +24,7 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIResponses
 from agno.tools.gmail import GmailTools
 from agno.tools.reasoning import ReasoningTools
-
+from agno.db.sqlite import SqliteDb
 # ============================================================================
 # System Message
 # ============================================================================
@@ -113,6 +113,7 @@ inbox_agent = Agent(
     read_chat_history=True,
     enable_agentic_memory=True,
     markdown=True,
+    db=SqliteDb(db_file="tmp/data.db"),
 )
 
 

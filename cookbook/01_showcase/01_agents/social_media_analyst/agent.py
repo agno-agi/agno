@@ -25,7 +25,7 @@ from agno.models.openai import OpenAIResponses
 from agno.tools.reasoning import ReasoningTools
 from agno.tools.x import XTools
 from schemas import SocialMediaReport
-
+from agno.db.sqlite import SqliteDb
 # ============================================================================
 # System Message
 # ============================================================================
@@ -131,6 +131,7 @@ social_media_agent = Agent(
     num_history_runs=5,
     enable_agentic_memory=True,
     markdown=True,
+    db=SqliteDb(db_file="tmp/data.db"),
 )
 
 

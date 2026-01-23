@@ -23,6 +23,7 @@ Usage:
 from pathlib import Path
 
 from agno.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIResponses
@@ -134,6 +135,7 @@ recipe_agent = Agent(
     enable_agentic_memory=True,
     search_knowledge=True,
     markdown=True,
+    db=SqliteDb(db_file="tmp/data.db"),
 )
 
 
