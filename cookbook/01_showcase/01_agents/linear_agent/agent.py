@@ -18,14 +18,14 @@ Usage:
     linear_agent.print_response("Create a bug: Login button is not responding", stream=True)
 
     # Interactive mode
-    linear_agent.cli(stream=True)
+    linear_agent.cli_app(stream=True)
 """
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIResponses
 from agno.tools.linear import LinearTools
 from agno.tools.reasoning import ReasoningTools
-
+from agno.db.sqlite import SqliteDb
 # ============================================================================
 # System Message
 # ============================================================================
@@ -108,6 +108,7 @@ linear_agent = Agent(
     read_chat_history=True,
     enable_agentic_memory=True,
     markdown=True,
+    db=SqliteDb(db_file="tmp/data.db"),
 )
 
 
@@ -119,4 +120,4 @@ __all__ = [
 ]
 
 if __name__ == "__main__":
-    linear_agent.cli(stream=True)
+    linear_agent.cli_app(stream=True)

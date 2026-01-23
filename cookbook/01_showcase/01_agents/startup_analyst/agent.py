@@ -28,7 +28,7 @@ from agno.models.openai import OpenAIResponses
 from agno.tools.reasoning import ReasoningTools
 from agno.tools.scrapegraph import ScrapeGraphTools
 from schemas import StartupReport
-
+from agno.db.sqlite import SqliteDb
 # ============================================================================
 # System Message
 # ============================================================================
@@ -143,6 +143,7 @@ startup_analyst = Agent(
     num_history_runs=5,
     enable_agentic_memory=True,
     markdown=True,
+    db=SqliteDb(db_file="tmp/data.db"),
 )
 
 
@@ -178,4 +179,4 @@ __all__ = [
 ]
 
 if __name__ == "__main__":
-    startup_analyst.cli(stream=True)
+    startup_analyst.cli_app(stream=True)
