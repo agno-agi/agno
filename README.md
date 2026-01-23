@@ -19,7 +19,7 @@
   <span>&nbsp;•&nbsp;</span>
   <a href="https://community.agno.com/">Community</a>
   <span>&nbsp;•&nbsp;</span>
-  <a href="https://discord.gg/4MtYHHrgA8">Discord</a>
+  <a href="https://www.agno.com/discord">Discord</a>
 </div>
 
 ## What is Agno?
