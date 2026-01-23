@@ -919,7 +919,7 @@ class LanceDb(VectorDb):
 
             # Get all documents and filter in Python (LanceDB doesn't support JSON operators)
             total_count = self.table.count_rows()
-            results = self.table.search().select(["id", "payload"]).limit(total_count).to_pandas()
+            results = self.table.search().select(["id", "payload", "vector"]).limit(total_count).to_pandas()
 
             if results.empty:
                 logger.debug("No documents found")
