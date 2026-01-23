@@ -71,7 +71,7 @@ class OpenAIEmbedder(Embedder):
         }
         if self.user is not None:
             _request_params["user"] = self.user
-        if self.id.startswith("text-embedding-3"):
+        if self.dimensions is not None:
             _request_params["dimensions"] = self.dimensions
         if self.request_params:
             _request_params.update(self.request_params)
@@ -106,7 +106,7 @@ class OpenAIEmbedder(Embedder):
         }
         if self.user is not None:
             req["user"] = self.user
-        if self.id.startswith("text-embedding-3"):
+        if self.dimensions is not None:
             req["dimensions"] = self.dimensions
         if self.request_params:
             req.update(self.request_params)
@@ -126,7 +126,7 @@ class OpenAIEmbedder(Embedder):
         }
         if self.user is not None:
             req["user"] = self.user
-        if self.id.startswith("text-embedding-3"):
+        if self.dimensions is not None:
             req["dimensions"] = self.dimensions
         if self.request_params:
             req.update(self.request_params)
@@ -166,7 +166,7 @@ class OpenAIEmbedder(Embedder):
             }
             if self.user is not None:
                 req["user"] = self.user
-            if self.id.startswith("text-embedding-3"):
+            if self.dimensions is not None:
                 req["dimensions"] = self.dimensions
             if self.request_params:
                 req.update(self.request_params)
