@@ -18,7 +18,7 @@ Usage:
     knowledge_agent.print_response("What is the PTO policy?", stream=True)
 
     # Interactive mode
-    knowledge_agent.cli(stream=True)
+    knowledge_agent.cli_app(stream=True)
 """
 
 from pathlib import Path
@@ -133,4 +133,4 @@ __all__ = [
 ]
 
 if __name__ == "__main__":
-    knowledge_agent.cli(stream=True)
+    knowledge_agent.print_response("What is the PTO policy?", stream=True)

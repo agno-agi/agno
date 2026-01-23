@@ -18,7 +18,7 @@ Usage:
     linear_agent.print_response("Create a bug: Login button is not responding", stream=True)
 
     # Interactive mode
-    linear_agent.cli(stream=True)
+    linear_agent.cli_app(stream=True)
 """
 
 from agno.agent import Agent
@@ -119,4 +119,4 @@ __all__ = [
 ]
 
 if __name__ == "__main__":
-    linear_agent.cli(stream=True)
+    linear_agent.cli_app(stream=True)

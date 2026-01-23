@@ -191,4 +191,4 @@ __all__ = [
 ]
 
 if __name__ == "__main__":
-    translation_agent.cli(stream=True)
+    translation_agent.cli_app(stream=True)

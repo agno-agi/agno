@@ -184,4 +184,4 @@ __all__ = [
 ]
 
 if __name__ == "__main__":
-    recipe_agent.cli(stream=True)
+    recipe_agent.cli_app(stream=True)

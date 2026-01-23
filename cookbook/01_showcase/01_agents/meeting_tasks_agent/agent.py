@@ -20,7 +20,7 @@ Usage:
     )
 
     # Interactive mode
-    meeting_tasks_agent.cli(stream=True)
+    meeting_tasks_agent.cli_app(stream=True)
 """
 
 from pathlib import Path
@@ -173,4 +173,4 @@ __all__ = [
 ]
 
 if __name__ == "__main__":
-    meeting_tasks_agent.cli(stream=True)
+    meeting_tasks_agent.cli_app(stream=True)

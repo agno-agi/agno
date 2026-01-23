@@ -17,7 +17,7 @@ Usage:
     inbox_agent.print_response("Triage my 10 most recent unread emails", stream=True)
 
     # Interactive mode
-    inbox_agent.cli(stream=True)
+    inbox_agent.cli_app(stream=True)
 """
 
 from agno.agent import Agent
@@ -124,4 +124,4 @@ __all__ = [
 ]
 
 if __name__ == "__main__":
-    inbox_agent.cli(stream=True)
+    inbox_agent.cli_app(stream=True)

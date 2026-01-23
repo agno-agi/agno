@@ -178,4 +178,4 @@ __all__ = [
 ]
 
 if __name__ == "__main__":
-    startup_analyst.cli(stream=True)
+    startup_analyst.cli_app(stream=True)
