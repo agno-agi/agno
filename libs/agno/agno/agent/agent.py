@@ -5181,6 +5181,8 @@ class Agent:
         functions: Optional[Dict[str, Function]] = None,
         stream_events: bool = False,
     ) -> Iterator[RunOutputEvent]:
+        from agno.run.agent import CustomEvent
+
         self.model = cast(Model, self.model)
         # Execute the tool
         function_call = self.model.get_function_call_to_run_from_tool_execution(tool, functions)
@@ -5222,6 +5224,10 @@ class Agent:
                                 events_to_skip=self.events_to_skip,  # type: ignore
                                 store_events=self.store_events,
                             )
+            # Yield CustomEvent instances from sync tool generators
+            elif isinstance(call_result, CustomEvent):
+                if stream_events:
+                    yield call_result  # type: ignore
 
         if len(function_call_results) > 0:
             run_messages.messages.extend(function_call_results)
@@ -5246,6 +5252,8 @@ class Agent:
         functions: Optional[Dict[str, Function]] = None,
         stream_events: bool = False,
     ) -> AsyncIterator[RunOutputEvent]:
+        from agno.run.agent import CustomEvent
+
         self.model = cast(Model, self.model)
 
         # Execute the tool
@@ -5288,6 +5296,11 @@ class Agent:
                                 events_to_skip=self.events_to_skip,  # type: ignore
                                 store_events=self.store_events,
                             )
+            # Yield CustomEvent instances from async tool generators
+            elif isinstance(call_result, CustomEvent):
+                if stream_events:
+                    yield call_result  # type: ignore
+                    
         if len(function_call_results) > 0:
             run_messages.messages.extend(function_call_results)
 
