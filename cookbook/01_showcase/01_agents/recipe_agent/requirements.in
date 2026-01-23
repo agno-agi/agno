@@ -1,0 +1,4 @@
+agno
+openai
+cohere
+psycopg[binary]
