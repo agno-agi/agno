@@ -154,17 +154,30 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
                             except Exception:
                                 pass
 
-                        function_details.append(
-                            {
-                                "name": func_name,
-                                "description": _safe_str(getattr(func, "description", None)),
-                                "class_path": _class_path(func),
-                                "has_entrypoint": bool(getattr(func, "entrypoint", None)),
-                                "parameters": _maybe_jsonable(func_params),
-                                "requires_confirmation": requires_confirmation,
-                                "external_execution": external_execution,
-                            }
-                        )
+                        func_detail: Dict[str, Any] = {
+                            "name": func_name,
+                            "description": _safe_str(getattr(func, "description", None)),
+                            "class_path": _class_path(func),
+                            "has_entrypoint": bool(getattr(func, "entrypoint", None)),
+                            "parameters": _maybe_jsonable(func_params),
+                            "requires_confirmation": requires_confirmation,
+                            "external_execution": external_execution,
+                        }
+
+                        # Add callable metadata from entrypoint if available
+                        if func.entrypoint:
+                            ep = func.entrypoint
+                            func_detail["module"] = getattr(ep, "__module__", None)
+                            func_detail["qualname"] = getattr(ep, "__qualname__", None)
+                            try:
+                                sig = inspect.signature(ep)
+                                func_detail["signature"] = str(sig)
+                                if sig.return_annotation is not inspect.Signature.empty:
+                                    func_detail["return_annotation"] = str(sig.return_annotation)
+                            except (ValueError, TypeError):
+                                pass
+
+                        function_details.append(func_detail)
 
                     components.append(
                         RegistryContentResponse(
@@ -198,35 +211,64 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
                             # If processing fails, use original parameters
                             pass
 
+                    func_tool_meta: Dict[str, Any] = {
+                        "class_path": _class_path(tool),
+                        "has_entrypoint": bool(getattr(tool, "entrypoint", None)),
+                        "parameters": _maybe_jsonable(func_params),
+                        "requires_confirmation": requires_confirmation,
+                        "external_execution": external_execution,
+                    }
+
+                    # Add callable metadata from entrypoint if available
+                    if tool.entrypoint:
+                        ep = tool.entrypoint
+                        func_tool_meta["module"] = getattr(ep, "__module__", None)
+                        func_tool_meta["qualname"] = getattr(ep, "__qualname__", None)
+                        try:
+                            sig = inspect.signature(ep)
+                            func_tool_meta["signature"] = str(sig)
+                            if sig.return_annotation is not inspect.Signature.empty:
+                                func_tool_meta["return_annotation"] = str(sig.return_annotation)
+                        except (ValueError, TypeError):
+                            pass
+
                     components.append(
                         RegistryContentResponse(
                             name=func_name,
                             type="tool",
                             description=_safe_str(getattr(tool, "description", None)),
-                            metadata={
-                                "class_path": _class_path(tool),
-                                "has_entrypoint": bool(getattr(tool, "entrypoint", None)),
-                                "parameters": _maybe_jsonable(func_params),
-                                "requires_confirmation": requires_confirmation,
-                                "external_execution": external_execution,
-                            },
+                            metadata=func_tool_meta,
                         )
                     )
 
                 elif callable(tool):
                     call_name = getattr(tool, "__name__", None) or tool.__class__.__name__
+                    tool_module = getattr(tool, "__module__", "unknown")
+                    tool_meta: Dict[str, Any] = {
+                        "class_path": f"{tool_module}.{call_name}",
+                        "module": tool_module,
+                        "qualname": getattr(tool, "__qualname__", None),
+                        "has_entrypoint": True,
+                        "parameters": _get_callable_params(tool),
+                        "requires_confirmation": None,
+                        "external_execution": None,
+                    }
+
+                    # Add signature for display (parity with functions)
+                    try:
+                        sig = inspect.signature(tool)
+                        tool_meta["signature"] = str(sig)
+                        if sig.return_annotation is not inspect.Signature.empty:
+                            tool_meta["return_annotation"] = str(sig.return_annotation)
+                    except (ValueError, TypeError):
+                        pass
+
                     components.append(
                         RegistryContentResponse(
                             name=str(call_name),
                             type="tool",
                             description=_safe_str(getattr(tool, "__doc__", None)),
-                            metadata={
-                                "class_path": _class_path(tool),
-                                "has_entrypoint": True,
-                                "parameters": _get_callable_params(tool),
-                                "requires_confirmation": None,
-                                "external_execution": None,
-                            },
+                            metadata=tool_meta,
                         )
                     )
 
@@ -321,11 +363,15 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
         if component_type is None or component_type == "function":
             for func in getattr(registry, "functions", []) or []:
                 func_name = getattr(func, "__name__", None) or "anonymous"
+                func_module = getattr(func, "__module__", "unknown")
                 func_meta: Dict[str, Any] = {
-                    "class_path": f"{getattr(func, '__module__', 'unknown')}.{func_name}",
-                    "module": getattr(func, "__module__", None),
+                    "class_path": f"{func_module}.{func_name}",
+                    "module": func_module,
                     "qualname": getattr(func, "__qualname__", None),
+                    "has_entrypoint": True,
                     "parameters": _get_callable_params(func),
+                    "requires_confirmation": None,
+                    "external_execution": None,
                 }
 
                 # Also add signature string for display
