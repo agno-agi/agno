@@ -7852,7 +7852,7 @@ class Team:
                         stream_events=stream_events or self.stream_member_events,
                         debug_mode=debug_mode,
                         knowledge_filters=run_context.knowledge_filters
-                        if not member_agent.knowledge_filters and member_agent.knowledge
+                        if not agent.knowledge_filters and agent.knowledge
                         else None,
                         dependencies=run_context.dependencies,
                         add_dependencies_to_context=add_dependencies_to_context,
@@ -7877,7 +7877,7 @@ class Team:
                     finally:
                         _process_delegate_task_to_member(
                             member_agent_run_response,
-                            member_agent,
+                            agent,
                             member_agent_task,  # type: ignore
                             member_session_state_copy,  # type: ignore
                         )
@@ -7915,10 +7915,15 @@ class Team:
                     current_agent = member_agent
                     member_agent_task, history = _setup_delegate_task_to_member(member_agent=current_agent, task=task)
 
-                    async def run_member_agent(agent=current_agent) -> str:
+                    async def run_member_agent(
+                        member_agent=current_agent,
+                        member_agent_task=member_agent_task,
+                        history=history,
+                        member_agent_index=member_agent_index,
+                    ) -> str:
                         member_session_state_copy = copy(run_context.session_state)
 
-                        member_agent_run_response = await agent.arun(
+                        member_agent_run_response = await member_agent.arun(
                             input=member_agent_task if not history else history,
                             user_id=user_id,
                             # All members have the same session_id
@@ -8536,6 +8541,7 @@ class Team:
         # --- Handle Members reconstruction ---
         members: Optional[List[Union[Agent, "Team"]]] = None
         from agno.agent import get_agent_by_id
+        from agno.team import get_team_by_id
 
         if "members" in config and config["members"]:
             members = []
@@ -8551,6 +8557,16 @@ class Team:
                         members.append(agent)
                     else:
                         log_warning(f"Agent not found: {member_data['agent_id']}")
+                elif member_type == "team":
+                    # Handle nested teams as members
+                    if db is None:
+                        log_warning(f"Cannot load member team {member_data['team_id']}: db is None")
+                        continue
+                    nested_team = get_team_by_id(id=member_data["team_id"], db=db, registry=registry)
+                    if nested_team:
+                        members.append(nested_team)
+                    else:
+                        log_warning(f"Team not found: {member_data['team_id']}")
 
         # --- Handle reasoning_model reconstruction ---
         # TODO: implement reasoning model deserialization

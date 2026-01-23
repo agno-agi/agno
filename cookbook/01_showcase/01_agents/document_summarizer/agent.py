@@ -22,6 +22,7 @@ Usage:
 """
 
 from agno.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.tools.reasoning import ReasoningTools
 from schemas import DocumentSummary
@@ -104,6 +105,7 @@ summarizer_agent = Agent(
     num_history_runs=5,
     enable_agentic_memory=True,
     markdown=True,
+    db=SqliteDb(db_file="tmp/data.db"),
 )
 
 
@@ -155,4 +157,4 @@ __all__ = [
 ]
 
 if __name__ == "__main__":
-    summarizer_agent.cli(stream=True)
+    summarizer_agent.cli_app(stream=True)

@@ -8,7 +8,7 @@ from agno.vectordb.milvus import Milvus
 
 agent = Agent(
     model=OpenAIChat(
-        id="gpt-5.2",
+        id="gpt-4o",
     ),
     knowledge=Knowledge(
         vector_db=Milvus(
@@ -23,16 +23,19 @@ agent = Agent(
     read_chat_history=True,
 )
 
-if __name__ == "__main__":
-    # Comment out after first run
-    asyncio.run(
-        agent.knowledge.ainsert(path="cookbook/08_knowledge/testing_resources/cv_1.pdf")
+
+async def main():
+    # Insert data
+    await agent.knowledge.ainsert(
+        path="cookbook/07_knowledge/testing_resources/cv_1.pdf"
     )
 
     # Create and use the agent
-    asyncio.run(
-        agent.aprint_response(
-            "What can you tell me about the candidate and what are his skills?",
-            markdown=True,
-        )
+    await agent.aprint_response(
+        "What can you tell me about the candidate and what are his skills?",
+        markdown=True,
     )
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
