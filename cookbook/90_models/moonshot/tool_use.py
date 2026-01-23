@@ -1,9 +1,9 @@
 from agno.agent import Agent
-from agno.models.n1n import N1N
+from agno.models.moonshot import MoonShot
 from agno.tools.websearch import WebSearchTools
 
 agent = Agent(
-    model=N1N(id="gkimi-k2-thinking"),
+    model=MoonShot(id="kimi-k2-thinking"),
     markdown=True,
     tools=[WebSearchTools()],
 )
