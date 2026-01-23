@@ -407,3 +407,80 @@ class TestRemoteKnowledgeRoutes:
         # Verify it's gone
         verify_response = client.get(f"/knowledge/content/{content_id}?db_id={self.DB_ID}")
         assert verify_response.status_code == 404
+
+
+# =============================================================================
+# Remote Content Endpoint Tests
+# =============================================================================
+
+
+class TestRemoteContentEndpoint:
+    """Test remote content upload endpoint structure and validation.
+
+    Note: These tests verify endpoint behavior without requiring actual
+    remote content sources (GitHub, SharePoint, S3, GCS) to be configured.
+    They test validation, error handling, and response structure.
+    """
+
+    DB_ID = "gateway-db"
+
+    def test_config_includes_remote_content_sources_field(self, client: httpx.Client):
+        """Test GET /knowledge/config includes remote_content_sources in response."""
+        response = client.get(f"/knowledge/config?db_id={self.DB_ID}")
+        assert response.status_code == 200
+        data = response.json()
+
+        # Verify the field exists (may be None or empty list if no sources configured)
+        assert "remote_content_sources" in data
+
+    def test_remote_content_endpoint_requires_config_id(self, client: httpx.Client):
+        """Test POST /knowledge/remote-content requires config_id parameter."""
+        response = client.post(
+            f"/knowledge/remote-content?db_id={self.DB_ID}",
+            data={
+                "path": "some/file.pdf",
+            },
+        )
+        # Should return 422 for missing required field
+        assert response.status_code == 422
+
+    def test_remote_content_endpoint_requires_path(self, client: httpx.Client):
+        """Test POST /knowledge/remote-content requires path parameter."""
+        response = client.post(
+            f"/knowledge/remote-content?db_id={self.DB_ID}",
+            data={
+                "config_id": "some-config",
+            },
+        )
+        # Should return 422 for missing required field
+        assert response.status_code == 422
+
+    def test_remote_content_endpoint_rejects_unknown_config(self, client: httpx.Client):
+        """Test POST /knowledge/remote-content returns 400 for unknown config_id."""
+        response = client.post(
+            f"/knowledge/remote-content?db_id={self.DB_ID}",
+            data={
+                "config_id": "nonexistent-source",
+                "path": "some/file.pdf",
+            },
+        )
+        # Should return 400 for unknown config
+        assert response.status_code == 400
+        assert "Unknown content source" in response.json()["detail"]
+
+    def test_remote_content_endpoint_accepts_optional_fields(self, client: httpx.Client):
+        """Test POST /knowledge/remote-content accepts optional metadata fields."""
+        # This will still fail with 400 (unknown config) but validates
+        # that the endpoint accepts the optional fields without 422
+        response = client.post(
+            f"/knowledge/remote-content?db_id={self.DB_ID}",
+            data={
+                "config_id": "test-config",
+                "path": "documents/report.pdf",
+                "name": "My Report",
+                "description": "A test report",
+                "metadata": '{"key": "value"}',
+            },
+        )
+        # Should be 400 (unknown config), not 422 (validation error)
+        assert response.status_code == 400

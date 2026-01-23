@@ -4,7 +4,7 @@ from typing import Any
 
 try:
     from sqlalchemy.dialects.postgresql import JSONB
-    from sqlalchemy.types import BigInteger, Boolean, Date, String, Text
+    from sqlalchemy.types import BigInteger, Boolean, Date, Integer, String, Text
 except ImportError:
     raise ImportError("`sqlalchemy` not installed. Please install it using `pip install sqlalchemy`")
 
@@ -169,6 +169,68 @@ def _get_span_table_schema(traces_table_name: str = "agno_traces", db_schema: st
     }
 
 
+COMPONENT_TABLE_SCHEMA = {
+    "component_id": {"type": String, "primary_key": True},
+    "component_type": {"type": String, "nullable": False, "index": True},  # agent|team|workflow
+    "name": {"type": String, "nullable": True, "index": True},
+    "description": {"type": Text, "nullable": True},
+    "current_version": {"type": Integer, "nullable": True, "index": True},
+    "metadata": {"type": JSONB, "nullable": True},
+    "created_at": {"type": BigInteger, "nullable": False, "index": True},
+    "updated_at": {"type": BigInteger, "nullable": True},
+    "deleted_at": {"type": BigInteger, "nullable": True},
+}
+
+COMPONENT_CONFIGS_TABLE_SCHEMA = {
+    "component_id": {"type": String, "primary_key": True, "foreign_key": "components.component_id"},
+    "version": {"type": Integer, "primary_key": True},
+    "label": {"type": String, "nullable": True},  # stable|v1.2.0|pre-refactor
+    "stage": {"type": String, "nullable": False, "default": "draft", "index": True},  # draft|published
+    "config": {"type": JSONB, "nullable": False},
+    "notes": {"type": Text, "nullable": True},
+    "created_at": {"type": BigInteger, "nullable": False, "index": True},
+    "updated_at": {"type": BigInteger, "nullable": True},
+    "deleted_at": {"type": BigInteger, "nullable": True},
+}
+
+COMPONENT_LINKS_TABLE_SCHEMA = {
+    "parent_component_id": {"type": String, "nullable": False},
+    "parent_version": {"type": Integer, "nullable": False},
+    "link_kind": {"type": String, "nullable": False, "index": True},
+    "link_key": {"type": String, "nullable": False},
+    "child_component_id": {"type": String, "nullable": False, "foreign_key": "components.component_id"},
+    "child_version": {"type": Integer, "nullable": True},
+    "position": {"type": Integer, "nullable": False},
+    "meta": {"type": JSONB, "nullable": True},
+    "created_at": {"type": BigInteger, "nullable": True, "index": True},
+    "updated_at": {"type": BigInteger, "nullable": True},
+    "__primary_key__": ["parent_component_id", "parent_version", "link_kind", "link_key"],
+    "__foreign_keys__": [
+        {
+            "columns": ["parent_component_id", "parent_version"],
+            "ref_table": "component_configs",
+            "ref_columns": ["component_id", "version"],
+        }
+    ],
+}
+LEARNINGS_TABLE_SCHEMA = {
+    "learning_id": {"type": String, "primary_key": True, "nullable": False},
+    "learning_type": {"type": String, "nullable": False, "index": True},
+    "namespace": {"type": String, "nullable": True, "index": True},
+    "user_id": {"type": String, "nullable": True, "index": True},
+    "agent_id": {"type": String, "nullable": True, "index": True},
+    "team_id": {"type": String, "nullable": True, "index": True},
+    "workflow_id": {"type": String, "nullable": True, "index": True},
+    "session_id": {"type": String, "nullable": True, "index": True},
+    "entity_id": {"type": String, "nullable": True, "index": True},
+    "entity_type": {"type": String, "nullable": True, "index": True},
+    "content": {"type": JSONB, "nullable": False},
+    "metadata": {"type": JSONB, "nullable": True},
+    "created_at": {"type": BigInteger, "nullable": False, "index": True},
+    "updated_at": {"type": BigInteger, "nullable": True},
+}
+
+
 def get_table_schema_definition(
     table_type: str, traces_table_name: str = "agno_traces", db_schema: str = "agno"
 ) -> dict[str, Any]:
@@ -196,6 +258,10 @@ def get_table_schema_definition(
         "culture": CULTURAL_KNOWLEDGE_TABLE_SCHEMA,
         "versions": VERSIONS_TABLE_SCHEMA,
         "traces": TRACE_TABLE_SCHEMA,
+        "components": COMPONENT_TABLE_SCHEMA,
+        "component_configs": COMPONENT_CONFIGS_TABLE_SCHEMA,
+        "component_links": COMPONENT_LINKS_TABLE_SCHEMA,
+        "learnings": LEARNINGS_TABLE_SCHEMA,
     }
 
     schema = schemas.get(table_type, {})

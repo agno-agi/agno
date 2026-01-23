@@ -14,6 +14,7 @@ from fastapi import (
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
+from agno.db.base import BaseDb
 from agno.exceptions import InputCheckError, OutputCheckError
 from agno.os.auth import (
     get_auth_token_from_request,
@@ -61,7 +62,9 @@ async def handle_workflow_via_websocket(websocket: WebSocket, message: dict, os:
             return
 
         # Get workflow from OS
-        workflow = get_workflow_by_id(workflow_id, os.workflows)
+        workflow = get_workflow_by_id(
+            workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True
+        )
         if not workflow:
             await websocket.send_text(json.dumps({"event": "error", "error": f"Workflow {workflow_id} not found"}))
             return
@@ -141,7 +144,9 @@ async def handle_workflow_subscription(websocket: WebSocket, message: dict, os: 
         if buffer_status is None:
             # Run not in buffer - check database
             if workflow_id and session_id:
-                workflow = get_workflow_by_id(workflow_id, os.workflows)
+                workflow = get_workflow_by_id(
+                    workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True
+                )
                 if workflow and isinstance(workflow, Workflow):
                     workflow_run = await workflow.aget_run_output(run_id, session_id)
 
@@ -526,9 +531,6 @@ def get_workflow_router(
         },
     )
     async def get_workflows(request: Request) -> List[WorkflowSummaryResponse]:
-        if os.workflows is None:
-            return []
-
         # Filter workflows based on user's scopes (only if authorization is enabled)
         if getattr(request.state, "authorization_enabled", False):
             from agno.os.auth import filter_resources_by_access, get_accessible_resources
@@ -538,11 +540,24 @@ def get_workflow_router(
             if not accessible_ids:
                 raise HTTPException(status_code=403, detail="Insufficient permissions")
 
-            accessible_workflows = filter_resources_by_access(request, os.workflows, "workflows")
+            accessible_workflows = filter_resources_by_access(request, os.workflows or [], "workflows")
         else:
-            accessible_workflows = os.workflows
+            accessible_workflows = os.workflows or []
 
-        return [WorkflowSummaryResponse.from_workflow(workflow) for workflow in accessible_workflows]
+        workflows: List[WorkflowSummaryResponse] = []
+        if accessible_workflows:
+            for workflow in accessible_workflows:
+                workflows.append(WorkflowSummaryResponse.from_workflow(workflow=workflow))
+
+        if os.db and isinstance(os.db, BaseDb):
+            from agno.workflow.workflow import get_workflows
+
+            db_workflows = get_workflows(db=os.db, registry=os.registry)
+            if db_workflows:
+                for db_workflow in db_workflows:
+                    workflows.append(WorkflowSummaryResponse.from_workflow(workflow=db_workflow))
+
+        return workflows
 
     @router.get(
         "/workflows/{workflow_id}",
@@ -571,7 +586,9 @@ def get_workflow_router(
         dependencies=[Depends(require_resource_access("workflows", "read", "workflow_id"))],
     )
     async def get_workflow(workflow_id: str, request: Request) -> WorkflowResponse:
-        workflow = get_workflow_by_id(workflow_id, os.workflows)
+        workflow = get_workflow_by_id(
+            workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True
+        )
         if workflow is None:
             raise HTTPException(status_code=404, detail="Workflow not found")
         if isinstance(workflow, RemoteWorkflow):
@@ -622,6 +639,7 @@ def get_workflow_router(
         stream: bool = Form(True),
         session_id: Optional[str] = Form(None),
         user_id: Optional[str] = Form(None),
+        version: Optional[int] = Form(None),
     ):
         kwargs = await get_request_kwargs(request, create_workflow_run)
 
@@ -650,7 +668,14 @@ def get_workflow_router(
             kwargs["metadata"] = metadata
 
         # Retrieve the workflow by ID
-        workflow = get_workflow_by_id(workflow_id, os.workflows)
+        workflow = get_workflow_by_id(
+            workflow_id=workflow_id,
+            workflows=os.workflows,
+            db=os.db,
+            version=version,
+            registry=os.registry,
+            create_fresh=True,
+        )
         if workflow is None:
             raise HTTPException(status_code=404, detail="Workflow not found")
 
@@ -716,7 +741,9 @@ def get_workflow_router(
         dependencies=[Depends(require_resource_access("workflows", "run", "workflow_id"))],
     )
     async def cancel_workflow_run(workflow_id: str, run_id: str):
-        workflow = get_workflow_by_id(workflow_id, os.workflows)
+        workflow = get_workflow_by_id(
+            workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True
+        )
 
         if workflow is None:
             raise HTTPException(status_code=404, detail="Workflow not found")

@@ -162,6 +162,71 @@ VERSIONS_TABLE_SCHEMA = {
     "updated_at": {"type": String, "nullable": True},
 }
 
+COMPONENTS_TABLE_SCHEMA = {
+    "component_id": {"type": String, "primary_key": True},
+    "component_type": {"type": String, "nullable": False, "index": True},  # agent|team|workflow
+    "name": {"type": String, "nullable": False, "index": True},
+    "description": {"type": String, "nullable": True},
+    "current_version": {"type": BigInteger, "nullable": True, "index": True},
+    "metadata": {"type": JSON, "nullable": True},
+    "created_at": {"type": BigInteger, "nullable": False, "index": True},
+    "updated_at": {"type": BigInteger, "nullable": True},
+    "deleted_at": {"type": BigInteger, "nullable": True},
+}
+
+COMPONENT_CONFIGS_TABLE_SCHEMA = {
+    "component_id": {"type": String, "nullable": False},
+    "version": {"type": BigInteger, "nullable": False},
+    "label": {"type": String, "nullable": True},  # stable|v1.2.0|pre-refactor
+    "stage": {"type": String, "nullable": False, "default": "draft", "index": True},  # draft|published
+    "config": {"type": JSON, "nullable": False},
+    "notes": {"type": String, "nullable": True},
+    "created_at": {"type": BigInteger, "nullable": False, "index": True},
+    "updated_at": {"type": BigInteger, "nullable": True},
+    "_unique_constraints": [
+        {
+            "name": "uq_config_component_version",
+            "columns": ["component_id", "version"],
+        },
+    ],
+}
+
+COMPONENT_LINKS_TABLE_SCHEMA = {
+    "parent_component_id": {"type": String, "nullable": False},
+    "parent_version": {"type": BigInteger, "nullable": False},
+    "link_kind": {"type": String, "nullable": False, "index": True},
+    "link_key": {"type": String, "nullable": False},
+    "child_component_id": {"type": String, "nullable": False},
+    "child_version": {"type": BigInteger, "nullable": True},
+    "position": {"type": BigInteger, "nullable": False},
+    "meta": {"type": JSON, "nullable": True},
+    "created_at": {"type": BigInteger, "nullable": True, "index": True},
+    "updated_at": {"type": BigInteger, "nullable": True},
+    "_unique_constraints": [
+        {
+            "name": "uq_link_parent_kind_key",
+            "columns": ["parent_component_id", "parent_version", "link_kind", "link_key"],
+        },
+    ],
+}
+
+LEARNINGS_TABLE_SCHEMA = {
+    "learning_id": {"type": String, "primary_key": True, "nullable": False},
+    "learning_type": {"type": String, "nullable": False, "index": True},
+    "namespace": {"type": String, "nullable": True, "index": True},
+    "user_id": {"type": String, "nullable": True, "index": True},
+    "agent_id": {"type": String, "nullable": True, "index": True},
+    "team_id": {"type": String, "nullable": True, "index": True},
+    "workflow_id": {"type": String, "nullable": True, "index": True},
+    "session_id": {"type": String, "nullable": True, "index": True},
+    "entity_id": {"type": String, "nullable": True, "index": True},
+    "entity_type": {"type": String, "nullable": True, "index": True},
+    "content": {"type": JSON, "nullable": False},
+    "metadata": {"type": JSON, "nullable": True},
+    "created_at": {"type": BigInteger, "nullable": False, "index": True},
+    "updated_at": {"type": BigInteger, "nullable": True},
+}
+
 
 def get_table_schema_definition(table_type: str, traces_table_name: str = "agno_traces") -> dict[str, Any]:
     """
@@ -187,6 +252,10 @@ def get_table_schema_definition(table_type: str, traces_table_name: str = "agno_
         "traces": TRACE_TABLE_SCHEMA,
         "culture": CULTURAL_KNOWLEDGE_TABLE_SCHEMA,
         "versions": VERSIONS_TABLE_SCHEMA,
+        "components": COMPONENTS_TABLE_SCHEMA,
+        "component_configs": COMPONENT_CONFIGS_TABLE_SCHEMA,
+        "component_links": COMPONENT_LINKS_TABLE_SCHEMA,
+        "learnings": LEARNINGS_TABLE_SCHEMA,
     }
     schema = schemas.get(table_type, {})
 

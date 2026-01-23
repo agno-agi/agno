@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "2.3.24"
+version = "2.4.2"
 description = "Agno: a lightweight library for building Multi-Agent Systems"
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -63,10 +63,10 @@ dev = [
   "mcp",
   "openai",
   "fakeredis",
+  "xlwt",
 ]
 
 os = ["fastapi", "uvicorn", "PyJWT"]
-
 
 # Dependencies for Telemetry
 opentelemetry = ["opentelemetry-sdk", "opentelemetry-exporter-otlp"]
@@ -173,9 +173,9 @@ pdf = ["pypdf", "rapidocr_onnxruntime"]
 docx = ["python-docx"]
 pptx = ["python-pptx"]
 text = ["aiofiles"]
-csv = ["aiofiles"]
+csv = ["aiofiles", "openpyxl", "xlrd"]
 markdown = ["unstructured", "markdown", "aiofiles"]
-chonkie = ["chonkie[st]", "chonkie"]
+chonkie = ["chonkie[semantic]", "chonkie[code]", "chonkie"]
 
 # Dependencies for AG-UI integration
 agui = ["ag-ui-protocol"]
@@ -345,11 +345,13 @@ integration-tests = [
 
 # Dependencies for demo application
 demo = [
+    "agno[dev]",
     "anthropic",
     "chromadb",
     "ddgs",
     "fastapi[standard]",
     "google-genai",
+    "matplotlib",
     "mcp",
     "nest_asyncio",
     "openai",
@@ -547,6 +549,7 @@ module = [
   "redshift_connector.*",
   "reportlab.*",
   "surrealdb.*",
-  "trafilatura.*"
+  "trafilatura.*",
+  "xlrd.*"
 ]
 ignore_missing_imports = true
