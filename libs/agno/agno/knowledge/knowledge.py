@@ -1696,7 +1696,14 @@ class Knowledge:
                     log_debug(f"Using reader: {content.reader.__class__.__name__} to read content")
                     reader = content.reader
                 else:
-                    reader = self._select_reader(content.file_data.type)
+                    # Prefer filename extension over MIME type for reader selection
+                    # (browsers often send wrong MIME types for Excel files)
+                    reader_hint = content.file_data.type
+                    if content.file_data.filename:
+                        ext = Path(content.file_data.filename).suffix.lower()
+                        if ext:
+                            reader_hint = ext
+                    reader = self._select_reader(reader_hint)
                 # Use file_data.filename for reader (preserves extension for format detection)
                 reader_name = content.file_data.filename or content.name or f"content_{content.file_data.type}"
                 read_documents = await reader.async_read(content_io, name=reader_name)
@@ -1794,7 +1801,14 @@ class Knowledge:
                     log_debug(f"Using reader: {content.reader.__class__.__name__} to read content")
                     reader = content.reader
                 else:
-                    reader = self._select_reader(content.file_data.type)
+                    # Prefer filename extension over MIME type for reader selection
+                    # (browsers often send wrong MIME types for Excel files)
+                    reader_hint = content.file_data.type
+                    if content.file_data.filename:
+                        ext = Path(content.file_data.filename).suffix.lower()
+                        if ext:
+                            reader_hint = ext
+                    reader = self._select_reader(reader_hint)
                 # Use file_data.filename for reader (preserves extension for format detection)
                 reader_name = content.file_data.filename or content.name or f"content_{content.file_data.type}"
                 read_documents = reader.read(content_io, name=reader_name)

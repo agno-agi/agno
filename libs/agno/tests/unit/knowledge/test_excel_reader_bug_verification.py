@@ -30,7 +30,8 @@ def test_positive_indices_work_correctly(tmp_path: Path):
     file_path = tmp_path / "three_sheets.xlsx"
     file_path.write_bytes(buffer.getvalue())
 
-    reader = ExcelReader(chunk=False, sheets=[0, 2])
+    # 1-based indexing: 1=First, 2=Second, 3=Third
+    reader = ExcelReader(chunk=False, sheets=[1, 3])
     docs = reader.read(file_path)
 
     assert len(docs) == 2
@@ -165,8 +166,29 @@ def test_mixed_sheet_name_and_index_filter(tmp_path: Path):
     file_path = tmp_path / "test.xlsx"
     file_path.write_bytes(buffer.getvalue())
 
-    reader = ExcelReader(chunk=False, sheets=["First", 2])
+    # Mix name ("First") and 1-based index (3=Third)
+    reader = ExcelReader(chunk=False, sheets=["First", 3])
     docs = reader.read(file_path)
 
     assert len(docs) == 2
     assert {doc.meta_data["sheet_name"] for doc in docs} == {"First", "Third"}
+
+
+def test_unsupported_extension_raises_error(tmp_path: Path):
+    """Unsupported file extension raises ValueError instead of returning empty list."""
+    file_path = tmp_path / "data.txt"
+    file_path.write_text("not an excel file")
+
+    reader = ExcelReader(chunk=False)
+
+    with pytest.raises(ValueError, match="Unsupported file extension.*Expected .xlsx or .xls"):
+        reader.read(file_path)
+
+
+def test_empty_extension_raises_error():
+    """BytesIO without name raises ValueError."""
+    reader = ExcelReader(chunk=False)
+    buffer = io.BytesIO(b"some data")
+
+    with pytest.raises(ValueError, match="Unsupported file extension.*Expected .xlsx or .xls"):
+        reader.read(buffer)

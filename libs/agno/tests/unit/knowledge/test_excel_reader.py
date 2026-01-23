@@ -234,8 +234,8 @@ def test_excel_reader_reads_xlsx_from_bytesio_without_name():
     assert documents[0].content.splitlines() == ["col1, col2", "a, b"]
 
 
-def test_excel_reader_fails_gracefully_when_name_has_no_extension():
-    """When BytesIO has no name and name param has no extension, reader returns empty list."""
+def test_excel_reader_raises_error_when_name_has_no_extension():
+    """When BytesIO has no name and name param has no extension, reader raises ValueError."""
     openpyxl = pytest.importorskip("openpyxl")
 
     workbook = openpyxl.Workbook()
@@ -251,11 +251,9 @@ def test_excel_reader_fails_gracefully_when_name_has_no_extension():
     buffer.seek(0)
 
     reader = ExcelReader(chunk=False)
-    # This simulates the old bug: name="Lorcan_data" (no extension)
-    documents = reader.read(buffer, name="Lorcan_data")
 
-    # Reader returns empty list when extension can't be determined
-    assert len(documents) == 0
+    with pytest.raises(ValueError, match="Unsupported file extension.*Expected .xlsx or .xls"):
+        reader.read(buffer, name="Lorcan_data")
 
 
 def test_excel_reader_succeeds_when_name_has_extension():
@@ -730,22 +728,95 @@ def test_excel_reader_filter_sheets_by_index(tmp_path: Path):
     file_path = tmp_path / "filter.xlsx"
     file_path.write_bytes(buffer.getvalue())
 
-    # Read only sheets at index 0 and 2 (First and Third)
-    reader = ExcelReader(chunk=False, sheets=[0, 2])
+    # Read only sheets at index 1 and 3 (First and Third) - 1-based to match metadata
+    reader = ExcelReader(chunk=False, sheets=[1, 3])
     documents = reader.read(file_path)
 
     assert len(documents) == 2
     assert {doc.meta_data["sheet_name"] for doc in documents} == {"First", "Third"}
 
 
-def test_excel_reader_unsupported_extension_returns_empty(tmp_path: Path):
+def test_excel_reader_filter_by_index_is_1_based():
+    """Index filtering uses 1-based indices to match sheet_index in document metadata."""
+    openpyxl = pytest.importorskip("openpyxl")
+
+    workbook = openpyxl.Workbook()
+    workbook.active.title = "First"
+    workbook.active["A1"] = "first"
+    workbook.create_sheet("Second")
+    workbook["Second"]["A1"] = "second"
+    workbook.create_sheet("Third")
+    workbook["Third"]["A1"] = "third"
+
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    workbook.close()
+    buffer.seek(0)
+    buffer.name = "test.xlsx"
+
+    # sheets=[1] should get "First" (index 1 in metadata)
+    reader = ExcelReader(chunk=False, sheets=[1])
+    documents = reader.read(buffer)
+
+    assert len(documents) == 1
+    assert documents[0].meta_data["sheet_name"] == "First"
+    assert documents[0].meta_data["sheet_index"] == 1
+
+
+def test_excel_reader_filter_by_name_case_insensitive():
+    """Name filtering is case-insensitive."""
+    openpyxl = pytest.importorskip("openpyxl")
+
+    workbook = openpyxl.Workbook()
+    workbook.active.title = "Sales"
+    workbook.active["A1"] = "data"
+
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    workbook.close()
+    buffer.seek(0)
+    buffer.name = "test.xlsx"
+
+    # "sales" (lowercase) should match "Sales" (capitalized)
+    reader = ExcelReader(chunk=False, sheets=["sales"])
+    documents = reader.read(buffer)
+
+    assert len(documents) == 1
+    assert documents[0].meta_data["sheet_name"] == "Sales"
+
+
+def test_excel_reader_empty_sheets_list_returns_all():
+    """Empty sheets list should return all sheets, same as None."""
+    openpyxl = pytest.importorskip("openpyxl")
+
+    workbook = openpyxl.Workbook()
+    workbook.active.title = "First"
+    workbook.active["A1"] = "first"
+    workbook.create_sheet("Second")
+    workbook["Second"]["A1"] = "second"
+
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    workbook.close()
+    buffer.seek(0)
+    buffer.name = "test.xlsx"
+
+    # sheets=[] should return all sheets
+    reader = ExcelReader(chunk=False, sheets=[])
+    documents = reader.read(buffer)
+
+    assert len(documents) == 2
+    assert {doc.meta_data["sheet_name"] for doc in documents} == {"First", "Second"}
+
+
+def test_excel_reader_unsupported_extension_raises_error(tmp_path: Path):
     file_path = tmp_path / "file.txt"
     file_path.write_text("not an excel file")
 
     reader = ExcelReader(chunk=False)
-    documents = reader.read(file_path)
 
-    assert documents == []
+    with pytest.raises(ValueError, match="Unsupported file extension.*Expected .xlsx or .xls"):
+        reader.read(file_path)
 
 
 def test_excel_reader_xls_date_cells_converted_to_iso(tmp_path: Path):
@@ -878,8 +949,8 @@ def test_excel_reader_xls_filter_sheets_by_index(tmp_path: Path):
     file_path = tmp_path / "filter.xls"
     workbook.save(str(file_path))
 
-    # Read only sheets at index 0 and 2 (First and Third)
-    reader = ExcelReader(chunk=False, sheets=[0, 2])
+    # Read only sheets at index 1 and 3 (First and Third) - 1-based to match metadata
+    reader = ExcelReader(chunk=False, sheets=[1, 3])
     documents = reader.read(file_path)
 
     assert len(documents) == 2

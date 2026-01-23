@@ -51,16 +51,32 @@ class ExcelReader(Reader):
         sheet_name: str,
         sheet_index: int,
     ) -> bool:
-        """Check if sheet passes the configured filters."""
-        if self.sheets is None:
+        """Check if sheet passes the configured filters.
+
+        Args:
+            sheet_name: Name of the sheet
+            sheet_index: 1-based index of the sheet (matches document metadata)
+
+        Returns:
+            True if sheet should be included, False otherwise.
+
+        Note:
+            - Index filtering is 1-based to match sheet_index in document metadata
+            - Name filtering is case-insensitive
+            - Empty list or None means include all sheets
+        """
+        # None or empty list = include all sheets
+        if not self.sheets:
             return True
 
         for sheet_filter in self.sheets:
             if isinstance(sheet_filter, int):
+                # 1-based indexing to match metadata
                 if sheet_index == sheet_filter:
                     return True
             elif isinstance(sheet_filter, str):
-                if sheet_name == sheet_filter:
+                # Case-insensitive name matching
+                if sheet_name.lower() == sheet_filter.lower():
                     return True
 
         return False
@@ -84,7 +100,8 @@ class ExcelReader(Reader):
         try:
             sheets: List[Tuple[str, int, Iterable[Sequence[Any]]]] = []
             for sheet_index, worksheet in enumerate(workbook.worksheets):
-                if not self._should_include_sheet(worksheet.title, sheet_index):
+                # Pass 1-based index to match metadata (sheet_index + 1)
+                if not self._should_include_sheet(worksheet.title, sheet_index + 1):
                     log_debug(f"Skipping sheet '{worksheet.title}' (filtered out)")
                     continue
 
@@ -114,7 +131,8 @@ class ExcelReader(Reader):
         for sheet_index in range(workbook.nsheets):
             sheet = workbook.sheet_by_index(sheet_index)
 
-            if not self._should_include_sheet(sheet.name, sheet_index):
+            # Pass 1-based index to match metadata (sheet_index + 1)
+            if not self._should_include_sheet(sheet.name, sheet_index + 1):
                 log_debug(f"Skipping sheet '{sheet.name}' (filtered out)")
                 continue
 
@@ -154,8 +172,7 @@ class ExcelReader(Reader):
             elif file_extension == ContentType.XLS or file_extension == ".xls":
                 documents = self._read_xls(file, workbook_name=workbook_name)
             else:
-                log_error(f"Unsupported file extension: {file_extension}. Expected .xlsx or .xls")
-                return []
+                raise ValueError(f"Unsupported file extension: '{file_extension}'. Expected .xlsx or .xls")
 
             if self.chunk:
                 chunked_documents = []
@@ -165,9 +182,7 @@ class ExcelReader(Reader):
 
             return documents
 
-        except FileNotFoundError:
-            raise
-        except ImportError:
+        except (FileNotFoundError, ImportError, ValueError):
             raise
         except Exception as e:
             file_desc = getattr(file, "name", str(file)) if isinstance(file, IO) else file
@@ -195,17 +210,14 @@ class ExcelReader(Reader):
             elif file_extension == ContentType.XLS or file_extension == ".xls":
                 documents = await asyncio.to_thread(self._read_xls, file, workbook_name=workbook_name)
             else:
-                log_error(f"Unsupported file extension: {file_extension}. Expected .xlsx or .xls")
-                return []
+                raise ValueError(f"Unsupported file extension: '{file_extension}'. Expected .xlsx or .xls")
 
             if self.chunk:
                 documents = await self.chunk_documents_async(documents)
 
             return documents
 
-        except FileNotFoundError:
-            raise
-        except ImportError:
+        except (FileNotFoundError, ImportError, ValueError):
             raise
         except Exception as e:
             file_desc = getattr(file, "name", str(file)) if isinstance(file, IO) else file
