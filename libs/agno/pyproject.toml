@@ -173,7 +173,8 @@ pdf = ["pypdf", "rapidocr_onnxruntime"]
 docx = ["python-docx"]
 pptx = ["python-pptx"]
 text = ["aiofiles"]
-csv = ["aiofiles", "openpyxl", "xlrd"]
+csv = ["aiofiles"]
+excel = ["openpyxl", "xlrd"]
 markdown = ["unstructured", "markdown", "aiofiles"]
 chonkie = ["chonkie[semantic]", "chonkie[code]", "chonkie"]
 
@@ -304,6 +305,7 @@ knowledge = [
   "agno[pptx]",
   "agno[text]",
   "agno[csv]",
+  "agno[excel]",
   "agno[markdown]",
   "agno[chonkie]"
 ]
@@ -485,6 +487,7 @@ module = [
   "newspaper.*",
   "numpy.*",
   "ollama.*",
+  "openpyxl.*",
   "openai.*",
   "cv2.*",
   "openbb.*",

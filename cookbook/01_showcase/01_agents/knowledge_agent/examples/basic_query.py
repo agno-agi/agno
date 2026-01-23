@@ -61,4 +61,4 @@ if __name__ == "__main__":
     )
 
     # Uncomment for interactive mode
-    # knowledge_agent.cli(stream=True)
+    # knowledge_agent.cli_app(stream=True)
