@@ -984,6 +984,11 @@ class Knowledge:
         return self._get_reader("csv")
 
     @property
+    def excel_reader(self) -> Optional[Reader]:
+        """Excel reader - lazy loaded via factory."""
+        return self._get_reader("excel")
+
+    @property
     def docx_reader(self) -> Optional[Reader]:
         """Docx reader - lazy loaded via factory."""
         return self._get_reader("docx")
@@ -1123,6 +1128,8 @@ class Knowledge:
             return self.json_reader, ""
         elif file_extension == ".markdown":
             return self.markdown_reader, ""
+        elif file_extension in [".xlsx", ".xls"]:
+            return self.excel_reader, ""
         else:
             return self.text_reader, ""
 
@@ -1153,6 +1160,8 @@ class Knowledge:
             return self.json_reader
         elif uri_lower.endswith(".markdown"):
             return self.markdown_reader
+        elif uri_lower.endswith(".xlsx") or uri_lower.endswith(".xls"):
+            return self.excel_reader
         else:
             return self.text_reader
 
