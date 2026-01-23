@@ -329,13 +329,11 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
                 db_name = (
                     _safe_str(getattr(db, "name", None))
                     or _safe_str(getattr(db, "id", None))
-                    or _safe_str(getattr(db, "table_name", None))
                     or db.__class__.__name__
                 )
                 db_metadata = DbMetadata(
                     class_path=_class_path(db),
                     db_id=_safe_str(getattr(db, "id", None)),
-                    table_name=_safe_str(getattr(db, "table_name", None)),
                 )
                 components.append(
                     RegistryContentResponse(

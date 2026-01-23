@@ -692,7 +692,6 @@ class DbMetadata(BaseModel):
 
     class_path: str = Field(..., description="Full module path to the database class")
     db_id: Optional[str] = Field(None, description="Database identifier")
-    table_name: Optional[str] = Field(None, description="Table name")
 
 
 class VectorDbMetadata(BaseModel):
