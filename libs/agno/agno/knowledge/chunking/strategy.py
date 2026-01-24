@@ -13,7 +13,9 @@ class ChunkingStrategy(ABC):
     def chunk(self, document: Document) -> List[Document]:
         raise NotImplementedError
 
-    def _generate_chunk_id(self, document: Document, chunk_number: int, content: Optional[str] = None) -> Optional[str]:
+    def _generate_chunk_id(
+        self, document: Document, chunk_number: int, content: Optional[str] = None, prefix: Optional[str] = None
+    ) -> Optional[str]:
         """Generate a chunk ID with fallback to content hash when document lacks id/name.
 
         Fallback chain: document.id -> document.name -> content hash
@@ -21,17 +23,25 @@ class ChunkingStrategy(ABC):
         This ensures unique chunk IDs for vector DB deduplication (skip_if_exists).
         Without this, documents lacking both id and name would produce chunks with
         id=None, causing insert failures or incorrect deduplication.
+
+        Args:
+            document: The source document
+            chunk_number: The chunk index (1-based)
+            content: Optional chunk content for hashing (defaults to document.content)
+            prefix: Optional prefix before chunk_number (e.g., "row" produces "_row_1")
         """
+        suffix = f"_{prefix}_{chunk_number}" if prefix else f"_{chunk_number}"
+
         if document.id:
-            return f"{document.id}_{chunk_number}"
+            return f"{document.id}{suffix}"
         elif document.name:
-            return f"{document.name}_{chunk_number}"
+            return f"{document.name}{suffix}"
         else:
             # Hash the chunk content for a deterministic ID when no identifier exists
             hash_source = content if content else document.content
             if hash_source:
-                content_hash = hashlib.md5(hash_source.encode()).hexdigest()[:12]
-                return f"chunk_{content_hash}_{chunk_number}"
+                content_hash = hashlib.md5(hash_source.encode("utf-8")).hexdigest()[:12]  # nosec B324
+                return f"chunk_{content_hash}{suffix}"
             return None
 
     async def achunk(self, document: Document) -> List[Document]:
