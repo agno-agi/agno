@@ -21,6 +21,7 @@ class ModelResponseEvent(str, Enum):
     assistant_response = "AssistantResponse"
     compression_started = "CompressionStarted"
     compression_completed = "CompressionCompleted"
+    compression_context_update = "CompressionContextUpdate"
     model_request_started = "ModelRequestStarted"
     model_request_completed = "ModelRequestCompleted"
 

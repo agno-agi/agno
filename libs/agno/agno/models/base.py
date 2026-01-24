@@ -1494,6 +1494,13 @@ class Model(ABC):
                 # No tool calls or finished processing them
                 break
 
+            # Yield compression context if compression occurred during the stream
+            if compression_context is not None:
+                yield ModelResponse(
+                    event=ModelResponseEvent.compression_context_update.value,
+                    compression_context=compression_context,
+                )
+
             log_debug(f"{self.get_provider()} Response Stream End", center=True, symbol="-")
 
             # Save streaming responses to cache if enabled
@@ -1773,6 +1780,13 @@ class Model(ABC):
 
                 # No tool calls or finished processing them
                 break
+
+            # Yield compression context if compression occurred during the stream
+            if compression_context is not None:
+                yield ModelResponse(
+                    event=ModelResponseEvent.compression_context_update.value,
+                    compression_context=compression_context,
+                )
 
             log_debug(f"{self.get_provider()} Async Response Stream End", center=True, symbol="-")
 

@@ -3463,6 +3463,12 @@ class Team:
                         )
                     continue
 
+                # Handle compression context update - persist to session
+                if model_response_event.event == ModelResponseEvent.compression_context_update.value:
+                    if model_response_event.compression_context:
+                        session.set_compression_context(model_response_event.compression_context)
+                    continue
+
             yield from self._handle_model_response_chunk(
                 session=session,
                 run_response=run_response,
@@ -3625,6 +3631,12 @@ class Team:
                             events_to_skip=self.events_to_skip,
                             store_events=self.store_events,
                         )
+                    continue
+
+                # Handle compression context update - persist to session
+                if model_response_event.event == ModelResponseEvent.compression_context_update.value:
+                    if model_response_event.compression_context:
+                        session.set_compression_context(model_response_event.compression_context)
                     continue
 
             for event in self._handle_model_response_chunk(
