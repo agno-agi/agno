@@ -1,0 +1,114 @@
+NON-DISCLOSURE AGREEMENT
+
+This Non-Disclosure Agreement ("Agreement") is entered into as of January 15, 2024 (the "Effective Date") by and between:
+
+DISCLOSING PARTY:
+Innovate Technologies Inc., a Delaware corporation with its principal place of business at 100 Innovation Drive, San Francisco, CA 94102 ("Discloser")
+
+RECEIVING PARTY:
+Strategic Partners LLC, a California limited liability company with its principal place of business at 500 Market Street, Suite 300, Los Angeles, CA 90012 ("Recipient")
+
+(each a "Party" and collectively the "Parties")
+
+RECITALS
+
+WHEREAS, Discloser possesses certain confidential and proprietary information relating to its technology, business operations, and strategic plans; and
+
+WHEREAS, Recipient desires to receive such confidential information for the purpose of evaluating a potential business relationship between the Parties;
+
+NOW, THEREFORE, in consideration of the mutual covenants and agreements hereinafter set forth and for other good and valuable consideration, the receipt and sufficiency of which are hereby acknowledged, the Parties agree as follows:
+
+1. DEFINITION OF CONFIDENTIAL INFORMATION
+
+1.1 "Confidential Information" means any and all non-public information, in any form or medium, disclosed by Discloser to Recipient, including but not limited to:
+(a) Technical information: software code, algorithms, designs, specifications, documentation, formulas, and inventions;
+(b) Business information: business plans, financial data, customer lists, pricing strategies, marketing plans, and strategic initiatives;
+(c) Any other information designated as "Confidential" or "Proprietary" by Discloser.
+
+1.2 Confidential Information does not include information that:
+(a) Is or becomes publicly available through no fault of Recipient;
+(b) Was in Recipient's possession prior to disclosure, as evidenced by written records;
+(c) Is independently developed by Recipient without use of Confidential Information;
+(d) Is rightfully obtained from a third party without restriction on disclosure.
+
+2. OBLIGATIONS OF RECIPIENT
+
+2.1 Non-Disclosure. Recipient shall not disclose any Confidential Information to any third party without the prior written consent of Discloser.
+
+2.2 Limited Use. Recipient shall use the Confidential Information solely for the purpose of evaluating a potential business relationship with Discloser (the "Purpose") and for no other purpose.
+
+2.3 Standard of Care. Recipient shall protect the Confidential Information using the same degree of care it uses to protect its own confidential information, but in no event less than reasonable care.
+
+2.4 Limited Disclosure. Recipient may disclose Confidential Information only to its employees, contractors, and advisors who:
+(a) Have a need to know such information for the Purpose;
+(b) Are bound by confidentiality obligations at least as restrictive as those in this Agreement.
+
+2.5 Required Disclosure. If Recipient is compelled by law to disclose Confidential Information, Recipient shall:
+(a) Provide prompt written notice to Discloser (to the extent legally permitted);
+(b) Cooperate with Discloser in seeking a protective order;
+(c) Disclose only the minimum information required by law.
+
+3. TERM AND TERMINATION
+
+3.1 Term. This Agreement shall remain in effect for a period of two (2) years from the Effective Date, unless terminated earlier in accordance with this Section 3.
+
+3.2 Termination for Convenience. Either Party may terminate this Agreement upon thirty (30) days' prior written notice to the other Party.
+
+3.3 Survival. The obligations of confidentiality set forth in Section 2 shall survive termination of this Agreement for a period of five (5) years.
+
+3.4 Return of Materials. Upon termination or expiration of this Agreement, or upon Discloser's written request, Recipient shall promptly:
+(a) Return all tangible materials containing Confidential Information;
+(b) Destroy all copies, summaries, and extracts of Confidential Information in its possession;
+(c) Certify in writing its compliance with this Section 3.4 within fifteen (15) days of such request.
+
+4. INTELLECTUAL PROPERTY
+
+4.1 No License. Nothing in this Agreement grants Recipient any license or right to use any Confidential Information except as expressly set forth herein.
+
+4.2 Ownership. All Confidential Information shall remain the sole property of Discloser. Recipient acquires no rights in the Confidential Information except the limited right to use it for the Purpose.
+
+5. NO WARRANTIES
+
+5.1 Discloser makes no warranties, express or implied, regarding the accuracy or completeness of the Confidential Information. Recipient relies on such information at its own risk.
+
+6. REMEDIES
+
+6.1 Injunctive Relief. Recipient acknowledges that any breach of this Agreement may cause irreparable harm to Discloser for which monetary damages would be inadequate. Accordingly, Discloser shall be entitled to seek injunctive relief, in addition to any other remedies available at law or in equity.
+
+6.2 Indemnification. Recipient shall indemnify and hold harmless Discloser from any and all claims, damages, losses, and expenses (including reasonable attorneys' fees) arising from Recipient's breach of this Agreement.
+
+7. GENERAL PROVISIONS
+
+7.1 Governing Law. This Agreement shall be governed by and construed in accordance with the laws of the State of California, without regard to its conflict of laws principles.
+
+7.2 Jurisdiction. Any dispute arising out of or relating to this Agreement shall be resolved exclusively in the state or federal courts located in San Francisco County, California.
+
+7.3 Entire Agreement. This Agreement constitutes the entire agreement between the Parties with respect to the subject matter hereof and supersedes all prior negotiations, representations, and agreements.
+
+7.4 Amendments. This Agreement may not be amended or modified except by a written instrument signed by both Parties.
+
+7.5 Assignment. Recipient may not assign this Agreement without the prior written consent of Discloser.
+
+7.6 Waiver. The failure of either Party to enforce any provision of this Agreement shall not be deemed a waiver of such provision or the right to enforce it in the future.
+
+7.7 Severability. If any provision of this Agreement is held to be invalid or unenforceable, the remaining provisions shall continue in full force and effect.
+
+7.8 Notices. All notices under this Agreement shall be in writing and delivered to the addresses set forth above, or to such other address as a Party may designate in writing.
+
+7.9 Counterparts. This Agreement may be executed in counterparts, each of which shall be deemed an original.
+
+IN WITNESS WHEREOF, the Parties have executed this Agreement as of the date first written above.
+
+INNOVATE TECHNOLOGIES INC.
+
+By: _______________________________
+Name: Sarah Johnson
+Title: Chief Executive Officer
+Date: January 15, 2024
+
+STRATEGIC PARTNERS LLC
+
+By: _______________________________
+Name: Michael Chen
+Title: Managing Partner
+Date: January 15, 2024
