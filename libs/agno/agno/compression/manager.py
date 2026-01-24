@@ -141,6 +141,9 @@ class CompressionManager:
             log_warning("No compression model available for context compression")
             return None
 
+        # Save original messages for rollback on failure
+        original_messages = messages.copy()
+
         # 1. Find current user (latest user message with from_history=False)
         current_user_idx: Optional[int] = None
         for i in range(len(messages) - 1, -1, -1):
@@ -199,12 +202,22 @@ class CompressionManager:
         conversation_text = "\n".join(conversation_parts)
         compression_prompt = self.compress_context_instructions or CONTEXT_COMPRESSION_PROMPT
 
+        # Build user content - include previous summary for incremental compression
+        if compression_context and compression_context.content:
+            user_content = (
+                f"Previous summary (merge new facts into this):\n"
+                f"{compression_context.content}\n\n"
+                f"New conversation to incorporate:\n\n{conversation_text}"
+            )
+        else:
+            user_content = f"Conversation to compress:\n\n{conversation_text}"
+
         # Generate a new combined summary from: previous summary + new messages
         try:
             response = self.model.response(
                 messages=[
                     Message(role="system", content=compression_prompt),
-                    Message(role="user", content=f"Conversation to compress:\n\n{conversation_text}"),
+                    Message(role="user", content=user_content),
                 ]
             )
 
@@ -270,6 +283,8 @@ class CompressionManager:
 
         except Exception as e:
             log_error(f"Error compressing context: {e}")
+            # Restore original messages on failure
+            messages[:] = original_messages
 
         return None
 
@@ -285,6 +300,9 @@ class CompressionManager:
         if not self.model:
             log_warning("No compression model available for context compression")
             return None
+
+        # Save original messages for rollback on failure
+        original_messages = messages.copy()
 
         # 1. Find current user (latest user message with from_history=False)
         current_user_idx: Optional[int] = None
@@ -344,12 +362,22 @@ class CompressionManager:
         conversation_text = "\n".join(conversation_parts)
         compression_prompt = self.compress_context_instructions or CONTEXT_COMPRESSION_PROMPT
 
+        # Build user content - include previous summary for incremental compression
+        if compression_context and compression_context.content:
+            user_content = (
+                f"Previous summary (merge new facts into this):\n"
+                f"{compression_context.content}\n\n"
+                f"New conversation to incorporate:\n\n{conversation_text}"
+            )
+        else:
+            user_content = f"Conversation to compress:\n\n{conversation_text}"
+
         # Generate summary: previous summary + new messages
         try:
             response = await self.model.aresponse(
                 messages=[
                     Message(role="system", content=compression_prompt),
-                    Message(role="user", content=f"Conversation to compress:\n\n{conversation_text}"),
+                    Message(role="user", content=user_content),
                 ]
             )
 
@@ -416,6 +444,8 @@ class CompressionManager:
 
         except Exception as e:
             log_error(f"Error compressing context: {e}")
+            # Restore original messages on failure
+            messages[:] = original_messages
 
         return None
 

@@ -395,3 +395,104 @@ class TestCompressedContextFiltering:
 
         # All messages should remain since message_ids is empty
         assert len(filtered_history) == 2
+
+
+class TestIncrementalCompression:
+    """Test that incremental compression includes previous summary."""
+
+    def test_incremental_compression_includes_previous_summary(self):
+        """Verify that when a previous compression context exists, its content is included in the LLM prompt."""
+        manager = CompressionManager(
+            compress_context=True,
+            model=MagicMock(),
+        )
+
+        mock_response = MagicMock()
+        mock_response.content = "Merged summary"
+        manager.model.response = MagicMock(return_value=mock_response)
+
+        previous_context = CompressedContext(
+            content="TASK: Research topic\nDATA: fact1=value1",
+            message_ids={"old_user1", "old_asst1"},
+        )
+
+        messages = [
+            Message(role="system", content="System", id="sys1"),
+            Message(role="user", content="Question", id="user1", from_history=True),
+            Message(role="assistant", content="Answer", id="asst1", from_history=True),
+            Message(role="user", content="Current", id="user2", from_history=False),
+        ]
+
+        with patch("agno.compression.manager.get_model", return_value=manager.model):
+            manager._compress_context(messages.copy(), previous_context)
+
+        # Check that the model was called with the previous summary in the prompt
+        call_args = manager.model.response.call_args
+        user_message = call_args.kwargs["messages"][1]
+        assert "Previous summary" in user_message.content
+        assert "TASK: Research topic" in user_message.content
+        assert "fact1=value1" in user_message.content
+        assert "New conversation to incorporate" in user_message.content
+
+
+class TestCompressionErrorHandling:
+    """Test error handling and recovery in compression."""
+
+    def test_compression_failure_restores_messages(self):
+        """Verify that messages are restored when compression fails mid-way."""
+        manager = CompressionManager(
+            compress_context=True,
+            model=MagicMock(),
+        )
+
+        # Simulate a model failure
+        manager.model.response = MagicMock(side_effect=Exception("API Error"))
+
+        messages = [
+            Message(role="system", content="System", id="sys1"),
+            Message(role="user", content="Old question", id="user1", from_history=True),
+            Message(role="assistant", content="Old answer", id="asst1", from_history=True),
+            Message(role="user", content="Current question", id="user2", from_history=False),
+        ]
+
+        original_message_ids = [msg.id for msg in messages]
+
+        with patch("agno.compression.manager.get_model", return_value=manager.model):
+            result = manager._compress_context(messages)
+
+        # Compression should fail and return None
+        assert result is None
+
+        # Messages should be restored to original state
+        assert len(messages) == 4
+        assert [msg.id for msg in messages] == original_message_ids
+
+    @pytest.mark.asyncio
+    async def test_async_compression_failure_restores_messages(self):
+        """Verify async compression restores messages on failure."""
+        manager = CompressionManager(
+            compress_context=True,
+            model=MagicMock(),
+        )
+
+        # Simulate an async model failure
+        manager.model.aresponse = AsyncMock(side_effect=Exception("API Error"))
+
+        messages = [
+            Message(role="system", content="System", id="sys1"),
+            Message(role="user", content="Old question", id="user1", from_history=True),
+            Message(role="assistant", content="Old answer", id="asst1", from_history=True),
+            Message(role="user", content="Current question", id="user2", from_history=False),
+        ]
+
+        original_message_ids = [msg.id for msg in messages]
+
+        with patch("agno.compression.manager.get_model", return_value=manager.model):
+            result = await manager._acompress_context(messages)
+
+        # Compression should fail and return None
+        assert result is None
+
+        # Messages should be restored to original state
+        assert len(messages) == 4
+        assert [msg.id for msg in messages] == original_message_ids

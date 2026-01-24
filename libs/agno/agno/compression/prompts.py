@@ -118,4 +118,11 @@ CONTEXT_COMPRESSION_PROMPT = dedent("""\
     PENDING:
     - Extract top 3 clips
     - Add captions
+
+    INCREMENTAL COMPRESSION:
+    When given a "Previous summary", merge new information:
+    - Keep all facts from previous summary unless contradicted by new info
+    - Add new facts from the conversation
+    - Update STATUS and PENDING based on latest state
+    - Remove duplicates (same fact should not appear twice)
     """)
