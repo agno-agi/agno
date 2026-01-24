@@ -1,103 +1,451 @@
 import asyncio
 from dataclasses import dataclass, field
-from textwrap import dedent
-from typing import Any, Dict, List, Optional, Type, Union
+from datetime import datetime
+from typing import Any, Dict, List, Optional, Set, Type, Union
 
 from pydantic import BaseModel
 
+from agno.compression.context import CompressedContext
+from agno.compression.prompts import CONTEXT_COMPRESSION_PROMPT, TOOL_COMPRESSION_PROMPT
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.utils import get_model
 from agno.utils.log import log_error, log_info, log_warning
-
-DEFAULT_COMPRESSION_PROMPT = dedent("""\
-    You are compressing tool call results to save context space while preserving critical information.
-    
-    Your goal: Extract only the essential information from the tool output.
-    
-    ALWAYS PRESERVE:
-    • Specific facts: numbers, statistics, amounts, prices, quantities, metrics
-    • Temporal data: dates, times, timestamps (use short format: "Oct 21 2025")
-    • Entities: people, companies, products, locations, organizations
-    • Identifiers: URLs, IDs, codes, technical identifiers, versions
-    • Key quotes, citations, sources (if relevant to agent's task)
-    
-    COMPRESS TO ESSENTIALS:
-    • Descriptions: keep only key attributes
-    • Explanations: distill to core insight
-    • Lists: focus on most relevant items based on agent context
-    • Background: minimal context only if critical
-    
-    REMOVE ENTIRELY:
-    • Introductions, conclusions, transitions
-    • Hedging language ("might", "possibly", "appears to")
-    • Meta-commentary ("According to", "The results show")
-    • Formatting artifacts (markdown, HTML, JSON structure)
-    • Redundant or repetitive information
-    • Generic background not relevant to agent's task
-    • Promotional language, filler words
-    
-    EXAMPLE:
-    Input: "According to recent market analysis and industry reports, OpenAI has made several significant announcements in the technology sector. The company revealed ChatGPT Atlas on October 21, 2025, which represents a new AI-powered browser application that has been specifically designed for macOS users. This browser is strategically positioned to compete with traditional search engines in the market. Additionally, on October 6, 2025, OpenAI launched Apps in ChatGPT, which includes a comprehensive software development kit (SDK) for developers. The company has also announced several initial strategic partners who will be integrating with this new feature, including well-known companies such as Spotify, the popular music streaming service, Zillow, which is a real estate marketplace platform, and Canva, a graphic design platform."
-    
-    Output: "OpenAI - Oct 21 2025: ChatGPT Atlas (AI browser, macOS, search competitor); Oct 6 2025: Apps in ChatGPT + SDK; Partners: Spotify, Zillow, Canva"
-    
-    Be concise while retaining all critical facts.
-    """)
+from agno.utils.tokens import count_text_tokens
 
 
 @dataclass
 class CompressionManager:
-    model: Optional[Model] = None  # model used for compression
-    compress_tool_results: bool = True
-    compress_tool_results_limit: Optional[int] = None
+    model: Optional[Model] = None
+
+    # Token limit for compression
     compress_token_limit: Optional[int] = None
+
+    # Tool compression
+    compress_tool_results: bool = False
+    compress_tool_results_limit: Optional[int] = None
     compress_tool_call_instructions: Optional[str] = None
+
+    # Context compression
+    compress_context: bool = False
+    compress_context_messages_limit: Optional[int] = None
+    compress_context_instructions: Optional[str] = None
 
     stats: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self):
-        if self.compress_tool_results_limit is None and self.compress_token_limit is None:
-            self.compress_tool_results_limit = 3
+        if self.compress_token_limit is None:
+            # Set default limit to 3 if only compress_tool_results = True
+            if self.compress_tool_results and self.compress_tool_results_limit is None:
+                self.compress_tool_results_limit = 3
+            # Set default limit to 10 if only compress_context = True
+            if self.compress_context and self.compress_context_messages_limit is None:
+                self.compress_context_messages_limit = 10
 
-    def _is_tool_result_message(self, msg: Message) -> bool:
-        return msg.role == "tool"
+        if not (self.compress_tool_results or self.compress_context):
+            log_warning(
+                "No compression strategy is enabled. Please set compress_tool_results=True or compress_context=True."
+            )
 
-    def should_compress(
+        if self.compress_tool_results and self.compress_context:
+            log_warning(
+                "Cannot enable `compress_tool_results` and `compress_context` simultaneously. Defaulting to `compress_context`."
+            )
+
+    def compress(
         self,
         messages: List[Message],
         tools: Optional[List] = None,
-        model: Optional[Model] = None,
+        compression_context: Optional[CompressedContext] = None,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+    ) -> Optional[CompressedContext]:
+        if self.compress_context and self._should_compress_context(messages, tools, response_format):
+            return self._compress_context(messages, compression_context)
+
+        if self.compress_tool_results and self._should_compress_tools(messages, tools, response_format):
+            self._compress_tools(messages)
+            return None
+
+        return None
+
+    async def acompress(
+        self,
+        messages: List[Message],
+        tools: Optional[List] = None,
+        compression_context: Optional[CompressedContext] = None,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+    ) -> Optional[CompressedContext]:
+        if self.compress_context and self._should_compress_context(messages, tools, response_format):
+            return await self._acompress_context(messages, compression_context)
+
+        if self.compress_tool_results and self._should_compress_tools(messages, tools, response_format):
+            await self._acompress_tools(messages)
+            return None
+
+        return None
+
+    def _should_compress_context(
+        self,
+        messages: List[Message],
+        tools: Optional[List] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
     ) -> bool:
-        """Check if tool results should be compressed.
-
-        Args:
-            messages: List of messages to check.
-            tools: List of tools for token counting.
-            model: The Agent / Team model.
-            response_format: Output schema for accurate token counting.
-        """
-        if not self.compress_tool_results:
+        """Check if context compression should be triggered based on limits."""
+        # Token-based compression
+        if self.compress_token_limit:
+            if self.model:
+                token_count = self.model.count_tokens(messages, tools, output_schema=response_format)
+                if token_count >= self.compress_token_limit:
+                    return True
             return False
 
-        # Token-based threshold check
-        if self.compress_token_limit is not None and model is not None:
-            tokens = model.count_tokens(messages, tools, response_format)
-            if tokens >= self.compress_token_limit:
-                log_info(f"Token limit hit: {tokens} >= {self.compress_token_limit}")
-                return True
-
-        # Count-based threshold check
-        if self.compress_tool_results_limit is not None:
-            uncompressed_tools_count = len(
-                [m for m in messages if self._is_tool_result_message(m) and m.compressed_content is None]
-            )
-            if uncompressed_tools_count >= self.compress_tool_results_limit:
-                log_info(f"Tool count limit hit: {uncompressed_tools_count} >= {self.compress_tool_results_limit}")
-                return True
+        # Message count-based compression (excludes system messages)
+        if self.compress_context_messages_limit is not None:
+            msg_count = len([m for m in messages if m.role != "system"])
+            return msg_count >= self.compress_context_messages_limit
 
         return False
+
+    def _should_compress_tools(
+        self,
+        messages: List[Message],
+        tools: Optional[List] = None,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+    ) -> bool:
+        """Check if tool compression should be triggered based on limits."""
+        # Token-based compression
+        if self.compress_token_limit:
+            if self.model:
+                token_count = self.model.count_tokens(messages, tools, output_schema=response_format)
+                if token_count >= self.compress_token_limit:
+                    return True
+            return False
+
+        # Count-based compression
+        if self.compress_tool_results_limit is not None:
+            uncompressed = sum(1 for m in messages if m.role == "tool" and m.compressed_content is None)
+            return uncompressed >= self.compress_tool_results_limit
+
+        return False
+
+    def _compress_context(
+        self,
+        messages: List[Message],
+        compression_context: Optional[CompressedContext] = None,
+    ) -> Optional[CompressedContext]:
+        if len(messages) < 3:
+            return None
+
+        self.model = get_model(self.model)
+        if not self.model:
+            log_warning("No compression model available for context compression")
+            return None
+
+        # 1. Find current user (latest user message with from_history=False)
+        current_user_idx: Optional[int] = None
+        for i in range(len(messages) - 1, -1, -1):
+            msg = messages[i]
+            if msg.role == "user" and not msg.from_history:
+                current_user_idx = i
+                break
+
+        if current_user_idx is None:
+            return None
+
+        # 2. Find last tool batch (only after current user)
+        last_tool_idx: Optional[int] = None
+        for i in range(len(messages) - 1, current_user_idx, -1):
+            msg = messages[i]
+            if msg.role == "assistant" and msg.tool_calls:
+                last_tool_idx = i
+                break
+
+        # Get already compressed message IDs from previous runs
+        already_compressed_ids: Set[str] = set()
+        if compression_context and compression_context.message_ids:
+            already_compressed_ids = compression_context.message_ids
+
+        # 3. Collect messages to compress (everything except system, current_user, last_tool_batch, and already-compressed)
+        msgs_to_compress: List[Message] = []
+        compressed_msg_ids: Set[str] = set()
+
+        for i, msg in enumerate(messages):
+            # Skip: system messages, current user message, last tool batch
+            if msg.role == "system" or i == current_user_idx:
+                continue
+            if last_tool_idx is not None and i >= last_tool_idx:
+                continue
+            # Skip messages that were already compressed in previous runs
+            if msg.id and msg.id in already_compressed_ids:
+                continue
+
+            msgs_to_compress.append(msg)
+            if msg.id:
+                compressed_msg_ids.add(msg.id)
+
+        if not msgs_to_compress:
+            return None
+
+        # 4. Build conversation text for LLM
+        conversation_parts = []
+        for msg in msgs_to_compress:
+            role = msg.role.upper()
+            content = msg.compressed_content or msg.content or ""
+            if msg.tool_name:
+                conversation_parts.append(f"[{role} - {msg.tool_name}]: {content}")
+            else:
+                conversation_parts.append(f"[{role}]: {content}")
+
+        conversation_text = "\n".join(conversation_parts)
+        compression_prompt = self.compress_context_instructions or CONTEXT_COMPRESSION_PROMPT
+
+        # Generate a new combined summary from: previous summary + new messages
+        try:
+            response = self.model.response(
+                messages=[
+                    Message(role="system", content=compression_prompt),
+                    Message(role="user", content=f"Conversation to compress:\n\n{conversation_text}"),
+                ]
+            )
+
+            if not response.content:
+                return None
+
+            # Merge message IDs with previous compressed context
+            all_msg_ids = compressed_msg_ids
+            if compression_context and compression_context.message_ids:
+                all_msg_ids = all_msg_ids.union(compression_context.message_ids)
+
+            new_context = CompressedContext(
+                content=response.content,
+                message_ids=all_msg_ids,
+                updated_at=datetime.now(),
+            )
+
+            # Calculate and track token savings
+            original_tokens = count_text_tokens(conversation_text, self.model.id)
+            compressed_tokens = count_text_tokens(response.content, self.model.id)
+
+            self.stats["context_compressions"] = self.stats.get("context_compressions", 0) + 1
+            self.stats["messages_compressed"] = self.stats.get("messages_compressed", 0) + len(msgs_to_compress)
+            self.stats["original_context_tokens"] = self.stats.get("original_context_tokens", 0) + original_tokens
+            self.stats["compression_context_tokens"] = (
+                self.stats.get("compression_context_tokens", 0) + compressed_tokens
+            )
+
+            log_info(
+                f"Context compressed: {original_tokens} -> {compressed_tokens} tokens ({len(msgs_to_compress)} msgs)"
+            )
+
+            # 6. Rebuild message list: system + summary + current_user + last_tool_batch
+            new_messages: List[Message] = []
+
+            # Keep system messages
+            for msg in messages:
+                if msg.role == "system":
+                    new_messages.append(msg)
+                else:
+                    break
+
+            # Add summary of compressed messages as user message
+            summary_content = f"<previous_summary>\n{response.content}\n</previous_summary>"
+            summary_msg = Message(
+                role="user",
+                content=summary_content,
+                add_to_agent_memory=True,
+            )
+            new_messages.append(summary_msg)
+
+            # Add current user
+            new_messages.append(messages[current_user_idx])
+
+            # Add last tool batch (if exists)
+            if last_tool_idx is not None:
+                new_messages.extend(messages[last_tool_idx:])
+
+            # Replace messages in place
+            messages[:] = new_messages
+
+            return new_context
+
+        except Exception as e:
+            log_error(f"Error compressing context: {e}")
+
+        return None
+
+    async def _acompress_context(
+        self,
+        messages: List[Message],
+        compression_context: Optional[CompressedContext] = None,
+    ) -> Optional[CompressedContext]:
+        if len(messages) < 3:
+            return None
+
+        self.model = get_model(self.model)
+        if not self.model:
+            log_warning("No compression model available for context compression")
+            return None
+
+        # 1. Find current user (latest user message with from_history=False)
+        current_user_idx: Optional[int] = None
+        for i in range(len(messages) - 1, -1, -1):
+            msg = messages[i]
+            if msg.role == "user" and not msg.from_history:
+                current_user_idx = i
+                break
+
+        if current_user_idx is None:
+            return None
+
+        # 2. Find last tool batch (only after current user)
+        last_tool_idx: Optional[int] = None
+        for i in range(len(messages) - 1, current_user_idx, -1):
+            msg = messages[i]
+            if msg.role == "assistant" and msg.tool_calls:
+                last_tool_idx = i
+                break
+
+        # Get already compressed message IDs from previous runs
+        already_compressed_ids: Set[str] = set()
+        if compression_context and compression_context.message_ids:
+            already_compressed_ids = compression_context.message_ids
+
+        # 3. Collect messages to compress (skip already-compressed)
+        msgs_to_compress: List[Message] = []
+        compressed_msg_ids: Set[str] = set()
+
+        for i, msg in enumerate(messages):
+            # Skip: system messages, current user message, last tool batch
+            if msg.role == "system" or i == current_user_idx:
+                continue
+            if last_tool_idx is not None and i >= last_tool_idx:
+                continue
+            # Skip messages that were already compressed in previous runs
+            if msg.id and msg.id in already_compressed_ids:
+                continue
+
+            msgs_to_compress.append(msg)
+            if msg.id:
+                compressed_msg_ids.add(msg.id)
+
+        if not msgs_to_compress:
+            return None
+
+        # 4. Build conversation text for LLM
+        conversation_parts = []
+        for msg in msgs_to_compress:
+            role = msg.role.upper()
+            content = msg.compressed_content or msg.content or ""
+            if msg.tool_name:
+                conversation_parts.append(f"[{role} - {msg.tool_name}]: {content}")
+            else:
+                conversation_parts.append(f"[{role}]: {content}")
+
+        conversation_text = "\n".join(conversation_parts)
+        compression_prompt = self.compress_context_instructions or CONTEXT_COMPRESSION_PROMPT
+
+        # Generate summary: previous summary + new messages
+        try:
+            response = await self.model.aresponse(
+                messages=[
+                    Message(role="system", content=compression_prompt),
+                    Message(role="user", content=f"Conversation to compress:\n\n{conversation_text}"),
+                ]
+            )
+
+            if not response.content:
+                return None
+
+            # Merge message IDs with previous compressed context
+            all_msg_ids = compressed_msg_ids
+            if compression_context and compression_context.message_ids:
+                all_msg_ids = all_msg_ids.union(compression_context.message_ids)
+
+            new_context = CompressedContext(
+                content=response.content,
+                message_ids=all_msg_ids,
+                updated_at=datetime.now(),
+            )
+
+            # Calculate and track token savings
+            original_tokens = count_text_tokens(conversation_text, self.model.id)
+            compressed_tokens = count_text_tokens(response.content, self.model.id)
+
+            self.stats["context_compressions"] = self.stats.get("context_compressions", 0) + 1
+            self.stats["messages_compressed"] = self.stats.get("messages_compressed", 0) + len(msgs_to_compress)
+            self.stats["original_context_tokens"] = self.stats.get("original_context_tokens", 0) + original_tokens
+            self.stats["compression_context_tokens"] = (
+                self.stats.get("compression_context_tokens", 0) + compressed_tokens
+            )
+
+            log_info(
+                f"Context compressed: {original_tokens} -> {compressed_tokens} tokens ({len(msgs_to_compress)} msgs)"
+            )
+
+            # 6. Rebuild message list: system + summary + current_user + last_tool_batch
+            new_messages: List[Message] = []
+
+            # Keep system messages
+            for msg in messages:
+                if msg.role == "system":
+                    new_messages.append(msg)
+                else:
+                    break
+
+            # Add summary as user message (provides context to LLM)
+            summary_content = f"<previous_summary>\n{response.content}\n</previous_summary>"
+            new_messages.append(
+                Message(
+                    role="user",
+                    content=summary_content,
+                    add_to_agent_memory=True,
+                )
+            )
+
+            # Add current user
+            new_messages.append(messages[current_user_idx])
+
+            # Add last tool batch (if exists)
+            if last_tool_idx is not None:
+                new_messages.extend(messages[last_tool_idx:])
+
+            # Replace messages in place
+            messages[:] = new_messages
+
+            return new_context
+
+        except Exception as e:
+            log_error(f"Error compressing context: {e}")
+
+        return None
+
+    def _compress_tools(self, messages: List[Message]) -> None:
+        uncompressed_tools = [msg for msg in messages if msg.role == "tool" and msg.compressed_content is None]
+
+        if not uncompressed_tools:
+            return
+
+        log_info(f"Compressing {len(uncompressed_tools)} tool results")
+        self.stats["tool_compressions"] = self.stats.get("tool_compressions", 0) + 1
+
+        for tool_msg in uncompressed_tools:
+            original_content = str(tool_msg.content) if tool_msg.content else ""
+            compressed = self._compress_tool_result(tool_msg)
+
+            if compressed and self.model:
+                tool_msg.compressed_content = compressed
+                tool_results_count = len(tool_msg.tool_calls) if tool_msg.tool_calls else 1
+                self.stats["tool_results_compressed"] = (
+                    self.stats.get("tool_results_compressed", 0) + tool_results_count
+                )
+                # Track tokens
+                original_tokens = count_text_tokens(original_content, self.model.id)
+                compressed_tokens = count_text_tokens(compressed, self.model.id)
+
+                self.stats["original_tool_tokens"] = self.stats.get("original_tool_tokens", 0) + original_tokens
+                self.stats["compressed_tool_tokens"] = self.stats.get("compressed_tool_tokens", 0) + compressed_tokens
+            else:
+                log_warning(f"Compression failed for {tool_msg.tool_name}")
 
     def _compress_tool_result(self, tool_result: Message) -> Optional[str]:
         if not tool_result:
@@ -110,7 +458,7 @@ class CompressionManager:
             log_warning("No compression model available")
             return None
 
-        compression_prompt = self.compress_tool_call_instructions or DEFAULT_COMPRESSION_PROMPT
+        compression_prompt = self.compress_tool_call_instructions or TOOL_COMPRESSION_PROMPT
         compression_message = "Tool Results to Compress: " + tool_content + "\n"
 
         try:
@@ -125,71 +473,40 @@ class CompressionManager:
             log_error(f"Error compressing tool result: {e}")
             return tool_content
 
-    def compress(self, messages: List[Message]) -> None:
-        """Compress uncompressed tool results"""
-        if not self.compress_tool_results:
-            return
-
+    async def _acompress_tools(self, messages: List[Message]) -> None:
         uncompressed_tools = [msg for msg in messages if msg.role == "tool" and msg.compressed_content is None]
 
         if not uncompressed_tools:
             return
 
-        # Compress uncompressed tool results
-        for tool_msg in uncompressed_tools:
-            original_len = len(str(tool_msg.content)) if tool_msg.content else 0
-            compressed = self._compress_tool_result(tool_msg)
-            if compressed:
-                tool_msg.compressed_content = compressed
-                # Count actual tool results (Gemini combines multiple in one message)
-                tool_results_count = len(tool_msg.tool_calls) if tool_msg.tool_calls else 1
+        log_info(f"Compressing {len(uncompressed_tools)} tool results")
+        self.stats["tool_compressions"] = self.stats.get("tool_compressions", 0) + 1
+
+        # Track original content before compression
+        original_contents = [str(msg.content) if msg.content else "" for msg in uncompressed_tools]
+
+        # Parallel compression using asyncio.gather
+        tasks = [self._acompress_tool_result(msg) for msg in uncompressed_tools]
+        results = await asyncio.gather(*tasks)
+
+        # Apply results and track stats
+        for msg, compressed, original_content in zip(uncompressed_tools, results, original_contents):
+            if compressed and self.model:
+                msg.compressed_content = compressed
+                tool_results_count = len(msg.tool_calls) if msg.tool_calls else 1
                 self.stats["tool_results_compressed"] = (
                     self.stats.get("tool_results_compressed", 0) + tool_results_count
                 )
-                self.stats["original_size"] = self.stats.get("original_size", 0) + original_len
-                self.stats["compressed_size"] = self.stats.get("compressed_size", 0) + len(compressed)
+                # Track tokens
+                original_tokens = count_text_tokens(original_content, self.model.id)
+                compressed_tokens = count_text_tokens(compressed, self.model.id)
+
+                self.stats["original_tool_tokens"] = self.stats.get("original_tool_tokens", 0) + original_tokens
+                self.stats["compressed_tool_tokens"] = self.stats.get("compressed_tool_tokens", 0) + compressed_tokens
             else:
-                log_warning(f"Compression failed for {tool_msg.tool_name}")
-
-    # * Async methods *#
-    async def ashould_compress(
-        self,
-        messages: List[Message],
-        tools: Optional[List] = None,
-        model: Optional[Model] = None,
-        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-    ) -> bool:
-        """Async check if tool results should be compressed.
-
-        Args:
-            messages: List of messages to check.
-            tools: List of tools for token counting.
-            model: The Agent / Team model.
-            response_format: Output schema for accurate token counting.
-        """
-        if not self.compress_tool_results:
-            return False
-
-        # Token-based threshold check
-        if self.compress_token_limit is not None and model is not None:
-            tokens = await model.acount_tokens(messages, tools, response_format)
-            if tokens >= self.compress_token_limit:
-                log_info(f"Token limit hit: {tokens} >= {self.compress_token_limit}")
-                return True
-
-        # Count-based threshold check
-        if self.compress_tool_results_limit is not None:
-            uncompressed_tools_count = len(
-                [m for m in messages if self._is_tool_result_message(m) and m.compressed_content is None]
-            )
-            if uncompressed_tools_count >= self.compress_tool_results_limit:
-                log_info(f"Tool count limit hit: {uncompressed_tools_count} >= {self.compress_tool_results_limit}")
-                return True
-
-        return False
+                log_warning(f"Compression failed for {msg.tool_name}")
 
     async def _acompress_tool_result(self, tool_result: Message) -> Optional[str]:
-        """Async compress a single tool result"""
         if not tool_result:
             return None
 
@@ -200,7 +517,7 @@ class CompressionManager:
             log_warning("No compression model available")
             return None
 
-        compression_prompt = self.compress_tool_call_instructions or DEFAULT_COMPRESSION_PROMPT
+        compression_prompt = self.compress_tool_call_instructions or TOOL_COMPRESSION_PROMPT
         compression_message = "Tool Results to Compress: " + tool_content + "\n"
 
         try:
@@ -214,34 +531,3 @@ class CompressionManager:
         except Exception as e:
             log_error(f"Error compressing tool result: {e}")
             return tool_content
-
-    async def acompress(self, messages: List[Message]) -> None:
-        """Async compress uncompressed tool results"""
-        if not self.compress_tool_results:
-            return
-
-        uncompressed_tools = [msg for msg in messages if msg.role == "tool" and msg.compressed_content is None]
-
-        if not uncompressed_tools:
-            return
-
-        # Track original sizes before compression
-        original_sizes = [len(str(msg.content)) if msg.content else 0 for msg in uncompressed_tools]
-
-        # Parallel compression using asyncio.gather
-        tasks = [self._acompress_tool_result(msg) for msg in uncompressed_tools]
-        results = await asyncio.gather(*tasks)
-
-        # Apply results and track stats
-        for msg, compressed, original_len in zip(uncompressed_tools, results, original_sizes):
-            if compressed:
-                msg.compressed_content = compressed
-                # Count actual tool results (Gemini combines multiple in one message)
-                tool_results_count = len(msg.tool_calls) if msg.tool_calls else 1
-                self.stats["tool_results_compressed"] = (
-                    self.stats.get("tool_results_compressed", 0) + tool_results_count
-                )
-                self.stats["original_size"] = self.stats.get("original_size", 0) + original_len
-                self.stats["compressed_size"] = self.stats.get("compressed_size", 0) + len(compressed)
-            else:
-                log_warning(f"Compression failed for {msg.tool_name}")
