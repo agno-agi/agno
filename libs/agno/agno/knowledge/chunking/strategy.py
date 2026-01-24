@@ -16,20 +16,7 @@ class ChunkingStrategy(ABC):
     def _generate_chunk_id(
         self, document: Document, chunk_number: int, content: Optional[str] = None, prefix: Optional[str] = None
     ) -> Optional[str]:
-        """Generate a chunk ID with fallback to content hash when document lacks id/name.
-
-        Fallback chain: document.id -> document.name -> content hash
-
-        This ensures unique chunk IDs for vector DB deduplication (skip_if_exists).
-        Without this, documents lacking both id and name would produce chunks with
-        id=None, causing insert failures or incorrect deduplication.
-
-        Args:
-            document: The source document
-            chunk_number: The chunk index (1-based)
-            content: Optional chunk content for hashing (defaults to document.content)
-            prefix: Optional prefix before chunk_number (e.g., "row" produces "_row_1")
-        """
+        """Generate chunk ID with fallback: document.id -> document.name -> content hash."""
         suffix = f"_{prefix}_{chunk_number}" if prefix else f"_{chunk_number}"
 
         if document.id:

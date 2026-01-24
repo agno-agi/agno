@@ -82,7 +82,6 @@ class CodeChunking(ChunkingStrategy):
         for i, chunk in enumerate(chunks, 1):
             meta_data = document.meta_data.copy()
             meta_data["chunk"] = i
-            # Use content-based hash as fallback when document has no id or name
             chunk_id = self._generate_chunk_id(document, i, chunk.text)
             meta_data["chunk_size"] = len(chunk.text)
 

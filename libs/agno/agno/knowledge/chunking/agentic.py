@@ -55,7 +55,6 @@ class AgenticChunking(ChunkingStrategy):
             chunk = remaining_text[:break_point].strip()
             meta_data = chunk_meta_data.copy()
             meta_data["chunk"] = chunk_number
-            # Use content-based hash as fallback when document has no id or name
             chunk_id = self._generate_chunk_id(document, chunk_number, chunk)
             meta_data["chunk_size"] = len(chunk)
             chunks.append(

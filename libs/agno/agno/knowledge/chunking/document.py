@@ -39,7 +39,6 @@ class DocumentChunking(ChunkingStrategy):
                     meta_data = chunk_meta_data.copy()
                     meta_data["chunk"] = chunk_number
                     chunk_content = "\n\n".join(current_chunk)
-                    # Use content-based hash as fallback when document has no id or name
                     chunk_id = self._generate_chunk_id(document, chunk_number, chunk_content)
                     meta_data["chunk_size"] = len(chunk_content)
                     chunks.append(Document(id=chunk_id, name=document.name, meta_data=meta_data, content=chunk_content))
@@ -65,7 +64,6 @@ class DocumentChunking(ChunkingStrategy):
                             meta_data = chunk_meta_data.copy()
                             meta_data["chunk"] = chunk_number
                             chunk_content = " ".join(current_chunk)
-                            # Use content-based hash as fallback when document has no id or name
                             chunk_id = self._generate_chunk_id(document, chunk_number, chunk_content)
                             meta_data["chunk_size"] = len(chunk_content)
                             chunks.append(
@@ -87,7 +85,6 @@ class DocumentChunking(ChunkingStrategy):
                 meta_data = chunk_meta_data.copy()
                 meta_data["chunk"] = chunk_number
                 chunk_content = "\n\n".join(current_chunk)
-                # Use content-based hash as fallback when document has no id or name
                 chunk_id = self._generate_chunk_id(document, chunk_number, chunk_content)
                 meta_data["chunk_size"] = len(chunk_content)
                 if current_chunk:
@@ -100,7 +97,6 @@ class DocumentChunking(ChunkingStrategy):
             meta_data = chunk_meta_data.copy()
             meta_data["chunk"] = chunk_number
             chunk_content = "\n\n".join(current_chunk)
-            # Use content-based hash as fallback when document has no id or name
             chunk_id = self._generate_chunk_id(document, chunk_number, chunk_content)
             meta_data["chunk_size"] = len(chunk_content)
             chunks.append(Document(id=chunk_id, name=document.name, meta_data=meta_data, content=chunk_content))
