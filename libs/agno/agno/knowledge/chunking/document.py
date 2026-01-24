@@ -114,12 +114,9 @@ class DocumentChunking(ChunkingStrategy):
                     prev_text = chunks[i - 1].content[-self.overlap :]
                     meta_data = chunk_meta_data.copy()
                     meta_data["chunk"] = chunks[i].meta_data["chunk"]
+                    chunk_id = chunks[i].id
                     if prev_text:
-                        # Overlap prepends text from previous chunk, changing this chunk's content.
-                        # Must regenerate ID based on actual content, otherwise documents without
-                        # id/name would all get id=None regardless of their different content.
                         overlap_content = prev_text + chunks[i].content
-                        chunk_id = self._generate_chunk_id(document, meta_data["chunk"], overlap_content)
                         meta_data["chunk_size"] = len(overlap_content)
                         overlapped_chunks.append(
                             Document(
