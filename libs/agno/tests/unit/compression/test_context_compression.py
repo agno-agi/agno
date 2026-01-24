@@ -105,7 +105,8 @@ class TestContextCompressionSlicing:
             Message(role="user", content="Question", id="user1"),
         ]
 
-        result = manager._compress_context(messages.copy())
+        with patch("agno.compression.manager.get_model", return_value=manager.model):
+            result = manager._compress_context(messages.copy())
         assert result is None
 
     def test_no_compression_when_nothing_to_compress(self):
