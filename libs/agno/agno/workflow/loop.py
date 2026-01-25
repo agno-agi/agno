@@ -1,5 +1,4 @@
 import inspect
-import warnings
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union
 from uuid import uuid4
@@ -150,6 +149,7 @@ class Loop:
 
         all_results = []
         iteration = 0
+        early_termination = False
 
         while iteration < self.max_iterations:
             # Execute all steps in this iteration - mirroring workflow logic
@@ -182,6 +182,7 @@ class Loop:
 
                         if any(output.stop for output in step_output):
                             logger.info(f"Early termination requested by step {step_name}")
+                            early_termination = True
                             break
                 else:
                     # Single StepOutput
@@ -191,6 +192,7 @@ class Loop:
 
                     if step_output.stop:
                         logger.info(f"Early termination requested by step {step_name}")
+                        early_termination = True
                         break
 
                 # Update step input for next step
@@ -209,7 +211,11 @@ class Loop:
                         break
                 except Exception as e:
                     logger.warning(f"End condition evaluation failed: {e}")
-                    # Continue with loop if end condition fails
+
+            # Break out of iteration loop if early termination was requested
+            if early_termination:
+                log_debug(f"Loop ending early due to step termination request at iteration {iteration}")
+                break
 
         log_debug(f"Loop End: {self.name} ({iteration} iterations)", center=True, symbol="=")
 
@@ -224,6 +230,7 @@ class Loop:
             step_type=StepType.LOOP,
             content=f"Loop {self.name} completed {iteration} iterations with {len(flattened_results)} total steps",
             success=all(result.success for result in flattened_results) if flattened_results else True,
+            stop=any(result.stop for result in flattened_results) if flattened_results else False,
             steps=flattened_results,
         )
 
@@ -233,7 +240,6 @@ class Loop:
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         stream_events: bool = False,
-        stream_intermediate_steps: bool = False,
         stream_executor_events: bool = True,
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         step_index: Optional[Union[int, tuple]] = None,
@@ -253,15 +259,6 @@ class Loop:
         self._prepare_steps()
 
         loop_step_id = str(uuid4())
-
-        # Considering both stream_events and stream_intermediate_steps (deprecated)
-        if stream_intermediate_steps is not None:
-            warnings.warn(
-                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-        stream_events = stream_events or stream_intermediate_steps
 
         if stream_events and workflow_run_response:
             # Yield loop started event
@@ -434,6 +431,7 @@ class Loop:
             step_type=StepType.LOOP,
             content=f"Loop {self.name} completed {iteration} iterations with {len(flattened_results)} total steps",
             success=all(result.success for result in flattened_results) if flattened_results else True,
+            stop=any(result.stop for result in flattened_results) if flattened_results else False,
             steps=flattened_results,
         )
 
@@ -462,6 +460,7 @@ class Loop:
 
         all_results = []
         iteration = 0
+        early_termination = False
 
         while iteration < self.max_iterations:
             # Execute all steps in this iteration - mirroring workflow logic
@@ -494,6 +493,7 @@ class Loop:
 
                         if any(output.stop for output in step_output):
                             logger.info(f"Early termination requested by step {step_name}")
+                            early_termination = True
                             break
                 else:
                     # Single StepOutput
@@ -503,6 +503,7 @@ class Loop:
 
                     if step_output.stop:
                         logger.info(f"Early termination requested by step {step_name}")
+                        early_termination = True
                         break
 
                 # Update step input for next step
@@ -525,6 +526,11 @@ class Loop:
                 except Exception as e:
                     logger.warning(f"End condition evaluation failed: {e}")
 
+            # Break out of iteration loop if early termination was requested
+            if early_termination:
+                log_debug(f"Loop ending early due to step termination request at iteration {iteration}")
+                break
+
         # Use workflow logger for async loop completion
         log_debug(f"Async Loop End: {self.name} ({iteration} iterations)", center=True, symbol="=")
 
@@ -539,6 +545,7 @@ class Loop:
             step_type=StepType.LOOP,
             content=f"Loop {self.name} completed {iteration} iterations with {len(flattened_results)} total steps",
             success=all(result.success for result in flattened_results) if flattened_results else True,
+            stop=any(result.stop for result in flattened_results) if flattened_results else False,
             steps=flattened_results,
         )
 
@@ -548,7 +555,6 @@ class Loop:
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         stream_events: bool = False,
-        stream_intermediate_steps: bool = False,
         stream_executor_events: bool = True,
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         step_index: Optional[Union[int, tuple]] = None,
@@ -568,15 +574,6 @@ class Loop:
 
         # Prepare steps first
         self._prepare_steps()
-
-        # Considering both stream_events and stream_intermediate_steps (deprecated)
-        if stream_intermediate_steps is not None:
-            warnings.warn(
-                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-        stream_events = stream_events or stream_intermediate_steps
 
         if stream_events and workflow_run_response:
             # Yield loop started event
@@ -752,5 +749,6 @@ class Loop:
             step_type=StepType.LOOP,
             content=f"Loop {self.name} completed {iteration} iterations with {len(flattened_results)} total steps",
             success=all(result.success for result in flattened_results) if flattened_results else True,
+            stop=any(result.stop for result in flattened_results) if flattened_results else False,
             steps=flattened_results,
         )
