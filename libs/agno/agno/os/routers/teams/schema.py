@@ -8,7 +8,6 @@ from agno.os.routers.agents.schema import AgentResponse
 from agno.os.schema import ModelResponse
 from agno.os.utils import (
     format_team_tools,
-    get_team_input_schema_dict,
 )
 from agno.run import RunContext
 from agno.run.team import TeamRunOutput
@@ -22,6 +21,7 @@ class TeamResponse(BaseModel):
     name: Optional[str] = None
     db_id: Optional[str] = None
     description: Optional[str] = None
+    role: Optional[str] = None
     model: Optional[ModelResponse] = None
     tools: Optional[Dict[str, Any]] = None
     sessions: Optional[Dict[str, Any]] = None
@@ -65,7 +65,7 @@ class TeamResponse(BaseModel):
             "enable_agentic_knowledge_filters": False,
             # Memory defaults
             "enable_agentic_memory": False,
-            "enable_user_memories": False,
+            "update_memory_on_run": False,
             # Reasoning defaults
             "reasoning": False,
             "reasoning_min_steps": 1,
@@ -85,7 +85,6 @@ class TeamResponse(BaseModel):
             "use_json_mode": False,
             # Streaming defaults
             "stream_events": False,
-            "stream_intermediate_steps": False,
             "stream_member_events": False,
         }
 
@@ -102,6 +101,13 @@ class TeamResponse(BaseModel):
         )
         team_tools = _tools
         formatted_tools = format_team_tools(team_tools) if team_tools else None
+
+        input_schema_dict = None
+        if team.input_schema is not None:
+            try:
+                input_schema_dict = team.input_schema.model_json_schema()
+            except Exception:
+                pass
 
         model_name = team.model.name or team.model.__class__.__name__ if team.model else None
         model_provider = team.model.provider or team.model.__class__.__name__ if team.model else ""
@@ -131,7 +137,9 @@ class TeamResponse(BaseModel):
             "cache_session": team.cache_session,
         }
 
+        contents_db = getattr(team.knowledge, "contents_db", None) if team.knowledge else None
         knowledge_info = {
+            "db_id": contents_db.id if contents_db else None,
             "knowledge_table": knowledge_table,
             "enable_agentic_knowledge_filters": team.enable_agentic_knowledge_filters,
             "knowledge_filters": team.knowledge_filters,
@@ -142,9 +150,10 @@ class TeamResponse(BaseModel):
         if team.memory_manager is not None:
             memory_info = {
                 "enable_agentic_memory": team.enable_agentic_memory,
-                "enable_user_memories": team.enable_user_memories,
+                "update_memory_on_run": team.update_memory_on_run,
+                "enable_user_memories": team.enable_user_memories,  # Soon to be deprecated. Use update_memory_on_run
                 "metadata": team.metadata,
-                "memory_table": team.db.memory_table_name if team.db and team.enable_user_memories else None,
+                "memory_table": team.db.memory_table_name if team.db and team.update_memory_on_run else None,
             }
 
             if team.memory_manager.model is not None:
@@ -197,8 +206,21 @@ class TeamResponse(BaseModel):
             "resolve_in_context": team.resolve_in_context,
         }
 
+        # Handle output_schema name for both Pydantic models and JSON schemas
+        output_schema_name = None
+        if team.output_schema is not None:
+            if isinstance(team.output_schema, dict):
+                if "json_schema" in team.output_schema:
+                    output_schema_name = team.output_schema["json_schema"].get("name", "JSONSchema")
+                elif "schema" in team.output_schema and isinstance(team.output_schema["schema"], dict):
+                    output_schema_name = team.output_schema["schema"].get("title", "JSONSchema")
+                else:
+                    output_schema_name = team.output_schema.get("title", "JSONSchema")
+            elif hasattr(team.output_schema, "__name__"):
+                output_schema_name = team.output_schema.__name__
+
         response_settings_info: Dict[str, Any] = {
-            "output_schema_name": team.output_schema.__name__ if team.output_schema else None,
+            "output_schema_name": output_schema_name,
             "parser_model_prompt": team.parser_model_prompt,
             "parse_response": team.parse_response,
             "use_json_mode": team.use_json_mode,
@@ -214,7 +236,6 @@ class TeamResponse(BaseModel):
         streaming_info = {
             "stream": team.stream,
             "stream_events": team.stream_events,
-            "stream_intermediate_steps": team.stream_intermediate_steps,
             "stream_member_events": team.stream_member_events,
         }
 
@@ -240,6 +261,8 @@ class TeamResponse(BaseModel):
             id=team.id,
             name=team.name,
             db_id=team.db.id if team.db else None,
+            description=team.description,
+            role=team.role,
             model=ModelResponse(**_team_model_data) if _team_model_data else None,
             tools=filter_meaningful_config(tools_info, {}),
             sessions=filter_meaningful_config(sessions_info, team_defaults),
@@ -253,5 +276,5 @@ class TeamResponse(BaseModel):
             streaming=filter_meaningful_config(streaming_info, team_defaults),
             members=members if members else None,
             metadata=team.metadata,
-            input_schema=get_team_input_schema_dict(team),
+            input_schema=input_schema_dict,
         )

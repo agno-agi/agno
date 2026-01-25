@@ -1,5 +1,7 @@
 """Integration tests for WorkflowAgent functionality in workflows."""
 
+import uuid
+
 import pytest
 
 from agno.agent import Agent
@@ -101,6 +103,7 @@ def test_workflow_agent_answers_from_history(shared_db):
 def test_workflow_agent_new_topic_runs_workflow(shared_db):
     """Test that WorkflowAgent runs workflow again for new topics."""
     workflow_agent = WorkflowAgent(model=OpenAIChat(id="gpt-4o-mini"))
+    session_id = str(uuid.uuid4())
 
     workflow = Workflow(
         name="Story Workflow",
@@ -111,6 +114,7 @@ def test_workflow_agent_new_topic_runs_workflow(shared_db):
             Step(name="format", executor=format_step),
         ],
         db=shared_db,
+        session_id=session_id,
     )
 
     # First call - dog story
@@ -176,7 +180,7 @@ def test_workflow_agent_streaming(shared_db):
     )
 
     # Run with streaming
-    events = list(workflow.run(input="a dog named Max", stream=True, stream_intermediate_steps=True))
+    events = list(workflow.run(input="a dog named Max", stream=True, stream_events=True))
 
     # Should have workflow started and completed events
     started_events = [e for e in events if isinstance(e, WorkflowStartedEvent)]
@@ -284,7 +288,7 @@ async def test_workflow_agent_async_streaming(shared_db):
     )
 
     events = []
-    async for event in workflow.arun(input="a dog named Max", stream=True, stream_intermediate_steps=True):
+    async for event in workflow.arun(input="a dog named Max", stream=True, stream_events=True):
         events.append(event)
 
     # Should have workflow started and completed events

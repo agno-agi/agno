@@ -2,12 +2,14 @@ import hashlib
 import json
 import re
 import uuid
-from typing import Optional, Type
+from typing import Any, Optional, Type, Union
 from uuid import uuid4
 
 from pydantic import BaseModel, ValidationError
 
 from agno.utils.log import logger
+
+POSTGRES_INVALID_CHARS_REGEX = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\ufffe\uffff]")
 
 
 def is_valid_uuid(uuid_str: str) -> bool:
@@ -87,7 +89,8 @@ def _clean_json_content(content: str) -> str:
     if "```json" in content:
         content = content.split("```json")[-1].strip()
         parts = content.split("```")
-        parts.pop(-1)
+        if len(parts) > 1:
+            parts.pop(-1)
         content = "".join(parts)
     elif "```" in content:
         content = content.split("```")[1].strip()
@@ -201,6 +204,52 @@ def parse_response_model_str(content: str, output_schema: Type[BaseModel]) -> Op
     return structured_output
 
 
+def parse_response_dict_str(content: str) -> Optional[dict]:
+    """Parse dict from string content, extracting JSON if needed"""
+    from agno.utils.reasoning import extract_thinking_content
+
+    # Handle thinking content b/w <think> tags
+    if "</think>" in content:
+        reasoning_content, output_content = extract_thinking_content(content)
+        if reasoning_content:
+            content = output_content
+
+    # Clean content first to simplify all parsing attempts
+    cleaned_content = _clean_json_content(content)
+
+    try:
+        # First attempt: direct JSON parsing on cleaned content
+        return json.loads(cleaned_content)
+    except json.JSONDecodeError as e:
+        logger.warning(f"Failed to parse cleaned JSON: {e}")
+
+        # Second attempt: Extract individual JSON objects
+        candidate_jsons = _extract_json_objects(cleaned_content)
+
+        if len(candidate_jsons) == 1:
+            # Single JSON object - try to parse it directly
+            try:
+                return json.loads(candidate_jsons[0])
+            except json.JSONDecodeError:
+                pass
+
+        if len(candidate_jsons) > 1:
+            # Final attempt: Merge multiple JSON objects
+            merged_data: dict = {}
+            for candidate in candidate_jsons:
+                try:
+                    obj = json.loads(candidate)
+                    if isinstance(obj, dict):
+                        merged_data.update(obj)
+                except json.JSONDecodeError:
+                    continue
+            if merged_data:
+                return merged_data
+
+        logger.warning("All parsing attempts failed.")
+        return None
+
+
 def generate_id(seed: Optional[str] = None) -> str:
     """
     Generate a deterministic UUID5 based on a seed string.
@@ -229,3 +278,43 @@ def generate_id_from_name(name: Optional[str] = None) -> str:
         return name.lower().replace(" ", "-").replace("_", "-")
     else:
         return str(uuid4())
+
+
+def sanitize_postgres_string(value: Optional[str]) -> Optional[str]:
+    """Remove illegal chars from string values to prevent PostgreSQL encoding errors.
+
+    This function all chars illegal in Postgres UTF-8 text fields.
+    Useful to prevent CharacterNotInRepertoireError when storing strings.
+
+    Args:
+        value: The string value to sanitize.
+
+    Returns:
+        The sanitized string with illegal chars removed, or None if input was None.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return POSTGRES_INVALID_CHARS_REGEX.sub("", value)
+
+
+def sanitize_postgres_strings(data: Union[dict, list, str, Any]) -> Union[dict, list, str, Any]:
+    """Recursively sanitize all string values in a dictionary or JSON structure.
+
+    This function traverses dictionaries, lists, and nested structures to find
+    and sanitize all string values, removing null bytes that PostgreSQL cannot handle.
+
+    Args:
+        data: The data structure to sanitize (dict, list, str or any other type).
+
+    Returns:
+        The sanitized data structure with all strings cleaned of null bytes.
+    """
+    if isinstance(data, dict):
+        return {key: sanitize_postgres_strings(value) for key, value in data.items()}
+    elif isinstance(data, list):
+        return [sanitize_postgres_strings(item) for item in data]
+    elif isinstance(data, str):
+        return sanitize_postgres_string(data)
+    else:
+        return data

@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, Any, AsyncGenerator, List, Optional
+from typing import TYPE_CHECKING, Any, AsyncGenerator, List, Optional, Union
 from uuid import uuid4
 
 from fastapi import (
@@ -13,10 +13,11 @@ from fastapi import (
 )
 from fastapi.responses import JSONResponse, StreamingResponse
 
+from agno.db.base import BaseDb
 from agno.exceptions import InputCheckError, OutputCheckError
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
-from agno.os.auth import get_authentication_dependency
+from agno.os.auth import get_auth_token_from_request, get_authentication_dependency, require_resource_access
 from agno.os.routers.teams.schema import TeamResponse
 from agno.os.schema import (
     BadRequestResponse,
@@ -35,7 +36,9 @@ from agno.os.utils import (
     process_image,
     process_video,
 )
+from agno.registry import Registry
 from agno.run.team import RunErrorEvent as TeamRunErrorEvent
+from agno.team.remote import RemoteTeam
 from agno.team.team import Team
 from agno.utils.log import log_warning, logger
 
@@ -44,7 +47,7 @@ if TYPE_CHECKING:
 
 
 async def team_response_streamer(
-    team: Team,
+    team: Union[Team, RemoteTeam],
     message: str,
     session_id: Optional[str] = None,
     user_id: Optional[str] = None,
@@ -53,6 +56,7 @@ async def team_response_streamer(
     videos: Optional[List[Video]] = None,
     files: Optional[List[FileMedia]] = None,
     background_tasks: Optional[BackgroundTasks] = None,
+    auth_token: Optional[str] = None,
     **kwargs: Any,
 ) -> AsyncGenerator:
     """Run the given team asynchronously and yield its response"""
@@ -60,6 +64,15 @@ async def team_response_streamer(
         # Pass background_tasks if provided
         if background_tasks is not None:
             kwargs["background_tasks"] = background_tasks
+
+        if "stream_events" in kwargs:
+            stream_events = kwargs.pop("stream_events")
+        else:
+            stream_events = True
+
+        # Pass auth_token for remote teams
+        if auth_token and isinstance(team, RemoteTeam):
+            kwargs["auth_token"] = auth_token
 
         run_response = team.arun(
             input=message,
@@ -70,7 +83,7 @@ async def team_response_streamer(
             videos=videos,
             files=files,
             stream=True,
-            stream_events=True,
+            stream_events=stream_events,
             **kwargs,
         )
         async for run_response_chunk in run_response:
@@ -84,7 +97,7 @@ async def team_response_streamer(
         )
         yield format_sse_event(error_response)
 
-    except Exception as e:
+    except BaseException as e:
         import traceback
 
         traceback.print_exc()
@@ -100,6 +113,7 @@ async def team_response_streamer(
 def get_team_router(
     os: "AgentOS",
     settings: AgnoAPISettings = AgnoAPISettings(),
+    registry: Optional[Registry] = None,
 ) -> APIRouter:
     """Create the team router with comprehensive OpenAPI documentation."""
     router = APIRouter(
@@ -142,6 +156,7 @@ def get_team_router(
             400: {"description": "Invalid request or unsupported file type", "model": BadRequestResponse},
             404: {"description": "Team not found", "model": NotFoundResponse},
         },
+        dependencies=[Depends(require_resource_access("teams", "run", "team_id"))],
     )
     async def create_team_run(
         team_id: str,
@@ -153,28 +168,29 @@ def get_team_router(
         session_id: Optional[str] = Form(None),
         user_id: Optional[str] = Form(None),
         files: Optional[List[UploadFile]] = File(None),
+        version: Optional[int] = Form(None),
     ):
         kwargs = await get_request_kwargs(request, create_team_run)
 
-        if hasattr(request.state, "user_id"):
-            if user_id:
+        if hasattr(request.state, "user_id") and request.state.user_id is not None:
+            if user_id and user_id != request.state.user_id:
                 log_warning("User ID parameter passed in both request state and kwargs, using request state")
             user_id = request.state.user_id
-        if hasattr(request.state, "session_id"):
-            if session_id:
+        if hasattr(request.state, "session_id") and request.state.session_id is not None:
+            if session_id and session_id != request.state.session_id:
                 log_warning("Session ID parameter passed in both request state and kwargs, using request state")
             session_id = request.state.session_id
-        if hasattr(request.state, "session_state"):
+        if hasattr(request.state, "session_state") and request.state.session_state is not None:
             session_state = request.state.session_state
             if "session_state" in kwargs:
                 log_warning("Session state parameter passed in both request state and kwargs, using request state")
             kwargs["session_state"] = session_state
-        if hasattr(request.state, "dependencies"):
+        if hasattr(request.state, "dependencies") and request.state.dependencies is not None:
             dependencies = request.state.dependencies
             if "dependencies" in kwargs:
                 log_warning("Dependencies parameter passed in both request state and kwargs, using request state")
             kwargs["dependencies"] = dependencies
-        if hasattr(request.state, "metadata"):
+        if hasattr(request.state, "metadata") and request.state.metadata is not None:
             metadata = request.state.metadata
             if "metadata" in kwargs:
                 log_warning("Metadata parameter passed in both request state and kwargs, using request state")
@@ -182,7 +198,9 @@ def get_team_router(
 
         logger.debug(f"Creating team run: {message=} {session_id=} {monitor=} {user_id=} {team_id=} {files=} {kwargs=}")
 
-        team = get_team_by_id(team_id, os.teams)
+        team = get_team_by_id(
+            team_id=team_id, teams=os.teams, db=os.db, version=version, registry=registry, create_fresh=True
+        )
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
 
@@ -245,6 +263,9 @@ def get_team_router(
                 else:
                     raise HTTPException(status_code=400, detail="Unsupported file type")
 
+        # Extract auth token for remote teams
+        auth_token = get_auth_token_from_request(request)
+
         if stream:
             return StreamingResponse(
                 team_response_streamer(
@@ -257,11 +278,16 @@ def get_team_router(
                     videos=base64_videos if base64_videos else None,
                     files=document_files if document_files else None,
                     background_tasks=background_tasks,
+                    auth_token=auth_token,
                     **kwargs,
                 ),
                 media_type="text/event-stream",
             )
         else:
+            # Pass auth_token for remote teams
+            if auth_token and isinstance(team, RemoteTeam):
+                kwargs["auth_token"] = auth_token
+
             try:
                 run_response = await team.arun(
                     input=message,
@@ -295,17 +321,19 @@ def get_team_router(
             404: {"description": "Team not found", "model": NotFoundResponse},
             500: {"description": "Failed to cancel team run", "model": InternalServerErrorResponse},
         },
+        dependencies=[Depends(require_resource_access("teams", "run", "team_id"))],
     )
     async def cancel_team_run(
         team_id: str,
         run_id: str,
     ):
-        team = get_team_by_id(team_id, os.teams)
+        team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
 
-        if not team.cancel_run(run_id=run_id):
-            raise HTTPException(status_code=500, detail="Failed to cancel run")
+        cancelled = await team.acancel_run(run_id=run_id)
+        if not cancelled:
+            raise HTTPException(status_code=500, detail="Failed to cancel run - run not found or already completed")
 
         return JSONResponse(content={}, status_code=200)
 
@@ -390,15 +418,37 @@ def get_team_router(
             }
         },
     )
-    async def get_teams() -> List[TeamResponse]:
+    async def get_teams(request: Request) -> List[TeamResponse]:
         """Return the list of all Teams present in the contextual OS"""
-        if os.teams is None:
-            return []
+        # Filter teams based on user's scopes (only if authorization is enabled)
+        if getattr(request.state, "authorization_enabled", False):
+            from agno.os.auth import filter_resources_by_access, get_accessible_resources
+
+            # Check if user has any team scopes at all
+            accessible_ids = get_accessible_resources(request, "teams")
+            if not accessible_ids:
+                raise HTTPException(status_code=403, detail="Insufficient permissions")
+
+            accessible_teams = filter_resources_by_access(request, os.teams or [], "teams")
+        else:
+            accessible_teams = os.teams or []
 
         teams = []
-        for team in os.teams:
-            team_response = await TeamResponse.from_team(team=team)
-            teams.append(team_response)
+        for team in accessible_teams:
+            if isinstance(team, RemoteTeam):
+                teams.append(await team.get_team_config())
+            else:
+                team_response = await TeamResponse.from_team(team=team)
+                teams.append(team_response)
+
+        # Also load teams from database
+        if os.db and isinstance(os.db, BaseDb):
+            from agno.team.team import get_teams
+
+            db_teams = get_teams(db=os.db, registry=registry)
+            for db_team in db_teams:
+                team_response = await TeamResponse.from_team(team=db_team)
+                teams.append(team_response)
 
         return teams
 
@@ -485,12 +535,16 @@ def get_team_router(
             },
             404: {"description": "Team not found", "model": NotFoundResponse},
         },
+        dependencies=[Depends(require_resource_access("teams", "read", "team_id"))],
     )
-    async def get_team(team_id: str) -> TeamResponse:
-        team = get_team_by_id(team_id, os.teams)
+    async def get_team(team_id: str, request: Request) -> TeamResponse:
+        team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
 
-        return await TeamResponse.from_team(team)
+        if isinstance(team, RemoteTeam):
+            return await team.get_team_config()
+        else:
+            return await TeamResponse.from_team(team=team)
 
     return router

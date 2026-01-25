@@ -43,6 +43,8 @@ class OpenAIChat(Model):
     name: str = "OpenAIChat"
     provider: str = "OpenAI"
     supports_native_structured_outputs: bool = True
+    # If True, only collect metrics on the final streaming chunk (for providers with cumulative token counts)
+    collect_metrics_on_completion: bool = False
 
     # Request parameters
     store: Optional[bool] = None
@@ -248,7 +250,7 @@ class OpenAIChat(Model):
         # Add tools
         if tools is not None and len(tools) > 0:
             # Remove unsupported fields for OpenAILike models
-            if self.provider in ["AIMLAPI", "Fireworks", "Nvidia"]:
+            if self.provider in ["AIMLAPI", "Fireworks", "Nvidia", "VLLM"]:
                 for tool in tools:
                     if tool.get("type") == "function":
                         if tool["function"].get("requires_confirmation") is not None:
@@ -304,6 +306,13 @@ class OpenAIChat(Model):
         )
         cleaned_dict = {k: v for k, v in model_dict.items() if v is not None}
         return cleaned_dict
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "OpenAIChat":
+        """
+        Create an OpenAIChat model from a dictionary.
+        """
+        return cls(**data)
 
     def _format_message(self, message: Message, compress_tool_results: bool = False) -> Dict[str, Any]:
         """
@@ -745,6 +754,21 @@ class OpenAIChat(Model):
                     tool_call_entry["type"] = _tool_call_type
         return tool_calls
 
+    def _should_collect_metrics(self, response: ChatCompletionChunk) -> bool:
+        """
+        Determine if metrics should be collected from the response.
+        """
+        if not response.usage:
+            return False
+
+        if not self.collect_metrics_on_completion:
+            return True
+
+        if not response.choices:
+            return False
+
+        return response.choices[0].finish_reason is not None
+
     def _parse_provider_response(
         self,
         response: ChatCompletion,
@@ -768,7 +792,6 @@ class OpenAIChat(Model):
         # Add role
         if response_message.role is not None:
             model_response.role = response_message.role
-
         # Add content
         if response_message.content is not None:
             model_response.content = response_message.content
@@ -846,7 +869,6 @@ class OpenAIChat(Model):
 
         if response_delta.choices and len(response_delta.choices) > 0:
             choice_delta: ChoiceDelta = response_delta.choices[0].delta
-
             if choice_delta:
                 # Add content
                 if choice_delta.content is not None:
@@ -915,7 +937,7 @@ class OpenAIChat(Model):
                         log_warning(f"Error processing audio: {e}")
 
         # Add usage metrics if present
-        if response_delta.usage is not None:
+        if self._should_collect_metrics(response_delta) and response_delta.usage is not None:
             model_response.response_usage = self._get_metrics(response_delta.usage)
 
         return model_response
@@ -946,5 +968,7 @@ class OpenAIChat(Model):
         if completion_tokens_details := response_usage.completion_tokens_details:
             metrics.audio_output_tokens = completion_tokens_details.audio_tokens or 0
             metrics.reasoning_tokens = completion_tokens_details.reasoning_tokens or 0
+
+        metrics.cost = getattr(response_usage, "cost", None)
 
         return metrics

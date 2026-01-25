@@ -8,7 +8,6 @@ from agno.models.message import Message
 from agno.os.schema import ModelResponse
 from agno.os.utils import (
     format_tools,
-    get_agent_input_schema_dict,
 )
 from agno.run import RunContext
 from agno.run.agent import RunOutput
@@ -20,6 +19,8 @@ class AgentResponse(BaseModel):
     id: Optional[str] = None
     name: Optional[str] = None
     db_id: Optional[str] = None
+    description: Optional[str] = None
+    role: Optional[str] = None
     model: Optional[ModelResponse] = None
     tools: Optional[Dict[str, Any]] = None
     sessions: Optional[Dict[str, Any]] = None
@@ -64,7 +65,7 @@ class AgentResponse(BaseModel):
             "enable_agentic_knowledge_filters": False,
             # Memory defaults
             "enable_agentic_memory": False,
-            "enable_user_memories": False,
+            "update_memory_on_run": False,
             # Reasoning defaults
             "reasoning": False,
             "reasoning_min_steps": 1,
@@ -93,7 +94,6 @@ class AgentResponse(BaseModel):
             "use_json_mode": False,
             # Streaming defaults
             "stream_events": False,
-            "stream_intermediate_steps": False,
         }
 
         session_id = str(uuid4())
@@ -109,6 +109,16 @@ class AgentResponse(BaseModel):
         additional_input = agent.additional_input
         if additional_input and isinstance(additional_input[0], Message):
             additional_input = [message.to_dict() for message in additional_input]  # type: ignore
+
+        input_schema_dict = None
+        if agent.input_schema is not None:
+            if isinstance(agent.input_schema, dict):
+                input_schema_dict = agent.input_schema
+            else:
+                try:
+                    input_schema_dict = agent.input_schema.model_json_schema()
+                except Exception:
+                    pass
 
         # Build model only if it has at least one non-null field
         model_name = agent.model.name if (agent.model and agent.model.name) else None
@@ -141,7 +151,9 @@ class AgentResponse(BaseModel):
             "cache_session": agent.cache_session,
         }
 
+        contents_db = getattr(agent.knowledge, "contents_db", None) if agent.knowledge else None
         knowledge_info = {
+            "db_id": contents_db.id if contents_db else None,
             "knowledge_table": knowledge_table,
             "enable_agentic_knowledge_filters": agent.enable_agentic_knowledge_filters,
             "knowledge_filters": agent.knowledge_filters,
@@ -152,9 +164,10 @@ class AgentResponse(BaseModel):
         if agent.memory_manager is not None:
             memory_info = {
                 "enable_agentic_memory": agent.enable_agentic_memory,
-                "enable_user_memories": agent.enable_user_memories,
+                "update_memory_on_run": agent.update_memory_on_run,
+                "enable_user_memories": agent.enable_user_memories,  # Soon to be deprecated. Use update_memory_on_run
                 "metadata": agent.metadata,
-                "memory_table": agent.db.memory_table_name if agent.db and agent.enable_user_memories else None,
+                "memory_table": agent.db.memory_table_name if agent.db and agent.update_memory_on_run else None,
             }
 
             if agent.memory_manager.model is not None:
@@ -215,11 +228,24 @@ class AgentResponse(BaseModel):
             "build_user_context": agent.build_user_context,
         }
 
+        # Handle output_schema name for both Pydantic models and JSON schemas
+        output_schema_name = None
+        if agent.output_schema is not None:
+            if isinstance(agent.output_schema, dict):
+                if "json_schema" in agent.output_schema:
+                    output_schema_name = agent.output_schema["json_schema"].get("name", "JSONSchema")
+                elif "schema" in agent.output_schema and isinstance(agent.output_schema["schema"], dict):
+                    output_schema_name = agent.output_schema["schema"].get("title", "JSONSchema")
+                else:
+                    output_schema_name = agent.output_schema.get("title", "JSONSchema")
+            elif hasattr(agent.output_schema, "__name__"):
+                output_schema_name = agent.output_schema.__name__
+
         response_settings_info: Dict[str, Any] = {
             "retries": agent.retries,
             "delay_between_retries": agent.delay_between_retries,
             "exponential_backoff": agent.exponential_backoff,
-            "output_schema_name": agent.output_schema.__name__ if agent.output_schema else None,
+            "output_schema_name": output_schema_name,
             "parser_model_prompt": agent.parser_model_prompt,
             "parse_response": agent.parse_response,
             "structured_outputs": agent.structured_outputs,
@@ -237,13 +263,14 @@ class AgentResponse(BaseModel):
         streaming_info = {
             "stream": agent.stream,
             "stream_events": agent.stream_events,
-            "stream_intermediate_steps": agent.stream_intermediate_steps,
         }
 
         return AgentResponse(
             id=agent.id,
             name=agent.name,
             db_id=agent.db.id if agent.db else None,
+            description=agent.description,
+            role=agent.role,
             model=ModelResponse(**_agent_model_data) if _agent_model_data else None,
             tools=filter_meaningful_config(tools_info, {}),
             sessions=filter_meaningful_config(sessions_info, agent_defaults),
@@ -257,5 +284,5 @@ class AgentResponse(BaseModel):
             streaming=filter_meaningful_config(streaming_info, agent_defaults),
             introduction=agent.introduction,
             metadata=agent.metadata,
-            input_schema=get_agent_input_schema_dict(agent),
+            input_schema=input_schema_dict,
         )

@@ -15,10 +15,12 @@ from agno.run.team import (
     ToolCallCompletedEvent,
     ToolCallStartedEvent,
 )
-from agno.team.team import Team
+from agno.team.remote import RemoteTeam
+from agno.team.team import Team, get_team_by_id, get_teams
 
 __all__ = [
     "Team",
+    "RemoteTeam",
     "TeamRunOutput",
     "TeamRunOutputEvent",
     "TeamRunEvent",
@@ -34,4 +36,6 @@ __all__ = [
     "ReasoningCompletedEvent",
     "ToolCallStartedEvent",
     "ToolCallCompletedEvent",
+    "get_team_by_id",
+    "get_teams",
 ]

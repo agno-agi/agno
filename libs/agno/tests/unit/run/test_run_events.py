@@ -212,3 +212,186 @@ def test_api_schema_session_state():
     team_api_response = team_schema.model_dump(exclude_none=True)
     assert "session_state" in team_api_response
     assert team_api_response["session_state"] == {"team_api_data": "value"}
+
+
+def test_custom_event_subclass_serialization():
+    """Test that CustomEvent subclass properties are preserved during serialization."""
+    from typing import Any, Dict
+
+    from agno.run.agent import CustomEvent, RunOutput, run_output_event_from_dict
+    from agno.session.agent import AgentSession
+
+    @dataclass
+    class MimeEvent(CustomEvent):
+        name: str = "MimeEvent"
+        mime_type: str = ""
+        data: Dict[str, Any] = field(default_factory=dict)
+
+    event = MimeEvent(
+        event="CustomEvent",
+        agent_id="test-agent",
+        mime_type="application/echart+json",
+        data={"title": "Test Chart", "series": [{"type": "pie"}]},
+    )
+
+    event_dict = event.to_dict()
+    assert "mime_type" in event_dict
+    assert "data" in event_dict
+    assert event_dict["mime_type"] == "application/echart+json"
+    assert event_dict["data"]["title"] == "Test Chart"
+
+    restored_event = run_output_event_from_dict(event_dict)
+    assert hasattr(restored_event, "mime_type")
+    assert hasattr(restored_event, "data")
+    assert restored_event.mime_type == "application/echart+json"
+    assert restored_event.data["title"] == "Test Chart"
+
+    run_output = RunOutput(
+        run_id="run-123",
+        agent_id="test-agent",
+        events=[event],
+    )
+
+    run_dict = run_output.to_dict()
+    assert "mime_type" in run_dict["events"][0]
+
+    restored_run = RunOutput.from_dict(run_dict)
+    restored_evt = restored_run.events[0]
+    assert hasattr(restored_evt, "mime_type")
+    assert hasattr(restored_evt, "data")
+    assert restored_evt.mime_type == "application/echart+json"
+
+    session = AgentSession(
+        session_id="session-123",
+        agent_id="test-agent",
+        runs=[run_output],
+    )
+
+    session_dict = session.to_dict()
+    restored_session = AgentSession.from_dict(session_dict)
+
+    restored_run_evt = restored_session.runs[0].events[0]
+    assert hasattr(restored_run_evt, "mime_type")
+    assert hasattr(restored_run_evt, "data")
+    assert restored_run_evt.mime_type == "application/echart+json"
+    assert restored_run_evt.data["title"] == "Test Chart"
+
+
+def test_team_custom_event_subclass_serialization():
+    """Test that Team CustomEvent subclass properties are preserved during serialization."""
+    from typing import Any, Dict
+
+    from agno.run.team import CustomEvent as TeamCustomEvent
+    from agno.run.team import TeamRunOutput, team_run_output_event_from_dict
+
+    @dataclass
+    class TeamMimeEvent(TeamCustomEvent):
+        name: str = "TeamMimeEvent"
+        mime_type: str = ""
+        data: Dict[str, Any] = field(default_factory=dict)
+
+    event = TeamMimeEvent(
+        event="CustomEvent",
+        team_id="test-team",
+        mime_type="text/html",
+        data={"content": "<h1>Hello</h1>"},
+    )
+
+    event_dict = event.to_dict()
+    assert "mime_type" in event_dict
+    assert event_dict["mime_type"] == "text/html"
+
+    restored = team_run_output_event_from_dict(event_dict)
+    assert hasattr(restored, "mime_type")
+    assert hasattr(restored, "data")
+    assert restored.mime_type == "text/html"
+
+    team_output = TeamRunOutput(
+        run_id="run-123",
+        team_id="test-team",
+        events=[event],
+    )
+
+    team_dict = team_output.to_dict()
+    restored_team = TeamRunOutput.from_dict(team_dict)
+    restored_evt = restored_team.events[0]
+    assert hasattr(restored_evt, "mime_type")
+    assert restored_evt.mime_type == "text/html"
+
+
+def test_workflow_custom_event_subclass_serialization():
+    """Test that Workflow CustomEvent subclass properties are preserved during serialization."""
+    from typing import Any, Dict
+
+    from agno.run.workflow import CustomEvent as WorkflowCustomEvent
+    from agno.run.workflow import workflow_run_output_event_from_dict
+
+    @dataclass
+    class WorkflowMimeEvent(WorkflowCustomEvent):
+        name: str = "WorkflowMimeEvent"
+        mime_type: str = ""
+        data: Dict[str, Any] = field(default_factory=dict)
+
+    event = WorkflowMimeEvent(
+        event="CustomEvent",
+        workflow_id="test-workflow",
+        mime_type="application/json",
+        data={"key": "value"},
+    )
+
+    event_dict = event.to_dict()
+    assert "mime_type" in event_dict
+
+    restored = workflow_run_output_event_from_dict(event_dict)
+    assert hasattr(restored, "mime_type")
+    assert hasattr(restored, "data")
+    assert restored.mime_type == "application/json"
+    assert restored.data["key"] == "value"
+
+
+def test_requirements_in_run_paused_event():
+    """Test that RunPausedEvent includes requirements field and serializes/deserializes properly."""
+    from agno.models.response import ToolExecution
+    from agno.run.agent import RunPausedEvent
+    from agno.run.requirement import RunRequirement
+
+    # Create a ToolExecution that requires confirmation
+    tool_execution = ToolExecution(
+        tool_call_id="call_123",
+        tool_name="get_the_weather",
+        tool_args={"city": "Tokyo"},
+        requires_confirmation=True,
+    )
+
+    # Create a RunRequirement from the tool execution
+    requirement = RunRequirement(tool_execution=tool_execution)
+
+    # Create a RunPausedEvent with the requirement
+    paused_event = RunPausedEvent(
+        run_id="run_456",
+        agent_id="agent_789",
+        agent_name="TestAgent",
+        tools=[tool_execution],
+        requirements=[requirement],
+    )
+
+    # Test that requirements field exists and is properly set
+    assert paused_event.requirements is not None
+    assert len(paused_event.requirements) == 1
+    assert paused_event.requirements[0].tool_execution.tool_name == "get_the_weather"
+    assert paused_event.requirements[0].tool_execution.requires_confirmation is True
+
+    # Test to_dict serialization
+    event_dict = paused_event.to_dict()
+    assert "requirements" in event_dict
+    assert len(event_dict["requirements"]) == 1
+    assert event_dict["requirements"][0]["tool_execution"]["tool_name"] == "get_the_weather"
+    assert event_dict["requirements"][0]["tool_execution"]["requires_confirmation"] is True
+
+    # Test from_dict deserialization
+    reconstructed = RunPausedEvent.from_dict(event_dict)
+    assert reconstructed.requirements is not None
+    assert len(reconstructed.requirements) == 1
+    assert reconstructed.requirements[0].tool_execution.tool_name == "get_the_weather"
+    assert reconstructed.requirements[0].tool_execution.requires_confirmation is True
+    assert reconstructed.requirements[0].needs_confirmation is True
