@@ -3,7 +3,7 @@ from os import getenv
 from typing import Any, List, Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import log_debug, log_error, log_warning
+from agno.utils.log import log_debug, log_error
 
 try:
     from valyu import Valyu
@@ -11,45 +11,78 @@ except ImportError:
     raise ImportError("`valyu` not installed. Please install using `pip install valyu`")
 
 
+# Default sources for each specialized search type
+LIFE_SCIENCES_SOURCES = [
+    "valyu/valyu-pubmed",
+    "valyu/valyu-biorxiv",
+    "valyu/valyu-medrxiv",
+    "valyu/valyu-clinical-trials",
+    "valyu/valyu-drug-labels",
+    "valyu/valyu-chembl",
+    "valyu/valyu-pubchem",
+    "valyu/valyu-drugbank",
+    "valyu/valyu-open-targets",
+    "valyu/valyu-npi-registry",
+    "valyu/valyu-who-icd",
+]
+
+SEC_SOURCES = ["valyu/valyu-sec-filings"]
+
+PATENT_SOURCES = ["valyu/valyu-patents"]
+
+FINANCE_SOURCES = [
+    "valyu/valyu-stocks",
+    "valyu/valyu-sec-filings",
+    "valyu/valyu-earnings-US",
+    "valyu/valyu-balance-sheet-US",
+    "valyu/valyu-income-statement-US",
+    "valyu/valyu-cash-flow-US",
+    "valyu/valyu-dividends-US",
+    "valyu/valyu-insider-transactions-US",
+    "valyu/valyu-market-movers-US",
+    "valyu/valyu-crypto",
+    "valyu/valyu-forex",
+]
+
+ECONOMICS_SOURCES = [
+    "valyu/valyu-bls",
+    "valyu/valyu-fred",
+    "valyu/valyu-world-bank",
+    "valyu/valyu-worldbank-indicators",
+    "valyu/valyu-usaspending",
+]
+
+PAPER_SOURCES = [
+    "valyu/valyu-arxiv",
+    "valyu/valyu-biorxiv",
+    "valyu/valyu-medrxiv",
+    "valyu/valyu-pubmed",
+    "wiley/wiley-finance-papers",
+]
+
+
 class ValyuTools(Toolkit):
     """
-    Valyu is a toolkit for academic and web search capabilities.
+    Valyu search API toolkit providing web search and access to specialised/proprietary data sources
+    including life sciences, SEC filings, patents, finance, economics, and academic papers.
 
     Args:
-        api_key (Optional[str]): Valyu API key. Retrieved from VALYU_API_KEY env variable if not provided.
-        enable_academic_search (bool): Enable academic sources search functionality. Default is True.
-        enable_web_search (bool): Enable web search functionality. Default is True.
-        enable_paper_search (bool): Enable search within paper functionality. Default is True.
-        all (bool): Enable all tools. Overrides individual flags when True. Default is False.
-        text_length (int): Maximum length of text content per result. Default is 1000.
-        max_results (int): Maximum number of results to return. Default is 10.
-        relevance_threshold (float): Minimum relevance score for results. Default is 0.5.
-        content_category (Optional[str]): Content category for filtering.
-        search_start_date (Optional[str]): Start date for search filtering (YYYY-MM-DD).
-        search_end_date (Optional[str]): End date for search filtering (YYYY-MM-DD).
-        search_domains (Optional[List[str]]): List of domains to search within.
-        sources (Optional[List[str]]): List of specific sources to search.
-        max_price (float): Maximum price for API calls. Default is 30.0.
-        tool_call_mode (bool): Enable tool call mode. Default is False.
+        api_key: Valyu API key. Retrieved from VALYU_API_KEY env variable if not provided.
+        max_results: Maximum number of results to return per search. Default is 10.
+        relevance_threshold: Minimum relevance score for results. Default is 0.5.
+        max_price: Maximum price for API calls. Default is 30.0.
+        text_length: Maximum length of text content per result. Default is 1000.
+        search_type: Default search type ('web', 'proprietary', 'all'). Default is 'all'.
     """
 
     def __init__(
         self,
         api_key: Optional[str] = None,
-        enable_academic_search: bool = True,
-        enable_web_search: bool = True,
-        enable_paper_search: bool = True,
-        all: bool = False,
-        text_length: int = 1000,
         max_results: int = 10,
         relevance_threshold: float = 0.5,
-        content_category: Optional[str] = None,
-        search_start_date: Optional[str] = None,
-        search_end_date: Optional[str] = None,
-        search_domains: Optional[List[str]] = None,
-        sources: Optional[List[str]] = None,
         max_price: float = 30.0,
-        tool_call_mode: bool = False,
+        text_length: int = 1000,
+        search_type: str = "all",
         **kwargs,
     ):
         self.api_key = api_key or getenv("VALYU_API_KEY")
@@ -57,33 +90,31 @@ class ValyuTools(Toolkit):
             raise ValueError("VALYU_API_KEY not set. Please set the VALYU_API_KEY environment variable.")
 
         self.valyu = Valyu(api_key=self.api_key)
-        self.text_length = text_length
         self.max_results = max_results
         self.relevance_threshold = relevance_threshold
         self.max_price = max_price
-        self.content_category = content_category
-        self.search_start_date = search_start_date
-        self.search_end_date = search_end_date
-        self.search_domains = search_domains
-        self.sources = sources
-        self.tool_call_mode = tool_call_mode
+        self.text_length = text_length
+        self.search_type = search_type
 
-        tools: List[Any] = []
-        if all or enable_academic_search:
-            tools.append(self.search_academic_sources)
-        if all or enable_web_search:
-            tools.append(self.search_web)
-        if all or enable_paper_search:
-            tools.append(self.search_within_paper)
+        tools: List[Any] = [
+            self.search,
+            self.web_search,
+            self.life_sciences_search,
+            self.sec_search,
+            self.patent_search,
+            self.finance_search,
+            self.economics_search,
+            self.paper_search,
+        ]
 
-        super().__init__(name="valyu_search", tools=tools, **kwargs)
+        super().__init__(name="valyu", tools=tools, **kwargs)
 
     def _parse_results(self, results: List[Any]) -> str:
+        """Parse search results into JSON string."""
         parsed_results = []
         for result in results:
             result_dict = {}
 
-            # Essential fields
             if hasattr(result, "url") and result.url:
                 result_dict["url"] = result.url
             if hasattr(result, "title") and result.title:
@@ -93,14 +124,12 @@ class ValyuTools(Toolkit):
             if hasattr(result, "relevance_score"):
                 result_dict["relevance_score"] = result.relevance_score
 
-            # Content with length limiting
             if hasattr(result, "content") and result.content:
                 content = result.content
                 if self.text_length and len(content) > self.text_length:
                     content = content[: self.text_length] + "..."
                 result_dict["content"] = content
 
-            # Additional metadata
             if hasattr(result, "description") and result.description:
                 result_dict["description"] = result.description
 
@@ -108,34 +137,32 @@ class ValyuTools(Toolkit):
 
         return json.dumps(parsed_results, indent=2)
 
-    def _valyu_search(
+    def _execute_search(
         self,
         query: str,
         search_type: str,
-        content_category: Optional[str] = None,
         sources: Optional[List[str]] = None,
-        start_date: Optional[str] = None,
-        end_date: Optional[str] = None,
+        included_sources: Optional[List[str]] = None,
+        excluded_sources: Optional[List[str]] = None,
     ) -> str:
+        """Execute a search with the given parameters."""
         try:
             search_params = {
                 "query": query,
                 "search_type": search_type,
                 "max_num_results": self.max_results,
-                "is_tool_call": self.tool_call_mode,
                 "relevance_threshold": self.relevance_threshold,
                 "max_price": self.max_price,
             }
 
-            # Add optional parameters
-            if sources or self.sources:
-                search_params["included_sources"] = sources or self.sources
-            if content_category or self.content_category:
-                search_params["category"] = content_category or self.content_category
-            if start_date or self.search_start_date:
-                search_params["start_date"] = start_date or self.search_start_date
-            if end_date or self.search_end_date:
-                search_params["end_date"] = end_date or self.search_end_date
+            # Handle source filtering
+            if sources:
+                search_params["included_sources"] = sources
+            elif included_sources:
+                search_params["included_sources"] = included_sources
+
+            if excluded_sources:
+                search_params["excluded_sources"] = excluded_sources
 
             log_debug(f"Valyu search parameters: {search_params}")
             response = self.valyu.search(**search_params)
@@ -151,78 +178,147 @@ class ValyuTools(Toolkit):
             log_error(error_msg)
             return f"Error: {error_msg}"
 
-    def search_academic_sources(
+    def search(
         self,
         query: str,
-        start_date: Optional[str] = None,
-        end_date: Optional[str] = None,
+        included_sources: Optional[List[str]] = None,
+        excluded_sources: Optional[List[str]] = None,
     ) -> str:
-        """Search academic sources (ArXiv, PubMed, academic publishers).
+        """General search across all Valyu sources.
 
         Args:
-            query: Research question or topic
-            start_date: Filter papers after this date (YYYY-MM-DD)
-            end_date: Filter papers before this date (YYYY-MM-DD)
+            query: Natural language search query
+            included_sources: Restrict search to specific sources
+            excluded_sources: Exclude specific sources from results
 
         Returns:
-            JSON array of academic papers
+            JSON array of search results
         """
-        sources = ["valyu/valyu-arxiv", "valyu/valyu-pubmed", "wiley/wiley-finance-papers", "wiley/wiley-finance-books"]
-
-        return self._valyu_search(
+        return self._execute_search(
             query=query,
-            search_type="proprietary",
-            sources=sources,
-            start_date=start_date,
-            end_date=end_date,
+            search_type=self.search_type,
+            included_sources=included_sources,
+            excluded_sources=excluded_sources,
         )
 
-    def search_web(
+    def web_search(
         self,
         query: str,
-        start_date: Optional[str] = None,
-        end_date: Optional[str] = None,
-        content_category: Optional[str] = None,
+        included_sources: Optional[List[str]] = None,
+        excluded_sources: Optional[List[str]] = None,
     ) -> str:
-        """Search web sources for real-time information.
+        """Search the web for current information, news, and articles.
 
         Args:
-            query: Search query
-            start_date: Filter content after this date (YYYY-MM-DD)
-            end_date: Filter content before this date (YYYY-MM-DD)
-            content_category: Description of the category of the query
+            query: Natural language search query (e.g., 'latest AI developments')
+            included_sources: Restrict to specific domains (e.g., ['nature.com', 'arxiv.org'])
+            excluded_sources: Exclude specific domains (e.g., ['reddit.com'])
 
         Returns:
             JSON array of web search results
         """
-        return self._valyu_search(
+        return self._execute_search(
             query=query,
             search_type="web",
-            content_category=content_category,
-            start_date=start_date,
-            end_date=end_date,
+            included_sources=included_sources,
+            excluded_sources=excluded_sources,
         )
 
-    def search_within_paper(
-        self,
-        paper_url: str,
-        query: str,
-    ) -> str:
-        """Search within a specific ArXiv paper.
+    def life_sciences_search(self, query: str) -> str:
+        """Search biomedical and healthcare data.
+
+        Searches PubMed, clinical trials, FDA drug labels, ChEMBL compounds,
+        PubChem, DrugBank, Open Targets, NPI registry, and WHO ICD codes.
 
         Args:
-            paper_url: ArXiv paper URL
-            query: Search query
-        Returns:
-            JSON array of relevant sections from the paper
-        """
-        # Validate ArXiv URL
-        if not paper_url.startswith("https:/"):
-            log_warning(f"Invalid paper URL: {paper_url}")
-            return "Error: Invalid paper URL format"
+            query: Natural language query (e.g., 'GLP-1 agonists for weight loss')
 
-        return self._valyu_search(
+        Returns:
+            JSON array of biomedical search results
+        """
+        return self._execute_search(
             query=query,
             search_type="proprietary",
-            sources=[paper_url],
+            sources=LIFE_SCIENCES_SOURCES,
+        )
+
+    def sec_search(self, query: str) -> str:
+        """Search SEC filings (10-K, 10-Q, 8-K, proxy statements).
+
+        Args:
+            query: Natural language query (e.g., 'Tesla 10-K risk factors')
+
+        Returns:
+            JSON array of SEC filing results
+        """
+        return self._execute_search(
+            query=query,
+            search_type="proprietary",
+            sources=SEC_SOURCES,
+        )
+
+    def patent_search(self, query: str) -> str:
+        """Search patent databases for inventions and intellectual property.
+
+        Args:
+            query: Natural language query (e.g., 'solid-state battery patents')
+
+        Returns:
+            JSON array of patent results
+        """
+        return self._execute_search(
+            query=query,
+            search_type="proprietary",
+            sources=PATENT_SOURCES,
+        )
+
+    def finance_search(self, query: str) -> str:
+        """Search financial data: stocks, earnings, balance sheets, SEC filings.
+
+        Includes stock prices, earnings, balance sheets, income statements,
+        cash flows, dividends, insider transactions, crypto, and forex.
+
+        Args:
+            query: Natural language query (e.g., 'Apple revenue last 4 quarters')
+
+        Returns:
+            JSON array of financial data results
+        """
+        return self._execute_search(
+            query=query,
+            search_type="proprietary",
+            sources=FINANCE_SOURCES,
+        )
+
+    def economics_search(self, query: str) -> str:
+        """Search economic data from BLS, FRED, World Bank.
+
+        Includes unemployment, wages, GDP, monetary policy indicators,
+        international development data, and US government spending.
+
+        Args:
+            query: Natural language query (e.g., 'US unemployment rate 2024')
+
+        Returns:
+            JSON array of economic data results
+        """
+        return self._execute_search(
+            query=query,
+            search_type="proprietary",
+            sources=ECONOMICS_SOURCES,
+        )
+
+    def paper_search(self, query: str) -> str:
+        """Search academic papers from arXiv, PubMed, bioRxiv, and medRxiv.
+
+        Args:
+            query: Natural language query (e.g., 'transformer attention mechanisms')
+
+        Returns:
+            JSON array of academic paper results
+        """
+        return self._execute_search(
+            query=query,
+            search_type="proprietary",
+            sources=PAPER_SOURCES,
         )

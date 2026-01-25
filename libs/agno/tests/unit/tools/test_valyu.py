@@ -3,7 +3,15 @@ from unittest.mock import patch
 
 import pytest
 
-from agno.tools.valyu import ValyuTools
+from agno.tools.valyu import (
+    ECONOMICS_SOURCES,
+    FINANCE_SOURCES,
+    LIFE_SCIENCES_SOURCES,
+    PAPER_SOURCES,
+    PATENT_SOURCES,
+    SEC_SOURCES,
+    ValyuTools,
+)
 
 
 class MockSearchResult:
@@ -91,42 +99,28 @@ class TestValyuTools:
         data = json.loads(parsed)
         assert data == []
 
-    def test_search_academic_sources_success(self, valyu_tools):
-        """Test successful academic search."""
-        mock_response = MockSearchResponse(success=True, results=[MockSearchResult(title="Academic Paper")])
+    def test_general_search_success(self, valyu_tools):
+        """Test successful general search."""
+        mock_response = MockSearchResponse(success=True, results=[MockSearchResult(title="Search Result")])
         valyu_tools.valyu.search.return_value = mock_response
 
-        result = valyu_tools.search_academic_sources("test query")
+        result = valyu_tools.search("test query")
         data = json.loads(result)
 
         assert len(data) == 1
-        assert data[0]["title"] == "Academic Paper"
+        assert data[0]["title"] == "Search Result"
 
-        # Verify search was called with correct parameters
         valyu_tools.valyu.search.assert_called_once()
         call_args = valyu_tools.valyu.search.call_args[1]
         assert call_args["query"] == "test query"
-        assert call_args["search_type"] == "proprietary"
-        assert "valyu/valyu-arxiv" in call_args["included_sources"]
-        assert "valyu/valyu-pubmed" in call_args["included_sources"]
+        assert call_args["search_type"] == "all"
 
-    def test_search_academic_sources_with_dates(self, valyu_tools):
-        """Test academic search with date filters."""
-        mock_response = MockSearchResponse(success=True, results=[])
-        valyu_tools.valyu.search.return_value = mock_response
-
-        valyu_tools.search_academic_sources("test query", start_date="2023-01-01", end_date="2023-12-31")
-
-        call_args = valyu_tools.valyu.search.call_args[1]
-        assert call_args["start_date"] == "2023-01-01"
-        assert call_args["end_date"] == "2023-12-31"
-
-    def test_search_web_success(self, valyu_tools):
+    def test_web_search_success(self, valyu_tools):
         """Test successful web search."""
         mock_response = MockSearchResponse(success=True, results=[MockSearchResult(title="Web Article")])
         valyu_tools.valyu.search.return_value = mock_response
 
-        result = valyu_tools.search_web("test query")
+        result = valyu_tools.web_search("test query")
         data = json.loads(result)
 
         assert len(data) == 1
@@ -135,48 +129,124 @@ class TestValyuTools:
         call_args = valyu_tools.valyu.search.call_args[1]
         assert call_args["search_type"] == "web"
 
-    def test_search_web_with_category(self, valyu_tools):
-        """Test web search with category."""
+    def test_web_search_with_source_filters(self, valyu_tools):
+        """Test web search with source filters."""
         mock_response = MockSearchResponse(success=True, results=[])
         valyu_tools.valyu.search.return_value = mock_response
 
-        valyu_tools.search_web("test query", content_category="technology")
+        valyu_tools.web_search(
+            "test query",
+            included_sources=["nature.com"],
+            excluded_sources=["reddit.com"],
+        )
 
         call_args = valyu_tools.valyu.search.call_args[1]
-        assert call_args["category"] == "technology"
+        assert call_args["included_sources"] == ["nature.com"]
+        assert call_args["excluded_sources"] == ["reddit.com"]
 
-    def test_search_within_paper_success(self, valyu_tools):
-        """Test successful within-paper search."""
-        mock_response = MockSearchResponse(success=True, results=[MockSearchResult(title="Paper Section")])
+    def test_life_sciences_search_success(self, valyu_tools):
+        """Test successful life sciences search."""
+        mock_response = MockSearchResponse(success=True, results=[MockSearchResult(title="PubMed Article")])
         valyu_tools.valyu.search.return_value = mock_response
 
-        result = valyu_tools.search_within_paper("https://arxiv.org/abs/1234.5678", "test query")
+        result = valyu_tools.life_sciences_search("GLP-1 agonists")
         data = json.loads(result)
 
         assert len(data) == 1
-        assert data[0]["title"] == "Paper Section"
+        assert data[0]["title"] == "PubMed Article"
 
         call_args = valyu_tools.valyu.search.call_args[1]
-        assert call_args["included_sources"] == ["https://arxiv.org/abs/1234.5678"]
+        assert call_args["search_type"] == "proprietary"
+        assert call_args["included_sources"] == LIFE_SCIENCES_SOURCES
 
-    def test_search_within_paper_invalid_url(self, valyu_tools):
-        """Test within-paper search with invalid URL."""
-        result = valyu_tools.search_within_paper("invalid-url", "test query")
-        assert "Error: Invalid paper URL format" in result
+    def test_sec_search_success(self, valyu_tools):
+        """Test successful SEC search."""
+        mock_response = MockSearchResponse(success=True, results=[MockSearchResult(title="SEC Filing")])
+        valyu_tools.valyu.search.return_value = mock_response
+
+        result = valyu_tools.sec_search("Tesla 10-K")
+        data = json.loads(result)
+
+        assert len(data) == 1
+        assert data[0]["title"] == "SEC Filing"
+
+        call_args = valyu_tools.valyu.search.call_args[1]
+        assert call_args["search_type"] == "proprietary"
+        assert call_args["included_sources"] == SEC_SOURCES
+
+    def test_patent_search_success(self, valyu_tools):
+        """Test successful patent search."""
+        mock_response = MockSearchResponse(success=True, results=[MockSearchResult(title="Patent Result")])
+        valyu_tools.valyu.search.return_value = mock_response
+
+        result = valyu_tools.patent_search("solid-state battery")
+        data = json.loads(result)
+
+        assert len(data) == 1
+        assert data[0]["title"] == "Patent Result"
+
+        call_args = valyu_tools.valyu.search.call_args[1]
+        assert call_args["search_type"] == "proprietary"
+        assert call_args["included_sources"] == PATENT_SOURCES
+
+    def test_finance_search_success(self, valyu_tools):
+        """Test successful finance search."""
+        mock_response = MockSearchResponse(success=True, results=[MockSearchResult(title="Financial Data")])
+        valyu_tools.valyu.search.return_value = mock_response
+
+        result = valyu_tools.finance_search("Apple revenue")
+        data = json.loads(result)
+
+        assert len(data) == 1
+        assert data[0]["title"] == "Financial Data"
+
+        call_args = valyu_tools.valyu.search.call_args[1]
+        assert call_args["search_type"] == "proprietary"
+        assert call_args["included_sources"] == FINANCE_SOURCES
+
+    def test_economics_search_success(self, valyu_tools):
+        """Test successful economics search."""
+        mock_response = MockSearchResponse(success=True, results=[MockSearchResult(title="Economic Data")])
+        valyu_tools.valyu.search.return_value = mock_response
+
+        result = valyu_tools.economics_search("US unemployment rate")
+        data = json.loads(result)
+
+        assert len(data) == 1
+        assert data[0]["title"] == "Economic Data"
+
+        call_args = valyu_tools.valyu.search.call_args[1]
+        assert call_args["search_type"] == "proprietary"
+        assert call_args["included_sources"] == ECONOMICS_SOURCES
+
+    def test_paper_search_success(self, valyu_tools):
+        """Test successful paper search."""
+        mock_response = MockSearchResponse(success=True, results=[MockSearchResult(title="Academic Paper")])
+        valyu_tools.valyu.search.return_value = mock_response
+
+        result = valyu_tools.paper_search("transformer attention")
+        data = json.loads(result)
+
+        assert len(data) == 1
+        assert data[0]["title"] == "Academic Paper"
+
+        call_args = valyu_tools.valyu.search.call_args[1]
+        assert call_args["search_type"] == "proprietary"
+        assert call_args["included_sources"] == PAPER_SOURCES
 
     def test_search_api_error(self, valyu_tools):
         """Test handling of API error."""
         mock_response = MockSearchResponse(success=False, error="API Error")
         valyu_tools.valyu.search.return_value = mock_response
 
-        result = valyu_tools.search_academic_sources("test query")
+        result = valyu_tools.search("test query")
         assert "Error: API Error" in result
 
     def test_search_exception_handling(self, valyu_tools):
         """Test exception handling during search."""
         valyu_tools.valyu.search.side_effect = Exception("Network error")
 
-        result = valyu_tools.search_academic_sources("test query")
+        result = valyu_tools.search("test query")
         assert "Error: Valyu search failed: Network error" in result
 
     def test_constructor_parameters_used_in_search(self, mock_valyu):
@@ -185,39 +255,30 @@ class TestValyuTools:
             api_key="test_key",
             max_results=5,
             relevance_threshold=0.7,
-            content_category="science",
-            search_start_date="2023-01-01",
         )
 
         mock_response = MockSearchResponse(success=True, results=[])
         tools.valyu.search.return_value = mock_response
 
-        tools.search_academic_sources("test query")
+        tools.search("test query")
 
         call_args = tools.valyu.search.call_args[1]
         assert call_args["max_num_results"] == 5
         assert call_args["relevance_threshold"] == 0.7
-        assert call_args["category"] == "science"
-        assert call_args["start_date"] == "2023-01-01"
-
-    def test_method_parameters_override_constructor(self, valyu_tools):
-        """Test that method parameters override constructor defaults."""
-        valyu_tools.content_category = "default_category"
-        valyu_tools.search_start_date = "2023-01-01"
-
-        mock_response = MockSearchResponse(success=True, results=[])
-        valyu_tools.valyu.search.return_value = mock_response
-
-        valyu_tools.search_web("test query", content_category="override_category", start_date="2024-01-01")
-
-        call_args = valyu_tools.valyu.search.call_args[1]
-        assert call_args["category"] == "override_category"
-        assert call_args["start_date"] == "2024-01-01"
 
     def test_tools_registration(self, valyu_tools):
         """Test that all tools are properly registered."""
         tool_names = list(valyu_tools.functions.keys())
-        expected_tools = ["search_academic_sources", "search_web", "search_within_paper"]
+        expected_tools = [
+            "search",
+            "web_search",
+            "life_sciences_search",
+            "sec_search",
+            "patent_search",
+            "finance_search",
+            "economics_search",
+            "paper_search",
+        ]
 
         for tool in expected_tools:
             assert tool in tool_names
