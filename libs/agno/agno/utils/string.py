@@ -2,12 +2,14 @@ import hashlib
 import json
 import re
 import uuid
-from typing import Optional, Type
+from typing import Any, Optional, Type, Union
 from uuid import uuid4
 
 from pydantic import BaseModel, ValidationError
 
 from agno.utils.log import logger
+
+POSTGRES_INVALID_CHARS_REGEX = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\ufffe\uffff]")
 
 
 def is_valid_uuid(uuid_str: str) -> bool:
@@ -87,7 +89,8 @@ def _clean_json_content(content: str) -> str:
     if "```json" in content:
         content = content.split("```json")[-1].strip()
         parts = content.split("```")
-        parts.pop(-1)
+        if len(parts) > 1:
+            parts.pop(-1)
         content = "".join(parts)
     elif "```" in content:
         content = content.split("```")[1].strip()
@@ -275,3 +278,43 @@ def generate_id_from_name(name: Optional[str] = None) -> str:
         return name.lower().replace(" ", "-").replace("_", "-")
     else:
         return str(uuid4())
+
+
+def sanitize_postgres_string(value: Optional[str]) -> Optional[str]:
+    """Remove illegal chars from string values to prevent PostgreSQL encoding errors.
+
+    This function all chars illegal in Postgres UTF-8 text fields.
+    Useful to prevent CharacterNotInRepertoireError when storing strings.
+
+    Args:
+        value: The string value to sanitize.
+
+    Returns:
+        The sanitized string with illegal chars removed, or None if input was None.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return POSTGRES_INVALID_CHARS_REGEX.sub("", value)
+
+
+def sanitize_postgres_strings(data: Union[dict, list, str, Any]) -> Union[dict, list, str, Any]:
+    """Recursively sanitize all string values in a dictionary or JSON structure.
+
+    This function traverses dictionaries, lists, and nested structures to find
+    and sanitize all string values, removing null bytes that PostgreSQL cannot handle.
+
+    Args:
+        data: The data structure to sanitize (dict, list, str or any other type).
+
+    Returns:
+        The sanitized data structure with all strings cleaned of null bytes.
+    """
+    if isinstance(data, dict):
+        return {key: sanitize_postgres_strings(value) for key, value in data.items()}
+    elif isinstance(data, list):
+        return [sanitize_postgres_strings(item) for item in data]
+    elif isinstance(data, str):
+        return sanitize_postgres_string(data)
+    else:
+        return data

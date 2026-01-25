@@ -406,6 +406,30 @@ class Claude(Model):
         self.async_client = AsyncAnthropicClient(**_client_params)
         return self.async_client
 
+    def to_dict(self) -> Dict[str, Any]:
+        """
+        Convert the model to a dictionary.
+
+        Returns:
+            Dict[str, Any]: The dictionary representation of the model.
+        """
+        model_dict = super().to_dict()
+        model_dict.update(
+            {
+                "max_tokens": self.max_tokens,
+                "thinking": self.thinking,
+                "temperature": self.temperature,
+                "stop_sequences": self.stop_sequences,
+                "top_p": self.top_p,
+                "top_k": self.top_k,
+                "cache_system_prompt": self.cache_system_prompt,
+                "extended_cache_time": self.extended_cache_time,
+                "betas": self.betas,
+            }
+        )
+        cleaned_dict = {k: v for k, v in model_dict.items() if v is not None}
+        return cleaned_dict
+
     def count_tokens(
         self,
         messages: List[Message],

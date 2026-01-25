@@ -85,9 +85,11 @@ def test_health_endpoint_instantiated_at(test_os_client: TestClient):
     assert response_data["status"] == "ok"
     assert "instantiated_at" in response_data
 
-    # Verify instantiated_at is a valid timestamp (can be converted to float)
-    instantiated_at = float(response_data["instantiated_at"])
-    assert instantiated_at > 0
+    # Verify instantiated_at is a valid ISO 8601 timestamp
+    from datetime import datetime
+
+    instantiated_at = datetime.fromisoformat(response_data["instantiated_at"].replace("Z", "+00:00"))
+    assert instantiated_at is not None
 
     # Make a second request to verify the instantiation time remains the same
     response2 = test_os_client.get("/health")
