@@ -24,7 +24,7 @@ response = agent.run("What is the sum of the first 10 natural numbers?")
 # Print the reasoning_content
 print("\n--- reasoning_content from response ---")
 if hasattr(response, "reasoning_content") and response.reasoning_content:
-    print("✅ reasoning_content FOUND in non-streaming response")
+    print("[OK] reasoning_content FOUND in non-streaming response")
     print(f"   Length: {len(response.reasoning_content)} characters")
     print("\n=== reasoning_content preview (non-streaming) ===")
     preview = response.reasoning_content[:1000]
@@ -32,7 +32,7 @@ if hasattr(response, "reasoning_content") and response.reasoning_content:
         preview += "..."
     print(preview)
 else:
-    print("❌ reasoning_content NOT FOUND in non-streaming response")
+    print("[NOT FOUND] reasoning_content NOT FOUND in non-streaming response")
 
 
 print("\n\n=== Example 2: Using a custom reasoning_model ===\n")
@@ -53,7 +53,7 @@ response = agent_with_reasoning_model.run(
 # Print the reasoning_content
 print("\n--- reasoning_content from response ---")
 if hasattr(response, "reasoning_content") and response.reasoning_content:
-    print("✅ reasoning_content FOUND in non-streaming response")
+    print("[OK] reasoning_content FOUND in non-streaming response")
     print(f"   Length: {len(response.reasoning_content)} characters")
     print("\n=== reasoning_content preview (non-streaming) ===")
     preview = response.reasoning_content[:1000]
@@ -61,7 +61,7 @@ if hasattr(response, "reasoning_content") and response.reasoning_content:
         preview += "..."
     print(preview)
 else:
-    print("❌ reasoning_content NOT FOUND in non-streaming response")
+    print("[NOT FOUND] reasoning_content NOT FOUND in non-streaming response")
 
 
 print("\n\n=== Example 3: Processing stream with reasoning=True ===\n")
@@ -95,7 +95,7 @@ if (
     and hasattr(final_response, "reasoning_content")
     and final_response.reasoning_content
 ):
-    print("✅ reasoning_content FOUND in final stream event")
+    print("[OK] reasoning_content FOUND in final stream event")
     print(f"   Length: {len(final_response.reasoning_content)} characters")
     print("\n=== reasoning_content preview (streaming) ===")
     preview = final_response.reasoning_content[:1000]
@@ -103,7 +103,7 @@ if (
         preview += "..."
     print(preview)
 else:
-    print("❌ reasoning_content NOT FOUND in final stream event")
+    print("[NOT FOUND] reasoning_content NOT FOUND in final stream event")
 
 
 print("\n\n=== Example 4: Processing stream with reasoning_model ===\n")
@@ -137,7 +137,7 @@ if (
     and hasattr(final_response_with_model, "reasoning_content")
     and final_response_with_model.reasoning_content
 ):
-    print("✅ reasoning_content FOUND in final stream event")
+    print("[OK] reasoning_content FOUND in final stream event")
     print(f"   Length: {len(final_response_with_model.reasoning_content)} characters")
     print("\n=== reasoning_content preview (streaming with reasoning_model) ===")
     preview = final_response_with_model.reasoning_content[:1000]
@@ -145,4 +145,4 @@ if (
         preview += "..."
     print(preview)
 else:
-    print("❌ reasoning_content NOT FOUND in final stream event")
+    print("[NOT FOUND] reasoning_content NOT FOUND in final stream event")
