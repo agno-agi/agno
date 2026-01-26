@@ -59,6 +59,7 @@ agent = Agent(
     name="My Agent",
     description="Agno 2.0 Agent Implementation",
     knowledge=knowledge,
+    search_knowledge=True,
 )
 
 agent.print_response(
