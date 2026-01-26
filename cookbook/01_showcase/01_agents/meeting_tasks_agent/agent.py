@@ -20,12 +20,13 @@ Usage:
     )
 
     # Interactive mode
-    meeting_tasks_agent.cli(stream=True)
+    meeting_tasks_agent.cli_app(stream=True)
 """
 
 from pathlib import Path
 
 from agno.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.tools.linear import LinearTools
 from agno.tools.reasoning import ReasoningTools
@@ -136,6 +137,7 @@ meeting_tasks_agent = Agent(
     read_chat_history=True,
     enable_agentic_memory=True,
     markdown=True,
+    db=SqliteDb(db_file="tmp/data.db"),
 )
 
 
@@ -173,4 +175,4 @@ __all__ = [
 ]
 
 if __name__ == "__main__":
-    meeting_tasks_agent.cli(stream=True)
+    meeting_tasks_agent.cli_app(stream=True)
