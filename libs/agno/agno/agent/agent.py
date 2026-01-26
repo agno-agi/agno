@@ -320,6 +320,7 @@ class Agent:
     # Add a tool that allows the Model to search the knowledge base (aka Agentic RAG)
     # Added only if knowledge is provided.
     search_knowledge: bool = True
+    add_search_knowledge_to_context: bool = True
     # Add a tool that allows the Agent to update Knowledge.
     update_knowledge: bool = False
     # Add a tool that allows the Model to get the tool call history.
@@ -8859,16 +8860,6 @@ class Agent:
         if self.name is not None and self.add_name_to_context:
             additional_information.append(f"Your name is: {self.name}.")
 
-        # 3.2.5 Add knowledge context using protocol's build_context
-        if self.knowledge is not None:
-            build_context_fn = getattr(self.knowledge, "build_context", None)
-            if callable(build_context_fn):
-                knowledge_context = build_context_fn(
-                    enable_agentic_filters=self.enable_agentic_knowledge_filters,
-                )
-                if knowledge_context:
-                    additional_information.append(knowledge_context)
-
         # 3.3 Build the default system message for the Agent.
         system_message_content: str = ""
         # 3.3.1 First add the Agent description if provided
@@ -9045,12 +9036,22 @@ class Agent:
             if learning_context:
                 system_message_content += learning_context + "\n"
 
-        # 3.3.13 Add the system message from the Model
+        # 3.3.13 then add search_knowledge instructions to the system prompt
+        if self.knowledge is not None and self.search_knowledge and self.add_search_knowledge_to_context:
+            build_context_fn = getattr(self.knowledge, "build_context", None)
+            if callable(build_context_fn):
+                knowledge_context = build_context_fn(
+                    enable_agentic_filters=self.enable_agentic_knowledge_filters,
+                )
+                if knowledge_context is not None:
+                    system_message_content += knowledge_context + "\n"
+
+        # 3.3.14 Add the system message from the Model
         system_message_from_model = self.model.get_system_message_for_model(tools)
         if system_message_from_model is not None:
             system_message_content += system_message_from_model
 
-        # 3.3.14 Add the JSON output prompt if output_schema is provided and the model does not support native structured outputs or JSON schema outputs
+        # 3.3.15 Add the JSON output prompt if output_schema is provided and the model does not support native structured outputs or JSON schema outputs
         # or if use_json_mode is True
         if (
             output_schema is not None
@@ -9062,11 +9063,11 @@ class Agent:
         ):
             system_message_content += f"{get_json_output_prompt(output_schema)}"  # type: ignore
 
-        # 3.3.15 Add the response model format prompt if output_schema is provided (Pydantic only)
+        # 3.3.16 Add the response model format prompt if output_schema is provided (Pydantic only)
         if output_schema is not None and self.parser_model is not None and not isinstance(output_schema, dict):
             system_message_content += f"{get_response_model_format_prompt(output_schema)}"
 
-        # 3.3.16 Add the session state to the system message
+        # 3.3.17 Add the session state to the system message
         if add_session_state_to_context and session_state is not None:
             system_message_content += f"\n<session_state>\n{session_state}\n</session_state>\n\n"
 
@@ -9195,24 +9196,6 @@ class Agent:
         # 3.2.4 Add agent name if provided
         if self.name is not None and self.add_name_to_context:
             additional_information.append(f"Your name is: {self.name}.")
-
-        # 3.2.5 Add knowledge context using protocol's build_context (async)
-        if self.knowledge is not None:
-            # Prefer async version if available for async databases
-            abuild_context_fn = getattr(self.knowledge, "abuild_context", None)
-            build_context_fn = getattr(self.knowledge, "build_context", None)
-            if callable(abuild_context_fn):
-                knowledge_context = await abuild_context_fn(
-                    enable_agentic_filters=self.enable_agentic_knowledge_filters,
-                )
-                if knowledge_context:
-                    additional_information.append(knowledge_context)
-            elif callable(build_context_fn):
-                knowledge_context = build_context_fn(
-                    enable_agentic_filters=self.enable_agentic_knowledge_filters,
-                )
-                if knowledge_context:
-                    additional_information.append(knowledge_context)
 
         # 3.3 Build the default system message for the Agent.
         system_message_content: str = ""
@@ -9393,12 +9376,30 @@ class Agent:
             if learning_context:
                 system_message_content += learning_context + "\n"
 
-        # 3.3.13 Add the system message from the Model
+        # 3.3.13 then add search_knowledge instructions to the system prompt
+        if self.knowledge is not None:
+            # Prefer async version if available for async databases
+            abuild_context_fn = getattr(self.knowledge, "abuild_context", None)
+            build_context_fn = getattr(self.knowledge, "build_context", None)
+            if callable(abuild_context_fn):
+                knowledge_context = await abuild_context_fn(
+                    enable_agentic_filters=self.enable_agentic_knowledge_filters,
+                )
+                if knowledge_context is not None:
+                    system_message_content += knowledge_context + "\n"
+            elif callable(build_context_fn):
+                knowledge_context = build_context_fn(
+                    enable_agentic_filters=self.enable_agentic_knowledge_filters,
+                )
+                if knowledge_context is not None:
+                    system_message_content += knowledge_context + "\n"
+
+        # 3.3.14 Add the system message from the Model
         system_message_from_model = self.model.get_system_message_for_model(tools)
         if system_message_from_model is not None:
             system_message_content += system_message_from_model
 
-        # 3.3.14 Add the JSON output prompt if output_schema is provided and the model does not support native structured outputs or JSON schema outputs
+        # 3.3.15 Add the JSON output prompt if output_schema is provided and the model does not support native structured outputs or JSON schema outputs
         # or if use_json_mode is True
         if (
             output_schema is not None
@@ -9410,11 +9411,11 @@ class Agent:
         ):
             system_message_content += f"{get_json_output_prompt(output_schema)}"  # type: ignore
 
-        # 3.3.15 Add the response model format prompt if output_schema is provided (Pydantic only)
+        # 3.3.16 Add the response model format prompt if output_schema is provided (Pydantic only)
         if output_schema is not None and self.parser_model is not None and not isinstance(output_schema, dict):
             system_message_content += f"{get_response_model_format_prompt(output_schema)}"
 
-        # 3.3.16 Add the session state to the system message
+        # 3.3.17 Add the session state to the system message
         if add_session_state_to_context and session_state is not None:
             system_message_content += self._get_formatted_session_state_for_system_message(session_state)
 
