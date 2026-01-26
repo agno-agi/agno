@@ -1,7 +1,7 @@
-"""🔇 Silent External Tools - Suppress verbose messages in frontends
+"""Silent External Tools - Suppress verbose messages in frontends
 
 When using `external_execution=True`, the agent prints "I have tools to execute..."
-messages. Add `silent=True` to suppress these for cleaner UX in production.
+messages. Add `external_execution_silent=True` to suppress these for cleaner UX in production.
 """
 
 from typing import List
@@ -14,8 +14,8 @@ from agno.tools import tool
 from agno.tools.duckduckgo import DuckDuckGoTools
 
 
-# silent=True suppresses "I have tools to execute..." verbose messages
-@tool(external_execution=True, silent=True)
+# external_execution_silent=True suppresses "I have tools to execute..." verbose messages
+@tool(external_execution=True, external_execution_silent=True)
 def generate_haiku(
     english: List[str], japanese: List[str], image_names: List[str]
 ) -> str:

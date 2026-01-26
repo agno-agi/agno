@@ -70,7 +70,7 @@ def tool(
     requires_user_input: Optional[bool] = None,
     user_input_fields: Optional[List[str]] = None,
     external_execution: Optional[bool] = None,
-    silent: Optional[bool] = None,
+    external_execution_silent: Optional[bool] = None,
     pre_hook: Optional[Callable] = None,
     post_hook: Optional[Callable] = None,
     tool_hooks: Optional[List[Callable]] = None,
@@ -99,7 +99,7 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
         requires_user_input: Optional[bool] - If True, the function will require user input before execution
         user_input_fields: Optional[List[str]] - List of fields that will be provided to the function as user input
         external_execution: Optional[bool] - If True, the function will be executed outside of the agent's context
-        silent: Optional[bool] - If True, suppresses verbose paused messages (e.g., "I have tools to execute...")
+        external_execution_silent: Optional[bool] - If True (and external_execution=True), suppresses verbose paused messages (e.g., "I have tools to execute...")
         pre_hook: Optional[Callable] - Hook that runs before the function is executed.
         post_hook: Optional[Callable] - Hook that runs after the function is executed.
         tool_hooks: Optional[List[Callable]] - List of hooks that run before and after the function is executed.
@@ -137,7 +137,7 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
             "requires_user_input",
             "user_input_fields",
             "external_execution",
-            "silent",
+            "external_execution_silent",
             "pre_hook",
             "post_hook",
             "tool_hooks",

@@ -81,7 +81,7 @@ def create_paused_run_output_panel(run_output: Union[RunPausedEvent, RunOutput])
     from rich.text import Text
 
     # Filter out silent tools - they don't produce verbose output
-    non_silent_tools = [tc for tc in (run_output.tools or []) if not tc.silent]
+    non_silent_tools = [tc for tc in (run_output.tools or []) if not tc.external_execution_silent]
 
     # If all tools are silent, return None to indicate no panel should be shown
     if not non_silent_tools:
@@ -129,7 +129,7 @@ def get_paused_content(run_output: RunOutput) -> str:
     paused_content = ""
     for tool in run_output.tools or []:
         # Skip silent tools - they don't produce verbose paused messages
-        if tool.silent:
+        if tool.external_execution_silent:
             continue
 
         # Initialize flags for each tool

@@ -1,8 +1,8 @@
-"""🔇 External Tool Execution: Silent vs Verbose
+"""External Tool Execution: Silent vs Verbose
 
 This example shows the difference between silent and non-silent external tools.
 - Non-silent (default): Agent prints "I have tools to execute..." messages
-- Silent: No verbose messages, cleaner output for production UX
+- Silent (external_execution_silent=True): No verbose messages, cleaner output for production UX
 
 Run `pip install openai agno` to install dependencies.
 """
@@ -34,7 +34,7 @@ def execute_shell_command(command: str) -> str:
 
 
 # Silent tool: no verbose messages, ideal for frontend-rendered components
-@tool(external_execution=True, silent=True)
+@tool(external_execution=True, external_execution_silent=True)
 def render_file_tree(files: list[str]) -> str:
     """Render a file tree visualization in the frontend.
 
@@ -54,7 +54,9 @@ agent = Agent(
     db=SqliteDb(session_table="test_session", db_file="tmp/example.db"),
 )
 
-run_response = agent.run("What files do I have in my current directory? Then show me a tree view.")
+run_response = agent.run(
+    "What files do I have in my current directory? Then show me a tree view."
+)
 
 if run_response.is_paused:
     for requirement in run_response.active_requirements:
@@ -69,7 +71,7 @@ if run_response.is_paused:
 
             elif tool_name == render_file_tree.name:
                 # Silent tool - no verbose message was printed by the agent
-                print(f"Rendering file tree (silent tool)")
+                print("Rendering file tree (silent tool)")
                 result = render_file_tree.entrypoint(**tool_args)  # type: ignore
                 requirement.set_external_execution_result(result)
 

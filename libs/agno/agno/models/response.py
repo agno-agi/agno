@@ -48,8 +48,8 @@ class ToolExecution:
 
     external_execution_required: Optional[bool] = None
 
-    # If True, suppresses verbose paused messages
-    silent: Optional[bool] = None
+    # If True (and external_execution_required=True), suppresses verbose paused messages
+    external_execution_silent: Optional[bool] = None
 
     @property
     def is_paused(self) -> bool:
@@ -83,7 +83,7 @@ class ToolExecution:
             if "user_input_schema" in data
             else None,
             external_execution_required=data.get("external_execution_required"),
-            silent=data.get("silent"),
+            external_execution_silent=data.get("external_execution_silent"),
             metrics=Metrics(**(data.get("metrics", {}) or {})),
             **{"created_at": data["created_at"]} if "created_at" in data else {},
         )
