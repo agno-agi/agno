@@ -208,7 +208,7 @@ class WebSearchReader(Reader):
 
     def read(self, query: str) -> List[Document]:
         """Read content for a given query by performing web search and fetching content"""
-        # Reset state for each query
+        # Clear so URLs from previous queries aren't incorrectly skipped
         self._visited_urls.clear()
 
         if not query:
@@ -262,7 +262,7 @@ class WebSearchReader(Reader):
 
     async def async_read(self, query: str) -> List[Document]:
         """Asynchronously read content for a given query"""
-        # Reset state for each query
+        # Clear so URLs from previous queries aren't incorrectly skipped
         self._visited_urls.clear()
 
         if not query:

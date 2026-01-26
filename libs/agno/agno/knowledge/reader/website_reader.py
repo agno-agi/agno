@@ -165,7 +165,7 @@ class WebsiteReader(Reader):
         crawler_result: Dict[str, str] = {}
         primary_domain = self._get_primary_domain(url)
 
-        # Reset state for each crawl (matches async_crawl behavior)
+        # Clear so URLs from previous crawls aren't incorrectly skipped
         self._visited = set()
         self._urls_to_crawl = [(url, starting_depth)]
 
