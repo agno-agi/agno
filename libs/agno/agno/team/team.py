@@ -5678,16 +5678,6 @@ class Team:
         if self.name is not None and self.add_name_to_context:
             additional_information.append(f"Your name is: {self.name}.")
 
-        # Add knowledge context using protocol's build_context
-        if self.knowledge is not None and self.search_knowledge and self.add_search_knowledge_instructions:
-            build_context_fn = getattr(self.knowledge, "build_context", None)
-            if callable(build_context_fn):
-                knowledge_context = build_context_fn(
-                    enable_agentic_filters=self.enable_agentic_knowledge_filters,
-                )
-                if knowledge_context:
-                    additional_information.append(knowledge_context)
-
         # 2 Build the default system message for the Agent.
         system_message_content: str = ""
         if self.members is not None and len(self.members) > 0:
@@ -5790,6 +5780,16 @@ class Team:
                 "Note: this information is from previous interactions and may be outdated. "
                 "You should ALWAYS prefer information from this conversation over the past summary.\n\n"
             )
+
+        # Add search_knowledge instructions to the system prompt
+        if self.knowledge is not None and self.search_knowledge and self.add_search_knowledge_instructions:
+            build_context_fn = getattr(self.knowledge, "build_context", None)
+            if callable(build_context_fn):
+                knowledge_context = build_context_fn(
+                    enable_agentic_filters=self.enable_agentic_knowledge_filters,
+                )
+                if knowledge_context:
+                    system_message_content += knowledge_context + "\n"
 
         if self.description is not None:
             system_message_content += f"<description>\n{self.description}\n</description>\n\n"
@@ -5974,16 +5974,6 @@ class Team:
         if self.name is not None and self.add_name_to_context:
             additional_information.append(f"Your name is: {self.name}.")
 
-        # Add knowledge context using protocol's build_context
-        if self.knowledge is not None and self.search_knowledge and self.add_search_knowledge_instructions:
-            build_context_fn = getattr(self.knowledge, "build_context", None)
-            if callable(build_context_fn):
-                knowledge_context = build_context_fn(
-                    enable_agentic_filters=self.enable_agentic_knowledge_filters,
-                )
-                if knowledge_context:
-                    additional_information.append(knowledge_context)
-
         # 2 Build the default system message for the Agent.
         system_message_content: str = ""
         system_message_content += "You are the leader of a team and sub-teams of AI Agents.\n"
@@ -6091,6 +6081,16 @@ class Team:
                 "Note: this information is from previous interactions and may be outdated. "
                 "You should ALWAYS prefer information from this conversation over the past summary.\n\n"
             )
+
+        # Add search_knowledge instructions to the system prompt
+        if self.knowledge is not None and self.search_knowledge and self.add_search_knowledge_instructions:
+            build_context_fn = getattr(self.knowledge, "build_context", None)
+            if callable(build_context_fn):
+                knowledge_context = build_context_fn(
+                    enable_agentic_filters=self.enable_agentic_knowledge_filters,
+                )
+                if knowledge_context:
+                    system_message_content += knowledge_context + "\n"
 
         if self.description is not None:
             system_message_content += f"<description>\n{self.description}\n</description>\n\n"
