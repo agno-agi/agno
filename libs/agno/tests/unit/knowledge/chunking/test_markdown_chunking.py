@@ -546,3 +546,25 @@ def test_split_on_headings_chunk_metadata_correct_with_splitting():
         assert chunk.meta_data["source"] == "test"
         assert chunk.id == f"doc1_{i}"
         assert chunk.meta_data["chunk_size"] == len(chunk.content)
+
+
+def test_split_on_headings_overlap_between_sub_chunks():
+    """Overlap should be applied between sub-chunks from split large sections."""
+    # Create a large section that will be split into multiple sub-chunks
+    large_content = "Word1 Word2 Word3. " * 30  # ~570 chars
+    content = f"""# Big Section
+
+{large_content}
+"""
+    chunker = MarkdownChunking(chunk_size=200, split_on_headings=True, overlap=20)
+    doc = Document(name="test.md", content=content)
+    chunks = chunker.chunk(doc)
+
+    # Should have multiple chunks
+    assert len(chunks) > 1
+
+    # Verify overlap exists between consecutive chunks
+    for i in range(1, len(chunks)):
+        # The end of previous chunk should appear at start of current chunk
+        prev_ending = chunks[i - 1].content[-20:]
+        assert chunks[i].content.startswith(prev_ending), f"Chunk {i + 1} should start with overlap from chunk {i}"

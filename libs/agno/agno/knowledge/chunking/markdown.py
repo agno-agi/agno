@@ -37,14 +37,13 @@ class MarkdownChunking(ChunkingStrategy):
             if not (1 <= split_on_headings <= 6):
                 raise ValueError("split_on_headings must be between 1 and 6 when using integer value")
 
-    def _split_large_section(self, section: str, heading: str = "") -> List[str]:
+    def _split_large_section(self, section: str) -> List[str]:
         """
         Split a large section into smaller chunks while preserving the heading context.
         Each sub-chunk will include the original heading for context.
 
         Args:
-            section: The section content to split
-            heading: The heading line to prepend to each sub-chunk
+            section: The section content to split (may start with a heading)
 
         Returns:
             List of chunks, each respecting chunk_size
@@ -52,12 +51,9 @@ class MarkdownChunking(ChunkingStrategy):
         if len(section) <= self.chunk_size:
             return [section]
 
-        # Extract heading and content
+        # Extract heading and content from the section
         lines = section.split("\n")
-        if heading:
-            # heading was passed explicitly
-            content_lines = lines
-        elif lines and re.match(r"^#{1,6}\s+", lines[0]):
+        if lines and re.match(r"^#{1,6}\s+", lines[0]):
             heading = lines[0]
             content_lines = lines[1:]
         else:
@@ -83,13 +79,19 @@ class MarkdownChunking(ChunkingStrategy):
             if not para:
                 continue
 
-            current_size = sum(len(p) for p in current_chunk_content) + len(current_chunk_content) * 2  # account for \n\n
+            current_size = (
+                sum(len(p) for p in current_chunk_content) + len(current_chunk_content) * 2
+            )  # account for \n\n
             para_size = len(para)
 
             # Check if adding this paragraph would exceed chunk_size
             if current_chunk_content and (heading_size + current_size + para_size + 2) > self.chunk_size:
                 # Save current chunk
-                chunk_text = heading + "\n\n" + "\n\n".join(current_chunk_content) if heading else "\n\n".join(current_chunk_content)
+                chunk_text = (
+                    heading + "\n\n" + "\n\n".join(current_chunk_content)
+                    if heading
+                    else "\n\n".join(current_chunk_content)
+                )
                 chunks.append(chunk_text.strip())
                 current_chunk_content = []
 
@@ -97,7 +99,11 @@ class MarkdownChunking(ChunkingStrategy):
             if para_size + heading_size > self.chunk_size:
                 # Save any accumulated content first
                 if current_chunk_content:
-                    chunk_text = heading + "\n\n" + "\n\n".join(current_chunk_content) if heading else "\n\n".join(current_chunk_content)
+                    chunk_text = (
+                        heading + "\n\n" + "\n\n".join(current_chunk_content)
+                        if heading
+                        else "\n\n".join(current_chunk_content)
+                    )
                     chunks.append(chunk_text.strip())
                     current_chunk_content = []
 
@@ -123,7 +129,9 @@ class MarkdownChunking(ChunkingStrategy):
 
         # Don't forget remaining content
         if current_chunk_content:
-            chunk_text = heading + "\n\n" + "\n\n".join(current_chunk_content) if heading else "\n\n".join(current_chunk_content)
+            chunk_text = (
+                heading + "\n\n" + "\n\n".join(current_chunk_content) if heading else "\n\n".join(current_chunk_content)
+            )
             chunks.append(chunk_text.strip())
 
         return chunks if chunks else [section]
