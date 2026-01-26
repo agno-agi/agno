@@ -3822,6 +3822,7 @@ class Workflow:
         stream_events: Optional[bool] = None,
         background: Optional[bool] = False,
         background_tasks: Optional[Any] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
     ) -> WorkflowRunOutput: ...
 
     @overload
@@ -3841,6 +3842,7 @@ class Workflow:
         stream_events: Optional[bool] = None,
         background: Optional[bool] = False,
         background_tasks: Optional[Any] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
     ) -> Iterator[WorkflowRunOutputEvent]: ...
 
     def run(
@@ -3859,6 +3861,7 @@ class Workflow:
         stream_events: Optional[bool] = None,
         background: Optional[bool] = False,
         background_tasks: Optional[Any] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> Union[WorkflowRunOutput, Iterator[WorkflowRunOutputEvent]]:
         """Execute the workflow synchronously with optional streaming"""
@@ -3929,9 +3932,6 @@ class Workflow:
         )
 
         self.update_agents_and_teams_session_info()
-
-        # Extract dependencies from kwargs if provided (e.g., from JWT middleware)
-        dependencies = kwargs.pop("dependencies", None)
 
         # Initialize run context
         run_context = RunContext(
@@ -4009,6 +4009,7 @@ class Workflow:
         background: Optional[bool] = False,
         websocket: Optional[WebSocket] = None,
         background_tasks: Optional[Any] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
     ) -> WorkflowRunOutput: ...
 
     @overload
@@ -4029,6 +4030,7 @@ class Workflow:
         background: Optional[bool] = False,
         websocket: Optional[WebSocket] = None,
         background_tasks: Optional[Any] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
     ) -> AsyncIterator[WorkflowRunOutputEvent]: ...
 
     def arun(  # type: ignore
@@ -4048,6 +4050,7 @@ class Workflow:
         background: Optional[bool] = False,
         websocket: Optional[WebSocket] = None,
         background_tasks: Optional[Any] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> Union[WorkflowRunOutput, AsyncIterator[WorkflowRunOutputEvent]]:
         """Execute the workflow synchronously with optional streaming"""
@@ -4106,9 +4109,6 @@ class Workflow:
 
         self.initialize_workflow()
         session_id, user_id = self._initialize_session(session_id=session_id, user_id=user_id)
-
-        # Extract dependencies from kwargs if provided (e.g., from JWT middleware)
-        dependencies = kwargs.pop("dependencies", None)
 
         # Initialize run context
         run_context = RunContext(
