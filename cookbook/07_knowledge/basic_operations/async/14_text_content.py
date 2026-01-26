@@ -1,5 +1,5 @@
 """This cookbook shows how to add text content directly to the knowledge base.
-1. Run: `python cookbook/07_knowledge/basic_operations/async/14_text_content.py`
+1. Run: `python cookbook/07_knowledge/basic_operations/async/14_text_content.py` to run the cookbook
 """
 
 import asyncio

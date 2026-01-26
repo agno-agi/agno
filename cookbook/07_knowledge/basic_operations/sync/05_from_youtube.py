@@ -1,5 +1,5 @@
 """This cookbook shows how to add content from a Youtube video to Knowledge.
-1. Run: `python cookbook/07_knowledge/basic_operations/sync/05_from_youtube.py`
+1. Run: `python cookbook/07_knowledge/basic_operations/sync/05_from_youtube.py` to run the cookbook
 """
 
 from agno.agent import Agent

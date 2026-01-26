@@ -2,7 +2,7 @@
 
 You can remove vectors by metadata or by name.
 
-1. Run: `python cookbook/07_knowledge/basic_operations/async/10_remove_vectors.py`
+1. Run: `python cookbook/07_knowledge/basic_operations/async/10_remove_vectors.py` to run the cookbook
 """
 
 import asyncio

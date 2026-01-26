@@ -3,7 +3,7 @@
 It is important to specify the reader for the content when using topics.
 
 1. Run: `pip install agno wikipedia arxiv` to install the dependencies
-2. Run: `python cookbook/07_knowledge/basic_operations/async/03_from_topic.py`
+2. Run: `python cookbook/07_knowledge/basic_operations/async/03_from_topic.py` to run the cookbook
 """
 
 import asyncio

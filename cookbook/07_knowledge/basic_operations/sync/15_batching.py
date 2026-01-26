@@ -1,5 +1,5 @@
 """This cookbook shows how to use batch embeddings with Cohere.
-1. Run: `python cookbook/07_knowledge/basic_operations/sync/15_batching.py`
+1. Run: `python cookbook/07_knowledge/basic_operations/sync/15_batching.py` to run the cookbook
 """
 
 from agno.agent import Agent  # noqa

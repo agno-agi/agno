@@ -1,5 +1,5 @@
 """This cookbook shows how to add content from a URL to the knowledge base.
-1. Run: `python cookbook/07_knowledge/basic_operations/sync/02_from_url.py`
+1. Run: `python cookbook/07_knowledge/basic_operations/sync/02_from_url.py` to run the cookbook
 """
 
 from agno.agent import Agent

@@ -2,7 +2,7 @@
 
 You can remove content by id or by name.
 
-1. Run: `python cookbook/07_knowledge/basic_operations/sync/09_remove_content.py`
+1. Run: `python cookbook/07_knowledge/basic_operations/sync/09_remove_content.py` to run the cookbook
 """
 
 from agno.db.postgres.postgres import PostgresDb
