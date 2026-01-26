@@ -1,6 +1,8 @@
+import asyncio
 import os
 import shutil
 from typing import List
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -12,13 +14,17 @@ TEST_TABLE = "test_table"
 TEST_PATH = "tmp/test_lancedb"
 
 
+def _prepare_test_directory(path: str) -> None:
+    """Ensure a clean directory exists for tests by removing and recreating it."""
+    if os.path.exists(path):
+        shutil.rmtree(path)
+    os.makedirs(path, exist_ok=True)
+
+
 @pytest.fixture
 def lance_db(mock_embedder):
     """Fixture to create and clean up a LanceDb instance"""
-    os.makedirs(TEST_PATH, exist_ok=True)
-    if os.path.exists(TEST_PATH):
-        shutil.rmtree(TEST_PATH)
-        os.makedirs(TEST_PATH)
+    _prepare_test_directory(TEST_PATH)
 
     db = LanceDb(uri=TEST_PATH, table_name=TEST_TABLE, embedder=mock_embedder)
     db.create()
@@ -27,6 +33,7 @@ def lance_db(mock_embedder):
     try:
         db.drop()
     except Exception:
+        # Best-effort teardown: ignore errors if the database/table was already dropped
         pass
 
     if os.path.exists(TEST_PATH):
@@ -456,3 +463,188 @@ def test_content_hash_exists(lance_db, sample_documents):
 
     # Should still return False for non-existent hash
     assert lance_db.content_hash_exists("nonexistent_hash") is False
+
+
+@pytest.fixture
+def async_lance_db(mock_embedder):
+    """Fixture to create and clean up a LanceDb instance for async tests."""
+    async_test_path = "tmp/test_lancedb_async"
+    _prepare_test_directory(async_test_path)
+
+    db = LanceDb(uri=async_test_path, table_name="async_test_table", embedder=mock_embedder)
+    db.create()
+    yield db
+
+    try:
+        db.drop()
+    except Exception:
+        # Best-effort teardown: ignore errors if the database/table was already dropped
+        pass
+
+    if os.path.exists(async_test_path):
+        shutil.rmtree(async_test_path)
+
+
+@pytest.fixture
+def tracking_embedder():
+    """Create a mock embedder that tracks sync vs async calls."""
+    mock = MagicMock()
+    mock.dimensions = 1024
+    mock_embedding = [0.1] * 1024
+    mock_usage = {"prompt_tokens": 10, "total_tokens": 10}
+
+    # Track call counts
+    mock.sync_call_count = 0
+    mock.async_call_count = 0
+
+    def sync_get_embedding(text: str):
+        mock.sync_call_count += 1
+        return mock_embedding
+
+    mock.get_embedding = sync_get_embedding
+    mock.get_embedding_and_usage = lambda t: (sync_get_embedding(t), mock_usage)
+
+    async def async_get_embedding(text: str):
+        mock.async_call_count += 1
+        return mock_embedding
+
+    mock.async_get_embedding = async_get_embedding
+
+    async def async_get_embedding_and_usage(text: str):
+        mock.async_call_count += 1
+        return (mock_embedding, mock_usage)
+
+    mock.async_get_embedding_and_usage = async_get_embedding_and_usage
+
+    return mock
+
+
+@pytest.mark.asyncio
+async def test_async_search_uses_async_embedder(tracking_embedder):
+    """Test that async_search uses async embedder, not sync embedder (Issue #5974)."""
+    async_test_path = "tmp/test_async_embedder"
+    _prepare_test_directory(async_test_path)
+
+    try:
+        db = LanceDb(uri=async_test_path, table_name="async_embedder_test", embedder=tracking_embedder)
+        db.create()
+
+        # Insert a document (uses sync embedder, that's expected)
+        doc = Document(content="Test content for async search", name="test_doc")
+        doc.embedding = [0.1] * 1024  # Pre-set to avoid embed call
+        db.table.add(
+            [
+                {
+                    "id": "test_id",
+                    "vector": doc.embedding,
+                    "payload": '{"name": "test_doc", "meta_data": {}, "content": "Test content", "usage": null, "content_id": null, "content_hash": "test"}',
+                }
+            ]
+        )
+
+        # Reset counters
+        tracking_embedder.sync_call_count = 0
+        tracking_embedder.async_call_count = 0
+
+        # Call async_search - should use async embedder
+        await db.async_search("test query", limit=1)
+
+        # Verify async embedder was used, not sync
+        assert tracking_embedder.async_call_count > 0, "async_get_embedding should have been called"
+        assert tracking_embedder.sync_call_count == 0, "sync get_embedding should NOT have been called in async path"
+
+    finally:
+        if os.path.exists(async_test_path):
+            shutil.rmtree(async_test_path)
+
+
+@pytest.mark.asyncio
+async def test_async_vector_search_uses_async_embedder(tracking_embedder):
+    """Test that async_vector_search uses async embedder."""
+    async_test_path = "tmp/test_async_vector"
+    _prepare_test_directory(async_test_path)
+
+    try:
+        db = LanceDb(uri=async_test_path, table_name="async_vector_test", embedder=tracking_embedder)
+        db.create()
+
+        # Insert a document
+        doc = Document(content="Test content", name="test_doc")
+        doc.embedding = [0.1] * 1024
+        db.table.add(
+            [
+                {
+                    "id": "test_id",
+                    "vector": doc.embedding,
+                    "payload": '{"name": "test_doc", "meta_data": {}, "content": "Test content", "usage": null, "content_id": null, "content_hash": "test"}',
+                }
+            ]
+        )
+
+        # Reset counters
+        tracking_embedder.sync_call_count = 0
+        tracking_embedder.async_call_count = 0
+
+        # Call async_vector_search directly
+        await db.async_vector_search("test query", limit=1)
+
+        assert tracking_embedder.async_call_count > 0, "async_get_embedding should have been called"
+        assert tracking_embedder.sync_call_count == 0, "sync get_embedding should NOT have been called"
+
+    finally:
+        if os.path.exists(async_test_path):
+            shutil.rmtree(async_test_path)
+
+
+@pytest.mark.asyncio
+async def test_async_search_returns_results(async_lance_db, sample_documents):
+    """Test that async_search returns correct results."""
+    async_lance_db.insert(documents=sample_documents, content_hash="test_hash")
+
+    results = await async_lance_db.async_search("coconut soup", limit=2)
+
+    assert len(results) > 0
+    assert all(isinstance(doc, Document) for doc in results)
+
+
+@pytest.mark.asyncio
+async def test_concurrent_async_searches(tracking_embedder):
+    """Test that multiple concurrent async searches run without blocking each other."""
+    async_test_path = "tmp/test_concurrent"
+    os.makedirs(async_test_path, exist_ok=True)
+    if os.path.exists(async_test_path):
+        shutil.rmtree(async_test_path)
+        os.makedirs(async_test_path)
+
+    try:
+        db = LanceDb(uri=async_test_path, table_name="concurrent_test", embedder=tracking_embedder)
+        db.create()
+
+        # Insert documents
+        for i in range(3):
+            db.table.add(
+                [
+                    {
+                        "id": f"test_id_{i}",
+                        "vector": [0.1] * 1024,
+                        "payload": f'{{"name": "doc_{i}", "meta_data": {{}}, "content": "Content {i}", "usage": null, "content_id": null, "content_hash": "test"}}',
+                    }
+                ]
+            )
+
+        # Reset counters
+        tracking_embedder.sync_call_count = 0
+        tracking_embedder.async_call_count = 0
+
+        # Run multiple concurrent searches
+        tasks = [db.async_search(f"query {i}", limit=1) for i in range(5)]
+        results = await asyncio.gather(*tasks)
+
+        # All should complete and use async embedder
+        assert len(results) == 5
+        assert tracking_embedder.async_call_count == 5, "Each search should call async embedder once"
+        assert tracking_embedder.sync_call_count == 0, "No sync embedder calls should happen"
+
+    finally:
+        if os.path.exists(async_test_path):
+            shutil.rmtree(async_test_path)
