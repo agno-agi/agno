@@ -11,7 +11,7 @@ def test_moonshot_initialization_with_api_key():
     model = MoonShot(id="kimi-k2-thinking", api_key="test-api-key")
     assert model.id == "kimi-k2-thinking"
     assert model.api_key == "test-api-key"
-    assert model.base_url == "https://api.moonshot.cn/v1"
+    assert model.base_url == "https://api.moonshot.ai/v1"
 
 
 def test_moonshot_initialization_without_api_key():
@@ -33,4 +33,4 @@ def test_moonshot_client_params():
     model = MoonShot(id="kimi-k2-thinking", api_key="test-api-key")
     client_params = model._get_client_params()
     assert client_params["api_key"] == "test-api-key"
-    assert client_params["base_url"] == "https://api.moonshot.cn/v1"
+    assert client_params["base_url"] == "https://api.moonshot.ai/v1"

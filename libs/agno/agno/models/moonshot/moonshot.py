@@ -16,7 +16,7 @@ class MoonShot(OpenAILike):
         name (str): The model name. Defaults to "Moonshot".
         provider (str): The provider name. Defaults to "Moonshot".
         api_key (Optional[str]): The API key.
-        base_url (str): The base URL. Defaults to "https://api.moonshot.cn/v1".
+        base_url (str): The base URL. Defaults to "https://api.moonshot.ai/v1".
     """
 
     id: str = "kimi-k2-thinking"
@@ -24,7 +24,7 @@ class MoonShot(OpenAILike):
     provider: str = "Moonshot"
 
     api_key: Optional[str] = field(default_factory=lambda: getenv("MOONSHOT_API_KEY"))
-    base_url: str = "https://api.moonshot.cn/v1"
+    base_url: str = "https://api.moonshot.ai/v1"
 
     def _get_client_params(self) -> Dict[str, Any]:
         # Fetch API key from env if not already set
