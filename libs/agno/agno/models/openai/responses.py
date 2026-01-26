@@ -96,13 +96,16 @@ class OpenAIResponses(Model):
 
     def _set_reasoning_request_param(self, base_params: Dict[str, Any]) -> Dict[str, Any]:
         """Set the reasoning request parameter."""
-        base_params["reasoning"] = self.reasoning or {}
+        reasoning_config = self.reasoning if self.reasoning is not None else {}
 
-        if self.reasoning_effort is not None:
-            base_params["reasoning"]["effort"] = self.reasoning_effort
+        if self.reasoning is not None or self.reasoning_effort is not None or self.reasoning_summary is not None:
+            base_params["reasoning"] = reasoning_config
 
-        if self.reasoning_summary is not None:
-            base_params["reasoning"]["summary"] = self.reasoning_summary
+            if self.reasoning_effort is not None:
+                base_params["reasoning"]["effort"] = self.reasoning_effort
+
+            if self.reasoning_summary is not None:
+                base_params["reasoning"]["summary"] = self.reasoning_summary
 
         return base_params
 
@@ -974,7 +977,7 @@ class OpenAIResponses(Model):
                             reasoning_summary = (reasoning_summary or "") + summary_text
 
         # Add reasoning content
-        if reasoning_summary is not None:
+        if reasoning_summary:
             model_response.reasoning_content = reasoning_summary
         elif self.reasoning is not None:
             model_response.reasoning_content = response.output_text
