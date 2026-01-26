@@ -861,7 +861,7 @@ class PostgresDb(BaseDb):
                             func.jsonb_set(
                                 func.cast(table.c.session_data, postgresql.JSONB),
                                 text("'{session_name}'"),
-                                func.to_jsonb(sanitized_session_name),
+                                func.to_jsonb(func.cast(sanitized_session_name, postgresql.TEXT)),
                             ),
                             postgresql.JSON,
                         )
