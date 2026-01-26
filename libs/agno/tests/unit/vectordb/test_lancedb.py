@@ -456,3 +456,48 @@ def test_content_hash_exists(lance_db, sample_documents):
 
     # Should still return False for non-existent hash
     assert lance_db.content_hash_exists("nonexistent_hash") is False
+
+
+def test_update_metadata_preserves_vector(lance_db, sample_documents):
+    """Test that update_metadata preserves the vector embedding"""
+
+    sample_documents[0].content_id = "test_doc"
+    lance_db.insert(documents=sample_documents[:1], content_hash="test_hash")
+
+    # Get vector before update
+    total_count = lance_db.table.count_rows()
+    result_before = lance_db.table.search().select(["id", "payload", "vector"]).limit(total_count).to_pandas()
+    vector_before = result_before.iloc[0]["vector"]
+    assert vector_before is not None
+    assert len(vector_before) == 1024
+
+    # Update metadata
+    lance_db.update_metadata("test_doc", {"new_field": "new_value"})
+
+    # Get vector after update
+    result_after = lance_db.table.search().select(["id", "payload", "vector"]).limit(total_count).to_pandas()
+    vector_after = result_after.iloc[0]["vector"]
+
+    assert vector_after is not None
+    assert len(vector_after) == 1024
+    assert list(vector_before) == list(vector_after)
+
+
+def test_insert_reembeds_empty_embedding(lance_db):
+    """Test that insert re-embeds documents with empty embedding list"""
+    doc = Document(
+        content="Test document",
+        meta_data={"test": "value"},
+        name="test_doc",
+    )
+    doc.embedding = []  # Simulate failed async embedding
+
+    lance_db.insert(documents=[doc], content_hash="test_hash")
+
+    total_count = lance_db.table.count_rows()
+    result = lance_db.table.search().select(["vector"]).limit(total_count).to_pandas()
+
+    assert len(result) == 1
+    vector = result.iloc[0]["vector"]
+    assert vector is not None
+    assert len(vector) == 1024

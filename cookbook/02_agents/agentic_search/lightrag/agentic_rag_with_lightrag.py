@@ -20,7 +20,7 @@ knowledge = Knowledge(
 asyncio.run(
     knowledge.ainsert(
         name="Recipes",
-        path="cookbook/08_knowledge/testing_resources/cv_1.pdf",
+        path="cookbook/07_knowledge/testing_resources/cv_1.pdf",
         metadata={"doc_type": "recipe_book"},
     )
 )

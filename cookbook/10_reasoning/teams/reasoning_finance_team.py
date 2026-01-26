@@ -33,7 +33,7 @@ finance_agent = Agent(
 
 team_leader = Team(
     name="Reasoning Finance Team Leader",
-    model=Claude(id="claude-4-sonnet"),
+    model=Claude(id="claude-sonnet-4-5"),
     members=[
         web_agent,
         finance_agent,

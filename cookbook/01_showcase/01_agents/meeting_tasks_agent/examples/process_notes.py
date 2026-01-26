@@ -69,4 +69,4 @@ Here are the meeting notes:
     )
 
     # Uncomment for interactive mode
-    # meeting_tasks_agent.cli(stream=True)
+    # meeting_tasks_agent.cli_app(stream=True)

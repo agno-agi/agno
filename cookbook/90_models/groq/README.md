@@ -74,7 +74,7 @@ python cookbook/92_models/groq/storage.py
 ```shell
 python cookbook/92_models/groq/knowledge.py
 ```
-Take note that by default, OpenAI embeddings are used and an API key will be required. Alternatively, there are other embedders available that can be used. See more examples in `/cookbook/08_knowledge/embedders`
+Take note that by default, OpenAI embeddings are used and an API key will be required. Alternatively, there are other embedders available that can be used. See more examples in `/cookbook/07_knowledge/embedders`
 
 ### 9. Run Agent that analyzes an image
 

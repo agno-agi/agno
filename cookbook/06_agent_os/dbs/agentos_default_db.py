@@ -45,7 +45,7 @@ agno_agent = Agent(
 agent_os = AgentOS(
     id="agentos-demo",
     agents=[agno_agent],
-    db=db, # This is the default database for AgentOS, the agno_agent will use this
+    db=db,  # This is the default database for AgentOS, the agno_agent will use this
 )
 app = agent_os.get_app()
 

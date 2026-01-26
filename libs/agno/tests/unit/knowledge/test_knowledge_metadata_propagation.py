@@ -142,7 +142,12 @@ def test_prepare_documents_for_insert_with_metadata():
     result = knowledge._prepare_documents_for_insert(documents, "content-id-1", metadata=metadata)
 
     # Verify metadata was merged
-    assert result[0].meta_data == {"existing": "value1", "document_id": "123", "knowledge_base_id": "456", "filename": "test.txt"}
+    assert result[0].meta_data == {
+        "existing": "value1",
+        "document_id": "123",
+        "knowledge_base_id": "456",
+        "filename": "test.txt",
+    }
     assert result[1].meta_data == {"document_id": "123", "knowledge_base_id": "456", "filename": "test.txt"}
     assert result[2].meta_data == {"document_id": "123", "knowledge_base_id": "456", "filename": "test.txt"}
 
@@ -293,7 +298,9 @@ def test_load_from_path_without_metadata(temp_text_file, mock_vector_db):
     )
     content.content_hash = knowledge._build_content_hash(content)
 
-    with patch.object(knowledge, "_read", return_value=[Document(name="test", content="Test content", meta_data={"original": "data"})]):
+    with patch.object(
+        knowledge, "_read", return_value=[Document(name="test", content="Test content", meta_data={"original": "data"})]
+    ):
         knowledge._load_from_path(content, upsert=False, skip_if_exists=False)
 
     # Verify documents were inserted with original metadata preserved
@@ -318,7 +325,13 @@ def test_metadata_merges_with_existing_document_metadata(temp_text_file, mock_ve
     with patch.object(
         knowledge,
         "_read",
-        return_value=[Document(name="test", content="Test content", meta_data={"existing_field": "existing_value", "shared_field": "doc_value"})],
+        return_value=[
+            Document(
+                name="test",
+                content="Test content",
+                meta_data={"existing_field": "existing_value", "shared_field": "doc_value"},
+            )
+        ],
     ):
         knowledge._load_from_path(content, upsert=False, skip_if_exists=False)
 

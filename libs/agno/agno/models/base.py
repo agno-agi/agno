@@ -1988,6 +1988,7 @@ class Model(ABC):
 
                         if isinstance(item, CustomEvent):
                             function_call_output += str(item)
+                            item.tool_call_id = function_call.call_id
 
                         # For WorkflowCompletedEvent, extract content for final output
                         from agno.run.workflow import WorkflowCompletedEvent
@@ -2430,6 +2431,7 @@ class Model(ABC):
 
                         if isinstance(item, CustomEvent):
                             function_call_output += str(item)
+                            item.tool_call_id = function_call.call_id
 
                             # For WorkflowCompletedEvent, extract content for final output
                             from agno.run.workflow import WorkflowCompletedEvent
@@ -2507,8 +2509,12 @@ class Model(ABC):
                                 if async_gen_index in async_generator_outputs:
                                     _, async_function_call_output, error = async_generator_outputs[async_gen_index]
                                     if error:
-                                        log_error(f"Error in async generator: {error}")
-                                        raise error
+                                        # Handle async generator exceptions gracefully like sync generators
+                                        log_error(
+                                            f"Error while iterating async generator for {function_call.function.name}: {error}"
+                                        )
+                                        function_call.error = str(error)
+                                        function_call_success = False
                                 break
                             async_gen_index += 1
 
@@ -2554,6 +2560,10 @@ class Model(ABC):
                                 if function_call.function.show_result and item.content is not None:
                                     yield ModelResponse(content=item.content)
                                     continue
+
+                            elif isinstance(item, CustomEvent):
+                                function_call_output += str(item)
+                                item.tool_call_id = function_call.call_id
 
                             # Yield the event itself to bubble it up
                             yield item

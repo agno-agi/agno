@@ -246,6 +246,10 @@ class BaseRunOutputEvent:
             data["requirements"] = requirements_list if requirements_list else None
 
         # Filter data to only include fields that are actually defined in the target class
+        # CustomEvent accepts arbitrary fields, so skip filtering for it
+        if cls.__name__ == "CustomEvent":
+            return cls(**data)
+
         from dataclasses import fields
 
         supported_fields = {f.name for f in fields(cls)}

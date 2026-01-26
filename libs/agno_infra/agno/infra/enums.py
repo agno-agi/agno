@@ -2,6 +2,6 @@ from enum import Enum
 
 
 class InfraStarterTemplate(str, Enum):
-    agentos_docker_template = "agentos-docker-template"
-    agentos_aws_template = "agentos-aws-template"
-    agentos_railway_template = "agentos-railway-template"
+    agentos_docker = "agentos-docker"
+    agentos_aws = "agentos-aws"
+    agentos_railway = "agentos-railway"

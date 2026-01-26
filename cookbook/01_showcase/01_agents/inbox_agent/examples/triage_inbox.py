@@ -50,4 +50,4 @@ Then provide an executive summary of my inbox status.""",
     )
 
     # Uncomment for interactive mode
-    # inbox_agent.cli(stream=True)
+    # inbox_agent.cli_app(stream=True)

@@ -9,7 +9,7 @@ three tools to the agent:
 - list_files: List files matching a glob pattern
 - get_file: Read the full contents of a specific file
 
-Run: `python cookbook/08_knowledge/protocol/file_system.py`
+Run: `python cookbook/07_knowledge/protocol/file_system.py`
 """
 
 from agno.agent import Agent
@@ -81,7 +81,7 @@ if __name__ == "__main__":
     print("=" * 60 + "\n")
 
     docs_knowledge = FileSystemKnowledge(
-        base_dir="cookbook/08_knowledge/testing_resources",
+        base_dir="cookbook/07_knowledge/testing_resources",
         include_patterns=["*.md", "*.txt"],  # Text files only, not PDFs
         exclude_patterns=[],
     )

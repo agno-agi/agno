@@ -108,8 +108,8 @@ def test_read_complex_csv(csv_reader, complex_csv_file):
 
 def test_read_nonexistent_file(csv_reader, temp_dir):
     nonexistent_path = temp_dir / "nonexistent.csv"
-    documents = csv_reader.read(nonexistent_path)
-    assert documents == []
+    with pytest.raises(FileNotFoundError, match="Could not find file"):
+        csv_reader.read(nonexistent_path)
 
 
 def test_read_with_chunking(csv_reader, csv_file):

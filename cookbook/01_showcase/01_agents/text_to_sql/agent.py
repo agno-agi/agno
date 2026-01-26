@@ -91,4 +91,4 @@ sql_agent = Agent(
 )
 
 if __name__ == "__main__":
-    sql_agent.cli(stream=True)
+    sql_agent.cli_app(stream=True)

@@ -56,4 +56,4 @@ Format it as an executive summary suitable for a standup meeting.""",
     )
 
     # Uncomment for interactive mode
-    # linear_agent.cli(stream=True)
+    # linear_agent.cli_app(stream=True)

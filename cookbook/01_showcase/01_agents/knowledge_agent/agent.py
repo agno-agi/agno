@@ -18,12 +18,13 @@ Usage:
     knowledge_agent.print_response("What is the PTO policy?", stream=True)
 
     # Interactive mode
-    knowledge_agent.cli(stream=True)
+    knowledge_agent.cli_app(stream=True)
 """
 
 from pathlib import Path
 
 from agno.agent import Agent
+from agno.db.sqlite.sqlite import SqliteDb
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIResponses
@@ -119,6 +120,7 @@ knowledge_agent = Agent(
     enable_agentic_memory=True,
     search_knowledge=True,
     markdown=True,
+    db=SqliteDb(db_file="tmp/data.db"),
 )
 
 
@@ -133,4 +135,4 @@ __all__ = [
 ]
 
 if __name__ == "__main__":
-    knowledge_agent.cli(stream=True)
+    knowledge_agent.print_response("What is the PTO policy?", stream=True)

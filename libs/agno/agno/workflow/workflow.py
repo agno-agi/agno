@@ -3822,6 +3822,7 @@ class Workflow:
         stream_events: Optional[bool] = None,
         background: Optional[bool] = False,
         background_tasks: Optional[Any] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
     ) -> WorkflowRunOutput: ...
 
     @overload
@@ -3841,6 +3842,7 @@ class Workflow:
         stream_events: Optional[bool] = None,
         background: Optional[bool] = False,
         background_tasks: Optional[Any] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
     ) -> Iterator[WorkflowRunOutputEvent]: ...
 
     def run(
@@ -3855,10 +3857,11 @@ class Workflow:
         images: Optional[List[Image]] = None,
         videos: Optional[List[Video]] = None,
         files: Optional[List[File]] = None,
-        stream: bool = False,
+        stream: Optional[bool] = None,
         stream_events: Optional[bool] = None,
         background: Optional[bool] = False,
         background_tasks: Optional[Any] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> Union[WorkflowRunOutput, Iterator[WorkflowRunOutputEvent]]:
         """Execute the workflow synchronously with optional streaming"""
@@ -3901,8 +3904,9 @@ class Workflow:
 
         log_debug(f"Workflow Run Start: {self.name}", center=True)
 
-        # Use simple defaults
-        stream = stream or self.stream or False
+        # Use stream override value when necessary
+        if stream is None:
+            stream = self.stream or False
         stream_events = stream_events or self.stream_events
 
         # Can't stream events if streaming is disabled
@@ -3937,6 +3941,7 @@ class Workflow:
             session_state=session_state,
             workflow_id=self.id,
             workflow_name=self.name,
+            dependencies=dependencies,
         )
 
         # Execute workflow agent if configured
@@ -4004,6 +4009,7 @@ class Workflow:
         background: Optional[bool] = False,
         websocket: Optional[WebSocket] = None,
         background_tasks: Optional[Any] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
     ) -> WorkflowRunOutput: ...
 
     @overload
@@ -4024,6 +4030,7 @@ class Workflow:
         background: Optional[bool] = False,
         websocket: Optional[WebSocket] = None,
         background_tasks: Optional[Any] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
     ) -> AsyncIterator[WorkflowRunOutputEvent]: ...
 
     def arun(  # type: ignore
@@ -4038,11 +4045,12 @@ class Workflow:
         images: Optional[List[Image]] = None,
         videos: Optional[List[Video]] = None,
         files: Optional[List[File]] = None,
-        stream: bool = False,
+        stream: Optional[bool] = None,
         stream_events: Optional[bool] = None,
         background: Optional[bool] = False,
         websocket: Optional[WebSocket] = None,
         background_tasks: Optional[Any] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> Union[WorkflowRunOutput, AsyncIterator[WorkflowRunOutputEvent]]:
         """Execute the workflow synchronously with optional streaming"""
@@ -4108,12 +4116,14 @@ class Workflow:
             session_id=session_id,
             user_id=user_id,
             session_state=session_state,
+            dependencies=dependencies,
         )
 
         log_debug(f"Async Workflow Run Start: {self.name}", center=True)
 
-        # Use simple defaults
-        stream = stream or self.stream or False
+        # Use stream override value when necessary
+        if stream is None:
+            stream = self.stream or False
         stream_events = stream_events or self.stream_events
 
         # Can't stream events if streaming is disabled

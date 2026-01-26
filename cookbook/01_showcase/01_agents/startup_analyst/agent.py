@@ -24,6 +24,7 @@ Usage:
 """
 
 from agno.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.tools.reasoning import ReasoningTools
 from agno.tools.scrapegraph import ScrapeGraphTools
@@ -143,6 +144,7 @@ startup_analyst = Agent(
     num_history_runs=5,
     enable_agentic_memory=True,
     markdown=True,
+    db=SqliteDb(db_file="tmp/data.db"),
 )
 
 
@@ -178,4 +180,4 @@ __all__ = [
 ]
 
 if __name__ == "__main__":
-    startup_analyst.cli(stream=True)
+    startup_analyst.cli_app(stream=True)

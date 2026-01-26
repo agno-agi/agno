@@ -29,6 +29,7 @@ from pathlib import Path
 from textwrap import dedent
 
 from agno.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.tools.cartesia import CartesiaTools
 from agno.utils.media import save_base64_data
@@ -134,6 +135,7 @@ translation_agent = Agent(
     num_history_runs=5,
     enable_agentic_memory=True,
     markdown=True,
+    db=SqliteDb(db_file="tmp/data.db"),
 )
 
 
@@ -191,4 +193,4 @@ __all__ = [
 ]
 
 if __name__ == "__main__":
-    translation_agent.cli(stream=True)
+    translation_agent.cli_app(stream=True)
