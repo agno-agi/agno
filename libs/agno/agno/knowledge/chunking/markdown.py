@@ -308,15 +308,15 @@ class MarkdownChunking(ChunkingStrategy):
                     meta_data = chunk_meta_data.copy()
                     meta_data["chunk"] = chunks[i].meta_data["chunk"]
                     chunk_id = chunks[i].id
+                    meta_data["chunk_size"] = len(prev_text + chunks[i].content)
+
                     if prev_text:
-                        overlap_content = prev_text + chunks[i].content
-                        meta_data["chunk_size"] = len(overlap_content)
                         overlapped_chunks.append(
                             Document(
                                 id=chunk_id,
                                 name=document.name,
                                 meta_data=meta_data,
-                                content=overlap_content,
+                                content=prev_text + chunks[i].content,
                             )
                         )
                     else:

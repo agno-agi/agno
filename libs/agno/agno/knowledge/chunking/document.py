@@ -109,21 +109,20 @@ class DocumentChunking(ChunkingStrategy):
                     # Add overlap from previous chunk
                     prev_text = chunks[i - 1].content[-self.overlap :]
                     meta_data = chunk_meta_data.copy()
-                    meta_data["chunk"] = chunks[i].meta_data["chunk"]
-                    chunk_id = chunks[i].id
+                    meta_data["chunk"] = chunk_number
+                    chunk_id = None
+                    if document.id:
+                        chunk_id = f"{document.id}_{chunk_number}"
+                    meta_data["chunk_size"] = len(prev_text + chunks[i].content)
                     if prev_text:
-                        overlap_content = prev_text + chunks[i].content
-                        meta_data["chunk_size"] = len(overlap_content)
                         overlapped_chunks.append(
                             Document(
                                 id=chunk_id,
                                 name=document.name,
                                 meta_data=meta_data,
-                                content=overlap_content,
+                                content=prev_text + chunks[i].content,
                             )
                         )
-                    else:
-                        overlapped_chunks.append(chunks[i])
                 else:
                     overlapped_chunks.append(chunks[i])
             chunks = overlapped_chunks
