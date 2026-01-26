@@ -86,3 +86,18 @@ def test_website_reader_sync_and_async_have_same_reset_behavior():
     assert "self._visited = set()" in async_source
     assert "self._urls_to_crawl = [" in sync_source
     assert "self._urls_to_crawl = [" in async_source
+
+
+@pytest.mark.asyncio
+async def test_web_search_reader_async_read_clears_state():
+    """_visited_urls is cleared at start of each async_read() call."""
+    reader = WebSearchReader()
+
+    reader._visited_urls.add("https://example.com")
+    reader._visited_urls.add("https://test.com")
+    assert len(reader._visited_urls) == 2
+
+    with patch.object(reader, "_perform_web_search", return_value=[]):
+        await reader.async_read("test query")
+
+    assert len(reader._visited_urls) == 0
