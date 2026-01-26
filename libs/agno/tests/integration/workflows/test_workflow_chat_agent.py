@@ -180,7 +180,7 @@ def test_workflow_agent_streaming(shared_db):
     )
 
     # Run with streaming
-    events = list(workflow.run(input="a dog named Max", stream=True, stream_intermediate_steps=True))
+    events = list(workflow.run(input="a dog named Max", stream=True, stream_events=True))
 
     # Should have workflow started and completed events
     started_events = [e for e in events if isinstance(e, WorkflowStartedEvent)]
@@ -288,7 +288,7 @@ async def test_workflow_agent_async_streaming(shared_db):
     )
 
     events = []
-    async for event in workflow.arun(input="a dog named Max", stream=True, stream_intermediate_steps=True):
+    async for event in workflow.arun(input="a dog named Max", stream=True, stream_events=True):
         events.append(event)
 
     # Should have workflow started and completed events

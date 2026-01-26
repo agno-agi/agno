@@ -1,7 +1,7 @@
 """
 1. Run: `pip install openai agno lancedb tantivy sqlalchemy` to install the dependencies
 2. Export your OPENAI_API_KEY
-3. Run: `python cookbook/reasoning/tools/knowledge_tools.py` to run the agent
+3. Run: `python cookbook/81_reasoning/tools/knowledge_tools.py` to run the agent
 """
 
 from agno.agent import Agent
@@ -22,7 +22,7 @@ agno_docs = Knowledge(
     ),
 )
 # Add content to the knowledge
-agno_docs.add_content(url="https://docs.agno.com/llms-full.txt")
+agno_docs.insert(url="https://docs.agno.com/llms-full.txt")
 
 knowledge_tools = KnowledgeTools(
     knowledge=agno_docs,
