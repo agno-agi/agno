@@ -343,6 +343,7 @@ class Team:
     # Add a tool to search the knowledge base (aka Agentic RAG)
     # Only added if knowledge is provided.
     search_knowledge: bool = True
+    # If True, add search_knowledge instructions to the system prompt
     add_search_knowledge_instructions: bool = True
 
     # If False, media (images, videos, audio, files) is only available to tools and not sent to the LLM
@@ -8362,6 +8363,8 @@ class Team:
             config["add_knowledge_to_context"] = self.add_knowledge_to_context
         if not self.search_knowledge:  # default is True
             config["search_knowledge"] = self.search_knowledge
+        if self.add_search_knowledge_instructions:
+            config["add_search_knowledge_instructions"] = self.add_search_knowledge_instructions
         if self.references_format != "json":  # default is "json"
             config["references_format"] = self.references_format
 
@@ -8720,6 +8723,7 @@ class Team:
             add_knowledge_to_context=config.get("add_knowledge_to_context", False),
             update_knowledge=config.get("update_knowledge", False),
             search_knowledge=config.get("search_knowledge", True),
+            add_search_knowledge_instructions=config.get("add_search_knowledge_instructions", True),
             references_format=config.get("references_format", "json"),
             # --- Tools ---
             tools=config.get("tools"),

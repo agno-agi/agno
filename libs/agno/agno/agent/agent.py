@@ -320,6 +320,7 @@ class Agent:
     # Add a tool that allows the Model to search the knowledge base (aka Agentic RAG)
     # Added only if knowledge is provided.
     search_knowledge: bool = True
+    # If True, add search_knowledge instructions to the system prompt
     add_search_knowledge_instructions: bool = True
     # Add a tool that allows the Agent to update Knowledge.
     update_knowledge: bool = False
@@ -7434,6 +7435,10 @@ class Agent:
             config["enable_agentic_knowledge_filters"] = self.enable_agentic_knowledge_filters
         if self.add_knowledge_to_context:
             config["add_knowledge_to_context"] = self.add_knowledge_to_context
+        if not self.search_knowledge:
+            config["search_knowledge"] = self.search_knowledge
+        if self.add_search_knowledge_instructions:
+            config["add_search_knowledge_instructions"] = self.add_search_knowledge_instructions
         # Skip knowledge_retriever as it's a callable
         if self.references_format != "json":
             config["references_format"] = self.references_format
@@ -7486,6 +7491,8 @@ class Agent:
             config["read_chat_history"] = self.read_chat_history
         if not self.search_knowledge:
             config["search_knowledge"] = self.search_knowledge
+        if self.add_search_knowledge_instructions:
+            config["add_search_knowledge_instructions"] = self.add_search_knowledge_instructions
         if self.update_knowledge:
             config["update_knowledge"] = self.update_knowledge
         if self.read_tool_call_history:
@@ -7809,6 +7816,7 @@ class Agent:
             # --- Default tools settings ---
             read_chat_history=config.get("read_chat_history", False),
             search_knowledge=config.get("search_knowledge", True),
+            add_search_knowledge_instructions=config.get("add_search_knowledge_instructions", True),
             update_knowledge=config.get("update_knowledge", False),
             read_tool_call_history=config.get("read_tool_call_history", False),
             send_media_to_model=config.get("send_media_to_model", True),
