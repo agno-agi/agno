@@ -40,7 +40,7 @@ agent.print_response(
     markdown=True,
 )
 
-# Alex River is not in the knowledge base, so the Agent should not find any information about him
+# Alex Rivera is not in the knowledge base, so the Agent should not find any information about him
 agent.print_response(
     "Do you think Alex Rivera is a good candidate?",
     markdown=True,
