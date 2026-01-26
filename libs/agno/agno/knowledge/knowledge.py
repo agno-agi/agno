@@ -984,6 +984,11 @@ class Knowledge:
         return self._get_reader("csv")
 
     @property
+    def excel_reader(self) -> Optional[Reader]:
+        """Excel reader - lazy loaded via factory."""
+        return self._get_reader("excel")
+
+    @property
     def docx_reader(self) -> Optional[Reader]:
         """Docx reader - lazy loaded via factory."""
         return self._get_reader("docx")
@@ -1123,6 +1128,8 @@ class Knowledge:
             return self.json_reader, ""
         elif file_extension == ".markdown":
             return self.markdown_reader, ""
+        elif file_extension in [".xlsx", ".xls"]:
+            return self.excel_reader, ""
         else:
             return self.text_reader, ""
 
@@ -1153,6 +1160,8 @@ class Knowledge:
             return self.json_reader
         elif uri_lower.endswith(".markdown"):
             return self.markdown_reader
+        elif uri_lower.endswith(".xlsx") or uri_lower.endswith(".xls"):
+            return self.excel_reader
         else:
             return self.text_reader
 
@@ -1284,6 +1293,10 @@ class Knowledge:
             if self._should_include_file(str(path), include, exclude):
                 log_debug(f"Adding file {path} due to include/exclude filters")
 
+                # Set name from path if not provided
+                if not content.name:
+                    content.name = path.name
+
                 await self._ainsert_contents_db(content)
                 if self._should_skip(content.content_hash, skip_if_exists):  # type: ignore[arg-type]
                     content.status = ContentStatus.COMPLETED
@@ -1364,6 +1377,10 @@ class Knowledge:
         if path.is_file():
             if self._should_include_file(str(path), include, exclude):
                 log_debug(f"Adding file {path} due to include/exclude filters")
+
+                # Set name from path if not provided
+                if not content.name:
+                    content.name = path.name
 
                 self._insert_contents_db(content)
                 if self._should_skip(content.content_hash, skip_if_exists):  # type: ignore[arg-type]
@@ -1449,6 +1466,14 @@ class Knowledge:
 
         if not content.url:
             raise ValueError("No url provided")
+
+        # Set name from URL if not provided
+        if not content.name and content.url:
+            from urllib.parse import urlparse
+
+            parsed = urlparse(content.url)
+            url_path = Path(parsed.path)
+            content.name = url_path.name if url_path.name else content.url
 
         # 1. Add content to contents database
         await self._ainsert_contents_db(content)
@@ -1547,6 +1572,14 @@ class Knowledge:
         if not content.url:
             raise ValueError("No url provided")
 
+        # Set name from URL if not provided
+        if not content.name and content.url:
+            from urllib.parse import urlparse
+
+            parsed = urlparse(content.url)
+            url_path = Path(parsed.path)
+            content.name = url_path.name if url_path.name else content.url
+
         # 1. Add content to contents database
         self._insert_contents_db(content)
         if self._should_skip(content.content_hash, skip_if_exists):  # type: ignore[arg-type]
@@ -1633,6 +1666,8 @@ class Knowledge:
 
         if content.name:
             name = content.name
+        elif content.file_data and content.file_data.filename:
+            name = content.file_data.filename
         elif content.file_data and content.file_data.content:
             if isinstance(content.file_data.content, bytes):
                 name = content.file_data.content[:10].decode("utf-8", errors="ignore")
@@ -1696,9 +1731,17 @@ class Knowledge:
                     log_debug(f"Using reader: {content.reader.__class__.__name__} to read content")
                     reader = content.reader
                 else:
-                    reader = self._select_reader(content.file_data.type)
-                name = content.name if content.name else f"content_{content.file_data.type}"
-                read_documents = await reader.async_read(content_io, name=name)
+                    # Prefer filename extension over MIME type for reader selection
+                    # (browsers often send wrong MIME types for Excel files)
+                    reader_hint = content.file_data.type
+                    if content.file_data.filename:
+                        ext = Path(content.file_data.filename).suffix.lower()
+                        if ext:
+                            reader_hint = ext
+                    reader = self._select_reader(reader_hint)
+                # Use file_data.filename for reader (preserves extension for format detection)
+                reader_name = content.file_data.filename or content.name or f"content_{content.file_data.type}"
+                read_documents = await reader.async_read(content_io, name=reader_name)
                 if not content.id:
                     content.id = generate_id(content.content_hash or "")
                 self._prepare_documents_for_insert(read_documents, content.id, metadata=content.metadata)
@@ -1730,6 +1773,8 @@ class Knowledge:
 
         if content.name:
             name = content.name
+        elif content.file_data and content.file_data.filename:
+            name = content.file_data.filename
         elif content.file_data and content.file_data.content:
             if isinstance(content.file_data.content, bytes):
                 name = content.file_data.content[:10].decode("utf-8", errors="ignore")
@@ -1793,9 +1838,17 @@ class Knowledge:
                     log_debug(f"Using reader: {content.reader.__class__.__name__} to read content")
                     reader = content.reader
                 else:
-                    reader = self._select_reader(content.file_data.type)
-                name = content.name if content.name else f"content_{content.file_data.type}"
-                read_documents = reader.read(content_io, name=name)
+                    # Prefer filename extension over MIME type for reader selection
+                    # (browsers often send wrong MIME types for Excel files)
+                    reader_hint = content.file_data.type
+                    if content.file_data.filename:
+                        ext = Path(content.file_data.filename).suffix.lower()
+                        if ext:
+                            reader_hint = ext
+                    reader = self._select_reader(reader_hint)
+                # Use file_data.filename for reader (preserves extension for format detection)
+                reader_name = content.file_data.filename or content.name or f"content_{content.file_data.type}"
+                read_documents = reader.read(content_io, name=reader_name)
                 if not content.id:
                     content.id = generate_id(content.content_hash or "")
                 self._prepare_documents_for_insert(read_documents, content.id, metadata=content.metadata)
