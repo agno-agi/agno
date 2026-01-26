@@ -1,11 +1,3 @@
-"""Tests for chunk ID generation fallback chain.
-
-The _generate_chunk_id() method uses this fallback order:
-1. document.id (if present)
-2. document.name (if present, no id)
-3. content hash (MD5, when neither id nor name exists)
-"""
-
 from agno.knowledge.chunking.document import DocumentChunking
 from agno.knowledge.chunking.fixed import FixedSizeChunking
 from agno.knowledge.chunking.row import RowChunking
