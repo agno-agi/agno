@@ -1,9 +1,3 @@
-"""Tests for Knowledge filter validation.
-
-Verifies that _validate_filters correctly validates dict and list filters
-against known metadata keys.
-"""
-
 from typing import List, Set
 
 import pytest
@@ -15,8 +9,6 @@ from agno.vectordb.base import VectorDb
 
 
 class MockVectorDb(VectorDb):
-    """Mock VectorDb for testing Knowledge methods."""
-
     def create(self) -> None:
         pass
 
@@ -89,12 +81,10 @@ class MockVectorDb(VectorDb):
 
 @pytest.fixture
 def knowledge():
-    """Create a Knowledge instance with MockVectorDb."""
     return Knowledge(vector_db=MockVectorDb())
 
 
 def test_validate_filters_removes_invalid_dict_keys(knowledge):
-    """Invalid dict filter keys are removed during validation."""
     filters = {"region": "us", "invalid_key": "value"}
     valid_metadata: Set[str] = {"region", "year"}
 
@@ -106,7 +96,6 @@ def test_validate_filters_removes_invalid_dict_keys(knowledge):
 
 
 def test_validate_filters_removes_invalid_list_items(knowledge):
-    """Invalid list filter items are removed during validation."""
     filters = [EQ("region", "us"), EQ("invalid_key", "value")]
     valid_metadata: Set[str] = {"region", "year"}
 
@@ -119,19 +108,16 @@ def test_validate_filters_removes_invalid_list_items(knowledge):
 
 
 def test_validate_filters_keeps_complex_filters(knowledge):
-    """Complex filters (AND, OR) are kept even without key attribute."""
     filters = [AND(EQ("region", "us"), EQ("year", 2024)), OR(EQ("region", "eu"))]
     valid_metadata: Set[str] = {"region", "year"}
 
     valid, invalid = knowledge._validate_filters(filters, valid_metadata)
 
-    # Complex filters should be kept as-is
     assert len(valid) == 2
     assert len(invalid) == 0
 
 
 def test_validate_filters_with_gt_lt_in(knowledge):
-    """GT, LT, IN filters validate keys correctly (not just EQ)."""
     filters = [
         GT("price", 100),
         LT("date", "2024-01-01"),
@@ -151,32 +137,26 @@ def test_validate_filters_with_gt_lt_in(knowledge):
 
 
 def test_validate_filters_with_prefixed_keys(knowledge):
-    """Filter validation handles meta_data.key prefixed keys."""
     filters = {"meta_data.region": "us", "meta_data.invalid": "value"}
     valid_metadata: Set[str] = {"region", "year"}
 
     valid, invalid = knowledge._validate_filters(filters, valid_metadata)
 
-    # meta_data.region should match because base_key "region" is valid
     assert "meta_data.region" in valid
     assert "meta_data.invalid" not in valid
     assert "meta_data.invalid" in invalid
 
 
 def test_validate_filters_empty_metadata(knowledge):
-    """Filter validation returns original list when no metadata available."""
     filters = [EQ("region", "us")]
 
-    # Empty metadata set
     valid, invalid = knowledge._validate_filters(filters, set())
 
-    # Should return original filters with warning
     assert valid == filters
     assert invalid == []
 
 
 def test_validate_filters_mixed_valid_invalid_list(knowledge):
-    """Filter validation correctly separates valid and invalid list filters."""
     filters = [
         EQ("region", "us"),
         EQ("invalid1", "value"),
@@ -197,7 +177,6 @@ def test_validate_filters_mixed_valid_invalid_list(knowledge):
 
 
 def test_filter_merge_raises_on_type_mismatch():
-    """Merging dict and list filters raises ValueError."""
     from agno.utils.knowledge import get_agentic_or_user_search_filters
 
     with pytest.raises(ValueError):

@@ -1,9 +1,3 @@
-"""Tests for Knowledge topic loading behavior.
-
-Verifies that topic loaders correctly continue processing remaining topics
-when some topics are skipped or when using LightRAG.
-"""
-
 from typing import List
 from unittest.mock import AsyncMock, MagicMock
 
@@ -16,8 +10,6 @@ from agno.vectordb.base import VectorDb
 
 
 class MockVectorDb(VectorDb):
-    """Mock VectorDb for testing Knowledge methods."""
-
     def __init__(self, content_exists: bool = False):
         self.content_exists = content_exists
         self.inserted_documents: List[Document] = []
@@ -93,8 +85,6 @@ class MockVectorDb(VectorDb):
 
 
 class MockReader:
-    """Mock reader that tracks processed topics."""
-
     def __init__(self):
         self.processed_topics: List[str] = []
 
@@ -109,15 +99,13 @@ class MockReader:
 
 @pytest.fixture
 def mock_reader():
-    """Create a MockReader that tracks processed topics."""
     return MockReader()
 
 
 def test_load_from_topics_continues_after_skip(mock_reader):
-    """Sync topic loading processes all topics even if some are skipped."""
     knowledge = Knowledge(vector_db=MockVectorDb())
 
-    skip_pattern = [True, False, False]  # Skip A, process B and C
+    skip_pattern = [True, False, False]
     skip_index = [0]
 
     def mock_should_skip(content_hash, skip_if_exists):
@@ -135,14 +123,12 @@ def test_load_from_topics_continues_after_skip(mock_reader):
     content = Content(topics=["A", "B", "C"], reader=mock_reader)
     knowledge._load_from_topics(content, upsert=False, skip_if_exists=True)
 
-    # B and C should have been processed (A was skipped)
     assert "B" in mock_reader.processed_topics
     assert "C" in mock_reader.processed_topics
 
 
 @pytest.mark.asyncio
 async def test_aload_from_topics_continues_after_skip():
-    """Async topic loading processes all topics even if some are skipped."""
     knowledge = Knowledge(vector_db=MockVectorDb())
     processed_topics = []
 
@@ -176,11 +162,9 @@ async def test_aload_from_topics_continues_after_skip():
 
 
 def test_load_from_topics_multiple_skips():
-    """Topic loading handles multiple consecutive skips correctly."""
     knowledge = Knowledge(vector_db=MockVectorDb())
     mock_reader = MockReader()
 
-    # A exists, B exists, C new, D exists, E new
     skip_pattern = [True, True, False, True, False]
     skip_index = [0]
 
@@ -199,12 +183,10 @@ def test_load_from_topics_multiple_skips():
     content = Content(topics=["A", "B", "C", "D", "E"], reader=mock_reader)
     knowledge._load_from_topics(content, upsert=False, skip_if_exists=True)
 
-    # Only C and E should be processed
     assert mock_reader.processed_topics == ["C", "E"]
 
 
 def test_load_from_topics_all_skipped():
-    """Topic loading handles case where all topics are skipped."""
     knowledge = Knowledge(vector_db=MockVectorDb())
     mock_reader = MockReader()
 
@@ -216,14 +198,11 @@ def test_load_from_topics_all_skipped():
     content = Content(topics=["A", "B", "C"], reader=mock_reader)
     knowledge._load_from_topics(content, upsert=False, skip_if_exists=True)
 
-    # No topics should be processed
     assert mock_reader.processed_topics == []
-    # But update_content should be called for each skipped topic
     assert knowledge._update_content.call_count == 3
 
 
 def test_load_from_topics_lightrag_continues():
-    """LightRAG path continues to next topic after processing."""
     knowledge = Knowledge(vector_db=MockVectorDb())
     knowledge.vector_db.__class__.__name__ = "LightRag"
 
@@ -238,7 +217,6 @@ def test_load_from_topics_lightrag_continues():
     content = Content(topics=["A", "B", "C"], reader=mock_reader)
     knowledge._load_from_topics(content, upsert=False, skip_if_exists=False)
 
-    # All 3 topics should be processed via LightRAG path
     assert len(processed_topics) == 3
     assert "A" in processed_topics
     assert "B" in processed_topics
@@ -247,7 +225,6 @@ def test_load_from_topics_lightrag_continues():
 
 @pytest.mark.asyncio
 async def test_aload_from_topics_lightrag_continues():
-    """Async LightRAG path continues to next topic after processing."""
     knowledge = Knowledge(vector_db=MockVectorDb())
     knowledge.vector_db.__class__.__name__ = "LightRag"
 
@@ -265,5 +242,4 @@ async def test_aload_from_topics_lightrag_continues():
 
     await knowledge._aload_from_topics(content, upsert=False, skip_if_exists=False)
 
-    # All 3 topics should be processed via LightRAG path
     assert len(processed_topics) == 3

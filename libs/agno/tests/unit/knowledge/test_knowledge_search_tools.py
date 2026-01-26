@@ -1,9 +1,3 @@
-"""Tests for Knowledge search tool exception handling.
-
-Verifies that search tools catch exceptions and return error messages
-instead of crashing the agent.
-"""
-
 from typing import List
 from unittest.mock import AsyncMock, MagicMock
 
@@ -15,8 +9,6 @@ from agno.vectordb.base import VectorDb
 
 
 class MockVectorDb(VectorDb):
-    """Mock VectorDb for testing Knowledge methods."""
-
     def create(self) -> None:
         pass
 
@@ -89,12 +81,10 @@ class MockVectorDb(VectorDb):
 
 @pytest.fixture
 def knowledge():
-    """Create a Knowledge instance with MockVectorDb."""
     return Knowledge(vector_db=MockVectorDb())
 
 
 def test_search_tool_catches_exceptions(knowledge):
-    """Search tool returns error message instead of raising."""
     knowledge.search = MagicMock(side_effect=Exception("Connection refused"))
 
     tool = knowledge._create_search_tool(async_mode=False)
@@ -102,11 +92,10 @@ def test_search_tool_catches_exceptions(knowledge):
 
     assert isinstance(result, str)
     assert "Error searching knowledge base" in result
-    assert "Exception" in result  # Exception type name
+    assert "Exception" in result
 
 
 def test_search_tool_with_filters_catches_exceptions(knowledge):
-    """Search tool with filters returns error message instead of raising."""
     knowledge.search = MagicMock(side_effect=Exception("DB timeout"))
 
     tool = knowledge._create_search_tool_with_filters(async_mode=False)
@@ -118,7 +107,6 @@ def test_search_tool_with_filters_catches_exceptions(knowledge):
 
 @pytest.mark.asyncio
 async def test_async_search_tool_catches_exceptions(knowledge):
-    """Async search tool returns error message instead of raising."""
     knowledge.asearch = AsyncMock(side_effect=Exception("Network error"))
 
     tool = knowledge._create_search_tool(async_mode=True)
@@ -130,7 +118,6 @@ async def test_async_search_tool_catches_exceptions(knowledge):
 
 @pytest.mark.asyncio
 async def test_async_search_tool_with_filters_catches_exceptions(knowledge):
-    """Async search tool with filters returns error message instead of raising."""
     knowledge.asearch = AsyncMock(side_effect=Exception("Connection timeout"))
 
     tool = knowledge._create_search_tool_with_filters(async_mode=True)
@@ -141,13 +128,10 @@ async def test_async_search_tool_with_filters_catches_exceptions(knowledge):
 
 
 def test_search_tool_does_not_leak_sensitive_info(knowledge):
-    """Search tool error message uses exception type, not full message."""
-    # Simulate an exception with sensitive connection string
     knowledge.search = MagicMock(side_effect=Exception("Connection failed: postgres://user:password@host:5432/db"))
 
     tool = knowledge._create_search_tool(async_mode=False)
     result = tool.entrypoint(query="test")
 
-    # Should contain exception type name, not the sensitive connection string
     assert "Exception" in result
     assert "password" not in result
