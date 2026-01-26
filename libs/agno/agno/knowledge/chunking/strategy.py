@@ -16,7 +16,7 @@ class ChunkingStrategy(ABC):
     def _generate_chunk_id(
         self, document: Document, chunk_number: int, content: Optional[str] = None, prefix: Optional[str] = None
     ) -> Optional[str]:
-        """Generate chunk ID with fallback: document.id -> document.name -> content hash."""
+        """Generate a deterministic ID for the chunk."""
         suffix = f"_{prefix}_{chunk_number}" if prefix else f"_{chunk_number}"
 
         if document.id:
