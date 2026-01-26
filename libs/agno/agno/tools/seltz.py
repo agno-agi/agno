@@ -83,7 +83,8 @@ class SeltzTools(Toolkit):
                 doc_dict["url"] = url
             if content:
                 doc_dict["content"] = content
-            parsed.append(doc_dict)
+            if doc_dict:
+                parsed.append(doc_dict)
         return json.dumps(parsed, indent=4, ensure_ascii=False)
 
     def search_seltz(self, query: str, max_documents: Optional[int] = None) -> str:
