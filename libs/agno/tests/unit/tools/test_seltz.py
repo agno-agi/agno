@@ -7,6 +7,14 @@ import pytest
 
 pytest.importorskip("seltz")
 
+from seltz.exceptions import (
+    SeltzAPIError,
+    SeltzAuthenticationError,
+    SeltzConnectionError,
+    SeltzRateLimitError,
+    SeltzTimeoutError,
+)
+
 from agno.tools.seltz import SeltzTools
 
 
@@ -102,10 +110,69 @@ def test_parse_documents_with_missing_fields(seltz_tools):
     assert "content" not in result_data[0]
 
 
+def test_search_empty_query(seltz_tools):
+    """Test search with empty query returns error."""
+    result = seltz_tools.search_seltz("")
+    assert "Error" in result
+    assert "provide a query" in result
+
+
+def test_search_without_api_key():
+    """Test search without API key returns error."""
+    with patch("agno.tools.seltz.Seltz") as mock_seltz:
+        with patch.dict("os.environ", {"SELTZ_API_KEY": ""}, clear=False):
+            with patch.object(SeltzTools, "__init__", lambda self, **kwargs: None):
+                tools = SeltzTools()
+                tools.client = None
+                tools.max_documents = 10
+                tools.show_results = False
+                result = tools.search_seltz("test query")
+                assert "SELTZ_API_KEY not set" in result
+
+
+def test_init_invalid_max_documents():
+    """Test initialization with invalid max_documents raises error."""
+    with patch.dict("os.environ", {"SELTZ_API_KEY": "test_key"}):
+        with pytest.raises(ValueError, match="max_documents must be greater than 0"):
+            SeltzTools(max_documents=0)
+
+
+def test_search_invalid_max_documents(seltz_tools):
+    """Test search with invalid max_documents returns error."""
+    result = seltz_tools.search_seltz("test query", max_documents=0)
+    assert "Error" in result
+    assert "max_documents must be greater than 0" in result
+
+
+def test_parse_documents_skips_empty(seltz_tools):
+    """Test that documents with no url or content are skipped."""
+    empty_doc = Mock()
+    empty_doc.url = None
+    empty_doc.content = None
+
+    result = seltz_tools._parse_documents([empty_doc])
+    result_data = json.loads(result)
+
+    assert len(result_data) == 0
+
+
+def test_init_with_all_flag():
+    """Test initialization with all=True enables all tools."""
+    with patch("agno.tools.seltz.Seltz"):
+        with patch.dict("os.environ", {"SELTZ_API_KEY": "test_key"}):
+            tools = SeltzTools(all=True, enable_search=False)
+            assert "search_seltz" in [func.name for func in tools.functions.values()]
+
+
 @pytest.mark.parametrize(
     "exception",
     [
         Exception("Unknown error"),
+        SeltzAuthenticationError("Invalid API key"),
+        SeltzConnectionError("Connection failed"),
+        SeltzTimeoutError("Request timed out"),
+        SeltzRateLimitError("Rate limit exceeded"),
+        SeltzAPIError("API error"),
     ],
 )
 def test_error_handling(seltz_tools, mock_seltz_client, exception):
