@@ -404,3 +404,145 @@ def test_size_based_chunking_creates_multiple_chunks_when_content_exceeds_limit(
     # Verify chunk numbers are sequential
     for i, chunk in enumerate(chunks, 1):
         assert chunk.meta_data["chunk"] == i
+
+
+# --- Tests for split_on_headings respecting chunk_size ---
+
+
+def test_split_on_headings_respects_chunk_size():
+    """Large sections should be split to respect chunk_size even with split_on_headings enabled."""
+    # Create content with a very large section under one heading
+    large_section = "This is a long paragraph with lots of content. " * 50  # ~2400 chars
+    content = f"""# Section 1
+
+{large_section}
+
+## Section 2
+
+Short content here.
+"""
+    chunker = MarkdownChunking(chunk_size=500, split_on_headings=True)
+    doc = Document(name="test.md", content=content)
+    chunks = chunker.chunk(doc)
+
+    # Should create multiple chunks for the large section
+    assert len(chunks) > 2  # More than just 2 sections
+
+    # All chunks should respect chunk_size
+    for chunk in chunks:
+        assert len(chunk.content) <= 500, f"Chunk exceeds chunk_size: {len(chunk.content)} > 500"
+
+
+def test_split_on_headings_preserves_heading_in_sub_chunks():
+    """When splitting large sections, the heading should be preserved in each sub-chunk."""
+    # Create content with a large section
+    large_section = "Word " * 200  # ~1000 chars of content
+    content = f"""# My Important Heading
+
+{large_section}
+"""
+    chunker = MarkdownChunking(chunk_size=300, split_on_headings=True)
+    doc = Document(name="test.md", content=content)
+    chunks = chunker.chunk(doc)
+
+    # Should have multiple chunks
+    assert len(chunks) > 1
+
+    # Each chunk should start with the heading
+    for chunk in chunks:
+        assert chunk.content.startswith("# My Important Heading"), (
+            f"Chunk should start with heading, got: {chunk.content[:50]}..."
+        )
+
+
+def test_split_on_headings_level_2_respects_chunk_size():
+    """Large H2 sections should be split to respect chunk_size with split_on_headings=2."""
+    large_content = "Content here. " * 100  # ~1400 chars
+    content = f"""# Main Title
+
+Intro text.
+
+## Large Section
+
+{large_content}
+
+## Small Section
+
+Just a little text.
+"""
+    chunker = MarkdownChunking(chunk_size=400, split_on_headings=2)
+    doc = Document(name="test.md", content=content)
+    chunks = chunker.chunk(doc)
+
+    # Should split the large section
+    assert len(chunks) > 3  # More than just H1, H2 large, H2 small
+
+    # All chunks should respect chunk_size
+    for chunk in chunks:
+        assert len(chunk.content) <= 400, f"Chunk exceeds chunk_size: {len(chunk.content)} > 400"
+
+
+def test_split_on_headings_small_sections_not_affected():
+    """Small sections should remain as single chunks when split_on_headings is enabled."""
+    content = """# Section 1
+
+Short content.
+
+## Section 2
+
+Also short.
+
+### Section 3
+
+Brief text.
+"""
+    chunker = MarkdownChunking(chunk_size=500, split_on_headings=True)
+    doc = Document(name="test.md", content=content)
+    chunks = chunker.chunk(doc)
+
+    # Should have exactly 3 chunks (one per heading)
+    assert len(chunks) == 3
+
+    # Verify content matches expected sections
+    assert "# Section 1" in chunks[0].content
+    assert "## Section 2" in chunks[1].content
+    assert "### Section 3" in chunks[2].content
+
+
+def test_split_on_headings_very_long_paragraph_split_by_words():
+    """A single very long paragraph should be split by words to respect chunk_size."""
+    # Create a paragraph that is much larger than chunk_size
+    long_paragraph = "word " * 500  # ~2500 chars
+    content = f"""# Heading
+
+{long_paragraph}
+"""
+    chunker = MarkdownChunking(chunk_size=200, split_on_headings=True)
+    doc = Document(name="test.md", content=content)
+    chunks = chunker.chunk(doc)
+
+    # Should create multiple chunks
+    assert len(chunks) > 5
+
+    # All chunks should respect chunk_size
+    for chunk in chunks:
+        assert len(chunk.content) <= 200, f"Chunk exceeds chunk_size: {len(chunk.content)} > 200"
+
+
+def test_split_on_headings_chunk_metadata_correct_with_splitting():
+    """Chunk metadata should be correct when large sections are split."""
+    large_content = "Some text here. " * 50  # ~800 chars
+    content = f"""# Section
+
+{large_content}
+"""
+    chunker = MarkdownChunking(chunk_size=200, split_on_headings=True)
+    doc = Document(id="doc1", name="test.md", content=content, meta_data={"source": "test"})
+    chunks = chunker.chunk(doc)
+
+    # Verify sequential chunk numbers and correct IDs
+    for i, chunk in enumerate(chunks, 1):
+        assert chunk.meta_data["chunk"] == i
+        assert chunk.meta_data["source"] == "test"
+        assert chunk.id == f"doc1_{i}"
+        assert chunk.meta_data["chunk_size"] == len(chunk.content)
