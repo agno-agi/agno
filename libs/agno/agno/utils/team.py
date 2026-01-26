@@ -73,14 +73,40 @@ def add_interaction_to_team_run_context(
     log_debug(f"Updated team run context with member name: {member_name}")
 
 
-def get_team_member_interactions_str(team_run_context: Dict[str, Any]) -> str:
+def get_team_member_interactions_str(
+    team_run_context: Dict[str, Any],
+    max_interactions: Optional[int] = None,
+) -> str:
+    """
+    Build a string representation of member interactions from the team run context.
+
+    Args:
+        team_run_context: The context containing member responses
+        max_interactions: Maximum number of recent interactions to include.
+                         None means include all interactions.
+                         If set, only the most recent N interactions are included.
+
+    Returns:
+        A formatted string with member interactions
+    """
     if not team_run_context:
         return ""
     team_member_interactions_str = ""
     if "member_responses" in team_run_context:
-        team_member_interactions_str += "<member_interaction_context>\nSee below interactions wit other team members.\n"
+        member_responses = team_run_context["member_responses"]
 
-        for interaction in team_run_context["member_responses"]:
+        # If max_interactions is set, only include the most recent N interactions
+        if max_interactions is not None and len(member_responses) > max_interactions:
+            member_responses = member_responses[-max_interactions:]
+
+        if not member_responses:
+            return ""
+
+        team_member_interactions_str += (
+            "<member_interaction_context>\nSee below interactions with other team members.\n"
+        )
+
+        for interaction in member_responses:
             response_dict = interaction["run_response"].to_dict()
             response_content = (
                 response_dict.get("content")
@@ -95,45 +121,69 @@ def get_team_member_interactions_str(team_run_context: Dict[str, Any]) -> str:
     return team_member_interactions_str
 
 
-def get_team_run_context_images(team_run_context: Dict[str, Any]) -> List[Image]:
+def get_team_run_context_images(
+    team_run_context: Dict[str, Any],
+    max_interactions: Optional[int] = None,
+) -> List[Image]:
     if not team_run_context:
         return []
     images = []
     if "member_responses" in team_run_context:
-        for interaction in team_run_context["member_responses"]:
+        member_responses = team_run_context["member_responses"]
+        if max_interactions is not None and len(member_responses) > max_interactions:
+            member_responses = member_responses[-max_interactions:]
+        for interaction in member_responses:
             if interaction["run_response"].images:
                 images.extend(interaction["run_response"].images)
     return images
 
 
-def get_team_run_context_videos(team_run_context: Dict[str, Any]) -> List[Video]:
+def get_team_run_context_videos(
+    team_run_context: Dict[str, Any],
+    max_interactions: Optional[int] = None,
+) -> List[Video]:
     if not team_run_context:
         return []
     videos = []
     if "member_responses" in team_run_context:
-        for interaction in team_run_context["member_responses"]:
+        member_responses = team_run_context["member_responses"]
+        if max_interactions is not None and len(member_responses) > max_interactions:
+            member_responses = member_responses[-max_interactions:]
+        for interaction in member_responses:
             if interaction["run_response"].videos:
                 videos.extend(interaction["run_response"].videos)
     return videos
 
 
-def get_team_run_context_audio(team_run_context: Dict[str, Any]) -> List[Audio]:
+def get_team_run_context_audio(
+    team_run_context: Dict[str, Any],
+    max_interactions: Optional[int] = None,
+) -> List[Audio]:
     if not team_run_context:
         return []
     audio = []
     if "member_responses" in team_run_context:
-        for interaction in team_run_context["member_responses"]:
+        member_responses = team_run_context["member_responses"]
+        if max_interactions is not None and len(member_responses) > max_interactions:
+            member_responses = member_responses[-max_interactions:]
+        for interaction in member_responses:
             if interaction["run_response"].audio:
                 audio.extend(interaction["run_response"].audio)
     return audio
 
 
-def get_team_run_context_files(team_run_context: Dict[str, Any]) -> List[File]:
+def get_team_run_context_files(
+    team_run_context: Dict[str, Any],
+    max_interactions: Optional[int] = None,
+) -> List[File]:
     if not team_run_context:
         return []
     files = []
     if "member_responses" in team_run_context:
-        for interaction in team_run_context["member_responses"]:
+        member_responses = team_run_context["member_responses"]
+        if max_interactions is not None and len(member_responses) > max_interactions:
+            member_responses = member_responses[-max_interactions:]
+        for interaction in member_responses:
             if interaction["run_response"].files:
                 files.extend(interaction["run_response"].files)
     return files

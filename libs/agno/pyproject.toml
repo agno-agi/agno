@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "2.3.26"
+version = "2.4.3"
 description = "Agno: a lightweight library for building Multi-Agent Systems"
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -63,6 +63,7 @@ dev = [
   "mcp",
   "openai",
   "fakeredis",
+  "xlwt",
 ]
 
 os = ["fastapi", "uvicorn", "PyJWT"]
@@ -173,6 +174,7 @@ docx = ["python-docx"]
 pptx = ["python-pptx"]
 text = ["aiofiles"]
 csv = ["aiofiles"]
+excel = ["openpyxl", "xlrd"]
 markdown = ["unstructured", "markdown", "aiofiles"]
 chonkie = ["chonkie[semantic]", "chonkie[code]", "chonkie"]
 
@@ -303,6 +305,7 @@ knowledge = [
   "agno[pptx]",
   "agno[text]",
   "agno[csv]",
+  "agno[excel]",
   "agno[markdown]",
   "agno[chonkie]"
 ]
@@ -484,6 +487,7 @@ module = [
   "newspaper.*",
   "numpy.*",
   "ollama.*",
+  "openpyxl.*",
   "openai.*",
   "cv2.*",
   "openbb.*",
@@ -548,6 +552,7 @@ module = [
   "redshift_connector.*",
   "reportlab.*",
   "surrealdb.*",
-  "trafilatura.*"
+  "trafilatura.*",
+  "xlrd.*"
 ]
 ignore_missing_imports = true

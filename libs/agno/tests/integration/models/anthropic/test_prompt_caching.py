@@ -145,7 +145,7 @@ async def test_async_prompt_caching():
     large_system_prompt = _get_large_system_prompt()
 
     agent = Agent(
-        model=Claude(id="claude-3-5-haiku-20241022", cache_system_prompt=True),
+        model=Claude(id="claude-sonnet-4-20250514", cache_system_prompt=True),
         system_message=large_system_prompt,
         telemetry=False,
     )
