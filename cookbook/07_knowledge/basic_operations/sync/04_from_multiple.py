@@ -40,6 +40,6 @@ knowledge.insert_many(
     ],
 )
 
-agent = Agent(knowledge=knowledge)
+agent = Agent(knowledge=knowledge, search_knowledge=True)
 
 agent.print_response("What can you tell me about Agno?", markdown=True)

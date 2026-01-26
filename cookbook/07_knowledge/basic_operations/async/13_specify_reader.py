@@ -32,6 +32,6 @@ asyncio.run(
     )
 )
 
-agent = Agent(knowledge=knowledge)
+agent = Agent(knowledge=knowledge, search_knowledge=True)
 
 agent.print_response("What documents are in the knowledge base?", markdown=True)
