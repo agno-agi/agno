@@ -22,11 +22,12 @@ Usage:
 """
 
 from agno.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.tools.reasoning import ReasoningTools
 from schemas import DocumentSummary
 from tools import fetch_url, read_pdf, read_text_file
-from agno.db.sqlite import SqliteDb
+
 # ============================================================================
 # System Message
 # ============================================================================
