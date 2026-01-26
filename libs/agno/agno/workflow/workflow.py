@@ -3930,6 +3930,9 @@ class Workflow:
 
         self.update_agents_and_teams_session_info()
 
+        # Extract dependencies from kwargs if provided (e.g., from JWT middleware)
+        dependencies = kwargs.pop("dependencies", None)
+
         # Initialize run context
         run_context = RunContext(
             run_id=run_id,
@@ -3938,6 +3941,7 @@ class Workflow:
             session_state=session_state,
             workflow_id=self.id,
             workflow_name=self.name,
+            dependencies=dependencies,
         )
 
         # Execute workflow agent if configured
@@ -4103,12 +4107,16 @@ class Workflow:
         self.initialize_workflow()
         session_id, user_id = self._initialize_session(session_id=session_id, user_id=user_id)
 
+        # Extract dependencies from kwargs if provided (e.g., from JWT middleware)
+        dependencies = kwargs.pop("dependencies", None)
+
         # Initialize run context
         run_context = RunContext(
             run_id=run_id,
             session_id=session_id,
             user_id=user_id,
             session_state=session_state,
+            dependencies=dependencies,
         )
 
         log_debug(f"Async Workflow Run Start: {self.name}", center=True)
