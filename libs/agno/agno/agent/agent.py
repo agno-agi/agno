@@ -7489,10 +7489,6 @@ class Agent:
         # --- Default tools settings ---
         if self.read_chat_history:
             config["read_chat_history"] = self.read_chat_history
-        if not self.search_knowledge:
-            config["search_knowledge"] = self.search_knowledge
-        if self.add_search_knowledge_instructions:
-            config["add_search_knowledge_instructions"] = self.add_search_knowledge_instructions
         if self.update_knowledge:
             config["update_knowledge"] = self.update_knowledge
         if self.read_tool_call_history:
