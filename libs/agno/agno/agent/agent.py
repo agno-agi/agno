@@ -320,7 +320,7 @@ class Agent:
     # Add a tool that allows the Model to search the knowledge base (aka Agentic RAG)
     # Added only if knowledge is provided.
     search_knowledge: bool = True
-    add_search_knowledge_to_context: bool = True
+    add_search_knowledge_instructions: bool = True
     # Add a tool that allows the Agent to update Knowledge.
     update_knowledge: bool = False
     # Add a tool that allows the Model to get the tool call history.
@@ -525,6 +525,7 @@ class Agent:
         reasoning_max_steps: int = 10,
         read_chat_history: bool = False,
         search_knowledge: bool = True,
+        add_search_knowledge_instructions: bool = True,
         update_knowledge: bool = False,
         read_tool_call_history: bool = False,
         send_media_to_model: bool = True,
@@ -662,6 +663,7 @@ class Agent:
 
         self.read_chat_history = read_chat_history
         self.search_knowledge = search_knowledge
+        self.add_search_knowledge_instructions = add_search_knowledge_instructions
         self.update_knowledge = update_knowledge
         self.read_tool_call_history = read_tool_call_history
         self.send_media_to_model = send_media_to_model
@@ -9037,7 +9039,7 @@ class Agent:
                 system_message_content += learning_context + "\n"
 
         # 3.3.13 then add search_knowledge instructions to the system prompt
-        if self.knowledge is not None and self.search_knowledge and self.add_search_knowledge_to_context:
+        if self.knowledge is not None and self.search_knowledge and self.add_search_knowledge_instructions:
             build_context_fn = getattr(self.knowledge, "build_context", None)
             if callable(build_context_fn):
                 knowledge_context = build_context_fn(
@@ -9377,7 +9379,7 @@ class Agent:
                 system_message_content += learning_context + "\n"
 
         # 3.3.13 then add search_knowledge instructions to the system prompt
-        if self.knowledge is not None:
+        if self.knowledge is not None and self.search_knowledge and self.add_search_knowledge_instructions:
             # Prefer async version if available for async databases
             abuild_context_fn = getattr(self.knowledge, "abuild_context", None)
             build_context_fn = getattr(self.knowledge, "build_context", None)

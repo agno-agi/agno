@@ -343,6 +343,7 @@ class Team:
     # Add a tool to search the knowledge base (aka Agentic RAG)
     # Only added if knowledge is provided.
     search_knowledge: bool = True
+    add_search_knowledge_instructions: bool = True
 
     # If False, media (images, videos, audio, files) is only available to tools and not sent to the LLM
     send_media_to_model: bool = True
@@ -530,6 +531,7 @@ class Team:
         share_member_interactions: bool = False,
         get_member_information_tool: bool = False,
         search_knowledge: bool = True,
+        add_search_knowledge_instructions: bool = True,
         read_chat_history: bool = False,
         store_media: bool = True,
         store_tool_messages: bool = True,
@@ -653,6 +655,7 @@ class Team:
         self.share_member_interactions = share_member_interactions
         self.get_member_information_tool = get_member_information_tool
         self.search_knowledge = search_knowledge
+        self.add_search_knowledge_instructions = add_search_knowledge_instructions
         self.read_chat_history = read_chat_history
 
         self.store_media = store_media
@@ -5676,7 +5679,7 @@ class Team:
             additional_information.append(f"Your name is: {self.name}.")
 
         # Add knowledge context using protocol's build_context
-        if self.knowledge is not None:
+        if self.knowledge is not None and self.search_knowledge and self.add_search_knowledge_instructions:
             build_context_fn = getattr(self.knowledge, "build_context", None)
             if callable(build_context_fn):
                 knowledge_context = build_context_fn(
@@ -5972,7 +5975,7 @@ class Team:
             additional_information.append(f"Your name is: {self.name}.")
 
         # Add knowledge context using protocol's build_context
-        if self.knowledge is not None:
+        if self.knowledge is not None and self.search_knowledge and self.add_search_knowledge_instructions:
             build_context_fn = getattr(self.knowledge, "build_context", None)
             if callable(build_context_fn):
                 knowledge_context = build_context_fn(
