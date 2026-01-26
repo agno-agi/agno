@@ -2,9 +2,10 @@
 
 When using `external_execution=True`, the agent prints "I have tools to execute..."
 messages. Add `external_execution_silent=True` to suppress these for cleaner UX in production.
-"""
 
-from typing import List
+This cookbook is for AgentOS/AGUI where tool execution happens in the frontend.
+The frontend will receive the tool call and handle execution on the client side.
+"""
 
 from agno.agent.agent import Agent
 from agno.models.openai import OpenAIChat
@@ -16,11 +17,16 @@ from agno.tools.duckduckgo import DuckDuckGoTools
 
 # external_execution_silent=True suppresses "I have tools to execute..." verbose messages
 @tool(external_execution=True, external_execution_silent=True)
-def generate_haiku(
-    english: List[str], japanese: List[str], image_names: List[str]
-) -> str:
-    """Generate a haiku in Japanese and English and display it in the frontend."""
-    return "Haiku generated and displayed in frontend"
+def generate_haiku(topic: str) -> str:
+    """Generate a haiku about a given topic and display it in the frontend.
+
+    Args:
+        topic: The topic for the haiku (e.g., "nature", "technology", "love")
+
+    Returns:
+        Confirmation that the haiku was generated and displayed
+    """
+    return f"Haiku about '{topic}' generated and displayed in frontend"
 
 
 agent = Agent(
@@ -35,6 +41,9 @@ agent = Agent(
 
     **Tools (executed on server):**
     - Web search using DuckDuckGo for finding current information
+
+    **Frontend Tools (executed on client):**
+    - generate_haiku: Creates a haiku about a given topic
 
     Always be helpful, creative, and use the most appropriate tool for each request!
     """,

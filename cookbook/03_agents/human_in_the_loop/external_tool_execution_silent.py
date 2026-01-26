@@ -1,13 +1,13 @@
-"""External Tool Execution: Silent vs Verbose
+"""External Tool Execution: Silent Mode
 
-This example shows the difference between silent and non-silent external tools.
-- Non-silent (default): Agent prints "I have tools to execute..." messages
-- Silent (external_execution_silent=True): No verbose messages, cleaner output for production UX
+This example demonstrates external_execution_silent=True, which suppresses
+the verbose "I have tools to execute..." messages when tools are paused.
 
-Run `pip install openai agno` to install dependencies.
+- Default (external_execution_silent=False): Prints paused messages
+- Silent (external_execution_silent=True): No verbose messages
+
+Run: pip install openai agno
 """
-
-import subprocess
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
@@ -16,67 +16,60 @@ from agno.tools import tool
 from agno.utils import pprint
 
 
-# Non-silent tool: will print "I have tools to execute..." when paused
-@tool(external_execution=True)
-def execute_shell_command(command: str) -> str:
-    """Execute a shell command.
-
-    Args:
-        command (str): The shell command to execute
-
-    Returns:
-        str: The output of the shell command
-    """
-    if command.startswith("ls"):
-        return subprocess.check_output(command, shell=True).decode("utf-8")
-    else:
-        raise Exception(f"Unsupported command: {command}")
-
-
-# Silent tool: no verbose messages, ideal for frontend-rendered components
 @tool(external_execution=True, external_execution_silent=True)
-def render_file_tree(files: list[str]) -> str:
-    """Render a file tree visualization in the frontend.
+def get_weather(city: str) -> str:
+    """Get the current weather for a city.
 
     Args:
-        files (list[str]): List of file paths to display
+        city: The city name to get weather for
 
     Returns:
-        str: Confirmation that the tree was rendered
+        The weather information for the city
     """
-    return "File tree rendered in frontend"
+    # Simulated external API call
+    return f"Weather in {city}: Sunny, 72F"
 
 
 agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
-    tools=[execute_shell_command, render_file_tree],
+    tools=[get_weather],
     markdown=True,
     db=SqliteDb(session_table="test_session", db_file="tmp/example.db"),
 )
 
-run_response = agent.run(
-    "What files do I have in my current directory? Then show me a tree view."
-)
+# Note: With external_execution_silent=True, you won't see
+# "I have tools to execute..." when the agent pauses
+
+run_response = agent.run("What's the weather in San Francisco?")
 
 if run_response.is_paused:
+    print("Agent is paused for external execution")
+    print(f"Tools requiring execution: {len(run_response.active_requirements)}")
+
+    # This is where you see the difference:
+    # - external_execution_silent=False: shows "I have tools to execute..."
+    # - external_execution_silent=True: content is empty (no verbose message)
+    print(f"Paused content: '{run_response.content}'")
+
     for requirement in run_response.active_requirements:
         if requirement.needs_external_execution:
             tool_name = requirement.tool_execution.tool_name
-            tool_args = requirement.tool_execution.tool_args
+            tool_args = requirement.tool_execution.tool_args or {}
 
-            if tool_name == execute_shell_command.name:
-                print(f"Executing {tool_name} with args {tool_args} externally")
-                result = execute_shell_command.entrypoint(**tool_args)  # type: ignore
+            print(f"Executing: {tool_name}({tool_args})")
+
+            if tool_name == get_weather.name and "city" in tool_args:
+                result = get_weather.entrypoint(**tool_args)
                 requirement.set_external_execution_result(result)
+            else:
+                # Handle missing arguments gracefully
+                requirement.set_external_execution_result(
+                    "Unable to execute: missing arguments"
+                )
 
-            elif tool_name == render_file_tree.name:
-                # Silent tool - no verbose message was printed by the agent
-                print("Rendering file tree (silent tool)")
-                result = render_file_tree.entrypoint(**tool_args)  # type: ignore
-                requirement.set_external_execution_result(result)
+    run_response = agent.continue_run(
+        run_id=run_response.run_id,
+        requirements=run_response.requirements,
+    )
 
-run_response = agent.continue_run(
-    run_id=run_response.run_id,
-    requirements=run_response.requirements,
-)
 pprint.pprint_run_response(run_response)
