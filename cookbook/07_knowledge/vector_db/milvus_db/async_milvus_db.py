@@ -14,7 +14,7 @@ from agno.vectordb.milvus import Milvus
 # - If you use [Zilliz Cloud](https://zilliz.com/cloud), the fully managed cloud service for Milvus, adjust the `uri` and `token`, which correspond to the [Public Endpoint and API key](https://docs.zilliz.com/docs/on-zilliz-cloud-console#cluster-details) in Zilliz Cloud.
 vector_db = Milvus(
     collection="recipes",
-    uri="tmp/milvus.db",
+    uri="/tmp/milvus.db",
 )
 # Create knowledge base
 knowledge = Knowledge(
@@ -24,13 +24,16 @@ knowledge = Knowledge(
 # Create and use the agent
 agent = Agent(knowledge=knowledge)
 
-if __name__ == "__main__":
-    # Comment out after first run
-    asyncio.run(
-        knowledge.ainsert(
-            url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
-        )
+
+async def main():
+    # Insert data
+    await knowledge.ainsert(
+        url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
     )
 
     # Create and use the agent
-    asyncio.run(agent.aprint_response("How to make Tom Kha Gai", markdown=True))
+    await agent.aprint_response("How to make Tom Kha Gai", markdown=True)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

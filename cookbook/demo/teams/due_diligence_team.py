@@ -26,7 +26,6 @@ from agents.devil_advocate_agent import devil_advocate_agent
 from agents.finance_agent import finance_agent
 from agents.report_writer_agent import report_writer_agent
 from agents.research_agent import research_agent
-from agents.web_intelligence_agent import web_intelligence_agent
 from agno.models.openai import OpenAIResponses
 from agno.team.team import Team
 from agno.tools.reasoning import ReasoningTools
@@ -51,23 +50,18 @@ instructions = dedent("""\
        - Market trends and dynamics
        - Expert opinions and analysis
 
-    2. **Web Intelligence Agent** - Website and positioning analysis
-       - Product offerings and features
-       - Pricing and positioning
-       - Competitive differentiation
-
-    3. **Finance Agent** - Financial data (for public companies)
+    2. **Finance Agent** - Financial data (for public companies)
        - Stock performance
        - Financial metrics
        - Valuation analysis
 
-    4. **Devil's Advocate Agent** - THE CRITICAL DIFFERENTIATOR
+    3. **Devil's Advocate Agent** - THE CRITICAL DIFFERENTIATOR
        - Challenges findings from other agents
        - Finds weaknesses and risks
        - Presents counter-arguments
        - Forces intellectual honesty
 
-    5. **Report Writer Agent** - Final synthesis
+    4. **Report Writer Agent** - Final synthesis
        - Combines all findings
        - Notes where agents disagreed
        - Creates actionable recommendation
@@ -76,7 +70,6 @@ instructions = dedent("""\
 
     Phase 1: Evidence Gathering (Parallel)
     - Research Agent gathers market intelligence
-    - Web Intelligence Agent analyzes positioning
     - Finance Agent gets financial data (if applicable)
 
     Phase 2: Critical Challenge
@@ -148,7 +141,6 @@ due_diligence_team = Team(
     model=OpenAIResponses(id="gpt-5.2"),
     members=[
         research_agent,
-        web_intelligence_agent,
         finance_agent,
         devil_advocate_agent,
         report_writer_agent,

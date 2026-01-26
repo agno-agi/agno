@@ -1,6 +1,6 @@
-# Agno AgentOS Demo
+# Agno Demo
 
-This demo showcases what's possible with **Agno AgentOS** - a high-performance runtime for multi-agent systems.
+This demo cookbook showcases a range of examples built using Agno.
 
 ## What's Inside
 
@@ -45,36 +45,22 @@ cd agno
 ### 2. Create a virtual environment
 
 ```shell
-uv venv .demoenv --python 3.12
-source .demoenv/bin/activate
+uv venv .venvs/demo --python 3.12
+source .venvs/demo/bin/activate
 ```
 
 ### 3. Install dependencies
 
 ```shell
-uv pip install -r cookbook/demo/requirements.txt
+uv pip install -r cookbook/demo/requirements.in
 ```
 
 ### 4. Run Postgres with PgVector
 
-We use PostgreSQL for storing agent sessions, memories, metrics, evals, and knowledge. Install [Docker Desktop](https://docs.docker.com/desktop/install/mac-install/) and run:
+We use PostgreSQL for storing sessions, memories, metrics, evals, and knowledge. Install [Docker Desktop](https://docs.docker.com/desktop/install/mac-install/) and run:
 
 ```shell
 ./cookbook/scripts/run_pgvector.sh
-```
-
-Or use Docker directly:
-
-```shell
-docker run -d \
-  -e POSTGRES_DB=ai \
-  -e POSTGRES_USER=ai \
-  -e POSTGRES_PASSWORD=ai \
-  -e PGDATA=/var/lib/postgresql \
-  -v pgvolume:/var/lib/postgresql \
-  -p 5532:5432 \
-  --name pgvector \
-  agnohq/pgvector:18
 ```
 
 ### 5. Export API Keys
@@ -84,7 +70,7 @@ export OPENAI_API_KEY=***
 export PARALLEL_API_KEY=***
 ```
 
-### 6. Run the demo AgentOS
+### 6. Run the demo
 
 ```shell
 python cookbook/demo/run.py

@@ -21,7 +21,7 @@ Quick Start:
 
     # Interactive mode
     from agent import sql_agent
-    sql_agent.cli(stream=True)
+    sql_agent.cli_app(stream=True)
 
 Example:
     >>> from agent import sql_agent

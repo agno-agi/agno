@@ -9,7 +9,7 @@ from agno.vectordb.milvus import Milvus, SearchType
 # - If you have large scale of data, say more than a million vectors, you can set up a more performant Milvus server on [Docker or Kubernetes](https://milvus.io/docs/quickstart.md). In this setup, please use the server address and port as your uri, e.g.`http://localhost:19530`. If you enable the authentication feature on Milvus, use "<your_username>:<your_password>" as the token, otherwise don't set the token.
 # - If you use [Zilliz Cloud](https://zilliz.com/cloud), the fully managed cloud service for Milvus, adjust the `uri` and `token`, which correspond to the [Public Endpoint and API key](https://docs.zilliz.com/docs/on-zilliz-cloud-console#cluster-details) in Zilliz Cloud.
 vector_db = Milvus(
-    collection="recipes", uri="tmp/milvus.db", search_type=SearchType.hybrid
+    collection="recipes", uri="/tmp/milvus_hybrid.db", search_type=SearchType.hybrid
 )
 
 knowledge = Knowledge(
