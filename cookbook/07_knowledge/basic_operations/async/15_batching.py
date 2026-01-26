@@ -1,4 +1,4 @@
-"""This cookbook shows how to use batch embeddings with Cohere.
+"""This cookbook shows how to use batch embeddings.
 1. Run: `python cookbook/07_knowledge/basic_operations/async/15_batching.py` to run the cookbook
 """
 

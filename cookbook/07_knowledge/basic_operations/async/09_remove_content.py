@@ -24,21 +24,23 @@ knowledge = Knowledge(
     ),
 )
 
-asyncio.run(
-    knowledge.ainsert(
+
+async def main():
+    await knowledge.ainsert(
         name="CV",
         path="cookbook/07_knowledge/testing_resources/cv_1.pdf",
         metadata={"user_tag": "Engineering Candidates"},
     )
-)
+
+    # Remove content and vectors by id
+    contents, _ = await knowledge.aget_content()
+    for content in contents:
+        print(content.id)
+        print(" ")
+        await knowledge.aremove_content_by_id(content.id)
+
+    # Remove all content
+    await knowledge.aremove_all_content()
 
 
-# Remove content and vectors by id
-contents, _ = knowledge.get_content()
-for content in contents:
-    print(content.id)
-    print(" ")
-    knowledge.remove_content_by_id(content.id)
-
-# Remove all content
-knowledge.remove_all_content()
+asyncio.run(main())

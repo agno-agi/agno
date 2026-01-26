@@ -1,4 +1,4 @@
-"""This cookbook shows how to use batch embeddings with Cohere.
+"""This cookbook shows how to use batch embeddings with OpenAI.
 1. Run: `python cookbook/07_knowledge/basic_operations/sync/15_batching.py` to run the cookbook
 """
 
