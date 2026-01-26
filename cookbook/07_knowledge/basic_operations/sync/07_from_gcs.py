@@ -1,5 +1,5 @@
 """This cookbook shows how to add content from a GCS bucket to the knowledge base.
-1. Run: `python cookbook/07_knowledge/basic_operations/sync/07_from_gcs.py` to run the cookbook
+1. Run: `python cookbook/agent_concepts/knowledge/07_from_gcs.py` to run the cookbook
 """
 
 from agno.agent import Agent

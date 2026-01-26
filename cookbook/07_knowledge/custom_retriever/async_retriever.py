@@ -64,10 +64,9 @@ async def knowledge_retriever(
 async def amain():
     """Async main function to demonstrate agent usage."""
     # Initialize agent with custom knowledge retriever
-    # The knowledge object is required to register the search_knowledge_base tool
-    # The knowledge_retriever overrides the default retrieval logic
+    # Remember to set search_knowledge=True to use agentic_rag or add_reference=True for traditional RAG
+    # search_knowledge=True is default when you add a knowledge base but is needed here
     agent = Agent(
-        knowledge=knowledge,
         knowledge_retriever=knowledge_retriever,
         search_knowledge=True,
         instructions="Search the knowledge base for information",

@@ -217,15 +217,14 @@ async def test_async_unsupported_file_type():
 
 @pytest.mark.asyncio
 async def test_async_empty_text_file(tmp_path):
-    """Empty file produces no chunks (consistent with sync behavior)."""
     text_path = tmp_path / "empty.txt"
     text_path.write_text("")
 
     reader = TextReader()
     documents = await reader.async_read(text_path)
 
-    # No chunks can be extracted from an empty file (matches sync behavior)
-    assert len(documents) == 0
+    assert len(documents) == 1
+    assert documents[0].content == ""
 
 
 @pytest.mark.asyncio

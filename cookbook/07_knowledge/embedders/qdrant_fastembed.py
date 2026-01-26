@@ -1,5 +1,3 @@
-import asyncio
-
 from agno.knowledge.embedder.fastembed import FastEmbedEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.pgvector import PgVector
@@ -20,10 +18,4 @@ knowledge = Knowledge(
         embedder=FastEmbedEmbedder(),
     ),
     max_results=2,
-)
-
-asyncio.run(
-    knowledge.ainsert(
-        path="cookbook/07_knowledge/testing_resources/cv_1.pdf",
-    )
 )

@@ -2,14 +2,12 @@
 
 It is important to specify the reader for the content when using topics.
 
-1. Run: `pip install agno wikipedia arxiv` to install the dependencies
-2. Run: `python cookbook/07_knowledge/basic_operations/async/03_from_topic.py` to run the cookbook
+1. Run: `uv pip install agno wikipedia arxiv` to install the dependencies
+2. Run: `python cookbook/agent_concepts/knowledge/03_from_topic.py` to run the cookbook
 """
 
 import asyncio
 
-from agno.agent import Agent
-from agno.db.postgres import PostgresDb
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader.arxiv_reader import ArxivReader
 from agno.knowledge.reader.wikipedia_reader import WikipediaReader
@@ -21,10 +19,6 @@ knowledge = Knowledge(
     description="Agno 2.0 Knowledge Implementation",
     vector_db=PgVector(
         table_name="vectors", db_url="postgresql+psycopg://ai:ai@localhost:5532/ai"
-    ),
-    contents_db=PostgresDb(
-        db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
-        knowledge_table="knowledge_contents",
     ),
 )
 
@@ -51,18 +45,5 @@ asyncio.run(
     knowledge.ainsert_many(
         topics=["Carbon Dioxide", "Nitrogen"],
         reader=ArxivReader(),
-        skip_if_exists=True,
     )
-)
-
-agent = Agent(
-    name="My Agent",
-    description="Agno 2.0 Agent Implementation",
-    knowledge=knowledge,
-    search_knowledge=True,
-)
-
-agent.print_response(
-    "What can you tell me about Manchester United?",
-    markdown=True,
 )

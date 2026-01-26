@@ -1,5 +1,6 @@
 """This cookbook shows how to add content from a S3 bucket to the knowledge base.
-1. Run: `python cookbook/07_knowledge/basic_operations/async/06_from_s3.py` to run the cookbook
+
+1. Run: `python cookbook/agent_concepts/knowledge/06_from_s3.py` to run the cookbook
 """
 
 import asyncio

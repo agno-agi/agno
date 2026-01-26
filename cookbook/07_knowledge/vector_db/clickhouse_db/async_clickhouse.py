@@ -7,7 +7,7 @@ from agno.vectordb.clickhouse import Clickhouse
 agent = Agent(
     knowledge=Knowledge(
         vector_db=Clickhouse(
-            table_name="documents",
+            table_name="documentss",
             host="localhost",
             port=8123,
             username="ai",

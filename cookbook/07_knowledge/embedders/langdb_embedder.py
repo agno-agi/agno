@@ -1,5 +1,3 @@
-import asyncio
-
 from agno.knowledge.embedder.langdb import LangDBEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.pgvector import PgVector
@@ -18,10 +16,4 @@ knowledge = Knowledge(
         embedder=LangDBEmbedder(),
     ),
     max_results=2,
-)
-
-asyncio.run(
-    knowledge.ainsert(
-        path="cookbook/07_knowledge/testing_resources/cv_1.pdf",
-    )
 )

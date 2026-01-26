@@ -3,7 +3,7 @@ Readers are assigned by default to the content based on the file extension.
 You can specify a reader for a specific content by passing the reader to the insert method
 if you want to use a different reader for a specific content.
 
-1. Run: `python cookbook/07_knowledge/basic_operations/async/13_specify_reader.py` to run the cookbook
+1. Run: `python cookbook/agent_concepts/knowledge/13_specify_reader.py` to run the cookbook
 """
 
 import asyncio
@@ -32,6 +32,6 @@ asyncio.run(
     )
 )
 
-agent = Agent(knowledge=knowledge, search_knowledge=True)
+agent = Agent(knowledge=knowledge)
 
 agent.print_response("What documents are in the knowledge base?", markdown=True)
