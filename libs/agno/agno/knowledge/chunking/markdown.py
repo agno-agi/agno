@@ -69,8 +69,8 @@ class MarkdownChunking(ChunkingStrategy):
         # Split content by paragraphs
         paragraphs = re.split(r"\n\n+", content)
 
-        chunks = []
-        current_chunk_content = []
+        chunks: List[str] = []
+        current_chunk_content: List[str] = []
         # Account for heading size in each chunk
         heading_size = len(heading) + 2 if heading else 0  # +2 for "\n\n"
 
@@ -79,9 +79,7 @@ class MarkdownChunking(ChunkingStrategy):
             if not para:
                 continue
 
-            current_size = (
-                sum(len(p) for p in current_chunk_content) + len(current_chunk_content) * 2
-            )  # account for \n\n
+            current_size = sum(len(p) for p in current_chunk_content) + len(current_chunk_content) * 2  # \n\n
             para_size = len(para)
 
             # Check if adding this paragraph would exceed chunk_size
@@ -110,7 +108,7 @@ class MarkdownChunking(ChunkingStrategy):
                 # Split the large paragraph by sentences or fixed size
                 available_size = self.chunk_size - heading_size
                 words = para.split()
-                current_words = []
+                current_words: List[str] = []
                 current_word_len = 0
 
                 for word in words:
@@ -127,7 +125,7 @@ class MarkdownChunking(ChunkingStrategy):
             else:
                 current_chunk_content.append(para)
 
-        # Don't forget remaining content
+        # add the remaining content
         if current_chunk_content:
             chunk_text = (
                 heading + "\n\n" + "\n\n".join(current_chunk_content) if heading else "\n\n".join(current_chunk_content)
