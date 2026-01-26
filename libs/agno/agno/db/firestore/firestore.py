@@ -1,7 +1,7 @@
 import json
 import time
 from datetime import date, datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union, cast
 from uuid import uuid4
 
 if TYPE_CHECKING:
@@ -496,6 +496,29 @@ class FirestoreDb(BaseDb):
             if doc_ref is None:
                 return None
 
+            # Check if session_data is stored as JSON string (legacy) or native map.
+            # Legacy sessions stored session_data as a JSON string, but Firestore's dot notation
+            # (e.g., "session_data.session_name") only works with native maps. Using dot notation
+            # on a JSON string overwrites the entire field, causing data loss.
+            # For legacy sessions, we use read-modify-write which also migrates them to native maps.
+            current_doc = doc_ref.get()
+            if not current_doc.exists:
+                return None
+
+            current_data = current_doc.to_dict()
+            session_data = current_data.get("session_data") if current_data else None
+
+            if session_data is None or isinstance(session_data, str):
+                existing_session = self.get_session(session_id, session_type, deserialize=True)
+                if existing_session is None:
+                    return None
+                existing_session = cast(Session, existing_session)
+                if existing_session.session_data is None:
+                    existing_session.session_data = {}
+                existing_session.session_data["session_name"] = session_name
+                return self.upsert_session(existing_session, deserialize=deserialize)
+
+            # Native map format - use efficient dot notation update
             doc_ref.update({"session_data.session_name": session_name, "updated_at": int(time.time())})
 
             updated_doc = doc_ref.get()
