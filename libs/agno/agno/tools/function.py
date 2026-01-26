@@ -1,7 +1,6 @@
 from dataclasses import dataclass
 from functools import partial
 from importlib.metadata import version
-from inspect import signature
 from typing import Any, Callable, Dict, List, Literal, Optional, Sequence, Type, TypeVar, get_type_hints
 
 from docstring_parser import parse
@@ -467,7 +466,7 @@ class Function(BaseModel):
     @staticmethod
     def _wrap_callable(func: Callable) -> Callable:
         """Wrap a callable with Pydantic's validate_call decorator, if relevant"""
-        from inspect import isasyncgenfunction, iscoroutinefunction
+        from inspect import isasyncgenfunction, iscoroutinefunction, signature
 
         pydantic_version = Version(version("pydantic"))
 
