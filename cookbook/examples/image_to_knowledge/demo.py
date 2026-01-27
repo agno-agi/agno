@@ -54,7 +54,7 @@ image_reader = ImageReader(
 # Create Knowledge with content sources
 knowledge = Knowledge(
     name="Company Knowledge Base",
-    description="Unified knowledge from multiple sources",
+    description="Knowledge base with images and text",
     contents_db=contents_db,
     vector_db=vector_db,
     content_sources=[sharepoint],
