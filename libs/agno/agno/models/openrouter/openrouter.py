@@ -90,9 +90,12 @@ class OpenRouter(OpenAILike):
     def _format_message(self, message: Message, compress_tool_results: bool = False) -> Dict[str, Any]:
         message_dict = super()._format_message(message, compress_tool_results)
 
+        # Preserve reasoning_details for OpenRouter Gemini models
+        # This is required for multi-turn tool calling with reasoning models
         if message.role == "assistant" and message.provider_data:
-            if message.provider_data.get("reasoning_details"):
-                message_dict["reasoning_details"] = message.provider_data["reasoning_details"]
+            reasoning_details = message.provider_data.get("reasoning_details")
+            if reasoning_details is not None:
+                message_dict["reasoning_details"] = reasoning_details
 
         return message_dict
 
@@ -105,16 +108,31 @@ class OpenRouter(OpenAILike):
 
         if response.choices and len(response.choices) > 0:
             response_message = response.choices[0].message
+
+            # Extract reasoning_details from response - check multiple locations
+            # OpenRouter may return this data under different field names
+            reasoning_details = None
+
+            # Check for reasoning_details as a direct attribute
             if hasattr(response_message, "reasoning_details") and response_message.reasoning_details:
+                reasoning_details = response_message.reasoning_details
+
+            # Check model_extra for reasoning_details or reasoning
+            if reasoning_details is None and hasattr(response_message, "model_extra"):
+                extra = getattr(response_message, "model_extra", None)
+                if extra and isinstance(extra, dict):
+                    # Check for reasoning_details first, then reasoning
+                    if extra.get("reasoning_details"):
+                        reasoning_details = extra["reasoning_details"]
+                    elif extra.get("reasoning"):
+                        reasoning_details = extra["reasoning"]
+
+            # Store reasoning_details in provider_data if found
+            # This is required for Gemini reasoning models to preserve thought signatures
+            if reasoning_details is not None:
                 if model_response.provider_data is None:
                     model_response.provider_data = {}
-                model_response.provider_data["reasoning_details"] = response_message.reasoning_details
-            elif hasattr(response_message, "model_extra"):
-                extra = getattr(response_message, "model_extra", None)
-                if extra and isinstance(extra, dict) and extra.get("reasoning_details"):
-                    if model_response.provider_data is None:
-                        model_response.provider_data = {}
-                    model_response.provider_data["reasoning_details"] = extra["reasoning_details"]
+                model_response.provider_data["reasoning_details"] = reasoning_details
 
         return model_response
 
@@ -123,9 +141,27 @@ class OpenRouter(OpenAILike):
 
         if response_delta.choices and len(response_delta.choices) > 0:
             choice_delta = response_delta.choices[0].delta
+
+            # Extract reasoning_details from delta - check multiple locations
+            reasoning_details = None
+
+            # Check for reasoning_details as a direct attribute
             if hasattr(choice_delta, "reasoning_details") and choice_delta.reasoning_details:
+                reasoning_details = choice_delta.reasoning_details
+
+            # Check model_extra for reasoning_details or reasoning
+            if reasoning_details is None and hasattr(choice_delta, "model_extra"):
+                extra = getattr(choice_delta, "model_extra", None)
+                if extra and isinstance(extra, dict):
+                    if extra.get("reasoning_details"):
+                        reasoning_details = extra["reasoning_details"]
+                    elif extra.get("reasoning"):
+                        reasoning_details = extra["reasoning"]
+
+            # Store reasoning_details in provider_data if found
+            if reasoning_details is not None:
                 if model_response.provider_data is None:
                     model_response.provider_data = {}
-                model_response.provider_data["reasoning_details"] = choice_delta.reasoning_details
+                model_response.provider_data["reasoning_details"] = reasoning_details
 
         return model_response
