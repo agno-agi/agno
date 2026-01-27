@@ -42,6 +42,7 @@ class TestExcelToolsInit:
         assert "read_data" in function_names
         assert "add_sheet" in function_names
         assert "list_sheets" in function_names
+        assert "get_file_path" in function_names
         # Disabled by default
         assert "add_formula" not in function_names
         assert "format_cells" not in function_names
@@ -56,6 +57,7 @@ class TestExcelToolsInit:
         assert "read_data" in function_names
         assert "add_sheet" in function_names
         assert "list_sheets" in function_names
+        assert "get_file_path" in function_names
         assert "add_formula" in function_names
         assert "format_cells" in function_names
 
@@ -298,6 +300,48 @@ class TestListSheets:
         assert "not found" in result_data["error"]
 
 
+class TestGetFilePath:
+    """Tests for get_file_path method."""
+
+    def test_get_file_path_success(self, excel_tools, temp_dir):
+        """Test successful file path retrieval."""
+        excel_tools.create_workbook("test.xlsx")
+
+        result = excel_tools.get_file_path("test.xlsx")
+        result_data = json.loads(result)
+
+        assert result_data["success"] is True
+        assert result_data["file"] == "test.xlsx"
+        assert str(temp_dir) in result_data["path"]
+        assert result_data["exists"] is True
+        assert result_data["size_bytes"] > 0
+
+    def test_get_file_path_adds_extension(self, excel_tools, temp_dir):
+        """Test that .xlsx extension is added if missing."""
+        excel_tools.create_workbook("test")
+
+        result = excel_tools.get_file_path("test")
+        result_data = json.loads(result)
+
+        assert result_data["file"] == "test.xlsx"
+        assert result_data["success"] is True
+
+    def test_get_file_path_file_not_found(self, excel_tools):
+        """Test getting path for non-existent file."""
+        result = excel_tools.get_file_path("missing.xlsx")
+        result_data = json.loads(result)
+
+        assert "error" in result_data
+        assert "not found" in result_data["error"]
+
+    def test_get_file_path_escape_blocked(self, excel_tools):
+        """Test that path escape is blocked."""
+        result = excel_tools.get_file_path("../../escape.xlsx")
+        result_data = json.loads(result)
+
+        assert "error" in result_data
+
+
 class TestAddFormula:
     """Tests for add_formula method."""
 
@@ -350,7 +394,9 @@ class TestFormatCells:
         excel_tools_all.create_workbook("test.xlsx")
         excel_tools_all.write_data("test.xlsx", [["A", "B"], ["C", "D"]])
 
-        result = excel_tools_all.format_cells("test.xlsx", "A1:B2", bold=True, font_size=14)
+        result = excel_tools_all.format_cells(
+            "test.xlsx", "A1:B2", bold=True, font_size=14
+        )
         result_data = json.loads(result)
 
         assert result_data["success"] is True

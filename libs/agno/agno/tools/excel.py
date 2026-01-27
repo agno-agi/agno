@@ -47,6 +47,7 @@ class ExcelTools(Toolkit):
         enable_read_data: bool = True,
         enable_add_sheet: bool = True,
         enable_list_sheets: bool = True,
+        enable_get_file_path: bool = True,
         enable_add_formula: bool = False,
         enable_format_cells: bool = False,
         all: bool = False,
@@ -62,6 +63,7 @@ class ExcelTools(Toolkit):
             enable_read_data: Enable the read_data tool. Default: True.
             enable_add_sheet: Enable the add_sheet tool. Default: True.
             enable_list_sheets: Enable the list_sheets tool. Default: True.
+            enable_get_file_path: Enable the get_file_path tool. Default: True.
             enable_add_formula: Enable the add_formula tool. Default: False.
             enable_format_cells: Enable the format_cells tool. Default: False.
             all: Enable all tools. Default: False.
@@ -80,6 +82,8 @@ class ExcelTools(Toolkit):
             tools.append(self.add_sheet)
         if all or enable_list_sheets:
             tools.append(self.list_sheets)
+        if all or enable_get_file_path:
+            tools.append(self.get_file_path)
         if all or enable_add_formula:
             tools.append(self.add_formula)
         if all or enable_format_cells:
@@ -112,7 +116,9 @@ class ExcelTools(Toolkit):
 
             return openpyxl
         except ImportError as e:
-            raise ImportError("`openpyxl` not installed. Please install it via `pip install openpyxl`.") from e
+            raise ImportError(
+                "`openpyxl` not installed. Please install it via `pip install openpyxl`."
+            ) from e
 
     def create_workbook(
         self,
@@ -137,11 +143,17 @@ class ExcelTools(Toolkit):
             safe, file_path = self._check_path(file_name)
 
             if not safe:
-                log_error(f"Attempted to create file outside base directory: {file_name}")
+                log_error(
+                    f"Attempted to create file outside base directory: {file_name}"
+                )
                 return json.dumps({"error": "Invalid file path"})
 
             if file_path.exists() and not overwrite:
-                return json.dumps({"error": f"File '{file_name}' already exists. Set overwrite=True to replace."})
+                return json.dumps(
+                    {
+                        "error": f"File '{file_name}' already exists. Set overwrite=True to replace."
+                    }
+                )
 
             log_info(f"Creating Excel workbook: {file_path}")
 
@@ -204,11 +216,17 @@ class ExcelTools(Toolkit):
             safe, file_path = self._check_path(file_name)
 
             if not safe:
-                log_error(f"Attempted to access file outside base directory: {file_name}")
+                log_error(
+                    f"Attempted to access file outside base directory: {file_name}"
+                )
                 return json.dumps({"error": "Invalid file path"})
 
             if not file_path.exists():
-                return json.dumps({"error": f"File '{file_name}' not found. Create it first with create_workbook."})
+                return json.dumps(
+                    {
+                        "error": f"File '{file_name}' not found. Create it first with create_workbook."
+                    }
+                )
 
             log_info(f"Writing data to: {file_path}")
 
@@ -216,7 +234,11 @@ class ExcelTools(Toolkit):
 
             if sheet_name:
                 if sheet_name not in workbook.sheetnames:
-                    return json.dumps({"error": f"Sheet '{sheet_name}' not found. Available: {workbook.sheetnames}"})
+                    return json.dumps(
+                        {
+                            "error": f"Sheet '{sheet_name}' not found. Available: {workbook.sheetnames}"
+                        }
+                    )
                 sheet = workbook[sheet_name]
             else:
                 sheet = workbook.active
@@ -229,7 +251,9 @@ class ExcelTools(Toolkit):
             rows_written = 0
             for row_idx, row_data in enumerate(data):
                 for col_idx, value in enumerate(row_data):
-                    sheet.cell(row=start_row + row_idx, column=start_col + col_idx, value=value)
+                    sheet.cell(
+                        row=start_row + row_idx, column=start_col + col_idx, value=value
+                    )
                 rows_written += 1
 
             workbook.save(str(file_path))
@@ -279,7 +303,9 @@ class ExcelTools(Toolkit):
             safe, file_path = self._check_path(file_name)
 
             if not safe:
-                log_error(f"Attempted to access file outside base directory: {file_name}")
+                log_error(
+                    f"Attempted to access file outside base directory: {file_name}"
+                )
                 return json.dumps({"error": "Invalid file path"})
 
             if not file_path.exists():
@@ -292,7 +318,11 @@ class ExcelTools(Toolkit):
             if sheet_name:
                 if sheet_name not in workbook.sheetnames:
                     workbook.close()
-                    return json.dumps({"error": f"Sheet '{sheet_name}' not found. Available: {workbook.sheetnames}"})
+                    return json.dumps(
+                        {
+                            "error": f"Sheet '{sheet_name}' not found. Available: {workbook.sheetnames}"
+                        }
+                    )
                 sheet = workbook[sheet_name]
             else:
                 sheet = workbook.active
@@ -365,11 +395,17 @@ class ExcelTools(Toolkit):
             safe, file_path = self._check_path(file_name)
 
             if not safe:
-                log_error(f"Attempted to access file outside base directory: {file_name}")
+                log_error(
+                    f"Attempted to access file outside base directory: {file_name}"
+                )
                 return json.dumps({"error": "Invalid file path"})
 
             if not file_path.exists():
-                return json.dumps({"error": f"File '{file_name}' not found. Create it first with create_workbook."})
+                return json.dumps(
+                    {
+                        "error": f"File '{file_name}' not found. Create it first with create_workbook."
+                    }
+                )
 
             log_info(f"Adding sheet '{sheet_name}' to: {file_path}")
 
@@ -420,7 +456,9 @@ class ExcelTools(Toolkit):
             safe, file_path = self._check_path(file_name)
 
             if not safe:
-                log_error(f"Attempted to access file outside base directory: {file_name}")
+                log_error(
+                    f"Attempted to access file outside base directory: {file_name}"
+                )
                 return json.dumps({"error": "Invalid file path"})
 
             if not file_path.exists():
@@ -447,6 +485,50 @@ class ExcelTools(Toolkit):
             log_error(f"Error listing sheets: {e}")
             return json.dumps({"error": f"Error listing sheets: {e}"})
 
+    def get_file_path(self, file_name: str) -> str:
+        """Get the full absolute path to an Excel file.
+
+        Use this to retrieve the file location for downloading or accessing
+        the Excel file outside of the agent.
+
+        Args:
+            file_name: Name of the Excel file.
+
+        Returns:
+            JSON string with the full file path and file info.
+        """
+        try:
+            file_name = self._ensure_xlsx_extension(file_name)
+            safe, file_path = self._check_path(file_name)
+
+            if not safe:
+                log_error(
+                    f"Attempted to access file outside base directory: {file_name}"
+                )
+                return json.dumps({"error": "Invalid file path"})
+
+            if not file_path.exists():
+                return json.dumps({"error": f"File '{file_name}' not found."})
+
+            # Get file size
+            file_size = file_path.stat().st_size
+
+            log_debug(f"Retrieved path for: {file_path}")
+
+            return json.dumps(
+                {
+                    "success": True,
+                    "file": file_name,
+                    "path": str(file_path),
+                    "size_bytes": file_size,
+                    "exists": True,
+                }
+            )
+
+        except Exception as e:
+            log_error(f"Error getting file path: {e}")
+            return json.dumps({"error": f"Error getting file path: {e}"})
+
     def add_formula(
         self,
         file_name: str,
@@ -472,7 +554,9 @@ class ExcelTools(Toolkit):
             safe, file_path = self._check_path(file_name)
 
             if not safe:
-                log_error(f"Attempted to access file outside base directory: {file_name}")
+                log_error(
+                    f"Attempted to access file outside base directory: {file_name}"
+                )
                 return json.dumps({"error": "Invalid file path"})
 
             if not file_path.exists():
@@ -550,7 +634,9 @@ class ExcelTools(Toolkit):
             safe, file_path = self._check_path(file_name)
 
             if not safe:
-                log_error(f"Attempted to access file outside base directory: {file_name}")
+                log_error(
+                    f"Attempted to access file outside base directory: {file_name}"
+                )
                 return json.dumps({"error": "Invalid file path"})
 
             if not file_path.exists():
@@ -583,7 +669,9 @@ class ExcelTools(Toolkit):
             # Build fill style
             fill = None
             if bg_color:
-                fill = PatternFill(start_color=bg_color, end_color=bg_color, fill_type="solid")
+                fill = PatternFill(
+                    start_color=bg_color, end_color=bg_color, fill_type="solid"
+                )
 
             # Apply formatting to range
             cells_formatted = 0
