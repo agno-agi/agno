@@ -823,7 +823,13 @@ class Knowledge:
                     log_warning(f"Invalid filter key: {key} - not present in knowledge base")
 
         elif isinstance(filters, List):
-            # Validate that list contains FilterExpr instances
+            # Validate list filters against known metadata keys
+            if valid_metadata_filters is None or not valid_metadata_filters:
+                # Can't validate keys without metadata - return original list
+                log_warning("No valid metadata filters tracked yet. Cannot validate list filter keys.")
+                return filters, []
+
+            valid_list_filters: List[FilterExpr] = []
             for i, filter_item in enumerate(filters):
                 if not isinstance(filter_item, FilterExpr):
                     log_warning(
@@ -832,9 +838,23 @@ class Knowledge:
                         f"Use filter expressions like EQ('key', 'value'), IN('key', [values]), "
                         f"AND(...), OR(...), NOT(...) from agno.filters"
                     )
-            # Filter expressions are already validated, return empty dict/list
-            # The actual filtering happens in the vector_db layer
-            return filters, []
+                    continue
+
+                # Check if filter has a key attribute and validate it
+                if hasattr(filter_item, "key"):
+                    key = filter_item.key
+                    base_key = key.split(".")[-1] if "." in key else key
+                    if base_key in valid_metadata_filters or key in valid_metadata_filters:
+                        valid_list_filters.append(filter_item)
+                    else:
+                        invalid_keys.append(key)
+                        log_warning(f"Invalid filter key: {key} - not present in knowledge base")
+                else:
+                    # Complex filters (AND, OR, NOT) - keep them as-is
+                    # They contain nested filters that will be validated by the vector DB
+                    valid_list_filters.append(filter_item)
+
+            return valid_list_filters, invalid_keys
 
         return valid_filters, invalid_keys
 
@@ -984,6 +1004,11 @@ class Knowledge:
         return self._get_reader("csv")
 
     @property
+    def excel_reader(self) -> Optional[Reader]:
+        """Excel reader - lazy loaded via factory."""
+        return self._get_reader("excel")
+
+    @property
     def docx_reader(self) -> Optional[Reader]:
         """Docx reader - lazy loaded via factory."""
         return self._get_reader("docx")
@@ -1123,6 +1148,8 @@ class Knowledge:
             return self.json_reader, ""
         elif file_extension == ".markdown":
             return self.markdown_reader, ""
+        elif file_extension in [".xlsx", ".xls"]:
+            return self.excel_reader, ""
         else:
             return self.text_reader, ""
 
@@ -1153,6 +1180,8 @@ class Knowledge:
             return self.json_reader
         elif uri_lower.endswith(".markdown"):
             return self.markdown_reader
+        elif uri_lower.endswith(".xlsx") or uri_lower.endswith(".xls"):
+            return self.excel_reader
         else:
             return self.text_reader
 
@@ -1284,6 +1313,10 @@ class Knowledge:
             if self._should_include_file(str(path), include, exclude):
                 log_debug(f"Adding file {path} due to include/exclude filters")
 
+                # Set name from path if not provided
+                if not content.name:
+                    content.name = path.name
+
                 await self._ainsert_contents_db(content)
                 if self._should_skip(content.content_hash, skip_if_exists):  # type: ignore[arg-type]
                     content.status = ContentStatus.COMPLETED
@@ -1364,6 +1397,10 @@ class Knowledge:
         if path.is_file():
             if self._should_include_file(str(path), include, exclude):
                 log_debug(f"Adding file {path} due to include/exclude filters")
+
+                # Set name from path if not provided
+                if not content.name:
+                    content.name = path.name
 
                 self._insert_contents_db(content)
                 if self._should_skip(content.content_hash, skip_if_exists):  # type: ignore[arg-type]
@@ -1449,6 +1486,14 @@ class Knowledge:
 
         if not content.url:
             raise ValueError("No url provided")
+
+        # Set name from URL if not provided
+        if not content.name and content.url:
+            from urllib.parse import urlparse
+
+            parsed = urlparse(content.url)
+            url_path = Path(parsed.path)
+            content.name = url_path.name if url_path.name else content.url
 
         # 1. Add content to contents database
         await self._ainsert_contents_db(content)
@@ -1547,6 +1592,14 @@ class Knowledge:
         if not content.url:
             raise ValueError("No url provided")
 
+        # Set name from URL if not provided
+        if not content.name and content.url:
+            from urllib.parse import urlparse
+
+            parsed = urlparse(content.url)
+            url_path = Path(parsed.path)
+            content.name = url_path.name if url_path.name else content.url
+
         # 1. Add content to contents database
         self._insert_contents_db(content)
         if self._should_skip(content.content_hash, skip_if_exists):  # type: ignore[arg-type]
@@ -1633,6 +1686,8 @@ class Knowledge:
 
         if content.name:
             name = content.name
+        elif content.file_data and content.file_data.filename:
+            name = content.file_data.filename
         elif content.file_data and content.file_data.content:
             if isinstance(content.file_data.content, bytes):
                 name = content.file_data.content[:10].decode("utf-8", errors="ignore")
@@ -1696,9 +1751,17 @@ class Knowledge:
                     log_debug(f"Using reader: {content.reader.__class__.__name__} to read content")
                     reader = content.reader
                 else:
-                    reader = self._select_reader(content.file_data.type)
-                name = content.name if content.name else f"content_{content.file_data.type}"
-                read_documents = await reader.async_read(content_io, name=name)
+                    # Prefer filename extension over MIME type for reader selection
+                    # (browsers often send wrong MIME types for Excel files)
+                    reader_hint = content.file_data.type
+                    if content.file_data.filename:
+                        ext = Path(content.file_data.filename).suffix.lower()
+                        if ext:
+                            reader_hint = ext
+                    reader = self._select_reader(reader_hint)
+                # Use file_data.filename for reader (preserves extension for format detection)
+                reader_name = content.file_data.filename or content.name or f"content_{content.file_data.type}"
+                read_documents = await reader.async_read(content_io, name=reader_name)
                 if not content.id:
                     content.id = generate_id(content.content_hash or "")
                 self._prepare_documents_for_insert(read_documents, content.id, metadata=content.metadata)
@@ -1730,6 +1793,8 @@ class Knowledge:
 
         if content.name:
             name = content.name
+        elif content.file_data and content.file_data.filename:
+            name = content.file_data.filename
         elif content.file_data and content.file_data.content:
             if isinstance(content.file_data.content, bytes):
                 name = content.file_data.content[:10].decode("utf-8", errors="ignore")
@@ -1793,9 +1858,17 @@ class Knowledge:
                     log_debug(f"Using reader: {content.reader.__class__.__name__} to read content")
                     reader = content.reader
                 else:
-                    reader = self._select_reader(content.file_data.type)
-                name = content.name if content.name else f"content_{content.file_data.type}"
-                read_documents = reader.read(content_io, name=name)
+                    # Prefer filename extension over MIME type for reader selection
+                    # (browsers often send wrong MIME types for Excel files)
+                    reader_hint = content.file_data.type
+                    if content.file_data.filename:
+                        ext = Path(content.file_data.filename).suffix.lower()
+                        if ext:
+                            reader_hint = ext
+                    reader = self._select_reader(reader_hint)
+                # Use file_data.filename for reader (preserves extension for format detection)
+                reader_name = content.file_data.filename or content.name or f"content_{content.file_data.type}"
+                read_documents = reader.read(content_io, name=reader_name)
                 if not content.id:
                     content.id = generate_id(content.content_hash or "")
                 self._prepare_documents_for_insert(read_documents, content.id, metadata=content.metadata)
@@ -1847,11 +1920,11 @@ class Knowledge:
             if self._should_skip(content.content_hash, skip_if_exists):
                 content.status = ContentStatus.COMPLETED
                 await self._aupdate_content(content)
-                return
+                continue  # Skip to next topic, don't exit loop
 
             if self.vector_db.__class__.__name__ == "LightRag":
                 await self._aprocess_lightrag_content(content, KnowledgeContentOrigin.TOPIC)
-                return
+                continue  # Skip to next topic, don't exit loop
 
             if self.vector_db and self.vector_db.content_hash_exists(content.content_hash) and skip_if_exists:
                 log_info(f"Content {content.content_hash} already exists, skipping")
@@ -1908,11 +1981,11 @@ class Knowledge:
             if self._should_skip(content.content_hash, skip_if_exists):
                 content.status = ContentStatus.COMPLETED
                 self._update_content(content)
-                return
+                continue  # Skip to next topic, don't exit loop
 
             if self.vector_db.__class__.__name__ == "LightRag":
                 self._process_lightrag_content(content, KnowledgeContentOrigin.TOPIC)
-                return
+                continue  # Skip to next topic, don't exit loop
 
             if self.vector_db and self.vector_db.content_hash_exists(content.content_hash) and skip_if_exists:
                 log_info(f"Content {content.content_hash} already exists, skipping")
@@ -4398,12 +4471,10 @@ class Knowledge:
     # ========================================================================
 
     # Shared context strings
-    _KNOWLEDGE_BASE_SEARCH_INSTRUCTION = (
-        "You have access to a knowledge base.\n"
-        "IMPORTANT: For any user question that could be answered from the knowledge base, you MUST call the "
-        "search_knowledge_base tool before responding.\n"
-        "If the user question is ambiguous (e.g., 'the candidate') do NOT ask clarifying questions first—search the "
-        "knowledge base to identify the relevant documents.\n"
+    _SEARCH_KNOWLEDGE_INSTRUCTIONS = (
+        "You have a knowledge base you can search using the search_knowledge_base tool. "
+        "Search before answering questions—don't assume you know the answer. "
+        "For ambiguous questions, search first rather than asking for clarification."
     )
 
     _AGENTIC_FILTER_INSTRUCTION_TEMPLATE = """
@@ -4446,7 +4517,7 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
         Returns:
             Context string to add to system prompt.
         """
-        context_parts: List[str] = [self._KNOWLEDGE_BASE_SEARCH_INSTRUCTION]
+        context_parts: List[str] = [self._SEARCH_KNOWLEDGE_INSTRUCTIONS]
 
         # Add filter instructions if agentic filters are enabled
         if enable_agentic_filters:
@@ -4454,7 +4525,7 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
             if valid_filters:
                 context_parts.append(self._get_agentic_filter_instructions(valid_filters))
 
-        return "\n".join(context_parts)
+        return "<knowledge_base>\n" + "\n".join(context_parts) + "\n</knowledge_base>"
 
     async def abuild_context(
         self,
@@ -4473,7 +4544,7 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
         Returns:
             Context string to add to system prompt.
         """
-        context_parts: List[str] = [self._KNOWLEDGE_BASE_SEARCH_INSTRUCTION]
+        context_parts: List[str] = [self._SEARCH_KNOWLEDGE_INSTRUCTIONS]
 
         # Add filter instructions if agentic filters are enabled
         if enable_agentic_filters:
@@ -4481,7 +4552,7 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
             if valid_filters:
                 context_parts.append(self._get_agentic_filter_instructions(valid_filters))
 
-        return "\n".join(context_parts)
+        return "<knowledge_base>\n" + "\n".join(context_parts) + "\n</knowledge_base>"
 
     def get_tools(
         self,
@@ -4574,7 +4645,12 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
             retrieval_timer = Timer()
             retrieval_timer.start()
 
-            docs = self.search(query=query, filters=knowledge_filters)
+            try:
+                docs = self.search(query=query, filters=knowledge_filters)
+            except Exception as e:
+                retrieval_timer.stop()
+                log_warning(f"Knowledge search failed: {e}")
+                return f"Error searching knowledge base: {type(e).__name__}"
 
             if run_response is not None and docs:
                 references = MessageReferences(
@@ -4606,7 +4682,12 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
             retrieval_timer = Timer()
             retrieval_timer.start()
 
-            docs = await self.asearch(query=query, filters=knowledge_filters)
+            try:
+                docs = await self.asearch(query=query, filters=knowledge_filters)
+            except Exception as e:
+                retrieval_timer.stop()
+                log_warning(f"Knowledge search failed: {e}")
+                return f"Error searching knowledge base: {type(e).__name__}"
 
             if run_response is not None and docs:
                 references = MessageReferences(
@@ -4684,7 +4765,12 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
             retrieval_timer = Timer()
             retrieval_timer.start()
 
-            docs = self.search(query=query, filters=search_filters)
+            try:
+                docs = self.search(query=query, filters=search_filters)
+            except Exception as e:
+                retrieval_timer.stop()
+                log_warning(f"Knowledge search failed: {e}")
+                return f"Error searching knowledge base: {type(e).__name__}"
 
             if run_response is not None and docs:
                 references = MessageReferences(
@@ -4738,7 +4824,12 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
             retrieval_timer = Timer()
             retrieval_timer.start()
 
-            docs = await self.asearch(query=query, filters=search_filters)
+            try:
+                docs = await self.asearch(query=query, filters=search_filters)
+            except Exception as e:
+                retrieval_timer.stop()
+                log_warning(f"Knowledge search failed: {e}")
+                return f"Error searching knowledge base: {type(e).__name__}"
 
             if run_response is not None and docs:
                 references = MessageReferences(

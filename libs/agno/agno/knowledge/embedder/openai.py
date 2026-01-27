@@ -71,7 +71,8 @@ class OpenAIEmbedder(Embedder):
         }
         if self.user is not None:
             _request_params["user"] = self.user
-        if self.id.startswith("text-embedding-3"):
+        # Pass dimensions for text-embedding-3 models or when using custom base_url (third-party APIs)
+        if self.id.startswith("text-embedding-3") or self.base_url is not None:
             _request_params["dimensions"] = self.dimensions
         if self.request_params:
             _request_params.update(self.request_params)
@@ -106,7 +107,8 @@ class OpenAIEmbedder(Embedder):
         }
         if self.user is not None:
             req["user"] = self.user
-        if self.id.startswith("text-embedding-3"):
+        # Pass dimensions for text-embedding-3 models or when using custom base_url (third-party APIs)
+        if self.id.startswith("text-embedding-3") or self.base_url is not None:
             req["dimensions"] = self.dimensions
         if self.request_params:
             req.update(self.request_params)
@@ -126,7 +128,8 @@ class OpenAIEmbedder(Embedder):
         }
         if self.user is not None:
             req["user"] = self.user
-        if self.id.startswith("text-embedding-3"):
+        # Pass dimensions for text-embedding-3 models or when using custom base_url (third-party APIs)
+        if self.id.startswith("text-embedding-3") or self.base_url is not None:
             req["dimensions"] = self.dimensions
         if self.request_params:
             req.update(self.request_params)
@@ -166,7 +169,8 @@ class OpenAIEmbedder(Embedder):
             }
             if self.user is not None:
                 req["user"] = self.user
-            if self.id.startswith("text-embedding-3"):
+            # Pass dimensions for text-embedding-3 models or when using custom base_url (third-party APIs)
+            if self.id.startswith("text-embedding-3") or self.base_url is not None:
                 req["dimensions"] = self.dimensions
             if self.request_params:
                 req.update(self.request_params)

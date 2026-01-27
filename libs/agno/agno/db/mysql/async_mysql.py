@@ -282,86 +282,78 @@ class AsyncMySQLDb(AsyncBaseDb):
 
     async def _get_table(self, table_type: str, create_table_if_not_found: Optional[bool] = False) -> Table:
         if table_type == "sessions":
-            if not hasattr(self, "session_table"):
-                self.session_table = await self._get_or_create_table(
-                    table_name=self.session_table_name,
-                    table_type="sessions",
-                    create_table_if_not_found=create_table_if_not_found,
-                )
+            self.session_table = await self._get_or_create_table(
+                table_name=self.session_table_name,
+                table_type="sessions",
+                create_table_if_not_found=create_table_if_not_found,
+            )
             return self.session_table
 
         if table_type == "memories":
-            if not hasattr(self, "memory_table"):
-                self.memory_table = await self._get_or_create_table(
-                    table_name=self.memory_table_name,
-                    table_type="memories",
-                    create_table_if_not_found=create_table_if_not_found,
-                )
+            self.memory_table = await self._get_or_create_table(
+                table_name=self.memory_table_name,
+                table_type="memories",
+                create_table_if_not_found=create_table_if_not_found,
+            )
             return self.memory_table
 
         if table_type == "metrics":
-            if not hasattr(self, "metrics_table"):
-                self.metrics_table = await self._get_or_create_table(
-                    table_name=self.metrics_table_name,
-                    table_type="metrics",
-                    create_table_if_not_found=create_table_if_not_found,
-                )
+            self.metrics_table = await self._get_or_create_table(
+                table_name=self.metrics_table_name,
+                table_type="metrics",
+                create_table_if_not_found=create_table_if_not_found,
+            )
             return self.metrics_table
 
         if table_type == "evals":
-            if not hasattr(self, "eval_table"):
-                self.eval_table = await self._get_or_create_table(
-                    table_name=self.eval_table_name,
-                    table_type="evals",
-                    create_table_if_not_found=create_table_if_not_found,
-                )
+            self.eval_table = await self._get_or_create_table(
+                table_name=self.eval_table_name,
+                table_type="evals",
+                create_table_if_not_found=create_table_if_not_found,
+            )
             return self.eval_table
 
         if table_type == "knowledge":
-            if not hasattr(self, "knowledge_table"):
-                self.knowledge_table = await self._get_or_create_table(
-                    table_name=self.knowledge_table_name,
-                    table_type="knowledge",
-                    create_table_if_not_found=create_table_if_not_found,
-                )
+            self.knowledge_table = await self._get_or_create_table(
+                table_name=self.knowledge_table_name,
+                table_type="knowledge",
+                create_table_if_not_found=create_table_if_not_found,
+            )
             return self.knowledge_table
 
         if table_type == "culture":
-            if not hasattr(self, "culture_table"):
-                self.culture_table = await self._get_or_create_table(
-                    table_name=self.culture_table_name,
-                    table_type="culture",
-                    create_table_if_not_found=create_table_if_not_found,
-                )
+            self.culture_table = await self._get_or_create_table(
+                table_name=self.culture_table_name,
+                table_type="culture",
+                create_table_if_not_found=create_table_if_not_found,
+            )
             return self.culture_table
 
         if table_type == "versions":
-            if not hasattr(self, "versions_table"):
-                self.versions_table = await self._get_or_create_table(
-                    table_name=self.versions_table_name,
-                    table_type="versions",
-                    create_table_if_not_found=create_table_if_not_found,
-                )
+            self.versions_table = await self._get_or_create_table(
+                table_name=self.versions_table_name,
+                table_type="versions",
+                create_table_if_not_found=create_table_if_not_found,
+            )
             return self.versions_table
 
         if table_type == "traces":
-            if not hasattr(self, "traces_table"):
-                self.traces_table = await self._get_or_create_table(
-                    table_name=self.trace_table_name,
-                    table_type="traces",
-                    create_table_if_not_found=create_table_if_not_found,
-                )
+            self.traces_table = await self._get_or_create_table(
+                table_name=self.trace_table_name,
+                table_type="traces",
+                create_table_if_not_found=create_table_if_not_found,
+            )
             return self.traces_table
 
         if table_type == "spans":
-            if not hasattr(self, "spans_table"):
-                # Ensure traces table exists first (spans has FK to traces)
+            # Ensure traces table exists first (spans has FK to traces)
+            if create_table_if_not_found:
                 await self._get_table(table_type="traces", create_table_if_not_found=True)
-                self.spans_table = await self._get_or_create_table(
-                    table_name=self.span_table_name,
-                    table_type="spans",
-                    create_table_if_not_found=create_table_if_not_found,
-                )
+            self.spans_table = await self._get_or_create_table(
+                table_name=self.span_table_name,
+                table_type="spans",
+                create_table_if_not_found=create_table_if_not_found,
+            )
             return self.spans_table
 
         raise ValueError(f"Unknown table type: {table_type}")

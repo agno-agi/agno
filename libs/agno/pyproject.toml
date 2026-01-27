@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "2.4.1"
+version = "2.4.5"
 description = "Agno: a lightweight library for building Multi-Agent Systems"
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -109,6 +109,7 @@ duckdb = ["duckdb"]
 elevenlabs = ["elevenlabs"]
 evm = ["web3"]
 exa = ["exa_py"]
+seltz = ["seltz"]
 fal = ["fal_client"]
 firecrawl = ["firecrawl-py==3.4.0"]
 tavily = ["tavily-python"]
@@ -173,7 +174,8 @@ pdf = ["pypdf", "rapidocr_onnxruntime"]
 docx = ["python-docx"]
 pptx = ["python-pptx"]
 text = ["aiofiles"]
-csv = ["aiofiles", "openpyxl", "xlrd"]
+csv = ["aiofiles"]
+excel = ["openpyxl", "xlrd"]
 markdown = ["unstructured", "markdown", "aiofiles"]
 chonkie = ["chonkie[semantic]", "chonkie[code]", "chonkie"]
 
@@ -226,6 +228,7 @@ tools = [
   "agno[arxiv]",
   # "agno[brave]",  # It clashes with other dependencies
   "agno[exa]",
+  "agno[seltz]",
   "agno[cartesia]",
   "agno[ddg]",
   "agno[duckdb]",
@@ -304,6 +307,7 @@ knowledge = [
   "agno[pptx]",
   "agno[text]",
   "agno[csv]",
+  "agno[excel]",
   "agno[markdown]",
   "agno[chonkie]"
 ]
@@ -445,6 +449,7 @@ module = [
   "e2b_code_interpreter.*",
   "eth_account.*",
   "exa_py.*",
+  "seltz.*",
   "fastapi.*",
   "fastembed.*",
   "fastmcp.*",
@@ -485,6 +490,7 @@ module = [
   "newspaper.*",
   "numpy.*",
   "ollama.*",
+  "openpyxl.*",
   "openai.*",
   "cv2.*",
   "openbb.*",
