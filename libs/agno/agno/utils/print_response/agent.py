@@ -105,8 +105,9 @@ def print_response_stream(
                 if response_event.is_paused:  # type: ignore
                     response_event = cast(RunPausedEvent, response_event)  # type: ignore
                     response_panel = create_paused_run_output_panel(response_event)  # type: ignore
-                    panels.append(response_panel)
-                    live_log.update(Group(*panels))
+                    if response_panel is not None:
+                        panels.append(response_panel)
+                        live_log.update(Group(*panels))
                     return
 
                 if response_event.event == RunEvent.pre_hook_completed:  # type: ignore
@@ -310,8 +311,9 @@ async def aprint_response_stream(
             if isinstance(resp, tuple(get_args(RunOutputEvent))):
                 if resp.is_paused:
                     response_panel = create_paused_run_output_panel(resp)  # type: ignore
-                    panels.append(response_panel)
-                    live_log.update(Group(*panels))
+                    if response_panel is not None:
+                        panels.append(response_panel)
+                        live_log.update(Group(*panels))
                     break
 
                 if (
@@ -798,7 +800,8 @@ def build_panels(
 
     if isinstance(run_response, RunOutput) and run_response.is_paused:
         response_panel = create_paused_run_output_panel(run_response)
-        panels.append(response_panel)
+        if response_panel is not None:
+            panels.append(response_panel)
         return panels
 
     if isinstance(run_response, RunOutput) and run_response.reasoning_steps is not None:
