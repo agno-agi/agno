@@ -85,9 +85,9 @@ class Steps:
                 return Step.from_dict(step_data, registry=registry, db=db, links=links)
 
         return cls(
-            name=data["name"],
-            description=data["description"],
-            steps=[deserialize_step(step) for step in data["steps"]],
+            name=data.get("name"),
+            description=data.get("description"),
+            steps=[deserialize_step(step) for step in data.get("steps", [])],
         )
 
     def _prepare_steps(self):
