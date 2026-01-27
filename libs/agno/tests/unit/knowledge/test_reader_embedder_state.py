@@ -1,4 +1,4 @@
-"""Tests for reader state management."""
+"""Tests for reader and embedder state management."""
 
 from unittest.mock import MagicMock, patch
 
@@ -6,6 +6,65 @@ import pytest
 
 from agno.knowledge.reader.web_search_reader import WebSearchReader
 from agno.knowledge.reader.website_reader import WebsiteReader
+
+
+# --- FastEmbedEmbedder caching tests ---
+
+
+def test_fastembed_embedder_caches_client():
+    """FastEmbedEmbedder creates client once and reuses it across calls."""
+    import numpy as np
+
+    mock_text_embedding_class = MagicMock()
+    mock_client_instance = MagicMock()
+    mock_client_instance.embed.return_value = [np.array([0.1, 0.2, 0.3])]
+    mock_text_embedding_class.return_value = mock_client_instance
+
+    with patch.dict("sys.modules", {"fastembed": MagicMock(TextEmbedding=mock_text_embedding_class)}):
+        with patch("agno.knowledge.embedder.fastembed.TextEmbedding", mock_text_embedding_class):
+            from agno.knowledge.embedder.fastembed import FastEmbedEmbedder
+
+            embedder = FastEmbedEmbedder()
+
+            # Client should be created once during __post_init__
+            mock_text_embedding_class.assert_called_once()
+
+            # Multiple embedding calls should reuse the same client
+            embedder.get_embedding("text 1")
+            embedder.get_embedding("text 2")
+            embedder.get_embedding("text 3")
+
+            # Client constructor should still only have been called once
+            assert mock_text_embedding_class.call_count == 1
+
+            # But embed should have been called 3 times
+            assert mock_client_instance.embed.call_count == 3
+
+
+def test_fastembed_embedder_accepts_injected_client():
+    """FastEmbedEmbedder allows injecting a custom client."""
+    import numpy as np
+
+    mock_client = MagicMock()
+    mock_client.embed.return_value = [np.array([0.1, 0.2, 0.3])]
+
+    mock_text_embedding_class = MagicMock()
+
+    with patch.dict("sys.modules", {"fastembed": MagicMock(TextEmbedding=mock_text_embedding_class)}):
+        with patch("agno.knowledge.embedder.fastembed.TextEmbedding", mock_text_embedding_class):
+            from agno.knowledge.embedder.fastembed import FastEmbedEmbedder
+
+            embedder = FastEmbedEmbedder(fastembed_client=mock_client)
+
+            # Should use the injected client, not create a new one
+            assert embedder.fastembed_client is mock_client
+
+            result = embedder.get_embedding("test")
+            mock_client.embed.assert_called_once_with("test")
+            assert result == [0.1, 0.2, 0.3]
+
+
+# --- Reader state management tests ---
 
 
 @pytest.fixture

@@ -1,4 +1,11 @@
+"""Integration tests for FastEmbedEmbedder with real fastembed library.
+
+These tests require the fastembed package to be installed.
+Caching behavior is tested in unit tests (test_reader_embedder_state.py).
+"""
 import pytest
+
+pytest.importorskip("fastembed")
 
 from agno.knowledge.embedder.fastembed import FastEmbedEmbedder
 
@@ -9,7 +16,7 @@ def embedder():
 
 
 def test_embedder_initialization(embedder):
-    """Test that the embedder initializes correctly."""
+    """Test that the embedder initializes correctly with real fastembed."""
     assert embedder is not None
     assert embedder.id == "BAAI/bge-small-en-v1.5"
     assert embedder.fastembed_client is not None
@@ -23,16 +30,6 @@ def test_get_embedding(embedder):
     assert isinstance(embeddings, list)
     assert len(embeddings) > 0
     assert all(isinstance(x, float) for x in embeddings)
-
-
-def test_model_cached_across_calls(embedder):
-    """Test that the same model instance is reused across calls."""
-    client_before = embedder.fastembed_client
-
-    embedder.get_embedding("text 1")
-    embedder.get_embedding("text 2")
-
-    assert embedder.fastembed_client is client_before
 
 
 def test_special_characters(embedder):
@@ -59,20 +56,3 @@ def test_embedding_consistency(embedder):
 
     assert len(embeddings1) == len(embeddings2)
     assert all(abs(a - b) < 1e-6 for a, b in zip(embeddings1, embeddings2))
-
-
-def test_custom_client_injection():
-    """Test that users can inject a custom fastembed client."""
-    from unittest.mock import MagicMock
-
-    import numpy as np
-
-    mock_client = MagicMock()
-    mock_client.embed.return_value = [np.array([0.1, 0.2, 0.3])]
-
-    embedder = FastEmbedEmbedder(fastembed_client=mock_client)
-
-    assert embedder.fastembed_client is mock_client
-    result = embedder.get_embedding("test")
-    mock_client.embed.assert_called_once_with("test")
-    assert result == [0.1, 0.2, 0.3]
