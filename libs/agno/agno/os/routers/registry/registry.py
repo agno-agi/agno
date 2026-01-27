@@ -178,9 +178,9 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
                             except (ValueError, TypeError):
                                 pass
 
-                    func_description = getattr(func, "description", None)
-                    if func_description is None and func.entrypoint:
-                        func_description = inspect.getdoc(func.entrypoint)
+                        func_description = getattr(func, "description", None)
+                        if func_description is None and func.entrypoint:
+                            func_description = inspect.getdoc(func.entrypoint)
 
                         function_details.append(
                             CallableMetadata(
