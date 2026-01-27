@@ -103,9 +103,40 @@ def check_documents() -> bool:
     return all_exist
 
 
+def check_tools() -> bool:
+    """Verify tools and guardrails are available."""
+    print("\n4. Checking tools and guardrails...")
+
+    try:
+        from agno.tools.reasoning import ReasoningTools
+        from agno.tools.websearch import WebSearchTools
+
+        print("   [OK] ReasoningTools available")
+        print("   [OK] WebSearchTools available")
+    except ImportError as e:
+        print(f"   [FAIL] Could not import tools: {e}")
+        return False
+
+    try:
+        from agno.guardrails import (
+            OpenAIModerationGuardrail,
+            PIIDetectionGuardrail,
+            PromptInjectionGuardrail,
+        )
+
+        print("   [OK] PIIDetectionGuardrail available")
+        print("   [OK] PromptInjectionGuardrail available")
+        print("   [OK] OpenAIModerationGuardrail available")
+    except ImportError as e:
+        print(f"   [FAIL] Could not import guardrails: {e}")
+        return False
+
+    return True
+
+
 def check_import() -> bool:
     """Verify agent can be imported."""
-    print("\n4. Checking agent import...")
+    print("\n5. Checking agent import...")
 
     try:
         # Add parent directory to path
@@ -135,6 +166,7 @@ def main() -> int:
         "Dependencies": check_dependencies(),
         "API Keys": check_api_keys(),
         "Documents": check_documents(),
+        "Tools & Guardrails": check_tools(),
         "Agent Import": check_import(),
     }
 

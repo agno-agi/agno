@@ -10,6 +10,7 @@ An intelligent contract review agent that analyzes legal documents, extracts key
 - **Clause Comparison**: Compares key clauses against standard market practices
 - **Redlining Suggestions**: Provides specific language recommendations for improvements
 - **Multi-Format Support**: Analyzes PDF, Word documents, text files, and URLs
+- **Security Guardrails**: PII detection, prompt injection protection, and content moderation
 
 ## Supported Contract Types
 
@@ -31,10 +32,34 @@ pip install -r requirements.in
 
 ## Prerequisites
 
-Set your OpenAI API key:
+Set your Google API key (the agent uses the Gemini model):
 
 ```bash
-export OPENAI_API_KEY=your-api-key
+# Windows
+set GOOGLE_API_KEY=your-api-key
+
+# Unix/Mac
+export GOOGLE_API_KEY=your-api-key
+```
+
+## Quick Start
+
+### Verify Setup
+
+```bash
+python scripts/check_setup.py
+```
+
+### Interactive CLI
+
+```bash
+python agent.py
+```
+
+### Run Examples
+
+```bash
+python examples/run_examples.py
 ```
 
 ## Usage
@@ -45,110 +70,83 @@ export OPENAI_API_KEY=your-api-key
 python agent.py
 ```
 
+This starts an interactive session where you can provide contracts for review.
+
 ### Python API
 
 ```python
 from agno.media import File
-from agent import contract_agent, review_contract, review_contract_text
+from agent import contract_agent
 
 # Review a local contract file
-review = review_contract("path/to/contract.pdf")
-print(review.executive_summary)
-print(f"Overall Risk Level: {review.overall_risk_level}")
+contract_agent.print_response(
+    "Analyze this contract and identify key risks.",
+    files=[File(filepath="path/to/contract.pdf")],
+    stream=True,
+)
 
 # Review a contract from URL
-review = review_contract("https://example.com/contract.pdf")
-
-# Review contract text directly
-contract_text = """
-SERVICE AGREEMENT
-This Agreement is entered into as of January 1, 2024...
-"""
-review = review_contract_text(contract_text, contract_type="service_agreement")
-
-# Use the agent directly with files
 contract_agent.print_response(
     "Review this NDA and identify the key risks",
-    files=[File(filepath="contract.pdf")]
-)
-
-# Or with a URL
-contract_agent.print_response(
-    "Analyze this contract",
-    files=[File(url="https://example.com/contract.pdf")]
+    files=[File(url="https://example.com/contract.pdf")],
+    stream=True,
 )
 ```
 
-### Accessing Review Results
+### Structured Output (Optional)
+
+The agent outputs readable markdown by default. To get structured output, set the output schema:
 
 ```python
-review = review_contract("contract.pdf")
+from agent import contract_agent
+from schemas import ContractReview
 
-# Executive summary
-print(review.executive_summary)
+contract_agent.output_schema = ContractReview
 
-# Parties
-for party in review.parties:
-    print(f"{party.name} ({party.role})")
-
-# Key terms
-for term in review.key_terms:
-    print(f"{term.term_type}: {term.value}")
-
-# Obligations
-for obligation in review.obligations:
-    print(f"{obligation.obligated_party}: {obligation.description}")
-    if obligation.deadline:
-        print(f"  Deadline: {obligation.deadline}")
-
-# Risk flags
-for risk in review.risk_flags:
-    print(f"[{risk.severity.upper()}] {risk.risk_type}: {risk.description}")
-    print(f"  Recommendation: {risk.recommendation}")
-
-# Redline suggestions
-for redline in review.redline_suggestions:
-    print(f"Section: {redline.section}")
-    print(f"Original: {redline.original_text}")
-    print(f"Suggested: {redline.suggested_text}")
-    print(f"Rationale: {redline.rationale}")
-```
-
-## Example Output Structure
-
-```python
-ContractReview(
-    contract_type="service_agreement",
-    executive_summary="This is a Master Service Agreement between...",
-    parties=[
-        ContractParty(name="Acme Corp", role="client"),
-        ContractParty(name="Tech Solutions Inc", role="service_provider")
-    ],
-    key_terms=[
-        KeyTerm(term_type="effective_date", value="January 1, 2024"),
-        KeyTerm(term_type="amount", value="$50,000 annually"),
-        KeyTerm(term_type="governing_law", value="State of Delaware")
-    ],
-    obligations=[
-        Obligation(
-            obligated_party="Tech Solutions Inc",
-            description="Provide monthly performance reports",
-            deadline="5th of each month",
-            is_recurring=True
-        )
-    ],
-    risk_flags=[
-        RiskFlag(
-            risk_type="liability_concern",
-            severity="high",
-            description="No limitation on liability for service provider",
-            recommendation="Add mutual liability cap equal to 12 months of fees"
-        )
-    ],
-    overall_risk_level="medium",
-    confidence=0.85
+result = contract_agent.run(
+    "Analyze this contract.",
+    files=[File(filepath="contract.pdf")],
 )
+# Access structured fields: result.content.executive_summary, result.content.risk_flags, etc.
 ```
+
+## Output Format
+
+By default, the agent returns a readable markdown report with:
+
+- Overview with contract type, risk level, and confidence score
+- Parties table
+- Key dates and terms
+- Obligations by party with deadlines
+- Risk flags categorized by severity (High / Medium / Low)
+- Clause analysis comparison table
+- Recommended redlines with original and suggested text
+- Missing clauses checklist
+- Ambiguous sections
+- Key deadlines to track
+
+## Security Guardrails
+
+The agent includes pre-processing guardrails:
+
+| Guardrail | Purpose |
+|-----------|---------|
+| `PIIDetectionGuardrail` | Detects PII (SSN, credit cards, emails, etc.) |
+| `PromptInjectionGuardrail` | Prevents prompt injection attacks |
+| `OpenAIModerationGuardrail` | Filters inappropriate/harmful content |
+
+## Tools Used
+
+| Tool | Purpose |
+|------|---------|
+| `ReasoningTools` | Plan analysis approach and work through complex clauses |
+| `WebSearchTools` | Look up legal standards, precedents, and regulations |
+
+## Environment Variables
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `GOOGLE_API_KEY` | Yes | Google API key for Gemini model |
 
 ## Example Prompts
 
@@ -159,16 +157,19 @@ ContractReview(
 - "Compare the confidentiality terms to standard NDA practices"
 - "Suggest redlines for the limitation of liability section"
 
-## Architecture
+## Project Structure
 
 ```
 contract_review/
-├── agent.py          # Main agent definition and helper functions
-├── schemas.py        # Pydantic models for structured output
-├── documents/        # Sample contracts for testing
-├── examples/         # Usage examples
+├── agent.py          # Main agent definition
+├── schemas.py        # Pydantic models for optional structured output
 ├── requirements.in   # Dependencies
-└── README.md         # This file
+├── README.md         # This file
+├── documents/        # Sample contracts for testing
+├── scripts/
+│   └── check_setup.py    # Setup verification
+└── examples/
+    └── run_examples.py   # Usage examples
 ```
 
 ## Notes
@@ -177,3 +178,7 @@ contract_review/
 - Files can be passed as local paths or URLs
 - Confidence scores indicate the reliability of the analysis
 - Complex contracts may require multiple review passes for thorough analysis
+
+## License
+
+See the main Agno repository license.

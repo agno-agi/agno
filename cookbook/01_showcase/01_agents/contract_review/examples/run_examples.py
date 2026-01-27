@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from agno.media import File
 from agent import contract_agent
 
+from schemas import ContractReview
 # Get documents directory
 DOCS_DIR = Path(__file__).parent.parent / "documents"
 
@@ -54,6 +55,8 @@ def review_single_document(filename: str):
 if __name__ == "__main__":
     # Review a single document
     review_single_document("Sample_NDA.pdf")
-
+    contract_agent.output_schema=ContractReview
+    #updated with schema
+    review_single_document("Sample_NDA.pdf")
     # Or review all documents
-    review_all_documents()
+    #review_all_documents()

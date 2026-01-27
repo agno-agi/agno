@@ -12281,6 +12281,7 @@ class Agent:
         emoji: str = ":sunglasses:",
         stream: bool = False,
         markdown: bool = False,
+        show_reasoning: bool = True,
         exit_on: Optional[List[str]] = None,
         **kwargs: Any,
     ) -> None:
@@ -12308,6 +12309,7 @@ class Agent:
                 markdown=markdown,
                 user_id=user_id,
                 session_id=session_id,
+                show_full_reasoning=show_reasoning
                 **kwargs,
             )
 

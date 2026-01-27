@@ -32,11 +32,14 @@ Usage:
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
+from agno.guardrails import (
+    OpenAIModerationGuardrail,
+    PIIDetectionGuardrail,
+    PromptInjectionGuardrail,
+)
 from agno.models.google import Gemini
 from agno.tools.reasoning import ReasoningTools
 from agno.tools.websearch import WebSearchTools
-
-from schemas import ContractReview
 
 # ============================================================================
 # System Message
@@ -216,6 +219,132 @@ Use web search to enhance your analysis when needed:
 
 Use the think tool to plan your analysis approach before reviewing.
 Use web search when you need to verify legal standards or look up specific regulations.
+
+## Output Format
+
+Structure your review in the following readable format:
+
+---
+
+# Contract Review Summary
+
+## 📋 Overview
+**Contract Type:** NDA / Employment Agreement / Service Agreement / etc.
+**Title:** [Contract title if present]
+**Overall Risk Level:** 🔴 High | 🟡 Medium | 🟢 Low
+**Confidence:** X/10
+
+[2-3 paragraph executive summary covering what the contract is, who it's between, key commercial terms, and most significant risks or concerns]
+
+## 👥 Parties
+| Party | Role | Address | Contact |
+|-------|------|---------|----------|
+| Acme Corp | Service Provider | 123 Main St | john@acme.com |
+| Client Inc | Client | 456 Oak Ave | jane@client.com |
+
+## 📅 Key Dates & Terms
+| Term | Value | Section | Notes |
+|------|-------|---------|-------|
+| Effective Date | January 1, 2026 | Preamble | - |
+| Expiration Date | December 31, 2026 | Section 2.1 | Auto-renewal |
+| Notice Period | 30 days | Section 8.2 | For termination |
+| Payment Terms | Net 30 | Section 5.1 | Monthly invoicing |
+
+**Total Contract Value:** $120,000/year
+**Renewal Terms:** Auto-renews for successive 1-year terms unless terminated with 30 days notice
+
+## 📜 Obligations
+
+### Party A (Service Provider)
+| Obligation | Deadline | Section | Priority | Recurring |
+|------------|----------|---------|----------|------------|
+| Deliver monthly reports | 5th of each month | 4.2 | High | ✅ |
+| Maintain insurance | Ongoing | 7.1 | Medium | ✅ |
+
+### Party B (Client)
+| Obligation | Deadline | Section | Priority | Recurring |
+|------------|----------|---------|----------|------------|
+| Pay invoices | Net 30 | 5.1 | High | ✅ |
+| Provide access credentials | Within 5 days of signing | 3.2 | High | ❌ |
+
+## ⚠️ Risk Flags
+
+### 🔴 High Severity
+#### Unlimited Liability Exposure
+- **Section:** 9.1
+- **Issue:** No cap on liability for service provider
+- **Recommendation:** Negotiate liability cap at 12 months of fees
+
+### 🟡 Medium Severity
+#### Ambiguous Scope Definition
+- **Section:** 2.3
+- **Issue:** "Reasonable efforts" not clearly defined
+- **Recommendation:** Add specific performance metrics or SLAs
+
+### 🟢 Low Severity
+#### Non-Standard Formatting
+- **Section:** Throughout
+- **Issue:** Inconsistent section numbering
+- **Recommendation:** Minor cleanup recommended but not critical
+
+## ⚖️ Clause Analysis
+| Clause Type | Assessment | Explanation |
+|-------------|------------|-------------|
+| Limitation of Liability | 🔴 Unfavorable | No mutual cap, one-sided |
+| Indemnification | 🟡 Non-Standard | Broader than typical |
+| Termination | 🟢 Standard | Mutual 30-day notice |
+| Confidentiality | 🟢 Favorable | 3-year term, clear exceptions |
+| IP Ownership | 🟢 Standard | Each party retains pre-existing IP |
+
+## ✏️ Recommended Redlines
+
+### High Priority
+#### Section 9.1 - Limitation of Liability
+**Original:**
+> "Provider shall be liable for all damages arising from this Agreement."
+
+**Suggested:**
+> "Each party's total liability under this Agreement shall not exceed the fees paid in the twelve (12) months preceding the claim, except for breaches of confidentiality, gross negligence, or willful misconduct."
+
+**Rationale:** Protects both parties with mutual, reasonable liability cap.
+
+### Medium Priority
+#### Section 2.3 - Service Standards
+**Original:**
+> "Provider shall use reasonable efforts to deliver services."
+
+**Suggested:**
+> "Provider shall deliver services meeting the performance standards set forth in Exhibit A, with 99.5% uptime measured monthly."
+
+**Rationale:** Provides measurable, enforceable service standards.
+
+## ❌ Missing Clauses
+- [ ] Force Majeure provision
+- [ ] Data protection / GDPR compliance
+- [ ] Dispute resolution mechanism
+- [ ] Insurance requirements
+
+## ❓ Ambiguous Sections
+- Section 2.3: "Reasonable efforts" undefined
+- Section 6.1: "Material breach" not specified
+- Section 4.5: Deliverable acceptance criteria missing
+
+## 📆 Key Deadlines to Track
+1. **January 15, 2026** - Initial deliverables due
+2. **5th of each month** - Monthly reports due
+3. **November 30, 2026** - Termination notice deadline (if not renewing)
+
+---
+
+**Document Word Count:** ~3,500 words
+**Analysis Confidence:** 8/10
+
+---
+
+Use this format consistently. Omit sections that have no findings.
+Use emoji indicators for quick visual scanning of risk levels.
+Be specific with section references throughout.
+Distinguish between legal risks and business/commercial risks.
 """
 
 # ============================================================================
@@ -225,10 +354,16 @@ contract_agent = Agent(
     name="Contract Review Agent",
     model=Gemini(id="gemini-3-flash-preview"),
     system_message=SYSTEM_MESSAGE,
-    output_schema=ContractReview,
+    #output_schema=ContractReview,
     tools=[
         ReasoningTools(add_instructions=True),
         WebSearchTools(backend="google"),
+    ],
+    # Security guardrails
+    pre_hooks=[
+        PIIDetectionGuardrail(),  # Detect PII (SSN, credit cards, emails, etc.)
+        PromptInjectionGuardrail(),  # Prevent prompt injection attacks
+        OpenAIModerationGuardrail(),  # Filter inappropriate/harmful content
     ],
     add_datetime_to_context=True,
     add_history_to_context=True,
