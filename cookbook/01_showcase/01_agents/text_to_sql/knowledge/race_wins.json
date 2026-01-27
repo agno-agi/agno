@@ -1,0 +1,57 @@
+{
+  "table_name": "race_wins",
+  "table_description": "Documents race win data from 1950-2020, detailing venue, winner, team, and race duration.",
+  "use_cases": [
+    "Win counts by driver or team",
+    "Wins by circuit or country",
+    "Historical win streaks"
+  ],
+  "data_quality_notes": [
+    "date is TEXT in format 'DD Mon YYYY' (e.g., '14 Jul 2019')",
+    "MUST use TO_DATE(date, 'DD Mon YYYY') to extract year or do date comparisons",
+    "No year column - extract from date using: EXTRACT(YEAR FROM TO_DATE(date, 'DD Mon YYYY'))",
+    "name_tag column name differs from drivers_championship and fastest_laps which use driver_tag"
+  ],
+  "table_columns": [
+    {
+      "name": "index",
+      "type": "int",
+      "description": "Unique index for each entry."
+    },
+    {
+      "name": "venue",
+      "type": "text",
+      "description": "Venue where the race was held (e.g., 'Monaco', 'Silverstone')."
+    },
+    {
+      "name": "date",
+      "type": "text",
+      "description": "Date of the race in format 'DD Mon YYYY'. Use TO_DATE(date, 'DD Mon YYYY') for date operations."
+    },
+    {
+      "name": "name",
+      "type": "text",
+      "description": "Full name of the winning driver."
+    },
+    {
+      "name": "name_tag",
+      "type": "text",
+      "description": "Abbreviated tag of the driver's name. Note: Other tables use 'driver_tag' for the same concept."
+    },
+    {
+      "name": "team",
+      "type": "text",
+      "description": "Team of the winning driver."
+    },
+    {
+      "name": "laps",
+      "type": "float",
+      "description": "Number of laps completed in the race."
+    },
+    {
+      "name": "time",
+      "type": "text",
+      "description": "Winning time of the race."
+    }
+  ]
+}

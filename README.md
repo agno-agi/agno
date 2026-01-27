@@ -19,7 +19,7 @@
   <span>&nbsp;•&nbsp;</span>
   <a href="https://community.agno.com/">Community</a>
   <span>&nbsp;•&nbsp;</span>
-  <a href="https://discord.gg/4MtYHHrgA8">Discord</a>
+  <a href="https://www.agno.com/discord">Discord</a>
 </div>
 
 ## What is Agno?
@@ -29,7 +29,7 @@ Agno is a framework, runtime, and control plane for multi-agent systems.
 | Layer | What it does |
 |-------|--------------|
 | **Framework** | Build agents, teams, and workflows with memory, knowledge, guardrails, and 100+ integrations |
-| **AgentOS Runtime** | Serve your system in production with a stateless, secure FastAPI backend |
+| **AgentOS Runtime** | Run your system in production with a stateless, secure FastAPI backend |
 | **Control Plane** | Test, monitor, and manage your system using the [AgentOS UI](https://os.agno.com) |
 
 ## Why Agno?
@@ -98,7 +98,7 @@ https://github.com/user-attachments/assets/feb23db8-15cc-4e88-be7c-01a21a03ebf6
 
 ## Getting Started
 
-1. Follow the [getting started guide](https://github.com/agno-agi/agno/tree/main/cookbook/00_getting_started)
+1. Follow the [quickstart guide](https://github.com/agno-agi/agno/tree/main/cookbook/00_quickstart)
 2. Browse the [cookbook](https://github.com/agno-agi/agno/tree/main/cookbook) for real-world examples
 3. Read the [docs](https://docs.agno.com) to go deeper
 

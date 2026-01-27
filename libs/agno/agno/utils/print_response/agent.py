@@ -1,5 +1,4 @@
 import json
-import warnings
 from collections.abc import Set
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Union, cast, get_args
 
@@ -106,8 +105,9 @@ def print_response_stream(
                 if response_event.is_paused:  # type: ignore
                     response_event = cast(RunPausedEvent, response_event)  # type: ignore
                     response_panel = create_paused_run_output_panel(response_event)  # type: ignore
-                    panels.append(response_panel)
-                    live_log.update(Group(*panels))
+                    if response_panel is not None:
+                        panels.append(response_panel)
+                        live_log.update(Group(*panels))
                     return
 
                 if response_event.event == RunEvent.pre_hook_completed:  # type: ignore
@@ -311,8 +311,9 @@ async def aprint_response_stream(
             if isinstance(resp, tuple(get_args(RunOutputEvent))):
                 if resp.is_paused:
                     response_panel = create_paused_run_output_panel(resp)  # type: ignore
-                    panels.append(response_panel)
-                    live_log.update(Group(*panels))
+                    if response_panel is not None:
+                        panels.append(response_panel)
+                        live_log.update(Group(*panels))
                     break
 
                 if (
@@ -555,8 +556,6 @@ def print_response(
     videos: Optional[Sequence[Video]] = None,
     files: Optional[Sequence[File]] = None,
     knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
-    stream_events: Optional[bool] = None,
-    stream_intermediate_steps: Optional[bool] = None,
     debug_mode: Optional[bool] = None,
     markdown: bool = False,
     show_message: bool = True,
@@ -571,19 +570,6 @@ def print_response(
     metadata: Optional[Dict[str, Any]] = None,
     **kwargs: Any,
 ):
-    if stream_events is not None:
-        warnings.warn(
-            "The 'stream_events' parameter is deprecated and will be removed in future versions. Event streaming is always enabled using the print_response function.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-    if stream_intermediate_steps is not None:
-        warnings.warn(
-            "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Event streaming is always enabled using the print_response function.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-
     with Live(console=console) as live_log:
         status = Status("Thinking...", spinner="aesthetic", speed=0.4, refresh_per_second=10)
         live_log.update(status)
@@ -695,8 +681,6 @@ async def aprint_response(
     show_message: bool = True,
     show_reasoning: bool = True,
     show_full_reasoning: bool = False,
-    stream_events: Optional[bool] = None,
-    stream_intermediate_steps: Optional[bool] = None,
     tags_to_include_in_markdown: Set[str] = {"think", "thinking"},
     console: Optional[Any] = None,
     add_history_to_context: Optional[bool] = None,
@@ -706,19 +690,6 @@ async def aprint_response(
     metadata: Optional[Dict[str, Any]] = None,
     **kwargs: Any,
 ):
-    if stream_events is not None:
-        warnings.warn(
-            "The 'stream_events' parameter is deprecated and will be removed in future versions. Event streaming is always enabled using the aprint_response function.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-    if stream_intermediate_steps is not None:
-        warnings.warn(
-            "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Event streaming is always enabled using the aprint_response function.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-
     with Live(console=console) as live_log:
         status = Status("Thinking...", spinner="aesthetic", speed=0.4, refresh_per_second=10)
         live_log.update(status)
@@ -829,7 +800,8 @@ def build_panels(
 
     if isinstance(run_response, RunOutput) and run_response.is_paused:
         response_panel = create_paused_run_output_panel(run_response)
-        panels.append(response_panel)
+        if response_panel is not None:
+            panels.append(response_panel)
         return panels
 
     if isinstance(run_response, RunOutput) and run_response.reasoning_steps is not None:
