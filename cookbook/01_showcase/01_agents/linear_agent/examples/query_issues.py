@@ -59,10 +59,6 @@ if __name__ == "__main__":
     # Get issue details
     print("Query 3: Issue details")
     print("-" * 40)
-    linear_agent.print_response(
-        "Get the details of the most recent high priority issue.",
-        stream=True,
-    )
 
     # Uncomment for interactive mode
-    # linear_agent.cli(stream=True)
+    # linear_agent.cli_app(stream=True)

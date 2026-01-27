@@ -12,6 +12,7 @@ from agents.research_agent import research_agent
 from agents.web_intelligence_agent import web_intelligence_agent
 from agno.os import AgentOS
 from db import demo_db
+from registry import registry
 from teams.due_diligence_team import due_diligence_team
 from teams.investment_team import investment_team
 from workflows.deep_research_workflow import deep_research_workflow
@@ -44,6 +45,7 @@ agent_os = AgentOS(
         deep_research_workflow,
         startup_analyst_workflow,
     ],
+    registry=registry,
     config=config_path,
     tracing=True,
     db=demo_db,

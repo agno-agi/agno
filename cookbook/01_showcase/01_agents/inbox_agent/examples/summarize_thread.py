@@ -65,4 +65,4 @@ Find the most active thread and summarize the conversation.""",
     )
 
     # Uncomment for interactive mode
-    # inbox_agent.cli(stream=True)
+    # inbox_agent.cli_app(stream=True)
