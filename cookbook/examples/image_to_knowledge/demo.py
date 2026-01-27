@@ -1,16 +1,16 @@
 """
-Content Sources for Knowledge — DX Design
+Custom Image Reader for Knowledge
 ============================================================
 
-This cookbook demonstrates the API for adding content from various
-remote sources (S3, GCS, SharePoint, GitHub, etc.) to Knowledge.
+This cookbook demonstrates how to create a custom Reader that uses an
+Agent to extract text from images and add it to Knowledge.
 
 Key Concepts:
-- RemoteContentConfig: Base class for configuring remote content sources
-- Each source type has its own config: S3Config, GcsConfig, SharePointConfig, GitHubConfig
-- Configs are registered on Knowledge via `content_sources` parameter
-- Configs have factory methods (.file(), .folder()) to create content references
-- Content references are passed to knowledge.insert()
+- Custom Reader: Extend the Reader base class to handle any content type
+- Agent-based extraction: Use a vision-capable model to extract text from images
+- Reader registration: Pass custom readers to Knowledge via the `readers` parameter
+- API integration: Custom readers appear in /knowledge/config and can be used
+  with /knowledge/content or /knowledge/remote-content endpoints
 """
 
 from os import getenv
