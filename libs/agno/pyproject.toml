@@ -39,7 +39,7 @@ dependencies = [
   "pydantic-settings",
   "pydantic",
   "python-dotenv",
-  "python-multipart",
+  "python-multipart>=0.0.22",
   "pyyaml",
   "rich",
   "typer",
