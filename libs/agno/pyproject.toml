@@ -176,7 +176,7 @@ pptx = ["python-pptx"]
 text = ["aiofiles"]
 csv = ["aiofiles"]
 excel = ["openpyxl", "xlrd"]
-markdown = ["unstructured", "markdown", "aiofiles"]
+markdown = ["unstructured<0.18.31", "markdown", "aiofiles"]
 chonkie = ["chonkie[semantic]", "chonkie[code]", "chonkie"]
 
 # Dependencies for AG-UI integration
