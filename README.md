@@ -24,16 +24,15 @@
 
 ## What is Agno?
 
-**Agno is a framework that turns agents into learning machines: systems that improve with every interaction.**
+**A Python SDK for building agents that learn and improve with every interaction.**
 
 Most agents are stateless. They reason, respond, forget. Session history helps, but they're exactly as capable on day 1000 as they were on day 1.
 
-Learning machines are different. They remember users across sessions. They accumulate knowledge across conversations. They get better at working with your team. Learnings from one user benefit everyone.
+Agno agents are different. They remember users across sessions, accumulate knowledge across conversations, and learn from decisions. Insights from one user benefit everyone.
 
 Everything runs in your cloud. Your data never leaves your environment.
 
 ## Quick Example
-
 ```python
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
@@ -48,14 +47,12 @@ agent = Agent(
 
 One line. Your agent now remembers users, accumulates knowledge, and improves over time.
 
-## Production Infrastructure
-
-Agno provides the complete stack for learning machines:
+## Production Stack
 
 | Layer | What it does |
 |-------|--------------|
-| **SDK** | Build learning machines with tools, knowledge, and guardrails |
-| **Runtime** | Run your system in production using [AgentOS](/agent-os/introduction) |
+| **SDK** | Build agents with learning, tools, knowledge, and guardrails |
+| **Runtime** | Run in production using [AgentOS](https://docs.agno.com/agent-os/introduction) |
 | **Control Plane** | Monitor and manage via the [AgentOS UI](https://os.agno.com) |
 
 ## Features
@@ -75,12 +72,10 @@ Agno provides the complete stack for learning machines:
 **Knowledge**
 - Agentic RAG with 20+ vector stores, hybrid search, reranking
 - Persistent storage for session history and state
-- Culture: shared long-term memory across agents
 
 **Orchestration**
 - Human-in-the-loop (confirmations, approvals, overrides)
 - Guardrails for validation and security
-- Pre/post hooks for the agent lifecycle
 - First-class MCP and A2A support
 - 100+ built-in toolkits
 
@@ -88,14 +83,12 @@ Agno provides the complete stack for learning machines:
 - Ready-to-use FastAPI runtime
 - Integrated control plane UI
 - Evals for accuracy, performance, latency
-- Durable execution for resumable workflows
-- RBAC and per-agent permissions
 
 ## Getting Started
 
-1. Follow the [quickstart guide](https://docs.agno.com/get-started/quickstart)
-2. Browse the [cookbook](https://github.com/agno-agi/agno/tree/main/cookbook) for real-world examples
-3. Read the [docs](https://docs.agno.com) to go deeper
+1. Follow the [quickstart](https://docs.agno.com/get-started/quickstart)
+2. Browse the [cookbook](https://github.com/agno-agi/agno/tree/main/cookbook)
+3. Read the [docs](https://docs.agno.com)
 
 ## IDE Integration
 
@@ -107,7 +100,7 @@ Also works with VSCode, Windsurf, and similar tools.
 
 ## Contributing
 
-We welcome contributions. See the [contributing guide](https://github.com/agno-agi/agno/blob/v2.0/CONTRIBUTING.md).
+See the [contributing guide](https://github.com/agno-agi/agno/blob/v2.0/CONTRIBUTING.md).
 
 ## Telemetry
 
