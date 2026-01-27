@@ -122,7 +122,12 @@ def test_create_team_run_with_kwargs(test_os_client, test_team: Team):
         def to_dict(self):
             return {}
 
-    with patch.object(test_team, "arun", new_callable=AsyncMock) as mock_arun:
+    # Patch deep_copy to return the same instance so our mock works
+    # (AgentOS uses create_fresh=True which calls deep_copy)
+    with (
+        patch.object(test_team, "deep_copy", return_value=test_team),
+        patch.object(test_team, "arun", new_callable=AsyncMock) as mock_arun,
+    ):
         mock_arun.return_value = MockRunOutput()
 
         response = test_os_client.post(

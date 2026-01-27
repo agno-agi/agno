@@ -1,0 +1,57 @@
+{
+  "table_name": "drivers_championship",
+  "table_description": "Contains data for driver's championship standings from 1950-2020, detailing driver positions, teams, and points.",
+  "use_cases": [
+    "Driver standings by year",
+    "Comparing driver points across seasons",
+    "Driver performance over time"
+  ],
+  "data_quality_notes": [
+    "position is TEXT type - must compare with strings (position = '1')",
+    "This differs from constructors_championship where position is INTEGER",
+    "position may contain non-numeric values like 'DSQ', 'DNS', 'NC' for disqualified/did not start/not classified",
+    "When counting champions, always use position = '1' (string comparison)"
+  ],
+  "table_columns": [
+    {
+      "name": "index",
+      "type": "int",
+      "description": "Index number of the record."
+    },
+    {
+      "name": "year",
+      "type": "int",
+      "description": "The year of the championship."
+    },
+    {
+      "name": "position",
+      "type": "text",
+      "description": "Final position of the driver in the championship. Use position = '1' (string) to get the champion driver."
+    },
+    {
+      "name": "name",
+      "type": "text",
+      "description": "Full name of the driver."
+    },
+    {
+      "name": "driver_tag",
+      "type": "text",
+      "description": "Abbreviated tag of the driver (e.g., 'HAM' for Hamilton)."
+    },
+    {
+      "name": "nationality",
+      "type": "text",
+      "description": "Nationality of the driver."
+    },
+    {
+      "name": "team",
+      "type": "text",
+      "description": "Racing team of the driver."
+    },
+    {
+      "name": "points",
+      "type": "float",
+      "description": "Total points accumulated by the driver that season."
+    }
+  ]
+}

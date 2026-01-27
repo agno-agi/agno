@@ -13,6 +13,7 @@ from fastapi import (
 )
 from fastapi.responses import JSONResponse, StreamingResponse
 
+from agno.db.base import BaseDb
 from agno.exceptions import InputCheckError, OutputCheckError
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
@@ -35,6 +36,7 @@ from agno.os.utils import (
     process_image,
     process_video,
 )
+from agno.registry import Registry
 from agno.run.team import RunErrorEvent as TeamRunErrorEvent
 from agno.team.remote import RemoteTeam
 from agno.team.team import Team
@@ -95,7 +97,7 @@ async def team_response_streamer(
         )
         yield format_sse_event(error_response)
 
-    except Exception as e:
+    except BaseException as e:
         import traceback
 
         traceback.print_exc()
@@ -111,6 +113,7 @@ async def team_response_streamer(
 def get_team_router(
     os: "AgentOS",
     settings: AgnoAPISettings = AgnoAPISettings(),
+    registry: Optional[Registry] = None,
 ) -> APIRouter:
     """Create the team router with comprehensive OpenAPI documentation."""
     router = APIRouter(
@@ -165,15 +168,16 @@ def get_team_router(
         session_id: Optional[str] = Form(None),
         user_id: Optional[str] = Form(None),
         files: Optional[List[UploadFile]] = File(None),
+        version: Optional[int] = Form(None),
     ):
         kwargs = await get_request_kwargs(request, create_team_run)
 
         if hasattr(request.state, "user_id") and request.state.user_id is not None:
-            if user_id:
+            if user_id and user_id != request.state.user_id:
                 log_warning("User ID parameter passed in both request state and kwargs, using request state")
             user_id = request.state.user_id
         if hasattr(request.state, "session_id") and request.state.session_id is not None:
-            if session_id:
+            if session_id and session_id != request.state.session_id:
                 log_warning("Session ID parameter passed in both request state and kwargs, using request state")
             session_id = request.state.session_id
         if hasattr(request.state, "session_state") and request.state.session_state is not None:
@@ -194,7 +198,9 @@ def get_team_router(
 
         logger.debug(f"Creating team run: {message=} {session_id=} {monitor=} {user_id=} {team_id=} {files=} {kwargs=}")
 
-        team = get_team_by_id(team_id, os.teams)
+        team = get_team_by_id(
+            team_id=team_id, teams=os.teams, db=os.db, version=version, registry=registry, create_fresh=True
+        )
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
 
@@ -321,11 +327,11 @@ def get_team_router(
         team_id: str,
         run_id: str,
     ):
-        team = get_team_by_id(team_id, os.teams)
+        team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
 
-        cancelled = team.cancel_run(run_id=run_id)
+        cancelled = await team.acancel_run(run_id=run_id)
         if not cancelled:
             raise HTTPException(status_code=500, detail="Failed to cancel run - run not found or already completed")
 
@@ -414,9 +420,6 @@ def get_team_router(
     )
     async def get_teams(request: Request) -> List[TeamResponse]:
         """Return the list of all Teams present in the contextual OS"""
-        if os.teams is None:
-            return []
-
         # Filter teams based on user's scopes (only if authorization is enabled)
         if getattr(request.state, "authorization_enabled", False):
             from agno.os.auth import filter_resources_by_access, get_accessible_resources
@@ -426,9 +429,9 @@ def get_team_router(
             if not accessible_ids:
                 raise HTTPException(status_code=403, detail="Insufficient permissions")
 
-            accessible_teams = filter_resources_by_access(request, os.teams, "teams")
+            accessible_teams = filter_resources_by_access(request, os.teams or [], "teams")
         else:
-            accessible_teams = os.teams
+            accessible_teams = os.teams or []
 
         teams = []
         for team in accessible_teams:
@@ -436,6 +439,15 @@ def get_team_router(
                 teams.append(await team.get_team_config())
             else:
                 team_response = await TeamResponse.from_team(team=team)
+                teams.append(team_response)
+
+        # Also load teams from database
+        if os.db and isinstance(os.db, BaseDb):
+            from agno.team.team import get_teams
+
+            db_teams = get_teams(db=os.db, registry=registry)
+            for db_team in db_teams:
+                team_response = await TeamResponse.from_team(team=db_team)
                 teams.append(team_response)
 
         return teams
@@ -526,7 +538,7 @@ def get_team_router(
         dependencies=[Depends(require_resource_access("teams", "read", "team_id"))],
     )
     async def get_team(team_id: str, request: Request) -> TeamResponse:
-        team = get_team_by_id(team_id, os.teams)
+        team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
 

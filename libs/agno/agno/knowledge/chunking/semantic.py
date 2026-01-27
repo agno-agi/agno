@@ -11,13 +11,13 @@ try:
 except ImportError:
     raise ImportError(
         "`chonkie` is required for semantic chunking. "
-        "Please install it using `pip install chonkie` to use SemanticChunking."
+        'Please install it using `pip install "chonkie[semantic]"` to use SemanticChunking.'
     )
 
 from agno.knowledge.chunking.strategy import ChunkingStrategy
 from agno.knowledge.document.base import Document
 from agno.knowledge.embedder.base import Embedder
-from agno.utils.log import log_info
+from agno.utils.log import log_debug
 
 
 def _get_chonkie_embedder_wrapper(embedder: Embedder):
@@ -87,7 +87,7 @@ class SemanticChunking(ChunkingStrategy):
             from agno.knowledge.embedder.openai import OpenAIEmbedder
 
             embedder = OpenAIEmbedder()  # type: ignore
-            log_info("Embedder not provided, using OpenAIEmbedder as default.")
+            log_debug("Embedder not provided, using OpenAIEmbedder as default.")
         self.embedder = embedder
         self.chunk_size = chunk_size
         self.similarity_threshold = similarity_threshold

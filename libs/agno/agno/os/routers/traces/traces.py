@@ -22,7 +22,7 @@ from agno.os.schema import (
     ValidationErrorResponse,
 )
 from agno.os.settings import AgnoAPISettings
-from agno.os.utils import get_db, parse_datetime_to_utc
+from agno.os.utils import get_db, timestamp_to_datetime
 from agno.remote.base import RemoteDb
 from agno.utils.log import log_error
 
@@ -126,8 +126,8 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             default=None,
             description="Filter traces ending before this time (ISO 8601 format with timezone, e.g., '2025-11-19T11:00:00Z' or '2025-11-19T16:30:00+05:30'). Times are converted to UTC for comparison.",
         ),
-        page: int = Query(default=1, description="Page number (1-indexed)", ge=1),
-        limit: int = Query(default=20, description="Number of traces per page", ge=1, le=100),
+        page: int = Query(default=1, description="Page number (1-indexed)", ge=0),
+        limit: int = Query(default=20, description="Number of traces per page", ge=1),
         db_id: Optional[str] = Query(default=None, description="Database ID to query traces from"),
     ):
         """Get list of traces with optional filters and pagination"""
@@ -159,8 +159,8 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             start_time_ms = time_module.time() * 1000
 
             # Convert ISO datetime strings to UTC datetime objects
-            start_time_dt = parse_datetime_to_utc(start_time, "start_time") if start_time else None
-            end_time_dt = parse_datetime_to_utc(end_time, "end_time") if end_time else None
+            start_time_dt = timestamp_to_datetime(start_time, "start_time") if start_time else None
+            end_time_dt = timestamp_to_datetime(end_time, "end_time") if end_time else None
 
             if isinstance(db, AsyncBaseDb):
                 traces, total_count = await db.get_traces(
@@ -455,7 +455,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             description="Filter sessions with traces created before this time (ISO 8601 format with timezone, e.g., '2025-11-19T11:00:00Z' or '2025-11-19T16:30:00+05:30'). Times are converted to UTC for comparison.",
         ),
         page: int = Query(default=1, description="Page number (1-indexed)", ge=1),
-        limit: int = Query(default=20, description="Number of sessions per page", ge=1, le=100),
+        limit: int = Query(default=20, description="Number of sessions per page", ge=1),
         db_id: Optional[str] = Query(default=None, description="Database ID to query statistics from"),
     ):
         """Get trace statistics grouped by session"""
@@ -484,8 +484,8 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             start_time_ms = time_module.time() * 1000
 
             # Convert ISO datetime strings to UTC datetime objects
-            start_time_dt = parse_datetime_to_utc(start_time, "start_time") if start_time else None
-            end_time_dt = parse_datetime_to_utc(end_time, "end_time") if end_time else None
+            start_time_dt = timestamp_to_datetime(start_time, "start_time") if start_time else None
+            end_time_dt = timestamp_to_datetime(end_time, "end_time") if end_time else None
 
             if isinstance(db, AsyncBaseDb):
                 stats_list, total_count = await db.get_trace_stats(

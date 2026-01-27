@@ -7,9 +7,9 @@ import pytest
 
 from agno.run.workflow import (
     StepCompletedEvent,
-    StepStartedEvent,
     StepsExecutionCompletedEvent,
     StepsExecutionStartedEvent,
+    StepStartedEvent,
     WorkflowCompletedEvent,
     WorkflowRunOutput,
 )
