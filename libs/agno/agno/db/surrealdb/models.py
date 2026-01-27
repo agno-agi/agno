@@ -48,7 +48,7 @@ def surrealize_dates(record: dict) -> dict:
         if isinstance(value, date):
             copy[key] = datetime.combine(value, datetime.min.time()).replace(tzinfo=timezone.utc)
         elif key in ["created_at", "updated_at"] and isinstance(value, (int, float)):
-            copy[key] = datetime.fromtimestamp(value).replace(tzinfo=timezone.utc)
+            copy[key] = datetime.fromtimestamp(value, tz=timezone.utc)
         elif key in ["created_at", "updated_at"] and isinstance(value, str):
             # Handle ISO string format - convert back to datetime object for SurrealDB
             try:

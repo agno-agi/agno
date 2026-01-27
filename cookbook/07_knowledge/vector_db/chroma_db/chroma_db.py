@@ -31,4 +31,4 @@ agent.print_response("List down the ingredients to make Massaman Gai", markdown=
 vector_db = knowledge.vector_db
 vector_db.delete_by_name("Recipes")
 # or
-vector_db.delete_by_metadata({"user_tag": "Recipes from website"})
+vector_db.delete_by_metadata({"doc_type": "recipe_book"})

@@ -1,7 +1,7 @@
 """This cookbook shows how to skip content if it already exists in the knowledge base.
-Existing content is skipped by default.
+By default, skip_if_exists=False, so content is re-indexed. Set skip_if_exists=True to skip.
 
-1. Run: `python cookbook/agent_concepts/knowledge/11_skip_if_exists.py` to run the cookbook
+1. Run: `python cookbook/07_knowledge/basic_operations/sync/11_skip_if_exists.py` to run the cookbook
 """
 
 from agno.knowledge.knowledge import Knowledge
@@ -20,7 +20,7 @@ knowledge.insert(
     name="CV",
     path="cookbook/07_knowledge/testing_resources/cv_1.pdf",
     metadata={"user_tag": "Engineering Candidates"},
-    skip_if_exists=True,  # True by default
+    skip_if_exists=True,  # Set to True to skip re-indexing existing content
 )
 
 # Add from local file to the knowledge base, but don't skip if it already exists

@@ -267,11 +267,7 @@ class MarkdownChunking(ChunkingStrategy):
                 for sub_chunk in sub_chunks:
                     meta_data = chunk_meta_data.copy()
                     meta_data["chunk"] = chunk_number
-                    chunk_id = None
-                    if document.id:
-                        chunk_id = f"{document.id}_{chunk_number}"
-                    elif document.name:
-                        chunk_id = f"{document.name}_{chunk_number}"
+                    chunk_id = self._generate_chunk_id(document, chunk_number, sub_chunk)
                     meta_data["chunk_size"] = len(sub_chunk)
 
                     chunks.append(Document(id=chunk_id, name=document.name, meta_data=meta_data, content=sub_chunk))
@@ -282,19 +278,12 @@ class MarkdownChunking(ChunkingStrategy):
             else:
                 meta_data = chunk_meta_data.copy()
                 meta_data["chunk"] = chunk_number
-                chunk_id = None
-                if document.id:
-                    chunk_id = f"{document.id}_{chunk_number}"
-                elif document.name:
-                    chunk_id = f"{document.name}_{chunk_number}"
-                meta_data["chunk_size"] = len("\n\n".join(current_chunk))
+                chunk_content = "\n\n".join(current_chunk)
+                chunk_id = self._generate_chunk_id(document, chunk_number, chunk_content)
+                meta_data["chunk_size"] = len(chunk_content)
 
                 if current_chunk:
-                    chunks.append(
-                        Document(
-                            id=chunk_id, name=document.name, meta_data=meta_data, content="\n\n".join(current_chunk)
-                        )
-                    )
+                    chunks.append(Document(id=chunk_id, name=document.name, meta_data=meta_data, content=chunk_content))
                     chunk_number += 1
 
                 current_chunk = [section]
@@ -304,15 +293,10 @@ class MarkdownChunking(ChunkingStrategy):
         if current_chunk and not self.split_on_headings:
             meta_data = chunk_meta_data.copy()
             meta_data["chunk"] = chunk_number
-            chunk_id = None
-            if document.id:
-                chunk_id = f"{document.id}_{chunk_number}"
-            elif document.name:
-                chunk_id = f"{document.name}_{chunk_number}"
-            meta_data["chunk_size"] = len("\n\n".join(current_chunk))
-            chunks.append(
-                Document(id=chunk_id, name=document.name, meta_data=meta_data, content="\n\n".join(current_chunk))
-            )
+            chunk_content = "\n\n".join(current_chunk)
+            chunk_id = self._generate_chunk_id(document, chunk_number, chunk_content)
+            meta_data["chunk_size"] = len(chunk_content)
+            chunks.append(Document(id=chunk_id, name=document.name, meta_data=meta_data, content=chunk_content))
 
         # Handle overlap if specified
         if self.overlap > 0:
