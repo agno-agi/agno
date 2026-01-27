@@ -2305,6 +2305,87 @@ class Knowledge(RemoteKnowledge):
             content_row = self._build_knowledge_row(content)
             self.contents_db.upsert_knowledge_content(knowledge_row=content_row)
 
+    # --- Vector DB Insert Helpers ---
+
+    async def _ahandle_vector_db_insert(self, content: Content, read_documents, upsert):
+        from agno.vectordb import VectorDb
+
+        self.vector_db = cast(VectorDb, self.vector_db)
+
+        if not self.vector_db:
+            log_error("No vector database configured")
+            content.status = ContentStatus.FAILED
+            content.status_message = "No vector database configured"
+            await self._aupdate_content(content)
+            return
+
+        if self.vector_db.upsert_available() and upsert:
+            try:
+                await self.vector_db.async_upsert(content.content_hash, read_documents, content.metadata)  # type: ignore[arg-type]
+            except Exception as e:
+                log_error(f"Error upserting document: {e}")
+                content.status = ContentStatus.FAILED
+                content.status_message = "Could not upsert embedding"
+                await self._aupdate_content(content)
+                return
+        else:
+            try:
+                await self.vector_db.async_insert(
+                    content.content_hash,  # type: ignore[arg-type]
+                    documents=read_documents,
+                    filters=content.metadata,  # type: ignore[arg-type]
+                )
+            except Exception as e:
+                log_error(f"Error inserting document: {e}")
+                content.status = ContentStatus.FAILED
+                content.status_message = "Could not insert embedding"
+                await self._aupdate_content(content)
+                return
+
+        content.status = ContentStatus.COMPLETED
+        await self._aupdate_content(content)
+
+    def _handle_vector_db_insert(self, content: Content, read_documents, upsert):
+        """Synchronously handle vector database insertion."""
+        from agno.vectordb import VectorDb
+
+        self.vector_db = cast(VectorDb, self.vector_db)
+
+        if not self.vector_db:
+            log_error("No vector database configured")
+            content.status = ContentStatus.FAILED
+            content.status_message = "No vector database configured"
+            self._update_content(content)
+            return
+
+        if self.vector_db.upsert_available() and upsert:
+            try:
+                self.vector_db.upsert(content.content_hash, read_documents, content.metadata)  # type: ignore[arg-type]
+            except Exception as e:
+                log_error(f"Error upserting document: {e}")
+                content.status = ContentStatus.FAILED
+                content.status_message = "Could not upsert embedding"
+                self._update_content(content)
+                return
+        else:
+            try:
+                self.vector_db.insert(
+                    content.content_hash,  # type: ignore[arg-type]
+                    documents=read_documents,
+                    filters=content.metadata,  # type: ignore[arg-type]
+                )
+            except Exception as e:
+                log_error(f"Error inserting document: {e}")
+                content.status = ContentStatus.FAILED
+                content.status_message = "Could not insert embedding"
+                self._update_content(content)
+                return
+
+        content.status = ContentStatus.COMPLETED
+        self._update_content(content)
+
+    # --- Content Update ---
+
     def _update_content(self, content: Content) -> Optional[Dict[str, Any]]:
         from agno.vectordb import VectorDb
 
