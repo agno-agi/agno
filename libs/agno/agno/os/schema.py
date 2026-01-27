@@ -626,3 +626,4 @@ class ConfigUpdate(BaseModel):
     stage: Optional[str] = None
     notes: Optional[str] = None
     links: Optional[List[Dict[str, Any]]] = None
+    set_current: bool = Field(True, description="Set as current version when publishing")

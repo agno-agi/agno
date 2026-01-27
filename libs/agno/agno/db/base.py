@@ -694,13 +694,14 @@ class BaseDb(ABC):
         stage: Optional[str] = None,
         notes: Optional[str] = None,
         links: Optional[List[Dict[str, Any]]] = None,
+        set_current: bool = True,
     ) -> Dict[str, Any]:
         """Create or update a config version for a component.
 
         Rules:
             - Draft configs can be edited freely
             - Published configs are immutable
-            - Publishing a config automatically sets it as current_version
+            - Publishing a config sets it as current_version if set_current is True
 
         Args:
             component_id: The component ID.
@@ -710,6 +711,8 @@ class BaseDb(ABC):
             stage: "draft" or "published". Defaults to "draft" for new configs.
             notes: Optional notes.
             links: Optional list of links. Each link must have child_version set.
+            set_current: If True (default), publishing sets the config as current.
+                        If False, config is published but current_version is not updated.
 
         Returns:
             Created/updated config dictionary.
