@@ -7,6 +7,9 @@ from unittest.mock import patch
 
 import pytest
 
+# Skip all tests if openpyxl is not installed
+pytest.importorskip("openpyxl")
+
 from agno.tools.excel import ExcelTools
 
 
@@ -394,9 +397,7 @@ class TestFormatCells:
         excel_tools_all.create_workbook("test.xlsx")
         excel_tools_all.write_data("test.xlsx", [["A", "B"], ["C", "D"]])
 
-        result = excel_tools_all.format_cells(
-            "test.xlsx", "A1:B2", bold=True, font_size=14
-        )
+        result = excel_tools_all.format_cells("test.xlsx", "A1:B2", bold=True, font_size=14)
         result_data = json.loads(result)
 
         assert result_data["success"] is True
