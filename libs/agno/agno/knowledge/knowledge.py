@@ -4471,12 +4471,10 @@ class Knowledge:
     # ========================================================================
 
     # Shared context strings
-    _KNOWLEDGE_BASE_SEARCH_INSTRUCTION = (
-        "You have access to a knowledge base.\n"
-        "IMPORTANT: For any user question that could be answered from the knowledge base, you MUST call the "
-        "search_knowledge_base tool before responding.\n"
-        "If the user question is ambiguous (e.g., 'the candidate') do NOT ask clarifying questions first—search the "
-        "knowledge base to identify the relevant documents.\n"
+    _SEARCH_KNOWLEDGE_INSTRUCTIONS = (
+        "You have a knowledge base you can search using the search_knowledge_base tool. "
+        "Search before answering questions—don't assume you know the answer. "
+        "For ambiguous questions, search first rather than asking for clarification."
     )
 
     _AGENTIC_FILTER_INSTRUCTION_TEMPLATE = """
@@ -4519,7 +4517,7 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
         Returns:
             Context string to add to system prompt.
         """
-        context_parts: List[str] = [self._KNOWLEDGE_BASE_SEARCH_INSTRUCTION]
+        context_parts: List[str] = [self._SEARCH_KNOWLEDGE_INSTRUCTIONS]
 
         # Add filter instructions if agentic filters are enabled
         if enable_agentic_filters:
@@ -4527,7 +4525,7 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
             if valid_filters:
                 context_parts.append(self._get_agentic_filter_instructions(valid_filters))
 
-        return "\n".join(context_parts)
+        return "<knowledge_base>\n" + "\n".join(context_parts) + "\n</knowledge_base>"
 
     async def abuild_context(
         self,
@@ -4546,7 +4544,7 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
         Returns:
             Context string to add to system prompt.
         """
-        context_parts: List[str] = [self._KNOWLEDGE_BASE_SEARCH_INSTRUCTION]
+        context_parts: List[str] = [self._SEARCH_KNOWLEDGE_INSTRUCTIONS]
 
         # Add filter instructions if agentic filters are enabled
         if enable_agentic_filters:
@@ -4554,7 +4552,7 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
             if valid_filters:
                 context_parts.append(self._get_agentic_filter_instructions(valid_filters))
 
-        return "\n".join(context_parts)
+        return "<knowledge_base>\n" + "\n".join(context_parts) + "\n</knowledge_base>"
 
     def get_tools(
         self,
