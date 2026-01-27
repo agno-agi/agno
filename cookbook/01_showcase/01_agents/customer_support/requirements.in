@@ -1,0 +1,16 @@
+# Customer Support Agent Dependencies
+#
+# Install with: pip install -r requirements.in
+#
+# Core dependencies (installed via agno)
+agno
+
+# OpenAI for model and embeddings
+openai
+
+# PostgreSQL for knowledge base
+psycopg[binary]
+pgvector
+
+# Zendesk API
+requests
