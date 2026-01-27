@@ -9,7 +9,7 @@
 </div>
 
 <p align="center">
-  Build, run, manage multi-agent systems.
+  Build agents that learn.
 </p>
 
 <div align="center">
@@ -24,51 +24,47 @@
 
 ## What is Agno?
 
-Agno is a framework, runtime, and control plane for multi-agent systems.
+**Agno is a framework that turns agents into learning machines: systems that improve with every interaction.**
 
-| Layer | What it does |
-|-------|--------------|
-| **Framework** | Build agents, teams, and workflows with memory, knowledge, guardrails, and 100+ integrations |
-| **AgentOS Runtime** | Run your system in production with a stateless, secure FastAPI backend |
-| **Control Plane** | Test, monitor, and manage your system using the [AgentOS UI](https://os.agno.com) |
+Most agents are stateless. They reason, respond, forget. Session history helps, but they're exactly as capable on day 1000 as they were on day 1.
 
-## Why Agno?
+Learning machines are different. They remember users across sessions. They accumulate knowledge across conversations. They get better at working with your team. Learnings from one user benefit everyone.
 
-- **Private by design.** AgentOS runs in your cloud. The control plane connects directly to your runtime from your browser. No retention costs, no vendor lock-in, no compliance headaches.
-- **Production-ready on day one.** Pre-built FastAPI runtime with SSE endpoints, ready to deploy.
-- **Fast.** 529× faster instantiation than LangGraph. 24× lower memory. [See benchmarks →](#performance)
+Everything runs in your cloud. Your data never leaves your environment.
 
-## Example
+## Quick Example
 
-An agent with MCP tools, persistent state, served via FastAPI:
 ```python
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
-from agno.models.anthropic import Claude
-from agno.os import AgentOS
-from agno.tools.mcp import MCPTools
+from agno.models.openai import OpenAIResponses
 
-agno_agent = Agent(
-    name="Agno Agent",
-    model=Claude(id="claude-sonnet-4-5"),
-    db=SqliteDb(db_file="agno.db"),
-    tools=[MCPTools(transport="streamable-http", url="https://docs.agno.com/mcp")],
-    add_history_to_context=True,
-    markdown=True,
+agent = Agent(
+    model=OpenAIResponses(id="gpt-5.2"),
+    db=SqliteDb(db_file="tmp/agents.db"),
+    learning=True,
 )
-
-agent_os = AgentOS(agents=[agno_agent])
-app = agent_os.get_app()
-
-if __name__ == "__main__":
-    agent_os.serve(app="agno_agent:app", reload=True)
 ```
 
-Run this and connect to the [AgentOS UI](https://os.agno.com):
+One line. Your agent now remembers users, accumulates knowledge, and improves over time.
 
-https://github.com/user-attachments/assets/feb23db8-15cc-4e88-be7c-01a21a03ebf6
+## Production Infrastructure
+
+Agno provides the complete stack for learning machines:
+
+| Layer | What it does |
+|-------|--------------|
+| **SDK** | Build learning machines with tools, knowledge, and guardrails |
+| **Runtime** | Run your system in production using [AgentOS](/agent-os/introduction) |
+| **Control Plane** | Monitor and manage via the [AgentOS UI](https://os.agno.com) |
 
 ## Features
+
+**Learning**
+- User profiles that persist across sessions
+- User memories that accumulate over time
+- Learned knowledge that transfers across users
+- Always or agentic learning modes
 
 **Core**
 - Model-agnostic: OpenAI, Anthropic, Google, local models
@@ -76,10 +72,9 @@ https://github.com/user-attachments/assets/feb23db8-15cc-4e88-be7c-01a21a03ebf6
 - Async-first, built for long-running tasks
 - Natively multimodal (text, images, audio, video, files)
 
-**Memory & Knowledge**
-- Persistent storage for session history and state
-- User memory across sessions
+**Knowledge**
 - Agentic RAG with 20+ vector stores, hybrid search, reranking
+- Persistent storage for session history and state
 - Culture: shared long-term memory across agents
 
 **Orchestration**
@@ -98,22 +93,9 @@ https://github.com/user-attachments/assets/feb23db8-15cc-4e88-be7c-01a21a03ebf6
 
 ## Getting Started
 
-1. Follow the [quickstart guide](https://github.com/agno-agi/agno/tree/main/cookbook/00_quickstart)
+1. Follow the [quickstart guide](https://docs.agno.com/get-started/quickstart)
 2. Browse the [cookbook](https://github.com/agno-agi/agno/tree/main/cookbook) for real-world examples
 3. Read the [docs](https://docs.agno.com) to go deeper
-
-## Performance
-
-Agent workloads spawn hundreds of instances. Stateless, horizontal scalability isn't optional.
-
-| Metric | Agno | LangGraph | PydanticAI | CrewAI |
-|--------|------|-----------|------------|--------|
-| Instantiation | **3μs** | 1,587μs (529×) | 170μs (57×) | 210μs (70×) |
-| Memory | **6.6 KiB** | 161 KiB (24×) | 29 KiB (4×) | 66 KiB (10×) |
-
-<sub>Apple M4 MacBook Pro, Oct 2025. [Run benchmarks yourself →](https://github.com/agno-agi/agno/tree/main/cookbook/12_evals/performance)</sub>
-
-https://github.com/user-attachments/assets/54b98576-1859-4880-9f2d-15e1a426719d
 
 ## IDE Integration
 
