@@ -319,13 +319,13 @@ def get_schema(table_type: TableType, table_name: str) -> str:
     elif table_type == "knowledge":
         return dedent(f"""
             {define_table}
-            DEFINE FIELD OVERWRITE created_at ON {table_name} TYPE datetime VALUE time::now();
+            DEFINE FIELD OVERWRITE created_at ON {table_name} TYPE datetime DEFAULT time::now();
             DEFINE FIELD OVERWRITE updated_at ON {table_name} TYPE datetime VALUE time::now();
             """)
     elif table_type == "culture":
         return dedent(f"""
             {define_table}
-            DEFINE FIELD OVERWRITE created_at ON {table_name} TYPE datetime VALUE time::now();
+            DEFINE FIELD OVERWRITE created_at ON {table_name} TYPE datetime DEFAULT time::now();
             DEFINE FIELD OVERWRITE updated_at ON {table_name} TYPE datetime VALUE time::now();
             """)
     elif table_type == "context":
@@ -337,13 +337,13 @@ def get_schema(table_type: TableType, table_name: str) -> str:
     elif table_type == "sessions":
         return dedent(f"""
             {define_table}
-            DEFINE FIELD OVERWRITE created_at ON {table_name} TYPE datetime VALUE time::now();
+            DEFINE FIELD OVERWRITE created_at ON {table_name} TYPE datetime DEFAULT time::now();
             DEFINE FIELD OVERWRITE updated_at ON {table_name} TYPE datetime VALUE time::now();
             """)
     elif table_type == "traces":
         return dedent(f"""
             {define_table}
-            DEFINE FIELD OVERWRITE created_at ON {table_name} TYPE datetime VALUE time::now();
+            DEFINE FIELD OVERWRITE created_at ON {table_name} TYPE datetime DEFAULT time::now();
             DEFINE INDEX idx_trace_id ON {table_name} FIELDS trace_id UNIQUE;
             DEFINE INDEX idx_run_id ON {table_name} FIELDS run_id;
             DEFINE INDEX idx_session_id ON {table_name} FIELDS session_id;
@@ -357,7 +357,7 @@ def get_schema(table_type: TableType, table_name: str) -> str:
     elif table_type == "spans":
         return dedent(f"""
             {define_table}
-            DEFINE FIELD OVERWRITE created_at ON {table_name} TYPE datetime VALUE time::now();
+            DEFINE FIELD OVERWRITE created_at ON {table_name} TYPE datetime DEFAULT time::now();
             DEFINE INDEX idx_span_id ON {table_name} FIELDS span_id UNIQUE;
             DEFINE INDEX idx_trace_id ON {table_name} FIELDS trace_id;
             DEFINE INDEX idx_parent_span_id ON {table_name} FIELDS parent_span_id;

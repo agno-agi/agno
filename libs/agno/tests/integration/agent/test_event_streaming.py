@@ -428,6 +428,150 @@ def test_intermediate_steps_with_user_confirmation(shared_db):
     assert stored_session.runs[0].events[10].event == RunEvent.run_completed
 
 
+@pytest.mark.asyncio
+async def test_custom_event_in_acontinue_run_with_async_tool(shared_db):
+    """Test that CustomEvent from async generator tools is properly yielded in acontinue_run.
+
+    This tests the fix for GitHub issue #6069 where CustomEvents from confirmed tools
+    were not being yielded as separate events during acontinue_run.
+    """
+
+    @dataclass
+    class WeatherRequestEvent(CustomEvent):
+        city: str = ""
+        temperature: int = 0
+
+    @tool(requires_confirmation=True)
+    async def get_the_weather(city: str):
+        """Get weather for a city, yielding a custom event first."""
+        yield WeatherRequestEvent(city=city, temperature=70)
+        yield f"It is currently 70 degrees and cloudy in {city}"
+
+    agent = Agent(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        tools=[get_the_weather],
+        db=shared_db,
+        telemetry=False,
+    )
+
+    session_id = "test_custom_event_acontinue"
+
+    # Initial run that requires confirmation
+    response = await agent.arun("What is the weather in Tokyo?", session_id=session_id)
+    assert response.is_paused
+    assert response.tools is not None
+    assert response.tools[0].requires_confirmation
+    assert response.tools[0].tool_name == "get_the_weather"
+
+    # Mark the tool as confirmed
+    response.tools[0].confirmed = True
+
+    # Continue the run with streaming and stream_events
+    events = {}
+    async for run_response_delta in agent.acontinue_run(
+        run_id=response.run_id,
+        updated_tools=response.tools,
+        session_id=session_id,
+        stream=True,
+        stream_events=True,
+    ):
+        if run_response_delta.event not in events:
+            events[run_response_delta.event] = []
+        events[run_response_delta.event].append(run_response_delta)
+
+    # Verify that CustomEvent was yielded as a separate event
+    assert RunEvent.custom_event in events.keys(), (
+        f"CustomEvent should be yielded as a separate event. Got events: {events.keys()}"
+    )
+    assert len(events[RunEvent.custom_event]) == 1
+    custom_event = events[RunEvent.custom_event][0]
+    assert custom_event.city == "Tokyo"
+    assert custom_event.temperature == 70
+
+    # Verify tool_call_id is injected and matches the tool call
+    tool_started_event = events[RunEvent.tool_call_started][0]
+    assert custom_event.tool_call_id is not None, "tool_call_id should not be None"
+    assert custom_event.tool_call_id == tool_started_event.tool.tool_call_id
+
+    # Verify tool result contains the actual weather data
+    tool_completed_event = events[RunEvent.tool_call_completed][0]
+    assert "70 degrees" in str(tool_completed_event.tool.result)
+
+    # Verify all expected events are present
+    assert RunEvent.run_continued in events.keys()
+    assert RunEvent.tool_call_started in events.keys()
+    assert RunEvent.tool_call_completed in events.keys()
+    assert RunEvent.run_completed in events.keys()
+
+
+def test_custom_event_in_continue_run_with_sync_generator_tool(shared_db):
+    """Test that CustomEvent from sync generator tools is properly yielded in continue_run.
+
+    This tests the sync version of the fix for GitHub issue #6069.
+    """
+
+    @dataclass
+    class WeatherRequestEvent(CustomEvent):
+        city: str = ""
+        temperature: int = 0
+
+    @tool(requires_confirmation=True)
+    def get_the_weather(city: str):
+        """Get weather for a city, yielding a custom event first."""
+        yield WeatherRequestEvent(city=city, temperature=70)
+        yield f"It is currently 70 degrees and cloudy in {city}"
+
+    agent = Agent(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        tools=[get_the_weather],
+        db=shared_db,
+        telemetry=False,
+    )
+
+    session_id = "test_custom_event_continue"
+
+    # Initial run that requires confirmation
+    response = agent.run("What is the weather in Tokyo?", session_id=session_id)
+    assert response.is_paused
+    assert response.tools is not None
+    assert response.tools[0].requires_confirmation
+    assert response.tools[0].tool_name == "get_the_weather"
+
+    # Mark the tool as confirmed
+    response.tools[0].confirmed = True
+
+    # Continue the run with streaming and stream_events
+    events = {}
+    for run_response_delta in agent.continue_run(
+        run_id=response.run_id,
+        updated_tools=response.tools,
+        session_id=session_id,
+        stream=True,
+        stream_events=True,
+    ):
+        if run_response_delta.event not in events:
+            events[run_response_delta.event] = []
+        events[run_response_delta.event].append(run_response_delta)
+
+    # Verify that CustomEvent was yielded as a separate event
+    assert RunEvent.custom_event in events.keys(), (
+        f"CustomEvent should be yielded as a separate event. Got events: {events.keys()}"
+    )
+    assert len(events[RunEvent.custom_event]) == 1
+    custom_event = events[RunEvent.custom_event][0]
+    assert custom_event.city == "Tokyo"
+    assert custom_event.temperature == 70
+
+    # Verify tool_call_id is injected and matches the tool call
+    tool_started_event = events[RunEvent.tool_call_started][0]
+    assert custom_event.tool_call_id is not None, "tool_call_id should not be None"
+    assert custom_event.tool_call_id == tool_started_event.tool.tool_call_id
+
+    # Verify tool result contains the actual weather data
+    tool_completed_event = events[RunEvent.tool_call_completed][0]
+    assert "70 degrees" in str(tool_completed_event.tool.result)
+
+
 def test_intermediate_steps_with_memory(shared_db):
     """Test that the agent streams events."""
     agent = Agent(
@@ -1254,3 +1398,52 @@ async def test_async_compression_events(shared_db):
         assert hasattr(compression_completed, "tool_results_compressed")
         assert hasattr(compression_completed, "original_size")
         assert hasattr(compression_completed, "compressed_size")
+
+
+def test_custom_event_properties_persist_after_db_reload(shared_db):
+    """Test that custom event subclass properties persist after loading from database."""
+    from dataclasses import field
+    from typing import Any, Dict
+
+    @dataclass
+    class MimeEvent(CustomEvent):
+        mime_type: str = ""
+        data: Dict[str, Any] = field(default_factory=dict)
+
+    def get_chart(city: str):
+        """Get a chart for the given city."""
+        yield MimeEvent(
+            mime_type="application/echart+json",
+            data={"title": "Test Chart", "series": [{"type": "pie"}]},
+        )
+
+    agent = Agent(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        db=shared_db,
+        tools=[get_chart],
+        store_events=True,
+        telemetry=False,
+    )
+
+    response_generator = agent.run("Get a chart for Tokyo", stream=True, stream_events=True)
+
+    events = {}
+    for run_response_delta in response_generator:
+        if run_response_delta.event not in events:
+            events[run_response_delta.event] = []
+        events[run_response_delta.event].append(run_response_delta)
+
+    assert RunEvent.custom_event in events
+    assert events[RunEvent.custom_event][0].mime_type == "application/echart+json"
+    assert events[RunEvent.custom_event][0].data["title"] == "Test Chart"
+
+    # Check stored events from DB
+    stored_session = shared_db.get_sessions(session_type=SessionType.AGENT)[0]
+    stored_run = stored_session.runs[0]
+
+    custom_events = [e for e in stored_run.events if e.event == RunEvent.custom_event]
+    assert len(custom_events) >= 1
+    assert hasattr(custom_events[0], "mime_type")
+    assert hasattr(custom_events[0], "data")
+    assert custom_events[0].mime_type == "application/echart+json"
+    assert custom_events[0].data["title"] == "Test Chart"

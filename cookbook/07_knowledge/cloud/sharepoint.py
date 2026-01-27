@@ -40,7 +40,7 @@ from os import getenv
 
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.remote_content import SharePointConfig
-from agno.vectordb.lancedb import LanceDb
+from agno.vectordb.pgvector import PgVector
 
 # Configure SharePoint content source
 # All credentials should come from environment variables
@@ -60,9 +60,9 @@ sharepoint_config = SharePointConfig(
 # Create Knowledge with SharePoint as a content source
 knowledge = Knowledge(
     name="SharePoint Knowledge",
-    vector_db=LanceDb(
-        uri="tmp/lancedb",
+    vector_db=PgVector(
         table_name="sharepoint_knowledge",
+        db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
     ),
     content_sources=[sharepoint_config],
 )

@@ -1,7 +1,7 @@
 import json
 import time
 from datetime import date, datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union, cast
 from uuid import uuid4
 
 if TYPE_CHECKING:
@@ -26,7 +26,7 @@ from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
-from agno.db.utils import deserialize_session_json_fields, serialize_session_json_fields
+from agno.db.utils import deserialize_session_json_fields
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info
 from agno.utils.string import generate_id
@@ -125,93 +125,86 @@ class FirestoreDb(BaseDb):
             CollectionReference: The collection reference.
         """
         if table_type == "sessions":
-            if not hasattr(self, "session_collection"):
-                if self.session_table_name is None:
-                    raise ValueError("Session collection was not provided on initialization")
-                self.session_collection = self._get_or_create_collection(
-                    collection_name=self.session_table_name,
-                    collection_type="sessions",
-                    create_collection_if_not_found=create_collection_if_not_found,
-                )
+            if self.session_table_name is None:
+                raise ValueError("Session collection was not provided on initialization")
+            self.session_collection = self._get_or_create_collection(
+                collection_name=self.session_table_name,
+                collection_type="sessions",
+                create_collection_if_not_found=create_collection_if_not_found,
+            )
             return self.session_collection
 
         if table_type == "memories":
-            if not hasattr(self, "memory_collection"):
-                if self.memory_table_name is None:
-                    raise ValueError("Memory collection was not provided on initialization")
-                self.memory_collection = self._get_or_create_collection(
-                    collection_name=self.memory_table_name,
-                    collection_type="memories",
-                    create_collection_if_not_found=create_collection_if_not_found,
-                )
+            if self.memory_table_name is None:
+                raise ValueError("Memory collection was not provided on initialization")
+            self.memory_collection = self._get_or_create_collection(
+                collection_name=self.memory_table_name,
+                collection_type="memories",
+                create_collection_if_not_found=create_collection_if_not_found,
+            )
             return self.memory_collection
 
         if table_type == "metrics":
-            if not hasattr(self, "metrics_collection"):
-                if self.metrics_table_name is None:
-                    raise ValueError("Metrics collection was not provided on initialization")
-                self.metrics_collection = self._get_or_create_collection(
-                    collection_name=self.metrics_table_name,
-                    collection_type="metrics",
-                    create_collection_if_not_found=create_collection_if_not_found,
-                )
+            if self.metrics_table_name is None:
+                raise ValueError("Metrics collection was not provided on initialization")
+            self.metrics_collection = self._get_or_create_collection(
+                collection_name=self.metrics_table_name,
+                collection_type="metrics",
+                create_collection_if_not_found=create_collection_if_not_found,
+            )
             return self.metrics_collection
 
         if table_type == "evals":
-            if not hasattr(self, "eval_collection"):
-                if self.eval_table_name is None:
-                    raise ValueError("Eval collection was not provided on initialization")
-                self.eval_collection = self._get_or_create_collection(
-                    collection_name=self.eval_table_name,
-                    collection_type="evals",
-                    create_collection_if_not_found=create_collection_if_not_found,
-                )
+            if self.eval_table_name is None:
+                raise ValueError("Eval collection was not provided on initialization")
+            self.eval_collection = self._get_or_create_collection(
+                collection_name=self.eval_table_name,
+                collection_type="evals",
+                create_collection_if_not_found=create_collection_if_not_found,
+            )
             return self.eval_collection
 
         if table_type == "knowledge":
-            if not hasattr(self, "knowledge_collection"):
-                if self.knowledge_table_name is None:
-                    raise ValueError("Knowledge collection was not provided on initialization")
-                self.knowledge_collection = self._get_or_create_collection(
-                    collection_name=self.knowledge_table_name,
-                    collection_type="knowledge",
-                    create_collection_if_not_found=create_collection_if_not_found,
-                )
+            if self.knowledge_table_name is None:
+                raise ValueError("Knowledge collection was not provided on initialization")
+            self.knowledge_collection = self._get_or_create_collection(
+                collection_name=self.knowledge_table_name,
+                collection_type="knowledge",
+                create_collection_if_not_found=create_collection_if_not_found,
+            )
             return self.knowledge_collection
 
         if table_type == "culture":
-            if not hasattr(self, "culture_collection"):
-                if self.culture_table_name is None:
-                    raise ValueError("Culture collection was not provided on initialization")
-                self.culture_collection = self._get_or_create_collection(
-                    collection_name=self.culture_table_name,
-                    collection_type="culture",
-                    create_collection_if_not_found=create_collection_if_not_found,
-                )
+            if self.culture_table_name is None:
+                raise ValueError("Culture collection was not provided on initialization")
+            self.culture_collection = self._get_or_create_collection(
+                collection_name=self.culture_table_name,
+                collection_type="culture",
+                create_collection_if_not_found=create_collection_if_not_found,
+            )
             return self.culture_collection
 
         if table_type == "traces":
-            if not hasattr(self, "traces_collection"):
-                if self.trace_table_name is None:
-                    raise ValueError("Traces collection was not provided on initialization")
-                self.traces_collection = self._get_or_create_collection(
-                    collection_name=self.trace_table_name,
-                    collection_type="traces",
-                    create_collection_if_not_found=create_collection_if_not_found,
-                )
+            if self.trace_table_name is None:
+                raise ValueError("Traces collection was not provided on initialization")
+            self.traces_collection = self._get_or_create_collection(
+                collection_name=self.trace_table_name,
+                collection_type="traces",
+                create_collection_if_not_found=create_collection_if_not_found,
+            )
             return self.traces_collection
 
         if table_type == "spans":
             # Ensure traces collection exists first (spans reference traces)
-            self._get_collection("traces", create_collection_if_not_found=create_collection_if_not_found)
-            if not hasattr(self, "spans_collection"):
-                if self.span_table_name is None:
-                    raise ValueError("Spans collection was not provided on initialization")
-                self.spans_collection = self._get_or_create_collection(
-                    collection_name=self.span_table_name,
-                    collection_type="spans",
-                    create_collection_if_not_found=create_collection_if_not_found,
-                )
+            if create_collection_if_not_found:
+                self._get_collection("traces", create_collection_if_not_found=True)
+            if self.span_table_name is None:
+                raise ValueError("Spans collection was not provided on initialization")
+            self.spans_collection = self._get_or_create_collection(
+                collection_name=self.span_table_name,
+                collection_type="spans",
+                create_collection_if_not_found=create_collection_if_not_found,
+            )
             return self.spans_collection
 
         if table_type == "context":
@@ -518,6 +511,29 @@ class FirestoreDb(BaseDb):
             if doc_ref is None:
                 return None
 
+            # Check if session_data is stored as JSON string (legacy) or native map.
+            # Legacy sessions stored session_data as a JSON string, but Firestore's dot notation
+            # (e.g., "session_data.session_name") only works with native maps. Using dot notation
+            # on a JSON string overwrites the entire field, causing data loss.
+            # For legacy sessions, we use read-modify-write which also migrates them to native maps.
+            current_doc = doc_ref.get()
+            if not current_doc.exists:
+                return None
+
+            current_data = current_doc.to_dict()
+            session_data = current_data.get("session_data") if current_data else None
+
+            if session_data is None or isinstance(session_data, str):
+                existing_session = self.get_session(session_id, session_type, deserialize=True)
+                if existing_session is None:
+                    return None
+                existing_session = cast(Session, existing_session)
+                if existing_session.session_data is None:
+                    existing_session.session_data = {}
+                existing_session.session_data["session_name"] = session_name
+                return self.upsert_session(existing_session, deserialize=deserialize)
+
+            # Native map format - use efficient dot notation update
             doc_ref.update({"session_data.session_name": session_name, "updated_at": int(time.time())})
 
             updated_doc = doc_ref.get()
@@ -561,50 +577,50 @@ class FirestoreDb(BaseDb):
         """
         try:
             collection_ref = self._get_collection(table_type="sessions", create_collection_if_not_found=True)
-            serialized_session_dict = serialize_session_json_fields(session.to_dict())
+            session_dict = session.to_dict()
 
             if isinstance(session, AgentSession):
                 record = {
-                    "session_id": serialized_session_dict.get("session_id"),
+                    "session_id": session_dict.get("session_id"),
                     "session_type": SessionType.AGENT.value,
-                    "agent_id": serialized_session_dict.get("agent_id"),
-                    "user_id": serialized_session_dict.get("user_id"),
-                    "runs": serialized_session_dict.get("runs"),
-                    "agent_data": serialized_session_dict.get("agent_data"),
-                    "session_data": serialized_session_dict.get("session_data"),
-                    "summary": serialized_session_dict.get("summary"),
-                    "metadata": serialized_session_dict.get("metadata"),
-                    "created_at": serialized_session_dict.get("created_at"),
+                    "agent_id": session_dict.get("agent_id"),
+                    "user_id": session_dict.get("user_id"),
+                    "runs": session_dict.get("runs"),
+                    "agent_data": session_dict.get("agent_data"),
+                    "session_data": session_dict.get("session_data"),
+                    "summary": session_dict.get("summary"),
+                    "metadata": session_dict.get("metadata"),
+                    "created_at": session_dict.get("created_at"),
                     "updated_at": int(time.time()),
                 }
 
             elif isinstance(session, TeamSession):
                 record = {
-                    "session_id": serialized_session_dict.get("session_id"),
+                    "session_id": session_dict.get("session_id"),
                     "session_type": SessionType.TEAM.value,
-                    "team_id": serialized_session_dict.get("team_id"),
-                    "user_id": serialized_session_dict.get("user_id"),
-                    "runs": serialized_session_dict.get("runs"),
-                    "team_data": serialized_session_dict.get("team_data"),
-                    "session_data": serialized_session_dict.get("session_data"),
-                    "summary": serialized_session_dict.get("summary"),
-                    "metadata": serialized_session_dict.get("metadata"),
-                    "created_at": serialized_session_dict.get("created_at"),
+                    "team_id": session_dict.get("team_id"),
+                    "user_id": session_dict.get("user_id"),
+                    "runs": session_dict.get("runs"),
+                    "team_data": session_dict.get("team_data"),
+                    "session_data": session_dict.get("session_data"),
+                    "summary": session_dict.get("summary"),
+                    "metadata": session_dict.get("metadata"),
+                    "created_at": session_dict.get("created_at"),
                     "updated_at": int(time.time()),
                 }
 
             elif isinstance(session, WorkflowSession):
                 record = {
-                    "session_id": serialized_session_dict.get("session_id"),
+                    "session_id": session_dict.get("session_id"),
                     "session_type": SessionType.WORKFLOW.value,
-                    "workflow_id": serialized_session_dict.get("workflow_id"),
-                    "user_id": serialized_session_dict.get("user_id"),
-                    "runs": serialized_session_dict.get("runs"),
-                    "workflow_data": serialized_session_dict.get("workflow_data"),
-                    "session_data": serialized_session_dict.get("session_data"),
-                    "summary": serialized_session_dict.get("summary"),
-                    "metadata": serialized_session_dict.get("metadata"),
-                    "created_at": serialized_session_dict.get("created_at"),
+                    "workflow_id": session_dict.get("workflow_id"),
+                    "user_id": session_dict.get("user_id"),
+                    "runs": session_dict.get("runs"),
+                    "workflow_data": session_dict.get("workflow_data"),
+                    "session_data": session_dict.get("session_data"),
+                    "summary": session_dict.get("summary"),
+                    "metadata": session_dict.get("metadata"),
+                    "created_at": session_dict.get("created_at"),
                     "updated_at": int(time.time()),
                 }
 

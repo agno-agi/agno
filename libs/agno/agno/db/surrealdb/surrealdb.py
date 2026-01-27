@@ -295,6 +295,7 @@ class SurrealDb(BaseDb):
         where = WhereClause()
         if user_id is not None:
             where = where.and_("user_id", user_id)
+
         where_clause, where_vars = where.build()
         query = dedent(f"""
             SELECT *
@@ -303,7 +304,18 @@ class SurrealDb(BaseDb):
         """)
         vars = {"record": record, **where_vars}
         raw = self._query_one(query, vars, dict)
-        if raw is None or not deserialize:
+        if raw is None:
+            return None
+
+        # Verify session type matches
+        if session_type == SessionType.AGENT and raw.get("agent") is None:
+            return None
+        elif session_type == SessionType.TEAM and raw.get("team") is None:
+            return None
+        elif session_type == SessionType.WORKFLOW and raw.get("workflow") is None:
+            return None
+
+        if not deserialize:
             return raw
 
         return deserialize_session(session_type, raw)
