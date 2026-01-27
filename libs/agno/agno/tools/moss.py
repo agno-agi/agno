@@ -24,6 +24,12 @@ class MossTools(Toolkit):
         project_id: Optional[str] = None,
         project_key: Optional[str] = None,
         default_index_name: Optional[str] = None,
+        enable_search_moss: bool = True,
+        enable_add_documents_to_moss: bool = True,
+        enable_create_moss_index: bool = True,
+        enable_list_moss_indexes: bool = True,
+        enable_delete_moss_index: bool = True,
+        all: bool = False,
         **kwargs,
     ):
         """
@@ -33,11 +39,15 @@ class MossTools(Toolkit):
             project_id (Optional[str]): Moss project ID.
             project_key (Optional[str]): Moss project key.
             default_index_name (Optional[str]): Default index name to use for tools.
+            enable_search_moss (bool): Enable the search_moss tool. Defaults to True.
+            enable_add_documents_to_moss (bool): Enable the add_documents_to_moss tool. Defaults to True.
+            enable_create_moss_index (bool): Enable the create_moss_index tool. Defaults to True.
+            enable_list_moss_indexes (bool): Enable the list_moss_indexes tool. Defaults to True.
+            enable_delete_moss_index (bool): Enable the delete_moss_index tool. Defaults to True.
+            all (bool): Enable all tools. Overrides individual flags. Defaults to False.
         """
         if not moss_available:
             raise ImportError("`inferedge-moss` not installed. Please install using `pip install inferedge-moss`.")
-
-        super().__init__(name="moss_tools", **kwargs)
 
         self.project_id: Optional[str] = project_id or os.getenv("MOSS_PROJECT_ID")
         self.project_key: Optional[str] = project_key or os.getenv("MOSS_PROJECT_KEY")
@@ -52,12 +62,19 @@ class MossTools(Toolkit):
         self.client: MossClient = MossClient(self.project_id, self.project_key)
         self._loaded_indexes: List[str] = []
 
-        # Register tools
-        self.register(self.search_moss)
-        self.register(self.add_documents_to_moss)
-        self.register(self.create_moss_index)
-        self.register(self.list_moss_indexes)
-        self.register(self.delete_moss_index)
+        tools: List[Any] = []
+        if all or enable_search_moss:
+            tools.append(self.search_moss)
+        if all or enable_add_documents_to_moss:
+            tools.append(self.add_documents_to_moss)
+        if all or enable_create_moss_index:
+            tools.append(self.create_moss_index)
+        if all or enable_list_moss_indexes:
+            tools.append(self.list_moss_indexes)
+        if all or enable_delete_moss_index:
+            tools.append(self.delete_moss_index)
+
+        super().__init__(name="moss_tools", tools=tools, **kwargs)
 
     def _get_index_name(self, index_name: Optional[str]) -> str:
         name = index_name or self.default_index_name
