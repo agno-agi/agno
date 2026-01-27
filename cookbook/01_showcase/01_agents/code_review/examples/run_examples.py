@@ -121,6 +121,7 @@ def example_review_python_code():
     code_review_agent.print_response(
         f"Review this Python code for bugs, security issues, and improvements:\n\n```python\n{SAMPLE_PYTHON_CODE}\n```",
         stream=True,
+        show_full_thinking=True,
     )
 
 
@@ -133,6 +134,7 @@ def example_review_javascript_code():
     code_review_agent.print_response(
         f"Review this JavaScript code for issues:\n\n```javascript\n{SAMPLE_JAVASCRIPT_CODE}\n```",
         stream=True,
+        show_full_thinking=True,
     )
 
 
@@ -145,6 +147,7 @@ def example_review_diff():
     code_review_agent.print_response(
         f"Review these code changes:\n\n```diff\n{SAMPLE_DIFF}\n```",
         stream=True,
+        show_full_thinking=True,
     )
 
 
@@ -164,6 +167,7 @@ def example_review_github_pr():
     code_review_agent.print_response(
         f"Review this pull request and provide feedback: {pr_url}",
         stream=True,
+        show_full_thinking=True,
     )
 
 
@@ -178,6 +182,7 @@ def example_security_focused_review():
         f"injection risks, authentication issues, and sensitive data exposure:\n\n"
         f"```python\n{SAMPLE_PYTHON_CODE}\n```",
         stream=True,
+        show_full_thinking=True,
     )
 
 
@@ -228,6 +233,7 @@ Use the file tools to:
 4. Create a new file named fixed_{filename} with fixed code
 """,
         stream=True,
+        show_full_thinking=True,
     )
 
 
@@ -292,6 +298,7 @@ Requirements:
 After creating the file, confirm the file was saved successfully.
 """,
         stream=True,
+        show_full_thinking=True,
     )
     
     # Open the HTML file in browser after agent completes
@@ -306,7 +313,7 @@ After creating the file, confirm the file was saved successfully.
         if user_input.lower() in ("quit", "exit"):
             break
         if user_input:
-            code_review_agent.print_response(user_input, stream=True)
+            code_review_agent.print_response(user_input, stream=True, show_full_thinking=True)
 
 
 # ============================================================================
@@ -350,6 +357,7 @@ def example_review_github_pr_interactive():
     code_review_agent.print_response(
         f"Review this pull request and provide feedback: {pr_url}",
         stream=True,
+        show_full_thinking=True,
     )
 
 
