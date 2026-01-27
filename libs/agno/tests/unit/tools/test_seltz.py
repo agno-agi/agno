@@ -119,7 +119,7 @@ def test_search_empty_query(seltz_tools):
 
 def test_search_without_api_key():
     """Test search without API key returns error."""
-    with patch("agno.tools.seltz.Seltz") as mock_seltz:
+    with patch("agno.tools.seltz.Seltz"):
         with patch.dict("os.environ", {"SELTZ_API_KEY": ""}, clear=False):
             with patch.object(SeltzTools, "__init__", lambda self, **kwargs: None):
                 tools = SeltzTools()
