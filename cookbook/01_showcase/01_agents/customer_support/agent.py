@@ -1,12 +1,7 @@
 """
-Advanced Support Agent
-======================
-A customer support agent with cross-ticket learning capabilities.
-
-This pattern combines:
-- Entity Memory: Products, past tickets (shared across org)
-- Learned Knowledge: Solutions and troubleshooting patterns (shared)
-- Session Context: Current ticket/issue tracking
+Support Agent
+=============
+A customer support agent with learning capabilities.
 
 The agent learns from successful resolutions and applies them to future tickets.
 
@@ -14,10 +9,8 @@ Requirements:
     - PostgreSQL with PgVector running (./cookbook/scripts/run_pgvector.sh)
     - Knowledge base loaded (./scripts/load_knowledge.py)
 
-See also: cross_ticket_learning.py for the full demo.
+See also: examples/learning_demo.py for the full demo.
 """
-
-from pathlib import Path
 
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
@@ -38,7 +31,6 @@ from agno.vectordb.pgvector import PgVector, SearchType
 # ============================================================================
 
 DB_URL = "postgresql+psycopg://ai:ai@localhost:5532/ai"
-KNOWLEDGE_DIR = Path(__file__).parent.parent / "knowledge"
 
 db = PostgresDb(db_url=DB_URL)
 
@@ -52,11 +44,7 @@ knowledge = Knowledge(
 )
 
 
-def create_support_agent(
-    customer_id: str,
-    ticket_id: str,
-    org_id: str = "default",
-) -> Agent:
+def create_support_agent(customer_id: str, ticket_id: str) -> Agent:
     """Create a support agent for a specific ticket."""
     return Agent(
         model=OpenAIResponses(id="gpt-4.1"),
@@ -71,7 +59,7 @@ def create_support_agent(
             session_context=SessionContextConfig(enable_planning=True),
             entity_memory=EntityMemoryConfig(
                 mode=LearningMode.ALWAYS,
-                namespace=f"org:{org_id}:support",
+                namespace="support",
             ),
             learned_knowledge=LearnedKnowledgeConfig(mode=LearningMode.AGENTIC),
         ),
@@ -87,11 +75,7 @@ def create_support_agent(
 # ============================================================================
 
 if __name__ == "__main__":
-    agent = create_support_agent(
-        customer_id="demo@example.com",
-        ticket_id="demo_ticket",
-        org_id="acme",
-    )
+    agent = create_support_agent("demo@example.com", "demo_ticket")
     agent.print_response(
         "What are the SLA response times for different priority levels?",
         stream=True,

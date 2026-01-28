@@ -34,7 +34,7 @@ export OPENAI_API_KEY=your-openai-api-key
 ### 4. Run an Example
 
 ```bash
-.venvs/demo/bin/python cookbook/01_showcase/01_agents/customer_support/examples/cross_ticket_learning.py
+.venvs/demo/bin/python cookbook/01_showcase/01_agents/customer_support/examples/learning_demo.py
 ```
 
 ## Examples
@@ -42,7 +42,7 @@ export OPENAI_API_KEY=your-openai-api-key
 | File | What You'll Learn |
 |:-----|:------------------|
 | `examples/simple_query.py` | Basic KB-powered query |
-| `examples/cross_ticket_learning.py` | Learning transfer between tickets |
+| `examples/learning_demo.py` | Learning transfer between tickets |
 | `examples/hitl_demo.py` | Human-in-the-loop clarification |
 | `examples/evaluate.py` | Multi-query evaluation |
 
@@ -53,7 +53,7 @@ customer_support/
 ├── agent.py              # Support agent with Learning Machine
 ├── examples/
 │   ├── simple_query.py
-│   ├── cross_ticket_learning.py
+│   ├── learning_demo.py
 │   ├── evaluate.py
 │   └── hitl_demo.py
 ├── knowledge/            # KB documents
@@ -104,7 +104,7 @@ agent = Agent(
         session_context=SessionContextConfig(enable_planning=True),
         entity_memory=EntityMemoryConfig(
             mode=LearningMode.ALWAYS,
-            namespace=f"org:{org_id}:support",
+            namespace="support",
         ),
         learned_knowledge=LearnedKnowledgeConfig(mode=LearningMode.AGENTIC),
     ),
