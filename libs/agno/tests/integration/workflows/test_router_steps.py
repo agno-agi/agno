@@ -777,3 +777,233 @@ def test_selector_step_choices_in_workflow(shared_db):
     # Test slow path
     response = workflow.run(input="take slow route")
     assert find_content_in_steps(response.step_results[0], "Slow path")
+
+
+# ============================================================================
+# STRING RETURN TYPE TESTS
+# ============================================================================
+
+
+def test_selector_returns_string_step_name():
+    """Test that selector can return step name as string."""
+    step_a = Step(name="step_a", executor=lambda x: StepOutput(content="Output A"))
+    step_b = Step(name="step_b", executor=lambda x: StepOutput(content="Output B"))
+
+    def string_selector(step_input: StepInput):
+        """Selector that returns step name as string."""
+        if "A" in step_input.input:
+            return "step_a"  # Return string name
+        return "step_b"  # Return string name
+
+    router = Router(
+        name="string_router",
+        selector=string_selector,
+        choices=[step_a, step_b],
+    )
+
+    # Test selecting step_a by name
+    result = router.execute(StepInput(input="Choose A"))
+    assert result.steps[0].content == "Output A"
+
+    # Test selecting step_b by name
+    result = router.execute(StepInput(input="Choose B"))
+    assert result.steps[0].content == "Output B"
+
+
+def test_selector_returns_list_of_strings():
+    """Test that selector can return list of step names as strings."""
+    step_1 = Step(name="step_1", executor=lambda x: StepOutput(content="Step 1"))
+    step_2 = Step(name="step_2", executor=lambda x: StepOutput(content="Step 2"))
+    step_3 = Step(name="step_3", executor=lambda x: StepOutput(content="Step 3"))
+
+    def multi_string_selector(step_input: StepInput):
+        """Selector that returns multiple step names as strings."""
+        if "all" in step_input.input:
+            return ["step_1", "step_2", "step_3"]
+        return ["step_1"]
+
+    router = Router(
+        name="multi_string_router",
+        selector=multi_string_selector,
+        choices=[step_1, step_2, step_3],
+    )
+
+    # Test selecting all steps by name
+    result = router.execute(StepInput(input="run all"))
+    assert len(result.steps) == 3
+    assert result.steps[0].content == "Step 1"
+    assert result.steps[1].content == "Step 2"
+    assert result.steps[2].content == "Step 3"
+
+
+def test_selector_returns_mixed_string_and_step():
+    """Test that selector can return mixed strings and Step objects."""
+    step_a = Step(name="step_a", executor=lambda x: StepOutput(content="Output A"))
+    step_b = Step(name="step_b", executor=lambda x: StepOutput(content="Output B"))
+
+    def mixed_selector(step_input: StepInput, step_choices: list):
+        """Selector that returns mix of string and Step."""
+        step_map = {s.name: s for s in step_choices}
+        # Return string for first, Step object for second
+        return ["step_a", step_map["step_b"]]
+
+    router = Router(
+        name="mixed_router",
+        selector=mixed_selector,
+        choices=[step_a, step_b],
+    )
+
+    result = router.execute(StepInput(input="test"))
+    assert len(result.steps) == 2
+    assert result.steps[0].content == "Output A"
+    assert result.steps[1].content == "Output B"
+
+
+def test_selector_unknown_string_name_warns():
+    """Test that unknown step name logs warning and returns empty."""
+    step_a = Step(name="step_a", executor=lambda x: StepOutput(content="Output A"))
+
+    def bad_selector(step_input: StepInput):
+        return "nonexistent_step"
+
+    router = Router(
+        name="bad_router",
+        selector=bad_selector,
+        choices=[step_a],
+    )
+
+    result = router.execute(StepInput(input="test"))
+    # Should complete but with no steps executed (steps is None or empty)
+    assert result.steps is None or len(result.steps) == 0
+
+
+# ============================================================================
+# NESTED CHOICES TESTS
+# ============================================================================
+
+
+def test_nested_list_in_choices_becomes_steps_container():
+    """Test that nested list in choices becomes a Steps container."""
+    from agno.workflow.steps import Steps
+
+    step_a = Step(name="step_a", executor=lambda x: StepOutput(content="Output A"))
+    step_b = Step(name="step_b", executor=lambda x: StepOutput(content="Output B"))
+    step_c = Step(name="step_c", executor=lambda x: StepOutput(content="Output C"))
+
+    def nested_selector(step_input: StepInput, step_choices: list):
+        """Select from nested choices."""
+        # step_choices[0] = step_a
+        # step_choices[1] = Steps container with [step_b, step_c]
+        if "single" in step_input.input:
+            return step_choices[0]
+        return step_choices[1]  # Returns the Steps container
+
+    router = Router(
+        name="nested_router",
+        selector=nested_selector,
+        choices=[step_a, [step_b, step_c]],  # Nested list
+    )
+
+    # Verify step_choices structure after preparation
+    router._prepare_steps()
+    assert len(router.steps) == 2
+    assert isinstance(router.steps[0], Step)
+    assert isinstance(router.steps[1], Steps)
+
+    # Test selecting single step
+    result = router.execute(StepInput(input="single"))
+    assert len(result.steps) == 1
+    assert result.steps[0].content == "Output A"
+
+    # Test selecting Steps container (runs step_b then step_c)
+    result = router.execute(StepInput(input="sequence"))
+    # Steps container should execute both nested steps
+    assert find_content_in_steps(result, "Output B")
+    assert find_content_in_steps(result, "Output C")
+
+
+def test_multiple_nested_lists_in_choices():
+    """Test multiple nested lists in choices."""
+    step_1 = Step(name="step_1", executor=lambda x: StepOutput(content="Step 1"))
+    step_2 = Step(name="step_2", executor=lambda x: StepOutput(content="Step 2"))
+    step_3 = Step(name="step_3", executor=lambda x: StepOutput(content="Step 3"))
+    step_4 = Step(name="step_4", executor=lambda x: StepOutput(content="Step 4"))
+
+    def selector(step_input: StepInput, step_choices: list):
+        if "first" in step_input.input:
+            return step_choices[0]  # Steps container [step_1, step_2]
+        return step_choices[1]  # Steps container [step_3, step_4]
+
+    router = Router(
+        name="multi_nested_router",
+        selector=selector,
+        choices=[[step_1, step_2], [step_3, step_4]],
+    )
+
+    # Test first group
+    result = router.execute(StepInput(input="first group"))
+    assert find_content_in_steps(result, "Step 1")
+    assert find_content_in_steps(result, "Step 2")
+
+    # Test second group
+    result = router.execute(StepInput(input="second group"))
+    assert find_content_in_steps(result, "Step 3")
+    assert find_content_in_steps(result, "Step 4")
+
+
+@pytest.mark.asyncio
+async def test_async_selector_returns_string():
+    """Test async selector returning string step name."""
+    step_a = Step(name="step_a", executor=lambda x: StepOutput(content="Async A"))
+    step_b = Step(name="step_b", executor=lambda x: StepOutput(content="Async B"))
+
+    async def async_string_selector(step_input: StepInput):
+        return "step_b"
+
+    router = Router(
+        name="async_string_router",
+        selector=async_string_selector,
+        choices=[step_a, step_b],
+    )
+
+    result = await router.aexecute(StepInput(input="test"))
+    assert result.steps[0].content == "Async B"
+
+
+def test_string_selector_in_workflow(shared_db):
+    """Test string-returning selector in workflow context."""
+    tech_step = Step(name="Tech Research", executor=lambda x: StepOutput(content="Tech content"))
+    biz_step = Step(name="Business Research", executor=lambda x: StepOutput(content="Business content"))
+    general_step = Step(name="General Research", executor=lambda x: StepOutput(content="General content"))
+
+    def route_by_topic(step_input: StepInput):
+        topic = step_input.input.lower()
+        if "tech" in topic:
+            return "Tech Research"
+        elif "business" in topic:
+            return "Business Research"
+        return "General Research"
+
+    workflow = Workflow(
+        name="String Selector Workflow",
+        db=shared_db,
+        steps=[
+            Router(
+                name="Topic Router",
+                selector=route_by_topic,
+                choices=[tech_step, biz_step, general_step],
+            )
+        ],
+    )
+
+    # Test tech routing
+    response = workflow.run(input="tech trends")
+    assert find_content_in_steps(response.step_results[0], "Tech content")
+
+    # Test business routing
+    response = workflow.run(input="business analysis")
+    assert find_content_in_steps(response.step_results[0], "Business content")
+
+    # Test general routing
+    response = workflow.run(input="random topic")
+    assert find_content_in_steps(response.step_results[0], "General content")
