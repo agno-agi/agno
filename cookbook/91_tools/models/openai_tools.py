@@ -6,9 +6,9 @@ import base64
 from pathlib import Path
 
 from agno.agent import Agent
+from agno.media import Image
 from agno.run.agent import RunOutput
 from agno.tools.openai import OpenAITools
-from agno.media import Image
 from agno.utils.media import download_file, save_base64_data
 
 # Example 1: Transcription

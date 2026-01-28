@@ -192,9 +192,9 @@ class OpenAITools(Toolkit):
             return ToolResult(content=f"Failed to generate image: {e}")
 
     def edit_image(self, prompt: str) -> ToolResult:
-        """Edit the input image using a text prompt.
+        """Edit the pre-loaded input image using a text prompt. The image to edit has already been provided during tool initialization - do NOT pass any image, image_url, or image_bytes parameters. Only provide the text prompt describing the edits.
         Args:
-            prompt (str): The text prompt to edit the image with.
+            prompt (str): The text prompt describing how to edit the image (e.g., "increase brightness", "add a red border").
         """
         import base64
 
