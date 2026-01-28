@@ -17,6 +17,10 @@ from agno.utils.log import log_debug, logger
 from agno.workflow.step import Step
 from agno.workflow.types import StepInput, StepOutput, StepType
 
+# Constants for condition branch identifiers
+CONDITION_BRANCH_IF = "if"
+CONDITION_BRANCH_ELSE = "else"
+
 WorkflowSteps = List[
     Union[
         Callable[
@@ -225,11 +229,11 @@ class Condition:
         # Determine which steps to execute
         if condition_result:
             steps_to_execute = self.steps
-            branch = "if"
+            branch = CONDITION_BRANCH_IF
             log_debug(f"Condition {self.name} met, executing {len(steps_to_execute)} steps (if branch)")
         elif self._has_else_steps():
             steps_to_execute = self.else_steps  # type: ignore[assignment]
-            branch = "else"
+            branch = CONDITION_BRANCH_ELSE
             log_debug(f"Condition {self.name} not met, executing {len(steps_to_execute)} else_steps (else branch)")
         else:
             # No else_steps provided, return "not met" message
@@ -369,11 +373,11 @@ class Condition:
         # Determine which steps to execute
         if condition_result:
             steps_to_execute = self.steps
-            branch = "if"
+            branch = CONDITION_BRANCH_IF
             log_debug(f"Condition {self.name} met, executing {len(steps_to_execute)} steps (if branch)")
         elif self._has_else_steps():
             steps_to_execute = self.else_steps  # type: ignore[assignment]
-            branch = "else"
+            branch = CONDITION_BRANCH_ELSE
             log_debug(f"Condition {self.name} not met, executing {len(steps_to_execute)} else_steps (else branch)")
         else:
             # No else_steps provided, yield completed event and return
@@ -537,11 +541,11 @@ class Condition:
         # Determine which steps to execute
         if condition_result:
             steps_to_execute = self.steps
-            branch = "if"
+            branch = CONDITION_BRANCH_IF
             log_debug(f"Condition {self.name} met, executing {len(steps_to_execute)} steps (if branch)")
         elif self._has_else_steps():
             steps_to_execute = self.else_steps  # type: ignore[assignment]
-            branch = "else"
+            branch = CONDITION_BRANCH_ELSE
             log_debug(f"Condition {self.name} not met, executing {len(steps_to_execute)} else_steps (else branch)")
         else:
             # No else_steps provided, return "not met" message
@@ -680,11 +684,11 @@ class Condition:
         # Determine which steps to execute
         if condition_result:
             steps_to_execute = self.steps
-            branch = "if"
+            branch = CONDITION_BRANCH_IF
             log_debug(f"Condition {self.name} met, executing {len(steps_to_execute)} steps (if branch)")
         elif self._has_else_steps():
             steps_to_execute = self.else_steps  # type: ignore[assignment]
-            branch = "else"
+            branch = CONDITION_BRANCH_ELSE
             log_debug(f"Condition {self.name} not met, executing {len(steps_to_execute)} else_steps (else branch)")
         else:
             # No else_steps provided, yield completed event and return
