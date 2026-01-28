@@ -12,8 +12,7 @@ downloaded_csv_paths = download_knowledge_filters_sample_data(
     num_files=4, file_extension=SampleDataFileExtension.CSV
 )
 
-# Initialize LanceDB
-# By default, it stores data in /tmp/lancedb
+# Initialize PgVector
 vector_db = PgVector(
     table_name="recipes",
     db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
