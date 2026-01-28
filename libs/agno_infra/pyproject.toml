@@ -32,7 +32,7 @@ dependencies = [
   "gitpython",
   "httpx",
   "python-dotenv",
-  "python-multipart",
+  "python-multipart>=0.0.22",
   "pydantic-settings",
   "pydantic",
   "rich",
