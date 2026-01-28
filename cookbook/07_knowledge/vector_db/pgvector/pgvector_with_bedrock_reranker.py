@@ -19,7 +19,7 @@ from agno.knowledge.reranker.aws_bedrock import (
     AwsBedrockReranker,
     CohereBedrockReranker,
 )
-from agno.models.aws import AWSBedrock
+from agno.models.aws import AwsBedrock```
 from agno.vectordb.pgvector import PgVector
 
 # Option 1: Using AwsBedrockReranker with Cohere Rerank 3.5
