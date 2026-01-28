@@ -823,7 +823,13 @@ class Knowledge:
                     log_warning(f"Invalid filter key: {key} - not present in knowledge base")
 
         elif isinstance(filters, List):
-            # Validate that list contains FilterExpr instances
+            # Validate list filters against known metadata keys
+            if valid_metadata_filters is None or not valid_metadata_filters:
+                # Can't validate keys without metadata - return original list
+                log_warning("No valid metadata filters tracked yet. Cannot validate list filter keys.")
+                return filters, []
+
+            valid_list_filters: List[FilterExpr] = []
             for i, filter_item in enumerate(filters):
                 if not isinstance(filter_item, FilterExpr):
                     log_warning(
@@ -832,9 +838,23 @@ class Knowledge:
                         f"Use filter expressions like EQ('key', 'value'), IN('key', [values]), "
                         f"AND(...), OR(...), NOT(...) from agno.filters"
                     )
-            # Filter expressions are already validated, return empty dict/list
-            # The actual filtering happens in the vector_db layer
-            return filters, []
+                    continue
+
+                # Check if filter has a key attribute and validate it
+                if hasattr(filter_item, "key"):
+                    key = filter_item.key
+                    base_key = key.split(".")[-1] if "." in key else key
+                    if base_key in valid_metadata_filters or key in valid_metadata_filters:
+                        valid_list_filters.append(filter_item)
+                    else:
+                        invalid_keys.append(key)
+                        log_warning(f"Invalid filter key: {key} - not present in knowledge base")
+                else:
+                    # Complex filters (AND, OR, NOT) - keep them as-is
+                    # They contain nested filters that will be validated by the vector DB
+                    valid_list_filters.append(filter_item)
+
+            return valid_list_filters, invalid_keys
 
         return valid_filters, invalid_keys
 
@@ -1541,7 +1561,49 @@ class Knowledge:
         # 6. Chunk documents if needed
         if reader and not reader.chunk:
             read_documents = await reader.chunk_documents_async(read_documents)
-        # 7. Prepare and insert the content in the vector database
+
+        # 7. Group documents by source URL for multi-page readers (like WebsiteReader)
+        docs_by_source: Dict[str, List[Document]] = {}
+        for doc in read_documents:
+            source_url = doc.meta_data.get("url", content.url) if doc.meta_data else content.url
+            source_url = source_url or "unknown"
+            if source_url not in docs_by_source:
+                docs_by_source[source_url] = []
+            docs_by_source[source_url].append(doc)
+
+        # 8. Process each source separately if multiple sources exist
+        if len(docs_by_source) > 1:
+            for source_url, source_docs in docs_by_source.items():
+                # Compute per-document hash based on actual source URL
+                doc_hash = self._build_document_content_hash(source_docs[0], content)
+
+                # Check skip_if_exists for each source individually
+                if self._should_skip(doc_hash, skip_if_exists):
+                    log_debug(f"Skipping already indexed: {source_url}")
+                    continue
+
+                doc_id = generate_id(doc_hash)
+                self._prepare_documents_for_insert(source_docs, doc_id, calculate_sizes=True)
+
+                # Insert with per-document hash
+                if self.vector_db.upsert_available() and upsert:
+                    try:
+                        await self.vector_db.async_upsert(doc_hash, source_docs, content.metadata)
+                    except Exception as e:
+                        log_error(f"Error upserting document from {source_url}: {e}")
+                        continue
+                else:
+                    try:
+                        await self.vector_db.async_insert(doc_hash, documents=source_docs, filters=content.metadata)
+                    except Exception as e:
+                        log_error(f"Error inserting document from {source_url}: {e}")
+                        continue
+
+            content.status = ContentStatus.COMPLETED
+            await self._aupdate_content(content)
+            return
+
+        # 9. Single source - use existing logic with original content hash
         if not content.id:
             content.id = generate_id(content.content_hash or "")
         self._prepare_documents_for_insert(read_documents, content.id, calculate_sizes=True)
@@ -1648,7 +1710,48 @@ class Knowledge:
         if reader:
             read_documents = self._chunk_documents_sync(reader, read_documents)
 
-        # 7. Prepare and insert the content in the vector database
+        # 7. Group documents by source URL for multi-page readers (like WebsiteReader)
+        docs_by_source: Dict[str, List[Document]] = {}
+        for doc in read_documents:
+            source_url = doc.meta_data.get("url", content.url) if doc.meta_data else content.url
+            source_url = source_url or "unknown"
+            if source_url not in docs_by_source:
+                docs_by_source[source_url] = []
+            docs_by_source[source_url].append(doc)
+
+        # 8. Process each source separately if multiple sources exist
+        if len(docs_by_source) > 1:
+            for source_url, source_docs in docs_by_source.items():
+                # Compute per-document hash based on actual source URL
+                doc_hash = self._build_document_content_hash(source_docs[0], content)
+
+                # Check skip_if_exists for each source individually
+                if self._should_skip(doc_hash, skip_if_exists):
+                    log_debug(f"Skipping already indexed: {source_url}")
+                    continue
+
+                doc_id = generate_id(doc_hash)
+                self._prepare_documents_for_insert(source_docs, doc_id, calculate_sizes=True)
+
+                # Insert with per-document hash
+                if self.vector_db.upsert_available() and upsert:
+                    try:
+                        self.vector_db.upsert(doc_hash, source_docs, content.metadata)
+                    except Exception as e:
+                        log_error(f"Error upserting document from {source_url}: {e}")
+                        continue
+                else:
+                    try:
+                        self.vector_db.insert(doc_hash, documents=source_docs, filters=content.metadata)
+                    except Exception as e:
+                        log_error(f"Error inserting document from {source_url}: {e}")
+                        continue
+
+            content.status = ContentStatus.COMPLETED
+            self._update_content(content)
+            return
+
+        # 9. Single source - use existing logic with original content hash
         if not content.id:
             content.id = generate_id(content.content_hash or "")
         self._prepare_documents_for_insert(read_documents, content.id, calculate_sizes=True)
@@ -1900,11 +2003,11 @@ class Knowledge:
             if self._should_skip(content.content_hash, skip_if_exists):
                 content.status = ContentStatus.COMPLETED
                 await self._aupdate_content(content)
-                return
+                continue  # Skip to next topic, don't exit loop
 
             if self.vector_db.__class__.__name__ == "LightRag":
                 await self._aprocess_lightrag_content(content, KnowledgeContentOrigin.TOPIC)
-                return
+                continue  # Skip to next topic, don't exit loop
 
             if self.vector_db and self.vector_db.content_hash_exists(content.content_hash) and skip_if_exists:
                 log_info(f"Content {content.content_hash} already exists, skipping")
@@ -1961,11 +2064,11 @@ class Knowledge:
             if self._should_skip(content.content_hash, skip_if_exists):
                 content.status = ContentStatus.COMPLETED
                 self._update_content(content)
-                return
+                continue  # Skip to next topic, don't exit loop
 
             if self.vector_db.__class__.__name__ == "LightRag":
                 self._process_lightrag_content(content, KnowledgeContentOrigin.TOPIC)
-                return
+                continue  # Skip to next topic, don't exit loop
 
             if self.vector_db and self.vector_db.content_hash_exists(content.content_hash) and skip_if_exists:
                 log_info(f"Content {content.content_hash} already exists, skipping")
@@ -3896,6 +3999,42 @@ class Knowledge:
         hash_input = ":".join(hash_parts)
         return hashlib.sha256(hash_input.encode()).hexdigest()
 
+    def _build_document_content_hash(self, document: Document, content: Content) -> str:
+        """
+        Build content hash for a specific document.
+
+        Used for multi-page readers (like WebsiteReader) where each crawled page
+        should have its own unique content hash based on its actual URL.
+
+        Args:
+            document: The document to build the hash for
+            content: The original content object (for fallback name/description)
+
+        Returns:
+            A unique hash string for this specific document
+        """
+        hash_parts = []
+
+        if content.name:
+            hash_parts.append(content.name)
+        if content.description:
+            hash_parts.append(content.description)
+
+        # Use document's own URL if available (set by WebsiteReader)
+        doc_url = document.meta_data.get("url") if document.meta_data else None
+        if doc_url:
+            hash_parts.append(str(doc_url))
+        elif content.url:
+            hash_parts.append(content.url)
+        elif content.path:
+            hash_parts.append(str(content.path))
+        else:
+            # Fallback: use content hash for uniqueness
+            hash_parts.append(hashlib.sha256(document.content.encode()).hexdigest()[:16])
+
+        hash_input = ":".join(hash_parts)
+        return hashlib.sha256(hash_input.encode()).hexdigest()
+
     def _ensure_string_field(self, value: Any, field_name: str, default: str = "") -> str:
         """
         Safely ensure a field is a string, handling various edge cases.
@@ -4625,7 +4764,12 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
             retrieval_timer = Timer()
             retrieval_timer.start()
 
-            docs = self.search(query=query, filters=knowledge_filters)
+            try:
+                docs = self.search(query=query, filters=knowledge_filters)
+            except Exception as e:
+                retrieval_timer.stop()
+                log_warning(f"Knowledge search failed: {e}")
+                return f"Error searching knowledge base: {type(e).__name__}"
 
             if run_response is not None and docs:
                 references = MessageReferences(
@@ -4657,7 +4801,12 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
             retrieval_timer = Timer()
             retrieval_timer.start()
 
-            docs = await self.asearch(query=query, filters=knowledge_filters)
+            try:
+                docs = await self.asearch(query=query, filters=knowledge_filters)
+            except Exception as e:
+                retrieval_timer.stop()
+                log_warning(f"Knowledge search failed: {e}")
+                return f"Error searching knowledge base: {type(e).__name__}"
 
             if run_response is not None and docs:
                 references = MessageReferences(
@@ -4735,7 +4884,12 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
             retrieval_timer = Timer()
             retrieval_timer.start()
 
-            docs = self.search(query=query, filters=search_filters)
+            try:
+                docs = self.search(query=query, filters=search_filters)
+            except Exception as e:
+                retrieval_timer.stop()
+                log_warning(f"Knowledge search failed: {e}")
+                return f"Error searching knowledge base: {type(e).__name__}"
 
             if run_response is not None and docs:
                 references = MessageReferences(
@@ -4789,7 +4943,12 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
             retrieval_timer = Timer()
             retrieval_timer.start()
 
-            docs = await self.asearch(query=query, filters=search_filters)
+            try:
+                docs = await self.asearch(query=query, filters=search_filters)
+            except Exception as e:
+                retrieval_timer.stop()
+                log_warning(f"Knowledge search failed: {e}")
+                return f"Error searching knowledge base: {type(e).__name__}"
 
             if run_response is not None and docs:
                 references = MessageReferences(
