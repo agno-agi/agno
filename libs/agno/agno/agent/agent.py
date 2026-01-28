@@ -9762,6 +9762,58 @@ class Agent:
                     **kwargs,
                 )
 
+    def _add_dependencies_to_user_message(self, *, message: Message, dependencies: Dict[str, Any]) -> Message:
+        message_copy = message.model_copy(deep=True)
+        dependencies_block = (
+            "\n\n<additional context>\n"
+            + self._convert_dependencies_to_string(dependencies)
+            + "\n</additional context>"
+        )
+
+        if message_copy.content is None:
+            message_copy.content = dependencies_block.lstrip("\n")
+            return message_copy
+
+        if isinstance(message_copy.content, str):
+            message_copy.content += dependencies_block
+            return message_copy
+
+        if isinstance(message_copy.content, list):
+            if len(message_copy.content) > 0 and isinstance(message_copy.content[0], dict):
+                # When content uses multimodal parts (e.g. [{"type":"text","text":...}]),
+                # append the additional context to the last text part to avoid dropping non-text parts.
+                if "type" in message_copy.content[0]:
+                    for part in reversed(message_copy.content):
+                        if isinstance(part, dict) and part.get("type") == "text" and isinstance(part.get("text"), str):
+                            part["text"] += dependencies_block
+                            break
+                    else:
+                        message_copy.content.append({"type": "text", "text": dependencies_block.lstrip("\n")})
+                    return message_copy
+
+                # Some providers may store a list of dict parts without a "type" key, but with plain "text".
+                if "text" in message_copy.content[0]:
+                    for part in reversed(message_copy.content):
+                        if isinstance(part, dict) and isinstance(part.get("text"), str):
+                            part["text"] += dependencies_block
+                            break
+                    else:
+                        message_copy.content.append({"text": dependencies_block.lstrip("\n")})
+                    return message_copy
+
+            if all(isinstance(item, str) for item in message_copy.content):
+                original_text = "\n".join(message_copy.content)
+            else:
+                original_text = get_text_from_message(message_copy.content)
+                if original_text == "" and len(message_copy.content) > 0:
+                    original_text = str(message_copy.content)
+
+            message_copy.content = original_text + dependencies_block
+            return message_copy
+
+        message_copy.content = str(message_copy.content) + dependencies_block
+        return message_copy
+
     def _get_run_messages(
         self,
         *,
@@ -9909,6 +9961,15 @@ class Agent:
         # 4.2 If input is provided as a Message, use it directly
         elif isinstance(input, Message):
             user_message = input
+            if (
+                add_dependencies_to_context
+                and run_context.dependencies is not None
+                and user_message.role == self.user_message_role
+            ):
+                user_message = self._add_dependencies_to_user_message(
+                    message=user_message,
+                    dependencies=run_context.dependencies,
+                )
 
         # 4.3 If input is provided as a dict, try to validate it as a Message
         elif isinstance(input, dict):
@@ -9922,6 +9983,16 @@ class Agent:
                     user_message = Message.model_validate(input)
             except Exception as e:
                 log_warning(f"Failed to validate message: {e}")
+            if (
+                user_message is not None
+                and add_dependencies_to_context
+                and run_context.dependencies is not None
+                and user_message.role == self.user_message_role
+            ):
+                user_message = self._add_dependencies_to_user_message(
+                    message=user_message,
+                    dependencies=run_context.dependencies,
+                )
 
         # 4.4 If input is provided as a BaseModel, convert it to a Message
         elif isinstance(input, BaseModel):
@@ -9931,6 +10002,16 @@ class Agent:
                 user_message = Message(role=self.user_message_role, content=content)
             except Exception as e:
                 log_warning(f"Failed to convert BaseModel to message: {e}")
+            if (
+                user_message is not None
+                and add_dependencies_to_context
+                and run_context.dependencies is not None
+                and user_message.role == self.user_message_role
+            ):
+                user_message = self._add_dependencies_to_user_message(
+                    message=user_message,
+                    dependencies=run_context.dependencies,
+                )
 
         # 5. Add input messages to run_messages if provided (List[Message] or List[Dict])
         if (
@@ -9938,15 +10019,48 @@ class Agent:
             and len(input) > 0
             and (isinstance(input[0], Message) or (isinstance(input[0], dict) and "role" in input[0]))
         ):
-            for _m in input:
+            dependencies_for_context = run_context.dependencies if add_dependencies_to_context else None
+            inject_dependencies_at_index: Optional[int] = None
+            if dependencies_for_context is not None:
+                for i in range(len(input) - 1, -1, -1):
+                    msg = input[i]
+                    if isinstance(msg, Message) and msg.role == self.user_message_role:
+                        inject_dependencies_at_index = i
+                        break
+                    if isinstance(msg, dict) and msg.get("role") == self.user_message_role:
+                        inject_dependencies_at_index = i
+                        break
+
+            for idx, _m in enumerate(input):
                 if isinstance(_m, Message):
-                    run_messages.messages.append(_m)
+                    msg = _m
+                    if (
+                        inject_dependencies_at_index is not None
+                        and dependencies_for_context is not None
+                        and idx == inject_dependencies_at_index
+                        and msg.role == self.user_message_role
+                    ):
+                        msg = self._add_dependencies_to_user_message(
+                            message=msg,
+                            dependencies=dependencies_for_context,
+                        )
+                    run_messages.messages.append(msg)
                     if run_messages.extra_messages is None:
                         run_messages.extra_messages = []
-                    run_messages.extra_messages.append(_m)
+                    run_messages.extra_messages.append(msg)
                 elif isinstance(_m, dict):
                     try:
                         msg = Message.model_validate(_m)
+                        if (
+                            inject_dependencies_at_index is not None
+                            and dependencies_for_context is not None
+                            and idx == inject_dependencies_at_index
+                            and msg.role == self.user_message_role
+                        ):
+                            msg = self._add_dependencies_to_user_message(
+                                message=msg,
+                                dependencies=dependencies_for_context,
+                            )
                         run_messages.messages.append(msg)
                         if run_messages.extra_messages is None:
                             run_messages.extra_messages = []
@@ -10112,6 +10226,16 @@ class Agent:
         # 4.2 If input is provided as a Message, use it directly
         elif isinstance(input, Message):
             user_message = input
+            if (
+                user_message is not None
+                and add_dependencies_to_context
+                and dependencies is not None
+                and user_message.role == self.user_message_role
+            ):
+                user_message = self._add_dependencies_to_user_message(
+                    message=user_message,
+                    dependencies=dependencies,
+                )
 
         # 4.3 If input is provided as a dict, try to validate it as a Message
         elif isinstance(input, dict):
@@ -10119,6 +10243,16 @@ class Agent:
                 user_message = Message.model_validate(input)
             except Exception as e:
                 log_warning(f"Failed to validate message: {e}")
+            if (
+                user_message is not None
+                and add_dependencies_to_context
+                and dependencies is not None
+                and user_message.role == self.user_message_role
+            ):
+                user_message = self._add_dependencies_to_user_message(
+                    message=user_message,
+                    dependencies=dependencies,
+                )
 
         # 4.4 If input is provided as a BaseModel, convert it to a Message
         elif isinstance(input, BaseModel):
@@ -10128,6 +10262,16 @@ class Agent:
                 user_message = Message(role=self.user_message_role, content=content)
             except Exception as e:
                 log_warning(f"Failed to convert BaseModel to message: {e}")
+            if (
+                user_message is not None
+                and add_dependencies_to_context
+                and dependencies is not None
+                and user_message.role == self.user_message_role
+            ):
+                user_message = self._add_dependencies_to_user_message(
+                    message=user_message,
+                    dependencies=dependencies,
+                )
 
         # 5. Add input messages to run_messages if provided (List[Message] or List[Dict])
         if (
@@ -10135,15 +10279,48 @@ class Agent:
             and len(input) > 0
             and (isinstance(input[0], Message) or (isinstance(input[0], dict) and "role" in input[0]))
         ):
-            for _m in input:
+            dependencies_for_context = dependencies if add_dependencies_to_context else None
+            inject_dependencies_at_index: Optional[int] = None
+            if dependencies_for_context is not None:
+                for i in range(len(input) - 1, -1, -1):
+                    msg = input[i]
+                    if isinstance(msg, Message) and msg.role == self.user_message_role:
+                        inject_dependencies_at_index = i
+                        break
+                    if isinstance(msg, dict) and msg.get("role") == self.user_message_role:
+                        inject_dependencies_at_index = i
+                        break
+
+            for idx, _m in enumerate(input):
                 if isinstance(_m, Message):
-                    run_messages.messages.append(_m)
+                    msg = _m
+                    if (
+                        inject_dependencies_at_index is not None
+                        and dependencies_for_context is not None
+                        and idx == inject_dependencies_at_index
+                        and msg.role == self.user_message_role
+                    ):
+                        msg = self._add_dependencies_to_user_message(
+                            message=msg,
+                            dependencies=dependencies_for_context,
+                        )
+                    run_messages.messages.append(msg)
                     if run_messages.extra_messages is None:
                         run_messages.extra_messages = []
-                    run_messages.extra_messages.append(_m)
+                    run_messages.extra_messages.append(msg)
                 elif isinstance(_m, dict):
                     try:
                         msg = Message.model_validate(_m)
+                        if (
+                            inject_dependencies_at_index is not None
+                            and dependencies_for_context is not None
+                            and idx == inject_dependencies_at_index
+                            and msg.role == self.user_message_role
+                        ):
+                            msg = self._add_dependencies_to_user_message(
+                                message=msg,
+                                dependencies=dependencies_for_context,
+                            )
                         run_messages.messages.append(msg)
                         if run_messages.extra_messages is None:
                             run_messages.extra_messages = []
