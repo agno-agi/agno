@@ -248,7 +248,7 @@ class Condition:
 
         all_results: List[StepOutput] = []
         current_step_input = step_input
-        condition_step_outputs = {}
+        condition_step_outputs: Dict[str, StepOutput] = {}
 
         for i, step in enumerate(steps_to_execute):
             try:
