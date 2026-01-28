@@ -34,7 +34,8 @@ export OPENAI_API_KEY=your-openai-api-key
 ### 4. Run an Example
 
 ```bash
-.venvs/demo/bin/python cookbook/01_showcase/01_agents/customer_support/examples/learning_demo.py
+# Full demo showing all three Learning Machine stores
+.venvs/demo/bin/python cookbook/01_showcase/01_agents/customer_support/examples/cross_ticket_learning.py
 ```
 
 ## Examples
@@ -42,7 +43,8 @@ export OPENAI_API_KEY=your-openai-api-key
 | File | What You'll Learn |
 |:-----|:------------------|
 | `examples/simple_query.py` | Basic KB-powered query |
-| `examples/learning_demo.py` | Learning transfer between tickets |
+| `examples/learning_demo.py` | Basic learning demo |
+| `examples/cross_ticket_learning.py` | **All three Learning Machine stores in action** |
 | `examples/hitl_demo.py` | Human-in-the-loop clarification |
 | `examples/evaluate.py` | Multi-query evaluation |
 
@@ -54,6 +56,7 @@ customer_support/
 ├── examples/
 │   ├── simple_query.py
 │   ├── learning_demo.py
+│   ├── cross_ticket_learning.py  # Shows all three stores
 │   ├── evaluate.py
 │   └── hitl_demo.py
 ├── knowledge/            # KB documents

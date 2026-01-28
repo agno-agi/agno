@@ -8,8 +8,6 @@ The agent learns from successful resolutions and applies them to future tickets.
 Requirements:
     - PostgreSQL with PgVector running (./cookbook/scripts/run_pgvector.sh)
     - Knowledge base loaded (./scripts/load_knowledge.py)
-
-See also: examples/learning_demo.py for the full demo.
 """
 
 from agno.agent import Agent
@@ -34,9 +32,20 @@ DB_URL = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
 db = PostgresDb(db_url=DB_URL)
 
-knowledge = Knowledge(
+# Support KB - reference docs for RAG (e.g., SLA guidelines, escalation procedures)
+support_kb = Knowledge(
     vector_db=PgVector(
         table_name="support_knowledge",
+        db_url=DB_URL,
+        search_type=SearchType.hybrid,
+        embedder=OpenAIEmbedder(id="text-embedding-3-small"),
+    ),
+)
+
+# Learned Knowledge - agent-discovered solutions (SEPARATE table!)
+learnings_kb = Knowledge(
+    vector_db=PgVector(
+        table_name="support_learnings",
         db_url=DB_URL,
         search_type=SearchType.hybrid,
         embedder=OpenAIEmbedder(id="text-embedding-3-small"),
@@ -49,13 +58,15 @@ def create_support_agent(customer_id: str, ticket_id: str) -> Agent:
     return Agent(
         model=OpenAIResponses(id="gpt-4.1"),
         db=db,
+        knowledge=support_kb,  # RAG: search support docs
         instructions=(
             "You are a helpful support agent. "
-            "Check if similar issues have been solved before. "
-            "Save successful solutions for future reference."
+            "ALWAYS search learnings first for similar issues. "
+            "When a customer CONFIRMS a solution worked, ALWAYS save it using save_learning. "
+            "Include the problem, solution, and context so future agents can find it."
         ),
         learning=LearningMachine(
-            knowledge=knowledge,
+            knowledge=learnings_kb,  # Learnings: SEPARATE table
             session_context=SessionContextConfig(enable_planning=True),
             entity_memory=EntityMemoryConfig(
                 mode=LearningMode.ALWAYS,
