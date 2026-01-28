@@ -211,7 +211,7 @@ class GmailTools(Toolkit):
 
             # Save the credentials for future use
             if self.creds and self.creds.valid:
-                token_file.write_text(self.creds.to_json())
+                token_file.write_text(self.creds.to_json(), encoding="utf-8")
 
     def _format_emails(self, emails: List[dict]) -> str:
         """Format list of email dictionaries into a readable string"""
