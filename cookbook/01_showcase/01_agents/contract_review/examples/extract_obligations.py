@@ -2,7 +2,7 @@
 Extract Obligations
 ===================
 
-Extract deadlines and recurring obligations from a lease.
+Create a compliance calendar from a lease agreement.
 
 Usage:
     python examples/extract_obligations.py
@@ -25,7 +25,12 @@ if __name__ == "__main__":
     print()
 
     contract_agent.print_response(
-        "Extract all deadlines and recurring obligations from this lease.",
+        "I just signed this commercial lease. Create a compliance calendar:\n"
+        "1. List ALL deadlines I need to track (rent due, insurance renewals, etc.)\n"
+        "2. Identify recurring obligations (monthly, quarterly, annual)\n"
+        "3. What notice periods must I remember? (termination, renewal opt-out)\n"
+        "4. Are there any conditions that trigger additional obligations?\n"
+        "5. Format as a table: Obligation | Deadline/Frequency | Section Reference",
         files=[File(filepath=DOCS_DIR / "Sample_Lease_Agreement.pdf")],
         stream=True,
     )

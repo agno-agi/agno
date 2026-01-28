@@ -2,7 +2,7 @@
 NDA Review
 ==========
 
-Basic NDA review - extract key terms and summarize.
+Analyze an NDA from the Receiving Party's perspective.
 
 Usage:
     python examples/review_nda.py
@@ -25,7 +25,12 @@ if __name__ == "__main__":
     print()
 
     contract_agent.print_response(
-        "Review this NDA and summarize the key terms.",
+        "I'm the Receiving Party in this NDA. Review it and:\n"
+        "1. Identify all parties and their roles\n"
+        "2. What information is considered confidential?\n"
+        "3. How long does the confidentiality obligation last?\n"
+        "4. Are there any one-sided terms that favor the Disclosing Party?\n"
+        "5. What happens if I accidentally disclose something?",
         files=[File(filepath=DOCS_DIR / "sample_nda.txt")],
         stream=True,
     )

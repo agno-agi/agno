@@ -2,7 +2,7 @@
 Risk Assessment
 ===============
 
-Flag potential risks in a contract.
+Perform a thorough risk assessment on a service agreement.
 
 Usage:
     python examples/risk_assessment.py
@@ -25,8 +25,14 @@ if __name__ == "__main__":
     print()
 
     contract_agent.print_response(
-        "Flag all potential risks in this contract. "
-        "Focus on liability and indemnification clauses.",
+        "We're considering signing this service agreement as the CLIENT.\n"
+        "Perform a thorough risk assessment:\n"
+        "1. Flag ALL terms that are unfavorable to us\n"
+        "2. Identify any unlimited liability exposure\n"
+        "3. Check for auto-renewal traps\n"
+        "4. Look for broad indemnification clauses\n"
+        "5. Rate overall risk as LOW/MEDIUM/HIGH with justification\n"
+        "6. For each high-risk item, suggest specific redline language.",
         files=[File(filepath=DOCS_DIR / "Risky_Service_Agreement.pdf")],
         stream=True,
     )
