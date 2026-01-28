@@ -1,0 +1,9 @@
+agno
+openai
+python-dotenv
+arxiv
+pypdf
+wikipedia
+ddgs
+hackernews
+pygithub
