@@ -750,7 +750,10 @@ class Model(ABC):
                                 ModelResponseEvent.tool_call_completed.value,
                             ]:
                                 if function_call_response.content:
-                                    model_response.content += function_call_response.content  # type: ignore
+                                    if model_response.content is None:
+                                        model_response.content = function_call_response.content
+                                    else:
+                                        model_response.content += function_call_response.content
 
                     # Add a function call for each successful execution
                     function_call_count += len(function_call_results)
@@ -954,7 +957,10 @@ class Model(ABC):
                                 ModelResponseEvent.tool_call_completed.value,
                             ]:
                                 if function_call_response.content:
-                                    model_response.content += function_call_response.content  # type: ignore
+                                    if model_response.content is None:
+                                        model_response.content = function_call_response.content
+                                    else:
+                                        model_response.content += function_call_response.content
 
                     # Add a function call for each successful execution
                     function_call_count += len(function_call_results)
