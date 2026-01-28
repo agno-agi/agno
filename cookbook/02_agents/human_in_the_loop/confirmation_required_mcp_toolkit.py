@@ -1,4 +1,4 @@
-"""🤝 Human-in-the-Loop: Adding User Confirmation to Tool Calls
+"""Human-in-the-Loop: Adding User Confirmation to Tool Calls
 
 This example shows how to implement human-in-the-loop functionality with MCP Servers in your Agno tools.
 It shows how to:
