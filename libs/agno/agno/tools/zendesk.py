@@ -24,6 +24,7 @@ class ZendeskTools(Toolkit):
         username: Optional[str] = None,
         password: Optional[str] = None,
         company_name: Optional[str] = None,
+        fixed_per_page: Optional[int] = None,
         enable_search_zendesk: bool = True,
         enable_get_tickets: bool = False,
         enable_get_ticket: bool = False,
@@ -41,6 +42,7 @@ class ZendeskTools(Toolkit):
             username: The username for Zendesk API authentication (email/token format for API tokens).
             password: The password or API token for Zendesk API authentication.
             company_name: The company name to form the base URL for API requests.
+            fixed_per_page: Fixed number of results per page (overrides LLM choice, max 100).
             enable_search_zendesk: Whether to enable Help Center article search.
             enable_get_tickets: Whether to enable ticket listing.
             enable_get_ticket: Whether to enable single ticket retrieval.
@@ -52,6 +54,7 @@ class ZendeskTools(Toolkit):
         self.username = username or getenv("ZENDESK_USERNAME")
         self.password = password or getenv("ZENDESK_PASSWORD")
         self.company_name = company_name or getenv("ZENDESK_COMPANY_NAME")
+        self.fixed_per_page = min(fixed_per_page, 100) if fixed_per_page else None
 
         if not self.username or not self.password or not self.company_name:
             raise ValueError(
@@ -138,6 +141,7 @@ class ZendeskTools(Toolkit):
             JSON string with ticket list, count, pagination info.
         """
         log_debug(f"Getting tickets (status={status}, page={page})")
+        per_page = self.fixed_per_page or per_page
         per_page = min(per_page, 100)
         data = self._request("GET", "tickets.json", params={"page": page, "per_page": per_page})
         if "error" in data:
