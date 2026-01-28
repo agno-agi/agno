@@ -3,11 +3,12 @@
 Provides methods for loading content from Azure Blob Storage.
 """
 
+# mypy: disable-error-code="attr-defined"
+
 from io import BytesIO
 from typing import Any, Dict, List, Optional, cast
 
 from agno.knowledge.content import Content, ContentStatus
-from agno.knowledge.loaders.base import RemoteContentLoader
 from agno.knowledge.reader import Reader
 from agno.knowledge.remote_content.config import AzureBlobConfig, RemoteContentConfig
 from agno.knowledge.remote_content.remote_content import AzureBlobContent
@@ -15,7 +16,7 @@ from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.string import generate_id
 
 
-class AzureBlobLoader(RemoteContentLoader):
+class AzureBlobLoader:
     """Loader for Azure Blob Storage content."""
 
     # ==========================================
