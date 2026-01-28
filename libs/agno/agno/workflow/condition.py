@@ -66,6 +66,7 @@ class Condition:
             "name": self.name,
             "description": self.description,
             "steps": [step.to_dict() for step in self.steps if hasattr(step, "to_dict")],
+            "else_steps": [step.to_dict() for step in self.else_steps if hasattr(step, "to_dict")],
         }
         if callable(self.evaluator):
             result["evaluator"] = self.evaluator.__name__
@@ -124,6 +125,7 @@ class Condition:
         return cls(
             evaluator=evaluator,
             steps=[deserialize_step(step) for step in data.get("steps", [])],
+            else_steps=[deserialize_step(step) for step in data.get("else_steps", [])],
             name=data.get("name"),
             description=data.get("description"),
         )
