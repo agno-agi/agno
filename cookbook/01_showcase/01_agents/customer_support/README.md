@@ -1,189 +1,237 @@
 # Customer Support Agent
 
-A production-ready customer support agent that processes Zendesk tickets using knowledge-based responses and native Human-in-the-Loop (HITL) for complex cases.
+A production-ready customer support agent that processes support tickets using knowledge-based responses, automatic classification, and native Human-in-the-Loop (HITL) for complex cases.
 
 ## What Makes This Different
 
 | Feature | Description |
 |---------|-------------|
-| **Zendesk Integration** | Full ticket CRUD - fetch, comment, update status |
-| **Production Knowledge Base** | Ticket triage, escalation guidelines, SLA policies, response templates |
-| **Ticket Classification** | Automatic type (bug/question/feature/account) and sentiment detection |
-| **Native HITL** | `get_user_input()` for clarification when queries are ambiguous |
-| **Empathy-Aware Responses** | Different response styles for calm, frustrated, and urgent customers |
+| **Knowledge-First Responses** | Always searches KB before responding; cites sources in answers |
+| **Automatic Classification** | Classifies ticket type (bug/question/feature/account) and sentiment |
+| **Escalation Policy** | Strict rules for security, billing, VIP, and repeat issues |
+| **Native HITL** | Uses `get_user_input()` when queries are ambiguous |
+| **Zendesk Integration** | Full ticket CRUD operations (optional) |
+
+## What You'll Learn
+
+| Concept | Example | Description |
+|---------|---------|-------------|
+| RAG for Support | `knowledge_first_reply.py` | Retrieval-augmented responses with citations |
+| Ticket Triage | `triage_queue.py` | Classification, prioritization, queue processing |
+| Escalation Rules | `escalation_policy.py` | When and how to escalate (security, billing, VIP) |
+| HITL Clarification | `hitl_clarification.py` | Pausing for human input on ambiguous queries |
+| Sentiment Handling | `basic_support.py` | Different response styles for calm/frustrated/urgent |
+| Evaluation | `evaluate.py` | Testing agent responses with keyword matching |
 
 ## Quick Start
 
-### 1. Prerequisites
+### 1. Set API Keys
 
 ```bash
-# Set OpenAI API key (for model and embeddings)
+# Required
 export OPENAI_API_KEY=your-openai-api-key
 
-# Set Zendesk credentials (optional - for live ticket integration)
-export ZENDESK_USERNAME=your-email
+# Optional (for live Zendesk integration)
+export ZENDESK_USERNAME=your-email/token
 export ZENDESK_PASSWORD=your-api-token
 export ZENDESK_COMPANY_NAME=your-subdomain
+```
 
-# Start PostgreSQL with PgVector
+### 2. Start PostgreSQL
+
+```bash
 ./cookbook/scripts/run_pgvector.sh
 ```
 
-### 2. Load Knowledge Base
+### 3. Check Setup
 
 ```bash
-# Load support documentation and Agno docs
+.venvs/demo/bin/python cookbook/01_showcase/01_agents/customer_support/scripts/check_setup.py
+```
+
+### 4. Load Knowledge Base
+
+```bash
 .venvs/demo/bin/python cookbook/01_showcase/01_agents/customer_support/scripts/load_knowledge.py
 ```
 
-### 3. Run Examples
+### 5. Run Examples
 
 ```bash
-# Basic support workflow
+# Basic support queries
 .venvs/demo/bin/python cookbook/01_showcase/01_agents/customer_support/examples/basic_support.py
 
-# HITL clarification demo
-.venvs/demo/bin/python cookbook/01_showcase/01_agents/customer_support/examples/hitl_clarification.py
+# Knowledge-first with citations
+.venvs/demo/bin/python cookbook/01_showcase/01_agents/customer_support/examples/knowledge_first_reply.py
 
-# Triage queue processing
-.venvs/demo/bin/python cookbook/01_showcase/01_agents/customer_support/examples/triage_queue.py
+# Escalation scenarios
+.venvs/demo/bin/python cookbook/01_showcase/01_agents/customer_support/examples/escalation_policy.py
 
 # Interactive mode
 .venvs/demo/bin/python cookbook/01_showcase/01_agents/customer_support/examples/basic_support.py --interactive
 ```
 
-## Architecture
+## Examples
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                 Customer Support Agent                       │
-├─────────────────────────────────────────────────────────────┤
-│                                                             │
-│  ZENDESK TOOLS                  KNOWLEDGE BASE              │
-│  ┌─────────────┐               ┌─────────────────────┐      │
-│  │ get_tickets │               │ Ticket Triage       │      │
-│  │ get_ticket  │               │ Escalation Rules    │      │
-│  │ get_comments│               │ Response Templates  │      │
-│  │ add_comment │               │ SLA Guidelines      │      │
-│  │ update      │               │ Agno Docs           │      │
-│  └─────────────┘               └─────────────────────┘      │
-│        │                              │                     │
-│        └──────────────┬───────────────┘                     │
-│                       ▼                                     │
-│         ┌─────────────────────────┐                         │
-│         │    SUPPORT AGENT        │                         │
-│         │  ┌───────────────────┐  │                         │
-│         │  │ 1. Fetch ticket   │  │                         │
-│         │  │ 2. Classify type  │  │                         │
-│         │  │ 3. Detect sentiment│ │                         │
-│         │  │ 4. Search KB      │  │                         │
-│         │  │ 5. HITL if needed │  │                         │
-│         │  │ 6. Generate reply │  │                         │
-│         │  │ 7. Update status  │  │                         │
-│         │  └───────────────────┘  │                         │
-│         └─────────────────────────┘                         │
-│                       │                                     │
-│                       ▼                                     │
-│         ┌─────────────────────────┐                         │
-│         │  UserControlFlowTools   │                         │
-│         │  get_user_input()       │                         │
-│         │  (HITL clarification)   │                         │
-│         └─────────────────────────┘                         │
-│                                                             │
-└─────────────────────────────────────────────────────────────┘
-```
+| File | What It Demonstrates |
+|------|---------------------|
+| `basic_support.py` | Basic support workflow: classify, search KB, respond |
+| `knowledge_first_reply.py` | RAG pattern with explicit source citations |
+| `escalation_policy.py` | Strict escalation rules (security, billing, VIP, repeat) |
+| `triage_queue.py` | Processing multiple tickets by priority |
+| `hitl_clarification.py` | Pausing for human input on ambiguous queries |
+| `evaluate.py` | Automated testing with keyword matching |
 
-## Classification System
+## Key Concepts
 
-### Ticket Types
+### Knowledge-First Responses
 
-| Type | Keywords | Example |
-|------|----------|---------|
-| **Question** | how do I, what is, can I | "How do I set up a knowledge base?" |
-| **Bug** | error, not working, crash | "Agent crashes when adding tools" |
-| **Feature** | can you add, suggestion | "Would be nice to have Slack integration" |
-| **Account** | billing, access, login | "Can't access my dashboard" |
-
-### Sentiment Detection
-
-| Sentiment | Indicators | Response Style |
-|-----------|------------|----------------|
-| **Calm** | Neutral tone, polite | Standard professional |
-| **Frustrated** | "still", "again", "third time" | Empathetic, acknowledge history |
-| **Urgent** | "ASAP", "production down" | Immediate, expedited |
-
-### Priority Mapping
-
-| Priority | Response Time | Triggers |
-|----------|---------------|----------|
-| P1 - Critical | 15 min | Production down, security |
-| P2 - High | 1 hour | Major feature broken |
-| P3 - Medium | 4 hours | Partial issues, workaround available |
-| P4 - Low | 1 day | Questions, feature requests |
-
-## HITL (Human-in-the-Loop)
-
-The agent uses `UserControlFlowTools.get_user_input()` to pause and request clarification when:
-
-1. **Ambiguous queries** - "Search isn't working" (which search?)
-2. **Missing information** - No error message or steps provided
-3. **Escalation decisions** - VIP customer, repeated issue
-4. **Low confidence** - Multiple possible solutions
+The agent always searches the knowledge base before responding:
 
 ```python
-# The agent will pause here if clarification needed
-response = support_agent.run("Customer says: It's not working")
-
-# Check if HITL was triggered
-if response.tool_calls:
-    for tc in response.tool_calls:
-        if tc.function.name == "get_user_input":
-            # Agent is waiting for input
-            print("Agent needs clarification:", tc.function.arguments)
-```
-
-## Knowledge Base Contents
-
-| Document | Description |
-|----------|-------------|
-| `ticket_triage.md` | Priority classification, triage workflow |
-| `escalation_guidelines.md` | Tier structure, when to escalate |
-| `response_templates.md` | Empathy statements, response structures |
-| `sla_guidelines.md` | Response times, breach prevention |
-| Agno Docs | Product documentation from docs.agno.com |
-
-## Zendesk Integration
-
-The agent has full Zendesk ticket management capabilities:
-
-```python
-from agno.tools.zendesk import ZendeskTools
-
-zendesk = ZendeskTools(
-    enable_get_tickets=True,      # List tickets
-    enable_get_ticket=True,       # Get ticket details
-    enable_get_ticket_comments=True,  # Get conversation
-    enable_create_ticket_comment=True, # Add response
-    enable_update_ticket=True,    # Change status/priority
+# Agent has search_knowledge=True enabled
+support_agent = Agent(
+    knowledge=support_knowledge,
+    search_knowledge=True,  # Auto-search on every query
+    ...
 )
 ```
 
-Without Zendesk credentials, the agent still works with simulated ticket scenarios.
+Knowledge base contains:
+- `ticket_triage.md` - Priority classification workflow
+- `escalation_guidelines.md` - When to escalate and to whom
+- `response_templates.md` - Empathy statements and response structures
+- `sla_guidelines.md` - Response time targets by priority
+
+### Ticket Classification
+
+```
+Query Analysis
+     |
+     v
++----+----+     +-----------+     +----------+
+| Type    | --> | Sentiment | --> | Priority |
++---------+     +-----------+     +----------+
+| question|     | calm      |     | P4 - Low |
+| bug     |     | frustrated|     | P3 - Med |
+| feature |     | urgent    |     | P2 - High|
+| account |     |           |     | P1 - Crit|
++---------+     +-----------+     +----------+
+```
+
+### Escalation Workflow
+
+```
+Ticket Received
+      |
+      v
++-----+-----+
+| Security? | --> Yes --> Security Team (immediate)
++-----+-----+
+      | No
+      v
++-----+-----+
+| Billing?  | --> Yes --> Finance Team
++-----+-----+
+      | No
+      v
++-----+-----+
+| VIP/Ent?  | --> Yes --> P1 Priority, Senior Engineer
++-----+-----+
+      | No
+      v
++-----+-----+
+| Repeat?   | --> Yes --> Manager Escalation
++-----+-----+
+      | No
+      v
+Standard Support Flow
+```
+
+### Native HITL
+
+The agent uses `UserControlFlowTools.get_user_input()` when:
+- Query is ambiguous (could mean multiple things)
+- Multiple solutions exist (unsure which applies)
+- Customer is frustrated/urgent (confirm approach)
+- No KB match found (need human guidance)
+
+```python
+# HITL triggers automatically when needed
+response = support_agent.run("Search isn't working")
+# Agent may pause: "Which search: KB, web, or vector?"
+```
 
 ## Example Prompts
 
+**Simple Questions:**
 ```
-# Process a specific ticket
-"Get ticket 12345 and draft a response"
+How do I set up hybrid search with PgVector?
+What are the response time targets for P1 tickets?
+When should I escalate to Tier 2?
+```
 
-# Triage the queue
-"Show me all open tickets and prioritize them"
+**Ticket Processing:**
+```
+Process ticket 12345 and draft a response
+Show me all open tickets and prioritize them
+Customer says: The agent keeps crashing when I add tools
+```
 
-# Handle frustrated customer
-"Customer is frustrated about repeated issues with knowledge search"
+**Escalation Triggers:**
+```
+Customer reports unauthorized access to their account
+Customer is FURIOUS about repeated billing errors
+VIP enterprise customer with production down
+```
 
-# Technical support
-"Customer asks: How do I configure hybrid search with PgVector?"
+## Troubleshooting
+
+### PostgreSQL Connection Failed
+
+```
+[FAIL] Cannot connect to PostgreSQL
+```
+
+**Solution:** Start the PostgreSQL container:
+```bash
+./cookbook/scripts/run_pgvector.sh
+```
+
+### Knowledge Base Empty
+
+```
+[WARN] Knowledge base empty (0 documents)
+```
+
+**Solution:** Load the knowledge documents:
+```bash
+.venvs/demo/bin/python cookbook/01_showcase/01_agents/customer_support/scripts/load_knowledge.py
+```
+
+### Zendesk Credentials Missing
+
+```
+WARNING  Zendesk credentials not provided
+```
+
+**Solution:** This is optional. Examples work with simulated tickets. For live Zendesk:
+```bash
+export ZENDESK_USERNAME=your-email/token
+export ZENDESK_PASSWORD=your-api-token
+export ZENDESK_COMPANY_NAME=your-subdomain
+```
+
+### Agent Import Error
+
+```
+[FAIL] Cannot import agent
+```
+
+**Solution:** Ensure you're in the correct directory and using the demo venv:
+```bash
+cd /path/to/agno
+.venvs/demo/bin/python cookbook/01_showcase/01_agents/customer_support/scripts/check_setup.py
 ```
 
 ## Dependencies
@@ -194,19 +242,8 @@ Without Zendesk credentials, the agent still works with simulated ticket scenari
 - `pgvector` - Vector extension
 - `requests` - Zendesk API
 
-## API Credentials
+## Learn More
 
-### Required
-- **OPENAI_API_KEY** - For model and embeddings
-
-### Optional (for live Zendesk)
-- **ZENDESK_USERNAME** - Your Zendesk email
-- **ZENDESK_PASSWORD** - API token (not password)
-- **ZENDESK_COMPANY_NAME** - Your subdomain (e.g., "mycompany" for mycompany.zendesk.com)
-
-## Resources
-
-- [Ticket Triage Best Practices](https://www.chatbees.ai/blog/ticket-triage)
-- [Escalation Management](https://hiverhq.com/blog/escalation-management)
-- [Empathy Statements](https://blog.hubspot.com/service/empathy-phrases-customer-service)
-- [SLA Guidelines](https://www.freshworks.com/itsm/sla/response-time/)
+- [Agno Knowledge Documentation](https://docs.agno.com/agents/knowledge)
+- [Agno Tools Documentation](https://docs.agno.com/agents/tools)
+- [PgVector Setup Guide](https://docs.agno.com/vectordb/pgvector)
