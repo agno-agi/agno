@@ -111,8 +111,8 @@ def check_tools() -> bool:
         from agno.tools.reasoning import ReasoningTools
         from agno.tools.websearch import WebSearchTools
 
-        print("   [OK] ReasoningTools available")
-        print("   [OK] WebSearchTools available")
+        print(f"   [OK] {ReasoningTools.__name__} available")
+        print(f"   [OK] {WebSearchTools.__name__} available")
     except ImportError as e:
         print(f"   [FAIL] Could not import tools: {e}")
         return False
@@ -124,9 +124,9 @@ def check_tools() -> bool:
             PromptInjectionGuardrail,
         )
 
-        print("   [OK] PIIDetectionGuardrail available")
-        print("   [OK] PromptInjectionGuardrail available")
-        print("   [OK] OpenAIModerationGuardrail available")
+        print(f"   [OK] {PIIDetectionGuardrail.__name__} available")
+        print(f"   [OK] {PromptInjectionGuardrail.__name__} available")
+        print(f"   [OK] {OpenAIModerationGuardrail.__name__} available")
     except ImportError as e:
         print(f"   [FAIL] Could not import guardrails: {e}")
         return False

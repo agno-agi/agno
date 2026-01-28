@@ -5,7 +5,7 @@ Sample Calculator App with Bugs
 This file contains intentional bugs for testing the Code Review Agent.
 """
 
-import os
+import os  # noqa: F401 - intentional unused import for code review testing
 
 # Hardcoded credentials (security issue)
 DB_PASSWORD = "admin123"

@@ -130,13 +130,13 @@ def check_tools() -> bool:
         from agno.tools.websearch import WebSearchTools
         from agno.tools.website import WebsiteTools
 
-        print("   [OK] GithubTools available")
-        print("   [OK] ReasoningTools available")
-        print("   [OK] WebSearchTools available")
-        print("   [OK] ShellTools available")
-        print("   [OK] FileTools available")
-        print("   [OK] PythonTools available")
-        print("   [OK] WebsiteTools available")
+        print(f"   [OK] {GithubTools.__name__} available")
+        print(f"   [OK] {ReasoningTools.__name__} available")
+        print(f"   [OK] {WebSearchTools.__name__} available")
+        print(f"   [OK] {ShellTools.__name__} available")
+        print(f"   [OK] {FileTools.__name__} available")
+        print(f"   [OK] {PythonTools.__name__} available")
+        print(f"   [OK] {WebsiteTools.__name__} available")
         return True
     except ImportError as e:
         print(f"   [FAIL] Could not import tools: {e}")
