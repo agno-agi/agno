@@ -225,4 +225,4 @@ __all__ = [
 ]
 
 if __name__ == "__main__":
-    invoice_agent.cli(stream=True)
+    invoice_agent.cli_app(stream=True)

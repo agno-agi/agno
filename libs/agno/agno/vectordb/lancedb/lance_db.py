@@ -282,9 +282,10 @@ class LanceDb(VectorDb):
                 meta_data.update(filters)
                 document.meta_data = meta_data
 
-            # Only embed if the document doesn't already have an embedding
+            # Only embed if the document doesn't already have a valid embedding
             # This prevents duplicate embedding when called from async_insert or async_upsert
-            if document.embedding is None:
+            # Check for both None and empty list (async embedding failures return [])
+            if document.embedding is None or (isinstance(document.embedding, list) and len(document.embedding) == 0):
                 document.embed(embedder=self.embedder)
             cleaned_content = document.content.replace("\x00", "\ufffd")
             # Include content_hash in ID to ensure uniqueness across different content hashes
@@ -363,12 +364,21 @@ class LanceDb(VectorDb):
                 else:
                     logger.warning(f"Async batch embedding failed, falling back to individual embeddings: {e}")
                     embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
-                    await asyncio.gather(*embed_tasks, return_exceptions=True)
+                    results = await asyncio.gather(*embed_tasks, return_exceptions=True)
+                    # Log any embedding failures (they will be re-tried in sync insert)
+                    for i, result in enumerate(results):
+                        if isinstance(result, Exception):
+                            log_warning(f"Async embedding failed for document {i}, will retry in sync insert: {result}")
         else:
             embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
-            await asyncio.gather(*embed_tasks, return_exceptions=True)
+            results = await asyncio.gather(*embed_tasks, return_exceptions=True)
+            # Log any embedding failures (they will be re-tried in sync insert)
+            for i, result in enumerate(results):
+                if isinstance(result, Exception):
+                    log_warning(f"Async embedding failed for document {i}, will retry in sync insert: {result}")
 
         # Use sync insert to avoid sync/async table synchronization issues
+        # Sync insert will re-embed any documents that failed async embedding
         self.insert(content_hash, documents, filters)
 
     def upsert_available(self) -> bool:
@@ -414,13 +424,25 @@ class LanceDb(VectorDb):
                     if is_rate_limit:
                         raise e
                     else:
+                        logger.warning(f"Async batch embedding failed, falling back to individual embeddings: {e}")
                         embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
-                        await asyncio.gather(*embed_tasks, return_exceptions=True)
+                        results = await asyncio.gather(*embed_tasks, return_exceptions=True)
+                        # Log any embedding failures (they will be re-tried in sync upsert)
+                        for i, result in enumerate(results):
+                            if isinstance(result, Exception):
+                                log_warning(
+                                    f"Async embedding failed for document {i}, will retry in sync upsert: {result}"
+                                )
             else:
                 embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
-                await asyncio.gather(*embed_tasks, return_exceptions=True)
+                results = await asyncio.gather(*embed_tasks, return_exceptions=True)
+                # Log any embedding failures (they will be re-tried in sync upsert)
+                for i, result in enumerate(results):
+                    if isinstance(result, Exception):
+                        log_warning(f"Async embedding failed for document {i}, will retry in sync upsert: {result}")
 
         # Use sync upsert for reliability
+        # Sync upsert (via insert) will re-embed any documents that failed async embedding
         self.upsert(content_hash=content_hash, documents=documents, filters=filters)
 
     def search(
@@ -897,7 +919,7 @@ class LanceDb(VectorDb):
 
             # Get all documents and filter in Python (LanceDB doesn't support JSON operators)
             total_count = self.table.count_rows()
-            results = self.table.search().select(["id", "payload"]).limit(total_count).to_pandas()
+            results = self.table.search().select(["id", "payload", "vector"]).limit(total_count).to_pandas()
 
             if results.empty:
                 logger.debug("No documents found")
