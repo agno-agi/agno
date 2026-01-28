@@ -12,7 +12,7 @@ from agno.knowledge.content import Content, ContentStatus
 from agno.knowledge.reader import Reader
 from agno.knowledge.remote_content.config import AzureBlobConfig, RemoteContentConfig
 from agno.knowledge.remote_content.remote_content import AzureBlobContent
-from agno.utils.log import log_debug, log_error, log_warning
+from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
 
 
@@ -175,6 +175,8 @@ class AzureBlobLoader:
             if not blobs_to_process:
                 log_warning(f"No blobs found in Azure container: {azure_config.container}")
                 return
+
+            log_info(f"Processing {len(blobs_to_process)} file(s) from Azure Blob Storage")
 
             # For single file uploads, use the original content object to preserve the ID
             # returned by the API. For folder uploads, create new content entries for each file.
@@ -357,6 +359,8 @@ class AzureBlobLoader:
         if not blobs_to_process:
             log_warning(f"No blobs found in Azure container: {azure_config.container}")
             return
+
+        log_info(f"Processing {len(blobs_to_process)} file(s) from Azure Blob Storage")
 
         # For single file uploads, use the original content object to preserve the ID
         # returned by the API. For folder uploads, create new content entries for each file.

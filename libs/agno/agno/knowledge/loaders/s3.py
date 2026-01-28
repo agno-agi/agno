@@ -13,7 +13,7 @@ from agno.knowledge.content import Content, ContentStatus
 from agno.knowledge.reader import Reader
 from agno.knowledge.remote_content.config import RemoteContentConfig, S3Config
 from agno.knowledge.remote_content.remote_content import S3Content
-from agno.utils.log import log_error, log_warning
+from agno.utils.log import log_error, log_info, log_warning
 from agno.utils.string import generate_id
 
 
@@ -77,6 +77,9 @@ class S3Loader:
                 objects_to_read.extend(bucket.get_objects(prefix=remote_content.prefix))
             else:
                 objects_to_read.extend(bucket.get_objects())
+
+        if objects_to_read:
+            log_info(f"Processing {len(objects_to_read)} file(s) from S3")
 
         for s3_object in objects_to_read:
             # 2. Setup Content object
@@ -178,6 +181,9 @@ class S3Loader:
                 objects_to_read.extend(bucket.get_objects(prefix=remote_content.prefix))
             else:
                 objects_to_read.extend(bucket.get_objects())
+
+        if objects_to_read:
+            log_info(f"Processing {len(objects_to_read)} file(s) from S3")
 
         for s3_object in objects_to_read:
             # 2. Setup Content object

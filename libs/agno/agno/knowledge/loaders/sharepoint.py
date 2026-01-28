@@ -15,7 +15,7 @@ from agno.knowledge.content import Content, ContentStatus
 from agno.knowledge.reader import Reader
 from agno.knowledge.remote_content.config import RemoteContentConfig, SharePointConfig
 from agno.knowledge.remote_content.remote_content import SharePointContent
-from agno.utils.log import log_error, log_warning
+from agno.utils.log import log_error, log_info, log_warning
 from agno.utils.string import generate_id
 
 
@@ -251,6 +251,8 @@ class SharePointLoader:
             log_warning(f"No files found at SharePoint path: {path_to_process}")
             return
 
+        log_info(f"Processing {len(files_to_process)} file(s) from SharePoint")
+
         # 4. Process each file
         for file_path, file_name in files_to_process:
             # Build a unique virtual path for hashing (ensures different files don't collide)
@@ -401,6 +403,8 @@ class SharePointLoader:
         if not files_to_process:
             log_warning(f"No files found at SharePoint path: {path_to_process}")
             return
+
+        log_info(f"Processing {len(files_to_process)} file(s) from SharePoint")
 
         # 4. Process each file
         for file_path, file_name in files_to_process:

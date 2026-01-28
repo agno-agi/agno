@@ -12,7 +12,7 @@ from agno.knowledge.content import Content, ContentStatus
 from agno.knowledge.reader import Reader
 from agno.knowledge.remote_content.config import GcsConfig, RemoteContentConfig
 from agno.knowledge.remote_content.remote_content import GCSContent
-from agno.utils.log import log_warning
+from agno.utils.log import log_info, log_warning
 from agno.utils.string import generate_id
 
 
@@ -74,6 +74,9 @@ class GCSLoader:
             objects_to_read.extend(bucket.list_blobs(prefix=remote_content.prefix))  # type: ignore
         else:
             objects_to_read.extend(bucket.list_blobs())  # type: ignore
+
+        if objects_to_read:
+            log_info(f"Processing {len(objects_to_read)} file(s) from GCS")
 
         for gcs_object in objects_to_read:
             # 2. Setup Content object
@@ -163,6 +166,9 @@ class GCSLoader:
             objects_to_read.extend(bucket.list_blobs(prefix=remote_content.prefix))  # type: ignore
         else:
             objects_to_read.extend(bucket.list_blobs())  # type: ignore
+
+        if objects_to_read:
+            log_info(f"Processing {len(objects_to_read)} file(s) from GCS")
 
         for gcs_object in objects_to_read:
             # 2. Setup Content object
