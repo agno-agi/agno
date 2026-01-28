@@ -325,6 +325,13 @@ class Team:
     knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
     # Let the agent choose the knowledge filters
     enable_agentic_knowledge_filters: Optional[bool] = False
+    # If True, inherit team's knowledge_filters to member agents
+    inherit_knowledge_filters_to_agents: bool = False
+    # Strategy for merging team and agent knowledge_filters when inherit_knowledge_filters_to_agents is True
+    # - "replace": Team filters replace agent filters entirely
+    # - "merge_team_priority": Merge both, team filters win on key conflicts
+    # - "merge_agent_priority": Merge both, agent filters win on key conflicts
+    knowledge_filters_inheritance_mode: Literal["replace", "merge_team_priority", "merge_agent_priority"] = "replace"
     # Add a tool that allows the Team to update Knowledge.
     update_knowledge: bool = False
     # If True, add references to the user prompt
@@ -526,6 +533,10 @@ class Team:
         knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         add_knowledge_to_context: bool = False,
         enable_agentic_knowledge_filters: Optional[bool] = False,
+        inherit_knowledge_filters_to_agents: bool = False,
+        knowledge_filters_inheritance_mode: Literal[
+            "replace", "merge_team_priority", "merge_agent_priority"
+        ] = "replace",
         update_knowledge: bool = False,
         knowledge_retriever: Optional[Callable[..., Optional[List[Union[Dict, str]]]]] = None,
         references_format: Literal["json", "yaml"] = "json",
@@ -648,6 +659,8 @@ class Team:
         self.knowledge = knowledge
         self.knowledge_filters = knowledge_filters
         self.enable_agentic_knowledge_filters = enable_agentic_knowledge_filters
+        self.inherit_knowledge_filters_to_agents = inherit_knowledge_filters_to_agents
+        self.knowledge_filters_inheritance_mode = knowledge_filters_inheritance_mode
         self.update_knowledge = update_knowledge
         self.add_knowledge_to_context = add_knowledge_to_context
         self.knowledge_retriever = knowledge_retriever
@@ -825,6 +838,10 @@ class Team:
                 member.model = self.model
                 log_info(f"Agent '{member.name or member.id}' inheriting model from Team: {self.model.id}")
 
+            # Inherit team knowledge_filters to member agent if enabled
+            if self.inherit_knowledge_filters_to_agents and self.knowledge_filters and member.knowledge:
+                self._apply_knowledge_filters_inheritance(member)
+
         elif isinstance(member, Team):
             member.parent_team_id = self.id
             # Initialize the sub-team's model first so it has its model set
@@ -832,6 +849,49 @@ class Team:
             # Then let the sub-team initialize its own members so they inherit from the sub-team
             for sub_member in member.members:
                 member._initialize_member(sub_member, debug_mode=debug_mode)
+
+    def _apply_knowledge_filters_inheritance(self, member: Agent) -> None:
+        """
+        Apply knowledge_filters inheritance from team to member agent.
+
+        Args:
+            member: The agent to apply inheritance to.
+        """
+        if not isinstance(self.knowledge_filters, dict):
+            # Only dict filters are supported for inheritance
+            log_warning(
+                f"Cannot inherit knowledge_filters to agent '{member.name or member.id}': "
+                "only dict filters are supported for inheritance."
+            )
+            return
+
+        team_filters = self.knowledge_filters.copy()
+        agent_filters = member.knowledge_filters
+
+        if self.knowledge_filters_inheritance_mode == "replace":
+            # Team filters replace agent filters entirely
+            member.knowledge_filters = team_filters
+            log_debug(
+                f"Agent '{member.name or member.id}' knowledge_filters replaced with team filters: {team_filters}"
+            )
+
+        elif self.knowledge_filters_inheritance_mode == "merge_team_priority":
+            # Merge both, team filters win on key conflicts
+            if agent_filters and isinstance(agent_filters, dict):
+                merged = {**agent_filters, **team_filters}
+            else:
+                merged = team_filters
+            member.knowledge_filters = merged
+            log_debug(f"Agent '{member.name or member.id}' knowledge_filters merged (team priority): {merged}")
+
+        elif self.knowledge_filters_inheritance_mode == "merge_agent_priority":
+            # Merge both, agent filters win on key conflicts
+            if agent_filters and isinstance(agent_filters, dict):
+                merged = {**team_filters, **agent_filters}
+            else:
+                merged = team_filters
+            member.knowledge_filters = merged
+            log_debug(f"Agent '{member.name or member.id}' knowledge_filters merged (agent priority): {merged}")
 
     def propagate_run_hooks_in_background(self, run_in_background: bool = True) -> None:
         """
