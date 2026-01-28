@@ -1,6 +1,6 @@
 """
-Basic Support
-=============
+Simple Query
+============
 
 Demonstrates the basic customer support workflow:
 1. Fetch a ticket from Zendesk (or simulate one)
@@ -14,25 +14,14 @@ Prerequisites:
     3. API keys set: OPENAI_API_KEY, ZENDESK_* (optional)
 
 Usage:
-    .venvs/demo/bin/python cookbook/01_showcase/01_agents/customer_support/examples/basic_support.py
+    .venvs/demo/bin/python cookbook/01_showcase/01_agents/customer_support/basic/simple_query.py
 """
 
-import sys
-from pathlib import Path
+from agent import agent
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
-from agent import support_agent  # noqa: E402
-
-# ============================================================================
-# Example Queries
-# ============================================================================
 EXAMPLE_QUERIES = [
-    # Question about the product
     "A customer is asking: How do I set up a knowledge base with PgVector?",
-    # Frustrated customer with a bug
     "Ticket from customer (frustrated): I've tried three times but the agent keeps crashing when I add tools. This is blocking my demo tomorrow.",
-    # Urgent production issue
     "URGENT: Customer reports their production agents are returning empty responses. They have a client presentation in 2 hours.",
 ]
 
@@ -51,7 +40,7 @@ def run_basic_examples():
         print()
 
         try:
-            support_agent.print_response(query, stream=True)
+            agent.print_response(query, stream=True)
         except Exception as e:
             print(f"Error: {e}")
 
@@ -71,7 +60,7 @@ def interactive_mode():
     print()
 
     try:
-        support_agent.cli_app(stream=True)
+        agent.cli_app(stream=True)
     except KeyboardInterrupt:
         print("\nExiting...")
 

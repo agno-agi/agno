@@ -21,7 +21,7 @@ _parent = Path(__file__).parent.parent
 if str(_parent) not in sys.path:
     sys.path.insert(0, str(_parent))
 
-from agent import KNOWLEDGE_DIR, support_knowledge  # noqa: E402
+from advanced.agent import KNOWLEDGE_DIR, knowledge  # noqa: E402
 
 # ============================================================================
 # Agno Documentation URLs
@@ -61,7 +61,7 @@ def load_local_knowledge():
     # Insert all local docs
     print("Inserting into knowledge base...")
     try:
-        support_knowledge.insert(path=str(KNOWLEDGE_DIR))
+        knowledge.insert(path=str(KNOWLEDGE_DIR))
         print(f"  Inserted {len(md_files)} files")
         return len(md_files)
     except Exception as e:
@@ -81,7 +81,7 @@ def load_agno_docs():
     for url in AGNO_DOCS:
         try:
             print(f"  Inserting: {url}")
-            support_knowledge.insert(url=url)
+            knowledge.insert(url=url)
             loaded += 1
         except Exception as e:
             failed += 1
@@ -132,7 +132,7 @@ def main():
         print()
         print("Run the examples:")
         print(
-            "  .venvs/demo/bin/python cookbook/01_showcase/01_agents/customer_support/examples/basic_support.py"
+            "  .venvs/demo/bin/python cookbook/01_showcase/01_agents/customer_support/basic/simple_query.py"
         )
     else:
         print("WARNING: No documents loaded. Check the errors above.")

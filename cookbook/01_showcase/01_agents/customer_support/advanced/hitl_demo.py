@@ -1,6 +1,6 @@
 """
-HITL Clarification Demo
-=======================
+HITL Demo
+=========
 
 Demonstrates Human-in-the-Loop (HITL) using UserControlFlowTools.
 The agent will use get_user_input() when it needs clarification.
@@ -15,19 +15,11 @@ Prerequisites:
     2. Knowledge loaded: python scripts/load_knowledge.py
 
 Usage:
-    .venvs/demo/bin/python cookbook/01_showcase/01_agents/customer_support/examples/hitl_clarification.py
+    .venvs/demo/bin/python cookbook/01_showcase/01_agents/customer_support/advanced/hitl_demo.py
 """
 
-import sys
-from pathlib import Path
+from agent import agent
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
-from agent import support_agent  # noqa: E402
-
-# ============================================================================
-# Ambiguous Scenarios That Trigger HITL
-# ============================================================================
 HITL_SCENARIOS = [
     {
         "name": "Ambiguous Product Reference",
@@ -94,11 +86,9 @@ def run_hitl_demo():
         print("-" * 20)
 
         try:
-            # The agent may pause here waiting for user input if it uses HITL
-            response = support_agent.run(scenario["query"])
+            response = agent.run(scenario["query"])
             print(response.content if response.content else "(No content)")
 
-            # Check if HITL was triggered
             if response.tool_calls:
                 for tc in response.tool_calls:
                     if tc.function and tc.function.name == "get_user_input":
@@ -111,7 +101,6 @@ def run_hitl_demo():
         print("=" * 60)
         print()
 
-        # Ask if user wants to continue
         if i < len(HITL_SCENARIOS):
             try:
                 input("Press Enter to continue to next scenario...")

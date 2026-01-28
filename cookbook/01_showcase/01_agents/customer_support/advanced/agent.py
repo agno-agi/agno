@@ -1,11 +1,14 @@
 """
-Customer Support Agent
+Advanced Support Agent
 ======================
 
-A customer support agent that processes Zendesk tickets using:
-- ZendeskTools for ticket operations (fetch, comment, update)
-- UserControlFlowTools for HITL clarification when queries are ambiguous
-- Knowledge base with Agno documentation for answering questions
+A production-ready customer support agent with full capabilities:
+- Knowledge base integration with PgVector
+- ZendeskTools for ticket operations
+- ReasoningTools for step-by-step thinking
+- UserControlFlowTools for HITL (Human-in-the-Loop) clarification
+- Agentic memory for persistent context
+- Full workflow system message with escalation rules
 
 Example prompts:
 - "Get the latest open tickets"
@@ -13,13 +16,9 @@ Example prompts:
 - "What's the status of ticket 12345?"
 
 Usage:
-    from agent import support_agent
-
-    # Process a ticket
-    support_agent.print_response("Process ticket 12345", stream=True)
-
-    # Interactive mode
-    support_agent.cli_app(stream=True)
+    from agent import agent
+    agent.print_response("Process ticket 12345", stream=True)
+    agent.cli_app(stream=True)
 """
 
 from pathlib import Path
@@ -34,17 +33,10 @@ from agno.tools.user_control_flow import UserControlFlowTools
 from agno.tools.zendesk import ZendeskTools
 from agno.vectordb.pgvector import PgVector, SearchType
 
-# ============================================================================
-# Configuration
-# ============================================================================
 DB_URL = "postgresql+psycopg://ai:ai@localhost:5532/ai"
-KNOWLEDGE_DIR = Path(__file__).parent / "knowledge"
+KNOWLEDGE_DIR = Path(__file__).parent.parent / "knowledge"
 
-
-# ============================================================================
-# Knowledge Configuration
-# ============================================================================
-support_knowledge = Knowledge(
+knowledge = Knowledge(
     name="Support Knowledge Base",
     vector_db=PgVector(
         table_name="support_knowledge",
@@ -55,10 +47,6 @@ support_knowledge = Knowledge(
     max_results=10,
 )
 
-
-# ============================================================================
-# System Message
-# ============================================================================
 SYSTEM_MESSAGE = """\
 You are a Customer Support Agent processing Zendesk tickets for Agno.
 
@@ -119,25 +107,14 @@ Use get_user_input() when:
 Always use the think tool to plan your approach before responding to tickets.
 """
 
-
-# ============================================================================
-# Create the Agent
-# ============================================================================
-support_agent = Agent(
+agent = Agent(
     name="Customer Support Agent",
     model=OpenAIResponses(id="gpt-5.2"),
-    knowledge=support_knowledge,
+    knowledge=knowledge,
     system_message=SYSTEM_MESSAGE,
     tools=[
         ReasoningTools(add_instructions=True),
-        ZendeskTools(
-            enable_search_zendesk=True,
-            enable_get_tickets=True,
-            enable_get_ticket=True,
-            enable_get_ticket_comments=True,
-            enable_create_ticket_comment=True,
-            enable_update_ticket=True,
-        ),
+        ZendeskTools(all=True),
         UserControlFlowTools(),
     ],
     add_datetime_to_context=True,
@@ -150,16 +127,12 @@ support_agent = Agent(
     db=SqliteDb(db_file="tmp/support_data.db"),
 )
 
-
-# ============================================================================
-# Exports
-# ============================================================================
 __all__ = [
-    "support_agent",
-    "support_knowledge",
+    "agent",
+    "knowledge",
     "DB_URL",
     "KNOWLEDGE_DIR",
 ]
 
 if __name__ == "__main__":
-    support_agent.print_response("Get the latest open tickets", stream=True)
+    agent.print_response("Get the latest open tickets", stream=True)

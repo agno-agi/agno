@@ -186,9 +186,9 @@ def check_import() -> bool:
         if str(parent_dir) not in sys.path:
             sys.path.insert(0, str(parent_dir))
 
-        from agent import support_agent  # noqa: F401
+        from advanced.agent import agent  # noqa: F401
 
-        print("   [OK] support_agent imported successfully")
+        print("   [OK] agent imported successfully")
         return True
     except Exception as e:
         print(f"   [FAIL] Cannot import agent: {e}")
@@ -229,7 +229,7 @@ def main() -> int:
         print("All checks passed! You're ready to run the examples.")
         print()
         print("Try:")
-        print("  python examples/basic_support.py")
+        print("  python basic/simple_query.py")
         return 0
     else:
         print("Some checks failed. Please fix the issues above.")

@@ -14,19 +14,11 @@ Prerequisites:
     2. Knowledge loaded: python scripts/load_knowledge.py
 
 Usage:
-    .venvs/demo/bin/python cookbook/01_showcase/01_agents/customer_support/examples/escalation_policy.py
+    .venvs/demo/bin/python cookbook/01_showcase/01_agents/customer_support/advanced/escalation_policy.py
 """
 
-import sys
-from pathlib import Path
+from agent import agent
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
-from agent import support_agent  # noqa: E402
-
-# ============================================================================
-# Escalation Scenarios
-# ============================================================================
 ESCALATION_SCENARIOS = [
     {
         "name": "Security Concern - Auto Escalate",
@@ -129,7 +121,7 @@ def run_escalation_scenarios():
         """
 
         try:
-            support_agent.print_response(query, stream=True)
+            agent.print_response(query, stream=True)
         except Exception as e:
             print(f"Error: {e}")
 
@@ -137,7 +129,6 @@ def run_escalation_scenarios():
         print("=" * 60)
         print()
 
-        # Pause between scenarios
         if i < len(ESCALATION_SCENARIOS):
             try:
                 input("Press Enter for next scenario...")

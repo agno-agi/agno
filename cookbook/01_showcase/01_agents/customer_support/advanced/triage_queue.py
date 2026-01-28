@@ -16,59 +16,50 @@ Prerequisites:
     2. Knowledge loaded: python scripts/load_knowledge.py
 
 Usage:
-    .venvs/demo/bin/python cookbook/01_showcase/01_agents/customer_support/examples/triage_queue.py
+    .venvs/demo/bin/python cookbook/01_showcase/01_agents/customer_support/advanced/triage_queue.py
 """
 
-import sys
-from pathlib import Path
+from agent import agent
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
-from agent import support_agent  # noqa: E402
-from schemas import Sentiment, TicketType  # noqa: E402
-
-# ============================================================================
-# Simulated Ticket Queue
-# ============================================================================
 TICKET_QUEUE = [
     {
         "id": 1001,
         "subject": "Question about Teams",
         "description": "Hi, I was wondering how to set up a multi-agent team. Is there documentation on this?",
-        "expected_type": TicketType.QUESTION,
-        "expected_sentiment": Sentiment.CALM,
+        "expected_type": "question",
+        "expected_sentiment": "calm",
         "expected_priority": "P4",
     },
     {
         "id": 1002,
         "subject": "URGENT: Production down",
         "description": "Our production system is completely down. All agent calls are failing with 500 errors. We have a major customer demo in 1 hour. Please help ASAP!",
-        "expected_type": TicketType.BUG,
-        "expected_sentiment": Sentiment.URGENT,
+        "expected_type": "bug",
+        "expected_sentiment": "urgent",
         "expected_priority": "P1",
     },
     {
         "id": 1003,
         "subject": "Feature request: Slack integration",
         "description": "Would be great if Agno had native Slack integration for notifications when agent runs complete. Just a suggestion for the roadmap.",
-        "expected_type": TicketType.FEATURE,
-        "expected_sentiment": Sentiment.CALM,
+        "expected_type": "feature",
+        "expected_sentiment": "calm",
         "expected_priority": "P4",
     },
     {
         "id": 1004,
         "subject": "Still having the same issue",
         "description": "I reported this last week and was told it would be fixed. The knowledge base search is STILL returning empty results. This is the third time I'm contacting support about this.",
-        "expected_type": TicketType.BUG,
-        "expected_sentiment": Sentiment.FRUSTRATED,
+        "expected_type": "bug",
+        "expected_sentiment": "frustrated",
         "expected_priority": "P2",
     },
     {
         "id": 1005,
         "subject": "Billing question",
         "description": "Can you explain the difference between the Pro and Enterprise plans? Specifically interested in the API rate limits.",
-        "expected_type": TicketType.ACCOUNT,
-        "expected_sentiment": Sentiment.CALM,
+        "expected_type": "account",
+        "expected_sentiment": "calm",
         "expected_priority": "P4",
     },
 ]
@@ -83,7 +74,6 @@ def triage_tickets():
     print(f"Processing {len(TICKET_QUEUE)} tickets...")
     print()
 
-    # First pass: Classify all tickets
     print("Phase 1: Classification")
     print("-" * 40)
 
@@ -105,12 +95,12 @@ def triage_tickets():
         """
 
         try:
-            response = support_agent.run(prompt)
+            response = agent.run(prompt)
             content = response.content or ""
             print(f"Ticket #{ticket['id']}: {ticket['subject'][:30]}...")
             print(f"  Classification: {content[:100]}...")
             print(
-                f"  Expected: {ticket['expected_priority']} - {ticket['expected_type'].value} - {ticket['expected_sentiment'].value}"
+                f"  Expected: {ticket['expected_priority']} - {ticket['expected_type']} - {ticket['expected_sentiment']}"
             )
             print()
 
@@ -124,7 +114,6 @@ def triage_tickets():
             print(f"  Error classifying ticket #{ticket['id']}: {e}")
             print()
 
-    # Sort by priority (simulate priority ordering)
     print()
     print("Phase 2: Priority Processing")
     print("-" * 40)
@@ -132,13 +121,11 @@ def triage_tickets():
     print("Processing tickets in priority order (P1 first)...")
     print()
 
-    # In a real system, you'd sort by extracted priority
-    # Here we use expected_priority for demo
     sorted_tickets = sorted(
         classifications, key=lambda x: x["ticket"]["expected_priority"]
     )
 
-    for item in sorted_tickets[:3]:  # Process top 3 for demo
+    for item in sorted_tickets[:3]:
         ticket = item["ticket"]
         print(f"Processing Ticket #{ticket['id']} ({ticket['expected_priority']})")
         print(f"Subject: {ticket['subject']}")
@@ -150,13 +137,13 @@ def triage_tickets():
 
         Ticket #{ticket["id"]}: {ticket["subject"]}
         Priority: {ticket["expected_priority"]}
-        Sentiment: {ticket["expected_sentiment"].value}
+        Sentiment: {ticket["expected_sentiment"]}
         ---
         {ticket["description"]}
         """
 
         try:
-            support_agent.print_response(prompt, stream=True)
+            agent.print_response(prompt, stream=True)
         except Exception as e:
             print(f"Error: {e}")
 
@@ -175,8 +162,8 @@ def show_queue_stats():
     priority_counts = {}
 
     for ticket in TICKET_QUEUE:
-        t = ticket["expected_type"].value
-        s = ticket["expected_sentiment"].value
+        t = ticket["expected_type"]
+        s = ticket["expected_sentiment"]
         p = ticket["expected_priority"]
 
         type_counts[t] = type_counts.get(t, 0) + 1

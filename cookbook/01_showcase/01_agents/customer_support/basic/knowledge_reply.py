@@ -1,6 +1,6 @@
 """
-Knowledge-First Reply
-=====================
+Knowledge Reply
+================
 
 Demonstrates retrieval-augmented response generation where the agent:
 1. Always searches the knowledge base first
@@ -14,19 +14,11 @@ Prerequisites:
     2. Knowledge loaded: python scripts/load_knowledge.py
 
 Usage:
-    .venvs/demo/bin/python cookbook/01_showcase/01_agents/customer_support/examples/knowledge_first_reply.py
+    .venvs/demo/bin/python cookbook/01_showcase/01_agents/customer_support/basic/knowledge_reply.py
 """
 
-import sys
-from pathlib import Path
+from agent import agent
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
-from agent import support_agent  # noqa: E402
-
-# ============================================================================
-# Queries That Should Retrieve Specific KB Docs
-# ============================================================================
 KB_QUERIES = [
     {
         "query": "When should I escalate a ticket to Tier 2 support?",
@@ -71,7 +63,7 @@ def run_knowledge_first_examples():
         print("-" * 20)
 
         try:
-            support_agent.print_response(item["query"], stream=True)
+            agent.print_response(item["query"], stream=True)
         except Exception as e:
             print(f"Error: {e}")
 
@@ -79,7 +71,6 @@ def run_knowledge_first_examples():
         print("=" * 60)
         print()
 
-        # Pause between queries for readability
         if i < len(KB_QUERIES):
             try:
                 input("Press Enter for next query...")
@@ -105,7 +96,7 @@ def test_no_knowledge_fallback():
     print("-" * 20)
 
     try:
-        support_agent.print_response(query, stream=True)
+        agent.print_response(query, stream=True)
     except Exception as e:
         print(f"Error: {e}")
 

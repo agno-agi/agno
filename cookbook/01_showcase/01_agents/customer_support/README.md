@@ -12,16 +12,38 @@ A production-ready customer support agent that processes support tickets using k
 | **Native HITL** | Uses `get_user_input()` when queries are ambiguous |
 | **Zendesk Integration** | Full ticket CRUD operations (optional) |
 
+## Structure
+
+This cookbook is organized into two levels:
+
+```
+customer_support/
+├── basic/                 # Start here - core concepts
+│   ├── agent.py           # Simplified agent (Knowledge + Zendesk + Reasoning)
+│   ├── simple_query.py    # Basic support workflow
+│   └── knowledge_reply.py # RAG with citations
+│
+├── advanced/              # Production patterns
+│   ├── agent.py           # Full agent (+ HITL + Memory + Escalation)
+│   ├── triage_queue.py    # Priority-based processing
+│   ├── escalation_policy.py # Escalation rules
+│   ├── hitl_demo.py       # Human-in-the-loop
+│   └── evaluate.py        # Testing
+│
+├── knowledge/             # Shared KB documents
+└── scripts/               # Setup utilities
+```
+
 ## What You'll Learn
 
-| Concept | Example | Description |
-|---------|---------|-------------|
-| RAG for Support | `knowledge_first_reply.py` | Retrieval-augmented responses with citations |
-| Ticket Triage | `triage_queue.py` | Classification, prioritization, queue processing |
-| Escalation Rules | `escalation_policy.py` | When and how to escalate (security, billing, VIP) |
-| HITL Clarification | `hitl_clarification.py` | Pausing for human input on ambiguous queries |
-| Sentiment Handling | `basic_support.py` | Different response styles for calm/frustrated/urgent |
-| Evaluation | `evaluate.py` | Testing agent responses with keyword matching |
+| Level | Example | Concept |
+|-------|---------|---------|
+| Basic | `simple_query.py` | Ticket classification, KB search, response generation |
+| Basic | `knowledge_reply.py` | RAG pattern with explicit source citations |
+| Advanced | `triage_queue.py` | Processing multiple tickets by priority |
+| Advanced | `escalation_policy.py` | When and how to escalate (security, billing, VIP) |
+| Advanced | `hitl_demo.py` | Pausing for human input on ambiguous queries |
+| Advanced | `evaluate.py` | Testing agent responses with keyword matching |
 
 ## Quick Start
 
@@ -57,41 +79,56 @@ export ZENDESK_COMPANY_NAME=your-subdomain
 
 ### 5. Run Examples
 
+**Start with basic examples:**
+
 ```bash
-# Basic support queries
-.venvs/demo/bin/python cookbook/01_showcase/01_agents/customer_support/examples/basic_support.py
+# Basic support workflow
+.venvs/demo/bin/python cookbook/01_showcase/01_agents/customer_support/basic/simple_query.py
 
 # Knowledge-first with citations
-.venvs/demo/bin/python cookbook/01_showcase/01_agents/customer_support/examples/knowledge_first_reply.py
-
-# Escalation scenarios
-.venvs/demo/bin/python cookbook/01_showcase/01_agents/customer_support/examples/escalation_policy.py
+.venvs/demo/bin/python cookbook/01_showcase/01_agents/customer_support/basic/knowledge_reply.py
 
 # Interactive mode
-.venvs/demo/bin/python cookbook/01_showcase/01_agents/customer_support/examples/basic_support.py --interactive
+.venvs/demo/bin/python cookbook/01_showcase/01_agents/customer_support/basic/simple_query.py --interactive
 ```
 
-## Examples
+**Then explore advanced patterns:**
 
-| File | What It Demonstrates |
-|------|---------------------|
-| `basic_support.py` | Basic support workflow: classify, search KB, respond |
-| `knowledge_first_reply.py` | RAG pattern with explicit source citations |
-| `escalation_policy.py` | Strict escalation rules (security, billing, VIP, repeat) |
-| `triage_queue.py` | Processing multiple tickets by priority |
-| `hitl_clarification.py` | Pausing for human input on ambiguous queries |
-| `evaluate.py` | Automated testing with keyword matching |
+```bash
+# Ticket triage queue
+.venvs/demo/bin/python cookbook/01_showcase/01_agents/customer_support/advanced/triage_queue.py
+
+# Escalation scenarios
+.venvs/demo/bin/python cookbook/01_showcase/01_agents/customer_support/advanced/escalation_policy.py
+
+# HITL clarification
+.venvs/demo/bin/python cookbook/01_showcase/01_agents/customer_support/advanced/hitl_demo.py
+
+# Run evaluation
+.venvs/demo/bin/python cookbook/01_showcase/01_agents/customer_support/advanced/evaluate.py
+```
 
 ## Key Concepts
+
+### Basic vs Advanced Agent
+
+| Feature | Basic | Advanced |
+|---------|-------|----------|
+| Knowledge base | Yes | Yes |
+| ZendeskTools | Yes | Yes |
+| ReasoningTools | Yes | Yes |
+| UserControlFlowTools (HITL) | No | Yes |
+| Agentic memory | No | Yes |
+| Chat history | No | Yes |
+| Full system message | No | Yes |
 
 ### Knowledge-First Responses
 
 The agent always searches the knowledge base before responding:
 
 ```python
-# Agent has search_knowledge=True enabled
-support_agent = Agent(
-    knowledge=support_knowledge,
+agent = Agent(
+    knowledge=knowledge,
     search_knowledge=True,  # Auto-search on every query
     ...
 )
@@ -158,7 +195,7 @@ The agent uses `UserControlFlowTools.get_user_input()` when:
 
 ```python
 # HITL triggers automatically when needed
-response = support_agent.run("Search isn't working")
+response = agent.run("Search isn't working")
 # Agent may pause: "Which search: KB, web, or vector?"
 ```
 
@@ -220,18 +257,6 @@ WARNING  Zendesk credentials not provided
 export ZENDESK_USERNAME=your-email/token
 export ZENDESK_PASSWORD=your-api-token
 export ZENDESK_COMPANY_NAME=your-subdomain
-```
-
-### Agent Import Error
-
-```
-[FAIL] Cannot import agent
-```
-
-**Solution:** Ensure you're in the correct directory and using the demo venv:
-```bash
-cd /path/to/agno
-.venvs/demo/bin/python cookbook/01_showcase/01_agents/customer_support/scripts/check_setup.py
 ```
 
 ## Dependencies

@@ -15,19 +15,13 @@ Prerequisites:
     2. Knowledge loaded: python scripts/load_knowledge.py
 
 Usage:
-    .venvs/demo/bin/python cookbook/01_showcase/01_agents/customer_support/examples/evaluate.py
+    .venvs/demo/bin/python cookbook/01_showcase/01_agents/customer_support/advanced/evaluate.py
 """
 
 import sys
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
+from agent import agent
 
-from agent import support_agent  # noqa: E402
-
-# ============================================================================
-# Test Cases
-# ============================================================================
 TEST_CASES = [
     {
         "name": "Classification - Bug Report",
@@ -92,26 +86,23 @@ def check_configuration() -> bool:
 
     checks = []
 
-    # Check model
-    if support_agent.model is not None:
+    if agent.model is not None:
         print("  [OK] Model configured")
         checks.append(True)
     else:
         print("  [FAIL] Model not configured")
         checks.append(False)
 
-    # Check knowledge
-    if support_agent.knowledge is not None:
+    if agent.knowledge is not None:
         print("  [OK] Knowledge base configured")
         checks.append(True)
     else:
         print("  [FAIL] Knowledge base not configured")
         checks.append(False)
 
-    # Check tools
-    if support_agent.tools and len(support_agent.tools) > 0:
-        tool_names = [t.name for t in support_agent.tools if hasattr(t, "name")]
-        print(f"  [OK] Tools configured: {len(support_agent.tools)}")
+    if agent.tools and len(agent.tools) > 0:
+        tool_names = [t.name for t in agent.tools if hasattr(t, "name")]
+        print(f"  [OK] Tools configured: {len(agent.tools)}")
         if "zendesk_tools" in str(tool_names):
             print("  [OK] ZendeskTools enabled")
         if "user_control_flow" in str(tool_names):
@@ -127,7 +118,7 @@ def check_configuration() -> bool:
 def run_test_case(test: dict) -> bool:
     """Run a single test case and check for expected keywords."""
     try:
-        response = support_agent.run(test["query"])
+        response = agent.run(test["query"])
         text = (response.content or "").lower()
 
         found = []
@@ -144,7 +135,6 @@ def run_test_case(test: dict) -> bool:
         return passed, found, missing, text
 
     except Exception as e:
-        # Database connection errors are expected if not set up
         if "connect" in str(e).lower() or "database" in str(e).lower():
             return True, [], [], f"SKIP - Database not configured: {e}"
         return False, [], [], f"ERROR: {e}"
@@ -157,7 +147,6 @@ def run_evaluation() -> bool:
     print("=" * 60)
     print()
 
-    # Check configuration first
     if not check_configuration():
         print()
         print("Configuration check failed. Aborting tests.")
@@ -178,7 +167,7 @@ def run_evaluation() -> bool:
 
         if isinstance(text, str) and text.startswith("SKIP"):
             print(f"  - {text}")
-            passed += 1  # Skip counts as pass
+            passed += 1
         elif isinstance(text, str) and text.startswith("ERROR"):
             print(f"  x FAIL - {text}")
             failed += 1
@@ -192,7 +181,6 @@ def run_evaluation() -> bool:
 
         print()
 
-    # Summary
     total = passed + failed
     print("=" * 60)
     print("Summary")
