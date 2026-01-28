@@ -74,11 +74,8 @@ class MCPTools(Toolkit):
                 Only relevant with HTTP transports (Streamable HTTP or SSE).
                 Creates a new session per agent run with dynamic headers merged into connection config.
         """
-        # Extract HITL and control flow parameters from kwargs before super().__init__
-        # Note: We must extract these before calling super().__init__() because Toolkit.__init__
-        # calls _check_tools_filters() which validates these parameters against available_tools.
-        # Since MCPTools doesn't load tools until build_tools() is called, we need to bypass
-        # this early validation and set these parameters after initialization (similar to include_tools/exclude_tools).
+        # Extract these before super().__init__() to bypass early validation
+        # (tools aren't available until build_tools() is called)
         requires_confirmation_tools = kwargs.pop("requires_confirmation_tools", None)
         external_execution_required_tools = kwargs.pop("external_execution_required_tools", None)
         stop_after_tool_call_tools = kwargs.pop("stop_after_tool_call_tools", None)
