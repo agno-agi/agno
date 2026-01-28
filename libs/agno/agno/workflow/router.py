@@ -15,6 +15,7 @@ from agno.run.workflow import (
 )
 from agno.session.workflow import WorkflowSession
 from agno.utils.log import log_debug, logger
+from agno.workflow.cel import CEL_AVAILABLE, evaluate_cel_router, is_cel_expression
 from agno.workflow.step import Step
 from agno.workflow.types import StepInput, StepOutput, StepType
 
@@ -35,12 +36,33 @@ WorkflowSteps = List[
 
 @dataclass
 class Router:
-    """A router that dynamically selects which step(s) to execute based on input"""
+    """A router that dynamically selects which step(s) to execute based on input.
 
-    # Router function that returns the step(s) to execute
+    The selector can be:
+        - A callable function that takes StepInput and returns step(s)
+        - A CEL (Common Expression Language) expression string that returns a step name
+
+    CEL expressions for selector have access to (same as Condition):
+        - input: The workflow input as a string
+        - previous_step_content: Content from the previous step
+        - has_previous_step_content: Whether previous content exists
+        - previous_step_names: List of previous step names
+        - additional_data: Map of additional data passed to the workflow
+        - session_state: Map of session state values
+
+    CEL expressions must return the name of a step from choices.
+
+    Example CEL expressions:
+        - 'input.contains("video") ? "video_step" : "image_step"'
+        - 'additional_data.route'
+        - 'session_state.preferred_handler'
+    """
+
+    # Router function or CEL expression that selects step(s) to execute
     selector: Union[
         Callable[[StepInput], Union[WorkflowSteps, List[WorkflowSteps]]],
         Callable[[StepInput], Awaitable[Union[WorkflowSteps, List[WorkflowSteps]]]],
+        str,  # CEL expression returning step name
     ]
     choices: WorkflowSteps  # Available steps that can be selected
 
@@ -54,9 +76,13 @@ class Router:
             "description": self.description,
             "choices": [step.to_dict() for step in self.choices if hasattr(step, "to_dict")],
         }
-        # Serialize selector function by name
+        # Serialize selector
         if callable(self.selector):
             result["selector"] = self.selector.__name__
+            result["selector_type"] = "function"
+        elif isinstance(self.selector, str):
+            result["selector"] = self.selector
+            result["selector_type"] = "cel"
         else:
             raise ValueError(f"Invalid selector type: {type(self.selector).__name__}")
 
@@ -90,17 +116,26 @@ class Router:
             else:
                 return Step.from_dict(step_data, registry=registry, db=db, links=links)
 
-        # Deserialize selector function
+        # Deserialize selector
         selector_data = data.get("selector")
+        selector_type = data.get("selector_type")
+
         if selector_data is None:
-            raise ValueError("Router requires a selector function")
+            raise ValueError("Router requires a selector")
         elif isinstance(selector_data, str):
-            if registry:
-                selector = registry.get_function(selector_data)
-                if selector is None:
-                    raise ValueError(f"Selector function '{selector_data}' not found in registry")
+            # Determine if this is a CEL expression or a function name
+            if selector_type == "cel" or (selector_type is None and is_cel_expression(selector_data)):
+                # CEL expression - use as-is
+                selector = selector_data
             else:
-                raise ValueError(f"Registry required to deserialize selector function '{selector_data}'")
+                # Function name - look up in registry
+                if registry:
+                    func = registry.get_function(selector_data)
+                    if func is None:
+                        raise ValueError(f"Selector function '{selector_data}' not found in registry")
+                    selector = func
+                else:
+                    raise ValueError(f"Registry required to deserialize selector function '{selector_data}'")
         else:
             raise ValueError(f"Invalid selector type in data: {type(selector_data).__name__}")
 
@@ -174,8 +209,32 @@ class Router:
             audio=current_audio + all_audio,
         )
 
+    def _find_step_by_name(self, step_name: str) -> Optional[Step]:
+        """Find a step in choices by its name."""
+        for step in self.steps:  # Use prepared steps
+            if getattr(step, "name", None) == step_name:
+                return step  # type: ignore
+        return None
+
     def _route_steps(self, step_input: StepInput, session_state: Optional[Dict[str, Any]] = None) -> List[Step]:  # type: ignore[return-value]
-        """Route to the appropriate steps based on input"""
+        """Route to the appropriate steps based on input."""
+        # Handle CEL expression selector
+        if isinstance(self.selector, str):
+            if not CEL_AVAILABLE:
+                logger.error("CEL expression used but cel-python is not installed. Install with: pip install cel-python")
+                return []
+            try:
+                step_name = evaluate_cel_router(self.selector, step_input, session_state)
+                step = self._find_step_by_name(step_name)
+                if step is None:
+                    logger.error(f"Router CEL returned step name '{step_name}' but no matching step found in choices")
+                    return []
+                return [step]
+            except Exception as e:
+                logger.error(f"Router CEL evaluation failed: {e}")
+                return []
+
+        # Handle callable selector
         if callable(self.selector):
             if session_state is not None and self._selector_has_session_state_param():
                 result = self.selector(step_input, session_state)  # type: ignore[call-arg]
@@ -194,7 +253,24 @@ class Router:
         return []
 
     async def _aroute_steps(self, step_input: StepInput, session_state: Optional[Dict[str, Any]] = None) -> List[Step]:  # type: ignore[return-value]
-        """Async version of step routing"""
+        """Async version of step routing."""
+        # Handle CEL expression selector (CEL evaluation is synchronous)
+        if isinstance(self.selector, str):
+            if not CEL_AVAILABLE:
+                logger.error("CEL expression used but cel-python is not installed. Install with: pip install cel-python")
+                return []
+            try:
+                step_name = evaluate_cel_router(self.selector, step_input, session_state)
+                step = self._find_step_by_name(step_name)
+                if step is None:
+                    logger.error(f"Router CEL returned step name '{step_name}' but no matching step found in choices")
+                    return []
+                return [step]
+            except Exception as e:
+                logger.error(f"Router CEL evaluation failed: {e}")
+                return []
+
+        # Handle callable selector
         if callable(self.selector):
             has_session_state = session_state is not None and self._selector_has_session_state_param()
 
@@ -221,7 +297,13 @@ class Router:
         return []
 
     def _selector_has_session_state_param(self) -> bool:
-        """Check if the selector function has a session_state parameter"""
+        """Check if the selector function has a session_state parameter.
+
+        For CEL expressions, session_state is always available in the context.
+        """
+        if isinstance(self.selector, str):
+            return True  # CEL always has session_state in context
+
         if not callable(self.selector):
             return False
 

@@ -96,6 +96,9 @@ portkey = ["portkey-ai"]
 # Dependencies for Token Counting
 tokenizers = ["tiktoken", "tokenizers"]
 
+# Dependencies for Workflow Expression Evaluation
+cel = ["cel-python"]
+
 # Dependencies for Tools
 agentql = ["agentql"]
 apify = ["apify-client"]

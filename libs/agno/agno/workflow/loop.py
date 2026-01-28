@@ -17,6 +17,7 @@ from agno.run.workflow import (
 )
 from agno.session.workflow import WorkflowSession
 from agno.utils.log import log_debug, logger
+from agno.workflow.cel import CEL_AVAILABLE, evaluate_cel_loop_end_condition, is_cel_expression
 from agno.workflow.step import Step
 from agno.workflow.types import StepInput, StepOutput, StepType
 
@@ -37,7 +38,28 @@ WorkflowSteps = List[
 
 @dataclass
 class Loop:
-    """A loop of steps that execute in order"""
+    """A loop of steps that execute in order.
+
+    The end_condition can be:
+        - A callable function that takes List[StepOutput] and returns bool
+        - A CEL (Common Expression Language) expression string
+        - None (loop runs for max_iterations)
+
+    CEL expressions for end_condition have access to:
+        - iteration: Current iteration number (0-indexed)
+        - num_steps: Number of step outputs in the current iteration
+        - all_success: Boolean - True if all steps succeeded
+        - any_failure: Boolean - True if any step failed
+        - last_content: Content string from the last step in the iteration
+        - total_content_length: Sum of all step content lengths
+        - max_content_length: Length of the longest step content
+
+    Example CEL expressions:
+        - 'iteration >= 2'
+        - 'all_success'
+        - 'total_content_length > 500'
+        - 'last_content.contains("DONE")'
+    """
 
     steps: WorkflowSteps
 
@@ -45,7 +67,7 @@ class Loop:
     description: Optional[str] = None
 
     max_iterations: int = 3  # Default to 3
-    end_condition: Optional[Callable[[List[StepOutput]], bool]] = None
+    end_condition: Optional[Union[Callable[[List[StepOutput]], bool], str]] = None
 
     def __init__(
         self,
@@ -53,7 +75,7 @@ class Loop:
         name: Optional[str] = None,
         description: Optional[str] = None,
         max_iterations: int = 3,
-        end_condition: Optional[Callable[[List[StepOutput]], bool]] = None,
+        end_condition: Optional[Union[Callable[[List[StepOutput]], bool], str]] = None,
     ):
         self.steps = steps
         self.name = name
@@ -72,8 +94,13 @@ class Loop:
         # Serialize end_condition
         if self.end_condition is None:
             result["end_condition"] = None
+            result["end_condition_type"] = None
+        elif isinstance(self.end_condition, str):
+            result["end_condition"] = self.end_condition
+            result["end_condition_type"] = "cel"
         elif callable(self.end_condition):
             result["end_condition"] = self.end_condition.__name__
+            result["end_condition_type"] = "function"
         else:
             raise ValueError(f"Invalid end_condition type: {type(self.end_condition).__name__}")
 
@@ -109,17 +136,23 @@ class Loop:
 
         # Deserialize end_condition
         end_condition_data = data.get("end_condition")
-        end_condition: Optional[Callable[[List[StepOutput]], bool]] = None
+        end_condition_type = data.get("end_condition_type")
+        end_condition: Optional[Union[Callable[[List[StepOutput]], bool], str]] = None
 
         if end_condition_data is None:
             end_condition = None
         elif isinstance(end_condition_data, str):
-            if registry:
-                end_condition = registry.get_function(end_condition_data)
-                if end_condition is None:
-                    raise ValueError(f"End condition function '{end_condition_data}' not found in registry")
+            if end_condition_type == "cel" or (end_condition_type is None and is_cel_expression(end_condition_data)):
+                end_condition = end_condition_data
             else:
-                raise ValueError(f"Registry required to deserialize end_condition function '{end_condition_data}'")
+                if registry:
+                    end_condition = registry.get_function(end_condition_data)
+                    if end_condition is None:
+                        raise ValueError(f"End condition function '{end_condition_data}' not found in registry")
+                else:
+                    raise ValueError(
+                        f"Registry required to deserialize end_condition function '{end_condition_data}'"
+                    )
 
         return cls(
             name=data.get("name"),
@@ -128,6 +161,57 @@ class Loop:
             max_iterations=data.get("max_iterations", 3),
             end_condition=end_condition,
         )
+
+    def _evaluate_end_condition(self, iteration_results: List[StepOutput], iteration: int = 0) -> bool:
+        """Evaluate the end condition and return whether the loop should stop."""
+        if self.end_condition is None:
+            return False
+
+        if isinstance(self.end_condition, str):
+            if not CEL_AVAILABLE:
+                logger.error("CEL expression used but cel-python is not installed. Install with: pip install cel-python")
+                return False
+            try:
+                return evaluate_cel_loop_end_condition(self.end_condition, iteration_results, iteration)
+            except Exception as e:
+                logger.warning(f"CEL end condition evaluation failed: {e}")
+                return False
+
+        if callable(self.end_condition):
+            try:
+                return self.end_condition(iteration_results)
+            except Exception as e:
+                logger.warning(f"End condition evaluation failed: {e}")
+                return False
+
+        return False
+
+    async def _aevaluate_end_condition(self, iteration_results: List[StepOutput], iteration: int = 0) -> bool:
+        """Async evaluate the end condition."""
+        if self.end_condition is None:
+            return False
+
+        if isinstance(self.end_condition, str):
+            if not CEL_AVAILABLE:
+                logger.error("CEL expression used but cel-python is not installed. Install with: pip install cel-python")
+                return False
+            try:
+                return evaluate_cel_loop_end_condition(self.end_condition, iteration_results, iteration)
+            except Exception as e:
+                logger.warning(f"CEL end condition evaluation failed: {e}")
+                return False
+
+        if callable(self.end_condition):
+            try:
+                if inspect.iscoroutinefunction(self.end_condition):
+                    return await self.end_condition(iteration_results)
+                else:
+                    return self.end_condition(iteration_results)
+            except Exception as e:
+                logger.warning(f"End condition evaluation failed: {e}")
+                return False
+
+        return False
 
     def _prepare_steps(self):
         """Prepare the steps for execution - mirrors workflow logic"""
@@ -273,13 +357,8 @@ class Loop:
             iteration += 1
 
             # Check end condition
-            if self.end_condition and callable(self.end_condition):
-                try:
-                    should_break = self.end_condition(iteration_results)
-                    if should_break:
-                        break
-                except Exception as e:
-                    logger.warning(f"End condition evaluation failed: {e}")
+            if self._evaluate_end_condition(iteration_results, iteration):
+                break
 
             # Break out of iteration loop if early termination was requested
             if early_termination:
@@ -437,13 +516,9 @@ class Loop:
 
             # Check end condition
             should_continue = True
-            if self.end_condition and callable(self.end_condition):
-                try:
-                    should_break = self.end_condition(iteration_results)
-                    should_continue = not should_break
-                    log_debug(f"End condition returned: {should_break}, should_continue: {should_continue}")
-                except Exception as e:
-                    logger.warning(f"End condition evaluation failed: {e}")
+            if self._evaluate_end_condition(iteration_results, iteration):
+                should_continue = False
+                log_debug("End condition met, loop will stop")
 
             if early_termination:
                 should_continue = False
@@ -469,7 +544,7 @@ class Loop:
             iteration += 1
 
             if not should_continue:
-                log_debug(f"Loop ending early due to end_condition at iteration {iteration}")
+                log_debug(f"Loop ending early at iteration {iteration}")
                 break
 
         log_debug(f"Loop End: {self.name} ({iteration} iterations)", center=True, symbol="=")
@@ -584,23 +659,14 @@ class Loop:
             iteration += 1
 
             # Check end condition
-            if self.end_condition and callable(self.end_condition):
-                try:
-                    if inspect.iscoroutinefunction(self.end_condition):
-                        should_break = await self.end_condition(iteration_results)
-                    else:
-                        should_break = self.end_condition(iteration_results)
-                    if should_break:
-                        break
-                except Exception as e:
-                    logger.warning(f"End condition evaluation failed: {e}")
+            if await self._aevaluate_end_condition(iteration_results, iteration):
+                break
 
             # Break out of iteration loop if early termination was requested
             if early_termination:
                 log_debug(f"Loop ending early due to step termination request at iteration {iteration}")
                 break
 
-        # Use workflow logger for async loop completion
         log_debug(f"Async Loop End: {self.name} ({iteration} iterations)", center=True, symbol="=")
 
         # Return flattened results from all iterations
@@ -752,16 +818,9 @@ class Loop:
 
             # Check end condition
             should_continue = True
-            if self.end_condition and callable(self.end_condition):
-                try:
-                    if inspect.iscoroutinefunction(self.end_condition):
-                        should_break = await self.end_condition(iteration_results)
-                    else:
-                        should_break = self.end_condition(iteration_results)
-                    should_continue = not should_break
-                    log_debug(f"End condition returned: {should_break}, should_continue: {should_continue}")
-                except Exception as e:
-                    logger.warning(f"End condition evaluation failed: {e}")
+            if await self._aevaluate_end_condition(iteration_results, iteration):
+                should_continue = False
+                log_debug("End condition met, loop will stop")
 
             if early_termination:
                 should_continue = False
@@ -787,7 +846,7 @@ class Loop:
             iteration += 1
 
             if not should_continue:
-                log_debug(f"Loop ending early due to end_condition at iteration {iteration}")
+                log_debug(f"Loop ending early at iteration {iteration}")
                 break
 
         log_debug(f"Loop End: {self.name} ({iteration} iterations)", center=True, symbol="=")
