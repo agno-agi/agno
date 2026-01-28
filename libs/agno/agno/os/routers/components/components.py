@@ -322,6 +322,7 @@ def attach_routes(
                 stage=body.stage,
                 notes=body.notes,
                 links=body.links,
+                set_current=body.set_current,
             )
             return ComponentConfigResponse(**config)
         except ValueError as e:
@@ -358,6 +359,7 @@ def attach_routes(
                 stage=body.stage,
                 notes=body.notes,
                 links=body.links,
+                set_current=body.set_current,
             )
             return ComponentConfigResponse(**config)
         except ValueError as e:

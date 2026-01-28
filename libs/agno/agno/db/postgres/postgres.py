@@ -3665,6 +3665,7 @@ class PostgresDb(BaseDb):
         stage: Optional[str] = None,
         notes: Optional[str] = None,
         links: Optional[List[Dict[str, Any]]] = None,
+        set_current: bool = True,
     ) -> Dict[str, Any]:
         """Create or update a config version for a component.
 
@@ -3825,7 +3826,7 @@ class PostgresDb(BaseDb):
                 # Determine final stage (could be from update or create)
                 final_stage = stage if stage is not None else (existing["stage"] if version is not None else "draft")
 
-                if final_stage == "published":
+                if final_stage == "published" and set_current:
                     sess.execute(
                         components_table.update()
                         .where(components_table.c.component_id == component_id)
