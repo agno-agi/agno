@@ -2183,11 +2183,27 @@ class Model(ABC):
                 )
 
             if paused_tool_executions:
+                # For the standard get_user_input tool ONLY, we execute before pausing.
+                # This is required for reasoning models (gpt-5.2, o3, o4-mini) that use
+                # previous_response_id - they expect ALL function calls to have outputs.
+                # get_user_input is safe to execute immediately (returns "User input received").
+                #
+                # IMPORTANT: We only do this if the tool doesn't have OTHER HITL flags.
+                # A custom tool named "get_user_input" with requires_confirmation=True
+                # should NOT be executed until confirmed.
+                is_standard_get_user_input = (
+                    fc.function.name == "get_user_input"
+                    and not fc.function.requires_confirmation
+                    and not fc.function.external_execution
+                )
+                if is_standard_get_user_input:
+                    yield from self.run_function_call(
+                        function_call=fc, function_call_results=function_call_results, additional_input=additional_input
+                    )
                 yield ModelResponse(
                     tool_executions=paused_tool_executions,
                     event=ModelResponseEvent.tool_call_paused.value,
                 )
-                # We don't execute the function calls here
                 continue
 
             yield from self.run_function_call(
@@ -2350,11 +2366,57 @@ class Model(ABC):
                 )
 
             if paused_tool_executions:
+                # For the standard get_user_input tool ONLY, we execute before pausing.
+                # This is required for reasoning models (gpt-5.2, o3, o4-mini) that use
+                # previous_response_id - they expect ALL function calls to have outputs.
+                # get_user_input is safe to execute immediately (returns "User input received").
+                #
+                # IMPORTANT: We only do this if the tool doesn't have OTHER HITL flags.
+                # A custom tool named "get_user_input" with requires_confirmation=True
+                # should NOT be executed until confirmed.
+                is_standard_get_user_input = (
+                    fc.function.name == "get_user_input"
+                    and not fc.function.requires_confirmation
+                    and not fc.function.external_execution
+                )
+                if is_standard_get_user_input:
+                    (
+                        function_call_success,
+                        function_call_timer,
+                        function_call,
+                        function_execution_result,
+                    ) = await self.arun_function_call(fc)
+                    function_call_output = (
+                        str(function_execution_result.result) if function_execution_result.result else ""
+                    )
+                    function_call_result = self.create_function_call_result(
+                        function_call,
+                        success=function_call_success,
+                        output=function_call_output,
+                        timer=function_call_timer,
+                        function_execution_result=function_execution_result,
+                    )
+                    yield ModelResponse(
+                        content=f"{function_call.get_call_str()} completed in {function_call_timer.elapsed:.4f}s. ",
+                        tool_executions=[
+                            ToolExecution(
+                                tool_call_id=function_call_result.tool_call_id,
+                                tool_name=function_call_result.tool_name,
+                                tool_args=function_call_result.tool_args,
+                                tool_call_error=function_call_result.tool_call_error,
+                                result=str(function_call_result.content),
+                                stop_after_tool_call=function_call_result.stop_after_tool_call,
+                                metrics=function_call_result.metrics,
+                            )
+                        ],
+                        event=ModelResponseEvent.tool_call_completed.value,
+                        updated_session_state=function_execution_result.updated_session_state,
+                    )
+                    function_call_results.append(function_call_result)
                 yield ModelResponse(
                     tool_executions=paused_tool_executions,
                     event=ModelResponseEvent.tool_call_paused.value,
                 )
-                # We don't execute the function calls here
                 continue
 
             yield ModelResponse(
