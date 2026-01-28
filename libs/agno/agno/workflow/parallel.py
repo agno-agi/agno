@@ -93,11 +93,11 @@ class Parallel:
             else:
                 return Step.from_dict(step_data, registry=registry, db=db, links=links)
 
-        deserialized_steps = [deserialize_step(step) for step in data["steps"]]
+        deserialized_steps = [deserialize_step(step) for step in data.get("steps", [])]
         return cls(
             *deserialized_steps,
-            name=data["name"],
-            description=data["description"],
+            name=data.get("name"),
+            description=data.get("description"),
         )
 
     def _prepare_steps(self):
