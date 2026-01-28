@@ -591,7 +591,8 @@ class Function(BaseModel):
         base_cache_dir = self.cache_dir or Path(gettempdir()) / "agno_cache"
         func_cache_dir = Path(base_cache_dir) / "functions" / self.name
         func_cache_dir.mkdir(parents=True, exist_ok=True)
-        return str(func_cache_dir / f"{cache_key}.json")
+        # Use as_posix() for cross-platform path consistency
+        return (func_cache_dir / f"{cache_key}.json").as_posix()
 
     def _get_cached_result(self, cache_file: str) -> Optional[Any]:
         """Retrieve cached result if valid."""

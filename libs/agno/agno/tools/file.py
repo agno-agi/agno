@@ -225,7 +225,8 @@ class FileTools(Toolkit):
                     "files": file_paths,
                 }
             else:
-                file_paths = [str(file_path.relative_to(self.base_dir)) for file_path in matching_files]
+                # Use as_posix() to ensure forward slashes in paths for cross-platform compatibility
+                file_paths = [file_path.relative_to(self.base_dir).as_posix() for file_path in matching_files]
 
                 result = {
                     "pattern": pattern,
