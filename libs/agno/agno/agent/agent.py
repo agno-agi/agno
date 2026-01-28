@@ -858,8 +858,9 @@ class Agent:
             return
 
         # Handle learning=True: create default LearningMachine
+        # Enables user_profile (structured fields) and user_memory (unstructured observations)
         if self.learning is True:
-            self._learning = LearningMachine(db=self.db, model=self.model, user_profile=True)
+            self._learning = LearningMachine(db=self.db, model=self.model, user_profile=True, user_memory=True)
             return
 
         # Handle learning=LearningMachine(...): inject dependencies
