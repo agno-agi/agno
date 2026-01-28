@@ -8,7 +8,7 @@ from agno.vectordb.pgvector import PgVector
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
 knowledge = Knowledge(
-    # Table name: ai.arxiv_documents
+    # Table name: ai.csv_documents
     vector_db=PgVector(
         table_name="csv_documents",
         db_url=db_url,
