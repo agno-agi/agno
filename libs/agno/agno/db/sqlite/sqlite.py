@@ -3759,10 +3759,6 @@ class SqliteDb(BaseDb):
                 if config_row is None:
                     return False
 
-                # Cannot delete published configs
-                if config_row.stage == "published":
-                    raise ValueError(f"Cannot delete published config {component_id} v{version}")
-
                 # Check if it's current version
                 current = sess.execute(
                     select(components_table.c.current_version).where(components_table.c.component_id == component_id)
