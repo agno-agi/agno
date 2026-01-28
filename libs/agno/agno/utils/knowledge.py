@@ -4,6 +4,24 @@ from agno.filters import FilterExpr
 from agno.utils.log import log_info
 
 
+def convert_agentic_filters_to_dict(filters: List[Any]) -> Dict[str, Any]:
+    """Helper function to convert a list of agentic filters to a dictionary.
+
+    Args:
+        filters: List of filter objects from the agent.
+
+    Returns:
+        Dict[str, Any]: Merged dictionary of all filters.
+    """
+    result: Dict[str, Any] = {}
+    for filt in filters:
+        if isinstance(filt, dict):
+            result.update(filt)
+        elif hasattr(filt, "key") and hasattr(filt, "value"):
+            result[filt.key] = filt.value
+    return result
+
+
 def get_agentic_or_user_search_filters(
     filters: Optional[Dict[str, Any]], effective_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]]
 ) -> Dict[str, Any]:
