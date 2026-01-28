@@ -1645,18 +1645,29 @@ class Agent:
                 except RunCancelledException as e:
                     # Handle run cancellation during streaming
                     log_info(f"Run {run_response.run_id} was cancelled during streaming")
-                    run_response.content = str(e)
                     run_response.status = RunStatus.cancelled
+                    # Don't overwrite content - preserve any partial content that was streamed
+                    # Only set content if it's empty
+                    if not run_response.content:
+                        run_response.content = str(e)
+
+                    # Preserve partial messages if available
+                    if run_response.messages is None and run_messages is not None:
+                        messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
+                        if messages_for_run_response:
+                            run_response.messages = messages_for_run_response
+
+                    # Cleanup and store BEFORE yielding the cancellation event
+                    # This ensures the session is saved even if the consumer stops iterating
+                    self._cleanup_and_store(
+                        run_response=run_response, session=session, run_context=run_context, user_id=user_id
+                    )
+
                     yield handle_event(
                         create_run_cancelled_event(from_run_response=run_response, reason=str(e)),
                         run_response,
                         events_to_skip=self.events_to_skip,  # type: ignore
                         store_events=self.store_events,
-                    )
-
-                    # Cleanup and store the run response and session
-                    self._cleanup_and_store(
-                        run_response=run_response, session=session, run_context=run_context, user_id=user_id
                     )
                     break
                 except (InputCheckError, OutputCheckError) as e:
@@ -2697,20 +2708,27 @@ class Agent:
                     if not run_response.content:
                         run_response.content = str(e)
 
+                    # Preserve partial messages if available
+                    if run_response.messages is None and run_messages is not None:
+                        messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
+                        if messages_for_run_response:
+                            run_response.messages = messages_for_run_response
+
+                    # Cleanup and store BEFORE yielding the cancellation event
+                    # This ensures the session is saved even if the consumer stops iterating
+                    await self._acleanup_and_store(
+                        run_response=run_response,
+                        session=agent_session,
+                        run_context=run_context,
+                        user_id=user_id,
+                    )
+
                     # Yield the cancellation event
                     yield handle_event(  # type: ignore
                         create_run_cancelled_event(from_run_response=run_response, reason=str(e)),
                         run_response,
                         events_to_skip=self.events_to_skip,  # type: ignore
                         store_events=self.store_events,
-                    )
-
-                    # Cleanup and store the run response and session
-                    await self._acleanup_and_store(
-                        run_response=run_response,
-                        session=agent_session,
-                        run_context=run_context,
-                        user_id=user_id,
                     )
                     break
 
@@ -3649,17 +3667,18 @@ class Agent:
                     run_response.status = RunStatus.cancelled
                     run_response.content = str(e)
 
+                    # Cleanup and store BEFORE yielding the cancellation event
+                    # This ensures the session is saved even if the consumer stops iterating
+                    self._cleanup_and_store(
+                        run_response=run_response, session=session, run_context=run_context, user_id=user_id
+                    )
+
                     # Yield the cancellation event
                     yield handle_event(  # type: ignore
                         create_run_cancelled_event(from_run_response=run_response, reason=str(e)),
                         run_response,
                         events_to_skip=self.events_to_skip,  # type: ignore
                         store_events=self.store_events,
-                    )
-
-                    # Cleanup and store the run response and session
-                    self._cleanup_and_store(
-                        run_response=run_response, session=session, run_context=run_context, user_id=user_id
                     )
                     break
                 except (InputCheckError, OutputCheckError) as e:
@@ -4525,20 +4544,21 @@ class Agent:
                     if not run_response.content:
                         run_response.content = str(e)
 
+                    # Cleanup and store BEFORE yielding the cancellation event
+                    # This ensures the session is saved even if the consumer stops iterating
+                    await self._acleanup_and_store(
+                        run_response=run_response,
+                        session=agent_session,
+                        run_context=run_context,
+                        user_id=user_id,
+                    )
+
                     # Yield the cancellation event
                     yield handle_event(  # type: ignore
                         create_run_cancelled_event(from_run_response=run_response, reason=str(e)),
                         run_response,
                         events_to_skip=self.events_to_skip,  # type: ignore
                         store_events=self.store_events,
-                    )
-
-                    # Cleanup and store the run response and session
-                    await self._acleanup_and_store(
-                        run_response=run_response,
-                        session=agent_session,
-                        run_context=run_context,
-                        user_id=user_id,
                     )
                     break
 
