@@ -21,7 +21,6 @@ from agno.workflow.types import StepInput
 from agno.workflow.workflow import Workflow
 
 # === AGENTS ===
-
 diagnostic_agent = Agent(
     name="Diagnostic Agent",
     instructions=(
@@ -56,8 +55,6 @@ followup_agent = Agent(
 
 
 # === EVALUATOR ===
-
-
 def is_technical_issue(step_input: StepInput) -> bool:
     """Return True when the query looks like a technical/product issue."""
     text = (step_input.input or "").lower()
@@ -81,7 +78,6 @@ def is_technical_issue(step_input: StepInput) -> bool:
 
 
 # === STEPS ===
-
 diagnose_step = Step(
     name="Diagnose",
     description="Run diagnostics on the technical issue",
@@ -108,8 +104,6 @@ followup_step = Step(
 
 
 # === WORKFLOW ===
-
-
 async def main():
     # Technical query -> if branch
     print("=" * 60)
