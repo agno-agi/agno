@@ -112,10 +112,17 @@ class Router:
     def _route_steps(self, step_input: StepInput, session_state: Optional[Dict[str, Any]] = None) -> List[Step]:  # type: ignore[return-value]
         """Route to the appropriate steps based on input"""
         if callable(self.selector):
-            if session_state is not None and self._selector_has_session_state_param():
-                result = self.selector(step_input, session_state)  # type: ignore[call-arg]
-            else:
-                result = self.selector(step_input)
+            has_session_state = session_state is not None and self._selector_has_session_state_param()
+            has_step_choices = self._selector_has_step_choices_param()
+
+            # Build kwargs based on what parameters the selector accepts
+            kwargs: Dict[str, Any] = {}
+            if has_session_state:
+                kwargs["session_state"] = session_state
+            if has_step_choices:
+                kwargs["step_choices"] = self.steps
+
+            result = self.selector(step_input, **kwargs)  # type: ignore[call-arg]
 
             # Handle the result based on its type
             if isinstance(result, Step):
@@ -132,17 +139,19 @@ class Router:
         """Async version of step routing"""
         if callable(self.selector):
             has_session_state = session_state is not None and self._selector_has_session_state_param()
+            has_step_choices = self._selector_has_step_choices_param()
+
+            # Build kwargs based on what parameters the selector accepts
+            kwargs: Dict[str, Any] = {}
+            if has_session_state:
+                kwargs["session_state"] = session_state
+            if has_step_choices:
+                kwargs["step_choices"] = self.steps
 
             if inspect.iscoroutinefunction(self.selector):
-                if has_session_state:
-                    result = await self.selector(step_input, session_state)  # type: ignore[call-arg]
-                else:
-                    result = await self.selector(step_input)
+                result = await self.selector(step_input, **kwargs)  # type: ignore[call-arg]
             else:
-                if has_session_state:
-                    result = self.selector(step_input, session_state)  # type: ignore[call-arg]
-                else:
-                    result = self.selector(step_input)
+                result = self.selector(step_input, **kwargs)  # type: ignore[call-arg]
 
             # Handle the result based on its type
             if isinstance(result, Step):
@@ -163,6 +172,17 @@ class Router:
         try:
             sig = inspect.signature(self.selector)
             return "session_state" in sig.parameters
+        except Exception:
+            return False
+
+    def _selector_has_step_choices_param(self) -> bool:
+        """Check if the selector function has a step_choices parameter"""
+        if not callable(self.selector):
+            return False
+
+        try:
+            sig = inspect.signature(self.selector)
+            return "step_choices" in sig.parameters
         except Exception:
             return False
 

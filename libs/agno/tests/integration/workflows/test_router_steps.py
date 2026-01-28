@@ -598,3 +598,182 @@ async def test_async_router_streaming_propagates_stop(shared_db):
     step_events = [e for e in events if isinstance(e, (StepStartedEvent, StepCompletedEvent))]
     step_names = [e.step_name for e in step_events]
     assert "should_not_run_step" not in step_names, "Workflow should have stopped before should_not_run_step"
+
+
+# ============================================================================
+# STEP_CHOICES PARAMETER TESTS
+# ============================================================================
+
+
+def test_selector_receives_step_choices():
+    """Test that selector function receives step_choices parameter with prepared steps."""
+    step_a = Step(name="step_a", executor=lambda x: StepOutput(content="Output A"))
+    step_b = Step(name="step_b", executor=lambda x: StepOutput(content="Output B"))
+
+    received_choices = []
+
+    def selector_with_choices(step_input: StepInput, step_choices: list):
+        """Selector that captures step_choices for verification."""
+        received_choices.extend(step_choices)
+        # Select step based on available choices
+        step_map = {s.name: s for s in step_choices}
+        if "A" in step_input.input:
+            return [step_map["step_a"]]
+        return [step_map["step_b"]]
+
+    router = Router(
+        name="choices_router",
+        selector=selector_with_choices,
+        choices=[step_a, step_b],
+    )
+
+    input_test = StepInput(input="Choose A")
+    result = router.execute(input_test)
+
+    # Verify step_choices was passed to selector
+    assert len(received_choices) == 2
+    assert all(isinstance(s, Step) for s in received_choices)
+    assert {s.name for s in received_choices} == {"step_a", "step_b"}
+
+    # Verify correct step was selected
+    assert result.steps[0].content == "Output A"
+
+
+def test_selector_with_step_choices_and_session_state():
+    """Test selector that uses both step_choices and session_state."""
+    step_1 = Step(name="step_1", executor=lambda x: StepOutput(content="Step 1"))
+    step_2 = Step(name="step_2", executor=lambda x: StepOutput(content="Step 2"))
+
+    def selector_with_both(step_input: StepInput, session_state: dict, step_choices: list):
+        """Selector using both session_state and step_choices."""
+        step_map = {s.name: s for s in step_choices}
+        target_step = session_state.get("target_step", "step_1")
+        return [step_map[target_step]]
+
+    router = Router(
+        name="combined_router",
+        selector=selector_with_both,
+        choices=[step_1, step_2],
+    )
+
+    # Test with session_state selecting step_2
+    input_test = StepInput(input="test")
+    result = router.execute(input_test, session_state={"target_step": "step_2"})
+
+    assert result.steps[0].content == "Step 2"
+
+
+def test_selector_without_step_choices_still_works():
+    """Test that selectors without step_choices parameter still work (backward compatibility)."""
+    step_a = Step(name="step_a", executor=lambda x: StepOutput(content="Output A"))
+    step_b = Step(name="step_b", executor=lambda x: StepOutput(content="Output B"))
+
+    def simple_selector(step_input: StepInput):
+        """Old-style selector without step_choices."""
+        return [step_a]
+
+    router = Router(
+        name="simple_router",
+        selector=simple_selector,
+        choices=[step_a, step_b],
+    )
+
+    input_test = StepInput(input="test")
+    result = router.execute(input_test)
+
+    assert result.steps[0].content == "Output A"
+
+
+def test_selector_dynamic_step_selection_from_choices():
+    """Test selector that dynamically selects steps based on step_choices names."""
+    step_research = Step(name="research", executor=lambda x: StepOutput(content="Research done"))
+    step_write = Step(name="write", executor=lambda x: StepOutput(content="Writing done"))
+    step_review = Step(name="review", executor=lambda x: StepOutput(content="Review done"))
+
+    def dynamic_selector(step_input: StepInput, step_choices: list):
+        """Select steps dynamically based on input keywords and available choices."""
+        step_map = {s.name: s for s in step_choices}
+        user_input = step_input.input.lower()
+
+        if "research" in user_input:
+            return [step_map["research"]]
+        elif "write" in user_input:
+            return [step_map["write"]]
+        elif "full" in user_input:
+            # Chain all available steps
+            return [step_map["research"], step_map["write"], step_map["review"]]
+        return [step_choices[0]]
+
+    router = Router(
+        name="dynamic_router",
+        selector=dynamic_selector,
+        choices=[step_research, step_write, step_review],
+    )
+
+    # Test single step selection
+    result = router.execute(StepInput(input="do research"))
+    assert len(result.steps) == 1
+    assert result.steps[0].content == "Research done"
+
+    # Test chaining multiple steps
+    result = router.execute(StepInput(input="full workflow"))
+    assert len(result.steps) == 3
+    assert result.steps[0].content == "Research done"
+    assert result.steps[1].content == "Writing done"
+    assert result.steps[2].content == "Review done"
+
+
+@pytest.mark.asyncio
+async def test_async_selector_receives_step_choices():
+    """Test that async selector receives step_choices parameter."""
+    step_a = Step(name="step_a", executor=lambda x: StepOutput(content="Async A"))
+    step_b = Step(name="step_b", executor=lambda x: StepOutput(content="Async B"))
+
+    async def async_selector(step_input: StepInput, step_choices: list):
+        """Async selector with step_choices."""
+        step_map = {s.name: s for s in step_choices}
+        return [step_map["step_b"]]
+
+    router = Router(
+        name="async_choices_router",
+        selector=async_selector,
+        choices=[step_a, step_b],
+    )
+
+    input_test = StepInput(input="test")
+    result = await router.aexecute(input_test)
+
+    assert result.steps[0].content == "Async B"
+
+
+def test_selector_step_choices_in_workflow(shared_db):
+    """Test step_choices parameter works correctly within a workflow."""
+    step_fast = Step(name="fast", executor=lambda x: StepOutput(content="Fast path"))
+    step_slow = Step(name="slow", executor=lambda x: StepOutput(content="Slow path"))
+
+    def workflow_selector(step_input: StepInput, step_choices: list):
+        """Selector that uses step_choices in workflow context."""
+        step_map = {s.name: s for s in step_choices}
+        if "fast" in step_input.input.lower():
+            return [step_map["fast"]]
+        return [step_map["slow"]]
+
+    workflow = Workflow(
+        name="Step Choices Workflow",
+        db=shared_db,
+        steps=[
+            Router(
+                name="choices_router",
+                selector=workflow_selector,
+                choices=[step_fast, step_slow],
+            )
+        ],
+    )
+
+    # Test fast path
+    response = workflow.run(input="take fast route")
+    assert find_content_in_steps(response.step_results[0], "Fast path")
+
+    # Test slow path
+    response = workflow.run(input="take slow route")
+    assert find_content_in_steps(response.step_results[0], "Slow path")
