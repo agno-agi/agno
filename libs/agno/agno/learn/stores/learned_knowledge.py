@@ -75,9 +75,7 @@ class LearnedKnowledgeStore(LearningStore):
         self._schema = self.config.schema or LearnedKnowledge
 
         if self.config.mode == LearningMode.HITL:
-            log_warning(
-                "LearnedKnowledgeStore does not support HITL mode. Use PROPOSE mode for human-in-the-loop approval. "
-            )
+            log_warning("LearnedKnowledgeStore does not support HITL mode. Use PROPOSE mode for soft approval.")
 
     # =========================================================================
     # LearningStore Protocol Implementation
@@ -178,6 +176,9 @@ class LearnedKnowledgeStore(LearningStore):
             namespace: Namespace to save learnings to (default: "global").
             **kwargs: Additional context (ignored).
         """
+        # Reset state for this operation
+        self.learning_saved = False
+
         # process only supported in ALWAYS mode
         # for programmatic extraction, use extract_and_save directly
         if self.config.mode != LearningMode.ALWAYS:
@@ -204,6 +205,9 @@ class LearnedKnowledgeStore(LearningStore):
         **kwargs,
     ) -> None:
         """Async version of process."""
+        # Reset state for this operation
+        self.learning_saved = False
+
         if self.config.mode != LearningMode.ALWAYS:
             return
 
@@ -250,35 +254,45 @@ class LearnedKnowledgeStore(LearningStore):
             → Then incorporate any relevant findings into your response
 
             **RULE 2: ALWAYS search before saving.**
-            When asked to save a learning or when you want to save an insight:
-            → First call `search_learnings` to check if similar knowledge exists
-            → Only save if it's genuinely new (not a duplicate or minor variation)
+            Before saving anything, first call `search_learnings` to check if similar knowledge exists.
+            Only save if it's genuinely new (not a duplicate or minor variation).
+
+            **RULE 3: ALWAYS save when explicitly asked.**
+            When the user says "remember", "save", "note", "keep in mind", or similar:
+            → These are explicit directives - save what they asked (after searching for duplicates)
+
+            **RULE 4: ALWAYS save team/org goals, constraints, and policies.**
+            When the user shares organizational context:
+            → "We're trying to..." / "Our goal is..." (team goals)
+            → "We can't use..." / "We need to avoid..." (constraints)
+            → "Our policy is..." / "We always..." (policies)
+            → "Our priority is..." / "We prefer..." at org level (priorities)
+            These are shared context - save them so other users benefit too.
 
             ## Tools
 
             `search_learnings(query)` - Search for relevant prior insights. Use liberally.
-            `save_learning(title, learning, context, tags)` - Save genuinely new insights.
+            `save_learning(title, learning, context, tags)` - Save new insights or context.
 
             ## When to Search
 
-            ALWAYS search when the user:
+            Search when the user:
             - Asks for recommendations or best practices
             - Asks how to approach a problem
             - Asks about trade-offs or considerations
             - Mentions a technology, domain, or problem area
-            - Asks you to save something (search first to check for duplicates!)
+            - Asks you to save something (check for duplicates first)
 
-            ## When to Save
+            ## When to Save (Self-Discovered Insights)
 
-            Only save insights that are:
+            For insights you discover yourself (not explicit requests or org context), only save if:
             - Non-obvious (required investigation to discover)
             - Reusable (applies to a category of problems)
             - Actionable (specific enough to apply directly)
-            - Not already in the knowledge base (you checked by searching first!)
 
             Do NOT save:
             - Raw facts or common knowledge
-            - User-specific preferences (use user memory instead)
+            - Individual user preferences (use user memory instead)
             - Duplicates of existing learnings
             </learning_system>\
         """)
@@ -308,7 +322,7 @@ class LearnedKnowledgeStore(LearningStore):
             If you discover something worth preserving, propose it at the end of your response:
 
             ---
-            **💡 Proposed Learning**
+            **Proposed Learning**
             **Title:** [Concise title]
             **Context:** [When this applies]
             **Insight:** [The learning - specific and actionable]
@@ -484,15 +498,17 @@ class LearnedKnowledgeStore(LearningStore):
         tools = []
 
         if self.config.agent_can_search:
-            tools.append(self._create_search_learnings_tool(user_id=user_id))
+            tools.append(
+                self._create_search_learnings_tool(namespace=namespace or self.config.namespace, user_id=user_id)
+            )
 
         if self.config.agent_can_save:
             tools.append(
                 self._create_save_learning_tool(
+                    namespace=namespace or self.config.namespace,
                     user_id=user_id,
                     agent_id=agent_id,
                     team_id=team_id,
-                    default_namespace=namespace,
                 )
             )
 
@@ -509,15 +525,17 @@ class LearnedKnowledgeStore(LearningStore):
         tools = []
 
         if self.config.agent_can_search:
-            tools.append(self._create_async_search_learnings_tool(user_id=user_id))
+            tools.append(
+                self._create_async_search_learnings_tool(namespace=namespace or self.config.namespace, user_id=user_id)
+            )
 
         if self.config.agent_can_save:
             tools.append(
                 self._create_async_save_learning_tool(
+                    namespace=namespace or self.config.namespace,
                     user_id=user_id,
                     agent_id=agent_id,
                     team_id=team_id,
-                    default_namespace=namespace,
                 )
             )
 
@@ -529,10 +547,10 @@ class LearnedKnowledgeStore(LearningStore):
 
     def _create_save_learning_tool(
         self,
+        namespace: str,
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
-        default_namespace: Optional[str] = None,
     ) -> Callable:
         """Create the save_learning tool for the agent."""
 
@@ -541,31 +559,20 @@ class LearnedKnowledgeStore(LearningStore):
             learning: str,
             context: Optional[str] = None,
             tags: Optional[List[str]] = None,
-            namespace: Optional[str] = None,
         ) -> str:
-            """Save a reusable insight to the knowledge base.
+            """Save a reusable insight or organizational context to the knowledge base.
 
-            IMPORTANT: Before calling this, you MUST first call search_learnings to check
-            if similar knowledge already exists. Do not save duplicates!
-
-            Only save insights that are:
-            - Non-obvious (not common knowledge)
-            - Reusable (applies beyond this specific case)
-            - Actionable (specific enough to apply directly)
-            - Not already saved (you searched first, right?)
+            IMPORTANT: You MUST call search_learnings first to check for duplicates.
 
             Args:
-                title: Concise, searchable title (e.g., "Cloud egress cost variations").
-                learning: The insight - specific and actionable.
-                context: When/where this applies (e.g., "When selecting cloud providers").
-                tags: Categories for organization (e.g., ["cloud", "costs"]).
-                namespace: Access scope - "global" (shared) or "user" (private).
+                title: Concise, searchable title.
+                learning: The insight or context - specific and actionable.
+                context: When/where this applies.
+                tags: Categories for organization.
 
             Returns:
                 Confirmation message.
             """
-            effective_namespace = namespace or default_namespace or "global"
-
             success = self.save(
                 title=title,
                 learning=learning,
@@ -574,21 +581,21 @@ class LearnedKnowledgeStore(LearningStore):
                 user_id=user_id,
                 agent_id=agent_id,
                 team_id=team_id,
-                namespace=effective_namespace,
+                namespace=namespace,
             )
             if success:
                 self.learning_saved = True
-                return f"Learning saved: {title} (namespace: {effective_namespace})"
+                return f"Learning saved: {title} (namespace: {namespace})"
             return "Failed to save learning"
 
         return save_learning
 
     def _create_async_save_learning_tool(
         self,
+        namespace: str,
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
-        default_namespace: Optional[str] = None,
     ) -> Callable:
         """Create the async save_learning tool for the agent."""
 
@@ -597,31 +604,20 @@ class LearnedKnowledgeStore(LearningStore):
             learning: str,
             context: Optional[str] = None,
             tags: Optional[List[str]] = None,
-            namespace: Optional[str] = None,
         ) -> str:
-            """Save a reusable insight to the knowledge base.
+            """Save a reusable insight or organizational context to the knowledge base.
 
-            IMPORTANT: Before calling this, you MUST first call search_learnings to check
-            if similar knowledge already exists. Do not save duplicates!
-
-            Only save insights that are:
-            - Non-obvious (not common knowledge)
-            - Reusable (applies beyond this specific case)
-            - Actionable (specific enough to apply directly)
-            - Not already saved (you searched first, right?)
+            IMPORTANT: You MUST call search_learnings first to check for duplicates.
 
             Args:
-                title: Concise, searchable title (e.g., "Cloud egress cost variations").
-                learning: The insight - specific and actionable.
-                context: When/where this applies (e.g., "When selecting cloud providers").
-                tags: Categories for organization (e.g., ["cloud", "costs"]).
-                namespace: Access scope - "global" (shared) or "user" (private).
+                title: Concise, searchable title.
+                learning: The insight or context - specific and actionable.
+                context: When/where this applies.
+                tags: Categories for organization.
 
             Returns:
                 Confirmation message.
             """
-            effective_namespace = namespace or default_namespace or "global"
-
             success = await self.asave(
                 title=title,
                 learning=learning,
@@ -630,11 +626,11 @@ class LearnedKnowledgeStore(LearningStore):
                 user_id=user_id,
                 agent_id=agent_id,
                 team_id=team_id,
-                namespace=effective_namespace,
+                namespace=namespace,
             )
             if success:
                 self.learning_saved = True
-                return f"Learning saved: {title} (namespace: {effective_namespace})"
+                return f"Learning saved: {title} (namespace: {namespace})"
             return "Failed to save learning"
 
         return save_learning
@@ -645,6 +641,7 @@ class LearnedKnowledgeStore(LearningStore):
 
     def _create_search_learnings_tool(
         self,
+        namespace: str,
         user_id: Optional[str] = None,
     ) -> Callable:
         """Create the search_learnings tool for the agent."""
@@ -652,7 +649,6 @@ class LearnedKnowledgeStore(LearningStore):
         def search_learnings(
             query: str,
             limit: int = 5,
-            namespace: Optional[str] = None,
         ) -> str:
             """Search for relevant insights in the knowledge base.
 
@@ -662,9 +658,8 @@ class LearnedKnowledgeStore(LearningStore):
 
             Args:
                 query: Keywords describing what you're looking for.
-                       Examples: "cloud costs", "API rate limiting", "database migration"
+                       Examples: "cloud costs", "API rate limiting", "team goals"
                 limit: Maximum results (default: 5)
-                namespace: Filter by scope (None = all, "global", "user", or custom)
 
             Returns:
                 List of relevant learnings, or message if none found.
@@ -686,6 +681,7 @@ class LearnedKnowledgeStore(LearningStore):
 
     def _create_async_search_learnings_tool(
         self,
+        namespace: str,
         user_id: Optional[str] = None,
     ) -> Callable:
         """Create the async search_learnings tool for the agent."""
@@ -693,7 +689,6 @@ class LearnedKnowledgeStore(LearningStore):
         async def search_learnings(
             query: str,
             limit: int = 5,
-            namespace: Optional[str] = None,
         ) -> str:
             """Search for relevant insights in the knowledge base.
 
@@ -703,9 +698,8 @@ class LearnedKnowledgeStore(LearningStore):
 
             Args:
                 query: Keywords describing what you're looking for.
-                       Examples: "cloud costs", "API rate limiting", "database migration"
+                       Examples: "cloud costs", "API rate limiting", "team goals"
                 limit: Maximum results (default: 5)
-                namespace: Filter by scope (None = all, "global", "user", or custom)
 
             Returns:
                 List of relevant learnings, or message if none found.
@@ -893,7 +887,7 @@ class LearnedKnowledgeStore(LearningStore):
             log_warning("LearnedKnowledgeStore.save: no knowledge base configured")
             return False
 
-        effective_namespace = namespace or "global"
+        effective_namespace = namespace or self.config.namespace
 
         # Validate "user" namespace has user_id
         if effective_namespace == "user" and not user_id:
@@ -963,7 +957,7 @@ class LearnedKnowledgeStore(LearningStore):
             log_warning("LearnedKnowledgeStore.asave: no knowledge base configured")
             return False
 
-        effective_namespace = namespace or "global"
+        effective_namespace = namespace or self.config.namespace
 
         # Validate "user" namespace has user_id
         if effective_namespace == "user" and not user_id:
@@ -988,7 +982,7 @@ class LearnedKnowledgeStore(LearningStore):
             learning_obj = self.schema(**learning_data)
             text_content = self._to_text_content(learning=learning_obj)
 
-            # Build metadata for filtering - THIS IS THE KEY FIX!
+            # Build metadata for filtering
             # Metadata must be passed separately to insert for filters to work
             filter_metadata: dict[str, Any] = {
                 "namespace": effective_namespace,
@@ -1181,49 +1175,48 @@ class LearnedKnowledgeStore(LearningStore):
         from agno.models.message import Message
 
         system_prompt = dedent("""\
-            You are a Learning Extractor. Your job is to identify genuinely reusable insights
-            from conversations - the kind of knowledge that would help with similar tasks in the future.
+            You are a Learning Extractor. Your job is to identify knowledge worth preserving
+            from conversations for future use.
 
-            ## What Makes Something Worth Saving
+            ## What to Save
 
-            A good learning is:
-            - **Discovered, not stated**: The insight emerged through work, not just repeated from the user
-            - **Non-obvious**: It required reasoning, investigation, or experience to arrive at
-            - **Reusable**: It applies to a category of problems, not just this exact situation
-            - **Actionable**: Someone encountering a similar situation could apply it directly
-            - **Durable**: It won't become outdated quickly
+            **1. Discovered Insights** - Knowledge that emerged through the conversation:
+            - Non-obvious (required reasoning or investigation)
+            - Reusable (applies to a category of problems)
+            - Actionable (specific enough to apply directly)
+            - Durable (won't become outdated quickly)
+
+            **2. Organizational Context** - Explicit directives shared by the user:
+            - Explicit save requests: "remember that...", "note that...", "keep in mind..."
+            - Team/org goals: "we're trying to...", "our goal is...", "our priority is..."
+            - Constraints: "we can't use...", "we need to avoid..."
+            - Policies: "our policy is...", "we always...", "we never..."
 
             ## What NOT to Save
 
-            - **Raw facts**: "Python 3.12 was released in October 2023" (use search for retrieval)
-            - **User-specific info**: "User prefers TypeScript" (belongs in user memory)
-            - **Common knowledge**: "Use version control for code" (everyone knows this)
-            - **One-off answers**: "The error was a typo on line 42" (not generalizable)
-            - **Summaries**: Recaps of what was discussed (no new insight)
-            - **Uncertain conclusions**: If you're not confident, don't save it
+            - Raw facts (use search for retrieval)
+            - Individual user preferences (belongs in user memory)
+            - Common knowledge (everyone knows this)
+            - One-off answers (not generalizable)
+            - Summaries without insight
+            - Uncertain conclusions
 
-            ## Examples of Good Learnings
+            ## Examples
 
-            From a debugging session:
+            Good - Discovered insight:
             > **Title:** Debugging intermittent PostgreSQL connection timeouts
-            > **Learning:** When connection timeouts are intermittent, check for connection pool exhaustion
-            > before investigating network issues. Monitor active connections vs pool size, and look for
-            > long-running transactions that hold connections.
-            > **Context:** Diagnosing database connectivity issues in production
+            > **Learning:** Check for connection pool exhaustion before investigating network issues.
+            > **Context:** Diagnosing database connectivity issues
 
-            From an architecture discussion:
-            > **Title:** Event sourcing trade-offs for audit requirements
-            > **Learning:** Event sourcing adds complexity but provides natural audit trails. For systems
-            > where audit is the primary driver, consider a simpler append-only log table with the main
-            > data model unchanged - you get audit without the full event sourcing overhead.
-            > **Context:** Evaluating architecture patterns when audit trails are required
+            Good - Organizational context:
+            > **Title:** Team goal: reduce cloud egress costs
+            > **Learning:** Factor egress costs into architecture decisions.
+            > **Context:** Infrastructure and vendor decisions
 
-            ## Examples of What NOT to Save
-
-            - "The user's API endpoint was returning 500 errors" (specific incident, not insight)
-            - "React is a popular frontend framework" (common knowledge)
-            - "We discussed three options for the database" (summary, no insight)
-            - "Always write tests" (too vague to be actionable)
+            Bad (don't save):
+            - "The error was a typo on line 42" (one-off)
+            - "React is popular" (common knowledge)
+            - "We discussed options" (summary, no insight)
 
         """)
 
@@ -1239,14 +1232,14 @@ These insights are already in the knowledge base. Do not save variations of thes
         system_prompt += dedent("""\
             ## Your Task
 
-            Review the conversation below. If - and only if - it contains a genuinely reusable insight
-            that isn't already captured, save it using the save_learning tool.
+            Review the conversation below. Save anything that fits the criteria above:
+            - Discovered insights worth preserving
+            - Organizational context the user shared (goals, constraints, policies)
 
             **Important:**
-            - Most conversations will NOT produce a learning. That's expected and correct.
+            - Most conversations will NOT produce a learning. That's expected.
             - When in doubt, don't save. Quality over quantity.
-            - One excellent learning is worth more than five mediocre ones.
-            - It's perfectly fine to do nothing if there's nothing worth saving.\
+            - It's fine to do nothing if there's nothing worth saving.\
         """)
 
         return [
@@ -1262,7 +1255,7 @@ These insights are already in the knowledge base. Do not save variations of thes
         namespace: Optional[str] = None,
     ) -> List[Callable]:
         """Get sync extraction tools."""
-        effective_namespace = namespace or "global"
+        effective_namespace = namespace or self.config.namespace
 
         def save_learning(
             title: str,
@@ -1270,18 +1263,12 @@ These insights are already in the knowledge base. Do not save variations of thes
             context: Optional[str] = None,
             tags: Optional[List[str]] = None,
         ) -> str:
-            """Save a genuinely reusable insight discovered in this conversation.
-
-            Only call this if you've identified something that:
-            - Required investigation or reasoning to discover
-            - Would help with similar future tasks
-            - Isn't already captured in existing learnings
-            - Is specific and actionable enough to apply directly
+            """Save a reusable insight or organizational context.
 
             Args:
-                title: Concise, searchable title that captures the topic.
-                learning: The insight itself - specific enough to apply, general enough to reuse.
-                context: When/where this applies (helps with future relevance matching).
+                title: Concise, searchable title.
+                learning: The insight or context - specific and actionable.
+                context: When/where this applies.
                 tags: Categories for organization.
 
             Returns:
@@ -1309,7 +1296,7 @@ These insights are already in the knowledge base. Do not save variations of thes
         namespace: Optional[str] = None,
     ) -> List[Callable]:
         """Get async extraction tools."""
-        effective_namespace = namespace or "global"
+        effective_namespace = namespace or self.config.namespace
 
         async def save_learning(
             title: str,
@@ -1317,18 +1304,12 @@ These insights are already in the knowledge base. Do not save variations of thes
             context: Optional[str] = None,
             tags: Optional[List[str]] = None,
         ) -> str:
-            """Save a genuinely reusable insight discovered in this conversation.
-
-            Only call this if you've identified something that:
-            - Required investigation or reasoning to discover
-            - Would help with similar future tasks
-            - Isn't already captured in existing learnings
-            - Is specific and actionable enough to apply directly
+            """Save a reusable insight or organizational context.
 
             Args:
-                title: Concise, searchable title that captures the topic.
-                learning: The insight itself - specific enough to apply, general enough to reuse.
-                context: When/where this applies (helps with future relevance matching).
+                title: Concise, searchable title.
+                learning: The insight or context - specific and actionable.
+                context: When/where this applies.
                 tags: Categories for organization.
 
             Returns:
@@ -1398,10 +1379,6 @@ These insights are already in the knowledge base. Do not save variations of thes
     # =========================================================================
     # Private Helpers
     # =========================================================================
-
-    def _build_learning_id(self, title: str) -> str:
-        """Build a unique learning ID from title."""
-        return f"learning_{title.lower().replace(' ', '_')[:32]}"
 
     def _parse_result(self, result: Any) -> Optional[Any]:
         """Parse a search result into a learning object."""
