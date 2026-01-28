@@ -104,7 +104,7 @@ class LanceDb(VectorDb):
         self.async_connection: Optional[lancedb.AsyncConnection] = async_connection
         self.async_table: Optional[lancedb.db.AsyncTable] = async_table
 
-        if table_name and table_name in self.connection.table_names():
+        if table_name and table_name in self.connection.list_tables().tables:
             # Open the table if it exists
             try:
                 self.table = self.connection.open_table(name=table_name)
@@ -186,8 +186,8 @@ class LanceDb(VectorDb):
             self.async_connection = await lancedb.connect_async(self.uri)
         # Only try to open table if it exists and we don't have it already
         if self.async_table is None:
-            table_names = await self.async_connection.table_names()
-            if self.table_name in table_names:
+            table_list = await self.async_connection.list_tables()
+            if self.table_name in table_list.tables:
                 try:
                     self.async_table = await self.async_connection.open_table(self.table_name)
                 except ValueError:
@@ -199,7 +199,7 @@ class LanceDb(VectorDb):
         """Refresh the sync connection to see changes made by async operations."""
         try:
             # Re-establish sync connection to see async changes
-            if self.connection and self.table_name in self.connection.table_names():
+            if self.connection is not None and self.table_name in self.connection.list_tables().tables:
                 self.table = self.connection.open_table(self.table_name)
         except Exception as e:
             log_debug(f"Could not refresh sync connection: {e}")
@@ -282,9 +282,10 @@ class LanceDb(VectorDb):
                 meta_data.update(filters)
                 document.meta_data = meta_data
 
-            # Only embed if the document doesn't already have an embedding
+            # Only embed if the document doesn't already have a valid embedding
             # This prevents duplicate embedding when called from async_insert or async_upsert
-            if document.embedding is None:
+            # Check for both None and empty list (async embedding failures return [])
+            if document.embedding is None or (isinstance(document.embedding, list) and len(document.embedding) == 0):
                 document.embed(embedder=self.embedder)
             cleaned_content = document.content.replace("\x00", "\ufffd")
             # Include content_hash in ID to ensure uniqueness across different content hashes
@@ -363,12 +364,21 @@ class LanceDb(VectorDb):
                 else:
                     logger.warning(f"Async batch embedding failed, falling back to individual embeddings: {e}")
                     embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
-                    await asyncio.gather(*embed_tasks, return_exceptions=True)
+                    results = await asyncio.gather(*embed_tasks, return_exceptions=True)
+                    # Log any embedding failures (they will be re-tried in sync insert)
+                    for i, result in enumerate(results):
+                        if isinstance(result, Exception):
+                            log_warning(f"Async embedding failed for document {i}, will retry in sync insert: {result}")
         else:
             embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
-            await asyncio.gather(*embed_tasks, return_exceptions=True)
+            results = await asyncio.gather(*embed_tasks, return_exceptions=True)
+            # Log any embedding failures (they will be re-tried in sync insert)
+            for i, result in enumerate(results):
+                if isinstance(result, Exception):
+                    log_warning(f"Async embedding failed for document {i}, will retry in sync insert: {result}")
 
         # Use sync insert to avoid sync/async table synchronization issues
+        # Sync insert will re-embed any documents that failed async embedding
         self.insert(content_hash, documents, filters)
 
     def upsert_available(self) -> bool:
@@ -414,13 +424,25 @@ class LanceDb(VectorDb):
                     if is_rate_limit:
                         raise e
                     else:
+                        logger.warning(f"Async batch embedding failed, falling back to individual embeddings: {e}")
                         embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
-                        await asyncio.gather(*embed_tasks, return_exceptions=True)
+                        results = await asyncio.gather(*embed_tasks, return_exceptions=True)
+                        # Log any embedding failures (they will be re-tried in sync upsert)
+                        for i, result in enumerate(results):
+                            if isinstance(result, Exception):
+                                log_warning(
+                                    f"Async embedding failed for document {i}, will retry in sync upsert: {result}"
+                                )
             else:
                 embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
-                await asyncio.gather(*embed_tasks, return_exceptions=True)
+                results = await asyncio.gather(*embed_tasks, return_exceptions=True)
+                # Log any embedding failures (they will be re-tried in sync upsert)
+                for i, result in enumerate(results):
+                    if isinstance(result, Exception):
+                        log_warning(f"Async embedding failed for document {i}, will retry in sync upsert: {result}")
 
         # Use sync upsert for reliability
+        # Sync upsert (via insert) will re-embed any documents that failed async embedding
         self.upsert(content_hash=content_hash, documents=documents, filters=filters)
 
     def search(
@@ -437,7 +459,7 @@ class LanceDb(VectorDb):
         Returns:
             List[Document]: List of matching documents
         """
-        if self.connection:
+        if self.connection is not None:
             self.table = self.connection.open_table(name=self.table_name)
 
         results = None
@@ -619,8 +641,8 @@ class LanceDb(VectorDb):
         # If we have an async table that was created, the table exists
         if self.async_table is not None:
             return True
-        if self.connection:
-            return self.table_name in self.connection.table_names()
+        if self.connection is not None:
+            return self.table_name in self.connection.list_tables().tables
         return False
 
     async def async_exists(self) -> bool:
@@ -631,8 +653,8 @@ class LanceDb(VectorDb):
         # Check if table exists in database without trying to open it
         if self.async_connection is None:
             self.async_connection = await lancedb.connect_async(self.uri)
-        table_names = await self.async_connection.table_names()
-        return self.table_name in table_names
+        table_list = await self.async_connection.list_tables()
+        return self.table_name in table_list.tables
 
     async def async_get_count(self) -> int:
         """Get the number of rows in the table asynchronously."""
@@ -897,7 +919,7 @@ class LanceDb(VectorDb):
 
             # Get all documents and filter in Python (LanceDB doesn't support JSON operators)
             total_count = self.table.count_rows()
-            results = self.table.search().select(["id", "payload"]).limit(total_count).to_pandas()
+            results = self.table.search().select(["id", "payload", "vector"]).limit(total_count).to_pandas()
 
             if results.empty:
                 logger.debug("No documents found")
