@@ -15,7 +15,7 @@ from agno.knowledge.content import Content, ContentStatus
 from agno.knowledge.reader import Reader
 from agno.knowledge.remote_content.config import GitHubConfig, RemoteContentConfig
 from agno.knowledge.remote_content.remote_content import GitHubContent
-from agno.utils.log import log_error, log_warning
+from agno.utils.log import log_error, log_info, log_warning
 from agno.utils.string import generate_id
 
 
@@ -126,6 +126,8 @@ class GitHubLoader:
             if not files_to_process:
                 log_warning(f"No files found at GitHub path: {path_to_process}")
                 return
+
+            log_info(f"Processing {len(files_to_process)} file(s) from GitHub")
 
             # Process each file
             for file_info in files_to_process:
@@ -329,6 +331,8 @@ class GitHubLoader:
             if not files_to_process:
                 log_warning(f"No files found at GitHub path: {path_to_process}")
                 return
+
+            log_info(f"Processing {len(files_to_process)} file(s) from GitHub")
 
             # Process each file
             for file_info in files_to_process:
