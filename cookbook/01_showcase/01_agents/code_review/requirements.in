@@ -1,0 +1,6 @@
+# Code Review Agent - Dependencies
+agno
+openai
+PyGithub
+ddgs
+beautifulsoup4
