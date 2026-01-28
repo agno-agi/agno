@@ -19,7 +19,7 @@ from agno.knowledge.reranker.aws_bedrock import (
     AwsBedrockReranker,
     CohereBedrockReranker,
 )
-from agno.models.aws import AwsBedrock```
+from agno.models.aws.bedrock import AwsBedrock
 from agno.vectordb.pgvector import PgVector
 
 # Option 1: Using AwsBedrockReranker with Cohere Rerank 3.5
@@ -77,7 +77,7 @@ knowledge_cohere.insert(
 
 # Create an agent with Bedrock model and knowledge
 agent = Agent(
-    model=AWSBedrock(id="anthropic.claude-sonnet-4-20250514-v1:0"),
+    model=AwsBedrock(id="anthropic.claude-sonnet-4-20250514-v1:0"),
     knowledge=knowledge_cohere,
     markdown=True,
 )

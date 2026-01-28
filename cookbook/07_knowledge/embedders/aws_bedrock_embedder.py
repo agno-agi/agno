@@ -9,6 +9,7 @@ Requirements:
 - boto3 installed: pip install boto3
 """
 
+from agno.knowledge.chunking.fixed import FixedSizeChunking
 from agno.knowledge.embedder.aws_bedrock import AwsBedrockEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader.pdf_reader import PDFReader
@@ -34,7 +35,9 @@ knowledge = Knowledge(
 )
 
 # Insert documents (embedder will automatically use search_document type)
+# Note: Cohere Embed v3 models have a 2048 token limit per text input,
+# so we use smaller chunks to stay within the limit
 knowledge.insert(
     url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
-    reader=PDFReader(chunk_size=2048),
+    reader=PDFReader(chunking_strategy=FixedSizeChunking(chunk_size=1500)),
 )
