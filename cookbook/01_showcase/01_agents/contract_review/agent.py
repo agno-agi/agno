@@ -12,20 +12,21 @@ Example prompts:
 - "What are the termination clauses in this employment contract?"
 
 Usage:
-    from agent import contract_agent, review_contract
+    from agent import contract_agent
+    from agno.media import File
 
     # Review a contract file (PDF, DOCX, TXT, etc.)
-    review = review_contract("path/to/contract.pdf")
-    print(review.executive_summary)
-    print(review.risk_flags)
+    contract_agent.print_response(
+        "Review this contract and identify key risks.",
+        files=[File(filepath="path/to/contract.pdf")],
+        stream=True,
+    )
 
     # Review a contract from URL
-    review = review_contract("https://example.com/contract.pdf")
-
-    # Or use the agent directly
     contract_agent.print_response(
-        "Review this contract",
-        files=[File(filepath="path/to/contract.pdf")]
+        "Analyze this NDA.",
+        files=[File(url="https://example.com/contract.pdf")],
+        stream=True,
     )
 """
 
@@ -353,7 +354,6 @@ contract_agent = Agent(
     name="Contract Review Agent",
     model=Gemini(id="gemini-3-flash-preview"),
     system_message=SYSTEM_MESSAGE,
-    # output_schema=ContractReview,
     tools=[
         ReasoningTools(add_instructions=True),
         WebSearchTools(backend="google"),

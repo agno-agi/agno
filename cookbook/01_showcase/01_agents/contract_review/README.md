@@ -95,15 +95,21 @@ contract_agent.print_response(
 
 ### Structured Output (Optional)
 
-The agent outputs readable markdown by default. To get structured output, set the output schema:
+The agent outputs readable markdown by default. To get structured output, create a new agent with `output_schema`:
 
 ```python
-from agent import contract_agent
+from agno.agent import Agent
+from agno.media import File
+from agno.models.google import Gemini
 from schemas import ContractReview
 
-contract_agent.output_schema = ContractReview
+# Create agent with structured output
+structured_agent = Agent(
+    model=Gemini(id="gemini-3-flash-preview"),
+    output_schema=ContractReview,
+)
 
-result = contract_agent.run(
+result = structured_agent.run(
     "Analyze this contract.",
     files=[File(filepath="contract.pdf")],
 )
