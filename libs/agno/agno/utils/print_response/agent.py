@@ -57,7 +57,7 @@ def print_response_stream(
     accumulated_tool_calls: List = []
 
     with Live(console=console) as live_log:
-        status = Status("Thinking...", spinner="aesthetic", speed=0.4, refresh_per_second=10)
+        status = Status("Working...", spinner="aesthetic", speed=0.4, refresh_per_second=10)
         live_log.update(status)
         response_timer = Timer()
         response_timer.start()
@@ -105,8 +105,9 @@ def print_response_stream(
                 if response_event.is_paused:  # type: ignore
                     response_event = cast(RunPausedEvent, response_event)  # type: ignore
                     response_panel = create_paused_run_output_panel(response_event)  # type: ignore
-                    panels.append(response_panel)
-                    live_log.update(Group(*panels))
+                    if response_panel is not None:
+                        panels.append(response_panel)
+                        live_log.update(Group(*panels))
                     return
 
                 if response_event.event == RunEvent.pre_hook_completed:  # type: ignore
@@ -223,7 +224,7 @@ def print_response_stream(
 
         response_timer.stop()
 
-        # Final update to remove the "Thinking..." status
+        # Final update to remove the "Working..." status
         panels = [p for p in panels if not isinstance(p, Status)]
         live_log.update(Group(*panels))
 
@@ -261,7 +262,7 @@ async def aprint_response_stream(
     accumulated_tool_calls: List = []
 
     with Live(console=console) as live_log:
-        status = Status("Thinking...", spinner="aesthetic", speed=0.4, refresh_per_second=10)
+        status = Status("Working...", spinner="aesthetic", speed=0.4, refresh_per_second=10)
         live_log.update(status)
         response_timer = Timer()
         response_timer.start()
@@ -310,8 +311,9 @@ async def aprint_response_stream(
             if isinstance(resp, tuple(get_args(RunOutputEvent))):
                 if resp.is_paused:
                     response_panel = create_paused_run_output_panel(resp)  # type: ignore
-                    panels.append(response_panel)
-                    live_log.update(Group(*panels))
+                    if response_panel is not None:
+                        panels.append(response_panel)
+                        live_log.update(Group(*panels))
                     break
 
                 if (
@@ -427,7 +429,7 @@ async def aprint_response_stream(
 
         response_timer.stop()
 
-        # Final update to remove the "Thinking..." status
+        # Final update to remove the "Working..." status
         panels = [p for p in panels if not isinstance(p, Status)]
         live_log.update(Group(*panels))
 
@@ -569,7 +571,7 @@ def print_response(
     **kwargs: Any,
 ):
     with Live(console=console) as live_log:
-        status = Status("Thinking...", spinner="aesthetic", speed=0.4, refresh_per_second=10)
+        status = Status("Working...", spinner="aesthetic", speed=0.4, refresh_per_second=10)
         live_log.update(status)
         response_timer = Timer()
         response_timer.start()
@@ -657,7 +659,7 @@ def print_response(
             live_log.update(Group(*panels))
             agent.session_summary_manager.summaries_updated = False
 
-        # Final update to remove the "Thinking..." status
+        # Final update to remove the "Working..." status
         panels = [p for p in panels if not isinstance(p, Status)]
         live_log.update(Group(*panels))
 
@@ -689,7 +691,7 @@ async def aprint_response(
     **kwargs: Any,
 ):
     with Live(console=console) as live_log:
-        status = Status("Thinking...", spinner="aesthetic", speed=0.4, refresh_per_second=10)
+        status = Status("Working...", spinner="aesthetic", speed=0.4, refresh_per_second=10)
         live_log.update(status)
         response_timer = Timer()
         response_timer.start()
@@ -777,7 +779,7 @@ async def aprint_response(
             panels.append(summary_panel)
             live_log.update(Group(*panels))
 
-        # Final update to remove the "Thinking..." status
+        # Final update to remove the "Working..." status
         panels = [p for p in panels if not isinstance(p, Status)]
         live_log.update(Group(*panels))
 
@@ -798,7 +800,8 @@ def build_panels(
 
     if isinstance(run_response, RunOutput) and run_response.is_paused:
         response_panel = create_paused_run_output_panel(run_response)
-        panels.append(response_panel)
+        if response_panel is not None:
+            panels.append(response_panel)
         return panels
 
     if isinstance(run_response, RunOutput) and run_response.reasoning_steps is not None:
