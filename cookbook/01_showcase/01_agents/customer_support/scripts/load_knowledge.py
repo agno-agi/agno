@@ -26,15 +26,30 @@ from advanced.agent import KNOWLEDGE_DIR, knowledge  # noqa: E402
 # ============================================================================
 # Agno Documentation URLs
 # ============================================================================
+# Curated for customer support agent: HITL, knowledge, memory, reasoning, tools
 AGNO_DOCS = [
+    # Core concepts
     "https://docs.agno.com/introduction",
     "https://docs.agno.com/agents/introduction",
+    "https://docs.agno.com/agents/debugging-agents",
+    # Knowledge & RAG (this agent uses hybrid search)
     "https://docs.agno.com/agents/knowledge",
+    "https://docs.agno.com/knowledge/quickstart",
+    "https://docs.agno.com/knowledge/concepts/search-and-retrieval/hybrid-search",
+    # Memory (advanced agent uses agentic memory)
     "https://docs.agno.com/agents/memory",
+    "https://docs.agno.com/memory/agent/agentic-memory",
+    # HITL - Human in the Loop (advanced agent uses UserControlFlowTools)
+    "https://docs.agno.com/hitl/overview",
+    "https://docs.agno.com/hitl/user-input",
+    # Tools (both agents use ReasoningTools, advanced uses ZendeskTools)
     "https://docs.agno.com/agents/tools",
-    "https://docs.agno.com/teams/introduction",
+    "https://docs.agno.com/tools/reasoning",
+    # Vector database (PgVector with hybrid search)
     "https://docs.agno.com/vectordb/introduction",
     "https://docs.agno.com/vectordb/pgvector",
+    # Related cookbook example
+    "https://docs.agno.com/cookbook/learning/support-agent",
 ]
 
 
@@ -128,7 +143,7 @@ def main():
         print("  - Escalation guidelines")
         print("  - Response templates with empathy statements")
         print("  - SLA guidelines")
-        print("  - Agno product documentation")
+        print("  - Agno documentation (agents, knowledge, memory, HITL, tools)")
         print()
         print("Run the examples:")
         print(

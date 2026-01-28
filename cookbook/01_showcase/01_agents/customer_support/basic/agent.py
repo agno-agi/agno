@@ -45,12 +45,11 @@ agent = Agent(
     knowledge=knowledge,
     tools=[
         ReasoningTools(add_instructions=True),
-        # Read-only Zendesk operations for safety in basic examples
+        # Read-only Zendesk ticket operations (FAQ handled by Agno knowledge base)
         ZendeskTools(
             enable_get_tickets=True,
             enable_get_ticket=True,
             enable_get_ticket_comments=True,
-            enable_search_zendesk=True,
         ),
     ],
     search_knowledge=True,

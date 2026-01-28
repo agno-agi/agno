@@ -114,7 +114,14 @@ agent = Agent(
     system_message=SYSTEM_MESSAGE,
     tools=[
         ReasoningTools(add_instructions=True),
-        ZendeskTools(all=True),
+        # Zendesk ticket operations (FAQ handled by Agno knowledge base)
+        ZendeskTools(
+            enable_get_tickets=True,
+            enable_get_ticket=True,
+            enable_get_ticket_comments=True,
+            enable_create_ticket_comment=True,
+            enable_update_ticket=True,
+        ),
         UserControlFlowTools(),
     ],
     add_datetime_to_context=True,

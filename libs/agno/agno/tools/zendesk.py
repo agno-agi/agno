@@ -1,5 +1,4 @@
 import json
-import re
 from os import getenv
 from typing import Any, List, Optional
 
@@ -55,12 +54,10 @@ class ZendeskTools(Toolkit):
         self.company_name = company_name or getenv("ZENDESK_COMPANY_NAME")
 
         if not self.username or not self.password or not self.company_name:
-            logger.warning(
-                "Zendesk credentials not provided. Set ZENDESK_USERNAME, ZENDESK_PASSWORD, "
+            raise ValueError(
+                "Zendesk credentials required. Set ZENDESK_USERNAME, ZENDESK_PASSWORD, "
                 "and ZENDESK_COMPANY_NAME environment variables."
             )
-
-        self._html_clean = re.compile("<.*?>")
 
         tools: List[Any] = []
         if all or enable_search_zendesk:
@@ -78,16 +75,6 @@ class ZendeskTools(Toolkit):
 
         super().__init__(name="zendesk_tools", tools=tools, **kwargs)
 
-    def _strip_html(self, text: str) -> str:
-        """Strip HTML tags from text."""
-        return re.sub(self._html_clean, "", text)
-
-    def _check_credentials(self) -> Optional[str]:
-        """Check if credentials are configured. Returns error message if not."""
-        if not self.username or not self.password or not self.company_name:
-            return "Username, password, or company name not provided."
-        return None
-
     def _get_auth(self) -> tuple:
         """Get auth tuple for requests."""
         return (self.username, self.password)
@@ -95,6 +82,23 @@ class ZendeskTools(Toolkit):
     def _base_url(self) -> str:
         """Get the base API URL."""
         return f"https://{self.company_name}.zendesk.com/api/v2"
+
+    def _request(
+        self,
+        method: str,
+        endpoint: str,
+        params: Optional[dict] = None,
+        json_data: Optional[dict] = None,
+    ) -> dict:
+        """Execute API request with error handling."""
+        url = f"{self._base_url()}/{endpoint}"
+        try:
+            response = requests.request(method, url, auth=self._get_auth(), params=params, json=json_data)
+            response.raise_for_status()
+            return response.json()
+        except requests.RequestException as e:
+            logger.error(f"Zendesk API error: {e}")
+            return {"error": str(e)}
 
     def search_zendesk(self, search_string: str) -> str:
         """
@@ -104,26 +108,17 @@ class ZendeskTools(Toolkit):
             search_string: The search query to look for in Zendesk articles.
 
         Returns:
-            A JSON-formatted string containing the list of articles without HTML tags.
-
-        Raises:
-            ConnectionError: If the API request fails due to connection-related issues.
+            A JSON-formatted string containing the list of matching articles.
         """
-        error = self._check_credentials()
-        if error:
-            return error
-
         log_debug(f"Searching Zendesk for: {search_string}")
-
-        url = f"https://{self.company_name}.zendesk.com/api/v2/help_center/articles/search.json?query={search_string}"
-        try:
-            response = requests.get(url, auth=self._get_auth())
-            response.raise_for_status()
-            articles = [self._strip_html(article["body"]) for article in response.json()["results"]]
-            return json.dumps(articles)
-        except requests.RequestException as e:
-            logger.error(f"Zendesk API error: {e}")
-            return json.dumps({"error": str(e)})
+        data = self._request("GET", "help_center/articles/search.json", params={"query": search_string})
+        if "error" in data:
+            return json.dumps(data)
+        articles = [
+            {"title": article.get("title"), "body": article.get("body"), "url": article.get("html_url")}
+            for article in data.get("results", [])
+        ]
+        return json.dumps(articles)
 
     def get_tickets(
         self,
@@ -142,52 +137,36 @@ class ZendeskTools(Toolkit):
         Returns:
             JSON string with ticket list, count, pagination info.
         """
-        error = self._check_credentials()
-        if error:
-            return error
-
         log_debug(f"Getting tickets (status={status}, page={page})")
-
         per_page = min(per_page, 100)
-        url = f"{self._base_url()}/tickets.json"
+        data = self._request("GET", "tickets.json", params={"page": page, "per_page": per_page})
+        if "error" in data:
+            return json.dumps(data)
 
-        try:
-            response = requests.get(
-                url,
-                auth=self._get_auth(),
-                params={"page": page, "per_page": per_page},
-            )
-            response.raise_for_status()
-            data = response.json()
+        tickets = data.get("tickets", [])
+        if status:
+            tickets = [t for t in tickets if t.get("status") == status]
 
-            tickets = data.get("tickets", [])
-
-            if status:
-                tickets = [t for t in tickets if t.get("status") == status]
-
-            result = {
-                "tickets": [
-                    {
-                        "id": t["id"],
-                        "subject": t.get("subject"),
-                        "status": t.get("status"),
-                        "priority": t.get("priority"),
-                        "created_at": t.get("created_at"),
-                        "updated_at": t.get("updated_at"),
-                        "requester_id": t.get("requester_id"),
-                        "assignee_id": t.get("assignee_id"),
-                        "tags": t.get("tags", []),
-                    }
-                    for t in tickets
-                ],
-                "count": len(tickets),
-                "page": page,
-                "has_more": data.get("next_page") is not None,
-            }
-            return json.dumps(result)
-        except requests.RequestException as e:
-            logger.error(f"Zendesk API error: {e}")
-            return json.dumps({"error": str(e)})
+        result = {
+            "tickets": [
+                {
+                    "id": t["id"],
+                    "subject": t.get("subject"),
+                    "status": t.get("status"),
+                    "priority": t.get("priority"),
+                    "created_at": t.get("created_at"),
+                    "updated_at": t.get("updated_at"),
+                    "requester_id": t.get("requester_id"),
+                    "assignee_id": t.get("assignee_id"),
+                    "tags": t.get("tags", []),
+                }
+                for t in tickets
+            ],
+            "count": len(tickets),
+            "page": page,
+            "has_more": data.get("next_page") is not None,
+        }
+        return json.dumps(result)
 
     def get_ticket(self, ticket_id: int) -> str:
         """
@@ -199,38 +178,28 @@ class ZendeskTools(Toolkit):
         Returns:
             JSON string with ticket details.
         """
-        error = self._check_credentials()
-        if error:
-            return error
-
         log_debug(f"Getting ticket {ticket_id}")
+        data = self._request("GET", f"tickets/{ticket_id}.json")
+        if "error" in data:
+            return json.dumps(data)
 
-        url = f"{self._base_url()}/tickets/{ticket_id}.json"
-
-        try:
-            response = requests.get(url, auth=self._get_auth())
-            response.raise_for_status()
-            ticket = response.json()["ticket"]
-
-            result = {
-                "id": ticket["id"],
-                "subject": ticket.get("subject"),
-                "description": ticket.get("description"),
-                "status": ticket.get("status"),
-                "priority": ticket.get("priority"),
-                "type": ticket.get("type"),
-                "created_at": ticket.get("created_at"),
-                "updated_at": ticket.get("updated_at"),
-                "requester_id": ticket.get("requester_id"),
-                "assignee_id": ticket.get("assignee_id"),
-                "tags": ticket.get("tags", []),
-                "via": ticket.get("via", {}).get("channel"),
-                "custom_fields": ticket.get("custom_fields", []),
-            }
-            return json.dumps(result)
-        except requests.RequestException as e:
-            logger.error(f"Zendesk API error: {e}")
-            return json.dumps({"error": str(e)})
+        ticket = data["ticket"]
+        result = {
+            "id": ticket["id"],
+            "subject": ticket.get("subject"),
+            "description": ticket.get("description"),
+            "status": ticket.get("status"),
+            "priority": ticket.get("priority"),
+            "type": ticket.get("type"),
+            "created_at": ticket.get("created_at"),
+            "updated_at": ticket.get("updated_at"),
+            "requester_id": ticket.get("requester_id"),
+            "assignee_id": ticket.get("assignee_id"),
+            "tags": ticket.get("tags", []),
+            "via": ticket.get("via", {}).get("channel"),
+            "custom_fields": ticket.get("custom_fields", []),
+        }
+        return json.dumps(result)
 
     def get_ticket_comments(self, ticket_id: int) -> str:
         """
@@ -242,38 +211,31 @@ class ZendeskTools(Toolkit):
         Returns:
             JSON string with comment list.
         """
-        error = self._check_credentials()
-        if error:
-            return error
-
         log_debug(f"Getting comments for ticket {ticket_id}")
+        data = self._request("GET", f"tickets/{ticket_id}/comments.json")
+        if "error" in data:
+            return json.dumps(data)
 
-        url = f"{self._base_url()}/tickets/{ticket_id}/comments.json"
-
-        try:
-            response = requests.get(url, auth=self._get_auth())
-            response.raise_for_status()
-            comments = response.json().get("comments", [])
-
-            result = {
-                "ticket_id": ticket_id,
-                "comments": [
-                    {
-                        "id": c["id"],
-                        "author_id": c.get("author_id"),
-                        "body": c.get("body") or self._strip_html(c.get("html_body", "")),
-                        "created_at": c.get("created_at"),
-                        "public": c.get("public", True),
-                        "type": c.get("type"),
-                    }
-                    for c in comments
-                ],
-                "count": len(comments),
-            }
-            return json.dumps(result)
-        except requests.RequestException as e:
-            logger.error(f"Zendesk API error: {e}")
-            return json.dumps({"error": str(e)})
+        comments = data.get("comments", [])
+        result = {
+            "ticket_id": ticket_id,
+            "comments": [
+                {
+                    "id": c["id"],
+                    "author_id": c.get("author_id"),
+                    "body": c.get("plain_body") or c.get("body"),
+                    "created_at": c.get("created_at"),
+                    "public": c.get("public", True),
+                    "attachments": [
+                        {"filename": a.get("file_name"), "url": a.get("content_url"), "size": a.get("size")}
+                        for a in c.get("attachments", [])
+                    ],
+                }
+                for c in comments
+            ],
+            "count": len(comments),
+        }
+        return json.dumps(result)
 
     def create_ticket_comment(
         self,
@@ -293,38 +255,21 @@ class ZendeskTools(Toolkit):
         Returns:
             JSON string with success status and updated ticket info.
         """
-        error = self._check_credentials()
-        if error:
-            return error
-
         log_debug(f"Creating comment on ticket {ticket_id} (public={public})")
+        payload = {"ticket": {"comment": {"body": body, "public": public}}}
+        data = self._request("PUT", f"tickets/{ticket_id}.json", json_data=payload)
+        if "error" in data:
+            return json.dumps(data)
 
-        url = f"{self._base_url()}/tickets/{ticket_id}.json"
-        payload = {
-            "ticket": {
-                "comment": {
-                    "body": body,
-                    "public": public,
-                }
+        ticket = data["ticket"]
+        return json.dumps(
+            {
+                "success": True,
+                "ticket_id": ticket["id"],
+                "message": "Comment added successfully",
+                "updated_at": ticket.get("updated_at"),
             }
-        }
-
-        try:
-            response = requests.put(url, auth=self._get_auth(), json=payload)
-            response.raise_for_status()
-            ticket = response.json()["ticket"]
-
-            return json.dumps(
-                {
-                    "success": True,
-                    "ticket_id": ticket["id"],
-                    "message": "Comment added successfully",
-                    "updated_at": ticket.get("updated_at"),
-                }
-            )
-        except requests.RequestException as e:
-            logger.error(f"Zendesk API error: {e}")
-            return json.dumps({"error": str(e)})
+        )
 
     def update_ticket(
         self,
@@ -347,10 +292,6 @@ class ZendeskTools(Toolkit):
         Returns:
             JSON string with success status and updated ticket info.
         """
-        error = self._check_credentials()
-        if error:
-            return error
-
         ticket_update: dict = {}
         if status is not None:
             ticket_update["status"] = status
@@ -370,26 +311,19 @@ class ZendeskTools(Toolkit):
             )
 
         log_debug(f"Updating ticket {ticket_id}: {ticket_update}")
+        data = self._request("PUT", f"tickets/{ticket_id}.json", json_data={"ticket": ticket_update})
+        if "error" in data:
+            return json.dumps(data)
 
-        url = f"{self._base_url()}/tickets/{ticket_id}.json"
-        payload = {"ticket": ticket_update}
-
-        try:
-            response = requests.put(url, auth=self._get_auth(), json=payload)
-            response.raise_for_status()
-            ticket = response.json()["ticket"]
-
-            return json.dumps(
-                {
-                    "success": True,
-                    "ticket_id": ticket["id"],
-                    "status": ticket.get("status"),
-                    "priority": ticket.get("priority"),
-                    "assignee_id": ticket.get("assignee_id"),
-                    "tags": ticket.get("tags", []),
-                    "updated_at": ticket.get("updated_at"),
-                }
-            )
-        except requests.RequestException as e:
-            logger.error(f"Zendesk API error: {e}")
-            return json.dumps({"error": str(e)})
+        ticket = data["ticket"]
+        return json.dumps(
+            {
+                "success": True,
+                "ticket_id": ticket["id"],
+                "status": ticket.get("status"),
+                "priority": ticket.get("priority"),
+                "assignee_id": ticket.get("assignee_id"),
+                "tags": ticket.get("tags", []),
+                "updated_at": ticket.get("updated_at"),
+            }
+        )
