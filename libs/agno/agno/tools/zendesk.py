@@ -122,7 +122,8 @@ class ZendeskTools(Toolkit):
             articles = [self._strip_html(article["body"]) for article in response.json()["results"]]
             return json.dumps(articles)
         except requests.RequestException as e:
-            raise ConnectionError(f"API request failed: {e}")
+            logger.error(f"Zendesk API error: {e}")
+            return json.dumps({"error": str(e)})
 
     def get_tickets(
         self,
@@ -185,7 +186,8 @@ class ZendeskTools(Toolkit):
             }
             return json.dumps(result)
         except requests.RequestException as e:
-            raise ConnectionError(f"API request failed: {e}")
+            logger.error(f"Zendesk API error: {e}")
+            return json.dumps({"error": str(e)})
 
     def get_ticket(self, ticket_id: int) -> str:
         """
@@ -227,7 +229,8 @@ class ZendeskTools(Toolkit):
             }
             return json.dumps(result)
         except requests.RequestException as e:
-            raise ConnectionError(f"API request failed: {e}")
+            logger.error(f"Zendesk API error: {e}")
+            return json.dumps({"error": str(e)})
 
     def get_ticket_comments(self, ticket_id: int) -> str:
         """
@@ -269,7 +272,8 @@ class ZendeskTools(Toolkit):
             }
             return json.dumps(result)
         except requests.RequestException as e:
-            raise ConnectionError(f"API request failed: {e}")
+            logger.error(f"Zendesk API error: {e}")
+            return json.dumps({"error": str(e)})
 
     def create_ticket_comment(
         self,
@@ -319,7 +323,8 @@ class ZendeskTools(Toolkit):
                 }
             )
         except requests.RequestException as e:
-            raise ConnectionError(f"API request failed: {e}")
+            logger.error(f"Zendesk API error: {e}")
+            return json.dumps({"error": str(e)})
 
     def update_ticket(
         self,
@@ -386,4 +391,5 @@ class ZendeskTools(Toolkit):
                 }
             )
         except requests.RequestException as e:
-            raise ConnectionError(f"API request failed: {e}")
+            logger.error(f"Zendesk API error: {e}")
+            return json.dumps({"error": str(e)})
