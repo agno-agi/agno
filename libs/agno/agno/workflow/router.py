@@ -109,11 +109,11 @@ class Router:
             audio=current_audio + all_audio,
         )
 
-    def _route_steps(self, step_input: StepInput, session_state: Optional[Dict[str, Any]] = None) -> List[Step]:  # type: ignore[return-value]
+    def _route_steps(self, step_input: StepInput,run_context:RunContext )-> List[Step]:  # type: ignore[return-value]
         """Route to the appropriate steps based on input"""
         if callable(self.selector):
-            if session_state is not None and self._selector_has_session_state_param():
-                result = self.selector(step_input, session_state)  # type: ignore[call-arg]
+            if self._selector_has_run_context_param():
+                result=self.selector(step_input,run_context)  # type: ignore[call-arg]
             else:
                 result = self.selector(step_input)
 
@@ -128,19 +128,19 @@ class Router:
 
         return []
 
-    async def _aroute_steps(self, step_input: StepInput, session_state: Optional[Dict[str, Any]] = None) -> List[Step]:  # type: ignore[return-value]
+    async def _aroute_steps(self, step_input: StepInput, run_context:RunContext) -> List[Step]:  # type: ignore[return-value]
         """Async version of step routing"""
         if callable(self.selector):
-            has_session_state = session_state is not None and self._selector_has_session_state_param()
+            
 
             if inspect.iscoroutinefunction(self.selector):
-                if has_session_state:
-                    result = await self.selector(step_input, session_state)  # type: ignore[call-arg]
+                if self._selector_has_run_context_param():
+                    result = await self.selector(step_input, run_context)  # type: ignore[call-arg]
                 else:
                     result = await self.selector(step_input)
             else:
-                if has_session_state:
-                    result = self.selector(step_input, session_state)  # type: ignore[call-arg]
+                if self._selector_has_run_context_param():
+                    result = self.selector(step_input, run_context)  # type: ignore[call-arg]
                 else:
                     result = self.selector(step_input)
 
@@ -165,6 +165,17 @@ class Router:
             return "session_state" in sig.parameters
         except Exception:
             return False
+    def _selector_has_run_context_param(self) -> bool:
+        """Check is selector accepts a run_context parameter."""
+        try:
+            sig = inspect.signature(self.selector)
+            params = list(sig.parameters.values())
+            return len(params) >= 2
+        except (TypeError,ValueError):
+            return False
+
+    
+
 
     def execute(
         self,
@@ -189,7 +200,7 @@ class Router:
 
         # Route to appropriate steps
         if run_context is not None and run_context.session_state is not None:
-            steps_to_execute = self._route_steps(step_input, session_state=run_context.session_state)
+            steps_to_execute = self._route_steps(step_input, run_context)
         else:
             steps_to_execute = self._route_steps(step_input, session_state=session_state)
         log_debug(f"Router {self.name}: Selected {len(steps_to_execute)} steps to execute")
@@ -297,7 +308,7 @@ class Router:
 
         # Route to appropriate steps
         if run_context is not None and run_context.session_state is not None:
-            steps_to_execute = self._route_steps(step_input, session_state=run_context.session_state)
+            steps_to_execute = self._route_steps(step_input, run_context)
         else:
             steps_to_execute = self._route_steps(step_input, session_state=session_state)
         log_debug(f"Router {self.name}: Selected {len(steps_to_execute)} steps to execute")
@@ -455,7 +466,7 @@ class Router:
 
         # Route to appropriate steps
         if run_context is not None and run_context.session_state is not None:
-            steps_to_execute = await self._aroute_steps(step_input, session_state=run_context.session_state)
+            steps_to_execute = await self._aroute_steps(step_input, run_context)
         else:
             steps_to_execute = await self._aroute_steps(step_input, session_state=session_state)
         log_debug(f"Router {self.name} selected: {len(steps_to_execute)} steps to execute")
@@ -566,7 +577,7 @@ class Router:
 
         # Route to appropriate steps
         if run_context is not None and run_context.session_state is not None:
-            steps_to_execute = await self._aroute_steps(step_input, session_state=run_context.session_state)
+            steps_to_execute = await self._aroute_steps(step_input, run_context)
         else:
             steps_to_execute = await self._aroute_steps(step_input, session_state=session_state)
         log_debug(f"Router {self.name} selected: {len(steps_to_execute)} steps to execute")
