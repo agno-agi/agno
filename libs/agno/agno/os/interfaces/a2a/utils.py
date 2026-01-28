@@ -15,6 +15,7 @@ from agno.run.team import RunCompletedEvent as TeamRunCompletedEvent
 from agno.run.team import RunContentEvent as TeamRunContentEvent
 from agno.run.team import RunStartedEvent as TeamRunStartedEvent
 from agno.run.team import TeamRunOutputEvent
+from agno.run.team import ToolCallArgsDeltaEvent as TeamToolCallArgsDeltaEvent
 from agno.run.team import ToolCallCompletedEvent as TeamToolCallCompletedEvent
 from agno.run.team import ToolCallStartedEvent as TeamToolCallStartedEvent
 from agno.run.workflow import (
@@ -77,6 +78,7 @@ from agno.run.agent import (
     RunOutput,
     RunOutputEvent,
     RunStartedEvent,
+    ToolCallArgsDeltaEvent,
     ToolCallCompletedEvent,
     ToolCallStartedEvent,
 )
@@ -351,6 +353,28 @@ async def stream_a2a_response(
                     metadata["tool_call_id"] = event.tool.tool_call_id
                 if hasattr(event.tool, "tool_args") and event.tool.tool_args:
                     metadata["tool_args"] = json.dumps(event.tool.tool_args)
+
+            status_event = TaskStatusUpdateEvent(
+                task_id=task_id,
+                context_id=context_id,
+                status=TaskStatus(state=TaskState.working),
+                final=False,
+                metadata=metadata,
+            )
+            response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
+            yield f"event: TaskStatusUpdateEvent\ndata: {json.dumps(response.model_dump(exclude_none=True))}\n\n"
+
+        elif isinstance(event, (ToolCallArgsDeltaEvent, TeamToolCallArgsDeltaEvent)):
+            metadata = {"agno_event_type": "tool_call_args_delta"}
+            tool_call_id = getattr(event, "tool_call_id", None)
+            if tool_call_id:
+                metadata["tool_call_id"] = tool_call_id
+            tool_name = getattr(event, "tool_name", None)
+            if tool_name:
+                metadata["tool_name"] = tool_name
+            delta = getattr(event, "delta", None)
+            if delta:
+                metadata["tool_args_delta"] = delta
 
             status_event = TaskStatusUpdateEvent(
                 task_id=task_id,

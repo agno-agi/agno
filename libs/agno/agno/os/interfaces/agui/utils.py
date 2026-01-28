@@ -305,6 +305,59 @@ def _create_events_from_chunk(
             )
             events_to_emit.append(args_event)  # type: ignore
 
+    # Handle tool call argument deltas
+    elif chunk.event == RunEvent.tool_call_args_delta or chunk.event == TeamRunEvent.tool_call_args_delta:
+        tool_call_id = getattr(chunk, "tool_call_id", None)
+        delta = getattr(chunk, "delta", None)
+        tool_name = getattr(chunk, "tool_name", None)
+
+        if tool_call_id is not None and delta is not None:
+            # If we haven't started this tool call yet, emit a start event first
+            if (
+                tool_call_id not in event_buffer.active_tool_call_ids
+                and tool_call_id not in event_buffer.ended_tool_call_ids
+            ):
+                current_message_id = message_id
+                if message_started:
+                    end_message_event = TextMessageEndEvent(
+                        type=EventType.TEXT_MESSAGE_END, message_id=current_message_id
+                    )
+                    events_to_emit.append(end_message_event)
+                    event_buffer.set_pending_tool_calls_parent_id(current_message_id)
+                    message_started = False
+                    message_id = str(uuid.uuid4())
+
+                parent_message_id = event_buffer.get_parent_message_id_for_tool_call()
+                if not parent_message_id:
+                    parent_message_id = str(uuid.uuid4())
+                    text_start = TextMessageStartEvent(
+                        type=EventType.TEXT_MESSAGE_START,
+                        message_id=parent_message_id,
+                        role="assistant",
+                    )
+                    events_to_emit.append(text_start)
+                    text_end = TextMessageEndEvent(
+                        type=EventType.TEXT_MESSAGE_END,
+                        message_id=parent_message_id,
+                    )
+                    events_to_emit.append(text_end)
+                    event_buffer.set_pending_tool_calls_parent_id(parent_message_id)
+
+                start_event = ToolCallStartEvent(
+                    type=EventType.TOOL_CALL_START,
+                    tool_call_id=tool_call_id,
+                    tool_call_name=tool_name or "tool",
+                    parent_message_id=parent_message_id,
+                )
+                events_to_emit.append(start_event)
+
+            args_event = ToolCallArgsEvent(
+                type=EventType.TOOL_CALL_ARGS,
+                tool_call_id=tool_call_id,
+                delta=str(delta),
+            )
+            events_to_emit.append(args_event)
+
     # Handle tool call completion
     elif chunk.event == RunEvent.tool_call_completed or chunk.event == TeamRunEvent.tool_call_completed:
         if chunk.tool is not None:  # type: ignore

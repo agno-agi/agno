@@ -11,7 +11,7 @@ from agno.media import File
 from agno.models.base import Model
 from agno.models.message import Citations, Message, UrlCitation
 from agno.models.metrics import Metrics
-from agno.models.response import ModelResponse
+from agno.models.response import ModelResponse, ModelResponseEvent
 from agno.run.agent import RunOutput
 from agno.tools.function import Function
 from agno.utils.http import get_default_async_client, get_default_sync_client
@@ -1057,6 +1057,11 @@ class OpenAIResponses(Model):
         # 4.2 Add tool call arguments
         elif stream_event.type == "response.function_call_arguments.delta":
             tool_use["function"]["arguments"] += stream_event.delta
+            tool_call_id = tool_use.get("call_id") or tool_use.get("id")
+            model_response.event = ModelResponseEvent.tool_call_args_delta.value
+            model_response.tool_call_id = tool_call_id
+            model_response.tool_name = tool_use.get("function", {}).get("name")
+            model_response.tool_args_delta = stream_event.delta
 
         # 4.3 Add tool call completion data
         elif stream_event.type == "response.output_item.done" and tool_use:
@@ -1067,6 +1072,7 @@ class OpenAIResponses(Model):
 
             model_response.extra = model_response.extra or {}
             model_response.extra.setdefault("tool_call_ids", []).append(tool_use["call_id"])
+            model_response.extra["skip_tool_call_args_delta"] = True
             tool_use = {}
 
         # 5. Add metrics

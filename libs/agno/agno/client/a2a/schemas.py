@@ -94,7 +94,7 @@ class StreamEvent:
     @property
     def is_tool_call(self) -> bool:
         """Check if this is a tool call event."""
-        return self.event_type in ("tool_call_started", "tool_call_completed")
+        return self.event_type in ("tool_call_started", "tool_call_args_delta", "tool_call_completed")
 
 
 @dataclass

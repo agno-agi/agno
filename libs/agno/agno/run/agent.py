@@ -154,6 +154,7 @@ class RunEvent(str, Enum):
     tool_call_started = "ToolCallStarted"
     tool_call_completed = "ToolCallCompleted"
     tool_call_error = "ToolCallError"
+    tool_call_args_delta = "ToolCallArgsDelta"
 
     reasoning_started = "ReasoningStarted"
     reasoning_step = "ReasoningStep"
@@ -404,6 +405,14 @@ class ToolCallStartedEvent(BaseAgentRunEvent):
 
 
 @dataclass
+class ToolCallArgsDeltaEvent(BaseAgentRunEvent):
+    event: str = RunEvent.tool_call_args_delta.value
+    tool_call_id: Optional[str] = None
+    tool_name: Optional[str] = None
+    delta: Optional[str] = None
+
+
+@dataclass
 class ToolCallCompletedEvent(BaseAgentRunEvent):
     event: str = RunEvent.tool_call_completed.value
     tool: Optional[ToolExecution] = None
@@ -517,6 +526,7 @@ RunOutputEvent = Union[
     SessionSummaryStartedEvent,
     SessionSummaryCompletedEvent,
     ToolCallStartedEvent,
+    ToolCallArgsDeltaEvent,
     ToolCallCompletedEvent,
     ToolCallErrorEvent,
     ParserModelResponseStartedEvent,
@@ -555,6 +565,7 @@ RUN_EVENT_TYPE_REGISTRY = {
     RunEvent.session_summary_started.value: SessionSummaryStartedEvent,
     RunEvent.session_summary_completed.value: SessionSummaryCompletedEvent,
     RunEvent.tool_call_started.value: ToolCallStartedEvent,
+    RunEvent.tool_call_args_delta.value: ToolCallArgsDeltaEvent,
     RunEvent.tool_call_completed.value: ToolCallCompletedEvent,
     RunEvent.tool_call_error.value: ToolCallErrorEvent,
     RunEvent.parser_model_response_started.value: ParserModelResponseStartedEvent,
