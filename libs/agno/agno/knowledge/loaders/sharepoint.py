@@ -3,6 +3,8 @@
 Provides methods for loading content from Microsoft SharePoint.
 """
 
+# mypy: disable-error-code="attr-defined"
+
 from io import BytesIO
 from typing import Dict, List, Optional, cast
 
@@ -10,7 +12,6 @@ import httpx
 from httpx import AsyncClient
 
 from agno.knowledge.content import Content, ContentStatus
-from agno.knowledge.loaders.base import RemoteContentLoader
 from agno.knowledge.reader import Reader
 from agno.knowledge.remote_content.config import RemoteContentConfig, SharePointConfig
 from agno.knowledge.remote_content.remote_content import SharePointContent
@@ -18,7 +19,7 @@ from agno.utils.log import log_error, log_warning
 from agno.utils.string import generate_id
 
 
-class SharePointLoader(RemoteContentLoader):
+class SharePointLoader:
     """Loader for SharePoint content."""
 
     # ==========================================

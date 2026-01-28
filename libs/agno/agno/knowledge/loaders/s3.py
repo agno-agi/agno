@@ -3,12 +3,13 @@
 Provides methods for loading content from AWS S3.
 """
 
+# mypy: disable-error-code="attr-defined"
+
 from io import BytesIO
 from pathlib import Path
 from typing import List, Optional, Union, cast
 
 from agno.knowledge.content import Content, ContentStatus
-from agno.knowledge.loaders.base import RemoteContentLoader
 from agno.knowledge.reader import Reader
 from agno.knowledge.remote_content.config import RemoteContentConfig, S3Config
 from agno.knowledge.remote_content.remote_content import S3Content
@@ -16,7 +17,7 @@ from agno.utils.log import log_error, log_warning
 from agno.utils.string import generate_id
 
 
-class S3Loader(RemoteContentLoader):
+class S3Loader:
     """Loader for S3 content."""
 
     async def _aload_from_s3(

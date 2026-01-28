@@ -3,11 +3,12 @@
 Provides methods for loading content from Google Cloud Storage.
 """
 
+# mypy: disable-error-code="attr-defined"
+
 from io import BytesIO
 from typing import Optional, cast
 
 from agno.knowledge.content import Content, ContentStatus
-from agno.knowledge.loaders.base import RemoteContentLoader
 from agno.knowledge.reader import Reader
 from agno.knowledge.remote_content.config import GcsConfig, RemoteContentConfig
 from agno.knowledge.remote_content.remote_content import GCSContent
@@ -15,7 +16,7 @@ from agno.utils.log import log_warning
 from agno.utils.string import generate_id
 
 
-class GCSLoader(RemoteContentLoader):
+class GCSLoader:
     """Loader for Google Cloud Storage content."""
 
     async def _aload_from_gcs(
