@@ -618,6 +618,7 @@ class ComponentUpdate(BaseModel):
     description: Optional[str] = None
     component_type: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
+    current_version: Optional[int] = None
 
 
 class ConfigUpdate(BaseModel):

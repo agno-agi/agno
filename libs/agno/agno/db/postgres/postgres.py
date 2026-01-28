@@ -3241,6 +3241,7 @@ class PostgresDb(BaseDb):
         component_type: Optional[ComponentType] = None,
         name: Optional[str] = None,
         description: Optional[str] = None,
+        current_version: Optional[int] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Create or update a component.
@@ -3250,6 +3251,7 @@ class PostgresDb(BaseDb):
             component_type: Type (agent|team|workflow). Required for create, optional for update.
             name: Display name.
             description: Optional description.
+            current_version: Optional current version.
             metadata: Optional metadata dict.
 
         Returns:
@@ -3317,6 +3319,8 @@ class PostgresDb(BaseDb):
                         updates["name"] = name
                     if description is not None:
                         updates["description"] = description
+                    if current_version is not None:
+                        updates["current_version"] = current_version
                     if metadata is not None:
                         updates["metadata"] = metadata
 
@@ -3693,8 +3697,8 @@ class PostgresDb(BaseDb):
             raise ValueError(f"Invalid stage: {stage}")
 
         try:
-            configs_table = self._get_table(table_type="component_configs", create_table_if_not_found=True)
             components_table = self._get_table(table_type="components")
+            configs_table = self._get_table(table_type="component_configs", create_table_if_not_found=True)
             links_table = self._get_table(table_type="component_links", create_table_if_not_found=True)
 
             if components_table is None:
