@@ -86,7 +86,7 @@ def load_knowledge_base():
     print()
     print("You can now run the examples:")
     print(
-        "  .venvs/demo/bin/python cookbook/01_showcase/01_agents/customer_support/basic/simple_query.py"
+        "  .venvs/demo/bin/python cookbook/01_showcase/01_agents/customer_support/examples/simple_query.py"
     )
 
 
