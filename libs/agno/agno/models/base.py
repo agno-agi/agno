@@ -1203,7 +1203,12 @@ class Model(ABC):
 
         # Add usage metrics if provided
         if provider_response.response_usage is not None:
-            assistant_message.metrics += provider_response.response_usage
+            # Anthropic returns cumulative usage across tool calls, so replace instead of accumulate
+            if getattr(provider_response, "_is_cumulative_usage", False):
+                assistant_message.metrics = provider_response.response_usage
+            else:
+                # Other providers (OpenAI, Gemini) return final/incremental usage
+                assistant_message.metrics += provider_response.response_usage
 
         return assistant_message
 

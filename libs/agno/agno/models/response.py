@@ -126,6 +126,10 @@ class ModelResponse:
 
     response_usage: Optional[Metrics] = None
 
+    # Flag to indicate if response_usage contains cumulative metrics (e.g., Anthropic)
+    # When True, metrics should be replaced rather than accumulated
+    _is_cumulative_usage: bool = False
+
     created_at: int = int(time())
 
     extra: Optional[Dict[str, Any]] = None
