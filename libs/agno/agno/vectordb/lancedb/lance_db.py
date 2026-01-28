@@ -104,7 +104,7 @@ class LanceDb(VectorDb):
         self.async_connection: Optional[lancedb.AsyncConnection] = async_connection
         self.async_table: Optional[lancedb.db.AsyncTable] = async_table
 
-        if table_name and table_name in self.connection.table_names():
+        if table_name and table_name in self.connection.list_tables().tables:
             # Open the table if it exists
             try:
                 self.table = self.connection.open_table(name=table_name)
@@ -186,8 +186,8 @@ class LanceDb(VectorDb):
             self.async_connection = await lancedb.connect_async(self.uri)
         # Only try to open table if it exists and we don't have it already
         if self.async_table is None:
-            table_names = await self.async_connection.table_names()
-            if self.table_name in table_names:
+            table_list = await self.async_connection.list_tables()
+            if self.table_name in table_list.tables:
                 try:
                     self.async_table = await self.async_connection.open_table(self.table_name)
                 except ValueError:
@@ -199,7 +199,7 @@ class LanceDb(VectorDb):
         """Refresh the sync connection to see changes made by async operations."""
         try:
             # Re-establish sync connection to see async changes
-            if self.connection and self.table_name in self.connection.table_names():
+            if self.connection is not None and self.table_name in self.connection.list_tables().tables:
                 self.table = self.connection.open_table(self.table_name)
         except Exception as e:
             log_debug(f"Could not refresh sync connection: {e}")
@@ -437,7 +437,7 @@ class LanceDb(VectorDb):
         Returns:
             List[Document]: List of matching documents
         """
-        if self.connection:
+        if self.connection is not None:
             self.table = self.connection.open_table(name=self.table_name)
 
         results = None
@@ -619,8 +619,8 @@ class LanceDb(VectorDb):
         # If we have an async table that was created, the table exists
         if self.async_table is not None:
             return True
-        if self.connection:
-            return self.table_name in self.connection.table_names()
+        if self.connection is not None:
+            return self.table_name in self.connection.list_tables().tables
         return False
 
     async def async_exists(self) -> bool:
@@ -631,8 +631,8 @@ class LanceDb(VectorDb):
         # Check if table exists in database without trying to open it
         if self.async_connection is None:
             self.async_connection = await lancedb.connect_async(self.uri)
-        table_names = await self.async_connection.table_names()
-        return self.table_name in table_names
+        table_list = await self.async_connection.list_tables()
+        return self.table_name in table_list.tables
 
     async def async_get_count(self) -> int:
         """Get the number of rows in the table asynchronously."""
