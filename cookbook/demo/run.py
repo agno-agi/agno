@@ -9,6 +9,7 @@ from agents.mcp_agent import mcp_agent
 from agents.pal_agent import pal_agent
 from agents.report_writer_agent import report_writer_agent
 from agents.research_agent import research_agent
+from agents.summarizer_agent import summarizer_agent
 from agents.web_intelligence_agent import web_intelligence_agent
 from agno.os import AgentOS
 from db import demo_db
@@ -36,6 +37,7 @@ agent_os = AgentOS(
         report_writer_agent,
         knowledge_agent,
         mcp_agent,
+        summarizer_agent,
     ],
     teams=[
         investment_team,
