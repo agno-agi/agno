@@ -1,6 +1,6 @@
 from agno.agent import Agent, RunOutput  # noqa
 from agno.models.openai import OpenAIChat
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 from agno.db.base import SessionType
 
 
@@ -26,7 +26,7 @@ def test_run_response_metrics():
 def test_session_metrics(shared_db):
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
-        tools=[DuckDuckGoTools(cache_results=True)],
+        tools=[WebSearchTools(cache_results=True)],
         db=shared_db,
         markdown=True,
         telemetry=False,

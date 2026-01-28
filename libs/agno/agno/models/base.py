@@ -1293,12 +1293,23 @@ class Model(ABC):
                 if _compression_manager is not None and _compression_manager.should_compress(
                     messages, tools, model=self, response_format=response_format
                 ):
+                    # Emit compression started event
+                    yield ModelResponse(event=ModelResponseEvent.compression_started.value)
                     _compression_manager.compress(messages)
+                    # Emit compression completed event with stats
+                    yield ModelResponse(
+                        event=ModelResponseEvent.compression_completed.value,
+                        compression_stats=_compression_manager.stats.copy(),
+                    )
 
                 assistant_message = Message(role=self.assistant_message_role)
                 # Create assistant message and stream data
                 stream_data = MessageData()
                 model_response = ModelResponse()
+
+                # Emit LLM request started event
+                yield ModelResponse(event=ModelResponseEvent.model_request_started.value)
+
                 if stream_model_response:
                     # Generate response
                     for response in self.process_response_stream(
@@ -1333,6 +1344,19 @@ class Model(ABC):
                 # Add assistant message to messages
                 messages.append(assistant_message)
                 assistant_message.log(metrics=True)
+
+                # Emit LLM request completed event with metrics
+                llm_metrics = assistant_message.metrics
+                yield ModelResponse(
+                    event=ModelResponseEvent.model_request_completed.value,
+                    input_tokens=llm_metrics.input_tokens if llm_metrics else None,
+                    output_tokens=llm_metrics.output_tokens if llm_metrics else None,
+                    total_tokens=llm_metrics.total_tokens if llm_metrics else None,
+                    time_to_first_token=llm_metrics.time_to_first_token if llm_metrics else None,
+                    reasoning_tokens=llm_metrics.reasoning_tokens if llm_metrics else None,
+                    cache_read_tokens=llm_metrics.cache_read_tokens if llm_metrics else None,
+                    cache_write_tokens=llm_metrics.cache_write_tokens if llm_metrics else None,
+                )
 
                 # Handle tool calls if present
                 if assistant_message.tool_calls is not None:
@@ -1513,12 +1537,23 @@ class Model(ABC):
                 if _compression_manager is not None and await _compression_manager.ashould_compress(
                     messages, tools, model=self, response_format=response_format
                 ):
+                    # Emit compression started event
+                    yield ModelResponse(event=ModelResponseEvent.compression_started.value)
                     await _compression_manager.acompress(messages)
+                    # Emit compression completed event with stats
+                    yield ModelResponse(
+                        event=ModelResponseEvent.compression_completed.value,
+                        compression_stats=_compression_manager.stats.copy(),
+                    )
 
                 # Create assistant message and stream data
                 assistant_message = Message(role=self.assistant_message_role)
                 stream_data = MessageData()
                 model_response = ModelResponse()
+
+                # Emit LLM request started event
+                yield ModelResponse(event=ModelResponseEvent.model_request_started.value)
+
                 if stream_model_response:
                     # Generate response
                     async for model_response in self.aprocess_response_stream(
@@ -1553,6 +1588,19 @@ class Model(ABC):
                 # Add assistant message to messages
                 messages.append(assistant_message)
                 assistant_message.log(metrics=True)
+
+                # Emit LLM request completed event with metrics
+                llm_metrics = assistant_message.metrics
+                yield ModelResponse(
+                    event=ModelResponseEvent.model_request_completed.value,
+                    input_tokens=llm_metrics.input_tokens if llm_metrics else None,
+                    output_tokens=llm_metrics.output_tokens if llm_metrics else None,
+                    total_tokens=llm_metrics.total_tokens if llm_metrics else None,
+                    time_to_first_token=llm_metrics.time_to_first_token if llm_metrics else None,
+                    reasoning_tokens=llm_metrics.reasoning_tokens if llm_metrics else None,
+                    cache_read_tokens=llm_metrics.cache_read_tokens if llm_metrics else None,
+                    cache_write_tokens=llm_metrics.cache_write_tokens if llm_metrics else None,
+                )
 
                 # Handle tool calls if present
                 if assistant_message.tool_calls is not None:
@@ -1940,6 +1988,7 @@ class Model(ABC):
 
                         if isinstance(item, CustomEvent):
                             function_call_output += str(item)
+                            item.tool_call_id = function_call.call_id
 
                         # For WorkflowCompletedEvent, extract content for final output
                         from agno.run.workflow import WorkflowCompletedEvent
@@ -1971,8 +2020,6 @@ class Model(ABC):
                     and function_call.function._run_context.session_state is not None
                 ):
                     function_execution_result.updated_session_state = function_call.function._run_context.session_state
-                elif function_call.function._session_state is not None:
-                    function_execution_result.updated_session_state = function_call.function._session_state
         else:
             from agno.tools.function import ToolResult
 
@@ -2062,6 +2109,7 @@ class Model(ABC):
                         tool_name=fc.function.name,
                         tool_args=fc.arguments,
                         requires_confirmation=True,
+                        external_execution_silent=fc.function.external_execution_silent,
                     )
                 )
 
@@ -2081,6 +2129,7 @@ class Model(ABC):
                         tool_args=fc.arguments,
                         requires_user_input=True,
                         user_input_schema=user_input_schema,
+                        external_execution_silent=fc.function.external_execution_silent,
                     )
                 )
 
@@ -2129,6 +2178,7 @@ class Model(ABC):
                         tool_name=fc.function.name,
                         tool_args=fc.arguments,
                         external_execution_required=True,
+                        external_execution_silent=fc.function.external_execution_silent,
                     )
                 )
 
@@ -2223,6 +2273,7 @@ class Model(ABC):
                         tool_name=fc.function.name,
                         tool_args=fc.arguments,
                         requires_confirmation=True,
+                        external_execution_silent=fc.function.external_execution_silent,
                     )
                 )
             # If the function requires user input, we yield a message to the user
@@ -2241,6 +2292,7 @@ class Model(ABC):
                         tool_args=fc.arguments,
                         requires_user_input=True,
                         user_input_schema=user_input_schema,
+                        external_execution_silent=fc.function.external_execution_silent,
                     )
                 )
             # If the function is from the user control flow tools, we handle it here
@@ -2293,6 +2345,7 @@ class Model(ABC):
                         tool_name=fc.function.name,
                         tool_args=fc.arguments,
                         external_execution_required=True,
+                        external_execution_silent=fc.function.external_execution_silent,
                     )
                 )
 
@@ -2384,6 +2437,7 @@ class Model(ABC):
 
                         if isinstance(item, CustomEvent):
                             function_call_output += str(item)
+                            item.tool_call_id = function_call.call_id
 
                             # For WorkflowCompletedEvent, extract content for final output
                             from agno.run.workflow import WorkflowCompletedEvent
@@ -2461,8 +2515,12 @@ class Model(ABC):
                                 if async_gen_index in async_generator_outputs:
                                     _, async_function_call_output, error = async_generator_outputs[async_gen_index]
                                     if error:
-                                        log_error(f"Error in async generator: {error}")
-                                        raise error
+                                        # Handle async generator exceptions gracefully like sync generators
+                                        log_error(
+                                            f"Error while iterating async generator for {function_call.function.name}: {error}"
+                                        )
+                                        function_call.error = str(error)
+                                        function_call_success = False
                                 break
                             async_gen_index += 1
 
@@ -2509,6 +2567,10 @@ class Model(ABC):
                                     yield ModelResponse(content=item.content)
                                     continue
 
+                            elif isinstance(item, CustomEvent):
+                                function_call_output += str(item)
+                                item.tool_call_id = function_call.call_id
+
                             # Yield the event itself to bubble it up
                             yield item
                         else:
@@ -2532,8 +2594,6 @@ class Model(ABC):
                         and function_call.function._run_context.session_state is not None
                     ):
                         updated_session_state = function_call.function._run_context.session_state
-                    elif function_call.function._session_state is not None:
-                        updated_session_state = function_call.function._session_state
 
             if not (
                 async_function_call_output is not None
