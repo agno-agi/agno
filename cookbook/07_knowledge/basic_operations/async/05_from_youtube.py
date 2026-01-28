@@ -1,6 +1,5 @@
 """This cookbook shows how to add content from a Youtube video to Knowledge.
-
-1. Run: `python cookbook/agent_concepts/knowledge/05_from_youtube.py` to run the cookbook
+1. Run: `python cookbook/07_knowledge/basic_operations/async/05_from_youtube.py` to run the cookbook
 """
 
 import asyncio
