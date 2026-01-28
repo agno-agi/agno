@@ -219,8 +219,7 @@ class SingleStoreDb(BaseDb):
                     column_kwargs["unique"] = True
                 columns.append(Column(*column_args, **column_kwargs))
 
-            # Create the table object without constraints to avoid autoload issues
-            table = Table(table_name, self.metadata, *columns, schema=self.db_schema)
+            table = Table(table_name, self.metadata, *columns, schema=self.db_schema, extend_existing=True)
 
             return table
 
@@ -286,8 +285,7 @@ class SingleStoreDb(BaseDb):
 
                 columns.append(Column(*column_args, **column_kwargs))
 
-            # Create the table object
-            table = Table(table_name, self.metadata, *columns, schema=self.db_schema)
+            table = Table(table_name, self.metadata, *columns, schema=self.db_schema, extend_existing=True)
 
             # Add multi-column unique constraints with table-specific names
             for constraint in schema_unique_constraints:
@@ -442,7 +440,8 @@ class SingleStoreDb(BaseDb):
 
         if table_type == "spans":
             # Ensure traces table exists first (for foreign key)
-            self._get_table(table_type="traces", create_table_if_not_found=create_table_if_not_found)
+            if create_table_if_not_found:
+                self._get_table(table_type="traces", create_table_if_not_found=True)
             self.spans_table = self._get_or_create_table(
                 table_name=self.span_table_name,
                 table_type="spans",
