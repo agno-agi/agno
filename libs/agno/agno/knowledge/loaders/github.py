@@ -12,6 +12,7 @@ import httpx
 from httpx import AsyncClient
 
 from agno.knowledge.content import Content, ContentStatus
+from agno.knowledge.loaders.base import BaseLoader
 from agno.knowledge.reader import Reader
 from agno.knowledge.remote_content.config import GitHubConfig, RemoteContentConfig
 from agno.knowledge.remote_content.remote_content import GitHubContent
@@ -19,8 +20,115 @@ from agno.utils.log import log_error, log_info, log_warning
 from agno.utils.string import generate_id
 
 
-class GitHubLoader:
+class GitHubLoader(BaseLoader):
     """Loader for GitHub content."""
+
+    # ==========================================
+    # GITHUB HELPERS (shared between sync/async)
+    # ==========================================
+
+    def _validate_github_config(
+        self,
+        content: Content,
+        config: Optional[RemoteContentConfig],
+    ) -> Optional[GitHubConfig]:
+        """Validate and extract GitHub config.
+
+        Returns:
+            GitHubConfig if valid, None otherwise
+        """
+        remote_content: GitHubContent = cast(GitHubContent, content.remote_content)
+        gh_config = cast(GitHubConfig, config) if isinstance(config, GitHubConfig) else None
+
+        if gh_config is None:
+            log_error(f"GitHub config not found for config_id: {remote_content.config_id}")
+            return None
+
+        return gh_config
+
+    def _build_github_headers(self, gh_config: GitHubConfig) -> Dict[str, str]:
+        """Build headers for GitHub API requests."""
+        headers: Dict[str, str] = {
+            "Accept": "application/vnd.github.v3+json",
+            "User-Agent": "Agno-Knowledge",
+        }
+        if gh_config.token:
+            headers["Authorization"] = f"Bearer {gh_config.token}"
+        return headers
+
+    def _build_github_metadata(
+        self,
+        gh_config: GitHubConfig,
+        branch: str,
+        file_path: str,
+        file_name: str,
+    ) -> Dict[str, str]:
+        """Build GitHub-specific metadata dictionary."""
+        return {
+            "source_type": "github",
+            "source_config_id": gh_config.id,
+            "source_config_name": gh_config.name,
+            "github_repo": gh_config.repo,
+            "github_branch": branch,
+            "github_path": file_path,
+            "github_filename": file_name,
+        }
+
+    def _build_github_virtual_path(self, repo: str, branch: str, file_path: str) -> str:
+        """Build virtual path for GitHub content."""
+        return f"github://{repo}/{branch}/{file_path}"
+
+    def _get_github_branch(self, remote_content: GitHubContent, gh_config: GitHubConfig) -> str:
+        """Get the branch to use for GitHub operations."""
+        return remote_content.branch or gh_config.branch or "main"
+
+    def _get_github_path_to_process(self, remote_content: GitHubContent) -> str:
+        """Get the path to process from remote content."""
+        return (remote_content.file_path or remote_content.folder_path or "").rstrip("/")
+
+    def _process_github_file_content(
+        self,
+        file_data: dict,
+        client: httpx.Client,
+        headers: Dict[str, str],
+    ) -> bytes:
+        """Process GitHub API response and return file content (sync)."""
+        if file_data.get("encoding") == "base64":
+            import base64
+
+            return base64.b64decode(file_data["content"])
+        else:
+            download_url = file_data.get("download_url")
+            if download_url:
+                dl_response = client.get(download_url, headers=headers, timeout=30.0)
+                dl_response.raise_for_status()
+                return dl_response.content
+            else:
+                raise ValueError("No content or download_url in response")
+
+    async def _aprocess_github_file_content(
+        self,
+        file_data: dict,
+        client: AsyncClient,
+        headers: Dict[str, str],
+    ) -> bytes:
+        """Process GitHub API response and return file content (async)."""
+        if file_data.get("encoding") == "base64":
+            import base64
+
+            return base64.b64decode(file_data["content"])
+        else:
+            download_url = file_data.get("download_url")
+            if download_url:
+                dl_response = await client.get(download_url, headers=headers, timeout=30.0)
+                dl_response.raise_for_status()
+                return dl_response.content
+            else:
+                raise ValueError("No content or download_url in response")
+
+    # ==========================================
+    # GITHUB LOADERS
+    # ==========================================
 
     async def _aload_from_github(
         self,
@@ -29,29 +137,20 @@ class GitHubLoader:
         skip_if_exists: bool,
         config: Optional[RemoteContentConfig] = None,
     ):
-        """Load content from GitHub.
+        """Load content from GitHub (async).
 
         Requires the GitHub config to contain repo and optionally token for private repos.
         Uses the GitHub API to fetch file contents.
         """
         remote_content: GitHubContent = cast(GitHubContent, content.remote_content)
-        gh_config = cast(GitHubConfig, config) if isinstance(config, GitHubConfig) else None
-
+        gh_config = self._validate_github_config(content, config)
         if gh_config is None:
-            log_error(f"GitHub config not found for config_id: {remote_content.config_id}")
             return
 
-        # Build headers for GitHub API
-        headers: Dict[str, str] = {
-            "Accept": "application/vnd.github.v3+json",
-            "User-Agent": "Agno-Knowledge",
-        }
-        if gh_config.token:
-            headers["Authorization"] = f"Bearer {gh_config.token}"
+        headers = self._build_github_headers(gh_config)
+        branch = self._get_github_branch(remote_content, gh_config)
+        path_to_process = self._get_github_path_to_process(remote_content)
 
-        branch = remote_content.branch or gh_config.branch or "main"
-
-        # Get list of files to process
         files_to_process: List[Dict[str, str]] = []
 
         async with AsyncClient() as client:
@@ -68,20 +167,13 @@ class GitHubLoader:
                     response.raise_for_status()
                     items = response.json()
 
-                    # If items is not a list, it's a single file response
                     if not isinstance(items, list):
                         items = [items]
 
                     for item in items:
                         if item.get("type") == "file":
-                            files.append(
-                                {
-                                    "path": item["path"],
-                                    "name": item["name"],
-                                }
-                            )
+                            files.append({"path": item["path"], "name": item["name"]})
                         elif item.get("type") == "dir":
-                            # Recursively get files from subdirectory
                             subdir_files = await list_files_recursive(item["path"])
                             files.extend(subdir_files)
                 except Exception as e:
@@ -89,11 +181,7 @@ class GitHubLoader:
 
                 return files
 
-            # Get the path to process (file_path or folder_path)
-            path_to_process = (remote_content.file_path or remote_content.folder_path or "").rstrip("/")
-
             if path_to_process:
-                # Fetch the path to determine if it's a file or directory
                 api_url = f"https://api.github.com/repos/{gh_config.repo}/contents/{path_to_process}"
                 if branch:
                     api_url += f"?ref={branch}"
@@ -104,7 +192,6 @@ class GitHubLoader:
                     path_data = response.json()
 
                     if isinstance(path_data, list):
-                        # It's a directory - recursively list all files
                         for item in path_data:
                             if item.get("type") == "file":
                                 files_to_process.append({"path": item["path"], "name": item["name"]})
@@ -112,13 +199,7 @@ class GitHubLoader:
                                 subdir_files = await list_files_recursive(item["path"])
                                 files_to_process.extend(subdir_files)
                     else:
-                        # It's a single file
-                        files_to_process.append(
-                            {
-                                "path": path_data["path"],
-                                "name": path_data["name"],
-                            }
-                        )
+                        files_to_process.append({"path": path_data["path"], "name": path_data["name"]})
                 except Exception as e:
                     log_error(f"Error fetching GitHub path {path_to_process}: {e}")
                     return
@@ -128,53 +209,27 @@ class GitHubLoader:
                 return
 
             log_info(f"Processing {len(files_to_process)} file(s) from GitHub")
+            is_folder_upload = len(files_to_process) > 1
 
-            # Process each file
             for file_info in files_to_process:
                 file_path = file_info["path"]
                 file_name = file_info["name"]
 
-                # Build a unique virtual path for hashing (ensures different files don't collide)
-                virtual_path = f"github://{gh_config.repo}/{branch}/{file_path}"
+                # Build metadata and virtual path using helpers
+                virtual_path = self._build_github_virtual_path(gh_config.repo, branch, file_path)
+                github_metadata = self._build_github_metadata(gh_config, branch, file_path, file_name)
+                merged_metadata = self._merge_metadata(github_metadata, content.metadata)
 
-                # Build metadata with all info needed to re-fetch the file
-                github_metadata: Dict[str, str] = {
-                    "source_type": "github",
-                    "source_config_id": gh_config.id,
-                    "source_config_name": gh_config.name,
-                    "github_repo": gh_config.repo,
-                    "github_branch": branch,
-                    "github_path": file_path,
-                    "github_filename": file_name,
-                }
-                # Merge with user-provided metadata (user metadata takes precedence)
-                merged_metadata = {**github_metadata, **(content.metadata or {})}
-
-                # Setup Content object
-                # Naming: for folders, use relative path; for single files, use user name or filename
-                is_folder_upload = len(files_to_process) > 1
-                if is_folder_upload:
-                    # Compute relative path from the upload root
-                    relative_path = file_path
-                    if path_to_process and file_path.startswith(path_to_process + "/"):
-                        relative_path = file_path[len(path_to_process) + 1 :]
-                    # If user provided a name, prefix it; otherwise use full file path
-                    content_name = f"{content.name}/{relative_path}" if content.name else file_path
-                else:
-                    # Single file: use user's name or the filename
-                    content_name = content.name or file_name
-                content_entry = Content(
-                    name=content_name,
-                    description=content.description,
-                    path=virtual_path,  # Include path for unique hashing
-                    status=ContentStatus.PROCESSING,
-                    metadata=merged_metadata,
-                    file_type="github",
+                # Compute content name using base helper
+                content_name = self._compute_content_name(
+                    file_path, file_name, content.name, path_to_process, is_folder_upload
                 )
 
-                # Hash content and add to contents database
-                content_entry.content_hash = self._build_content_hash(content_entry)
-                content_entry.id = generate_id(content_entry.content_hash)
+                # Create content entry using base helper
+                content_entry = self._create_content_entry(
+                    content, content_name, virtual_path, merged_metadata, "github", is_folder_upload
+                )
+
                 await self._ainsert_contents_db(content_entry)
 
                 if self._should_skip(content_entry.content_hash, skip_if_exists):
@@ -182,7 +237,7 @@ class GitHubLoader:
                     await self._aupdate_content(content_entry)
                     continue
 
-                # Fetch file content using GitHub API (works for private repos)
+                # Fetch file content
                 api_url = f"https://api.github.com/repos/{gh_config.repo}/contents/{file_path}"
                 if branch:
                     api_url += f"?ref={branch}"
@@ -190,21 +245,7 @@ class GitHubLoader:
                     response = await client.get(api_url, headers=headers, timeout=30.0)
                     response.raise_for_status()
                     file_data = response.json()
-
-                    # GitHub API returns content as base64
-                    if file_data.get("encoding") == "base64":
-                        import base64
-
-                        file_content = base64.b64decode(file_data["content"])
-                    else:
-                        # For large files, GitHub returns a download_url
-                        download_url = file_data.get("download_url")
-                        if download_url:
-                            dl_response = await client.get(download_url, headers=headers, timeout=30.0)
-                            dl_response.raise_for_status()
-                            file_content = dl_response.content
-                        else:
-                            raise ValueError("No content or download_url in response")
+                    file_content = await self._aprocess_github_file_content(file_data, client, headers)
                 except Exception as e:
                     log_error(f"Error fetching GitHub file {file_path}: {e}")
                     content_entry.status = ContentStatus.FAILED
@@ -238,25 +279,20 @@ class GitHubLoader:
         skip_if_exists: bool,
         config: Optional[RemoteContentConfig] = None,
     ):
-        """Synchronous version of _load_from_github."""
-        remote_content: GitHubContent = cast(GitHubContent, content.remote_content)
-        gh_config = cast(GitHubConfig, config) if isinstance(config, GitHubConfig) else None
+        """Load content from GitHub (sync).
 
+        Requires the GitHub config to contain repo and optionally token for private repos.
+        Uses the GitHub API to fetch file contents.
+        """
+        remote_content: GitHubContent = cast(GitHubContent, content.remote_content)
+        gh_config = self._validate_github_config(content, config)
         if gh_config is None:
-            log_error(f"GitHub config not found for config_id: {remote_content.config_id}")
             return
 
-        # Build headers for GitHub API
-        headers: Dict[str, str] = {
-            "Accept": "application/vnd.github.v3+json",
-            "User-Agent": "Agno-Knowledge",
-        }
-        if gh_config.token:
-            headers["Authorization"] = f"Bearer {gh_config.token}"
+        headers = self._build_github_headers(gh_config)
+        branch = self._get_github_branch(remote_content, gh_config)
+        path_to_process = self._get_github_path_to_process(remote_content)
 
-        branch = remote_content.branch or gh_config.branch or "main"
-
-        # Get list of files to process
         files_to_process: List[Dict[str, str]] = []
 
         with httpx.Client() as client:
@@ -273,20 +309,13 @@ class GitHubLoader:
                     response.raise_for_status()
                     items = response.json()
 
-                    # If items is not a list, it's a single file response
                     if not isinstance(items, list):
                         items = [items]
 
                     for item in items:
                         if item.get("type") == "file":
-                            files.append(
-                                {
-                                    "path": item["path"],
-                                    "name": item["name"],
-                                }
-                            )
+                            files.append({"path": item["path"], "name": item["name"]})
                         elif item.get("type") == "dir":
-                            # Recursively get files from subdirectory
                             subdir_files = list_files_recursive(item["path"])
                             files.extend(subdir_files)
                 except Exception as e:
@@ -294,11 +323,7 @@ class GitHubLoader:
 
                 return files
 
-            # Get the path to process (file_path or folder_path)
-            path_to_process = (remote_content.file_path or remote_content.folder_path or "").rstrip("/")
-
             if path_to_process:
-                # Fetch the path to determine if it's a file or directory
                 api_url = f"https://api.github.com/repos/{gh_config.repo}/contents/{path_to_process}"
                 if branch:
                     api_url += f"?ref={branch}"
@@ -309,7 +334,6 @@ class GitHubLoader:
                     path_data = response.json()
 
                     if isinstance(path_data, list):
-                        # It's a directory - recursively list all files
                         for item in path_data:
                             if item.get("type") == "file":
                                 files_to_process.append({"path": item["path"], "name": item["name"]})
@@ -317,13 +341,7 @@ class GitHubLoader:
                                 subdir_files = list_files_recursive(item["path"])
                                 files_to_process.extend(subdir_files)
                     else:
-                        # It's a single file
-                        files_to_process.append(
-                            {
-                                "path": path_data["path"],
-                                "name": path_data["name"],
-                            }
-                        )
+                        files_to_process.append({"path": path_data["path"], "name": path_data["name"]})
                 except Exception as e:
                     log_error(f"Error fetching GitHub path {path_to_process}: {e}")
                     return
@@ -333,53 +351,27 @@ class GitHubLoader:
                 return
 
             log_info(f"Processing {len(files_to_process)} file(s) from GitHub")
+            is_folder_upload = len(files_to_process) > 1
 
-            # Process each file
             for file_info in files_to_process:
                 file_path = file_info["path"]
                 file_name = file_info["name"]
 
-                # Build a unique virtual path for hashing (ensures different files don't collide)
-                virtual_path = f"github://{gh_config.repo}/{branch}/{file_path}"
+                # Build metadata and virtual path using helpers
+                virtual_path = self._build_github_virtual_path(gh_config.repo, branch, file_path)
+                github_metadata = self._build_github_metadata(gh_config, branch, file_path, file_name)
+                merged_metadata = self._merge_metadata(github_metadata, content.metadata)
 
-                # Build metadata with all info needed to re-fetch the file
-                github_metadata: Dict[str, str] = {
-                    "source_type": "github",
-                    "source_config_id": gh_config.id,
-                    "source_config_name": gh_config.name,
-                    "github_repo": gh_config.repo,
-                    "github_branch": branch,
-                    "github_path": file_path,
-                    "github_filename": file_name,
-                }
-                # Merge with user-provided metadata (user metadata takes precedence)
-                merged_metadata = {**github_metadata, **(content.metadata or {})}
-
-                # Setup Content object
-                # Naming: for folders, use relative path; for single files, use user name or filename
-                is_folder_upload = len(files_to_process) > 1
-                if is_folder_upload:
-                    # Compute relative path from the upload root
-                    relative_path = file_path
-                    if path_to_process and file_path.startswith(path_to_process + "/"):
-                        relative_path = file_path[len(path_to_process) + 1 :]
-                    # If user provided a name, prefix it; otherwise use full file path
-                    content_name = f"{content.name}/{relative_path}" if content.name else file_path
-                else:
-                    # Single file: use user's name or the filename
-                    content_name = content.name or file_name
-                content_entry = Content(
-                    name=content_name,
-                    description=content.description,
-                    path=virtual_path,  # Include path for unique hashing
-                    status=ContentStatus.PROCESSING,
-                    metadata=merged_metadata,
-                    file_type="github",
+                # Compute content name using base helper
+                content_name = self._compute_content_name(
+                    file_path, file_name, content.name, path_to_process, is_folder_upload
                 )
 
-                # Hash content and add to contents database
-                content_entry.content_hash = self._build_content_hash(content_entry)
-                content_entry.id = generate_id(content_entry.content_hash)
+                # Create content entry using base helper
+                content_entry = self._create_content_entry(
+                    content, content_name, virtual_path, merged_metadata, "github", is_folder_upload
+                )
+
                 self._insert_contents_db(content_entry)
 
                 if self._should_skip(content_entry.content_hash, skip_if_exists):
@@ -387,7 +379,7 @@ class GitHubLoader:
                     self._update_content(content_entry)
                     continue
 
-                # Fetch file content using GitHub API (works for private repos)
+                # Fetch file content
                 api_url = f"https://api.github.com/repos/{gh_config.repo}/contents/{file_path}"
                 if branch:
                     api_url += f"?ref={branch}"
@@ -395,21 +387,7 @@ class GitHubLoader:
                     response = client.get(api_url, headers=headers, timeout=30.0)
                     response.raise_for_status()
                     file_data = response.json()
-
-                    # GitHub API returns content as base64
-                    if file_data.get("encoding") == "base64":
-                        import base64
-
-                        file_content = base64.b64decode(file_data["content"])
-                    else:
-                        # For large files, GitHub returns a download_url
-                        download_url = file_data.get("download_url")
-                        if download_url:
-                            dl_response = client.get(download_url, headers=headers, timeout=30.0)
-                            dl_response.raise_for_status()
-                            file_content = dl_response.content
-                        else:
-                            raise ValueError("No content or download_url in response")
+                    file_content = self._process_github_file_content(file_data, client, headers)
                 except Exception as e:
                     log_error(f"Error fetching GitHub file {file_path}: {e}")
                     content_entry.status = ContentStatus.FAILED

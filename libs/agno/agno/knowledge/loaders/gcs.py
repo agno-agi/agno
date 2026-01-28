@@ -6,9 +6,10 @@ Provides methods for loading content from Google Cloud Storage.
 # mypy: disable-error-code="attr-defined"
 
 from io import BytesIO
-from typing import Optional, cast
+from typing import Any, Dict, Optional, cast
 
 from agno.knowledge.content import Content, ContentStatus
+from agno.knowledge.loaders.base import BaseLoader
 from agno.knowledge.reader import Reader
 from agno.knowledge.remote_content.config import GcsConfig, RemoteContentConfig
 from agno.knowledge.remote_content.remote_content import GCSContent
@@ -16,27 +17,29 @@ from agno.utils.log import log_info, log_warning
 from agno.utils.string import generate_id
 
 
-class GCSLoader:
+class GCSLoader(BaseLoader):
     """Loader for Google Cloud Storage content."""
 
-    async def _aload_from_gcs(
+    # ==========================================
+    # GCS HELPERS (shared between sync/async)
+    # ==========================================
+
+    def _validate_gcs_config(
         self,
         content: Content,
-        upsert: bool,
-        skip_if_exists: bool,
-        config: Optional[RemoteContentConfig] = None,
-    ):
-        """Load the contextual GCS content.
+        config: Optional[RemoteContentConfig],
+    ) -> Optional[GcsConfig]:
+        """Validate and extract GCS config.
 
-        Note: Uses sync google-cloud-storage calls as it doesn't have an async API.
+        Returns:
+            GcsConfig if valid, None otherwise (GCS can work without explicit config)
+        """
+        return cast(GcsConfig, config) if isinstance(config, GcsConfig) else None
 
-        1. Identify objects to read
-        2. Setup Content object
-        3. Hash content and add it to the contents database
-        4. Select reader
-        5. Fetch and load the content
-        6. Read the content
-        7. Prepare and insert the content in the vector database
+    def _get_gcs_client(self, gcs_config: Optional[GcsConfig]):
+        """Get a GCS client.
+
+        Requires the `google-cloud-storage` package.
         """
         try:
             from google.cloud import storage  # type: ignore
@@ -46,27 +49,72 @@ class GCSLoader:
                 "Please install it via `pip install google-cloud-storage`."
             )
 
-        # Note: GCS support has limited features compared to GitHub/SharePoint
+        if gcs_config and gcs_config.credentials_path:
+            return storage.Client.from_service_account_json(gcs_config.credentials_path)
+        elif gcs_config and gcs_config.project:
+            return storage.Client(project=gcs_config.project)
+        else:
+            return storage.Client()
+
+    def _build_gcs_metadata(
+        self,
+        gcs_config: Optional[GcsConfig],
+        bucket_name: str,
+        blob_name: str,
+    ) -> Dict[str, str]:
+        """Build GCS-specific metadata dictionary."""
+        metadata: Dict[str, str] = {
+            "source_type": "gcs",
+            "gcs_bucket": bucket_name,
+            "gcs_blob_name": blob_name,
+        }
+        if gcs_config:
+            metadata["source_config_id"] = gcs_config.id
+            metadata["source_config_name"] = gcs_config.name
+        return metadata
+
+    def _build_gcs_virtual_path(self, bucket_name: str, blob_name: str) -> str:
+        """Build virtual path for GCS content."""
+        return f"gcs://{bucket_name}/{blob_name}"
+
+    # ==========================================
+    # GCS LOADERS
+    # ==========================================
+
+    async def _aload_from_gcs(
+        self,
+        content: Content,
+        upsert: bool,
+        skip_if_exists: bool,
+        config: Optional[RemoteContentConfig] = None,
+    ):
+        """Load content from Google Cloud Storage (async).
+
+        Note: Uses sync google-cloud-storage calls as it doesn't have an async API.
+        """
+        try:
+            from google.cloud import storage  # type: ignore  # noqa: F401
+        except ImportError:
+            raise ImportError(
+                "The `google-cloud-storage` package is not installed. "
+                "Please install it via `pip install google-cloud-storage`."
+            )
+
         log_warning(
             "GCS content loading has limited features. "
             "Recursive folder traversal, rich metadata, and improved naming are coming in a future release."
         )
 
         remote_content: GCSContent = cast(GCSContent, content.remote_content)
+        gcs_config = self._validate_gcs_config(content, config)
 
-        # Get or create bucket with credentials from config
+        # Get or create bucket
         bucket = remote_content.bucket
         if bucket is None and remote_content.bucket_name:
-            gcs_config = cast(GcsConfig, config) if isinstance(config, GcsConfig) else None
-            if gcs_config and gcs_config.credentials_path:
-                client = storage.Client.from_service_account_json(gcs_config.credentials_path)
-            elif gcs_config and gcs_config.project:
-                client = storage.Client(project=gcs_config.project)
-            else:
-                client = storage.Client()
+            client = self._get_gcs_client(gcs_config)
             bucket = client.bucket(remote_content.bucket_name)
 
-        # 1. Identify objects to read
+        # Identify objects to read
         objects_to_read = []
         if remote_content.blob_name is not None:
             objects_to_read.append(bucket.blob(remote_content.blob_name))  # type: ignore
@@ -78,37 +126,52 @@ class GCSLoader:
         if objects_to_read:
             log_info(f"Processing {len(objects_to_read)} file(s) from GCS")
 
+        bucket_name = remote_content.bucket_name or (bucket.name if bucket else "unknown")
+        is_folder_upload = len(objects_to_read) > 1
+        root_path = remote_content.prefix or ""
+
         for gcs_object in objects_to_read:
-            # 2. Setup Content object
-            name = (content.name or "content") + "_" + gcs_object.name
+            blob_name = gcs_object.name
+            file_name = blob_name.split("/")[-1]
+
+            # Build metadata and virtual path using helpers
+            virtual_path = self._build_gcs_virtual_path(bucket_name, blob_name)
+            gcs_metadata = self._build_gcs_metadata(gcs_config, bucket_name, blob_name)
+            merged_metadata: Dict[str, Any] = self._merge_metadata(gcs_metadata, content.metadata)
+
+            # Compute content name using base helper
+            content_name = self._compute_content_name(blob_name, file_name, content.name, root_path, is_folder_upload)
+
+            # Create content entry
             content_entry = Content(
-                name=name,
+                name=content_name,
                 description=content.description,
+                path=virtual_path,
                 status=ContentStatus.PROCESSING,
-                metadata=content.metadata,
+                metadata=merged_metadata,
                 file_type="gcs",
             )
-
-            # 3. Hash content and add it to the contents database
             content_entry.content_hash = self._build_content_hash(content_entry)
             content_entry.id = generate_id(content_entry.content_hash)
+
             await self._ainsert_contents_db(content_entry)
+
             if self._should_skip(content_entry.content_hash, skip_if_exists):
                 content_entry.status = ContentStatus.COMPLETED
                 await self._aupdate_content(content_entry)
                 continue
 
-            # 4. Select reader
+            # Select reader
             reader = self._select_reader_by_uri(gcs_object.name, content.reader)
             reader = cast(Reader, reader)
 
-            # 5. Fetch and load the content
+            # Fetch and load the content
             readable_content = BytesIO(gcs_object.download_as_bytes())
 
-            # 6. Read the content
-            read_documents = await reader.async_read(readable_content, name=name)
+            # Read the content
+            read_documents = await reader.async_read(readable_content, name=file_name)
 
-            # 7. Prepare and insert the content in the vector database
+            # Prepare and insert the content in the vector database
             self._prepare_documents_for_insert(read_documents, content_entry.id)
             await self._ahandle_vector_db_insert(content_entry, read_documents, upsert)
 
@@ -119,46 +182,30 @@ class GCSLoader:
         skip_if_exists: bool,
         config: Optional[RemoteContentConfig] = None,
     ):
-        """Synchronous version of _load_from_gcs.
-
-        Load the contextual GCS content:
-        1. Identify objects to read
-        2. Setup Content object
-        3. Hash content and add it to the contents database
-        4. Select reader
-        5. Fetch and load the content
-        6. Read the content
-        7. Prepare and insert the content in the vector database
-        """
+        """Load content from Google Cloud Storage (sync)."""
         try:
-            from google.cloud import storage  # type: ignore
+            from google.cloud import storage  # type: ignore  # noqa: F401
         except ImportError:
             raise ImportError(
                 "The `google-cloud-storage` package is not installed. "
                 "Please install it via `pip install google-cloud-storage`."
             )
 
-        # Note: GCS support has limited features compared to GitHub/SharePoint
         log_warning(
             "GCS content loading has limited features. "
             "Recursive folder traversal, rich metadata, and improved naming are coming in a future release."
         )
 
         remote_content: GCSContent = cast(GCSContent, content.remote_content)
+        gcs_config = self._validate_gcs_config(content, config)
 
-        # Get or create bucket with credentials from config
+        # Get or create bucket
         bucket = remote_content.bucket
         if bucket is None and remote_content.bucket_name:
-            gcs_config = cast(GcsConfig, config) if isinstance(config, GcsConfig) else None
-            if gcs_config and gcs_config.credentials_path:
-                client = storage.Client.from_service_account_json(gcs_config.credentials_path)
-            elif gcs_config and gcs_config.project:
-                client = storage.Client(project=gcs_config.project)
-            else:
-                client = storage.Client()
+            client = self._get_gcs_client(gcs_config)
             bucket = client.bucket(remote_content.bucket_name)
 
-        # 1. Identify objects to read
+        # Identify objects to read
         objects_to_read = []
         if remote_content.blob_name is not None:
             objects_to_read.append(bucket.blob(remote_content.blob_name))  # type: ignore
@@ -170,36 +217,51 @@ class GCSLoader:
         if objects_to_read:
             log_info(f"Processing {len(objects_to_read)} file(s) from GCS")
 
+        bucket_name = remote_content.bucket_name or (bucket.name if bucket else "unknown")
+        is_folder_upload = len(objects_to_read) > 1
+        root_path = remote_content.prefix or ""
+
         for gcs_object in objects_to_read:
-            # 2. Setup Content object
-            name = (content.name or "content") + "_" + gcs_object.name
+            blob_name = gcs_object.name
+            file_name = blob_name.split("/")[-1]
+
+            # Build metadata and virtual path using helpers
+            virtual_path = self._build_gcs_virtual_path(bucket_name, blob_name)
+            gcs_metadata = self._build_gcs_metadata(gcs_config, bucket_name, blob_name)
+            merged_metadata: Dict[str, Any] = self._merge_metadata(gcs_metadata, content.metadata)
+
+            # Compute content name using base helper
+            content_name = self._compute_content_name(blob_name, file_name, content.name, root_path, is_folder_upload)
+
+            # Create content entry
             content_entry = Content(
-                name=name,
+                name=content_name,
                 description=content.description,
+                path=virtual_path,
                 status=ContentStatus.PROCESSING,
-                metadata=content.metadata,
+                metadata=merged_metadata,
                 file_type="gcs",
             )
-
-            # 3. Hash content and add it to the contents database
             content_entry.content_hash = self._build_content_hash(content_entry)
             content_entry.id = generate_id(content_entry.content_hash)
+
             self._insert_contents_db(content_entry)
+
             if self._should_skip(content_entry.content_hash, skip_if_exists):
                 content_entry.status = ContentStatus.COMPLETED
                 self._update_content(content_entry)
                 continue
 
-            # 4. Select reader
+            # Select reader
             reader = self._select_reader_by_uri(gcs_object.name, content.reader)
             reader = cast(Reader, reader)
 
-            # 5. Fetch and load the content
+            # Fetch and load the content
             readable_content = BytesIO(gcs_object.download_as_bytes())
 
-            # 6. Read the content
-            read_documents = reader.read(readable_content, name=name)
+            # Read the content
+            read_documents = reader.read(readable_content, name=file_name)
 
-            # 7. Prepare and insert the content in the vector database
+            # Prepare and insert the content in the vector database
             self._prepare_documents_for_insert(read_documents, content_entry.id)
             self._handle_vector_db_insert(content_entry, read_documents, upsert)
