@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union
 from uuid import uuid4
 
+from agno.registry import Registry
 from agno.run.agent import RunOutputEvent
 from agno.run.base import RunContext
 from agno.run.team import TeamRunOutputEvent
@@ -45,6 +46,70 @@ class Router:
 
     name: Optional[str] = None
     description: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        result: Dict[str, Any] = {
+            "type": "Router",
+            "name": self.name,
+            "description": self.description,
+            "choices": [step.to_dict() for step in self.choices if hasattr(step, "to_dict")],
+        }
+        # Serialize selector function by name
+        if callable(self.selector):
+            result["selector"] = self.selector.__name__
+        else:
+            raise ValueError(f"Invalid selector type: {type(self.selector).__name__}")
+
+        return result
+
+    @classmethod
+    def from_dict(
+        cls,
+        data: Dict[str, Any],
+        registry: Optional["Registry"] = None,
+        db: Optional[Any] = None,
+        links: Optional[List[Dict[str, Any]]] = None,
+    ) -> "Router":
+        from agno.workflow.condition import Condition
+        from agno.workflow.loop import Loop
+        from agno.workflow.parallel import Parallel
+        from agno.workflow.steps import Steps
+
+        def deserialize_step(step_data: Dict[str, Any]) -> Any:
+            step_type = step_data.get("type", "Step")
+            if step_type == "Loop":
+                return Loop.from_dict(step_data, registry=registry, db=db, links=links)
+            elif step_type == "Parallel":
+                return Parallel.from_dict(step_data, registry=registry, db=db, links=links)
+            elif step_type == "Steps":
+                return Steps.from_dict(step_data, registry=registry, db=db, links=links)
+            elif step_type == "Condition":
+                return Condition.from_dict(step_data, registry=registry, db=db, links=links)
+            elif step_type == "Router":
+                return cls.from_dict(step_data, registry=registry, db=db, links=links)
+            else:
+                return Step.from_dict(step_data, registry=registry, db=db, links=links)
+
+        # Deserialize selector function
+        selector_data = data.get("selector")
+        if selector_data is None:
+            raise ValueError("Router requires a selector function")
+        elif isinstance(selector_data, str):
+            if registry:
+                selector = registry.get_function(selector_data)
+                if selector is None:
+                    raise ValueError(f"Selector function '{selector_data}' not found in registry")
+            else:
+                raise ValueError(f"Registry required to deserialize selector function '{selector_data}'")
+        else:
+            raise ValueError(f"Invalid selector type in data: {type(selector_data).__name__}")
+
+        return cls(
+            selector=selector,
+            choices=[deserialize_step(step) for step in data.get("choices", [])],
+            name=data.get("name"),
+            description=data.get("description"),
+        )
 
     def _prepare_steps(self):
         """Prepare the steps for execution - mirrors workflow logic"""

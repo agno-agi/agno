@@ -3139,6 +3139,7 @@ class SqliteDb(BaseDb):
         component_type: Optional[ComponentType] = None,
         name: Optional[str] = None,
         description: Optional[str] = None,
+        current_version: Optional[int] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Create or update a component.
@@ -3148,6 +3149,7 @@ class SqliteDb(BaseDb):
             component_type: Type (agent|team|workflow). Required for create, optional for update.
             name: Display name.
             description: Optional description.
+            current_version: Optional current version.
             metadata: Optional metadata dict.
 
         Returns:
@@ -3213,6 +3215,8 @@ class SqliteDb(BaseDb):
                         updates["name"] = name
                     if description is not None:
                         updates["description"] = description
+                    if current_version is not None:
+                        updates["current_version"] = current_version
                     if metadata is not None:
                         updates["metadata"] = metadata
 
@@ -3758,10 +3762,6 @@ class SqliteDb(BaseDb):
 
                 if config_row is None:
                     return False
-
-                # Cannot delete published configs
-                if config_row.stage == "published":
-                    raise ValueError(f"Cannot delete published config {component_id} v{version}")
 
                 # Check if it's current version
                 current = sess.execute(
