@@ -4,8 +4,8 @@ from agno.models.openai import OpenAIChat
 from agno.vectordb.lancedb import LanceDb, SearchType
 
 knowledge = Knowledge(
-    name="My PG Vector Knowledge Base",
-    description="This is a knowledge base that uses a PG Vector DB",
+    name="My LanceDB Knowledge Base",
+    description="This is a knowledge base that uses LanceDB",
     vector_db=LanceDb(
         table_name="vectors",
         uri="tmp/lancedb",

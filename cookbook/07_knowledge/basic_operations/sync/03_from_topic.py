@@ -2,8 +2,8 @@
 
 It is important to specify the reader for the content when using topics.
 
-1. Run: `uv pip install agno wikipedia arxiv` to install the dependencies
-2. Run: `python cookbook/agent_concepts/knowledge/03_from_topic.py` to run the cookbook
+1. Run: `pip install agno wikipedia arxiv` to install the dependencies
+2. Run: `python cookbook/07_knowledge/basic_operations/sync/03_from_topic.py` to run the cookbook
 """
 
 from agno.agent import Agent

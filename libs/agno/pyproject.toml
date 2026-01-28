@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "2.4.5"
+version = "2.4.6"
 description = "Agno: a lightweight library for building Multi-Agent Systems"
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -155,7 +155,7 @@ mysql = ["pymysql", "asyncmy"]
 # Dependencies for Vector databases
 pgvector = ["pgvector"]
 chromadb = ["chromadb"]
-lancedb = ["lancedb==0.24.0", "tantivy"]
+lancedb = ["lancedb>=0.26.0", "tantivy"]
 pylance = ["pylance"]
 qdrant = ["qdrant-client"]
 couchbase = ["couchbase"]
@@ -176,7 +176,7 @@ pptx = ["python-pptx"]
 text = ["aiofiles"]
 csv = ["aiofiles"]
 excel = ["openpyxl", "xlrd"]
-markdown = ["unstructured", "markdown", "aiofiles"]
+markdown = ["unstructured<0.18.31", "markdown", "aiofiles"]
 chonkie = ["chonkie[semantic]", "chonkie[code]", "chonkie"]
 
 # Dependencies for AG-UI integration
