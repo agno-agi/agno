@@ -34,7 +34,12 @@ WorkflowSteps = List[
 
 @dataclass
 class Condition:
-    """A condition that executes a step (or list of steps) if the condition is met"""
+    """A condition that executes a step (or list of steps) if the condition is met.
+
+    If the condition evaluates to True, the `steps` are executed.
+    If the condition evaluates to False and `else_steps` is provided (and not empty),
+    the `else_steps` are executed instead.
+    """
 
     # Evaluator should only return boolean
     evaluator: Union[
@@ -43,6 +48,9 @@ class Condition:
         bool,
     ]
     steps: WorkflowSteps
+
+    # Steps to execute when condition is False (optional)
+    else_steps: Optional[WorkflowSteps] = None
 
     name: Optional[str] = None
     description: Optional[str] = None
@@ -57,20 +65,27 @@ class Condition:
         from agno.workflow.step import Step
         from agno.workflow.steps import Steps
 
-        prepared_steps: WorkflowSteps = []
-        for step in self.steps:
-            if callable(step) and hasattr(step, "__name__"):
-                prepared_steps.append(Step(name=step.__name__, description="User-defined callable step", executor=step))
-            elif isinstance(step, Agent):
-                prepared_steps.append(Step(name=step.name, description=step.description, agent=step))
-            elif isinstance(step, Team):
-                prepared_steps.append(Step(name=step.name, description=step.description, team=step))
-            elif isinstance(step, (Step, Steps, Loop, Parallel, Condition, Router)):
-                prepared_steps.append(step)
-            else:
-                raise ValueError(f"Invalid step type: {type(step).__name__}")
+        def prepare_step_list(steps: WorkflowSteps) -> WorkflowSteps:
+            """Helper to prepare a list of steps."""
+            prepared: WorkflowSteps = []
+            for step in steps:
+                if callable(step) and hasattr(step, "__name__"):
+                    prepared.append(Step(name=step.__name__, description="User-defined callable step", executor=step))
+                elif isinstance(step, Agent):
+                    prepared.append(Step(name=step.name, description=step.description, agent=step))
+                elif isinstance(step, Team):
+                    prepared.append(Step(name=step.name, description=step.description, team=step))
+                elif isinstance(step, (Step, Steps, Loop, Parallel, Condition, Router)):
+                    prepared.append(step)
+                else:
+                    raise ValueError(f"Invalid step type: {type(step).__name__}")
+            return prepared
 
-        self.steps = prepared_steps
+        self.steps = prepare_step_list(self.steps)
+
+        # Also prepare else_steps if provided and not empty
+        if self.else_steps and len(self.else_steps) > 0:
+            self.else_steps = prepare_step_list(self.else_steps)
 
     def _update_step_input_from_outputs(
         self,
@@ -169,6 +184,10 @@ class Condition:
         except Exception:
             return False
 
+    def _has_else_steps(self) -> bool:
+        """Check if else_steps is provided and not empty."""
+        return self.else_steps is not None and len(self.else_steps) > 0
+
     def execute(
         self,
         step_input: StepInput,
@@ -183,7 +202,12 @@ class Condition:
         num_history_runs: int = 3,
         background_tasks: Optional[Any] = None,
     ) -> StepOutput:
-        """Execute the condition and its steps with sequential chaining if condition is true"""
+        """Execute the condition and its steps with sequential chaining.
+
+        If condition is True, executes `steps`.
+        If condition is False and `else_steps` is provided (and not empty), executes `else_steps`.
+        If condition is False and no `else_steps`, returns a "not met" message.
+        """
         log_debug(f"Condition Start: {self.name}", center=True, symbol="-")
 
         conditional_step_id = str(uuid4())
@@ -198,7 +222,17 @@ class Condition:
 
         log_debug(f"Condition {self.name} evaluated to: {condition_result}")
 
-        if not condition_result:
+        # Determine which steps to execute
+        if condition_result:
+            steps_to_execute = self.steps
+            branch = "if"
+            log_debug(f"Condition {self.name} met, executing {len(steps_to_execute)} steps (if branch)")
+        elif self._has_else_steps():
+            steps_to_execute = self.else_steps  # type: ignore[assignment]
+            branch = "else"
+            log_debug(f"Condition {self.name} not met, executing {len(steps_to_execute)} else_steps (else branch)")
+        else:
+            # No else_steps provided, return "not met" message
             log_debug(f"Condition {self.name} not met, skipping {len(self.steps)} steps")
             return StepOutput(
                 step_name=self.name,
@@ -208,12 +242,11 @@ class Condition:
                 success=True,
             )
 
-        log_debug(f"Condition {self.name} met, executing {len(self.steps)} steps")
         all_results: List[StepOutput] = []
         current_step_input = step_input
         condition_step_outputs = {}
 
-        for i, step in enumerate(self.steps):
+        for i, step in enumerate(steps_to_execute):
             try:
                 step_output = step.execute(  # type: ignore[union-attr]
                     current_step_input,
@@ -234,7 +267,7 @@ class Condition:
                     all_results.extend(step_output)
                     if step_output:
                         step_name = getattr(step, "name", f"step_{i}")
-                        log_debug(f"Executing condition step {i + 1}/{len(self.steps)}: {step_name}")
+                        log_debug(f"Executing condition step {i + 1}/{len(steps_to_execute)}: {step_name}")
 
                         condition_step_outputs[step_name] = step_output[-1]
 
@@ -269,13 +302,13 @@ class Condition:
                 all_results.append(error_output)
                 break
 
-        log_debug(f"Condition End: {self.name} ({len(all_results)} results)", center=True, symbol="-")
+        log_debug(f"Condition End: {self.name} ({len(all_results)} results, {branch} branch)", center=True, symbol="-")
 
         return StepOutput(
             step_name=self.name,
             step_id=conditional_step_id,
             step_type=StepType.CONDITION,
-            content=f"Condition {self.name} completed with {len(all_results)} results",
+            content=f"Condition {self.name} completed with {len(all_results)} results ({branch} branch)",
             success=all(result.success for result in all_results) if all_results else True,
             error=None,
             stop=any(result.stop for result in all_results) if all_results else False,
@@ -300,7 +333,12 @@ class Condition:
         num_history_runs: int = 3,
         background_tasks: Optional[Any] = None,
     ) -> Iterator[Union[WorkflowRunOutputEvent, StepOutput]]:
-        """Execute the condition with streaming support - mirrors Loop logic"""
+        """Execute the condition with streaming support.
+
+        If condition is True, executes `steps`.
+        If condition is False and `else_steps` is provided (and not empty), executes `else_steps`.
+        If condition is False and no `else_steps`, yields completed event and returns.
+        """
         log_debug(f"Condition Start: {self.name}", center=True, symbol="-")
 
         conditional_step_id = str(uuid4())
@@ -328,9 +366,18 @@ class Condition:
                 parent_step_id=parent_step_id,
             )
 
-        if not condition_result:
+        # Determine which steps to execute
+        if condition_result:
+            steps_to_execute = self.steps
+            branch = "if"
+            log_debug(f"Condition {self.name} met, executing {len(steps_to_execute)} steps (if branch)")
+        elif self._has_else_steps():
+            steps_to_execute = self.else_steps  # type: ignore[assignment]
+            branch = "else"
+            log_debug(f"Condition {self.name} not met, executing {len(steps_to_execute)} else_steps (else branch)")
+        else:
+            # No else_steps provided, yield completed event and return
             if stream_events and workflow_run_response:
-                # Yield condition completed event for empty case
                 yield ConditionExecutionCompletedEvent(
                     run_id=workflow_run_response.run_id or "",
                     workflow_name=workflow_run_response.workflow_name or "",
@@ -340,20 +387,20 @@ class Condition:
                     step_index=step_index,
                     condition_result=False,
                     executed_steps=0,
+                    branch=None,
                     step_results=[],
                     step_id=conditional_step_id,
                     parent_step_id=parent_step_id,
                 )
             return
 
-        log_debug(f"Condition {self.name} met, executing {len(self.steps)} steps")
-        all_results = []
+        all_results: List[StepOutput] = []
         current_step_input = step_input
-        condition_step_outputs = {}
+        condition_step_outputs: Dict[str, StepOutput] = {}
 
-        for i, step in enumerate(self.steps):
+        for i, step in enumerate(steps_to_execute):
             try:
-                step_outputs_for_step = []
+                step_outputs_for_step: List[StepOutput] = []
 
                 # Create child index for each step within condition
                 if step_index is None or isinstance(step_index, int):
@@ -426,7 +473,7 @@ class Condition:
                 all_results.append(error_output)
                 break
 
-        log_debug(f"Condition End: {self.name} ({len(all_results)} results)", center=True, symbol="-")
+        log_debug(f"Condition End: {self.name} ({len(all_results)} results, {branch} branch)", center=True, symbol="-")
         if stream_events and workflow_run_response:
             # Yield condition completed event
             yield ConditionExecutionCompletedEvent(
@@ -436,8 +483,9 @@ class Condition:
                 session_id=workflow_run_response.session_id or "",
                 step_name=self.name,
                 step_index=step_index,
-                condition_result=True,
-                executed_steps=len(self.steps),
+                condition_result=condition_result,
+                executed_steps=len(steps_to_execute),
+                branch=branch,
                 step_results=all_results,
                 step_id=conditional_step_id,
                 parent_step_id=parent_step_id,
@@ -447,7 +495,7 @@ class Condition:
             step_name=self.name,
             step_id=conditional_step_id,
             step_type=StepType.CONDITION,
-            content=f"Condition {self.name} completed with {len(all_results)} results",
+            content=f"Condition {self.name} completed with {len(all_results)} results ({branch} branch)",
             success=all(result.success for result in all_results) if all_results else True,
             stop=any(result.stop for result in all_results) if all_results else False,
             steps=all_results,
@@ -467,7 +515,12 @@ class Condition:
         num_history_runs: int = 3,
         background_tasks: Optional[Any] = None,
     ) -> StepOutput:
-        """Async execute the condition and its steps with sequential chaining"""
+        """Async execute the condition and its steps with sequential chaining.
+
+        If condition is True, executes `steps`.
+        If condition is False and `else_steps` is provided (and not empty), executes `else_steps`.
+        If condition is False and no `else_steps`, returns a "not met" message.
+        """
         log_debug(f"Condition Start: {self.name}", center=True, symbol="-")
 
         conditional_step_id = str(uuid4())
@@ -481,7 +534,17 @@ class Condition:
             condition_result = await self._aevaluate_condition(step_input, session_state=session_state)
         log_debug(f"Condition {self.name} evaluated to: {condition_result}")
 
-        if not condition_result:
+        # Determine which steps to execute
+        if condition_result:
+            steps_to_execute = self.steps
+            branch = "if"
+            log_debug(f"Condition {self.name} met, executing {len(steps_to_execute)} steps (if branch)")
+        elif self._has_else_steps():
+            steps_to_execute = self.else_steps  # type: ignore[assignment]
+            branch = "else"
+            log_debug(f"Condition {self.name} not met, executing {len(steps_to_execute)} else_steps (else branch)")
+        else:
+            # No else_steps provided, return "not met" message
             log_debug(f"Condition {self.name} not met, skipping {len(self.steps)} steps")
             return StepOutput(
                 step_name=self.name,
@@ -491,14 +554,12 @@ class Condition:
                 success=True,
             )
 
-        log_debug(f"Condition {self.name} met, executing {len(self.steps)} steps")
-
         # Chain steps sequentially like Loop does
         all_results: List[StepOutput] = []
         current_step_input = step_input
-        condition_step_outputs = {}
+        condition_step_outputs: Dict[str, StepOutput] = {}
 
-        for i, step in enumerate(self.steps):
+        for i, step in enumerate(steps_to_execute):
             try:
                 step_output = await step.aexecute(  # type: ignore[union-attr]
                     current_step_input,
@@ -552,13 +613,13 @@ class Condition:
                 all_results.append(error_output)
                 break
 
-        log_debug(f"Condition End: {self.name} ({len(all_results)} results)", center=True, symbol="-")
+        log_debug(f"Condition End: {self.name} ({len(all_results)} results, {branch} branch)", center=True, symbol="-")
 
         return StepOutput(
             step_name=self.name,
             step_id=conditional_step_id,
             step_type=StepType.CONDITION,
-            content=f"Condition {self.name} completed with {len(all_results)} results",
+            content=f"Condition {self.name} completed with {len(all_results)} results ({branch} branch)",
             success=all(result.success for result in all_results) if all_results else True,
             error=None,
             stop=any(result.stop for result in all_results) if all_results else False,
@@ -583,7 +644,12 @@ class Condition:
         num_history_runs: int = 3,
         background_tasks: Optional[Any] = None,
     ) -> AsyncIterator[Union[WorkflowRunOutputEvent, TeamRunOutputEvent, RunOutputEvent, StepOutput]]:
-        """Async execute the condition with streaming support - mirrors Loop logic"""
+        """Async execute the condition with streaming support.
+
+        If condition is True, executes `steps`.
+        If condition is False and `else_steps` is provided (and not empty), executes `else_steps`.
+        If condition is False and no `else_steps`, yields completed event and returns.
+        """
         log_debug(f"Condition Start: {self.name}", center=True, symbol="-")
 
         conditional_step_id = str(uuid4())
@@ -611,9 +677,18 @@ class Condition:
                 parent_step_id=parent_step_id,
             )
 
-        if not condition_result:
+        # Determine which steps to execute
+        if condition_result:
+            steps_to_execute = self.steps
+            branch = "if"
+            log_debug(f"Condition {self.name} met, executing {len(steps_to_execute)} steps (if branch)")
+        elif self._has_else_steps():
+            steps_to_execute = self.else_steps  # type: ignore[assignment]
+            branch = "else"
+            log_debug(f"Condition {self.name} not met, executing {len(steps_to_execute)} else_steps (else branch)")
+        else:
+            # No else_steps provided, yield completed event and return
             if stream_events and workflow_run_response:
-                # Yield condition completed event for empty case
                 yield ConditionExecutionCompletedEvent(
                     run_id=workflow_run_response.run_id or "",
                     workflow_name=workflow_run_response.workflow_name or "",
@@ -623,22 +698,21 @@ class Condition:
                     step_index=step_index,
                     condition_result=False,
                     executed_steps=0,
+                    branch=None,
                     step_results=[],
                     step_id=conditional_step_id,
                     parent_step_id=parent_step_id,
                 )
             return
 
-        log_debug(f"Condition {self.name} met, executing {len(self.steps)} steps")
-
         # Chain steps sequentially like Loop does
-        all_results = []
+        all_results: List[StepOutput] = []
         current_step_input = step_input
-        condition_step_outputs = {}
+        condition_step_outputs: Dict[str, StepOutput] = {}
 
-        for i, step in enumerate(self.steps):
+        for i, step in enumerate(steps_to_execute):
             try:
-                step_outputs_for_step = []
+                step_outputs_for_step: List[StepOutput] = []
 
                 # Create child index for each step within condition
                 if step_index is None or isinstance(step_index, int):
@@ -711,7 +785,7 @@ class Condition:
                 all_results.append(error_output)
                 break
 
-        log_debug(f"Condition End: {self.name} ({len(all_results)} results)", center=True, symbol="-")
+        log_debug(f"Condition End: {self.name} ({len(all_results)} results, {branch} branch)", center=True, symbol="-")
 
         if stream_events and workflow_run_response:
             # Yield condition completed event
@@ -722,8 +796,9 @@ class Condition:
                 session_id=workflow_run_response.session_id or "",
                 step_name=self.name,
                 step_index=step_index,
-                condition_result=True,
-                executed_steps=len(self.steps),
+                condition_result=condition_result,
+                executed_steps=len(steps_to_execute),
+                branch=branch,
                 step_results=all_results,
                 step_id=conditional_step_id,
                 parent_step_id=parent_step_id,
@@ -733,7 +808,7 @@ class Condition:
             step_name=self.name,
             step_id=conditional_step_id,
             step_type=StepType.CONDITION,
-            content=f"Condition {self.name} completed with {len(all_results)} results",
+            content=f"Condition {self.name} completed with {len(all_results)} results ({branch} branch)",
             success=all(result.success for result in all_results) if all_results else True,
             stop=any(result.stop for result in all_results) if all_results else False,
             steps=all_results,

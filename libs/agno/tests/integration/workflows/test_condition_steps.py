@@ -483,3 +483,232 @@ async def test_async_condition_streaming_propagates_stop(shared_db):
     step_events = [e for e in events if isinstance(e, (StepStartedEvent, StepCompletedEvent))]
     step_names = [e.step_name for e in step_events]
     assert "should_not_run_step" not in step_names, "Workflow should have stopped before should_not_run_step"
+
+
+# ============================================================================
+# ELSE_STEPS TESTS
+# ============================================================================
+
+
+def general_step(step_input: StepInput) -> StepOutput:
+    """General research step (else branch)."""
+    return StepOutput(content=f"General research: {step_input.input}", success=True)
+
+
+def fallback_step(step_input: StepInput) -> StepOutput:
+    """Fallback step for else branch."""
+    return StepOutput(content="Fallback step executed", success=True)
+
+
+def test_condition_else_steps_execute_when_false():
+    """Test that else_steps execute when condition is False."""
+    condition = Condition(
+        name="Tech Check",
+        evaluator=is_tech_topic,
+        steps=[research_step],
+        else_steps=[general_step],
+    )
+    step_input = StepInput(input="General market overview")  # Not tech topic
+
+    result = condition.execute(step_input)
+
+    assert isinstance(result, StepOutput)
+    assert result.success is True
+    assert len(result.steps) == 1
+    assert "General research" in result.steps[0].content
+    assert "else branch" in result.content
+
+
+def test_condition_else_steps_not_executed_when_true():
+    """Test that else_steps are NOT executed when condition is True."""
+    condition = Condition(
+        name="Tech Check",
+        evaluator=is_tech_topic,
+        steps=[research_step],
+        else_steps=[general_step],
+    )
+    step_input = StepInput(input="AI technology trends")  # Tech topic
+
+    result = condition.execute(step_input)
+
+    assert isinstance(result, StepOutput)
+    assert result.success is True
+    assert len(result.steps) == 1
+    assert "Research findings" in result.steps[0].content
+    assert "if branch" in result.content
+
+
+def test_condition_no_else_steps_returns_not_met():
+    """Test that without else_steps, condition returns 'not met' when False."""
+    condition = Condition(
+        name="Tech Check",
+        evaluator=is_tech_topic,
+        steps=[research_step],
+        # No else_steps
+    )
+    step_input = StepInput(input="General market overview")  # Not tech topic
+
+    result = condition.execute(step_input)
+
+    assert isinstance(result, StepOutput)
+    assert result.success is True
+    assert result.steps is None or len(result.steps) == 0
+    assert "not met" in result.content
+
+
+def test_condition_empty_else_steps_treated_as_none():
+    """Test that empty else_steps list is treated as None."""
+    condition = Condition(
+        name="Tech Check",
+        evaluator=is_tech_topic,
+        steps=[research_step],
+        else_steps=[],  # Empty list should be treated as None
+    )
+    step_input = StepInput(input="General market overview")  # Not tech topic
+
+    result = condition.execute(step_input)
+
+    assert isinstance(result, StepOutput)
+    assert result.steps is None or len(result.steps) == 0
+    assert "not met" in result.content
+
+
+def test_condition_else_steps_multiple_steps():
+    """Test else_steps with multiple steps and chaining."""
+    condition = Condition(
+        name="Tech Check",
+        evaluator=is_tech_topic,
+        steps=[research_step],
+        else_steps=[general_step, analysis_step],  # Multiple else steps
+    )
+    step_input = StepInput(input="General market overview")  # Not tech topic
+
+    result = condition.execute(step_input)
+
+    assert isinstance(result, StepOutput)
+    assert result.success is True
+    assert len(result.steps) == 2
+    assert "General research" in result.steps[0].content
+    assert "Analysis" in result.steps[1].content
+    assert "else branch" in result.content
+
+
+@pytest.mark.asyncio
+async def test_condition_else_steps_aexecute():
+    """Test else_steps with async execution."""
+    condition = Condition(
+        name="Async Tech Check",
+        evaluator=is_tech_topic,
+        steps=[research_step],
+        else_steps=[general_step],
+    )
+    step_input = StepInput(input="General market overview")  # Not tech topic
+
+    result = await condition.aexecute(step_input)
+
+    assert isinstance(result, StepOutput)
+    assert result.success is True
+    assert len(result.steps) == 1
+    assert "General research" in result.steps[0].content
+    assert "else branch" in result.content
+
+
+def test_condition_else_steps_streaming():
+    """Test else_steps with streaming."""
+    from agno.run.workflow import WorkflowRunOutput
+
+    condition = Condition(
+        name="Stream Tech Check",
+        evaluator=is_tech_topic,
+        steps=[research_step],
+        else_steps=[general_step],
+    )
+    step_input = StepInput(input="General market overview")  # Not tech topic
+
+    mock_response = WorkflowRunOutput(
+        run_id="test-run",
+        workflow_name="test-workflow",
+        workflow_id="test-id",
+        session_id="test-session",
+        content="",
+    )
+
+    events = list(condition.execute_stream(step_input, workflow_run_response=mock_response, stream_events=True))
+
+    started_events = [e for e in events if isinstance(e, ConditionExecutionStartedEvent)]
+    completed_events = [e for e in events if isinstance(e, ConditionExecutionCompletedEvent)]
+    step_outputs = [e for e in events if isinstance(e, StepOutput)]
+
+    assert len(started_events) == 1
+    assert len(completed_events) == 1
+    assert len(step_outputs) == 1
+    assert started_events[0].condition_result is False
+    assert completed_events[0].branch == "else"
+
+
+def test_condition_else_steps_stop_propagation():
+    """Test that stop flag propagates correctly from else_steps."""
+    condition = Condition(
+        name="Stop in Else",
+        evaluator=False,  # Boolean False to trigger else branch
+        steps=[research_step],
+        else_steps=[early_stop_step],
+    )
+    step_input = StepInput(input="test")
+
+    result = condition.execute(step_input)
+
+    assert isinstance(result, StepOutput)
+    assert result.stop is True, "Condition should propagate stop=True from else_steps"
+
+
+def test_condition_else_steps_in_workflow(shared_db):
+    """Test else_steps in a real workflow."""
+    workflow = Workflow(
+        name="Workflow with else_steps",
+        db=shared_db,
+        steps=[
+            Condition(
+                name="topic_router",
+                evaluator=is_tech_topic,
+                steps=[research_step],
+                else_steps=[general_step, fallback_step],
+            )
+        ],
+    )
+
+    # Test with non-tech input (should trigger else branch)
+    response = workflow.run(input="General market overview")
+    assert isinstance(response, WorkflowRunOutput)
+    assert len(response.step_results) == 1
+
+    condition_result = response.step_results[0]
+    assert len(condition_result.steps) == 2  # general_step + fallback_step
+    assert "General research" in condition_result.steps[0].content
+    assert "Fallback step" in condition_result.steps[1].content
+
+
+def test_condition_else_steps_in_workflow_if_branch(shared_db):
+    """Test that if branch works correctly when else_steps is provided."""
+    workflow = Workflow(
+        name="Workflow with else_steps if branch",
+        db=shared_db,
+        steps=[
+            Condition(
+                name="topic_router",
+                evaluator=is_tech_topic,
+                steps=[research_step],
+                else_steps=[general_step],
+            )
+        ],
+    )
+
+    # Test with tech input (should trigger if branch)
+    response = workflow.run(input="AI technology trends")
+    assert isinstance(response, WorkflowRunOutput)
+    assert len(response.step_results) == 1
+
+    condition_result = response.step_results[0]
+    assert len(condition_result.steps) == 1
+    assert "Research findings" in condition_result.steps[0].content
+    assert "if branch" in condition_result.content
