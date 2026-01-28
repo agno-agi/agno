@@ -45,6 +45,11 @@ Structured Output (Optional):
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
+from agno.guardrails import (
+    OpenAIModerationGuardrail,
+    PIIDetectionGuardrail,
+    PromptInjectionGuardrail,
+)
 from agno.models.openai import OpenAIResponses
 from agno.tools.file import FileTools
 from agno.tools.github import GithubTools
@@ -412,6 +417,12 @@ code_review_agent = Agent(
         FileTools(),
         PythonTools(),
         WebsiteTools()
+    ],
+    # Security guardrails
+    pre_hooks=[
+        PIIDetectionGuardrail(),
+        PromptInjectionGuardrail(),
+        OpenAIModerationGuardrail(),
     ],
     add_datetime_to_context=True,
     add_history_to_context=True,

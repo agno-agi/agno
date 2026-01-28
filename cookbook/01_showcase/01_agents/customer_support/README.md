@@ -12,6 +12,7 @@ A customer support agent that resolves tickets using knowledge base retrieval, h
 - **Linear Integration**: Create and track support tickets
 - **Zendesk Integration**: Search help center articles
 - **Slack Integration**: Send notifications and updates
+- **Security Guardrails**: PII detection, prompt injection protection, and content moderation
 
 ## Installation
 
@@ -145,14 +146,36 @@ customer_support_agent.print_response(
 )
 ```
 
+## Database
+
+This agent uses [SQLite](https://docs.agno.com/database/providers/sqlite/overview) for session storage during development. For production, switch to [PostgreSQL](https://docs.agno.com/database/providers/postgres/overview):
+
+```python
+from agno.db.postgres import PostgresDb
+
+db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
+```
+
+See [Session Storage](https://docs.agno.com/database/session-storage) for more details.
+
+## Security Guardrails
+
+The agent includes pre-processing guardrails:
+
+| Guardrail | Purpose |
+|-----------|---------|
+| `PIIDetectionGuardrail` | Detects PII (SSN, credit cards, emails, etc.) |
+| `PromptInjectionGuardrail` | Prevents prompt injection attacks |
+| `OpenAIModerationGuardrail` | Filters inappropriate/harmful content |
+
 ## Tools Used
 
-| Tool | Purpose |
-|------|---------|
-| `WebSearchTools` | Search for solutions, known issues, and product info |
-| `LinearTools` | Create and manage support tickets in Linear |
-| `ZendeskTools` | Search knowledge base articles in Zendesk Help Center |
-| `SlackTools` | Send notifications and updates to Slack channels |
+| Tool | Purpose | Docs |
+|------|---------|------|
+| [`WebSearchTools`](https://docs.agno.com/tools/toolkits/search/websearch) | Search for solutions, known issues, and product info | [Web Search](https://docs.agno.com/tools/toolkits/search/websearch) |
+| [`LinearTools`](https://docs.agno.com/tools/toolkits/others/linear) | Create and manage support tickets in Linear | [Linear](https://docs.agno.com/tools/toolkits/others/linear) |
+| [`ZendeskTools`](https://docs.agno.com/tools/toolkits/others/zendesk) | Search knowledge base articles in Zendesk Help Center | [Zendesk](https://docs.agno.com/tools/toolkits/others/zendesk) |
+| [`SlackTools`](https://docs.agno.com/tools/toolkits/social/slack) | Send notifications and updates to Slack channels | [Slack](https://docs.agno.com/tools/toolkits/social/slack) |
 
 ## Environment Variables
 
@@ -182,6 +205,20 @@ customer_support/
 └── examples/
     └── run_examples.py   # Menu-based TUI with sample tickets
 ```
+
+## Agno Documentation
+
+- [Agents](https://docs.agno.com/agents/introduction) - Core agent concepts
+- [OpenAI Models](https://docs.agno.com/models/providers/native/openai/overview) - GPT-5-mini and other OpenAI models
+- [Google Gemini Models](https://docs.agno.com/models/providers/native/google/overview) - Gemini 2.5 Flash Lite
+- [Anthropic Models](https://docs.agno.com/models/providers/native/anthropic/overview) - Claude Haiku 4.5
+- [Knowledge (RAG)](https://docs.agno.com/knowledge/agents/overview) - Knowledge base integration
+- [LanceDB](https://docs.agno.com/knowledge/vector-stores/lancedb/overview) - Vector database for knowledge
+- [Session Storage](https://docs.agno.com/database/session-storage) - Persisting agent sessions
+- [SQLite Storage](https://docs.agno.com/database/providers/sqlite/overview) - SQLite for development
+- [PostgreSQL Storage](https://docs.agno.com/database/providers/postgres/overview) - PostgreSQL for production
+- [Tools Overview](https://docs.agno.com/tools/overview) - Available toolkits
+- [MCP Integration](https://docs.agno.com/tools/mcp/overview) - Model Context Protocol tools
 
 ## License
 

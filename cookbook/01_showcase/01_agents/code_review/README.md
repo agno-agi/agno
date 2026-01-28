@@ -12,6 +12,7 @@ An intelligent code review agent that analyzes pull requests, provides context-a
 - **Documentation Gaps**: Spots missing docstrings, comments, and API documentation
 - **File Operations**: Reads, analyzes, and creates fixed versions of code files
 - **HTML Generation**: Creates HTML pages from natural language descriptions
+- **Security Guardrails**: PII detection, prompt injection protection, and content moderation
 
 ## Supported Languages
 
@@ -236,17 +237,39 @@ By default, the agent returns a readable markdown report with:
 - Documentation gaps
 - Positive highlights
 
+## Database
+
+This agent uses [SQLite](https://docs.agno.com/database/providers/sqlite/overview) for session storage during development. For production, switch to [PostgreSQL](https://docs.agno.com/database/providers/postgres/overview):
+
+```python
+from agno.db.postgres import PostgresDb
+
+db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
+```
+
+See [Session Storage](https://docs.agno.com/database/session-storage) for more details.
+
+## Security Guardrails
+
+The agent includes pre-processing guardrails:
+
+| Guardrail | Purpose |
+|-----------|---------|
+| `PIIDetectionGuardrail` | Detects PII (SSN, credit cards, emails, etc.) |
+| `PromptInjectionGuardrail` | Prevents prompt injection attacks |
+| `OpenAIModerationGuardrail` | Filters inappropriate/harmful content |
+
 ## Tools Used
 
-| Tool | Purpose |
-|------|---------|
-| `GithubTools` | Fetch PRs, diffs, repo structure |
-| `ReasoningTools` | Analyze complex code logic |
-| `WebSearchTools` | Look up best practices, CVEs |
-| `ShellTools` | Execute shell commands for linting, testing |
-| `FileTools` | Read/write files for local repo analysis |
-| `PythonTools` | Run Python code for static analysis |
-| `WebsiteTools` | Read and summarize web documentation |
+| Tool | Purpose | Docs |
+|------|---------|------|
+| [`GithubTools`](https://docs.agno.com/tools/toolkits/others/github) | Fetch PRs, diffs, repo structure | [GitHub](https://docs.agno.com/tools/toolkits/others/github) |
+| [`ReasoningTools`](https://docs.agno.com/tools/reasoning_tools/reasoning-tools) | Analyze complex code logic | [Reasoning](https://docs.agno.com/tools/reasoning_tools/reasoning-tools) |
+| [`WebSearchTools`](https://docs.agno.com/tools/toolkits/search/websearch) | Look up best practices, CVEs | [Web Search](https://docs.agno.com/tools/toolkits/search/websearch) |
+| [`ShellTools`](https://docs.agno.com/tools/toolkits/local/shell) | Execute shell commands for linting, testing | [Shell](https://docs.agno.com/tools/toolkits/local/shell) |
+| [`FileTools`](https://docs.agno.com/tools/toolkits/local/file) | Read/write files for local repo analysis | [File](https://docs.agno.com/tools/toolkits/local/file) |
+| [`PythonTools`](https://docs.agno.com/tools/toolkits/local/python) | Run Python code for static analysis | [Python](https://docs.agno.com/tools/toolkits/local/python) |
+| [`WebsiteTools`](https://docs.agno.com/tools/toolkits/search/website) | Read and summarize web documentation | [Website](https://docs.agno.com/tools/toolkits/search/website) |
 
 ## Environment Variables
 
@@ -310,6 +333,17 @@ $env:ANTHROPIC_API_KEY  # PowerShell
 For large PRs or many reviews:
 - Use streaming (`stream=True`) for faster feedback
 - Review files individually for very large PRs
+
+## Agno Documentation
+
+- [Agents](https://docs.agno.com/agents/introduction) - Core agent concepts
+- [OpenAI Models](https://docs.agno.com/models/providers/native/openai/overview) - GPT-5.2-Codex and other OpenAI models
+- [Anthropic Models](https://docs.agno.com/models/providers/native/anthropic/overview) - Claude Opus 4.5 and other Claude models
+- [Session Storage](https://docs.agno.com/database/session-storage) - Persisting agent sessions
+- [SQLite Storage](https://docs.agno.com/database/providers/sqlite/overview) - SQLite for development
+- [PostgreSQL Storage](https://docs.agno.com/database/providers/postgres/overview) - PostgreSQL for production
+- [Tools Overview](https://docs.agno.com/tools/overview) - Available toolkits
+- [Reasoning Tools](https://docs.agno.com/tools/reasoning_tools/reasoning-tools) - Agent reasoning capabilities
 
 ## License
 

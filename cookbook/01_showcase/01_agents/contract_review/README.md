@@ -125,6 +125,18 @@ By default, the agent returns a readable markdown report with:
 - Ambiguous sections
 - Key deadlines to track
 
+## Database
+
+This agent uses [SQLite](https://docs.agno.com/database/providers/sqlite/overview) for session storage during development. For production, switch to [PostgreSQL](https://docs.agno.com/database/providers/postgres/overview):
+
+```python
+from agno.db.postgres import PostgresDb
+
+db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
+```
+
+See [Session Storage](https://docs.agno.com/database/session-storage) for more details.
+
 ## Security Guardrails
 
 The agent includes pre-processing guardrails:
@@ -137,10 +149,10 @@ The agent includes pre-processing guardrails:
 
 ## Tools Used
 
-| Tool | Purpose |
-|------|---------|
-| `ReasoningTools` | Plan analysis approach and work through complex clauses |
-| `WebSearchTools` | Look up legal standards, precedents, and regulations |
+| Tool | Purpose | Docs |
+|------|---------|------|
+| [`ReasoningTools`](https://docs.agno.com/tools/reasoning_tools/reasoning-tools) | Plan analysis approach and work through complex clauses | [Reasoning](https://docs.agno.com/tools/reasoning_tools/reasoning-tools) |
+| [`WebSearchTools`](https://docs.agno.com/tools/toolkits/search/websearch) | Look up legal standards, precedents, and regulations | [Web Search](https://docs.agno.com/tools/toolkits/search/websearch) |
 
 ## Environment Variables
 
@@ -178,6 +190,16 @@ contract_review/
 - Files can be passed as local paths or URLs
 - Confidence scores indicate the reliability of the analysis
 - Complex contracts may require multiple review passes for thorough analysis
+
+## Agno Documentation
+
+- [Agents](https://docs.agno.com/agents/introduction) - Core agent concepts
+- [Google Gemini Models](https://docs.agno.com/models/providers/native/google/overview) - Gemini model family
+- [Session Storage](https://docs.agno.com/database/session-storage) - Persisting agent sessions
+- [SQLite Storage](https://docs.agno.com/database/providers/sqlite/overview) - SQLite for development
+- [PostgreSQL Storage](https://docs.agno.com/database/providers/postgres/overview) - PostgreSQL for production
+- [Tools Overview](https://docs.agno.com/tools/overview) - Available toolkits
+- [Reasoning Tools](https://docs.agno.com/tools/reasoning_tools/reasoning-tools) - Agent reasoning capabilities
 
 ## License
 

@@ -32,6 +32,11 @@ from pathlib import Path
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
+from agno.guardrails import (
+    OpenAIModerationGuardrail,
+    PIIDetectionGuardrail,
+    PromptInjectionGuardrail,
+)
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIResponses
@@ -247,6 +252,12 @@ customer_support_agent = Agent(
         ZendeskTools(),
         # Send notifications and updates via Slack
         SlackTools(),
+    ],
+    # Security guardrails
+    pre_hooks=[
+        PIIDetectionGuardrail(),
+        PromptInjectionGuardrail(),
+        OpenAIModerationGuardrail(),
     ],
     add_datetime_to_context=True,
     add_history_to_context=True,
