@@ -1,0 +1,7 @@
+# Customer Support Agent - Dependencies
+agno
+openai
+ddgs
+slack-sdk
+lancedb
+tantivy
