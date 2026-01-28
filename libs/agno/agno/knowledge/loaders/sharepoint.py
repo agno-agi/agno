@@ -12,19 +12,38 @@ import httpx
 from httpx import AsyncClient
 
 from agno.knowledge.content import Content, ContentStatus
+from agno.knowledge.loaders.base import BaseLoader
 from agno.knowledge.reader import Reader
 from agno.knowledge.remote_content.config import RemoteContentConfig, SharePointConfig
 from agno.knowledge.remote_content.remote_content import SharePointContent
 from agno.utils.log import log_error, log_info, log_warning
-from agno.utils.string import generate_id
 
 
-class SharePointLoader:
+class SharePointLoader(BaseLoader):
     """Loader for SharePoint content."""
 
     # ==========================================
-    # SHAREPOINT HELPERS
+    # SHAREPOINT HELPERS (shared between sync/async)
     # ==========================================
+
+    def _validate_sharepoint_config(
+        self,
+        content: Content,
+        config: Optional[RemoteContentConfig],
+    ) -> Optional[SharePointConfig]:
+        """Validate and extract SharePoint config.
+
+        Returns:
+            SharePointConfig if valid, None otherwise
+        """
+        remote_content: SharePointContent = cast(SharePointContent, content.remote_content)
+        sp_config = cast(SharePointConfig, config) if isinstance(config, SharePointConfig) else None
+
+        if sp_config is None:
+            log_error(f"SharePoint config not found for config_id: {remote_content.config_id}")
+            return None
+
+        return sp_config
 
     def _get_sharepoint_access_token(self, sp_config: SharePointConfig) -> Optional[str]:
         """Get an access token for Microsoft Graph API using client credentials flow.
@@ -43,7 +62,6 @@ class SharePointLoader:
             client_credential=sp_config.client_secret,
         )
 
-        # Acquire token for Microsoft Graph
         scopes = ["https://graph.microsoft.com/.default"]
         result = app.acquire_token_for_client(scopes=scopes)
 
@@ -54,7 +72,7 @@ class SharePointLoader:
             return None
 
     def _get_sharepoint_site_id(self, hostname: str, site_path: Optional[str], access_token: str) -> Optional[str]:
-        """Get the SharePoint site ID using Microsoft Graph API."""
+        """Get the SharePoint site ID using Microsoft Graph API (sync)."""
         if site_path:
             url = f"https://graph.microsoft.com/v1.0/sites/{hostname}:/{site_path}"
         else:
@@ -68,41 +86,6 @@ class SharePointLoader:
             return response.json().get("id")
         except httpx.HTTPStatusError as e:
             log_error(f"Failed to get SharePoint site ID: {e.response.status_code} - {e.response.text}")
-            return None
-
-    def _list_sharepoint_folder_items(self, site_id: str, folder_path: str, access_token: str) -> List[dict]:
-        """List all items in a SharePoint folder."""
-        # Strip leading slashes to avoid double-slash in URL
-        folder_path = folder_path.lstrip("/")
-        url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/drive/root:/{folder_path}:/children"
-        headers = {"Authorization": f"Bearer {access_token}"}
-        items: List[dict] = []
-
-        try:
-            while url:
-                response = httpx.get(url, headers=headers)
-                response.raise_for_status()
-                data = response.json()
-                items.extend(data.get("value", []))
-                url = data.get("@odata.nextLink")
-        except httpx.HTTPStatusError as e:
-            log_error(f"Failed to list SharePoint folder: {e.response.status_code} - {e.response.text}")
-
-        return items
-
-    def _download_sharepoint_file(self, site_id: str, file_path: str, access_token: str) -> Optional[BytesIO]:
-        """Download a file from SharePoint."""
-        # Strip leading slashes to avoid double-slash in URL
-        file_path = file_path.lstrip("/")
-        url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/drive/root:/{file_path}:/content"
-        headers = {"Authorization": f"Bearer {access_token}"}
-
-        try:
-            response = httpx.get(url, headers=headers, follow_redirects=True)
-            response.raise_for_status()
-            return BytesIO(response.content)
-        except httpx.HTTPStatusError as e:
-            log_error(f"Failed to download SharePoint file {file_path}: {e.response.status_code} - {e.response.text}")
             return None
 
     async def _aget_sharepoint_site_id(
@@ -125,9 +108,27 @@ class SharePointLoader:
             log_error(f"Failed to get SharePoint site ID: {e.response.status_code} - {e.response.text}")
             return None
 
+    def _list_sharepoint_folder_items(self, site_id: str, folder_path: str, access_token: str) -> List[dict]:
+        """List all items in a SharePoint folder (sync)."""
+        folder_path = folder_path.lstrip("/")
+        url: Optional[str] = f"https://graph.microsoft.com/v1.0/sites/{site_id}/drive/root:/{folder_path}:/children"
+        headers = {"Authorization": f"Bearer {access_token}"}
+        items: List[dict] = []
+
+        try:
+            while url:
+                response = httpx.get(url, headers=headers)
+                response.raise_for_status()
+                data = response.json()
+                items.extend(data.get("value", []))
+                url = data.get("@odata.nextLink")
+        except httpx.HTTPStatusError as e:
+            log_error(f"Failed to list SharePoint folder: {e.response.status_code} - {e.response.text}")
+
+        return items
+
     async def _alist_sharepoint_folder_items(self, site_id: str, folder_path: str, access_token: str) -> List[dict]:
         """List all items in a SharePoint folder (async)."""
-        # Strip leading slashes to avoid double-slash in URL
         folder_path = folder_path.lstrip("/")
         url: Optional[str] = f"https://graph.microsoft.com/v1.0/sites/{site_id}/drive/root:/{folder_path}:/children"
         headers = {"Authorization": f"Bearer {access_token}"}
@@ -146,9 +147,22 @@ class SharePointLoader:
 
         return items
 
+    def _download_sharepoint_file(self, site_id: str, file_path: str, access_token: str) -> Optional[BytesIO]:
+        """Download a file from SharePoint (sync)."""
+        file_path = file_path.lstrip("/")
+        url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/drive/root:/{file_path}:/content"
+        headers = {"Authorization": f"Bearer {access_token}"}
+
+        try:
+            response = httpx.get(url, headers=headers, follow_redirects=True)
+            response.raise_for_status()
+            return BytesIO(response.content)
+        except httpx.HTTPStatusError as e:
+            log_error(f"Failed to download SharePoint file {file_path}: {e.response.status_code} - {e.response.text}")
+            return None
+
     async def _adownload_sharepoint_file(self, site_id: str, file_path: str, access_token: str) -> Optional[BytesIO]:
         """Download a file from SharePoint (async)."""
-        # Strip leading slashes to avoid double-slash in URL
         file_path = file_path.lstrip("/")
         url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/drive/root:/{file_path}:/content"
         headers = {"Authorization": f"Bearer {access_token}"}
@@ -162,6 +176,32 @@ class SharePointLoader:
             log_error(f"Failed to download SharePoint file {file_path}: {e.response.status_code} - {e.response.text}")
             return None
 
+    def _build_sharepoint_metadata(
+        self,
+        sp_config: SharePointConfig,
+        site_id: str,
+        file_path: str,
+        file_name: str,
+    ) -> Dict[str, str]:
+        """Build SharePoint-specific metadata dictionary."""
+        return {
+            "source_type": "sharepoint",
+            "source_config_id": sp_config.id,
+            "source_config_name": sp_config.name,
+            "sharepoint_hostname": sp_config.hostname,
+            "sharepoint_site_id": site_id,
+            "sharepoint_path": file_path,
+            "sharepoint_filename": file_name,
+        }
+
+    def _build_sharepoint_virtual_path(self, hostname: str, site_id: str, file_path: str) -> str:
+        """Build virtual path for SharePoint content."""
+        return f"sharepoint://{hostname}/{site_id}/{file_path}"
+
+    def _get_sharepoint_path_to_process(self, remote_content: SharePointContent) -> str:
+        """Get the path to process from remote content."""
+        return (remote_content.file_path or remote_content.folder_path or "").strip("/")
+
     # ==========================================
     # SHAREPOINT LOADERS
     # ==========================================
@@ -173,28 +213,21 @@ class SharePointLoader:
         skip_if_exists: bool,
         config: Optional[RemoteContentConfig] = None,
     ):
-        """Load content from SharePoint.
+        """Load content from SharePoint (async).
 
         Requires the SharePoint config to contain tenant_id, client_id, client_secret, and hostname.
-
-        1. Authenticate with Microsoft Graph using client credentials
-        2. Get site ID from hostname/site_path
-        3. Download file(s) from file_path or folder_path
-        4. Process through reader and insert to vector db
         """
         remote_content: SharePointContent = cast(SharePointContent, content.remote_content)
-        sp_config = cast(SharePointConfig, config) if isinstance(config, SharePointConfig) else None
-
+        sp_config = self._validate_sharepoint_config(content, config)
         if sp_config is None:
-            log_error(f"SharePoint config not found for config_id: {remote_content.config_id}")
             return
 
-        # 1. Get access token
+        # Get access token
         access_token = self._get_sharepoint_access_token(sp_config)
         if not access_token:
             return
 
-        # 2. Get site ID - use config value if provided, otherwise fetch via API
+        # Get site ID
         site_id: Optional[str] = sp_config.site_id
         if not site_id:
             site_path = remote_content.site_path or sp_config.site_path
@@ -203,29 +236,26 @@ class SharePointLoader:
                 log_error(f"Failed to get SharePoint site ID for {sp_config.hostname}/{site_path}")
                 return
 
-        # 3. Identify files to download
-        files_to_process: List[tuple] = []  # List of (file_path, file_name)
+        # Identify files to download
+        files_to_process: List[tuple] = []
+        path_to_process = self._get_sharepoint_path_to_process(remote_content)
 
         # Helper function to recursively list all files in a folder
         async def list_files_recursive(folder: str) -> List[tuple]:
             """Recursively list all files in a SharePoint folder."""
             files: List[tuple] = []
-            items = await self._alist_sharepoint_folder_items(site_id, folder, access_token)
+            items = await self._alist_sharepoint_folder_items(site_id, folder, access_token)  # type: ignore
             for item in items:
-                if "file" in item:  # It's a file
+                if "file" in item:
                     item_path = f"{folder}/{item['name']}"
                     files.append((item_path, item["name"]))
-                elif "folder" in item:  # It's a folder - recurse
+                elif "folder" in item:
                     subdir_path = f"{folder}/{item['name']}"
                     subdir_files = await list_files_recursive(subdir_path)
                     files.extend(subdir_files)
             return files
 
-        # Get the path to process (file_path or folder_path)
-        path_to_process = (remote_content.file_path or remote_content.folder_path or "").strip("/")
-
         if path_to_process:
-            # Check if path is a file or folder by getting item metadata
             try:
                 async with AsyncClient() as client:
                     url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/drive/root:/{path_to_process}"
@@ -235,10 +265,8 @@ class SharePointLoader:
                     item_data = response.json()
 
                     if "folder" in item_data:
-                        # It's a folder - recursively list all files
                         files_to_process = await list_files_recursive(path_to_process)
                     elif "file" in item_data:
-                        # It's a single file
                         files_to_process.append((path_to_process, item_data["name"]))
                     else:
                         log_warning(f"SharePoint path {path_to_process} is neither file nor folder")
@@ -252,61 +280,35 @@ class SharePointLoader:
             return
 
         log_info(f"Processing {len(files_to_process)} file(s) from SharePoint")
+        is_folder_upload = len(files_to_process) > 1
 
-        # 4. Process each file
         for file_path, file_name in files_to_process:
-            # Build a unique virtual path for hashing (ensures different files don't collide)
-            virtual_path = f"sharepoint://{sp_config.hostname}/{site_id}/{file_path}"
+            # Build metadata and virtual path using helpers
+            virtual_path = self._build_sharepoint_virtual_path(sp_config.hostname, site_id, file_path)
+            sharepoint_metadata = self._build_sharepoint_metadata(sp_config, site_id, file_path, file_name)
+            merged_metadata = self._merge_metadata(sharepoint_metadata, content.metadata)
 
-            # Build metadata with all info needed to re-fetch the file
-            sharepoint_metadata: Dict[str, str] = {
-                "source_type": "sharepoint",
-                "source_config_id": sp_config.id,
-                "source_config_name": sp_config.name,
-                "sharepoint_hostname": sp_config.hostname,
-                "sharepoint_site_id": site_id,
-                "sharepoint_path": file_path,
-                "sharepoint_filename": file_name,
-            }
-            # Merge with user-provided metadata (user metadata takes precedence)
-            merged_metadata = {**sharepoint_metadata, **(content.metadata or {})}
-
-            # Setup Content object
-            # Naming: for folders, use relative path; for single files, use user name or filename
-            is_folder_upload = len(files_to_process) > 1
-            if is_folder_upload:
-                # Compute relative path from the upload root
-                relative_path = file_path
-                if path_to_process and file_path.startswith(path_to_process + "/"):
-                    relative_path = file_path[len(path_to_process) + 1 :]
-                # If user provided a name, prefix it; otherwise use full file path
-                content_name = f"{content.name}/{relative_path}" if content.name else file_path
-            else:
-                # Single file: use user's name or the filename
-                content_name = content.name or file_name
-            content_entry = Content(
-                name=content_name,
-                description=content.description,
-                path=virtual_path,  # Include path for unique hashing
-                status=ContentStatus.PROCESSING,
-                metadata=merged_metadata,
-                file_type="sharepoint",
+            # Compute content name using base helper
+            content_name = self._compute_content_name(
+                file_path, file_name, content.name, path_to_process, is_folder_upload
             )
 
-            # Hash content and add to contents database
-            content_entry.content_hash = self._build_content_hash(content_entry)
-            content_entry.id = generate_id(content_entry.content_hash)
+            # Create content entry using base helper
+            content_entry = self._create_content_entry(
+                content, content_name, virtual_path, merged_metadata, "sharepoint", is_folder_upload
+            )
+
             await self._ainsert_contents_db(content_entry)
+
             if self._should_skip(content_entry.content_hash, skip_if_exists):
                 content_entry.status = ContentStatus.COMPLETED
                 await self._aupdate_content(content_entry)
                 continue
 
-            # Select reader based on file extension
+            # Select reader and download file
             reader = self._select_reader_by_uri(file_name, content.reader)
             reader = cast(Reader, reader)
 
-            # Download file
             file_content = await self._adownload_sharepoint_file(site_id, file_path, access_token)
             if not file_content:
                 content_entry.status = ContentStatus.FAILED
@@ -327,27 +329,21 @@ class SharePointLoader:
         skip_if_exists: bool,
         config: Optional[RemoteContentConfig] = None,
     ):
-        """Synchronous version of _load_from_sharepoint.
+        """Load content from SharePoint (sync).
 
-        Load content from SharePoint:
-        1. Authenticate with Microsoft Graph using client credentials
-        2. Get site ID from hostname/site_path
-        3. Download file(s) from file_path or folder_path
-        4. Process through reader and insert to vector db
+        Requires the SharePoint config to contain tenant_id, client_id, client_secret, and hostname.
         """
         remote_content: SharePointContent = cast(SharePointContent, content.remote_content)
-        sp_config = cast(SharePointConfig, config) if isinstance(config, SharePointConfig) else None
-
+        sp_config = self._validate_sharepoint_config(content, config)
         if sp_config is None:
-            log_error(f"SharePoint config not found for config_id: {remote_content.config_id}")
             return
 
-        # 1. Get access token
+        # Get access token
         access_token = self._get_sharepoint_access_token(sp_config)
         if not access_token:
             return
 
-        # 2. Get site ID - use config value if provided, otherwise fetch via API
+        # Get site ID
         site_id: Optional[str] = sp_config.site_id
         if not site_id:
             site_path = remote_content.site_path or sp_config.site_path
@@ -356,29 +352,26 @@ class SharePointLoader:
                 log_error(f"Failed to get SharePoint site ID for {sp_config.hostname}/{site_path}")
                 return
 
-        # 3. Identify files to download
-        files_to_process: List[tuple] = []  # List of (file_path, file_name)
+        # Identify files to download
+        files_to_process: List[tuple] = []
+        path_to_process = self._get_sharepoint_path_to_process(remote_content)
 
         # Helper function to recursively list all files in a folder
         def list_files_recursive(folder: str) -> List[tuple]:
             """Recursively list all files in a SharePoint folder."""
             files: List[tuple] = []
-            items = self._list_sharepoint_folder_items(site_id, folder, access_token)
+            items = self._list_sharepoint_folder_items(site_id, folder, access_token)  # type: ignore
             for item in items:
-                if "file" in item:  # It's a file
+                if "file" in item:
                     item_path = f"{folder}/{item['name']}"
                     files.append((item_path, item["name"]))
-                elif "folder" in item:  # It's a folder - recurse
+                elif "folder" in item:
                     subdir_path = f"{folder}/{item['name']}"
                     subdir_files = list_files_recursive(subdir_path)
                     files.extend(subdir_files)
             return files
 
-        # Get the path to process (file_path or folder_path)
-        path_to_process = (remote_content.file_path or remote_content.folder_path or "").strip("/")
-
         if path_to_process:
-            # Check if path is a file or folder by getting item metadata
             try:
                 with httpx.Client() as client:
                     url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/drive/root:/{path_to_process}"
@@ -388,10 +381,8 @@ class SharePointLoader:
                     item_data = response.json()
 
                     if "folder" in item_data:
-                        # It's a folder - recursively list all files
                         files_to_process = list_files_recursive(path_to_process)
                     elif "file" in item_data:
-                        # It's a single file
                         files_to_process.append((path_to_process, item_data["name"]))
                     else:
                         log_warning(f"SharePoint path {path_to_process} is neither file nor folder")
@@ -405,61 +396,35 @@ class SharePointLoader:
             return
 
         log_info(f"Processing {len(files_to_process)} file(s) from SharePoint")
+        is_folder_upload = len(files_to_process) > 1
 
-        # 4. Process each file
         for file_path, file_name in files_to_process:
-            # Build a unique virtual path for hashing (ensures different files don't collide)
-            virtual_path = f"sharepoint://{sp_config.hostname}/{site_id}/{file_path}"
+            # Build metadata and virtual path using helpers
+            virtual_path = self._build_sharepoint_virtual_path(sp_config.hostname, site_id, file_path)
+            sharepoint_metadata = self._build_sharepoint_metadata(sp_config, site_id, file_path, file_name)
+            merged_metadata = self._merge_metadata(sharepoint_metadata, content.metadata)
 
-            # Build metadata with all info needed to re-fetch the file
-            sharepoint_metadata: Dict[str, str] = {
-                "source_type": "sharepoint",
-                "source_config_id": sp_config.id,
-                "source_config_name": sp_config.name,
-                "sharepoint_hostname": sp_config.hostname,
-                "sharepoint_site_id": site_id,
-                "sharepoint_path": file_path,
-                "sharepoint_filename": file_name,
-            }
-            # Merge with user-provided metadata (user metadata takes precedence)
-            merged_metadata = {**sharepoint_metadata, **(content.metadata or {})}
-
-            # Setup Content object
-            # Naming: for folders, use relative path; for single files, use user name or filename
-            is_folder_upload = len(files_to_process) > 1
-            if is_folder_upload:
-                # Compute relative path from the upload root
-                relative_path = file_path
-                if path_to_process and file_path.startswith(path_to_process + "/"):
-                    relative_path = file_path[len(path_to_process) + 1 :]
-                # If user provided a name, prefix it; otherwise use full file path
-                content_name = f"{content.name}/{relative_path}" if content.name else file_path
-            else:
-                # Single file: use user's name or the filename
-                content_name = content.name or file_name
-            content_entry = Content(
-                name=content_name,
-                description=content.description,
-                path=virtual_path,  # Include path for unique hashing
-                status=ContentStatus.PROCESSING,
-                metadata=merged_metadata,
-                file_type="sharepoint",
+            # Compute content name using base helper
+            content_name = self._compute_content_name(
+                file_path, file_name, content.name, path_to_process, is_folder_upload
             )
 
-            # Hash content and add to contents database
-            content_entry.content_hash = self._build_content_hash(content_entry)
-            content_entry.id = generate_id(content_entry.content_hash)
+            # Create content entry using base helper
+            content_entry = self._create_content_entry(
+                content, content_name, virtual_path, merged_metadata, "sharepoint", is_folder_upload
+            )
+
             self._insert_contents_db(content_entry)
+
             if self._should_skip(content_entry.content_hash, skip_if_exists):
                 content_entry.status = ContentStatus.COMPLETED
                 self._update_content(content_entry)
                 continue
 
-            # Select reader based on file extension
+            # Select reader and download file
             reader = self._select_reader_by_uri(file_name, content.reader)
             reader = cast(Reader, reader)
 
-            # Download file
             file_content = self._download_sharepoint_file(site_id, file_path, access_token)
             if not file_content:
                 content_entry.status = ContentStatus.FAILED
