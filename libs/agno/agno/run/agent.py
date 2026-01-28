@@ -467,19 +467,22 @@ class ModelRequestCompletedEvent(BaseAgentRunEvent):
 
 @dataclass
 class CompressionStartedEvent(BaseAgentRunEvent):
-    """Event sent when tool result compression is about to start"""
+    """Event sent when context or tool compression starts"""
 
     event: str = RunEvent.compression_started.value
+    compression_type: str = ""  # "tool" or "context"
 
 
 @dataclass
 class CompressionCompletedEvent(BaseAgentRunEvent):
-    """Event sent when tool result compression has completed"""
+    """Event sent when context or tool compression completes"""
 
     event: str = RunEvent.compression_completed.value
-    tool_results_compressed: Optional[int] = None
+    compression_type: str = ""  # "tool" or "context"
     original_size: Optional[int] = None
     compressed_size: Optional[int] = None
+    items_compressed: Optional[int] = None  # tools or messages
+    compressed_message_ids: Optional[List[str]] = None
 
 
 @dataclass

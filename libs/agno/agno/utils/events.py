@@ -863,57 +863,81 @@ def create_team_model_request_completed_event(
 
 def create_compression_started_event(
     from_run_response: RunOutput,
+    compression_type: str,
 ) -> CompressionStartedEvent:
     return CompressionStartedEvent(
         session_id=from_run_response.session_id,
         agent_id=from_run_response.agent_id,  # type: ignore
         agent_name=from_run_response.agent_name,  # type: ignore
         run_id=from_run_response.run_id,
+        compression_type=compression_type,
     )
 
 
 def create_compression_completed_event(
     from_run_response: RunOutput,
-    tool_results_compressed: Optional[int] = None,
-    original_size: Optional[int] = None,
-    compressed_size: Optional[int] = None,
+    compression_type: str,
+    stats: Dict[str, Any],
 ) -> CompressionCompletedEvent:
+    # Extract relevant stats based on compression type (use token-based keys)
+    if compression_type == "context":
+        original_size = stats.get("original_context_tokens", 0)
+        compressed_size = stats.get("compression_context_tokens", 0)
+        items_compressed = stats.get("context_compressions", 0)
+    else:  # tool
+        original_size = stats.get("original_tool_tokens", 0)
+        compressed_size = stats.get("compressed_tool_tokens", 0)
+        items_compressed = stats.get("tool_results_compressed", 0)
+
     return CompressionCompletedEvent(
         session_id=from_run_response.session_id,
         agent_id=from_run_response.agent_id,  # type: ignore
         agent_name=from_run_response.agent_name,  # type: ignore
         run_id=from_run_response.run_id,
-        tool_results_compressed=tool_results_compressed,
+        compression_type=compression_type,
         original_size=original_size,
         compressed_size=compressed_size,
+        items_compressed=items_compressed,
     )
 
 
 def create_team_compression_started_event(
     from_run_response: TeamRunOutput,
+    compression_type: str,
 ) -> TeamCompressionStartedEvent:
     return TeamCompressionStartedEvent(
         session_id=from_run_response.session_id,
         team_id=from_run_response.team_id,  # type: ignore
         team_name=from_run_response.team_name,  # type: ignore
         run_id=from_run_response.run_id,
+        compression_type=compression_type,
     )
 
 
 def create_team_compression_completed_event(
     from_run_response: TeamRunOutput,
-    tool_results_compressed: Optional[int] = None,
-    original_size: Optional[int] = None,
-    compressed_size: Optional[int] = None,
+    compression_type: str,
+    stats: Dict[str, Any],
 ) -> TeamCompressionCompletedEvent:
+    # Extract relevant stats based on compression type (use token-based keys)
+    if compression_type == "context":
+        original_size = stats.get("original_context_tokens", 0)
+        compressed_size = stats.get("compression_context_tokens", 0)
+        items_compressed = stats.get("context_compressions", 0)
+    else:  # tool
+        original_size = stats.get("original_tool_tokens", 0)
+        compressed_size = stats.get("compressed_tool_tokens", 0)
+        items_compressed = stats.get("tool_results_compressed", 0)
+
     return TeamCompressionCompletedEvent(
         session_id=from_run_response.session_id,
         team_id=from_run_response.team_id,  # type: ignore
         team_name=from_run_response.team_name,  # type: ignore
         run_id=from_run_response.run_id,
-        tool_results_compressed=tool_results_compressed,
+        compression_type=compression_type,
         original_size=original_size,
         compressed_size=compressed_size,
+        items_compressed=items_compressed,
     )
 
 
