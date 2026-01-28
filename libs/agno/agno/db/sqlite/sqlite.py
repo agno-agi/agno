@@ -9,6 +9,7 @@ if TYPE_CHECKING:
 
 from agno.db.base import BaseDb, ComponentType, SessionType
 from agno.db.migrations.manager import MigrationManager
+from agno.db.schemas.context import ContextItem
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
@@ -48,6 +49,7 @@ class SqliteDb(BaseDb):
         db_url: Optional[str] = None,
         session_table: Optional[str] = None,
         culture_table: Optional[str] = None,
+        context_table: Optional[str] = None,
         memory_table: Optional[str] = None,
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
@@ -76,6 +78,7 @@ class SqliteDb(BaseDb):
             db_url (Optional[str]): The database URL to connect to.
             session_table (Optional[str]): Name of the table to store Agent, Team and Workflow sessions.
             culture_table (Optional[str]): Name of the table to store cultural notions.
+            context_table (Optional[str]): Name of the table to store context items (prompt content).
             memory_table (Optional[str]): Name of the table to store user memories.
             metrics_table (Optional[str]): Name of the table to store metrics.
             eval_table (Optional[str]): Name of the table to store evaluation runs data.
@@ -100,6 +103,7 @@ class SqliteDb(BaseDb):
             id=id,
             session_table=session_table,
             culture_table=culture_table,
+            context_table=context_table,
             memory_table=memory_table,
             metrics_table=metrics_table,
             eval_table=eval_table,
@@ -204,6 +208,7 @@ class SqliteDb(BaseDb):
             (self.component_configs_table_name, "component_configs"),
             (self.component_links_table_name, "component_links"),
             (self.learnings_table_name, "learnings"),
+            (self.context_table_name, "context"),
         ]
 
         for table_name, table_type in tables_to_create:
@@ -518,6 +523,14 @@ class SqliteDb(BaseDb):
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.learnings_table
+
+        elif table_type == "context":
+            self.context_table = self._get_or_create_table(
+                table_name=self.context_table_name,
+                table_type="context",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.context_table
 
         else:
             raise ValueError(f"Unknown table type: '{table_type}'")
@@ -4324,3 +4337,201 @@ class SqliteDb(BaseDb):
         except Exception as e:
             log_debug(f"Error getting learnings: {e}")
             return []
+
+    def clear_context_items(self) -> None:
+        """Delete all context items from the database.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
+        try:
+            table = self._get_table(table_type="context")
+            if table is None:
+                return
+
+            with self.Session() as sess, sess.begin():
+                sess.execute(table.delete())
+
+        except Exception as e:
+            log_warning(f"Exception deleting all context items: {e}")
+            raise e
+
+    def delete_context_item(self, id: str) -> None:
+        """Delete a context item from the database.
+
+        Args:
+            id (str): The ID of the context item to delete.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
+        try:
+            table = self._get_table(table_type="context")
+            if table is None:
+                return
+
+            with self.Session() as sess, sess.begin():
+                delete_stmt = table.delete().where(table.c.id == id)
+                result = sess.execute(delete_stmt)
+
+                success = result.rowcount > 0
+                if success:
+                    log_debug(f"Successfully deleted context item id: {id}")
+                else:
+                    log_debug(f"No context item found with id: {id}")
+
+        except Exception as e:
+            log_error(f"Error deleting context item: {e}")
+            raise e
+
+    def get_context_item(self, id: str) -> Optional[ContextItem]:
+        """Get a context item from the database.
+
+        Args:
+            id (str): The ID of the context item to get.
+
+        Returns:
+            Optional[ContextItem]: The context item, or None if it doesn't exist.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            table = self._get_table(table_type="context")
+            if table is None:
+                return None
+
+            with self.Session() as sess, sess.begin():
+                stmt = select(table).where(table.c.id == id)
+                result = sess.execute(stmt).fetchone()
+                if result is None:
+                    return None
+
+                db_row = dict(result._mapping)
+                if not db_row:
+                    return None
+
+            return ContextItem.from_dict(db_row)
+
+        except Exception as e:
+            log_error(f"Exception reading from context items table: {e}")
+            raise e
+
+    def get_all_context_items(
+        self,
+        name: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Optional[List[ContextItem]]:
+        """Get all context items from the database.
+
+        Args:
+            name (Optional[str]): The name of the context item to filter by.
+            metadata (Optional[Dict[str, Any]]): The metadata to filter by.
+
+        Returns:
+            Optional[List[ContextItem]]: List of context items
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            table = self._get_table(table_type="context")
+            if table is None:
+                return []
+
+            with self.Session() as sess, sess.begin():
+                stmt = select(table)
+
+                # Filtering
+                if name is not None:
+                    stmt = stmt.where(table.c.name == name)
+
+                result = sess.execute(stmt).fetchall()
+                if not result:
+                    return []
+
+                db_rows = [dict(record._mapping) for record in result]
+
+            # Filter by metadata in Python since SQLite doesn't support JSON containment
+            if metadata is not None:
+                filtered_rows = []
+                for row in db_rows:
+                    row_metadata = row.get("metadata", {}) or {}
+                    if all(row_metadata.get(k) == v for k, v in metadata.items()):
+                        filtered_rows.append(row)
+                db_rows = filtered_rows
+
+            return [ContextItem.from_dict(row) for row in db_rows]
+
+        except Exception as e:
+            log_error(f"Error reading from context items table: {e}")
+            raise e
+
+    def upsert_context_item(self, context_item: ContextItem) -> Optional[ContextItem]:
+        """Upsert a context item into the database.
+
+        Args:
+            context_item (ContextItem): The context item to upsert.
+
+        Returns:
+            Optional[ContextItem]: The upserted context item.
+
+        Raises:
+            Exception: If an error occurs during upsert.
+        """
+        try:
+            table = self._get_table(table_type="context", create_table_if_not_found=True)
+            if table is None:
+                return None
+
+            if context_item.id is None:
+                context_item.id = str(uuid4())
+
+            # Timestamps are already epoch seconds (int)
+            created_at_ts = context_item.created_at if context_item.created_at else int(time.time())
+            updated_at_ts = context_item.updated_at if context_item.updated_at else int(time.time())
+
+            with self.Session() as sess, sess.begin():
+                stmt = sqlite.insert(table).values(
+                    id=context_item.id,
+                    name=context_item.name,
+                    content=context_item.content,
+                    description=context_item.description,
+                    metadata=context_item.metadata,
+                    variables=context_item.variables,
+                    version=context_item.version,
+                    parent_id=context_item.parent_id,
+                    optimization_notes=context_item.optimization_notes,
+                    created_at=created_at_ts,
+                    updated_at=updated_at_ts,
+                )
+                stmt = stmt.on_conflict_do_update(  # type: ignore
+                    index_elements=["id"],
+                    set_=dict(
+                        name=context_item.name,
+                        content=context_item.content,
+                        description=context_item.description,
+                        metadata=context_item.metadata,
+                        variables=context_item.variables,
+                        version=context_item.version,
+                        parent_id=context_item.parent_id,
+                        optimization_notes=context_item.optimization_notes,
+                        updated_at=updated_at_ts,
+                    ),
+                ).returning(table)
+
+                result = sess.execute(stmt)
+                row = result.fetchone()
+
+                if row is None:
+                    return None
+
+            db_row: Dict[str, Any] = dict(row._mapping)
+            if not db_row:
+                return None
+
+            return ContextItem.from_dict(db_row)
+
+        except Exception as e:
+            log_error(f"Error upserting context item: {e}")
+            raise e

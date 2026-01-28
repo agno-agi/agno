@@ -10,6 +10,7 @@ from agno.db.postgres.utils import (
     get_dates_to_calculate_metrics_for,
 )
 from agno.db.schemas import UserMemory
+from agno.db.schemas.context import ContextItem
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
@@ -23,6 +24,7 @@ from agno.db.surrealdb.metrics import (
 )
 from agno.db.surrealdb.models import (
     TableType,
+    deserialize_context_item,
     deserialize_cultural_knowledge,
     deserialize_eval_run_record,
     deserialize_knowledge_row,
@@ -35,6 +37,7 @@ from agno.db.surrealdb.models import (
     desurrealize_user_memory,
     get_schema,
     get_session_type,
+    serialize_context_item,
     serialize_cultural_knowledge,
     serialize_eval_run_record,
     serialize_knowledge_row,
@@ -69,6 +72,7 @@ class SurrealDb(BaseDb):
         culture_table: Optional[str] = None,
         traces_table: Optional[str] = None,
         spans_table: Optional[str] = None,
+        context_table: Optional[str] = None,
         id: Optional[str] = None,
     ):
         """
@@ -105,6 +109,7 @@ class SurrealDb(BaseDb):
             culture_table=culture_table,
             traces_table=traces_table,
             spans_table=spans_table,
+            context_table=context_table,
         )
         self._client = client
         self._db_url = db_url
@@ -126,6 +131,7 @@ class SurrealDb(BaseDb):
     def table_names(self) -> dict[TableType, str]:
         return {
             "agents": self._agents_table_name,
+            "context": self.context_table_name,
             "culture": self.culture_table_name,
             "evals": self.eval_table_name,
             "knowledge": self.knowledge_table_name,
@@ -169,6 +175,8 @@ class SurrealDb(BaseDb):
             table_name = self.knowledge_table_name
         elif table_type == "culture":
             table_name = self.culture_table_name
+        elif table_type == "context":
+            table_name = self.context_table_name
         elif table_type == "users":
             table_name = self._users_table_name
         elif table_type == "agents":
@@ -1965,3 +1973,154 @@ class SurrealDb(BaseDb):
         limit: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         raise NotImplementedError("Learning methods not yet implemented for SurrealDb")
+
+    # -- Context methods --
+
+    def clear_context_items(self) -> None:
+        """Delete all context items from the database.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
+        table = self._get_table("context")
+        _ = self.client.delete(table)
+
+    def delete_context_item(self, id: str) -> None:
+        """Delete a context item by ID.
+
+        Args:
+            id (str): The ID of the context item to delete.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
+        table = self._get_table("context")
+        rec_id = RecordID(table, id)
+        self.client.delete(rec_id)
+
+    def get_context_item(
+        self, id: str, deserialize: Optional[bool] = True
+    ) -> Optional[Union[ContextItem, Dict[str, Any]]]:
+        """Get a context item by ID.
+
+        Args:
+            id (str): The ID of the context item to retrieve.
+            deserialize (Optional[bool]): Whether to deserialize to ContextItem object. Defaults to True.
+
+        Returns:
+            Optional[Union[ContextItem, Dict[str, Any]]]: The context item if found, None otherwise.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        table = self._get_table("context")
+        rec_id = RecordID(table, id)
+        result = self._query_one("SELECT * FROM ONLY $record", {"record": rec_id}, dict)
+
+        if result is None:
+            return None
+
+        if not deserialize:
+            return result  # type: ignore
+
+        return deserialize_context_item(result)  # type: ignore
+
+    def get_all_context_items(
+        self,
+        name: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[ContextItem], Tuple[List[Dict[str, Any]], int]]:
+        """Get all context items with filtering and pagination.
+
+        Args:
+            name (Optional[str]): Filter by name.
+            metadata (Optional[Dict[str, Any]]): Filter by metadata fields.
+            limit (Optional[int]): Maximum number of results to return.
+            page (Optional[int]): Page number for pagination.
+            sort_by (Optional[str]): Field to sort by.
+            sort_order (Optional[str]): Sort order ('asc' or 'desc').
+            deserialize (Optional[bool]): Whether to deserialize to ContextItem objects. Defaults to True.
+
+        Returns:
+            Union[List[ContextItem], Tuple[List[Dict[str, Any]], int]]:
+                - When deserialize=True: List of ContextItem objects
+                - When deserialize=False: Tuple with list of dictionaries and total count
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        table = self._get_table("context")
+
+        # Build where clauses
+        where = WhereClause()
+        if name is not None:
+            where = where.and_("name", name)
+        if metadata is not None:
+            for key, value in metadata.items():
+                where = where.and_(f"metadata.{key}", value)
+
+        where_clause, where_vars = where.build()
+
+        # Total count
+        total_count = self._count(table, where_clause, where_vars)
+
+        # Query
+        order_limit_start_clause = order_limit_start(sort_by, sort_order, limit, page)
+        query = dedent(f"""
+            SELECT *
+            FROM {table}
+            {where_clause}
+            {order_limit_start_clause}
+        """)
+
+        results = self._query(query, where_vars, dict) or []
+
+        if not deserialize:
+            return list(results), total_count  # type: ignore
+
+        return [deserialize_context_item(r) for r in results]  # type: ignore
+
+    def upsert_context_item(
+        self, context_item: ContextItem, deserialize: Optional[bool] = True
+    ) -> Optional[Union[ContextItem, Dict[str, Any]]]:
+        """Upsert a context item in SurrealDB.
+
+        Args:
+            context_item (ContextItem): The context item to upsert.
+            deserialize (Optional[bool]): Whether to deserialize the result. Defaults to True.
+
+        Returns:
+            Optional[Union[ContextItem, Dict[str, Any]]]: The upserted context item.
+
+        Raises:
+            Exception: If an error occurs during upsert.
+        """
+        table = self._get_table("context", create_table_if_not_found=True)
+
+        # Generate ID if not provided
+        if context_item.id is None:
+            from uuid import uuid4
+
+            context_item.id = str(uuid4())
+
+        serialized = serialize_context_item(context_item, table)
+        rec_id = serialized["id"]
+
+        result = self._query_one(
+            "UPSERT ONLY $record CONTENT $content",
+            {"record": rec_id, "content": serialized},
+            dict,
+        )
+
+        if result is None:
+            return None
+
+        if not deserialize:
+            return result  # type: ignore
+
+        return deserialize_context_item(result)  # type: ignore

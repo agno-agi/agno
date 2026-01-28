@@ -121,6 +121,20 @@ VERSIONS_TABLE_SCHEMA = {
     "updated_at": {"type": String, "nullable": True},
 }
 
+CONTEXT_ITEM_TABLE_SCHEMA = {
+    "id": {"type": String, "primary_key": True, "nullable": False},
+    "name": {"type": String, "nullable": False, "index": True},
+    "content": {"type": Text, "nullable": False},
+    "description": {"type": Text, "nullable": True},
+    "metadata": {"type": JSONB, "nullable": True},
+    "variables": {"type": JSONB, "nullable": True},
+    "version": {"type": BigInteger, "nullable": False, "default": 1},
+    "parent_id": {"type": String, "nullable": True},
+    "optimization_notes": {"type": Text, "nullable": True},
+    "created_at": {"type": BigInteger, "nullable": True},
+    "updated_at": {"type": BigInteger, "nullable": True},
+}
+
 TRACE_TABLE_SCHEMA = {
     "trace_id": {"type": String, "primary_key": True, "nullable": False},
     "name": {"type": String, "nullable": False},
@@ -262,6 +276,7 @@ def get_table_schema_definition(
         "component_configs": COMPONENT_CONFIGS_TABLE_SCHEMA,
         "component_links": COMPONENT_LINKS_TABLE_SCHEMA,
         "learnings": LEARNINGS_TABLE_SCHEMA,
+        "context": CONTEXT_ITEM_TABLE_SCHEMA,
     }
 
     schema = schemas.get(table_type, {})

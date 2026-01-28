@@ -32,6 +32,7 @@ from agno.db.dynamo.utils import (
     serialize_knowledge_row,
     serialize_to_dynamo_item,
 )
+from agno.db.schemas.context import ContextItem
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
@@ -65,6 +66,7 @@ class DynamoDb(BaseDb):
         knowledge_table: Optional[str] = None,
         traces_table: Optional[str] = None,
         spans_table: Optional[str] = None,
+        context_table: Optional[str] = None,
         id: Optional[str] = None,
     ):
         """
@@ -83,6 +85,7 @@ class DynamoDb(BaseDb):
             knowledge_table: The name of the knowledge table.
             traces_table: The name of the traces table.
             spans_table: The name of the spans table.
+            context_table: The name of the context table.
             id: ID of the database.
         """
         if id is None:
@@ -99,6 +102,7 @@ class DynamoDb(BaseDb):
             knowledge_table=knowledge_table,
             traces_table=traces_table,
             spans_table=spans_table,
+            context_table=context_table,
         )
 
         if db_client is not None:
@@ -145,6 +149,7 @@ class DynamoDb(BaseDb):
             ("evals", self.eval_table_name),
             ("knowledge", self.knowledge_table_name),
             ("culture", self.culture_table_name),
+            ("context", self.context_table_name),
         ]
 
         for table_type, table_name in tables_to_create:
@@ -186,6 +191,8 @@ class DynamoDb(BaseDb):
             # Ensure traces table exists first (spans reference traces)
             self._get_table("traces", create_table_if_not_found=True)
             table_name = self.span_table_name
+        elif table_type == "context":
+            table_name = self.context_table_name
         else:
             raise ValueError(f"Unknown table type: {table_type}")
 
@@ -2826,3 +2833,173 @@ class DynamoDb(BaseDb):
         limit: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         raise NotImplementedError("Learning methods not yet implemented for DynamoDb")
+
+    # -- Context methods --
+
+    def clear_context_items(self) -> None:
+        """Delete all context items from the database."""
+        try:
+            table_name = self._get_table(table_type="context")
+            if table_name is None:
+                return
+
+            # Scan and delete all items
+            response = self.client.scan(TableName=table_name, ProjectionExpression="id")
+            items = response.get("Items", [])
+
+            for item in items:
+                item_id = deserialize_from_dynamodb_item(item).get("id")
+                if item_id:
+                    self.client.delete_item(TableName=table_name, Key=serialize_to_dynamo_item({"id": item_id}))
+
+        except Exception as e:
+            log_error(f"Exception deleting all context items: {e}")
+            raise e
+
+    def delete_context_item(self, id: str) -> None:
+        """Delete a context item by ID.
+
+        Args:
+            id (str): The ID of the context item to delete.
+        """
+        try:
+            table_name = self._get_table(table_type="context")
+            if table_name is None:
+                return
+
+            self.client.delete_item(TableName=table_name, Key=serialize_to_dynamo_item({"id": id}))
+            log_debug(f"Deleted context item with ID: {id}")
+
+        except Exception as e:
+            log_error(f"Error deleting context item: {e}")
+            raise e
+
+    def get_context_item(self, id: str) -> Optional[ContextItem]:
+        """Get a context item by ID.
+
+        Args:
+            id (str): The ID of the context item to retrieve.
+
+        Returns:
+            Optional[ContextItem]: The context item if found, None otherwise.
+        """
+        try:
+            table_name = self._get_table(table_type="context")
+            if table_name is None:
+                return None
+
+            response = self.client.get_item(TableName=table_name, Key=serialize_to_dynamo_item({"id": id}))
+            item = response.get("Item")
+            if not item:
+                return None
+
+            result = deserialize_from_dynamodb_item(item)
+            # Ensure content is a string (deserializer might parse JSON strings as dicts)
+            if "content" in result and not isinstance(result["content"], str):
+                result["content"] = json.dumps(result["content"])
+            return ContextItem.from_dict(result)
+
+        except Exception as e:
+            log_error(f"Error getting context item: {e}")
+            raise e
+
+    def get_all_context_items(
+        self,
+        name: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> List[ContextItem]:
+        """Get all context items from the database.
+
+        Args:
+            name (Optional[str]): Filter by name.
+            metadata (Optional[Dict[str, Any]]): Filter by metadata (containment match).
+
+        Returns:
+            List[ContextItem]: List of context items.
+        """
+        try:
+            table_name = self._get_table(table_type="context")
+            if table_name is None:
+                return []
+
+            # Build filter expression
+            filter_parts = []
+            expression_values = {}
+
+            if name is not None:
+                filter_parts.append("#n = :name")
+                expression_values[":name"] = {"S": name}
+
+            scan_kwargs: Dict[str, Any] = {"TableName": table_name}
+            if filter_parts:
+                scan_kwargs["FilterExpression"] = " AND ".join(filter_parts)
+                scan_kwargs["ExpressionAttributeValues"] = expression_values
+                scan_kwargs["ExpressionAttributeNames"] = {"#n": "name"}
+
+            response = self.client.scan(**scan_kwargs)
+            items = response.get("Items", [])
+
+            results = [deserialize_from_dynamodb_item(item) for item in items]
+
+            # Filter by metadata if provided (containment match)
+            if metadata is not None:
+                filtered_results = []
+                for r in results:
+                    item_metadata = r.get("metadata", {}) or {}
+                    if all(item_metadata.get(k) == v for k, v in metadata.items()):
+                        filtered_results.append(r)
+                results = filtered_results
+
+            # Ensure content is a string for all items (deserializer might parse JSON strings as dicts)
+            for r in results:
+                if "content" in r and not isinstance(r["content"], str):
+                    r["content"] = json.dumps(r["content"])
+
+            return [ContextItem.from_dict(r) for r in results]
+
+        except Exception as e:
+            log_error(f"Error getting all context items: {e}")
+            raise e
+
+    def upsert_context_item(self, context_item: ContextItem) -> Optional[ContextItem]:
+        """Upsert a context item into the database.
+
+        Args:
+            context_item (ContextItem): The context item to upsert.
+
+        Returns:
+            Optional[ContextItem]: The upserted context item.
+        """
+        try:
+            from uuid import uuid4
+
+            table_name = self._get_table(table_type="context", create_table_if_not_found=True)
+            if table_name is None:
+                return None
+
+            if not context_item.id:
+                context_item.id = str(uuid4())
+
+            item_dict = {
+                "id": context_item.id,
+                "name": context_item.name,
+                "content": context_item.content,
+                "description": context_item.description,
+                "metadata": context_item.metadata,
+                "variables": context_item.variables,
+                "version": context_item.version,
+                "parent_id": context_item.parent_id,
+                "optimization_notes": context_item.optimization_notes,
+                "created_at": context_item.created_at if context_item.created_at else int(time.time()),
+                "updated_at": context_item.updated_at if context_item.updated_at else int(time.time()),
+            }
+
+            # Convert to DynamoDB format
+            item = serialize_to_dynamo_item(item_dict)
+            self.client.put_item(TableName=table_name, Item=item)
+
+            return self.get_context_item(context_item.id)
+
+        except Exception as e:
+            log_error(f"Error upserting context item: {e}")
+            raise e

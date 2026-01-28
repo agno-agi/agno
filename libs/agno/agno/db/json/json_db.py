@@ -18,6 +18,7 @@ from agno.db.json.utils import (
     get_dates_to_calculate_metrics_for,
     serialize_cultural_knowledge_for_db,
 )
+from agno.db.schemas.context import ContextItem
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
@@ -33,6 +34,7 @@ class JsonDb(BaseDb):
         db_path: Optional[str] = None,
         session_table: Optional[str] = None,
         culture_table: Optional[str] = None,
+        context_table: Optional[str] = None,
         memory_table: Optional[str] = None,
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
@@ -48,6 +50,7 @@ class JsonDb(BaseDb):
             db_path (Optional[str]): Path to the directory where JSON files will be stored.
             session_table (Optional[str]): Name of the JSON file to store sessions (without .json extension).
             culture_table (Optional[str]): Name of the JSON file to store cultural knowledge.
+            context_table (Optional[str]): Name of the JSON file to store context items.
             memory_table (Optional[str]): Name of the JSON file to store memories.
             metrics_table (Optional[str]): Name of the JSON file to store metrics.
             eval_table (Optional[str]): Name of the JSON file to store evaluation runs.
@@ -64,6 +67,7 @@ class JsonDb(BaseDb):
             id=id,
             session_table=session_table,
             culture_table=culture_table,
+            context_table=context_table,
             memory_table=memory_table,
             metrics_table=metrics_table,
             eval_table=eval_table,
@@ -1822,3 +1826,123 @@ class JsonDb(BaseDb):
         limit: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         raise NotImplementedError("Learning methods not yet implemented for JsonDb")
+
+    # -- Context methods --
+
+    def clear_context_items(self) -> None:
+        """Delete all context items from JSON file."""
+        try:
+            self._write_json_file(self.context_table_name, [])
+        except Exception as e:
+            log_error(f"Error clearing context items: {e}")
+            raise e
+
+    def delete_context_item(self, id: str) -> None:
+        """Delete a context item entry from JSON file."""
+        try:
+            context_items = self._read_json_file(self.context_table_name)
+            context_items = [ci for ci in context_items if ci.get("id") != id]
+            self._write_json_file(self.context_table_name, context_items)
+        except Exception as e:
+            log_error(f"Error deleting context item: {e}")
+            raise e
+
+    def get_context_item(
+        self, id: str, deserialize: Optional[bool] = True
+    ) -> Optional[Union[ContextItem, Dict[str, Any]]]:
+        """Get a context item entry from JSON file."""
+        try:
+            context_items = self._read_json_file(self.context_table_name)
+            for ci in context_items:
+                if ci.get("id") == id:
+                    if not deserialize:
+                        return ci
+                    return ContextItem.from_dict(ci)
+            return None
+        except Exception as e:
+            log_error(f"Error getting context item: {e}")
+            raise e
+
+    def get_all_context_items(
+        self,
+        name: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[ContextItem], Tuple[List[Dict[str, Any]], int]]:
+        """Get all context items from JSON file."""
+        try:
+            context_items = self._read_json_file(self.context_table_name)
+
+            # Filter
+            filtered = []
+            for ci in context_items:
+                if name and name.lower() not in ci.get("name", "").lower():
+                    continue
+                if metadata:
+                    item_metadata = ci.get("metadata", {}) or {}
+                    if not all(item_metadata.get(k) == v for k, v in metadata.items()):
+                        continue
+                filtered.append(ci)
+
+            # Sort
+            if sort_by:
+                filtered = apply_sorting(filtered, sort_by, sort_order)
+
+            total_count = len(filtered)
+
+            # Paginate
+            if limit and page:
+                start = (page - 1) * limit
+                filtered = filtered[start : start + limit]
+            elif limit:
+                filtered = filtered[:limit]
+
+            if not deserialize:
+                return filtered, total_count
+
+            return [ContextItem.from_dict(ci) for ci in filtered]
+        except Exception as e:
+            log_error(f"Error getting all context items: {e}")
+            raise e
+
+    def upsert_context_item(
+        self, context_item: ContextItem, deserialize: Optional[bool] = True
+    ) -> Optional[Union[ContextItem, Dict[str, Any]]]:
+        """Upsert a context item entry into JSON file."""
+        try:
+            if not context_item.id:
+                context_item.id = str(uuid4())
+
+            all_context_items = self._read_json_file(self.context_table_name, create_table_if_not_found=True)
+
+            # Create the item dict
+            ci_dict = {
+                "id": context_item.id,
+                "name": context_item.name,
+                "content": context_item.content,
+                "description": context_item.description,
+                "metadata": context_item.metadata,
+                "variables": context_item.variables,
+                "version": context_item.version,
+                "parent_id": context_item.parent_id,
+                "optimization_notes": context_item.optimization_notes,
+                "created_at": context_item.created_at if context_item.created_at else int(time.time()),
+                "updated_at": context_item.updated_at if context_item.updated_at else int(time.time()),
+            }
+
+            # Remove existing entry
+            all_context_items = [ci for ci in all_context_items if ci.get("id") != context_item.id]
+
+            # Add new entry
+            all_context_items.append(ci_dict)
+
+            self._write_json_file(self.context_table_name, all_context_items)
+
+            return self.get_context_item(context_item.id, deserialize=deserialize)
+        except Exception as e:
+            log_error(f"Error upserting context item: {e}")
+            raise e

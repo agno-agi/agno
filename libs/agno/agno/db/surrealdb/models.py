@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Literal, Optional, Sequence
 from surrealdb import RecordID
 
 from agno.db.base import SessionType
+from agno.db.schemas.context import ContextItem
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalRunRecord
 from agno.db.schemas.knowledge import KnowledgeRow
@@ -17,6 +18,7 @@ from agno.session.workflow import WorkflowSession
 
 TableType = Literal[
     "agents",
+    "context",
     "culture",
     "evals",
     "knowledge",
@@ -250,6 +252,31 @@ def serialize_cultural_knowledge(cultural_knowledge: CulturalKnowledge, culture_
     return dict_
 
 
+def serialize_context_item(context_item: ContextItem, context_table_name: str) -> dict:
+    """Serialize a ContextItem for SurrealDB storage."""
+    dict_ = asdict(context_item)
+    if context_item.id is not None:
+        dict_["id"] = RecordID(context_table_name, context_item.id)
+
+    # surrealize dates (convert epoch int to datetime)
+    dict_ = surrealize_dates(dict_)
+
+    return dict_
+
+
+def deserialize_context_item(context_item_raw: dict) -> ContextItem:
+    """Deserialize a ContextItem from SurrealDB."""
+    copy = context_item_raw.copy()
+
+    # Convert RecordID to string
+    copy = deserialize_record_id(copy, "id")
+
+    # Convert datetime back to epoch seconds
+    copy = desurrealize_dates(copy)
+
+    return ContextItem.from_dict(copy)
+
+
 def desurrealize_eval_run_record(eval_run_record_raw: dict) -> dict:
     copy = eval_run_record_raw.copy()
 
@@ -299,6 +326,12 @@ def get_schema(table_type: TableType, table_name: str) -> str:
         return dedent(f"""
             {define_table}
             DEFINE FIELD OVERWRITE created_at ON {table_name} TYPE datetime DEFAULT time::now();
+            DEFINE FIELD OVERWRITE updated_at ON {table_name} TYPE datetime VALUE time::now();
+            """)
+    elif table_type == "context":
+        return dedent(f"""
+            {define_table}
+            DEFINE FIELD OVERWRITE created_at ON {table_name} TYPE datetime VALUE time::now();
             DEFINE FIELD OVERWRITE updated_at ON {table_name} TYPE datetime VALUE time::now();
             """)
     elif table_type == "sessions":

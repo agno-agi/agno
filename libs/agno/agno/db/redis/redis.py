@@ -23,6 +23,7 @@ from agno.db.redis.utils import (
     serialize_cultural_knowledge_for_db,
     serialize_data,
 )
+from agno.db.schemas.context import ContextItem
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
@@ -53,6 +54,7 @@ class RedisDb(BaseDb):
         culture_table: Optional[str] = None,
         traces_table: Optional[str] = None,
         spans_table: Optional[str] = None,
+        context_table: Optional[str] = None,
     ):
         """
         Interface for interacting with a Redis database.
@@ -78,6 +80,7 @@ class RedisDb(BaseDb):
             culture_table (Optional[str]): Name of the table to store cultural knowledge
             traces_table (Optional[str]): Name of the table to store traces
             spans_table (Optional[str]): Name of the table to store spans
+            context_table (Optional[str]): Name of the table to store context items
 
         Raises:
             ValueError: If neither redis_client nor db_url is provided.
@@ -97,6 +100,7 @@ class RedisDb(BaseDb):
             culture_table=culture_table,
             traces_table=traces_table,
             spans_table=spans_table,
+            context_table=context_table,
         )
 
         self.db_prefix = db_prefix
@@ -141,6 +145,9 @@ class RedisDb(BaseDb):
         elif table_type == "spans":
             return self.span_table_name
 
+        elif table_type == "context":
+            return self.context_table_name
+
         else:
             raise ValueError(f"Unknown table type: {table_type}")
 
@@ -166,7 +173,7 @@ class RedisDb(BaseDb):
 
             if index_fields:
                 create_index_entries(
-                    redis_client=self.redis_client,
+                    redis_client=self.redis_client,  # type: ignore[arg-type]
                     prefix=self.db_prefix,
                     table_type=table_type,
                     record_id=record_id,
@@ -223,7 +230,7 @@ class RedisDb(BaseDb):
                 record_data = self._get_record(table_type, record_id)
                 if record_data:
                     remove_index_entries(
-                        redis_client=self.redis_client,
+                        redis_client=self.redis_client,  # type: ignore[arg-type]
                         prefix=self.db_prefix,
                         table_type=table_type,
                         record_id=record_id,
@@ -255,7 +262,7 @@ class RedisDb(BaseDb):
             Exception: If any error occurs while getting the records.
         """
         try:
-            keys = get_all_keys_for_table(redis_client=self.redis_client, prefix=self.db_prefix, table_type=table_type)
+            keys = get_all_keys_for_table(redis_client=self.redis_client, prefix=self.db_prefix, table_type=table_type)  # type: ignore[arg-type]
 
             records = []
             for key in keys:
@@ -1000,7 +1007,7 @@ class RedisDb(BaseDb):
         """
         try:
             # Get all keys for memories table
-            keys = get_all_keys_for_table(redis_client=self.redis_client, prefix=self.db_prefix, table_type="memories")
+            keys = get_all_keys_for_table(redis_client=self.redis_client, prefix=self.db_prefix, table_type="memories")  # type: ignore[arg-type]
 
             if keys:
                 # Delete all memory keys in a single batch operation
@@ -1528,7 +1535,7 @@ class RedisDb(BaseDb):
             Exception: If an error occurs during deletion.
         """
         try:
-            keys = get_all_keys_for_table(redis_client=self.redis_client, prefix=self.db_prefix, table_type="culture")
+            keys = get_all_keys_for_table(redis_client=self.redis_client, prefix=self.db_prefix, table_type="culture")  # type: ignore[arg-type]
 
             if keys:
                 self.redis_client.delete(*keys)
@@ -2186,3 +2193,171 @@ class RedisDb(BaseDb):
         limit: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         raise NotImplementedError("Learning methods not yet implemented for RedisDb")
+
+    # -- Context methods --
+    def clear_context_items(self) -> None:
+        """Delete all context items from the database.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
+        try:
+            keys = get_all_keys_for_table(redis_client=self.redis_client, prefix=self.db_prefix, table_type="context")  # type: ignore[arg-type]
+
+            if keys:
+                self.redis_client.delete(*keys)
+
+        except Exception as e:
+            log_error(f"Exception deleting all context items: {e}")
+            raise e
+
+    def delete_context_item(self, id: str) -> None:
+        """Delete context item by ID.
+
+        Args:
+            id (str): The ID of the context item to delete.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
+        try:
+            if self._delete_record("context", id, index_fields=["name"]):
+                log_debug(f"Successfully deleted context item id: {id}")
+            else:
+                log_debug(f"No context item found with id: {id}")
+
+        except Exception as e:
+            log_error(f"Error deleting context item: {e}")
+            raise e
+
+    def get_context_item(
+        self, id: str, deserialize: Optional[bool] = True
+    ) -> Optional[Union[ContextItem, Dict[str, Any]]]:
+        """Get context item by ID.
+
+        Args:
+            id (str): The ID of the context item to retrieve.
+            deserialize (Optional[bool]): Whether to deserialize to ContextItem object. Defaults to True.
+
+        Returns:
+            Optional[Union[ContextItem, Dict[str, Any]]]: The context item if found, None otherwise.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            context_item = self._get_record("context", id)
+
+            if context_item is None:
+                return None
+
+            if not deserialize:
+                return context_item
+
+            return ContextItem.from_dict(context_item)
+
+        except Exception as e:
+            log_error(f"Error getting context item: {e}")
+            raise e
+
+    def get_all_context_items(
+        self,
+        name: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[ContextItem], Tuple[List[Dict[str, Any]], int]]:
+        """Get all context items with filtering and pagination.
+
+        Args:
+            name (Optional[str]): Filter by name (case-insensitive partial match).
+            metadata (Optional[Dict[str, Any]]): Filter by metadata key-value pairs.
+            limit (Optional[int]): Maximum number of results to return.
+            page (Optional[int]): Page number for pagination.
+            sort_by (Optional[str]): Field to sort by.
+            sort_order (Optional[str]): Sort order ('asc' or 'desc').
+            deserialize (Optional[bool]): Whether to deserialize to ContextItem objects. Defaults to True.
+
+        Returns:
+            Union[List[ContextItem], Tuple[List[Dict[str, Any]], int]]:
+                - When deserialize=True: List of ContextItem objects
+                - When deserialize=False: Tuple with list of dictionaries and total count
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            all_context_items = self._get_all_records("context")
+
+            # Apply filters
+            filtered_items = []
+            for item in all_context_items:
+                if name is not None and name.lower() not in item.get("name", "").lower():
+                    continue
+                if metadata is not None:
+                    item_metadata = item.get("metadata", {}) or {}
+                    if not all(item_metadata.get(k) == v for k, v in metadata.items()):
+                        continue
+
+                filtered_items.append(item)
+
+            sorted_items = apply_sorting(records=filtered_items, sort_by=sort_by, sort_order=sort_order)
+            paginated_items = apply_pagination(records=sorted_items, limit=limit, page=page)
+
+            if not deserialize:
+                return paginated_items, len(filtered_items)
+
+            return [ContextItem.from_dict(item) for item in paginated_items]
+
+        except Exception as e:
+            log_error(f"Error getting all context items: {e}")
+            raise e
+
+    def upsert_context_item(
+        self, context_item: ContextItem, deserialize: Optional[bool] = True
+    ) -> Optional[Union[ContextItem, Dict[str, Any]]]:
+        """Upsert context item in Redis.
+
+        Args:
+            context_item (ContextItem): The context item to upsert.
+            deserialize (Optional[bool]): Whether to deserialize the result. Defaults to True.
+
+        Returns:
+            Optional[Union[ContextItem, Dict[str, Any]]]: The upserted context item.
+
+        Raises:
+            Exception: If an error occurs during upsert.
+        """
+        try:
+            item_id = context_item.id or str(uuid4())
+
+            data = {
+                "id": item_id,
+                "name": context_item.name,
+                "content": context_item.content,
+                "description": context_item.description,
+                "metadata": context_item.metadata,
+                "variables": context_item.variables,
+                "version": context_item.version,
+                "parent_id": context_item.parent_id,
+                "optimization_notes": context_item.optimization_notes,
+                "created_at": context_item.created_at if context_item.created_at else int(time.time()),
+                "updated_at": context_item.updated_at if context_item.updated_at else int(time.time()),
+            }
+
+            success = self._store_record("context", item_id, data, index_fields=["name"])
+
+            if not success:
+                return None
+
+            if not deserialize:
+                return data
+
+            return ContextItem.from_dict(data)
+
+        except Exception as e:
+            log_error(f"Error upserting context item: {e}")
+            raise e

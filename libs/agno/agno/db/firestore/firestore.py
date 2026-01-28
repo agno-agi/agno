@@ -21,6 +21,7 @@ from agno.db.firestore.utils import (
     get_dates_to_calculate_metrics_for,
     serialize_cultural_knowledge_for_db,
 )
+from agno.db.schemas.context import ContextItem
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
@@ -51,6 +52,7 @@ class FirestoreDb(BaseDb):
         culture_collection: Optional[str] = None,
         traces_collection: Optional[str] = None,
         spans_collection: Optional[str] = None,
+        context_collection: Optional[str] = None,
         id: Optional[str] = None,
     ):
         """
@@ -67,6 +69,7 @@ class FirestoreDb(BaseDb):
             culture_collection (Optional[str]): Name of the collection to store cultural knowledge.
             traces_collection (Optional[str]): Name of the collection to store traces.
             spans_collection (Optional[str]): Name of the collection to store spans.
+            context_collection (Optional[str]): Name of the collection to store context items.
             id (Optional[str]): ID of the database.
 
         Raises:
@@ -86,6 +89,7 @@ class FirestoreDb(BaseDb):
             culture_table=culture_collection,
             traces_table=traces_collection,
             spans_table=spans_collection,
+            context_table=context_collection,
         )
 
         _client: Optional[Client] = db_client
@@ -202,6 +206,17 @@ class FirestoreDb(BaseDb):
                 create_collection_if_not_found=create_collection_if_not_found,
             )
             return self.spans_collection
+
+        if table_type == "context":
+            if not hasattr(self, "context_collection"):
+                if self.context_table_name is None:
+                    raise ValueError("Context collection was not provided on initialization")
+                self.context_collection = self._get_or_create_collection(
+                    collection_name=self.context_table_name,
+                    collection_type="context",
+                    create_collection_if_not_found=create_collection_if_not_found,
+                )
+            return self.context_collection
 
         raise ValueError(f"Unknown table type: {table_type}")
 
@@ -2440,3 +2455,213 @@ class FirestoreDb(BaseDb):
         limit: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         raise NotImplementedError("Learning methods not yet implemented for FirestoreDb")
+
+    # -- Context methods --
+
+    def clear_context_items(self) -> None:
+        """Delete all context items from the database.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
+        try:
+            collection_ref = self._get_collection(table_type="context")
+
+            # Get all documents in the collection
+            docs = collection_ref.stream()
+
+            # Delete all documents in batches
+            batch = self.db_client.batch()
+            batch_count = 0
+
+            for doc in docs:
+                batch.delete(doc.reference)
+                batch_count += 1
+
+                # Firestore batch has a limit of 500 operations
+                if batch_count >= 500:
+                    batch.commit()
+                    batch = self.db_client.batch()
+                    batch_count = 0
+
+            # Commit remaining operations
+            if batch_count > 0:
+                batch.commit()
+
+        except Exception as e:
+            log_error(f"Exception deleting all context items: {e}")
+            raise e
+
+    def delete_context_item(self, id: str) -> None:
+        """Delete a context item by ID.
+
+        Args:
+            id (str): The ID of the context item to delete.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
+        try:
+            collection_ref = self._get_collection(table_type="context")
+            docs = collection_ref.where(filter=FieldFilter("id", "==", id)).stream()
+
+            for doc in docs:
+                doc.reference.delete()
+                log_debug(f"Deleted context item with ID: {id}")
+
+        except Exception as e:
+            log_error(f"Error deleting context item: {e}")
+            raise e
+
+    def get_context_item(
+        self, id: str, deserialize: Optional[bool] = True
+    ) -> Optional[Union[ContextItem, Dict[str, Any]]]:
+        """Get a context item by ID.
+
+        Args:
+            id (str): The ID of the context item to retrieve.
+            deserialize (Optional[bool]): Whether to deserialize to ContextItem object. Defaults to True.
+
+        Returns:
+            Optional[Union[ContextItem, Dict[str, Any]]]: The context item if found, None otherwise.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            collection_ref = self._get_collection(table_type="context")
+            docs = collection_ref.where(filter=FieldFilter("id", "==", id)).limit(1).stream()
+
+            for doc in docs:
+                result = doc.to_dict()
+                if not deserialize:
+                    return result
+                return ContextItem.from_dict(result)
+
+            return None
+
+        except Exception as e:
+            log_error(f"Error getting context item: {e}")
+            raise e
+
+    def get_all_context_items(
+        self,
+        name: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[ContextItem], Tuple[List[Dict[str, Any]], int]]:
+        """Get all context items with filtering and pagination.
+
+        Args:
+            name (Optional[str]): Filter by name (case-insensitive partial match).
+            metadata (Optional[Dict[str, Any]]): Filter by metadata fields.
+            limit (Optional[int]): Maximum number of results to return.
+            page (Optional[int]): Page number for pagination.
+            sort_by (Optional[str]): Field to sort by.
+            sort_order (Optional[str]): Sort order ('asc' or 'desc').
+            deserialize (Optional[bool]): Whether to deserialize to ContextItem objects. Defaults to True.
+
+        Returns:
+            Union[List[ContextItem], Tuple[List[Dict[str, Any]], int]]:
+                - When deserialize=True: List of ContextItem objects
+                - When deserialize=False: Tuple with list of dictionaries and total count
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            collection_ref = self._get_collection(table_type="context")
+
+            # Get all documents
+            query = collection_ref
+            docs = query.stream()
+            results = [doc.to_dict() for doc in docs]
+
+            # Apply name filter (Firestore doesn't support regex in queries)
+            if name is not None:
+                results = [r for r in results if name.lower() in r.get("name", "").lower()]
+
+            # Apply metadata filter
+            if metadata is not None:
+                filtered_results = []
+                for r in results:
+                    item_metadata = r.get("metadata", {}) or {}
+                    if all(item_metadata.get(k) == v for k, v in metadata.items()):
+                        filtered_results.append(r)
+                results = filtered_results
+
+            total_count = len(results)
+
+            # Apply sorting and pagination to in-memory results
+            sorted_results = apply_sorting_to_records(records=results, sort_by=sort_by, sort_order=sort_order)
+            paginated_results = apply_pagination_to_records(records=sorted_results, limit=limit, page=page)
+
+            if not deserialize:
+                return paginated_results, total_count
+
+            return [ContextItem.from_dict(item) for item in paginated_results]
+
+        except Exception as e:
+            log_error(f"Error getting all context items: {e}")
+            raise e
+
+    def upsert_context_item(
+        self, context_item: ContextItem, deserialize: Optional[bool] = True
+    ) -> Optional[Union[ContextItem, Dict[str, Any]]]:
+        """Upsert a context item in Firestore.
+
+        Args:
+            context_item (ContextItem): The context item to upsert.
+            deserialize (Optional[bool]): Whether to deserialize the result. Defaults to True.
+
+        Returns:
+            Optional[Union[ContextItem, Dict[str, Any]]]: The upserted context item.
+
+        Raises:
+            Exception: If an error occurs during upsert.
+        """
+        try:
+            collection_ref = self._get_collection(table_type="context", create_collection_if_not_found=True)
+
+            if context_item.id is None:
+                context_item.id = str(uuid4())
+
+            # Create the update document
+            update_doc = {
+                "id": context_item.id,
+                "name": context_item.name,
+                "content": context_item.content,
+                "description": context_item.description,
+                "metadata": context_item.metadata,
+                "variables": context_item.variables,
+                "version": context_item.version,
+                "parent_id": context_item.parent_id,
+                "optimization_notes": context_item.optimization_notes,
+                "created_at": context_item.created_at if context_item.created_at else int(time.time()),
+                "updated_at": context_item.updated_at if context_item.updated_at else int(time.time()),
+            }
+
+            # Find and update or create new document
+            docs = collection_ref.where(filter=FieldFilter("id", "==", context_item.id)).limit(1).stream()
+
+            doc_found = False
+            for doc in docs:
+                doc.reference.set(update_doc)
+                doc_found = True
+                break
+
+            if not doc_found:
+                collection_ref.add(update_doc)
+
+            if not deserialize:
+                return update_doc
+
+            return ContextItem.from_dict(update_doc)
+
+        except Exception as e:
+            log_error(f"Error upserting context item: {e}")
+            raise e

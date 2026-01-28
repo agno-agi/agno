@@ -16,6 +16,7 @@ from agno.db.gcs_json.utils import (
     get_dates_to_calculate_metrics_for,
     serialize_cultural_knowledge_for_db,
 )
+from agno.db.schemas.context import ContextItem
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
@@ -43,6 +44,7 @@ class GcsJsonDb(BaseDb):
         culture_table: Optional[str] = None,
         traces_table: Optional[str] = None,
         spans_table: Optional[str] = None,
+        context_table: Optional[str] = None,
         project: Optional[str] = None,
         credentials: Optional[Any] = None,
         id: Optional[str] = None,
@@ -61,6 +63,7 @@ class GcsJsonDb(BaseDb):
             culture_table (Optional[str]): Name of the JSON file to store cultural knowledge.
             traces_table (Optional[str]): Name of the JSON file to store traces.
             spans_table (Optional[str]): Name of the JSON file to store spans.
+            context_table (Optional[str]): Name of the JSON file to store context items.
             project (Optional[str]): GCP project ID. If None, uses default project.
             location (Optional[str]): GCS bucket location. If None, uses default location.
             credentials (Optional[Any]): GCP credentials. If None, uses default credentials.
@@ -81,6 +84,7 @@ class GcsJsonDb(BaseDb):
             culture_table=culture_table,
             traces_table=traces_table,
             spans_table=spans_table,
+            context_table=context_table,
         )
 
         self.bucket_name = bucket_name
@@ -1836,3 +1840,183 @@ class GcsJsonDb(BaseDb):
         limit: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         raise NotImplementedError("Learning methods not yet implemented for GcsJsonDb")
+
+    # -- Context methods --
+    def clear_context_items(self) -> None:
+        """Delete all context items from the database.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
+        try:
+            self._write_json_file(self.context_table_name, [])
+        except Exception as e:
+            log_warning(f"Exception deleting all context items: {e}")
+            raise e
+
+    def delete_context_item(self, id: str) -> None:
+        """Delete context item by ID.
+
+        Args:
+            id (str): The ID of the context item to delete.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
+        try:
+            context_items = self._read_json_file(self.context_table_name)
+            context_items = [item for item in context_items if item.get("id") != id]
+            self._write_json_file(self.context_table_name, context_items)
+            log_debug(f"Deleted context item with ID: {id}")
+        except Exception as e:
+            log_warning(f"Error deleting context item: {e}")
+            raise e
+
+    def get_context_item(
+        self, id: str, deserialize: Optional[bool] = True
+    ) -> Optional[Union[ContextItem, Dict[str, Any]]]:
+        """Get context item by ID.
+
+        Args:
+            id (str): The ID of the context item to retrieve.
+            deserialize (Optional[bool]): Whether to deserialize to ContextItem object. Defaults to True.
+
+        Returns:
+            Optional[Union[ContextItem, Dict[str, Any]]]: The context item if found, None otherwise.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            context_items = self._read_json_file(self.context_table_name)
+
+            for item in context_items:
+                if item.get("id") == id:
+                    if not deserialize:
+                        return item
+                    return ContextItem.from_dict(item)
+
+            return None
+        except Exception as e:
+            log_warning(f"Error getting context item: {e}")
+            raise e
+
+    def get_all_context_items(
+        self,
+        name: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[ContextItem], Tuple[List[Dict[str, Any]], int]]:
+        """Get all context items with filtering and pagination.
+
+        Args:
+            name (Optional[str]): Filter by name (case-insensitive partial match).
+            metadata (Optional[Dict[str, Any]]): Filter by metadata key-value pairs.
+            limit (Optional[int]): Maximum number of results to return.
+            page (Optional[int]): Page number for pagination.
+            sort_by (Optional[str]): Field to sort by.
+            sort_order (Optional[str]): Sort order ('asc' or 'desc').
+            deserialize (Optional[bool]): Whether to deserialize to ContextItem objects. Defaults to True.
+
+        Returns:
+            Union[List[ContextItem], Tuple[List[Dict[str, Any]], int]]:
+                - When deserialize=True: List of ContextItem objects
+                - When deserialize=False: Tuple with list of dictionaries and total count
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            context_items = self._read_json_file(self.context_table_name)
+
+            # Apply filters
+            filtered_items = []
+            for item in context_items:
+                if name is not None and name.lower() not in item.get("name", "").lower():
+                    continue
+                if metadata is not None:
+                    item_metadata = item.get("metadata", {}) or {}
+                    if not all(item_metadata.get(k) == v for k, v in metadata.items()):
+                        continue
+
+                filtered_items.append(item)
+
+            total_count = len(filtered_items)
+
+            # Apply sorting
+            filtered_items = apply_sorting(filtered_items, sort_by, sort_order)
+
+            # Apply pagination
+            if limit is not None:
+                start_idx = 0
+                if page is not None:
+                    start_idx = (page - 1) * limit
+                filtered_items = filtered_items[start_idx : start_idx + limit]
+
+            if not deserialize:
+                return filtered_items, total_count
+
+            return [ContextItem.from_dict(item) for item in filtered_items]
+
+        except Exception as e:
+            log_warning(f"Error getting all context items: {e}")
+            raise e
+
+    def upsert_context_item(
+        self, context_item: ContextItem, deserialize: Optional[bool] = True
+    ) -> Optional[Union[ContextItem, Dict[str, Any]]]:
+        """Upsert context item in the GCS JSON file.
+
+        Args:
+            context_item (ContextItem): The context item to upsert.
+            deserialize (Optional[bool]): Whether to deserialize the result. Defaults to True.
+
+        Returns:
+            Optional[Union[ContextItem, Dict[str, Any]]]: The upserted context item.
+
+        Raises:
+            Exception: If an error occurs during upsert.
+        """
+        try:
+            context_items_list = self._read_json_file(self.context_table_name, create_table_if_not_found=True)
+
+            # Create the item dict
+            context_item_dict = {
+                "id": context_item.id,
+                "name": context_item.name,
+                "content": context_item.content,
+                "description": context_item.description,
+                "metadata": context_item.metadata,
+                "variables": context_item.variables,
+                "version": context_item.version,
+                "parent_id": context_item.parent_id,
+                "optimization_notes": context_item.optimization_notes,
+                "created_at": context_item.created_at if context_item.created_at else int(time.time()),
+                "updated_at": context_item.updated_at if context_item.updated_at else int(time.time()),
+            }
+
+            # Find existing item to update
+            item_updated = False
+            for i, existing_item in enumerate(context_items_list):
+                if existing_item.get("id") == context_item.id:
+                    context_items_list[i] = context_item_dict
+                    item_updated = True
+                    break
+
+            if not item_updated:
+                context_items_list.append(context_item_dict)
+
+            self._write_json_file(self.context_table_name, context_items_list)
+
+            if not deserialize:
+                return context_item_dict
+
+            return ContextItem.from_dict(context_item_dict)
+
+        except Exception as e:
+            log_warning(f"Error upserting context item: {e}")
+            raise e

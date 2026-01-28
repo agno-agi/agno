@@ -413,6 +413,29 @@ SPAN_TABLE_SCHEMA = {
     "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
 }
 
+CONTEXT_ITEM_TABLE_SCHEMA = {
+    "TableName": "agno_context",
+    "KeySchema": [{"AttributeName": "id", "KeyType": "HASH"}],
+    "AttributeDefinitions": [
+        {"AttributeName": "id", "AttributeType": "S"},
+        {"AttributeName": "name", "AttributeType": "S"},
+        {"AttributeName": "created_at", "AttributeType": "N"},
+    ],
+    "GlobalSecondaryIndexes": [
+        {
+            "IndexName": "name-created_at-index",
+            "KeySchema": [
+                {"AttributeName": "name", "KeyType": "HASH"},
+                {"AttributeName": "created_at", "KeyType": "RANGE"},
+            ],
+            "Projection": {"ProjectionType": "ALL"},
+            "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
+        },
+    ],
+    "BillingMode": "PROVISIONED",
+    "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
+}
+
 
 def get_table_schema_definition(table_type: str) -> Dict[str, Any]:
     """
@@ -433,6 +456,7 @@ def get_table_schema_definition(table_type: str) -> Dict[str, Any]:
         "culture": CULTURAL_KNOWLEDGE_TABLE_SCHEMA,
         "traces": TRACE_TABLE_SCHEMA,
         "spans": SPAN_TABLE_SCHEMA,
+        "context": CONTEXT_ITEM_TABLE_SCHEMA,
     }
 
     schema = schemas.get(table_type, {})

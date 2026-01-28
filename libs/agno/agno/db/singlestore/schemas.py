@@ -115,6 +115,20 @@ VERSIONS_TABLE_SCHEMA = {
     "updated_at": {"type": lambda: String(128), "nullable": True},
 }
 
+CONTEXT_ITEM_TABLE_SCHEMA = {
+    "id": {"type": lambda: String(128), "primary_key": True, "nullable": False},
+    "name": {"type": lambda: String(255), "nullable": False, "index": True},
+    "content": {"type": Text, "nullable": False},
+    "description": {"type": Text, "nullable": True},
+    "metadata": {"type": JSON, "nullable": True},
+    "variables": {"type": JSON, "nullable": True},
+    "version": {"type": BigInteger, "nullable": False},
+    "parent_id": {"type": lambda: String(128), "nullable": True},
+    "optimization_notes": {"type": Text, "nullable": True},
+    "created_at": {"type": BigInteger, "nullable": True},
+    "updated_at": {"type": BigInteger, "nullable": True},
+}
+
 TRACE_TABLE_SCHEMA = {
     "trace_id": {"type": lambda: String(128), "primary_key": True, "nullable": False},
     "name": {"type": lambda: String(512), "nullable": False},
@@ -190,9 +204,10 @@ def get_table_schema_definition(
         "culture": CULTURAL_KNOWLEDGE_TABLE_SCHEMA,
         "versions": VERSIONS_TABLE_SCHEMA,
         "traces": TRACE_TABLE_SCHEMA,
+        "context": CONTEXT_ITEM_TABLE_SCHEMA,
     }
-    schema = schemas.get(table_type, {})
 
+    schema = schemas.get(table_type, {})
     if not schema:
         raise ValueError(f"Unknown table type: {table_type}")
 

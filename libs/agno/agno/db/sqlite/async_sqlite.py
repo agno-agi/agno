@@ -9,6 +9,7 @@ if TYPE_CHECKING:
 
 from agno.db.base import AsyncBaseDb, ComponentType, SessionType
 from agno.db.migrations.manager import MigrationManager
+from agno.db.schemas.context import ContextItem
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
@@ -53,6 +54,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         knowledge_table: Optional[str] = None,
         traces_table: Optional[str] = None,
         spans_table: Optional[str] = None,
+        context_table: Optional[str] = None,
         versions_table: Optional[str] = None,
         learnings_table: Optional[str] = None,
         id: Optional[str] = None,
@@ -78,6 +80,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             knowledge_table (Optional[str]): Name of the table to store knowledge documents data.
             traces_table (Optional[str]): Name of the table to store run traces.
             spans_table (Optional[str]): Name of the table to store span events.
+            context_table (Optional[str]): Name of the table to store context items.
             versions_table (Optional[str]): Name of the table to store schema versions.
             learnings_table (Optional[str]): Name of the table to store learning records.
             id (Optional[str]): ID of the database.
@@ -99,6 +102,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             knowledge_table=knowledge_table,
             traces_table=traces_table,
             spans_table=spans_table,
+            context_table=context_table,
             versions_table=versions_table,
             learnings_table=learnings_table,
         )
@@ -159,6 +163,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             (self.knowledge_table_name, "knowledge"),
             (self.versions_table_name, "versions"),
             (self.learnings_table_name, "learnings"),
+            (self.context_table_name, "context"),
         ]
 
         for table_name, table_type in tables_to_create:
@@ -344,6 +349,15 @@ class AsyncSqliteDb(AsyncBaseDb):
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.learnings_table
+
+        elif table_type == "context":
+            if not hasattr(self, "context_table"):
+                self.context_table = await self._get_or_create_table(
+                    table_name=self.context_table_name,
+                    table_type="context",
+                    create_table_if_not_found=create_table_if_not_found,
+                )
+            return self.context_table
 
         else:
             raise ValueError(f"Unknown table type: '{table_type}'")
@@ -3158,6 +3172,194 @@ class AsyncSqliteDb(AsyncBaseDb):
         except Exception as e:
             log_debug(f"Error getting learnings: {e}")
             return []
+
+    async def clear_context_items(self) -> None:
+        """Delete all context items from the database.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
+        try:
+            table = await self._get_table(table_type="context")
+            if table is None:
+                return
+
+            async with self.async_session_factory() as sess, sess.begin():
+                await sess.execute(table.delete())
+
+        except Exception as e:
+            log_warning(f"Exception deleting all context items: {e}")
+            raise e
+
+    async def delete_context_item(self, id: str) -> None:
+        """Delete a context item from the database.
+
+        Args:
+            id (str): The ID of the context item to delete.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
+        try:
+            table = await self._get_table(table_type="context")
+            if table is None:
+                return
+
+            async with self.async_session_factory() as sess, sess.begin():
+                stmt = table.delete().where(table.c.id == id)
+                await sess.execute(stmt)
+
+        except Exception as e:
+            log_error(f"Error deleting context item: {e}")
+            raise e
+
+    async def get_context_item(self, id: str) -> Optional[ContextItem]:
+        """Get a context item from the database.
+
+        Args:
+            id (str): The ID of the context item to get.
+
+        Returns:
+            Optional[ContextItem]: The context item, or None if it doesn't exist.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            table = await self._get_table(table_type="context")
+            if table is None:
+                return None
+
+            async with self.async_session_factory() as sess, sess.begin():
+                stmt = select(table).where(table.c.id == id)
+                result = (await sess.execute(stmt)).first()
+
+                if not result:
+                    return None
+
+                db_row: Dict[str, Any] = dict(result._mapping)
+                return ContextItem.from_dict(db_row)
+
+        except Exception as e:
+            log_error(f"Error reading context item: {e}")
+            raise e
+
+    async def get_all_context_items(
+        self,
+        name: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> List[ContextItem]:
+        """Get all context items from the database, with optional filtering.
+
+        Args:
+            name (Optional[str]): Filter by context name.
+            metadata (Optional[Dict[str, Any]]): Filter by metadata.
+
+        Returns:
+            List[ContextItem]: List of context items.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            table = await self._get_table(table_type="context")
+            if table is None:
+                return []
+
+            async with self.async_session_factory() as sess, sess.begin():
+                stmt = select(table)
+
+                # Apply filters
+                if name is not None:
+                    stmt = stmt.where(table.c.name == name)
+
+                result = (await sess.execute(stmt)).fetchall()
+
+                if not result:
+                    return []
+
+                db_rows = [dict(record._mapping) for record in result]
+
+            # Filter by metadata in Python since SQLite doesn't support JSON containment
+            if metadata is not None:
+                filtered_rows = []
+                for row in db_rows:
+                    row_metadata = row.get("metadata", {}) or {}
+                    if all(row_metadata.get(k) == v for k, v in metadata.items()):
+                        filtered_rows.append(row)
+                db_rows = filtered_rows
+
+            return [ContextItem.from_dict(row) for row in db_rows]
+
+        except Exception as e:
+            log_error(f"Error reading from context items table: {e}")
+            raise e
+
+    async def upsert_context_item(self, context_item: ContextItem) -> Optional[ContextItem]:
+        """Upsert a context item into the database.
+
+        Args:
+            context_item (ContextItem): The context item to upsert.
+
+        Returns:
+            Optional[ContextItem]: The upserted context item.
+
+        Raises:
+            Exception: If an error occurs during upsert.
+        """
+        try:
+            table = await self._get_table(table_type="context", create_table_if_not_found=True)
+            if table is None:
+                return None
+
+            if context_item.id is None:
+                context_item.id = str(uuid4())
+
+            # Timestamps are already epoch seconds (int)
+            created_at_ts = context_item.created_at if context_item.created_at else int(time.time())
+            updated_at_ts = context_item.updated_at if context_item.updated_at else int(time.time())
+
+            async with self.async_session_factory() as sess, sess.begin():
+                stmt = sqlite.insert(table).values(
+                    id=context_item.id,
+                    name=context_item.name,
+                    content=context_item.content,
+                    description=context_item.description,
+                    metadata=context_item.metadata,
+                    variables=context_item.variables,
+                    version=context_item.version,
+                    parent_id=context_item.parent_id,
+                    optimization_notes=context_item.optimization_notes,
+                    created_at=created_at_ts,
+                    updated_at=updated_at_ts,
+                )
+                stmt = stmt.on_conflict_do_update(  # type: ignore
+                    index_elements=["id"],
+                    set_=dict(
+                        name=context_item.name,
+                        content=context_item.content,
+                        description=context_item.description,
+                        metadata=context_item.metadata,
+                        variables=context_item.variables,
+                        version=context_item.version,
+                        parent_id=context_item.parent_id,
+                        optimization_notes=context_item.optimization_notes,
+                        updated_at=updated_at_ts,
+                    ),
+                ).returning(table)
+
+                result = await sess.execute(stmt)
+                row = result.first()
+
+            if not row:
+                return None
+
+            db_row: Dict[str, Any] = dict(row._mapping)
+            return ContextItem.from_dict(db_row)
+
+        except Exception as e:
+            log_error(f"Error upserting context item: {e}")
+            raise e
 
     # --- Components (Not yet supported for async) ---
     def get_component(

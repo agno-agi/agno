@@ -127,6 +127,20 @@ SPAN_SCHEMA = {
     "created_at": {"type": "string"},
 }
 
+CONTEXT_ITEM_SCHEMA = {
+    "id": {"type": "string", "primary_key": True},
+    "name": {"type": "string"},
+    "content": {"type": "string"},
+    "description": {"type": "string"},
+    "metadata": {"type": "json"},
+    "variables": {"type": "json"},
+    "version": {"type": "integer"},
+    "parent_id": {"type": "string"},
+    "optimization_notes": {"type": "string"},
+    "created_at": {"type": "integer"},
+    "updated_at": {"type": "integer"},
+}
+
 
 def get_table_schema_definition(table_type: str) -> dict[str, Any]:
     """
@@ -150,6 +164,7 @@ def get_table_schema_definition(table_type: str) -> dict[str, Any]:
         "culture": CULTURAL_KNOWLEDGE_SCHEMA,
         "traces": TRACE_SCHEMA,
         "spans": SPAN_SCHEMA,
+        "context": CONTEXT_ITEM_SCHEMA,
     }
 
     schema = schemas.get(table_type, {})

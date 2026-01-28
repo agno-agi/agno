@@ -8,6 +8,7 @@ if TYPE_CHECKING:
     from agno.tracing.schemas import Span, Trace
 
 from agno.db.schemas import UserMemory
+from agno.db.schemas.context import ContextItem
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
@@ -36,6 +37,7 @@ class BaseDb(ABC):
         self,
         session_table: Optional[str] = None,
         culture_table: Optional[str] = None,
+        context_table: Optional[str] = None,
         memory_table: Optional[str] = None,
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
@@ -52,6 +54,7 @@ class BaseDb(ABC):
         self.id = id or str(uuid4())
         self.session_table_name = session_table or "agno_sessions"
         self.culture_table_name = culture_table or "agno_culture"
+        self.context_table_name = context_table or "agno_context"
         self.memory_table_name = memory_table or "agno_memories"
         self.metrics_table_name = metrics_table or "agno_metrics"
         self.eval_table_name = eval_table or "agno_eval_runs"
@@ -943,6 +946,30 @@ class BaseDb(ABC):
         """
         raise NotImplementedError
 
+    @abstractmethod
+    def clear_context_items(self) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def delete_context_item(self, id: str) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_context_item(self, id: str) -> Optional["ContextItem"]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_all_context_items(
+        self,
+        name: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Optional[List["ContextItem"]]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def upsert_context_item(self, context_item: "ContextItem") -> Optional["ContextItem"]:
+        raise NotImplementedError
+
 
 class AsyncBaseDb(ABC):
     """Base abstract class for all our async database implementations."""
@@ -960,6 +987,7 @@ class AsyncBaseDb(ABC):
         culture_table: Optional[str] = None,
         versions_table: Optional[str] = None,
         learnings_table: Optional[str] = None,
+        context_table: Optional[str] = None,
     ):
         self.id = id or str(uuid4())
         self.session_table_name = session_table or "agno_sessions"
@@ -972,6 +1000,7 @@ class AsyncBaseDb(ABC):
         self.culture_table_name = culture_table or "agno_culture"
         self.versions_table_name = versions_table or "agno_schema_versions"
         self.learnings_table_name = learnings_table or "agno_learnings"
+        self.context_table_name = context_table or "agno_context"
 
     async def _create_all_tables(self) -> None:
         """Create all tables for this database. Override in subclasses."""
@@ -1516,4 +1545,28 @@ class AsyncBaseDb(ABC):
         Returns:
             List of learning records.
         """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def clear_context_items(self) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def delete_context_item(self, id: str) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def get_context_item(self, id: str) -> Optional["ContextItem"]:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def get_all_context_items(
+        self,
+        name: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Optional[List["ContextItem"]]:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def upsert_context_item(self, context_item: "ContextItem") -> Optional["ContextItem"]:
         raise NotImplementedError

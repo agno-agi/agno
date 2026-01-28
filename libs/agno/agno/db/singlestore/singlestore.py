@@ -9,6 +9,7 @@ if TYPE_CHECKING:
 
 from agno.db.base import BaseDb, SessionType
 from agno.db.migrations.manager import MigrationManager
+from agno.db.schemas.context import ContextItem
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
@@ -58,6 +59,7 @@ class SingleStoreDb(BaseDb):
         traces_table: Optional[str] = None,
         spans_table: Optional[str] = None,
         create_schema: bool = True,
+        context_table: Optional[str] = None,
     ):
         """
         Interface for interacting with a SingleStore database.
@@ -81,6 +83,7 @@ class SingleStoreDb(BaseDb):
             versions_table (Optional[str]): Name of the table to store schema versions.
             create_schema (bool): Whether to automatically create the database schema if it doesn't exist.
                 Set to False if schema is managed externally (e.g., via migrations). Defaults to True.
+            context_table (Optional[str]): Name of the table to store context items.
         Raises:
             ValueError: If neither db_url nor db_engine is provided.
             ValueError: If none of the tables are provided.
@@ -102,6 +105,7 @@ class SingleStoreDb(BaseDb):
             versions_table=versions_table,
             traces_table=traces_table,
             spans_table=spans_table,
+            context_table=context_table,
         )
 
         _engine: Optional[Engine] = db_engine
@@ -174,7 +178,7 @@ class SingleStoreDb(BaseDb):
                 columns.append(Column(*column_args, **column_kwargs))
 
             # Create the table object without constraints to avoid autoload issues
-            table = Table(table_name, self.metadata, *columns, schema=self.db_schema)
+            table = Table(table_name, self.metadata, *columns, schema=self.db_schema, extend_existing=True)
 
             return table
 
@@ -192,6 +196,7 @@ class SingleStoreDb(BaseDb):
             (self.eval_table_name, "evals"),
             (self.knowledge_table_name, "knowledge"),
             (self.versions_table_name, "versions"),
+            (self.context_table_name, "context"),
         ]
 
         for table_name, table_type in tables_to_create:
@@ -241,7 +246,7 @@ class SingleStoreDb(BaseDb):
                 columns.append(Column(*column_args, **column_kwargs))
 
             # Create the table object
-            table = Table(table_name, self.metadata, *columns, schema=self.db_schema)
+            table = Table(table_name, self.metadata, *columns, schema=self.db_schema, extend_existing=True)
 
             # Add multi-column unique constraints with table-specific names
             for constraint in schema_unique_constraints:
@@ -377,6 +382,14 @@ class SingleStoreDb(BaseDb):
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.culture_table
+
+        if table_type == "context":
+            self.context_table = self._get_or_create_table(
+                table_name=self.context_table_name,
+                table_type="context",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.context_table
 
         if table_type == "versions":
             self.versions_table = self._get_or_create_table(
@@ -2933,3 +2946,218 @@ class SingleStoreDb(BaseDb):
         limit: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         raise NotImplementedError("Learning methods not yet implemented for SingleStoreDb")
+
+    # -- Context methods --
+
+    def clear_context_items(self) -> None:
+        """Delete all context items from the database.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
+        try:
+            table = self._get_table(table_type="context")
+            if table is None:
+                return
+
+            with self.Session() as sess, sess.begin():
+                sess.execute(table.delete())
+
+        except Exception as e:
+            log_error(f"Exception deleting all context items: {e}")
+            raise e
+
+    def delete_context_item(self, id: str) -> None:
+        """Delete a context item from the database.
+
+        Args:
+            id (str): The ID of the context item to delete.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
+        try:
+            table = self._get_table(table_type="context")
+            if table is None:
+                return
+
+            with self.Session() as sess, sess.begin():
+                delete_stmt = table.delete().where(table.c.id == id)
+                result = sess.execute(delete_stmt)
+
+                success = result.rowcount > 0
+                if success:
+                    log_debug(f"Successfully deleted context item id: {id}")
+                else:
+                    log_debug(f"No context item found with id: {id}")
+
+        except Exception as e:
+            log_error(f"Error deleting context item: {e}")
+            raise e
+
+    def get_context_item(
+        self, id: str, deserialize: Optional[bool] = True
+    ) -> Optional[Union[ContextItem, Dict[str, Any]]]:
+        """Get a context item from the database.
+
+        Args:
+            id (str): The ID of the context item to get.
+            deserialize (Optional[bool]): Whether to deserialize the context item. Defaults to True.
+
+        Returns:
+            Optional[Union[ContextItem, Dict[str, Any]]]: The context item, or None if it doesn't exist.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            table = self._get_table(table_type="context")
+            if table is None:
+                return None
+
+            with self.Session() as sess, sess.begin():
+                stmt = select(table).where(table.c.id == id)
+                result = sess.execute(stmt).fetchone()
+                if result is None:
+                    return None
+
+                db_row = dict(result._mapping)
+                if not db_row or not deserialize:
+                    return db_row
+
+            return ContextItem.from_dict(db_row)
+
+        except Exception as e:
+            log_error(f"Exception reading from context table: {e}")
+            raise e
+
+    def get_all_context_items(
+        self,
+        name: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[ContextItem], Tuple[List[Dict[str, Any]], int]]:
+        """Get all context items from the database.
+
+        Args:
+            name (Optional[str]): The name of the context item to filter by.
+            metadata (Optional[Dict[str, Any]]): Filter by metadata fields.
+            limit (Optional[int]): The maximum number of context items to return.
+            page (Optional[int]): The page number.
+            sort_by (Optional[str]): The column to sort by.
+            sort_order (Optional[str]): The order to sort by.
+            deserialize (Optional[bool]): Whether to deserialize the context items. Defaults to True.
+
+        Returns:
+            Union[List[ContextItem], Tuple[List[Dict[str, Any]], int]]:
+                - When deserialize=True: List of ContextItem objects
+                - When deserialize=False: List of ContextItem dictionaries and total count
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            table = self._get_table(table_type="context")
+            if table is None:
+                return [] if deserialize else ([], 0)
+
+            with self.Session() as sess, sess.begin():
+                stmt = select(table)
+
+                # Filtering
+                if name is not None:
+                    stmt = stmt.where(table.c.name == name)
+                if metadata is not None:
+                    for key, value in metadata.items():
+                        stmt = stmt.where(
+                            func.coalesce(func.JSON_EXTRACT_STRING(table.c.metadata, key), "") == str(value)
+                        )
+
+                # Get total count after applying filtering
+                count_stmt = select(func.count()).select_from(stmt.alias())
+                total_count = sess.execute(count_stmt).scalar()
+
+                # Sorting
+                stmt = apply_sorting(stmt, table, sort_by, sort_order)
+
+                # Paginating
+                if limit is not None:
+                    stmt = stmt.limit(limit)
+                    if page is not None:
+                        stmt = stmt.offset((page - 1) * limit)
+
+                result = sess.execute(stmt).fetchall()
+                if not result:
+                    return [] if deserialize else ([], 0)
+
+                db_rows = [dict(record._mapping) for record in result]
+
+                if not deserialize:
+                    return db_rows, total_count
+
+            return [ContextItem.from_dict(row) for row in db_rows]
+
+        except Exception as e:
+            log_error(f"Error reading from context table: {e}")
+            raise e
+
+    def upsert_context_item(
+        self, context_item: ContextItem, deserialize: Optional[bool] = True
+    ) -> Optional[Union[ContextItem, Dict[str, Any]]]:
+        """Upsert a context item into the database.
+
+        Args:
+            context_item (ContextItem): The context item to upsert.
+            deserialize (Optional[bool]): Whether to deserialize the context item. Defaults to True.
+
+        Returns:
+            Optional[Union[ContextItem, Dict[str, Any]]]: The upserted context item.
+
+        Raises:
+            Exception: If an error occurs during upsert.
+        """
+        try:
+            table = self._get_table(table_type="context", create_table_if_not_found=True)
+            if table is None:
+                return None
+
+            if context_item.id is None:
+                context_item.id = str(uuid4())
+
+            with self.Session() as sess, sess.begin():
+                stmt = mysql.insert(table).values(
+                    id=context_item.id,
+                    name=context_item.name,
+                    content=context_item.content,
+                    description=context_item.description,
+                    metadata=context_item.metadata,
+                    variables=context_item.variables,
+                    version=context_item.version,
+                    parent_id=context_item.parent_id,
+                    optimization_notes=context_item.optimization_notes,
+                    created_at=context_item.created_at if context_item.created_at else int(time.time()),
+                    updated_at=context_item.updated_at if context_item.updated_at else int(time.time()),
+                )
+                stmt = stmt.on_duplicate_key_update(
+                    name=context_item.name,
+                    content=context_item.content,
+                    description=context_item.description,
+                    metadata=context_item.metadata,
+                    variables=context_item.variables,
+                    version=context_item.version,
+                    parent_id=context_item.parent_id,
+                    optimization_notes=context_item.optimization_notes,
+                    updated_at=int(time.time()),
+                )
+                sess.execute(stmt)
+
+            # Fetch the inserted/updated row
+            return self.get_context_item(id=context_item.id, deserialize=deserialize)
+
+        except Exception as e:
+            log_error(f"Error upserting context item: {e}")
+            raise e

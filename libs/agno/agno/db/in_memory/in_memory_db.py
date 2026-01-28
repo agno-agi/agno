@@ -13,6 +13,7 @@ from agno.db.in_memory.utils import (
     get_dates_to_calculate_metrics_for,
     serialize_cultural_knowledge_for_db,
 )
+from agno.db.schemas.context import ContextItem
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
@@ -36,6 +37,7 @@ class InMemoryDb(BaseDb):
         self._eval_runs: List[Dict[str, Any]] = []
         self._knowledge: List[Dict[str, Any]] = []
         self._cultural_knowledge: List[Dict[str, Any]] = []
+        self._context_items: List[Dict[str, Any]] = []
 
     def table_exists(self, table_name: str) -> bool:
         """In-memory implementation, always returns True."""
@@ -1357,3 +1359,131 @@ class InMemoryDb(BaseDb):
         limit: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         raise NotImplementedError("Learning methods not yet implemented for InMemoryDb")
+
+    # -- Context methods --
+
+    def clear_context_items(self) -> None:
+        """Delete all context items from in-memory storage."""
+        try:
+            self._context_items = []
+        except Exception as e:
+            log_error(f"Error clearing context items: {e}")
+            raise e
+
+    def delete_context_item(self, id: str) -> None:
+        """Delete a context item from in-memory storage.
+
+        Args:
+            id (str): The ID of the context item to delete.
+        """
+        try:
+            self._context_items = [ci for ci in self._context_items if ci.get("id") != id]
+        except Exception as e:
+            log_error(f"Error deleting context item: {e}")
+            raise e
+
+    def get_context_item(self, id: str) -> Optional[ContextItem]:
+        """Get a context item from in-memory storage.
+
+        Args:
+            id (str): The ID of the context item to get.
+
+        Returns:
+            Optional[ContextItem]: The context item if found, None otherwise.
+        """
+        try:
+            for ci_data in self._context_items:
+                if ci_data.get("id") == id:
+                    ci_data_copy = deepcopy(ci_data)
+                    return ContextItem.from_dict(ci_data_copy)
+            return None
+        except Exception as e:
+            log_error(f"Error getting context item: {e}")
+            raise e
+
+    def get_all_context_items(
+        self,
+        name: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> List[ContextItem]:
+        """Get all context items from in-memory storage.
+
+        Args:
+            name (Optional[str]): Filter by name.
+            metadata (Optional[Dict[str, Any]]): Filter by metadata (containment match).
+
+        Returns:
+            List[ContextItem]: List of context items.
+        """
+        try:
+            filtered_items = []
+            for ci_data in self._context_items:
+                if name and ci_data.get("name") != name:
+                    continue
+                if metadata:
+                    # Use containment matching: filter metadata must be subset of item metadata
+                    item_metadata = ci_data.get("metadata")
+                    if not self._metadata_contains(item_metadata, metadata):
+                        continue
+                filtered_items.append(ci_data)
+
+            return [ContextItem.from_dict(deepcopy(ci)) for ci in filtered_items]
+        except Exception as e:
+            log_error(f"Error getting all context items: {e}")
+            raise e
+
+    def _metadata_contains(self, item_metadata: Optional[Dict[str, Any]], filter_metadata: Dict[str, Any]) -> bool:
+        """Check if item_metadata contains all key-value pairs from filter_metadata.
+
+        Args:
+            item_metadata: The metadata from the item
+            filter_metadata: The metadata filter to match
+
+        Returns:
+            bool: True if all filter keys/values are present in item metadata
+        """
+        if item_metadata is None:
+            return False
+        for key, value in filter_metadata.items():
+            if key not in item_metadata or item_metadata[key] != value:
+                return False
+        return True
+
+    def upsert_context_item(self, context_item: ContextItem) -> Optional[ContextItem]:
+        """Upsert a context item into in-memory storage.
+
+        Args:
+            context_item (ContextItem): The context item to upsert.
+
+        Returns:
+            Optional[ContextItem]: The upserted context item.
+        """
+        try:
+            if not context_item.id:
+                context_item.id = str(uuid4())
+
+            # Create the item dict
+            ci_dict = {
+                "id": context_item.id,
+                "name": context_item.name,
+                "content": context_item.content,
+                "description": context_item.description,
+                "metadata": context_item.metadata,
+                "variables": context_item.variables,
+                "version": context_item.version,
+                "parent_id": context_item.parent_id,
+                "optimization_notes": context_item.optimization_notes,
+                "created_at": context_item.created_at if context_item.created_at else int(time.time()),
+                "updated_at": context_item.updated_at if context_item.updated_at else int(time.time()),
+            }
+
+            # Remove existing entry with same id
+            self._context_items = [ci for ci in self._context_items if ci.get("id") != context_item.id]
+
+            # Add new entry
+            self._context_items.append(ci_dict)
+
+            return self.get_context_item(context_item.id)
+        except Exception as e:
+            log_error(f"Error upserting context item: {e}")
+            raise e

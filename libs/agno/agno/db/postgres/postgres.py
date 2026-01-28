@@ -21,6 +21,7 @@ from agno.db.postgres.utils import (
     is_valid_table,
     serialize_cultural_knowledge,
 )
+from agno.db.schemas.context import ContextItem
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
@@ -74,6 +75,7 @@ class PostgresDb(BaseDb):
         component_configs_table: Optional[str] = None,
         component_links_table: Optional[str] = None,
         learnings_table: Optional[str] = None,
+        context_table: Optional[str] = None,
         id: Optional[str] = None,
         create_schema: bool = True,
     ):
@@ -102,6 +104,7 @@ class PostgresDb(BaseDb):
             component_configs_table (Optional[str]): Name of the table to store component configurations.
             component_links_table (Optional[str]): Name of the table to store component references.
             learnings_table (Optional[str]): Name of the table to store learnings.
+            context_table (Optional[str]): Name of the table to store context items.
             id (Optional[str]): ID of the database.
             create_schema (bool): Whether to automatically create the database schema if it doesn't exist.
                 Set to False if schema is managed externally (e.g., via migrations). Defaults to True.
@@ -144,6 +147,7 @@ class PostgresDb(BaseDb):
             component_configs_table=component_configs_table,
             component_links_table=component_links_table,
             learnings_table=learnings_table,
+            context_table=context_table,
         )
 
         self.db_schema: str = db_schema if db_schema is not None else "ai"
@@ -220,6 +224,7 @@ class PostgresDb(BaseDb):
             (self.component_configs_table_name, "component_configs"),
             (self.component_links_table_name, "component_links"),
             (self.learnings_table_name, "learnings"),
+            (self.context_table_name, "context"),
         ]
 
         for table_name, table_type in tables_to_create:
@@ -525,6 +530,14 @@ class PostgresDb(BaseDb):
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.learnings_table
+
+        if table_type == "context":
+            self.context_table = self._get_or_create_table(
+                table_name=self.context_table_name,
+                table_type="context",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.context_table
 
         raise ValueError(f"Unknown table type: {table_type}")
 
@@ -4481,3 +4494,184 @@ class PostgresDb(BaseDb):
         except Exception as e:
             log_debug(f"Error getting learnings: {e}")
             return []
+
+    # -- Context methods --
+
+    def clear_context_items(self) -> None:
+        """Delete all context items from the database.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
+        try:
+            table = self._get_table(table_type="context")
+            if table is None:
+                return
+
+            with self.Session() as sess, sess.begin():
+                sess.execute(table.delete())
+
+        except Exception as e:
+            log_warning(f"Exception deleting all context items: {e}")
+            raise e
+
+    def delete_context_item(self, id: str) -> None:
+        """Delete a context item from the database.
+
+        Args:
+            id (str): The ID of the context item to delete.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
+        try:
+            table = self._get_table(table_type="context")
+            if table is None:
+                return
+
+            with self.Session() as sess, sess.begin():
+                delete_stmt = table.delete().where(table.c.id == id)
+                result = sess.execute(delete_stmt)
+
+                success = result.rowcount > 0
+                if success:
+                    log_debug(f"Successfully deleted context item id: {id}")
+                else:
+                    log_debug(f"No context item found with id: {id}")
+
+        except Exception as e:
+            log_error(f"Error deleting context item: {e}")
+            raise e
+
+    def get_context_item(self, id: str) -> Optional[ContextItem]:
+        """Get a context item from the database.
+
+        Args:
+            id (str): The ID of the context item to get.
+
+        Returns:
+            Optional[ContextItem]: The context item, or None if it doesn't exist.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            table = self._get_table(table_type="context")
+            if table is None:
+                return None
+
+            with self.Session() as sess, sess.begin():
+                stmt = select(table).where(table.c.id == id)
+                result = sess.execute(stmt).fetchone()
+                if result is None:
+                    return None
+
+                db_row = dict(result._mapping)
+                if not db_row:
+                    return None
+
+            return ContextItem.from_dict(db_row)
+
+        except Exception as e:
+            log_error(f"Exception reading from context table: {e}")
+            raise e
+
+    def get_all_context_items(
+        self,
+        name: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> List[ContextItem]:
+        """Get all context items from the database.
+
+        Args:
+            name (Optional[str]): The name of the context item to filter by.
+            metadata (Optional[Dict[str, Any]]): The metadata to filter by (exact match).
+
+        Returns:
+            List[ContextItem]: List of context items.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            table = self._get_table(table_type="context")
+            if table is None:
+                return []
+
+            with self.Session() as sess, sess.begin():
+                stmt = select(table)
+
+                # Filtering
+                if name is not None:
+                    stmt = stmt.where(table.c.name == name)
+                if metadata is not None:
+                    # Use JSONB containment for metadata filtering
+                    stmt = stmt.where(table.c.metadata.contains(metadata))
+
+                result = sess.execute(stmt).fetchall()
+                if not result:
+                    return []
+
+                db_rows = [dict(record._mapping) for record in result]
+
+            return [ContextItem.from_dict(row) for row in db_rows]
+
+        except Exception as e:
+            log_error(f"Error reading from context table: {e}")
+            raise e
+
+    def upsert_context_item(self, context_item: ContextItem) -> Optional[ContextItem]:
+        """Upsert a context item into the database.
+
+        Args:
+            context_item (ContextItem): The context item to upsert.
+
+        Returns:
+            Optional[ContextItem]: The upserted context item.
+
+        Raises:
+            Exception: If an error occurs during upsert.
+        """
+        try:
+            table = self._get_table(table_type="context", create_table_if_not_found=True)
+            if table is None:
+                return None
+
+            if context_item.id is None:
+                context_item.id = str(uuid4())
+
+            with self.Session() as sess, sess.begin():
+                stmt = postgresql.insert(table).values(
+                    id=context_item.id,
+                    name=context_item.name,
+                    content=context_item.content,
+                    description=context_item.description,
+                    metadata=context_item.metadata,
+                    variables=context_item.variables,
+                    version=context_item.version,
+                    parent_id=context_item.parent_id,
+                    optimization_notes=context_item.optimization_notes,
+                    created_at=context_item.created_at if context_item.created_at else int(time.time()),
+                    updated_at=context_item.updated_at if context_item.updated_at else int(time.time()),
+                )
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=["id"],
+                    set_=dict(
+                        name=context_item.name,
+                        content=context_item.content,
+                        description=context_item.description,
+                        metadata=context_item.metadata,
+                        variables=context_item.variables,
+                        version=context_item.version,
+                        parent_id=context_item.parent_id,
+                        optimization_notes=context_item.optimization_notes,
+                        updated_at=int(time.time()),
+                    ),
+                )
+                sess.execute(stmt)
+
+            return self.get_context_item(context_item.id)
+
+        except Exception as e:
+            log_error(f"Error upserting context item: {e}")
+            raise e

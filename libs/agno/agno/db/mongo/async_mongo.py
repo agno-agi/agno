@@ -19,6 +19,7 @@ from agno.db.mongo.utils import (
     get_dates_to_calculate_metrics_for,
     serialize_cultural_knowledge_for_db,
 )
+from agno.db.schemas.context import ContextItem
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
@@ -150,6 +151,7 @@ class AsyncMongoDb(AsyncBaseDb):
         traces_collection: Optional[str] = None,
         spans_collection: Optional[str] = None,
         learnings_collection: Optional[str] = None,
+        context_collection: Optional[str] = None,
         id: Optional[str] = None,
     ):
         """
@@ -174,6 +176,7 @@ class AsyncMongoDb(AsyncBaseDb):
             traces_collection (Optional[str]): Name of the collection to store traces.
             spans_collection (Optional[str]): Name of the collection to store spans.
             learnings_collection (Optional[str]): Name of the collection to store learnings.
+            context_collection (Optional[str]): Name of the collection to store context items.
             id (Optional[str]): ID of the database.
 
         Raises:
@@ -194,6 +197,7 @@ class AsyncMongoDb(AsyncBaseDb):
             eval_table=eval_collection,
             knowledge_table=knowledge_collection,
             culture_table=culture_collection,
+            context_table=context_collection,
             traces_table=traces_collection,
             spans_table=spans_collection,
             learnings_table=learnings_collection,
@@ -246,6 +250,7 @@ class AsyncMongoDb(AsyncBaseDb):
             ("evals", self.eval_table_name),
             ("knowledge", self.knowledge_table_name),
             ("culture", self.culture_table_name),
+            ("context", self.context_table_name),
         ]
 
         for collection_type, collection_name in collections_to_create:
@@ -465,6 +470,17 @@ class AsyncMongoDb(AsyncBaseDb):
                     create_collection_if_not_found=create_collection_if_not_found,
                 )
             return self.learnings_collection
+
+        if table_type == "context":
+            if reset_cache or not hasattr(self, "context_collection"):
+                if self.context_table_name is None:
+                    raise ValueError("Context collection was not provided on initialization")
+                self.context_collection = await self._get_or_create_collection(
+                    collection_name=self.context_table_name,
+                    collection_type="context",
+                    create_collection_if_not_found=create_collection_if_not_found,
+                )
+            return self.context_collection
 
         raise ValueError(f"Unknown table type: {table_type}")
 
@@ -2998,3 +3014,147 @@ class AsyncMongoDb(AsyncBaseDb):
         except Exception as e:
             log_debug(f"Error getting learnings: {e}")
             return []
+
+    # -- Context methods --
+
+    async def clear_context_items(self) -> None:
+        """Delete all context items from the database."""
+        try:
+            collection = await self._get_collection(table_type="context")
+            if collection is None:
+                return
+
+            await collection.delete_many({})
+
+        except Exception as e:
+            log_error(f"Exception deleting all context items: {e}")
+            raise e
+
+    async def delete_context_item(self, id: str) -> None:
+        """Delete a context item by ID.
+
+        Args:
+            id (str): The ID of the context item to delete.
+        """
+        try:
+            collection = await self._get_collection(table_type="context")
+            if collection is None:
+                return
+
+            await collection.delete_one({"id": id})
+            log_debug(f"Deleted context item with ID: {id}")
+
+        except Exception as e:
+            log_error(f"Error deleting context item: {e}")
+            raise e
+
+    async def get_context_item(self, id: str) -> Optional[ContextItem]:
+        """Get a context item by ID.
+
+        Args:
+            id (str): The ID of the context item to retrieve.
+
+        Returns:
+            Optional[ContextItem]: The context item if found, None otherwise.
+        """
+        try:
+            collection = await self._get_collection(table_type="context")
+            if collection is None:
+                return None
+
+            result = await collection.find_one({"id": id})
+            if result is None:
+                return None
+
+            # Remove MongoDB's _id field
+            result_filtered = {k: v for k, v in result.items() if k != "_id"}
+
+            return ContextItem.from_dict(result_filtered)
+
+        except Exception as e:
+            log_error(f"Error getting context item: {e}")
+            raise e
+
+    async def get_all_context_items(
+        self,
+        name: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> List[ContextItem]:
+        """Get all context items from the database.
+
+        Args:
+            name (Optional[str]): Filter by name.
+            metadata (Optional[Dict[str, Any]]): Filter by metadata (containment match).
+
+        Returns:
+            List[ContextItem]: List of context items.
+        """
+        try:
+            collection = await self._get_collection(table_type="context")
+            if collection is None:
+                return []
+
+            query: Dict[str, Any] = {}
+            if name is not None:
+                query["name"] = name
+            if metadata is not None:
+                # Use containment matching: all filter keys/values must match in item metadata
+                for key, value in metadata.items():
+                    query[f"metadata.{key}"] = value
+
+            cursor = collection.find(query)
+            results = await cursor.to_list(length=None)
+            if not results:
+                return []
+
+            # Remove MongoDB's _id field from each result
+            filtered_results = [{k: v for k, v in r.items() if k != "_id"} for r in results]
+
+            return [ContextItem.from_dict(r) for r in filtered_results]
+
+        except Exception as e:
+            log_error(f"Error getting all context items: {e}")
+            raise e
+
+    async def upsert_context_item(self, context_item: ContextItem) -> Optional[ContextItem]:
+        """Upsert a context item into the database.
+
+        Args:
+            context_item (ContextItem): The context item to upsert.
+
+        Returns:
+            Optional[ContextItem]: The upserted context item.
+        """
+        try:
+            collection = await self._get_collection(table_type="context", create_collection_if_not_found=True)
+            if collection is None:
+                return None
+
+            if context_item.id is None:
+                context_item.id = str(uuid4())
+
+            doc = {
+                "id": context_item.id,
+                "name": context_item.name,
+                "content": context_item.content,
+                "description": context_item.description,
+                "metadata": context_item.metadata,
+                "variables": context_item.variables,
+                "version": context_item.version,
+                "parent_id": context_item.parent_id,
+                "optimization_notes": context_item.optimization_notes,
+                "created_at": context_item.created_at if context_item.created_at else int(time.time()),
+                "updated_at": context_item.updated_at if context_item.updated_at else int(time.time()),
+            }
+
+            await collection.update_one(
+                {"id": context_item.id},
+                {"$set": doc},
+                upsert=True,
+            )
+
+            return await self.get_context_item(context_item.id)
+
+        except Exception as e:
+            log_error(f"Error upserting context item: {e}")
+            raise e
