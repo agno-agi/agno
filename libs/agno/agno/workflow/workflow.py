@@ -123,6 +123,7 @@ WorkflowSteps = Union[
             Parallel,
             Condition,
             Router,
+            "Workflow",  # Nested workflow support
         ]
     ],
 ]
@@ -2064,6 +2065,7 @@ class Workflow:
             session_id=workflow_run_response.session_id,
             step_results=workflow_run_response.step_results,  # type: ignore
             metadata=workflow_run_response.metadata,
+            run_output=workflow_run_response,  # Include full run output for nested workflows
         )
         yield self._handle_event(workflow_completed_event, workflow_run_response)
 
@@ -2670,6 +2672,7 @@ class Workflow:
             session_id=workflow_run_response.session_id,
             step_results=workflow_run_response.step_results,  # type: ignore[arg-type]
             metadata=workflow_run_response.metadata,
+            run_output=workflow_run_response,  # Include full run output for nested workflows
         )
         yield self._handle_event(workflow_completed_event, workflow_run_response, websocket_handler=websocket_handler)
 
@@ -4204,7 +4207,7 @@ class Workflow:
     def _prepare_steps(self):
         """Prepare the steps for execution"""
         if not callable(self.steps) and self.steps is not None:
-            prepared_steps: List[Union[Step, Steps, Loop, Parallel, Condition, Router]] = []
+            prepared_steps: List[Union[Step, Steps, Loop, Parallel, Condition, Router, "Workflow"]] = []
             for i, step in enumerate(self.steps):  # type: ignore
                 if callable(step) and hasattr(step, "__name__"):
                     step_name = step.__name__
@@ -4218,6 +4221,10 @@ class Workflow:
                     step_name = step.name or f"step_{i + 1}"
                     log_debug(f"Step {i + 1}: Team '{step_name}' with {len(step.members)} members")
                     prepared_steps.append(Step(name=step_name, description=step.description, team=step))
+                elif isinstance(step, Workflow):
+                    step_name = step.name or f"step_{i + 1}"
+                    log_debug(f"Step {i + 1}: Nested Workflow '{step_name}'")
+                    prepared_steps.append(Step(name=step_name, description=step.description, workflow=step))
                 elif isinstance(step, Step) and step.add_workflow_history is True and self.db is None:
                     log_warning(
                         f"Step '{step.name or f'step_{i + 1}'}' has add_workflow_history=True "
