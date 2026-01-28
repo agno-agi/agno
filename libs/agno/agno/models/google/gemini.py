@@ -106,9 +106,9 @@ class Gemini(Model):
     response_modalities: Optional[list[str]] = None  # "TEXT", "IMAGE", and/or "AUDIO"
     speech_config: Optional[dict[str, Any]] = None
     cached_content: Optional[Any] = None
-    thinking_budget: Optional[int] = None  # Thinking budget for Gemini 2.5 models
+    thinking_budget: Optional[int] = None  # Legacy (Gemini 2.5); cannot be used with `thinking_level`
     include_thoughts: Optional[bool] = None  # Include thought summaries in response
-    thinking_level: Optional[str] = None  # "low", "high"
+    thinking_level: Optional[str] = None  # Gemini 3: Pro supports low/high; Flash supports minimal/low/medium/high
     request_params: Optional[Dict[str, Any]] = None
 
     # Client parameters
@@ -132,6 +132,54 @@ class Gemini(Model):
         "assistant": "model",
         "tool": "user",
     }
+
+    def _normalize_model_id(self) -> str:
+        model_id = (self.id or "").strip().lower()
+        if "/" in model_id:
+            model_id = model_id.split("/")[-1]
+        return model_id
+
+    def _normalize_thinking_level(self, thinking_level: Any) -> Optional[str]:
+        if thinking_level is None:
+            return None
+        if hasattr(thinking_level, "value"):
+            thinking_level = thinking_level.value
+        if isinstance(thinking_level, str):
+            thinking_level = thinking_level.strip().lower()
+        return thinking_level if thinking_level else None
+
+    def _get_model_major_version(self) -> Optional[int]:
+        model_id = self._normalize_model_id()
+        if not model_id.startswith("gemini-"):
+            return None
+        version_part = model_id[len("gemini-") :]
+        digits = ""
+        for ch in version_part:
+            if ch.isdigit():
+                digits += ch
+            else:
+                break
+        return int(digits) if digits else None
+
+    def _supports_thinking_level(self) -> bool:
+        major = self._get_model_major_version()
+        return major is not None and major >= 3
+
+    def _get_allowed_thinking_levels(self) -> Optional[set[str]]:
+        model_id = self._normalize_model_id()
+        if not self._supports_thinking_level():
+            return None
+
+        # Gemini 3+ Pro: low/high only
+        if "-pro" in model_id:
+            return {"low", "high"}
+
+        # Gemini 3+ Flash (incl flash-lite): minimal/low/medium/high
+        if "flash-lite" in model_id or "-flash" in model_id:
+            return {"minimal", "low", "medium", "high"}
+
+        # Default for future Gemini 3+/4+ variants unless specified otherwise
+        return {"minimal", "low", "medium", "high"}
 
     def get_client(self) -> GeminiClient:
         """
@@ -277,13 +325,52 @@ class Gemini(Model):
             config["response_schema"] = prepare_response_schema(response_format)
 
         # Add thinking configuration
-        thinking_config_params: Dict[str, Any] = {}
-        if self.thinking_budget is not None:
-            thinking_config_params["thinking_budget"] = self.thinking_budget
+        existing_thinking_config = config.get("thinking_config")
+        existing_thinking_config_params: Dict[str, Any] = {}
+        if isinstance(existing_thinking_config, ThinkingConfig):
+            existing_thinking_config_params = existing_thinking_config.model_dump(exclude_none=True)
+        elif isinstance(existing_thinking_config, dict):
+            existing_thinking_config_params = existing_thinking_config
+
+        thinking_level = self._normalize_thinking_level(self.thinking_level)
+        if thinking_level is None:
+            thinking_level = self._normalize_thinking_level(existing_thinking_config_params.get("thinking_level"))
+
+        thinking_budget = self.thinking_budget
+        if thinking_budget is None:
+            thinking_budget = existing_thinking_config_params.get("thinking_budget")
+
+        if thinking_level is not None and not self._supports_thinking_level():
+            log_warning(f"`thinking_level` is not supported for model {self.id}. Ignoring it.")
+            thinking_level = None
+
+        if thinking_level is not None:
+            allowed_thinking_levels = self._get_allowed_thinking_levels()
+            if allowed_thinking_levels is not None and thinking_level not in allowed_thinking_levels:
+                raise ValueError(
+                    f"Invalid `thinking_level`: {thinking_level}. Allowed values for {self.id}: {sorted(allowed_thinking_levels)}"
+                )
+
+            if thinking_budget is not None:
+                log_warning("`thinking_level` was provided; overriding any `thinking_budget` setting.")
+                thinking_budget = None
+
+        thinking_config_params: Dict[str, Any] = dict(existing_thinking_config_params)
+
+        if thinking_budget is not None:
+            thinking_config_params["thinking_budget"] = thinking_budget
+        else:
+            thinking_config_params.pop("thinking_budget", None)
+
         if self.include_thoughts is not None:
             thinking_config_params["include_thoughts"] = self.include_thoughts
-        if self.thinking_level is not None:
-            thinking_config_params["thinking_level"] = self.thinking_level
+
+        if thinking_level is not None:
+            thinking_config_params["thinking_level"] = thinking_level
+        else:
+            thinking_config_params.pop("thinking_level", None)
+
+        thinking_config_params = {k: v for k, v in thinking_config_params.items() if v is not None}
         if thinking_config_params:
             config["thinking_config"] = ThinkingConfig(**thinking_config_params)
 
