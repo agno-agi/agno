@@ -58,11 +58,11 @@ def load_local_knowledge():
         print(f"  - {f.name}")
     print()
 
-    # Load all local docs
-    print("Loading into knowledge base...")
+    # Insert all local docs
+    print("Inserting into knowledge base...")
     try:
-        support_knowledge.load(path=str(KNOWLEDGE_DIR))
-        print(f"  Loaded {len(md_files)} files")
+        support_knowledge.insert(path=str(KNOWLEDGE_DIR))
+        print(f"  Inserted {len(md_files)} files")
         return len(md_files)
     except Exception as e:
         print(f"  FAILED: {e}")
@@ -80,15 +80,15 @@ def load_agno_docs():
 
     for url in AGNO_DOCS:
         try:
-            print(f"  Loading: {url}")
-            support_knowledge.load(url=url)
+            print(f"  Inserting: {url}")
+            support_knowledge.insert(url=url)
             loaded += 1
         except Exception as e:
             failed += 1
             print(f"    FAILED: {e}")
 
     print()
-    print(f"Loaded {loaded}/{loaded + failed} Agno docs")
+    print(f"Inserted {loaded}/{loaded + failed} Agno docs")
     return loaded
 
 
