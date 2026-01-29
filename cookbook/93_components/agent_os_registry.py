@@ -63,7 +63,9 @@ def validate_input(step_input: StepInput) -> StepOutput:
             success=False,
             stop=True,  # Stop workflow on validation failure
         )
-    return StepOutput(step_name="ValidateInput", content="Input validated", success=True)
+    return StepOutput(
+        step_name="ValidateInput", content="Input validated", success=True
+    )
 
 
 # =============================================================================
@@ -75,7 +77,15 @@ def validate_input(step_input: StepInput) -> StepOutput:
 def is_tech_topic(step_input: StepInput) -> bool:
     """Check if the topic is technology-related."""
     topic = step_input.input or step_input.previous_step_content or ""
-    tech_keywords = ["ai", "machine learning", "programming", "software", "tech", "api", "database"]
+    tech_keywords = [
+        "ai",
+        "machine learning",
+        "programming",
+        "software",
+        "tech",
+        "api",
+        "database",
+    ]
     return any(keyword in str(topic).lower() for keyword in tech_keywords)
 
 
@@ -88,7 +98,13 @@ def is_long_content(step_input: StepInput) -> bool:
 def requires_human_review(step_input: StepInput) -> bool:
     """Check if content contains sensitive topics requiring human review."""
     content = str(step_input.previous_step_content or step_input.input or "").lower()
-    sensitive_keywords = ["legal", "medical", "financial advice", "lawsuit", "diagnosis"]
+    sensitive_keywords = [
+        "legal",
+        "medical",
+        "financial advice",
+        "lawsuit",
+        "diagnosis",
+    ]
     return any(keyword in content for keyword in sensitive_keywords)
 
 
@@ -101,8 +117,23 @@ def has_errors_in_output(step_input: StepInput) -> bool:
 def is_question(step_input: StepInput) -> bool:
     """Check if input is a question (ends with ? or starts with question words)."""
     text = str(step_input.input or "").strip().lower()
-    question_starters = ["what", "why", "how", "when", "where", "who", "which", "can", "could", "would", "is", "are"]
-    return text.endswith("?") or any(text.startswith(word) for word in question_starters)
+    question_starters = [
+        "what",
+        "why",
+        "how",
+        "when",
+        "where",
+        "who",
+        "which",
+        "can",
+        "could",
+        "would",
+        "is",
+        "are",
+    ]
+    return text.endswith("?") or any(
+        text.startswith(word) for word in question_starters
+    )
 
 
 # =============================================================================
@@ -157,7 +188,13 @@ def found_answer(outputs: List[StepOutput]) -> bool:
     if not outputs:
         return False
     latest_content = str(outputs[-1].content or "").lower()
-    answer_markers = ["the answer is", "in conclusion", "therefore", "result:", "solution:"]
+    answer_markers = [
+        "the answer is",
+        "in conclusion",
+        "therefore",
+        "result:",
+        "solution:",
+    ]
     return any(marker in latest_content for marker in answer_markers)
 
 
