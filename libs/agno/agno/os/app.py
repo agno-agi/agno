@@ -1056,12 +1056,15 @@ class AgentOS:
         dbs_with_specific_config = [db.db_id for db in knowledge_config.dbs]
 
         # Only add databases that are actually used for knowledge contents
-        for db_id in self.knowledge_dbs.keys():
+        for db_id, dbs in self.knowledge_dbs.items():
             if db_id not in dbs_with_specific_config:
+                # Collect unique table names from all databases with the same id
+                unique_tables = list(set(db.knowledge_table_name for db in dbs))
                 knowledge_config.dbs.append(
                     DatabaseConfig(
                         db_id=db_id,
                         domain_config=KnowledgeDomainConfig(display_name=db_id),
+                        tables=unique_tables,
                     )
                 )
 
