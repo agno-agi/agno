@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Calculator App</title>
+    <!-- Bug: Missing charset meta tag -->
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+        }
+        .calculator {
+            width: 300px;
+            padding: 20px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+        }
+        input[type="text"] {
+            width: 100%;
+            padding: 10px;
+            margin-bottom: 10px;
+            font-size: 18px;
+        }
+        button {
+            width: 60px;
+            height: 40px;
+            margin: 2px;
+            font-size: 16px;
+            cursor: pointer;
+        }
+        .result {
+            margin-top: 10px;
+            padding: 10px;
+            background: #f0f0f0;
+        }
+    </style>
+</head>
+<body>
+    <div class="calculator">
+        <h2>Simple Calculator</h2>
+        
+        <!-- Bug: No input validation, allows script injection -->
+        <input type="text" id="display" placeholder="Enter expression">
+        
+        <div class="buttons">
+            <button onclick="appendNumber(7)">7</button>
+            <button onclick="appendNumber(8)">8</button>
+            <button onclick="appendNumber(9)">9</button>
+            <button onclick="appendOperator('/')">/</button>
+            <br>
+            <button onclick="appendNumber(4)">4</button>
+            <button onclick="appendNumber(5)">5</button>
+            <button onclick="appendNumber(6)">6</button>
+            <button onclick="appendOperator('*')">*</button>
+            <br>
+            <button onclick="appendNumber(1)">1</button>
+            <button onclick="appendNumber(2)">2</button>
+            <button onclick="appendNumber(3)">3</button>
+            <button onclick="appendOperator('-')">-</button>
+            <br>
+            <button onclick="appendNumber(0)">0</button>
+            <button onclick="appendDecimal()">.</button>
+            <button onclick="calculate()">=</button>
+            <button onclick="appendOperator('+')">+</button>
+            <br>
+            <button onclick="clearDisplay()">C</button>
+            <button onclick="backspace()">←</button>
+        </div>
+        
+        <div class="result" id="result"></div>
+        
+        <!-- Bug: Displaying user data without sanitization -->
+        <div id="history"></div>
+    </div>
+
+    <!-- Bug: Inline event handlers (should use addEventListener) -->
+    <!-- Bug: No Content Security Policy -->
+    
+    <script>
+        // Bug: Using var instead of let/const
+        var display = document.getElementById('display');
+        var resultDiv = document.getElementById('result');
+        var historyDiv = document.getElementById('history');
+        var calculationHistory = [];
+        
+        // Security issue: Hardcoded API key
+        var API_KEY = "sk-secret-key-12345";
+        var DB_PASSWORD = "password123";
+        
+        function appendNumber(num) {
+            display.value += num;
+        }
+        
+        function appendOperator(op) {
+            display.value += op;
+        }
+        
+        function appendDecimal() {
+            // Bug: Allows multiple decimals in same number
+            display.value += '.';
+        }
+        
+        function clearDisplay() {
+            display.value = '';
+            resultDiv.innerHTML = '';
+        }
+        
+        function backspace() {
+            display.value = display.value.slice(0, -1);
+        }
+        
+        function calculate() {
+            // Security vulnerability: Using eval() on user input
+            try {
+                var expression = display.value;
+                var result = eval(expression);  // XSS vulnerability
+                
+                resultDiv.innerHTML = 'Result: ' + result;
+                
+                // Bug: No sanitization before adding to DOM (XSS)
+                historyDiv.innerHTML += '<p>' + expression + ' = ' + result + '</p>';
+                
+                calculationHistory.push({
+                    expression: expression,
+                    result: result,
+                    // Bug: Storing sensitive data
+                    apiKey: API_KEY
+                });
+                
+                // Bug: Logging sensitive data to console
+                console.log('Calculation performed with API key:', API_KEY);
+                
+            } catch (e) {
+                // Bug: Exposing error details to user
+                resultDiv.innerHTML = 'Error: ' + e.message;
+            }
+        }
+        
+        function saveToServer() {
+            // Security issue: Sending data without HTTPS check
+            // Bug: No input validation
+            var data = {
+                history: calculationHistory,
+                password: DB_PASSWORD,  // Sending password in request
+                apiKey: API_KEY
+            };
+            
+            // Bug: Using synchronous XMLHttpRequest (deprecated)
+            var xhr = new XMLHttpRequest();
+            xhr.open('POST', 'http://api.example.com/save', false);  // Insecure HTTP
+            xhr.send(JSON.stringify(data));
+        }
+        
+        function loadUserInput() {
+            // XSS vulnerability: innerHTML with user input
+            var userInput = prompt('Enter your name:');
+            document.getElementById('result').innerHTML = 'Hello, ' + userInput;
+        }
+        
+        function processCommand(cmd) {
+            // Command injection vulnerability
+            var script = document.createElement('script');
+            script.innerHTML = cmd;  // Executing arbitrary code
+            document.body.appendChild(script);
+        }
+        
+        // Bug: Memory leak - event listener added but never removed
+        window.addEventListener('resize', function() {
+            console.log('Window resized');
+        });
+        
+        // Bug: Unused function
+        function unusedFunction() {
+            return 'This function is never called';
+        }
+        
+        // Bug: Global variable pollution
+        globalVar = 'I am polluting the global scope';
+        
+        // Bug: Race condition possibility
+        var counter = 0;
+        function incrementCounter() {
+            var temp = counter;
+            // Simulating async operation
+            setTimeout(function() {
+                counter = temp + 1;
+            }, 100);
+        }
+        
+        // Bug: Potential infinite loop
+        function findValue(arr, target) {
+            var i = 0;
+            while (arr[i] != target) {  // No bounds check
+                i++;
+            }
+            return i;
+        }
+        
+        // Bug: Type coercion issues
+        function compareValues(a, b) {
+            if (a == b) {  // Should use === for strict comparison
+                return true;
+            }
+            return false;
+        }
+        
+        // Bug: Missing 'return' in some code paths
+        function divide(a, b) {
+            if (b !== 0) {
+                return a / b;
+            }
+            // Missing return for b === 0 case
+        }
+    </script>
+</body>
+</html>
