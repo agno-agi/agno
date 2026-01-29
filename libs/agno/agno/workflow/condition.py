@@ -55,7 +55,7 @@ class Condition:
         - input: The workflow input as a string
         - previous_step_content: Content from the previous step
         - has_previous_step_content: Boolean flag for previous content presence
-        - previous_step_names: List of previous step names
+        - previous_step_contents: List of content strings from all previous steps
         - additional_data: Map of additional data passed to the workflow
         - session_state: Map of session state values
 
@@ -63,7 +63,7 @@ class Condition:
         - 'input.contains("urgent")'
         - 'session_state.retry_count < 3'
         - 'additional_data.priority > 5'
-        - '"step1" in previous_step_names'
+        - 'previous_step_contents[0].contains("error")'
     """
 
     # Evaluator should only return boolean
@@ -251,7 +251,9 @@ class Condition:
         if isinstance(self.evaluator, str):
             # CEL expression
             if not CEL_AVAILABLE:
-                logger.error("CEL expression used but cel-python is not installed. Install with: pip install cel-python")
+                logger.error(
+                    "CEL expression used but cel-python is not installed. Install with: pip install cel-python"
+                )
                 return False
             try:
                 return evaluate_cel_condition_evaluator(self.evaluator, step_input, session_state)
@@ -287,7 +289,9 @@ class Condition:
         if isinstance(self.evaluator, str):
             # CEL expression - CEL evaluation is synchronous
             if not CEL_AVAILABLE:
-                logger.error("CEL expression used but cel-python is not installed. Install with: pip install cel-python")
+                logger.error(
+                    "CEL expression used but cel-python is not installed. Install with: pip install cel-python"
+                )
                 return False
             try:
                 return evaluate_cel_condition_evaluator(self.evaluator, step_input, session_state)

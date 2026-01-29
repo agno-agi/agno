@@ -46,19 +46,23 @@ class Loop:
         - None (loop runs for max_iterations)
 
     CEL expressions for end_condition have access to:
-        - iteration: Current iteration number (0-indexed)
+        - iteration: Current iteration number (1-indexed, after completion)
+        - max_iterations: Maximum iterations configured for the loop
         - num_steps: Number of step outputs in the current iteration
         - all_success: Boolean - True if all steps succeeded
         - any_failure: Boolean - True if any step failed
-        - last_content: Content string from the last step in the iteration
+        - step_contents: List of content strings from all steps in order
+        - last_step_content: Content string from the last step in the iteration
         - total_content_length: Sum of all step content lengths
         - max_content_length: Length of the longest step content
 
     Example CEL expressions:
         - 'iteration >= 2'
+        - 'iteration >= max_iterations'
         - 'all_success'
         - 'total_content_length > 500'
-        - 'last_content.contains("DONE")'
+        - 'max_content_length > 200'
+        - 'last_step_content.contains("DONE")'
     """
 
     steps: WorkflowSteps
@@ -150,9 +154,7 @@ class Loop:
                     if end_condition is None:
                         raise ValueError(f"End condition function '{end_condition_data}' not found in registry")
                 else:
-                    raise ValueError(
-                        f"Registry required to deserialize end_condition function '{end_condition_data}'"
-                    )
+                    raise ValueError(f"Registry required to deserialize end_condition function '{end_condition_data}'")
 
         return cls(
             name=data.get("name"),
@@ -169,10 +171,14 @@ class Loop:
 
         if isinstance(self.end_condition, str):
             if not CEL_AVAILABLE:
-                logger.error("CEL expression used but cel-python is not installed. Install with: pip install cel-python")
+                logger.error(
+                    "CEL expression used but cel-python is not installed. Install with: pip install cel-python"
+                )
                 return False
             try:
-                return evaluate_cel_loop_end_condition(self.end_condition, iteration_results, iteration)
+                return evaluate_cel_loop_end_condition(
+                    self.end_condition, iteration_results, iteration, self.max_iterations
+                )
             except Exception as e:
                 logger.warning(f"CEL end condition evaluation failed: {e}")
                 return False
@@ -193,10 +199,14 @@ class Loop:
 
         if isinstance(self.end_condition, str):
             if not CEL_AVAILABLE:
-                logger.error("CEL expression used but cel-python is not installed. Install with: pip install cel-python")
+                logger.error(
+                    "CEL expression used but cel-python is not installed. Install with: pip install cel-python"
+                )
                 return False
             try:
-                return evaluate_cel_loop_end_condition(self.end_condition, iteration_results, iteration)
+                return evaluate_cel_loop_end_condition(
+                    self.end_condition, iteration_results, iteration, self.max_iterations
+                )
             except Exception as e:
                 logger.warning(f"CEL end condition evaluation failed: {e}")
                 return False
@@ -513,6 +523,7 @@ class Loop:
                         )
 
             all_results.append(iteration_results)
+            iteration += 1
 
             # Check end condition
             should_continue = True
@@ -533,15 +544,13 @@ class Loop:
                     session_id=workflow_run_response.session_id or "",
                     step_name=self.name,
                     step_index=step_index,
-                    iteration=iteration + 1,
+                    iteration=iteration,
                     max_iterations=self.max_iterations,
                     iteration_results=iteration_results,
                     should_continue=should_continue,
                     step_id=loop_step_id,
                     parent_step_id=parent_step_id,
                 )
-
-            iteration += 1
 
             if not should_continue:
                 log_debug(f"Loop ending early at iteration {iteration}")
@@ -815,6 +824,7 @@ class Loop:
                         )
 
             all_results.append(iteration_results)
+            iteration += 1
 
             # Check end condition
             should_continue = True
@@ -835,15 +845,13 @@ class Loop:
                     session_id=workflow_run_response.session_id or "",
                     step_name=self.name,
                     step_index=step_index,
-                    iteration=iteration + 1,
+                    iteration=iteration,
                     max_iterations=self.max_iterations,
                     iteration_results=iteration_results,
                     should_continue=should_continue,
                     step_id=loop_step_id,
                     parent_step_id=parent_step_id,
                 )
-
-            iteration += 1
 
             if not should_continue:
                 log_debug(f"Loop ending early at iteration {iteration}")

@@ -46,7 +46,7 @@ class Router:
         - input: The workflow input as a string
         - previous_step_content: Content from the previous step
         - has_previous_step_content: Whether previous content exists
-        - previous_step_names: List of previous step names
+        - previous_step_contents: List of content strings from all previous steps
         - additional_data: Map of additional data passed to the workflow
         - session_state: Map of session state values
 
@@ -221,7 +221,9 @@ class Router:
         # Handle CEL expression selector
         if isinstance(self.selector, str):
             if not CEL_AVAILABLE:
-                logger.error("CEL expression used but cel-python is not installed. Install with: pip install cel-python")
+                logger.error(
+                    "CEL expression used but cel-python is not installed. Install with: pip install cel-python"
+                )
                 return []
             try:
                 step_name = evaluate_cel_router_selector(self.selector, step_input, session_state)
@@ -257,7 +259,9 @@ class Router:
         # Handle CEL expression selector (CEL evaluation is synchronous)
         if isinstance(self.selector, str):
             if not CEL_AVAILABLE:
-                logger.error("CEL expression used but cel-python is not installed. Install with: pip install cel-python")
+                logger.error(
+                    "CEL expression used but cel-python is not installed. Install with: pip install cel-python"
+                )
                 return []
             try:
                 step_name = evaluate_cel_router_selector(self.selector, step_input, session_state)

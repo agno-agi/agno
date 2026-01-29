@@ -10,7 +10,14 @@ Requirements:
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
-from agno.workflow import CEL_AVAILABLE, Condition, Step, StepInput, StepOutput, Workflow
+from agno.workflow import (
+    CEL_AVAILABLE,
+    Condition,
+    Step,
+    StepInput,
+    StepOutput,
+    Workflow,
+)
 
 if not CEL_AVAILABLE:
     print("CEL is not available. Install with: pip install cel-python")

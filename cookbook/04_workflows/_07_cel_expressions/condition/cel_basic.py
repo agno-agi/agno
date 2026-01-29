@@ -47,7 +47,9 @@ workflow = Workflow(
 
 if __name__ == "__main__":
     print("--- Urgent request ---")
-    workflow.print_response(input="This is an urgent request - please help immediately!")
+    workflow.print_response(
+        input="This is an urgent request - please help immediately!"
+    )
     print()
 
     print("--- Normal request ---")

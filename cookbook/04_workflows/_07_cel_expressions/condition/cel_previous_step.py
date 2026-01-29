@@ -58,7 +58,9 @@ workflow = Workflow(
 
 if __name__ == "__main__":
     print("--- Technical question ---")
-    workflow.print_response(input="My API returns 500 errors when I send POST requests with JSON payloads.")
+    workflow.print_response(
+        input="My API returns 500 errors when I send POST requests with JSON payloads."
+    )
     print()
 
     print("--- General question ---")

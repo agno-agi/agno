@@ -1,6 +1,6 @@
 """Loop with CEL end condition: stop when output contains a keyword.
 
-Uses last_content.contains("DONE") so the agent can signal
+Uses last_step_content.contains("DONE") so the agent can signal
 completion through its output.
 
 Requirements:
@@ -31,7 +31,7 @@ workflow = Workflow(
         Loop(
             name="Planning Loop",
             max_iterations=5,
-            end_condition='last_content.contains("DONE")',
+            end_condition='last_step_content.contains("DONE")',
             steps=[
                 Step(name="Plan", agent=planner),
             ],
@@ -40,7 +40,7 @@ workflow = Workflow(
 )
 
 if __name__ == "__main__":
-    print('Loop with CEL end condition: last_content.contains("DONE")')
+    print('Loop with CEL end condition: last_step_content.contains("DONE")')
     print("=" * 60)
     workflow.print_response(
         input="Create a plan for building a REST API with authentication",

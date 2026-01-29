@@ -19,7 +19,7 @@ expressions = [
     ("session_state.count > 5", True),
     ("additional_data.priority >= 1 && additional_data.priority <= 10", True),
     ('has_previous_step_content && previous_step_content.contains("error")', True),
-    ('"step1" in previous_step_names', True),
+    ("size(previous_step_contents) > 0", True),
     # Invalid expressions
     ("input.contains(", False),
     (">>> not valid <<<", False),
