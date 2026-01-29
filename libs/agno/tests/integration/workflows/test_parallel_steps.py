@@ -550,3 +550,121 @@ def test_parallel_no_stop():
 
     assert isinstance(result, StepOutput)
     assert result.stop is False, "Parallel should not set stop when no inner step requests it"
+
+
+def test_parallel_name_as_first_positional_arg():
+    """Test Parallel with name as first positional argument."""
+    parallel = Parallel("My Named Parallel", step_a, step_b)
+    step_input = StepInput(input="test")
+
+    result = parallel.execute(step_input)
+
+    assert isinstance(result, StepOutput)
+    assert parallel.name == "My Named Parallel"
+    assert result.step_name == "My Named Parallel"
+    assert len(result.steps) == 2
+    assert find_content_in_steps(result, "Output A")
+    assert find_content_in_steps(result, "Output B")
+
+
+def test_parallel_name_as_keyword_arg():
+    """Test Parallel with name as keyword argument (original behavior)."""
+    parallel = Parallel(step_a, step_b, name="Keyword Named Parallel")
+    step_input = StepInput(input="test")
+
+    result = parallel.execute(step_input)
+
+    assert isinstance(result, StepOutput)
+    assert parallel.name == "Keyword Named Parallel"
+    assert result.step_name == "Keyword Named Parallel"
+    assert len(result.steps) == 2
+    assert find_content_in_steps(result, "Output A")
+    assert find_content_in_steps(result, "Output B")
+
+
+def test_parallel_no_name():
+    """Test Parallel without any name."""
+    parallel = Parallel(step_a, step_b)
+    step_input = StepInput(input="test")
+
+    result = parallel.execute(step_input)
+
+    assert isinstance(result, StepOutput)
+    assert parallel.name is None
+    assert result.step_name == "Parallel"  # Default name
+    assert len(result.steps) == 2
+
+
+def test_parallel_keyword_name_overrides_positional():
+    """Test that keyword name takes precedence over positional name."""
+    parallel = Parallel("Positional Name", step_a, step_b, name="Keyword Name")
+    step_input = StepInput(input="test")
+
+    result = parallel.execute(step_input)
+
+    assert isinstance(result, StepOutput)
+    assert parallel.name == "Keyword Name"
+    assert result.step_name == "Keyword Name"
+
+
+def test_parallel_name_first_single_step():
+    """Test Parallel with name first and single step."""
+    parallel = Parallel("Single Step Named", step_a)
+    step_input = StepInput(input="test")
+
+    result = parallel.execute(step_input)
+
+    assert isinstance(result, StepOutput)
+    assert parallel.name == "Single Step Named"
+    assert len(result.steps) == 1
+    assert find_content_in_steps(result, "Output A")
+
+
+def test_parallel_name_first_with_description():
+    """Test Parallel with name first and description as keyword."""
+    parallel = Parallel("Described Parallel", step_a, step_b, description="A parallel with description")
+    step_input = StepInput(input="test")
+
+    result = parallel.execute(step_input)
+
+    assert isinstance(result, StepOutput)
+    assert parallel.name == "Described Parallel"
+    assert parallel.description == "A parallel with description"
+    assert len(result.steps) == 2
+
+
+@pytest.mark.asyncio
+async def test_parallel_name_first_async():
+    """Test async Parallel with name as first positional argument."""
+    parallel = Parallel("Async Named Parallel", step_a, step_b)
+    step_input = StepInput(input="test")
+
+    result = await parallel.aexecute(step_input)
+
+    assert isinstance(result, StepOutput)
+    assert parallel.name == "Async Named Parallel"
+    assert result.step_name == "Async Named Parallel"
+    assert len(result.steps) == 2
+
+
+def test_parallel_name_first_streaming():
+    """Test streaming Parallel with name as first positional argument."""
+    from agno.run.workflow import WorkflowRunOutput
+
+    parallel = Parallel("Streaming Named Parallel", step_a, step_b)
+    step_input = StepInput(input="test")
+
+    mock_response = WorkflowRunOutput(
+        run_id="test-run",
+        workflow_name="test-workflow",
+        workflow_id="test-id",
+        session_id="test-session",
+        content="",
+    )
+
+    events = list(parallel.execute_stream(step_input, workflow_run_response=mock_response, stream_events=True))
+    step_outputs = [e for e in events if isinstance(e, StepOutput)]
+
+    assert len(step_outputs) == 1
+    assert parallel.name == "Streaming Named Parallel"
+    assert step_outputs[0].step_name == "Streaming Named Parallel"
