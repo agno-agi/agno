@@ -15,7 +15,7 @@ from agno.run.workflow import (
 )
 from agno.session.workflow import WorkflowSession
 from agno.utils.log import log_debug, logger
-from agno.workflow.cel import CEL_AVAILABLE, evaluate_cel_condition, is_cel_expression
+from agno.workflow.cel import CEL_AVAILABLE, evaluate_cel_condition_evaluator, is_cel_expression
 from agno.workflow.step import Step
 from agno.workflow.types import StepInput, StepOutput, StepType
 
@@ -254,7 +254,7 @@ class Condition:
                 logger.error("CEL expression used but cel-python is not installed. Install with: pip install cel-python")
                 return False
             try:
-                return evaluate_cel_condition(self.evaluator, step_input, session_state)
+                return evaluate_cel_condition_evaluator(self.evaluator, step_input, session_state)
             except Exception as e:
                 logger.error(f"CEL expression evaluation failed: {e}")
                 return False
@@ -290,7 +290,7 @@ class Condition:
                 logger.error("CEL expression used but cel-python is not installed. Install with: pip install cel-python")
                 return False
             try:
-                return evaluate_cel_condition(self.evaluator, step_input, session_state)
+                return evaluate_cel_condition_evaluator(self.evaluator, step_input, session_state)
             except Exception as e:
                 logger.error(f"CEL expression evaluation failed: {e}")
                 return False

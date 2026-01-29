@@ -1,9 +1,5 @@
 """CEL (Common Expression Language) support for workflow steps.
 
-Provides safe, sandboxed expression evaluation for Condition evaluators and
-Loop end conditions. Enables UI-driven workflow configuration by allowing
-conditions to be defined as strings rather than Python callables.
-
 CEL spec: https://github.com/google/cel-spec
 """
 
@@ -18,7 +14,7 @@ try:
     from celpy import celtypes
 
     CEL_AVAILABLE = True
-except ImportError:
+except ImportError: 
     CEL_AVAILABLE = False
     celpy = None  # type: ignore
     celtypes = None  # type: ignore
@@ -36,12 +32,7 @@ _CEL_INDICATORS = [
     "true", "false", " in ",
 ]
 
-
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
-
-
+# ********** Public Functions **********
 def validate_cel_expression(expression: str) -> bool:
     """Validate a CEL expression without evaluating it.
 
@@ -72,7 +63,7 @@ def is_cel_expression(value: str) -> bool:
     return any(indicator in value for indicator in _CEL_INDICATORS)
 
 
-def evaluate_cel_condition(
+def evaluate_cel_condition_evaluator(
     expression: str,
     step_input: "StepInput",  # type: ignore  # noqa: F821
     session_state: Optional[Dict[str, Any]] = None,
@@ -87,7 +78,7 @@ def evaluate_cel_condition(
         - additional_data: Map of additional data passed to the workflow
         - session_state: Map of session state values
     """
-    return _evaluate_cel(expression, _build_condition_context(step_input, session_state))
+    return _evaluate_cel(expression, _build_step_input_context(step_input, session_state))
 
 
 def evaluate_cel_loop_end_condition(
@@ -106,10 +97,10 @@ def evaluate_cel_loop_end_condition(
         - total_content_length: Sum of all step content lengths
         - max_content_length: Length of the longest step content
     """
-    return _evaluate_cel(expression, _build_loop_context(iteration_results, iteration))
+    return _evaluate_cel(expression, _build_loop_step_output_context(iteration_results, iteration))
 
 
-def evaluate_cel_router(
+def evaluate_cel_router_selector(
     expression: str,
     step_input: "StepInput",  # type: ignore  # noqa: F821
     session_state: Optional[Dict[str, Any]] = None,
@@ -131,14 +122,10 @@ def evaluate_cel_router(
         - 'additional_data.route'
         - 'session_state.preferred_handler'
     """
-    return _evaluate_cel_string(expression, _build_condition_context(step_input, session_state))
+    return _evaluate_cel_string(expression, _build_step_input_context(step_input, session_state))
 
 
-# ---------------------------------------------------------------------------
-# Internal helpers
-# ---------------------------------------------------------------------------
-
-
+# ********** Internal Functions **********
 def _evaluate_cel(expression: str, context: Dict[str, Any]) -> bool:
     """Core CEL evaluation: compile, run, and coerce to bool."""
     if not CEL_AVAILABLE:
@@ -207,11 +194,11 @@ def _to_cel(value: Any) -> Any:
     return celtypes.StringType(str(value))
 
 
-def _build_condition_context(
+def _build_step_input_context(
     step_input: "StepInput",  # type: ignore  # noqa: F821
     session_state: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """Build context for Condition CEL evaluation from StepInput."""
+    """Build context for CEL evaluation of step input."""
     input_str = ""
     if step_input.input is not None:
         input_str = step_input.get_input_as_string() or ""
@@ -239,11 +226,11 @@ def _build_condition_context(
     }
 
 
-def _build_loop_context(
+def _build_loop_step_output_context(
     iteration_results: "List[StepOutput]",  # type: ignore  # noqa: F821
     iteration: int = 0,
 ) -> Dict[str, Any]:
-    """Build context for Loop end condition CEL evaluation from iteration results."""
+    """Build context for CEL evaluation of loop end condition from iteration results."""
     all_success = True
     any_failure = False
     total_content_length = 0

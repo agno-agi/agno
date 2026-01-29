@@ -15,7 +15,7 @@ from agno.run.workflow import (
 )
 from agno.session.workflow import WorkflowSession
 from agno.utils.log import log_debug, logger
-from agno.workflow.cel import CEL_AVAILABLE, evaluate_cel_router, is_cel_expression
+from agno.workflow.cel import CEL_AVAILABLE, evaluate_cel_router_selector, is_cel_expression
 from agno.workflow.step import Step
 from agno.workflow.types import StepInput, StepOutput, StepType
 
@@ -224,7 +224,7 @@ class Router:
                 logger.error("CEL expression used but cel-python is not installed. Install with: pip install cel-python")
                 return []
             try:
-                step_name = evaluate_cel_router(self.selector, step_input, session_state)
+                step_name = evaluate_cel_router_selector(self.selector, step_input, session_state)
                 step = self._find_step_by_name(step_name)
                 if step is None:
                     logger.error(f"Router CEL returned step name '{step_name}' but no matching step found in choices")
@@ -260,7 +260,7 @@ class Router:
                 logger.error("CEL expression used but cel-python is not installed. Install with: pip install cel-python")
                 return []
             try:
-                step_name = evaluate_cel_router(self.selector, step_input, session_state)
+                step_name = evaluate_cel_router_selector(self.selector, step_input, session_state)
                 step = self._find_step_by_name(step_name)
                 if step is None:
                     logger.error(f"Router CEL returned step name '{step_name}' but no matching step found in choices")
