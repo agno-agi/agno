@@ -96,6 +96,7 @@ def evaluate_cel_condition_evaluator(
         - previous_step_content: Content from the previous step
         - has_previous_step_content: Whether previous content exists
         - previous_step_contents: List of content strings from all previous steps
+        - all_previous_content: Concatenated content from all previous steps (formatted)
         - additional_data: Map of additional data passed to the workflow
         - session_state: Map of session state values
     """
@@ -117,6 +118,7 @@ def evaluate_cel_loop_end_condition(
         - all_success: True if all steps succeeded
         - any_failure: True if any step failed
         - step_contents: List of content strings from all steps in order
+        - first_step_content: Content string from the first step
         - last_step_content: Content string from the last step
         - total_content_length: Sum of all step content lengths
         - max_content_length: Length of the longest step content
@@ -138,6 +140,7 @@ def evaluate_cel_router_selector(
         - previous_step_content: Content from the previous step
         - has_previous_step_content: Whether previous content exists
         - previous_step_contents: List of content strings from all previous steps
+        - all_previous_content: Concatenated content from all previous steps (formatted)
         - additional_data: Map of additional data passed to the workflow
         - session_state: Map of session state values
 
@@ -240,11 +243,21 @@ def _build_step_input_context(
     if step_input.previous_step_outputs:
         previous_step_contents = [str(output.content) for output in step_input.previous_step_outputs.values()]
 
+    # Build all_previous_content similar to StepInput.get_all_previous_content()
+    all_previous_content = ""
+    if step_input.previous_step_outputs:
+        content_parts = []
+        for name, output in step_input.previous_step_outputs.items():
+            if output.content:
+                content_parts.append(f"=== {name} ===\n{output.content}")
+        all_previous_content = "\n\n".join(content_parts)
+
     return {
         "input": input_str,
         "previous_step_content": previous_content,
         "has_previous_step_content": bool(step_input.previous_step_content),
         "previous_step_contents": previous_step_contents,
+        "all_previous_content": all_previous_content,
         "additional_data": step_input.additional_data or {},
         "session_state": session_state or {},
     }
