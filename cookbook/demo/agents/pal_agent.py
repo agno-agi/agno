@@ -1,688 +1,255 @@
 """
-PaL - Plan and Learn Agent
-===========================
-A disciplined planning and execution agent that:
-- Creates structured plans with success criteria
-- Executes steps sequentially with verification
-- Learns from successful executions
-- Persists state across sessions
+Pal - Personal Agent that Learns
+================================
 
-> Plan. Execute. Learn. Repeat.
+Your AI-powered second brain.
+
+Pal researches, captures, organizes, connects, and retrieves your personal
+knowledge - so nothing useful is ever lost.
+
+Uses callable tools for per-user DuckDB isolation - each user gets their own
+database file automatically.
 
 Example queries:
-- "Help me decide between Supabase, Firebase, and PlanetScale for my startup"
-- "Build a complete market analysis of the electric vehicle industry"
-- "Create a competitor analysis for OpenAI vs Anthropic"
+- "Note: decided to use Postgres for the new project"
+- "Bookmark https://docs.agno.com - Agno documentation"
+- "Research event sourcing best practices and save the findings"
+
+Test:
+    python cookbook/demo/agents/pal_agent.py
+    python cookbook/demo/agents/pal_agent.py "Your query here"
 """
 
-import json
-from datetime import datetime, timezone
-from typing import List, Optional
+from os import getenv
+from pathlib import Path
+from typing import List, Union
 
 from agno.agent import Agent
+from agno.knowledge import Knowledge
 from agno.knowledge.embedder.openai import OpenAIEmbedder
-from agno.knowledge.knowledge import Knowledge
-from agno.knowledge.reader.text_reader import TextReader
+from agno.learn import (
+    LearnedKnowledgeConfig,
+    LearningMachine,
+    LearningMode,
+    UserMemoryConfig,
+    UserProfileConfig,
+)
 from agno.models.openai import OpenAIResponses
 from agno.run import RunContext
-from agno.tools.parallel import ParallelTools
-from agno.tools.yfinance import YFinanceTools
-from agno.utils.log import logger
+from agno.tools.duckdb import DuckDbTools
+from agno.tools.function import Function
+from agno.tools.mcp import MCPTools
+from agno.tools.toolkit import Toolkit
 from agno.vectordb.pgvector import PgVector, SearchType
+
 from db import db_url, demo_db
 
 # ============================================================================
-# Knowledge Base: Stores execution learnings
+# Setup
 # ============================================================================
-execution_knowledge = Knowledge(
-    name="PaL Execution Learnings",
+DATA_DIR = Path(getenv("DATA_DIR", "workspace/pal"))
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+# Exa MCP for research
+EXA_API_KEY = getenv("EXA_API_KEY", "")
+EXA_MCP_URL = (
+    (
+        f"https://mcp.exa.ai/mcp?exaApiKey={EXA_API_KEY}&tools="
+        "web_search_exa,"
+        "get_code_context_exa,"
+        "company_research_exa,"
+        "crawling_exa,"
+        "people_search_exa"
+    )
+    if EXA_API_KEY
+    else None
+)
+
+# Knowledge base for semantic search and learnings
+pal_knowledge = Knowledge(
+    name="Pal Knowledge",
     vector_db=PgVector(
         db_url=db_url,
-        table_name="pal_execution_learnings",
+        table_name="pal_knowledge",
         search_type=SearchType.hybrid,
         embedder=OpenAIEmbedder(id="text-embedding-3-small"),
     ),
-    max_results=5,
     contents_db=demo_db,
 )
 
 
 # ============================================================================
-# Planning Tools
+# Callable Tools - Per-User DuckDB
 # ============================================================================
-def create_plan(
-    run_context: RunContext,
-    objective: str,
-    steps: List[dict],
-    context: Optional[str] = None,
-) -> str:
+def get_user_tools(run_context: RunContext) -> List[Union[Toolkit, Function]]:
     """
-    Create an execution plan with ordered steps and success criteria.
+    Create user-specific tools at runtime.
+
+    Each user gets their own DuckDB database file for complete data isolation.
+    This is called when agent.run() is invoked with a user_id.
 
     Args:
-        objective: The overall goal to achieve
-        steps: List of step objects, each with:
-               - description (str): What to do
-               - success_criteria (str): How to verify completion
-        context: Optional background information
+        run_context: Runtime context with user_id, session_id, etc.
 
-    Example:
-        create_plan(
-            objective="Competitive analysis of cloud storage",
-            steps=[
-                {"description": "Identify top 3 providers", "success_criteria": "List with market share data"},
-                {"description": "Compare pricing tiers", "success_criteria": "Pricing table for all tiers"},
-                {"description": "Analyze features", "success_criteria": "Feature matrix with 10+ attributes"},
-                {"description": "Write summary", "success_criteria": "Executive summary under 500 words"},
-            ]
-        )
+    Returns:
+        List of tools configured for this specific user.
     """
-    state = run_context.session_state
+    user_id = run_context.user_id or "default"
 
-    # Guard: Don't overwrite active plan
-    if state.get("plan") and state.get("status") == "in_progress":
-        return (
-            "A plan is already in progress.\n"
-            "Options:\n"
-            "  - Complete the current plan\n"
-            "  - Call reset_plan(confirm=True) to start fresh"
-        )
+    # Sanitize user_id for use in file names
+    safe_user_id = user_id.replace("@", "_").replace(".", "_").replace("/", "_")
 
-    # Validate and build plan structure
-    plan_items = []
-    for i, step in enumerate(steps, 1):
-        if not isinstance(step, dict) or "description" not in step:
-            return f"Invalid step format at position {i}. Need {{'description': '...', 'success_criteria': '...'}}"
+    # Create user-specific data directory
+    user_dir = DATA_DIR / "users" / safe_user_id
+    user_dir.mkdir(parents=True, exist_ok=True)
 
-        plan_items.append(
-            {
-                "id": i,
-                "description": step["description"].strip(),
-                "success_criteria": step.get(
-                    "success_criteria", "Task completed successfully"
-                ).strip(),
-                "status": "pending",
-                "started_at": None,
-                "completed_at": None,
-                "output": None,
-            }
-        )
+    # Each user gets their own DuckDB database
+    db_path = str(user_dir / "pal_data.db")
 
-    # Initialize state
-    state["objective"] = objective.strip()
-    state["context"] = context.strip() if context else None
-    state["plan"] = plan_items
-    state["plan_length"] = len(plan_items)
-    state["current_step"] = 1
-    state["status"] = "in_progress"
-    state["created_at"] = datetime.now(timezone.utc).isoformat()
-    state["completed_at"] = None
+    print(f"Initializing Pal tools for user: {user_id}")
+    print(f"Database: {db_path}")
 
-    # Format response
-    steps_display = "\n".join(
-        [
-            f"  {s['id']}. {s['description']}\n     Done when: {s['success_criteria']}"
-            for s in plan_items
-        ]
-    )
-
-    logger.info(f"[PaL] Plan created: {objective} ({len(plan_items)} steps)")
-
-    return (
-        f"Plan created!\n\n"
-        f"Objective: {objective}\n"
-        f"{'Context: ' + context + chr(10) if context else ''}\n"
-        f"Steps:\n{steps_display}\n\n"
-        f"-> Ready to begin with Step 1"
-    )
-
-
-def complete_step(run_context: RunContext, output: str) -> str:
-    """
-    Mark the current step as complete with verification output.
-
-    The output should demonstrate that the success criteria has been met.
-    The agent will automatically advance to the next step.
-
-    Args:
-        output: Evidence/results that satisfy the step's success criteria
-    """
-    state = run_context.session_state
-    plan = state.get("plan", [])
-    current = state.get("current_step", 1)
-
-    if not plan:
-        return "No plan exists. Create one first with create_plan()."
-
-    if state.get("status") == "complete":
-        return (
-            "Plan is already complete. Use reset_plan(confirm=True) to start a new one."
-        )
-
-    # Get current step
-    step = plan[current - 1]
-
-    if step["status"] == "complete":
-        return f"Step {current} is already complete."
-
-    # Mark complete
-    now = datetime.now(timezone.utc).isoformat()
-    step["status"] = "complete"
-    step["completed_at"] = now
-    step["output"] = output.strip()
-
-    logger.info(f"[PaL] Step {current} completed: {step['description'][:50]}...")
-
-    # Check if this was the last step
-    if current >= len(plan):
-        state["status"] = "complete"
-        state["completed_at"] = now
-
-        # Calculate duration
-        created = datetime.fromisoformat(state["created_at"].replace("Z", "+00:00"))
-        completed = datetime.fromisoformat(now.replace("Z", "+00:00"))
-        duration = completed - created
-
-        return (
-            f"Step {current} complete!\n\n"
-            f"**Plan Finished!**\n"
-            f"All {len(plan)} steps completed successfully.\n"
-            f"Duration: {duration}\n\n"
-            f"**Learning opportunity**: Is there a reusable insight from this execution?\n"
-            f"If so, propose it and I'll save it with `save_learning()` for future tasks."
-        )
-
-    # Advance to next step
-    state["current_step"] = current + 1
-    next_step = plan[current]
-
-    return (
-        f"Step {current} complete!\n\n"
-        f"-> **Step {current + 1}**: {next_step['description']}\n"
-        f"  Success criteria: {next_step['success_criteria']}"
-    )
-
-
-def update_plan(
-    run_context: RunContext,
-    action: str,
-    step_id: Optional[int] = None,
-    new_step: Optional[dict] = None,
-    reason: Optional[str] = None,
-) -> str:
-    """
-    Modify the current plan dynamically.
-
-    Args:
-        action: The modification type
-                - "add": Append a new step to the end
-                - "insert": Insert a step after step_id
-                - "remove": Remove a future step
-                - "revisit": Go back to a previous step
-        step_id: Target step ID (required for insert/remove/revisit)
-        new_step: Step definition for add/insert {"description": "...", "success_criteria": "..."}
-        reason: Explanation for the change (required for revisit)
-    """
-    state = run_context.session_state
-    plan = state.get("plan", [])
-    current = state.get("current_step", 1)
-
-    if not plan:
-        return "No plan exists. Create one first."
-
-    # ADD: Append new step to end
-    if action == "add":
-        if not new_step or "description" not in new_step:
-            return "Provide new_step={'description': '...', 'success_criteria': '...'}"
-
-        new_item = {
-            "id": len(plan) + 1,
-            "description": new_step["description"].strip(),
-            "success_criteria": new_step.get(
-                "success_criteria", "Task completed"
-            ).strip(),
-            "status": "pending",
-            "started_at": None,
-            "completed_at": None,
-            "output": None,
-        }
-        plan.append(new_item)
-        state["plan_length"] = len(plan)
-
-        logger.info(f"[PaL] Step added: {new_item['description'][:50]}...")
-        return f"Added Step {new_item['id']}: {new_item['description']}"
-
-    # INSERT: Add step after a specific position
-    elif action == "insert":
-        if not step_id or not new_step:
-            return "Provide step_id (insert after) and new_step"
-        if step_id < current:
-            return f"Cannot insert before current step {current}"
-
-        new_item = {
-            "id": step_id + 1,
-            "description": new_step["description"].strip(),
-            "success_criteria": new_step.get(
-                "success_criteria", "Task completed"
-            ).strip(),
-            "status": "pending",
-            "started_at": None,
-            "completed_at": None,
-            "output": None,
-        }
-
-        # Insert and renumber
-        plan.insert(step_id, new_item)
-        for i, s in enumerate(plan, 1):
-            s["id"] = i
-        state["plan_length"] = len(plan)
-
-        logger.info(
-            f"[PaL] Step inserted after {step_id}: {new_item['description'][:50]}..."
-        )
-        return f"Inserted new Step {step_id + 1}: {new_item['description']}"
-
-    # REMOVE: Delete a future step
-    elif action == "remove":
-        if not step_id:
-            return "Provide step_id to remove"
-        if step_id <= current:
-            return f"Cannot remove step {step_id} - already current or completed"
-
-        removed = next((s for s in plan if s["id"] == step_id), None)
-        if not removed:
-            return f"Step {step_id} not found"
-
-        state["plan"] = [s for s in plan if s["id"] != step_id]
-        # Renumber remaining steps
-        for i, s in enumerate(state["plan"], 1):
-            s["id"] = i
-        state["plan_length"] = len(state["plan"])
-
-        logger.info(f"[PaL] Step removed: {removed['description'][:50]}...")
-        return f"Removed: {removed['description']}\nPlan now has {state['plan_length']} steps."
-
-    # REVISIT: Go back to a previous step
-    elif action == "revisit":
-        if not step_id:
-            return "Provide step_id to revisit"
-        if not reason:
-            return "Provide reason for revisiting"
-        if step_id > current:
-            return f"Step {step_id} hasn't been reached yet"
-
-        # Reset this step and all subsequent
-        for s in plan:
-            if s["id"] >= step_id:
-                s["status"] = "pending"
-                s["started_at"] = None
-                s["completed_at"] = None
-                if s["id"] == step_id:
-                    s["output"] = f"[Revisiting: {reason}]"
-                else:
-                    s["output"] = None
-
-        state["current_step"] = step_id
-        state["status"] = "in_progress"
-
-        logger.info(f"[PaL] Revisiting step {step_id}: {reason}")
-        return (
-            f"Revisiting Step {step_id}\nReason: {reason}\nProgress reset to this step."
-        )
-
-    return f"Unknown action: {action}. Use 'add', 'insert', 'remove', or 'revisit'."
-
-
-def block_step(
-    run_context: RunContext, blocker: str, suggestion: Optional[str] = None
-) -> str:
-    """
-    Mark the current step as blocked with an explanation.
-
-    Args:
-        blocker: What is preventing progress
-        suggestion: Optional suggested resolution
-    """
-    state = run_context.session_state
-    plan = state.get("plan", [])
-    current = state.get("current_step", 1)
-
-    if not plan:
-        return "No plan exists."
-
-    step = plan[current - 1]
-    step["status"] = "blocked"
-    step["output"] = f"BLOCKED: {blocker}"
-
-    logger.warning(f"[PaL] Step {current} blocked: {blocker}")
-
-    response = f"Step {current} is blocked\n\n**Blocker**: {blocker}\n"
-
-    if suggestion:
-        response += f"**Suggested resolution**: {suggestion}\n"
-
-    response += (
-        "\n**Options**:\n"
-        "  - Resolve the blocker and call complete_step()\n"
-        "  - Use update_plan(action='revisit', ...) to try a different approach\n"
-        "  - Use reset_plan(confirm=True) to start over"
-    )
-
-    return response
-
-
-def get_status(run_context: RunContext) -> str:
-    """
-    Get a formatted view of the current plan status.
-    Shows objective, all steps with their status, and progress.
-    """
-    state = run_context.session_state
-
-    if not state.get("plan"):
-        return (
-            "No active plan.\n\n"
-            "Use create_plan() to start. Example:\n"
-            "```\n"
-            "create_plan(\n"
-            '    objective="Your goal here",\n'
-            "    steps=[\n"
-            '        {"description": "First step", "success_criteria": "How to verify"},\n'
-            '        {"description": "Second step", "success_criteria": "How to verify"},\n'
-            "    ]\n"
-            ")\n"
-            "```"
-        )
-
-    objective = state["objective"]
-    context = state.get("context")
-    plan = state["plan"]
-    current = state["current_step"]
-    status = state["status"]
-
-    # Status icons
-    icons = {
-        "pending": "○",
-        "complete": "+",
-        "blocked": "x",
-    }
-
-    # Build output
-    lines = [
-        f"{'=' * 50}",
-        f"OBJECTIVE: {objective}",
-        f"STATUS: {status.upper()}",
+    tools: List[Union[Toolkit, Function]] = [
+        DuckDbTools(db_path=db_path, read_only=False),
     ]
 
-    if context:
-        lines.append(f"Context: {context}")
+    # Add MCP tools if API key is available
+    if EXA_MCP_URL:
+        tools.append(MCPTools(url=EXA_MCP_URL))
 
-    lines.extend(["", "STEPS:", ""])
-
-    for s in plan:
-        icon = icons.get(s["status"], "○")
-        is_current = s["id"] == current and s["status"] not in ["complete", "blocked"]
-        marker = " < CURRENT" if is_current else ""
-
-        lines.append(f"  {icon} [{s['id']}] {s['description']}{marker}")
-
-        if is_current:
-            lines.append(f"       Must satisfy: {s['success_criteria']}")
-
-        if s["output"] and s["status"] == "complete":
-            # Truncate long outputs
-            output_preview = (
-                s["output"][:80] + "..." if len(s["output"]) > 80 else s["output"]
-            )
-            lines.append(f"       -> {output_preview}")
-        elif s["status"] == "blocked":
-            lines.append(f"       -> {s['output']}")
-
-    # Progress bar
-    done = sum(1 for s in plan if s["status"] == "complete")
-    total = len(plan)
-    pct = int(done / total * 100) if total > 0 else 0
-    bar_filled = int(pct / 5)
-    bar = "#" * bar_filled + "-" * (20 - bar_filled)
-
-    lines.extend(
-        [
-            "",
-            f"Progress: [{bar}] {done}/{total} ({pct}%)",
-            f"{'=' * 50}",
-        ]
-    )
-
-    return "\n".join(lines)
-
-
-def reset_plan(run_context: RunContext, confirm: bool = False) -> str:
-    """
-    Clear the current plan to start fresh.
-
-    Args:
-        confirm: Must be True to actually reset (safety check)
-    """
-    if not confirm:
-        return (
-            "This will clear the current plan and all progress.\n"
-            "To confirm, call: reset_plan(confirm=True)"
-        )
-
-    state = run_context.session_state
-    state.update(
-        {
-            "objective": None,
-            "context": None,
-            "plan": [],
-            "plan_length": 0,
-            "current_step": 1,
-            "status": "no_plan",
-            "created_at": None,
-            "completed_at": None,
-        }
-    )
-
-    logger.info("[PaL] Plan reset")
-    return "Plan cleared. Ready to create a new plan."
+    return tools
 
 
 # ============================================================================
-# Learning Tool
-# ============================================================================
-def save_learning(
-    run_context: RunContext,
-    title: str,
-    learning: str,
-    applies_to: str,
-    effectiveness: Optional[str] = "medium",
-) -> str:
-    """
-    Save a reusable learning from this execution for future reference.
-
-    Only save learnings that are:
-    - Specific and actionable
-    - Applicable to similar future tasks
-    - Based on what actually worked
-
-    Args:
-        title: Short descriptive name (e.g., "Pricing Research Pattern")
-        learning: The actual insight/pattern (be specific!)
-        applies_to: What types of tasks this helps with
-        effectiveness: How well it worked - "low" | "medium" | "high"
-
-    Example:
-        save_learning(
-            title="Competitor Pricing Sources",
-            learning="For SaaS pricing: 1) Official pricing page, 2) G2/Capterra, 3) PricingBot archives. Official pages often hide enterprise tiers.",
-            applies_to="competitive analysis, pricing research, market research",
-            effectiveness="high"
-        )
-    """
-    state = run_context.session_state
-
-    payload = {
-        "title": title.strip(),
-        "learning": learning.strip(),
-        "applies_to": applies_to.strip(),
-        "effectiveness": effectiveness,
-        "source_objective": state.get("objective", "unknown"),
-        "source_steps": len(state.get("plan", [])),
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    }
-
-    logger.info(f"[PaL] Saving learning: {payload['title']}")
-
-    try:
-        execution_knowledge.insert(
-            name=payload["title"],
-            text_content=json.dumps(payload, ensure_ascii=False),
-            reader=TextReader(),
-            skip_if_exists=True,
-        )
-        return (
-            f"Learning saved!\n\n**{title}**\n{learning}\n\n_Applies to: {applies_to}_"
-        )
-    except Exception as e:
-        logger.error(f"[PaL] Failed to save learning: {e}")
-        return f"Failed to save learning: {str(e)}"
-
-
-# ============================================================================
-# Agent Instructions
+# Instructions
 # ============================================================================
 instructions = """\
-You are **PaL** - the **Plan and Learn** Agent.
+You are Pal, a personal agent that learns.
 
-You're a friendly, helpful assistant that can also tackle complex multi-step tasks with discipline. You plan when it's useful, not for everything.
+## Your Purpose
 
-## WHEN TO PLAN
+You are the user's AI-powered second brain. You research, capture, organize,
+connect, and retrieve their personal knowledge - so nothing useful is ever lost.
 
-**Create a plan** for tasks that:
-- Have multiple distinct steps
-- Need to be done in a specific order
-- Would benefit from tracking progress
-- Are complex enough that you might lose track
+## Two Storage Systems
 
-**Don't plan** for:
-- Simple questions -> just answer them
-- Quick tasks -> just do them
-- Casual conversation -> just chat
-- Single-step requests -> just handle them
+**DuckDB** - User's actual data:
+- notes, bookmarks, people, meetings, projects
+- This is where user content goes
+- Each user has their own isolated database
 
-When in doubt: if you can do it in one response without losing track, skip the plan.
+**Learning System** - System knowledge (schemas, research, errors):
+- Table schemas so you remember what tables exist
+- Research findings when user asks to save them
+- Error patterns and fixes so you don't repeat mistakes
+- NOT for user's notes/bookmarks/etc - those go in DuckDB
 
-## CURRENT STATE
-- Objective: {objective}
-- Step: {current_step} of {plan_length}
-- Status: {status}
+## CRITICAL: What goes where
 
-## THE PaL CYCLE (for complex tasks)
+| User says | Store in | NOT in |
+|-----------|----------|--------|
+| "Note: decided to use Postgres" | DuckDB `notes` table | save_learning |
+| "Bookmark https://..." | DuckDB `bookmarks` table | save_learning |
+| "Met Sarah from Anthropic" | DuckDB `people` table | save_learning |
+| (after CREATE TABLE) | save_learning (schema only) | - |
+| "Research X and save findings" | save_learning | - |
+| (after fixing a DuckDB error) | save_learning (error + fix) | - |
 
-1. **PLAN** - Break the goal into steps with success criteria. Call `create_plan()`.
-2. **EXECUTE** - Work through steps one at a time. Call `complete_step()` with evidence.
-3. **ADAPT** - Add, revisit, or block steps as needed. Plans can evolve.
-4. **LEARN** - After success, propose reusable insights. Save only with user approval.
+## When to call save_learning
 
-## EXECUTION RULES (when planning)
+1. **After CREATE TABLE** - Save the schema (not the data!)
+```
+save_learning(
+  title="notes table schema",
+  learning="CREATE TABLE notes (id INTEGER PRIMARY KEY, content TEXT, tags TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)",
+  context="Schema for user's notes",
+  tags=["schema"]
+)
+```
 
-- Complete step N before starting step N+1
-- Verify success criteria before calling `complete_step()`
-- Use tools to change state - don't just describe changes
+2. **When user explicitly asks to save research findings**
+```
+save_learning(
+  title="Event sourcing best practices",
+  learning="Key patterns: 1) Start simple 2) Events are immutable",
+  context="From web research",
+  tags=["research"]
+)
+```
 
-## YOUR KNOWLEDGE BASE
+3. **When you discover a new pattern, insight or knowledge**
+```
+save_learning(
+  title="User prefers concise SQL queries",
+  learning="Use CTEs instead of nested subqueries for readability",
+  context="Discovered while helping with data queries",
+  tags=["insight"]
+)
+```
 
-You have learnings from past tasks. When planning something similar:
-- Search for relevant patterns
-- Apply what worked before
-- Mention when a learning influenced your approach
+4. **After fixing an error** - Save what went wrong and the fix
+```
+save_learning(
+  title="DuckDB: avoid PRIMARY KEY constraint errors",
+  learning="Use INTEGER PRIMARY KEY AUTOINCREMENT or generate IDs with (SELECT COALESCE(MAX(id), 0) + 1 FROM table)",
+  context="Got constraint violation when inserting without explicit ID",
+  tags=["error", "duckdb"]
+)
+```
 
-## PERSONALITY
+## Workflow: Capturing a note
 
-You're a PaL - friendly, helpful, and easy to talk to. You:
-- Chat naturally for simple stuff
-- Get structured when complexity requires it
-- Celebrate progress without being over-the-top
-- Push back gently if asked to skip important steps
-- Learn and improve over time
+1. `search_learnings("notes schema")` - Check if table exists
+2. If no schema found -> CREATE TABLE -> `save_learning` with schema
+3. INSERT the note into DuckDB
+4. Confirm: "Saved your note"
 
-Be helpful first. Be disciplined when it matters.\
+Do NOT call save_learning with the note content. The note goes in DuckDB.
+
+## Research Tools (when available)
+
+- `web_search_exa` - General web search
+- `company_research_exa` - Company info
+- `people_search_exa` - Find people online
+- `get_code_context_exa` - Code examples, docs
+- `crawling_exa` - Read a specific URL
+
+## Personality
+
+- Warm but efficient
+- Quick to capture
+- Confirms what was saved and where
+- Learns from mistakes and doesn't repeat them\
 """
 
-
 # ============================================================================
-# Create the Agent
+# Create Agent
 # ============================================================================
 pal_agent = Agent(
     id="pal-agent",
-    name="PaL (Plan and Learn Agent)",
+    name="Pal",
     model=OpenAIResponses(id="gpt-5.2"),
-    instructions=instructions,
-    # Database for persistence
     db=demo_db,
+    instructions=instructions,
     # Knowledge base for learnings
-    knowledge=execution_knowledge,
+    knowledge=pal_knowledge,
     search_knowledge=True,
-    # Session state structure
-    session_state={
-        "objective": None,
-        "context": None,
-        "plan": [],
-        "plan_length": 0,
-        "current_step": 1,
-        "status": "no_plan",
-        "created_at": None,
-        "completed_at": None,
-    },
-    tools=[
-        # Plan management
-        create_plan,
-        complete_step,
-        update_plan,
-        block_step,
-        get_status,
-        reset_plan,
-        # Learning
-        save_learning,
-        # Execution capabilities
-        ParallelTools(),
-        YFinanceTools(),
-    ],
-    # Make state available in instructions
-    add_session_state_to_context=True,
-    # Enable memory for user preferences
-    enable_agentic_memory=True,
-    # Context management
+    # Learning system
+    learning=LearningMachine(
+        knowledge=pal_knowledge,
+        user_profile=UserProfileConfig(mode=LearningMode.AGENTIC),
+        user_memory=UserMemoryConfig(mode=LearningMode.AGENTIC),
+        learned_knowledge=LearnedKnowledgeConfig(mode=LearningMode.AGENTIC),
+    ),
+    # Callable tools - per-user DuckDB isolation
+    tools=get_user_tools,
+    # Context
     add_datetime_to_context=True,
     add_history_to_context=True,
-    num_history_runs=5,
     read_chat_history=True,
-    # Output
+    num_history_runs=5,
     markdown=True,
 )
-
-
-# ============================================================================
-# CLI Interface
-# ============================================================================
-def run_pal(message: str, session_id: Optional[str] = None, show_state: bool = True):
-    """
-    Run PaL with a message, optionally continuing a session.
-
-    Args:
-        message: The user's message/request
-        session_id: Optional session ID to continue a previous session
-        show_state: Whether to print the state after the response
-    """
-    pal_agent.print_response(message, session_id=session_id, stream=True)
-    if show_state:
-        state = pal_agent.get_session_state()
-        print(f"\n{'-' * 50}")
-        print("Session State:")
-        print(f"   Status: {state.get('status', 'no_plan')}")
-        if state.get("plan"):
-            done = sum(1 for s in state["plan"] if s["status"] == "complete")
-            print(f"   Progress: {done}/{len(state['plan'])} steps")
-        print(f"{'-' * 50}")
 
 
 # ============================================================================
@@ -692,27 +259,33 @@ if __name__ == "__main__":
     import sys
 
     print("=" * 60)
-    print("PaL - Plan and Learn Agent")
-    print("   Plan. Execute. Learn. Repeat.")
+    print("Pal - Personal Agent that Learns")
+    print("   Your AI-powered second brain")
     print("=" * 60)
 
     if len(sys.argv) > 1:
         # Run with command line argument
         message = " ".join(sys.argv[1:])
-        run_pal(message)
+        pal_agent.print_response(message, user_id="demo_user", stream=True)
     else:
         # Run demo tests
-        print("\n--- Demo 1: Simple Question (no plan needed) ---")
-        pal_agent.print_response("What is the capital of France?", stream=True)
-
-        print("\n--- Demo 2: Complex Task (needs planning) ---")
+        print("\n--- Demo 1: Introduction ---")
         pal_agent.print_response(
-            "Help me compare Supabase vs Firebase for a new startup project",
+            "Tell me about yourself",
+            user_id="demo_user",
             stream=True,
         )
 
-        print("\n--- Demo 3: Financial Analysis ---")
+        print("\n--- Demo 2: Create a note ---")
         pal_agent.print_response(
-            "Analyze NVDA stock and give me a quick investment summary",
+            "Note: Today I decided to use PostgreSQL instead of MySQL for the new project",
+            user_id="demo_user",
+            stream=True,
+        )
+
+        print("\n--- Demo 3: Query notes ---")
+        pal_agent.print_response(
+            "What notes do I have?",
+            user_id="demo_user",
             stream=True,
         )
