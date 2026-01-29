@@ -72,6 +72,12 @@ class Step:
     add_workflow_history: Optional[bool] = None
     num_history_runs: int = 3
 
+    # Human-in-the-loop (HITL) configuration
+    # If True, the step will pause before execution and require user confirmation
+    requires_confirmation: bool = False
+    # Message to display to the user when requesting confirmation
+    confirmation_message: Optional[str] = None
+
     _retry_count: int = 0
 
     def __init__(
@@ -87,6 +93,8 @@ class Step:
         strict_input_validation: bool = False,
         add_workflow_history: Optional[bool] = None,
         num_history_runs: int = 3,
+        requires_confirmation: bool = False,
+        confirmation_message: Optional[str] = None,
     ):
         # Auto-detect name for function executors if not provided
         if name is None and executor is not None:
@@ -107,6 +115,8 @@ class Step:
         self.strict_input_validation = strict_input_validation
         self.add_workflow_history = add_workflow_history
         self.num_history_runs = num_history_runs
+        self.requires_confirmation = requires_confirmation
+        self.confirmation_message = confirmation_message
         self.step_id = step_id
 
         if step_id is None:
@@ -126,6 +136,8 @@ class Step:
             "strict_input_validation": self.strict_input_validation,
             "add_workflow_history": self.add_workflow_history,
             "num_history_runs": self.num_history_runs,
+            "requires_confirmation": self.requires_confirmation,
+            "confirmation_message": self.confirmation_message,
         }
 
         if self.agent is not None:
@@ -189,6 +201,8 @@ class Step:
             strict_input_validation=config.get("strict_input_validation", False),
             add_workflow_history=config.get("add_workflow_history"),
             num_history_runs=config.get("num_history_runs", 3),
+            requires_confirmation=config.get("requires_confirmation", False),
+            confirmation_message=config.get("confirmation_message"),
             agent=agent,
             team=team,
             executor=executor,

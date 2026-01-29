@@ -55,6 +55,7 @@ from agno.run.team import RunContentEvent as TeamRunContentEvent
 from agno.run.team import TeamRunEvent
 from agno.run.workflow import (
     StepOutputEvent,
+    StepPausedEvent,
     WorkflowCancelledEvent,
     WorkflowCompletedEvent,
     WorkflowRunEvent,
@@ -92,6 +93,7 @@ from agno.workflow.types import (
     StepInput,
     StepMetrics,
     StepOutput,
+    StepRequirement,
     StepType,
     WorkflowExecutionInput,
     WorkflowMetrics,
@@ -1659,8 +1661,35 @@ class Workflow:
                         shared_files=shared_files,
                     )
 
-                    # Check for can cellation before executing step
+                    # Check for cancellation before executing step
                     raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+
+                    # Check if step requires confirmation (HITL)
+                    if isinstance(step, Step) and step.requires_confirmation:
+                        log_debug(f"Step '{step_name}' requires confirmation - pausing workflow")
+
+                        # Create step requirement
+                        step_requirement = StepRequirement(
+                            step_id=step.step_id or str(uuid4()),
+                            step_name=step_name,
+                            step_index=i,
+                            requires_confirmation=True,
+                            confirmation_message=step.confirmation_message,
+                            step_input=step_input,
+                        )
+
+                        # Store the paused state
+                        workflow_run_response.status = RunStatus.paused
+                        workflow_run_response.step_requirements = [step_requirement]
+                        workflow_run_response._paused_step_index = i
+                        workflow_run_response.step_results = collected_step_outputs
+
+                        # Save the session with paused state
+                        self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
+                        session.upsert_run(run=workflow_run_response)
+                        self.save_session(session=session)
+
+                        return workflow_run_response
 
                     step_output = step.execute(  # type: ignore[union-attr]
                         step_input,
@@ -1852,6 +1881,47 @@ class Workflow:
                         shared_audio=shared_audio,
                         shared_files=shared_files,
                     )
+
+                    # Check if step requires confirmation (HITL)
+                    if isinstance(step, Step) and step.requires_confirmation:
+                        log_debug(f"Step '{step_name}' requires confirmation - pausing workflow")
+
+                        # Create step requirement
+                        step_requirement = StepRequirement(
+                            step_id=step.step_id or str(uuid4()),
+                            step_name=step_name,
+                            step_index=i,
+                            requires_confirmation=True,
+                            confirmation_message=step.confirmation_message,
+                            step_input=step_input,
+                        )
+
+                        # Store the paused state
+                        workflow_run_response.status = RunStatus.paused
+                        workflow_run_response.step_requirements = [step_requirement]
+                        workflow_run_response._paused_step_index = i
+                        workflow_run_response.step_results = collected_step_outputs
+
+                        # Yield StepPausedEvent
+                        step_paused_event = StepPausedEvent(
+                            run_id=workflow_run_response.run_id or "",
+                            workflow_name=workflow_run_response.workflow_name,
+                            workflow_id=workflow_run_response.workflow_id,
+                            session_id=workflow_run_response.session_id,
+                            step_name=step_name,
+                            step_index=i,
+                            step_id=step.step_id,
+                            requires_confirmation=True,
+                            confirmation_message=step.confirmation_message,
+                        )
+                        yield self._handle_event(step_paused_event, workflow_run_response)
+
+                        # Save the session with paused state
+                        self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
+                        session.upsert_run(run=workflow_run_response)
+                        self.save_session(session=session)
+
+                        return
 
                     # Execute step with streaming and yield all events
                     for event in step.execute_stream(  # type: ignore[union-attr]
@@ -2246,6 +2316,36 @@ class Workflow:
                     # Check for cancellation before executing step
                     await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
 
+                    # Check if step requires confirmation (HITL)
+                    if isinstance(step, Step) and step.requires_confirmation:
+                        log_debug(f"Step '{step_name}' requires confirmation - pausing workflow")
+
+                        # Create step requirement
+                        step_requirement = StepRequirement(
+                            step_id=step.step_id or str(uuid4()),
+                            step_name=step_name,
+                            step_index=i,
+                            requires_confirmation=True,
+                            confirmation_message=step.confirmation_message,
+                            step_input=step_input,
+                        )
+
+                        # Store the paused state
+                        workflow_run_response.status = RunStatus.paused
+                        workflow_run_response.step_requirements = [step_requirement]
+                        workflow_run_response._paused_step_index = i
+                        workflow_run_response.step_results = collected_step_outputs
+
+                        # Save the session with paused state
+                        self._update_session_metrics(session=workflow_session, workflow_run_response=workflow_run_response)
+                        workflow_session.upsert_run(run=workflow_run_response)
+                        if self._has_async_db():
+                            await self.asave_session(session=workflow_session)
+                        else:
+                            self.save_session(session=workflow_session)
+
+                        return workflow_run_response
+
                     step_output = await step.aexecute(  # type: ignore[union-attr]
                         step_input,
                         session_id=session_id,
@@ -2451,6 +2551,50 @@ class Workflow:
                         shared_audio=shared_audio,
                         shared_files=shared_files,
                     )
+
+                    # Check if step requires confirmation (HITL)
+                    if isinstance(step, Step) and step.requires_confirmation:
+                        log_debug(f"Step '{step_name}' requires confirmation - pausing workflow")
+
+                        # Create step requirement
+                        step_requirement = StepRequirement(
+                            step_id=step.step_id or str(uuid4()),
+                            step_name=step_name,
+                            step_index=i,
+                            requires_confirmation=True,
+                            confirmation_message=step.confirmation_message,
+                            step_input=step_input,
+                        )
+
+                        # Store the paused state
+                        workflow_run_response.status = RunStatus.paused
+                        workflow_run_response.step_requirements = [step_requirement]
+                        workflow_run_response._paused_step_index = i
+                        workflow_run_response.step_results = collected_step_outputs
+
+                        # Yield StepPausedEvent
+                        step_paused_event = StepPausedEvent(
+                            run_id=workflow_run_response.run_id or "",
+                            workflow_name=workflow_run_response.workflow_name,
+                            workflow_id=workflow_run_response.workflow_id,
+                            session_id=workflow_run_response.session_id,
+                            step_name=step_name,
+                            step_index=i,
+                            step_id=step.step_id,
+                            requires_confirmation=True,
+                            confirmation_message=step.confirmation_message,
+                        )
+                        yield self._handle_event(step_paused_event, workflow_run_response, websocket_handler=websocket_handler)
+
+                        # Save the session with paused state
+                        self._update_session_metrics(session=workflow_session, workflow_run_response=workflow_run_response)
+                        workflow_session.upsert_run(run=workflow_run_response)
+                        if self._has_async_db():
+                            await self.asave_session(session=workflow_session)
+                        else:
+                            self.save_session(session=workflow_session)
+
+                        return
 
                     # Execute step with streaming and yield all events
                     async for event in step.aexecute_stream(  # type: ignore[union-attr]
@@ -3804,6 +3948,1221 @@ class Workflow:
             bool: True if the run was found and marked for cancellation, False otherwise.
         """
         return await acancel_run_global(run_id)
+
+    @overload
+    def continue_run(
+        self,
+        run_response: Optional[WorkflowRunOutput] = None,
+        *,
+        run_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        step_requirements: Optional[List[StepRequirement]] = None,
+        stream: Literal[False] = False,
+        stream_events: Optional[bool] = None,
+    ) -> WorkflowRunOutput: ...
+
+    @overload
+    def continue_run(
+        self,
+        run_response: Optional[WorkflowRunOutput] = None,
+        *,
+        run_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        step_requirements: Optional[List[StepRequirement]] = None,
+        stream: Literal[True] = True,
+        stream_events: Optional[bool] = None,
+    ) -> Iterator[WorkflowRunOutputEvent]: ...
+
+    def continue_run(
+        self,
+        run_response: Optional[WorkflowRunOutput] = None,
+        *,
+        run_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        step_requirements: Optional[List[StepRequirement]] = None,
+        stream: Optional[bool] = None,
+        stream_events: Optional[bool] = None,
+        **kwargs: Any,
+    ) -> Union[WorkflowRunOutput, Iterator[WorkflowRunOutputEvent]]:
+        """Continue a paused workflow run after step confirmation.
+
+        This method resumes a workflow that was paused due to a step requiring
+        user confirmation. The step requirements must be resolved (confirmed or
+        rejected) before calling this method.
+
+        Args:
+            run_response: The paused WorkflowRunOutput to continue. If not provided,
+                run_id and session_id must be provided to load the run from storage.
+            run_id: The run_id of the paused workflow run. Required if run_response
+                is not provided.
+            session_id: The session_id of the paused workflow run. Required if
+                run_response is not provided.
+            step_requirements: Updated step requirements with confirmation status.
+                If not provided, uses the requirements from run_response.
+            stream: Whether to stream the response. Defaults to workflow's stream setting.
+            stream_events: Whether to stream events. Defaults to workflow's stream_events setting.
+
+        Returns:
+            WorkflowRunOutput if stream=False, Iterator[WorkflowRunOutputEvent] if stream=True.
+
+        Raises:
+            ValueError: If neither run_response nor (run_id + session_id) are provided.
+            ValueError: If the run is not in a paused state.
+            ValueError: If step requirements have not been resolved.
+
+        Example:
+            ```python
+            # Run workflow with a step that requires confirmation
+            run_output = workflow.run("process data")
+
+            if run_output.is_paused:
+                # Check what step requires confirmation
+                for requirement in run_output.active_step_requirements:
+                    if requirement.needs_confirmation:
+                        print(f"Step '{requirement.step_name}' requires confirmation")
+                        print(f"Message: {requirement.confirmation_message}")
+                        # User confirms
+                        requirement.confirm()
+
+                # Continue the workflow
+                run_output = workflow.continue_run(run_output)
+            ```
+        """
+        if self._has_async_db():
+            raise Exception("`continue_run()` is not supported with an async DB. Please use `acontinue_run()`.")
+
+        # Get run_response from storage if not provided
+        if run_response is None:
+            if run_id is None or session_id is None:
+                raise ValueError("Either run_response or (run_id and session_id) must be provided.")
+            run_response = self.get_run_output(run_id=run_id, session_id=session_id)
+            if run_response is None:
+                raise ValueError(f"Could not find run with id {run_id} in session {session_id}")
+
+        # Validate the run is paused
+        if run_response.status != RunStatus.paused:
+            raise ValueError(f"Cannot continue a run that is not paused. Current status: {run_response.status}")
+
+        # Update step requirements if provided
+        if step_requirements is not None:
+            run_response.step_requirements = step_requirements
+
+        # Validate that all requirements are resolved
+        if run_response.active_step_requirements:
+            unresolved = [req.step_name for req in run_response.active_step_requirements]
+            raise ValueError(f"Cannot continue run - unresolved step requirements: {unresolved}")
+
+        # Check if any step was rejected
+        rejected_steps = [
+            req for req in (run_response.step_requirements or [])
+            if req.requires_confirmation and req.confirmed is False
+        ]
+        if rejected_steps:
+            # Mark workflow as cancelled due to rejected step
+            run_response.status = RunStatus.cancelled
+            run_response.content = f"Workflow cancelled: Step '{rejected_steps[0].step_name}' was rejected"
+
+            # Save and return
+            session_id = run_response.session_id or self.session_id
+            if session_id:
+                session = self.get_session(session_id=session_id)
+                if session:
+                    session.upsert_run(run=run_response)
+                    self.save_session(session=session)
+
+            if stream:
+                def cancelled_generator() -> Iterator[WorkflowRunOutputEvent]:
+                    yield WorkflowCancelledEvent(
+                        run_id=run_response.run_id or "",
+                        workflow_id=self.id,
+                        workflow_name=self.name,
+                        session_id=run_response.session_id,
+                        reason=run_response.content,
+                    )
+                return cancelled_generator()
+            return run_response
+
+        # Get the paused step index
+        paused_step_index = run_response._paused_step_index
+        if paused_step_index is None:
+            raise ValueError("Cannot continue run - no paused step index found")
+
+        # Clear the confirmation requirement since it's now resolved
+        # This allows the step to execute on resume
+        if isinstance(self.steps, list) and paused_step_index < len(self.steps):
+            step = self.steps[paused_step_index]
+            if isinstance(step, Step):
+                step.requires_confirmation = False
+
+        # Resume execution
+        session_id = run_response.session_id or self.session_id
+        if session_id is None:
+            raise ValueError("Session ID is required to continue a run")
+
+        # Use stream override value when necessary
+        if stream is None:
+            stream = self.stream or False
+        stream_events = stream_events or self.stream_events
+
+        # Load session
+        session = self.get_session(session_id=session_id)
+        if session is None:
+            raise ValueError(f"Could not find session with id {session_id}")
+
+        # Update run status to running
+        run_response.status = RunStatus.running
+        run_response.step_requirements = None
+
+        # Create run context
+        run_context = RunContext(
+            run_id=run_response.run_id or str(uuid4()),
+            session_id=session_id,
+            user_id=run_response.user_id,
+            session_state=session.session_data.get("session_state", {}) if session.session_data else {},
+        )
+
+        # Create execution input from the original input
+        execution_input = WorkflowExecutionInput(
+            input=run_response.input,
+        )
+
+        if stream:
+            return self._continue_execute_stream(
+                session=session,
+                execution_input=execution_input,
+                workflow_run_response=run_response,
+                run_context=run_context,
+                start_step_index=paused_step_index,
+                stream_events=stream_events or False,
+                **kwargs,
+            )
+        else:
+            return self._continue_execute(
+                session=session,
+                execution_input=execution_input,
+                workflow_run_response=run_response,
+                run_context=run_context,
+                start_step_index=paused_step_index,
+                **kwargs,
+            )
+
+    def _continue_execute(
+        self,
+        session: WorkflowSession,
+        execution_input: WorkflowExecutionInput,
+        workflow_run_response: WorkflowRunOutput,
+        run_context: RunContext,
+        start_step_index: int,
+        background_tasks: Optional[Any] = None,
+        **kwargs: Any,
+    ) -> WorkflowRunOutput:
+        """Continue executing a workflow from a specific step index."""
+        try:
+            # Restore previous step outputs from step_results
+            collected_step_outputs: List[Union[StepOutput, List[StepOutput]]] = list(workflow_run_response.step_results or [])
+            previous_step_outputs: Dict[str, StepOutput] = {}
+            for step_output in collected_step_outputs:
+                if isinstance(step_output, StepOutput) and step_output.step_name:
+                    previous_step_outputs[step_output.step_name] = step_output
+
+            shared_images: List[Image] = execution_input.images or []
+            output_images: List[Image] = (execution_input.images or []).copy()
+            shared_videos: List[Video] = execution_input.videos or []
+            output_videos: List[Video] = (execution_input.videos or []).copy()
+            shared_audio: List[Audio] = execution_input.audio or []
+            output_audio: List[Audio] = (execution_input.audio or []).copy()
+            shared_files: List[File] = execution_input.files or []
+            output_files: List[File] = (execution_input.files or []).copy()
+
+            # Restore shared media from previous steps
+            for step_output in collected_step_outputs:
+                if isinstance(step_output, StepOutput):
+                    shared_images.extend(step_output.images or [])
+                    shared_videos.extend(step_output.videos or [])
+                    shared_audio.extend(step_output.audio or [])
+                    shared_files.extend(step_output.files or [])
+                    output_images.extend(step_output.images or [])
+                    output_videos.extend(step_output.videos or [])
+                    output_audio.extend(step_output.audio or [])
+                    output_files.extend(step_output.files or [])
+
+            # Continue from the paused step
+            for i, step in enumerate(self.steps[start_step_index:], start=start_step_index):  # type: ignore[arg-type]
+                raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+                step_name = getattr(step, "name", f"step_{i + 1}")
+                log_debug(f"Continuing step {i + 1}/{self._get_step_count()}: {step_name}")
+
+                # Create enhanced StepInput
+                step_input = self._create_step_input(
+                    execution_input=execution_input,
+                    previous_step_outputs=previous_step_outputs,
+                    shared_images=shared_images,
+                    shared_videos=shared_videos,
+                    shared_audio=shared_audio,
+                    shared_files=shared_files,
+                )
+
+                raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+
+                # Check if step requires confirmation (HITL) - for subsequent steps
+                if isinstance(step, Step) and step.requires_confirmation and i != start_step_index:
+                    log_debug(f"Step '{step_name}' requires confirmation - pausing workflow")
+
+                    step_requirement = StepRequirement(
+                        step_id=step.step_id or str(uuid4()),
+                        step_name=step_name,
+                        step_index=i,
+                        requires_confirmation=True,
+                        confirmation_message=step.confirmation_message,
+                        step_input=step_input,
+                    )
+
+                    workflow_run_response.status = RunStatus.paused
+                    workflow_run_response.step_requirements = [step_requirement]
+                    workflow_run_response._paused_step_index = i
+                    workflow_run_response.step_results = collected_step_outputs
+
+                    self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
+                    session.upsert_run(run=workflow_run_response)
+                    self.save_session(session=session)
+
+                    return workflow_run_response
+
+                step_output = step.execute(  # type: ignore[union-attr]
+                    step_input,
+                    session_id=session.session_id,
+                    user_id=self.user_id,
+                    workflow_run_response=workflow_run_response,
+                    run_context=run_context,
+                    store_executor_outputs=self.store_executor_outputs,
+                    workflow_session=session,
+                    add_workflow_history_to_steps=self.add_workflow_history_to_steps
+                    if self.add_workflow_history_to_steps
+                    else None,
+                    num_history_runs=self.num_history_runs,
+                    background_tasks=background_tasks,
+                )
+
+                raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+
+                previous_step_outputs[step_name] = step_output
+                collected_step_outputs.append(step_output)
+
+                shared_images.extend(step_output.images or [])
+                shared_videos.extend(step_output.videos or [])
+                shared_audio.extend(step_output.audio or [])
+                shared_files.extend(step_output.files or [])
+                output_images.extend(step_output.images or [])
+                output_videos.extend(step_output.videos or [])
+                output_audio.extend(step_output.audio or [])
+                output_files.extend(step_output.files or [])
+
+                if step_output.stop:
+                    logger.info(f"Early termination requested by step {step_name}")
+                    break
+
+            # Update the workflow_run_response with completion data
+            if collected_step_outputs:
+                if workflow_run_response.metrics:
+                    workflow_run_response.metrics.stop_timer()
+
+                workflow_run_response.metrics = self._aggregate_workflow_metrics(
+                    collected_step_outputs,
+                    workflow_run_response.metrics,  # type: ignore[arg-type]
+                )
+                last_output = cast(StepOutput, collected_step_outputs[-1])
+
+                if getattr(last_output, "steps", None):
+                    _cur = last_output
+                    while getattr(_cur, "steps", None):
+                        _steps = _cur.steps or []
+                        if not _steps:
+                            break
+                        _cur = _steps[-1]
+                    workflow_run_response.content = _cur.content
+                else:
+                    workflow_run_response.content = last_output.content
+            else:
+                workflow_run_response.content = "No steps executed"
+
+            workflow_run_response.step_results = collected_step_outputs
+            workflow_run_response.images = output_images
+            workflow_run_response.videos = output_videos
+            workflow_run_response.audio = output_audio
+            workflow_run_response.status = RunStatus.completed
+            workflow_run_response._paused_step_index = None
+
+        except RunCancelledException as e:
+            logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled")
+            workflow_run_response.status = RunStatus.cancelled
+            workflow_run_response.content = str(e)
+        except Exception as e:
+            logger.error(f"Workflow execution failed: {e}")
+            workflow_run_response.status = RunStatus.error
+            workflow_run_response.content = f"Workflow execution failed: {e}"
+            raise e
+        finally:
+            if workflow_run_response.metrics:
+                workflow_run_response.metrics.stop_timer()
+
+            self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
+            session.upsert_run(run=workflow_run_response)
+            self.save_session(session=session)
+            cleanup_run(workflow_run_response.run_id)  # type: ignore
+
+        if self.telemetry:
+            self._log_workflow_telemetry(session_id=session.session_id, run_id=workflow_run_response.run_id)
+
+        return workflow_run_response
+
+    def _continue_execute_stream(
+        self,
+        session: WorkflowSession,
+        execution_input: WorkflowExecutionInput,
+        workflow_run_response: WorkflowRunOutput,
+        run_context: RunContext,
+        start_step_index: int,
+        stream_events: bool = False,
+        background_tasks: Optional[Any] = None,
+        **kwargs: Any,
+    ) -> Iterator[WorkflowRunOutputEvent]:
+        """Continue executing a workflow from a specific step index with streaming."""
+        try:
+            # Restore previous step outputs from step_results
+            collected_step_outputs: List[Union[StepOutput, List[StepOutput]]] = list(workflow_run_response.step_results or [])
+            previous_step_outputs: Dict[str, StepOutput] = {}
+            for step_output in collected_step_outputs:
+                if isinstance(step_output, StepOutput) and step_output.step_name:
+                    previous_step_outputs[step_output.step_name] = step_output
+
+            shared_images: List[Image] = execution_input.images or []
+            output_images: List[Image] = (execution_input.images or []).copy()
+            shared_videos: List[Video] = execution_input.videos or []
+            output_videos: List[Video] = (execution_input.videos or []).copy()
+            shared_audio: List[Audio] = execution_input.audio or []
+            output_audio: List[Audio] = (execution_input.audio or []).copy()
+            shared_files: List[File] = execution_input.files or []
+            output_files: List[File] = (execution_input.files or []).copy()
+
+            # Restore shared media from previous steps
+            for step_output in collected_step_outputs:
+                if isinstance(step_output, StepOutput):
+                    shared_images.extend(step_output.images or [])
+                    shared_videos.extend(step_output.videos or [])
+                    shared_audio.extend(step_output.audio or [])
+                    shared_files.extend(step_output.files or [])
+                    output_images.extend(step_output.images or [])
+                    output_videos.extend(step_output.videos or [])
+                    output_audio.extend(step_output.audio or [])
+                    output_files.extend(step_output.files or [])
+
+            early_termination = False
+
+            # Continue from the paused step
+            for i, step in enumerate(self.steps[start_step_index:], start=start_step_index):  # type: ignore[arg-type]
+                raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+                step_name = getattr(step, "name", f"step_{i + 1}")
+                log_debug(f"Streaming continued step {i + 1}/{self._get_step_count()}: {step_name}")
+
+                # Create enhanced StepInput
+                step_input = self._create_step_input(
+                    execution_input=execution_input,
+                    previous_step_outputs=previous_step_outputs,
+                    shared_images=shared_images,
+                    shared_videos=shared_videos,
+                    shared_audio=shared_audio,
+                    shared_files=shared_files,
+                )
+
+                # Check if step requires confirmation (HITL) - for subsequent steps
+                if isinstance(step, Step) and step.requires_confirmation and i != start_step_index:
+                    log_debug(f"Step '{step_name}' requires confirmation - pausing workflow")
+
+                    step_requirement = StepRequirement(
+                        step_id=step.step_id or str(uuid4()),
+                        step_name=step_name,
+                        step_index=i,
+                        requires_confirmation=True,
+                        confirmation_message=step.confirmation_message,
+                        step_input=step_input,
+                    )
+
+                    workflow_run_response.status = RunStatus.paused
+                    workflow_run_response.step_requirements = [step_requirement]
+                    workflow_run_response._paused_step_index = i
+                    workflow_run_response.step_results = collected_step_outputs
+
+                    step_paused_event = StepPausedEvent(
+                        run_id=workflow_run_response.run_id or "",
+                        workflow_name=workflow_run_response.workflow_name,
+                        workflow_id=workflow_run_response.workflow_id,
+                        session_id=workflow_run_response.session_id,
+                        step_name=step_name,
+                        step_index=i,
+                        step_id=step.step_id,
+                        requires_confirmation=True,
+                        confirmation_message=step.confirmation_message,
+                    )
+                    yield self._handle_event(step_paused_event, workflow_run_response)
+
+                    self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
+                    session.upsert_run(run=workflow_run_response)
+                    self.save_session(session=session)
+
+                    return
+
+                # Execute step with streaming
+                for event in step.execute_stream(  # type: ignore[union-attr]
+                    step_input,
+                    session_id=session.session_id,
+                    user_id=self.user_id,
+                    stream_events=stream_events,
+                    stream_executor_events=self.stream_executor_events,
+                    workflow_run_response=workflow_run_response,
+                    run_context=run_context,
+                    step_index=i,
+                    store_executor_outputs=self.store_executor_outputs,
+                    workflow_session=session,
+                    add_workflow_history_to_steps=self.add_workflow_history_to_steps
+                    if self.add_workflow_history_to_steps
+                    else None,
+                    num_history_runs=self.num_history_runs,
+                    background_tasks=background_tasks,
+                ):
+                    raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+
+                    if isinstance(event, StepOutput):
+                        step_output = event
+                        collected_step_outputs.append(step_output)
+                        previous_step_outputs[step_name] = step_output
+
+                        step_output_event = self._transform_step_output_to_event(
+                            step_output, workflow_run_response, step_index=i
+                        )
+
+                        if step_output.stop:
+                            logger.info(f"Early termination requested by step {step_name}")
+                            shared_images.extend(step_output.images or [])
+                            shared_videos.extend(step_output.videos or [])
+                            shared_audio.extend(step_output.audio or [])
+                            shared_files.extend(step_output.files or [])
+                            output_images.extend(step_output.images or [])
+                            output_videos.extend(step_output.videos or [])
+                            output_audio.extend(step_output.audio or [])
+                            output_files.extend(step_output.files or [])
+
+                            if getattr(step, "executor_type", None) == "function":
+                                yield step_output_event
+
+                            early_termination = True
+                            break
+
+                        shared_images.extend(step_output.images or [])
+                        shared_videos.extend(step_output.videos or [])
+                        shared_audio.extend(step_output.audio or [])
+                        shared_files.extend(step_output.files or [])
+                        output_images.extend(step_output.images or [])
+                        output_videos.extend(step_output.videos or [])
+                        output_audio.extend(step_output.audio or [])
+                        output_files.extend(step_output.files or [])
+
+                        if getattr(step, "executor_type", None) == "function":
+                            yield step_output_event
+
+                    elif isinstance(event, WorkflowRunOutputEvent):  # type: ignore
+                        enriched_event = self._enrich_event_with_workflow_context(
+                            event, workflow_run_response, step_index=i, step=step
+                        )
+                        yield self._handle_event(enriched_event, workflow_run_response)  # type: ignore
+
+                    else:
+                        enriched_event = self._enrich_event_with_workflow_context(
+                            event, workflow_run_response, step_index=i, step=step
+                        )
+                        if self.stream_executor_events:
+                            yield self._handle_event(enriched_event, workflow_run_response)  # type: ignore
+
+                if early_termination:
+                    break
+
+            # Update the workflow_run_response with completion data
+            if collected_step_outputs:
+                if workflow_run_response.metrics:
+                    workflow_run_response.metrics.stop_timer()
+
+                workflow_run_response.metrics = self._aggregate_workflow_metrics(
+                    collected_step_outputs,
+                    workflow_run_response.metrics,  # type: ignore[arg-type]
+                )
+                last_output = cast(StepOutput, collected_step_outputs[-1])
+
+                if getattr(last_output, "steps", None):
+                    _cur = last_output
+                    while getattr(_cur, "steps", None):
+                        _steps = _cur.steps or []
+                        if not _steps:
+                            break
+                        _cur = _steps[-1]
+                    workflow_run_response.content = _cur.content
+                else:
+                    workflow_run_response.content = last_output.content
+            else:
+                workflow_run_response.content = "No steps executed"
+
+            workflow_run_response.step_results = collected_step_outputs
+            workflow_run_response.images = output_images
+            workflow_run_response.videos = output_videos
+            workflow_run_response.audio = output_audio
+            workflow_run_response.status = RunStatus.completed
+            workflow_run_response._paused_step_index = None
+
+        except RunCancelledException as e:
+            logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled")
+            workflow_run_response.status = RunStatus.cancelled
+            workflow_run_response.content = str(e)
+
+            cancelled_event = WorkflowCancelledEvent(
+                run_id=workflow_run_response.run_id or "",
+                workflow_id=self.id,
+                workflow_name=self.name,
+                session_id=session.session_id,
+                reason=str(e),
+            )
+            yield self._handle_event(cancelled_event, workflow_run_response)
+        except Exception as e:
+            logger.error(f"Workflow execution failed: {e}")
+            workflow_run_response.status = RunStatus.error
+            workflow_run_response.content = f"Workflow execution failed: {e}"
+            raise e
+
+        # Yield workflow completed event
+        workflow_completed_event = WorkflowCompletedEvent(
+            run_id=workflow_run_response.run_id or "",
+            content=workflow_run_response.content,
+            workflow_name=workflow_run_response.workflow_name,
+            workflow_id=workflow_run_response.workflow_id,
+            session_id=workflow_run_response.session_id,
+            step_results=workflow_run_response.step_results,  # type: ignore
+            metadata=workflow_run_response.metadata,
+        )
+        yield self._handle_event(workflow_completed_event, workflow_run_response)
+
+        if workflow_run_response.metrics:
+            workflow_run_response.metrics.stop_timer()
+
+        self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
+        session.upsert_run(run=workflow_run_response)
+        self.save_session(session=session)
+        cleanup_run(workflow_run_response.run_id)  # type: ignore
+
+        if self.telemetry:
+            self._log_workflow_telemetry(session_id=session.session_id, run_id=workflow_run_response.run_id)
+
+    @overload
+    async def acontinue_run(
+        self,
+        run_response: Optional[WorkflowRunOutput] = None,
+        *,
+        run_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        step_requirements: Optional[List[StepRequirement]] = None,
+        stream: Literal[False] = False,
+        stream_events: Optional[bool] = None,
+    ) -> WorkflowRunOutput: ...
+
+    @overload
+    async def acontinue_run(
+        self,
+        run_response: Optional[WorkflowRunOutput] = None,
+        *,
+        run_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        step_requirements: Optional[List[StepRequirement]] = None,
+        stream: Literal[True] = True,
+        stream_events: Optional[bool] = None,
+    ) -> AsyncIterator[WorkflowRunOutputEvent]: ...
+
+    async def acontinue_run(
+        self,
+        run_response: Optional[WorkflowRunOutput] = None,
+        *,
+        run_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        step_requirements: Optional[List[StepRequirement]] = None,
+        stream: Optional[bool] = None,
+        stream_events: Optional[bool] = None,
+        **kwargs: Any,
+    ) -> Union[WorkflowRunOutput, AsyncIterator[WorkflowRunOutputEvent]]:
+        """Continue a paused workflow run after step confirmation (async version).
+
+        This method resumes a workflow that was paused due to a step requiring
+        user confirmation. The step requirements must be resolved (confirmed or
+        rejected) before calling this method.
+
+        Args:
+            run_response: The paused WorkflowRunOutput to continue. If not provided,
+                run_id and session_id must be provided to load the run from storage.
+            run_id: The run_id of the paused workflow run. Required if run_response
+                is not provided.
+            session_id: The session_id of the paused workflow run. Required if
+                run_response is not provided.
+            step_requirements: Updated step requirements with confirmation status.
+                If not provided, uses the requirements from run_response.
+            stream: Whether to stream the response. Defaults to workflow's stream setting.
+            stream_events: Whether to stream events. Defaults to workflow's stream_events setting.
+
+        Returns:
+            WorkflowRunOutput if stream=False, AsyncIterator[WorkflowRunOutputEvent] if stream=True.
+
+        Raises:
+            ValueError: If neither run_response nor (run_id + session_id) are provided.
+            ValueError: If the run is not in a paused state.
+            ValueError: If step requirements have not been resolved.
+
+        Example:
+            ```python
+            # Run workflow with a step that requires confirmation
+            run_output = await workflow.arun("process data")
+
+            if run_output.is_paused:
+                # Check what step requires confirmation
+                for requirement in run_output.active_step_requirements:
+                    if requirement.needs_confirmation:
+                        print(f"Step '{requirement.step_name}' requires confirmation")
+                        print(f"Message: {requirement.confirmation_message}")
+                        # User confirms
+                        requirement.confirm()
+
+                # Continue the workflow
+                run_output = await workflow.acontinue_run(run_output)
+            ```
+        """
+        # Get run_response from storage if not provided
+        if run_response is None:
+            if run_id is None or session_id is None:
+                raise ValueError("Either run_response or (run_id and session_id) must be provided.")
+            run_response = await self.aget_run_output(run_id=run_id, session_id=session_id)
+            if run_response is None:
+                raise ValueError(f"Could not find run with id {run_id} in session {session_id}")
+
+        # Validate the run is paused
+        if run_response.status != RunStatus.paused:
+            raise ValueError(f"Cannot continue a run that is not paused. Current status: {run_response.status}")
+
+        # Update step requirements if provided
+        if step_requirements is not None:
+            run_response.step_requirements = step_requirements
+
+        # Validate that all requirements are resolved
+        if run_response.active_step_requirements:
+            unresolved = [req.step_name for req in run_response.active_step_requirements]
+            raise ValueError(f"Cannot continue run - unresolved step requirements: {unresolved}")
+
+        # Check if any step was rejected
+        rejected_steps = [
+            req for req in (run_response.step_requirements or [])
+            if req.requires_confirmation and req.confirmed is False
+        ]
+        if rejected_steps:
+            # Mark workflow as cancelled due to rejected step
+            run_response.status = RunStatus.cancelled
+            run_response.content = f"Workflow cancelled: Step '{rejected_steps[0].step_name}' was rejected"
+
+            # Save and return
+            session_id = run_response.session_id or self.session_id
+            if session_id:
+                session = await self.aget_session(session_id=session_id)
+                if session:
+                    session.upsert_run(run=run_response)
+                    await self.asave_session(session=session)
+
+            if stream:
+                async def cancelled_generator() -> AsyncIterator[WorkflowRunOutputEvent]:
+                    yield WorkflowCancelledEvent(
+                        run_id=run_response.run_id or "",
+                        workflow_id=self.id,
+                        workflow_name=self.name,
+                        session_id=run_response.session_id,
+                        reason=run_response.content,
+                    )
+                return cancelled_generator()
+            return run_response
+
+        # Get the paused step index
+        paused_step_index = run_response._paused_step_index
+        if paused_step_index is None:
+            raise ValueError("Cannot continue run - no paused step index found")
+
+        # Clear the confirmation requirement since it's now resolved
+        # This allows the step to execute on resume
+        if isinstance(self.steps, list) and paused_step_index < len(self.steps):
+            step = self.steps[paused_step_index]
+            if isinstance(step, Step):
+                step.requires_confirmation = False
+
+        # Resume execution
+        session_id = run_response.session_id or self.session_id
+        if session_id is None:
+            raise ValueError("Session ID is required to continue a run")
+
+        # Use stream override value when necessary
+        if stream is None:
+            stream = self.stream or False
+        stream_events = stream_events or self.stream_events
+
+        # Load session
+        session = await self.aget_session(session_id=session_id)
+        if session is None:
+            raise ValueError(f"Could not find session with id {session_id}")
+
+        # Update run status to running
+        run_response.status = RunStatus.running
+        run_response.step_requirements = None
+
+        # Create run context
+        run_context = RunContext(
+            run_id=run_response.run_id or str(uuid4()),
+            session_id=session_id,
+            user_id=run_response.user_id,
+            session_state=session.session_data.get("session_state", {}) if session.session_data else {},
+        )
+
+        # Create execution input from the original input
+        execution_input = WorkflowExecutionInput(
+            input=run_response.input,
+        )
+
+        if stream:
+            return self._acontinue_execute_stream(
+                session=session,
+                execution_input=execution_input,
+                workflow_run_response=run_response,
+                run_context=run_context,
+                start_step_index=paused_step_index,
+                stream_events=stream_events or False,
+                **kwargs,
+            )
+        else:
+            return await self._acontinue_execute(
+                session=session,
+                execution_input=execution_input,
+                workflow_run_response=run_response,
+                run_context=run_context,
+                start_step_index=paused_step_index,
+                **kwargs,
+            )
+
+    async def _acontinue_execute(
+        self,
+        session: WorkflowSession,
+        execution_input: WorkflowExecutionInput,
+        workflow_run_response: WorkflowRunOutput,
+        run_context: RunContext,
+        start_step_index: int,
+        background_tasks: Optional[Any] = None,
+        **kwargs: Any,
+    ) -> WorkflowRunOutput:
+        """Continue executing a workflow from a specific step index (async version)."""
+        try:
+            # Restore previous step outputs from step_results
+            collected_step_outputs: List[Union[StepOutput, List[StepOutput]]] = list(workflow_run_response.step_results or [])
+            previous_step_outputs: Dict[str, StepOutput] = {}
+            for step_output in collected_step_outputs:
+                if isinstance(step_output, StepOutput) and step_output.step_name:
+                    previous_step_outputs[step_output.step_name] = step_output
+
+            shared_images: List[Image] = execution_input.images or []
+            output_images: List[Image] = (execution_input.images or []).copy()
+            shared_videos: List[Video] = execution_input.videos or []
+            output_videos: List[Video] = (execution_input.videos or []).copy()
+            shared_audio: List[Audio] = execution_input.audio or []
+            output_audio: List[Audio] = (execution_input.audio or []).copy()
+            shared_files: List[File] = execution_input.files or []
+            output_files: List[File] = (execution_input.files or []).copy()
+
+            # Restore shared media from previous steps
+            for step_output in collected_step_outputs:
+                if isinstance(step_output, StepOutput):
+                    shared_images.extend(step_output.images or [])
+                    shared_videos.extend(step_output.videos or [])
+                    shared_audio.extend(step_output.audio or [])
+                    shared_files.extend(step_output.files or [])
+                    output_images.extend(step_output.images or [])
+                    output_videos.extend(step_output.videos or [])
+                    output_audio.extend(step_output.audio or [])
+                    output_files.extend(step_output.files or [])
+
+            # Continue from the paused step
+            for i, step in enumerate(self.steps[start_step_index:], start=start_step_index):  # type: ignore[arg-type]
+                await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+                step_name = getattr(step, "name", f"step_{i + 1}")
+                log_debug(f"Continuing step {i + 1}/{self._get_step_count()}: {step_name}")
+
+                # Create enhanced StepInput
+                step_input = self._create_step_input(
+                    execution_input=execution_input,
+                    previous_step_outputs=previous_step_outputs,
+                    shared_images=shared_images,
+                    shared_videos=shared_videos,
+                    shared_audio=shared_audio,
+                    shared_files=shared_files,
+                )
+
+                await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+
+                # Check if step requires confirmation (HITL) - for subsequent steps
+                if isinstance(step, Step) and step.requires_confirmation and i != start_step_index:
+                    log_debug(f"Step '{step_name}' requires confirmation - pausing workflow")
+
+                    step_requirement = StepRequirement(
+                        step_id=step.step_id or str(uuid4()),
+                        step_name=step_name,
+                        step_index=i,
+                        requires_confirmation=True,
+                        confirmation_message=step.confirmation_message,
+                        step_input=step_input,
+                    )
+
+                    workflow_run_response.status = RunStatus.paused
+                    workflow_run_response.step_requirements = [step_requirement]
+                    workflow_run_response._paused_step_index = i
+                    workflow_run_response.step_results = collected_step_outputs
+
+                    self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
+                    session.upsert_run(run=workflow_run_response)
+                    await self.asave_session(session=session)
+
+                    return workflow_run_response
+
+                step_output = await step.aexecute(  # type: ignore[union-attr]
+                    step_input,
+                    session_id=session.session_id,
+                    user_id=self.user_id,
+                    workflow_run_response=workflow_run_response,
+                    run_context=run_context,
+                    store_executor_outputs=self.store_executor_outputs,
+                    workflow_session=session,
+                    add_workflow_history_to_steps=self.add_workflow_history_to_steps
+                    if self.add_workflow_history_to_steps
+                    else None,
+                    num_history_runs=self.num_history_runs,
+                    background_tasks=background_tasks,
+                )
+
+                await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+
+                previous_step_outputs[step_name] = step_output
+                collected_step_outputs.append(step_output)
+
+                shared_images.extend(step_output.images or [])
+                shared_videos.extend(step_output.videos or [])
+                shared_audio.extend(step_output.audio or [])
+                shared_files.extend(step_output.files or [])
+                output_images.extend(step_output.images or [])
+                output_videos.extend(step_output.videos or [])
+                output_audio.extend(step_output.audio or [])
+                output_files.extend(step_output.files or [])
+
+                if step_output.stop:
+                    logger.info(f"Early termination requested by step {step_name}")
+                    break
+
+            # Update the workflow_run_response with completion data
+            if collected_step_outputs:
+                if workflow_run_response.metrics:
+                    workflow_run_response.metrics.stop_timer()
+
+                workflow_run_response.metrics = self._aggregate_workflow_metrics(
+                    collected_step_outputs,
+                    workflow_run_response.metrics,  # type: ignore[arg-type]
+                )
+                last_output = cast(StepOutput, collected_step_outputs[-1])
+
+                if getattr(last_output, "steps", None):
+                    _cur = last_output
+                    while getattr(_cur, "steps", None):
+                        _steps = _cur.steps or []
+                        if not _steps:
+                            break
+                        _cur = _steps[-1]
+                    workflow_run_response.content = _cur.content
+                else:
+                    workflow_run_response.content = last_output.content
+            else:
+                workflow_run_response.content = "No steps executed"
+
+            workflow_run_response.step_results = collected_step_outputs
+            workflow_run_response.images = output_images
+            workflow_run_response.videos = output_videos
+            workflow_run_response.audio = output_audio
+            workflow_run_response.status = RunStatus.completed
+            workflow_run_response._paused_step_index = None
+
+        except RunCancelledException as e:
+            logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled")
+            workflow_run_response.status = RunStatus.cancelled
+            workflow_run_response.content = str(e)
+        except Exception as e:
+            logger.error(f"Workflow execution failed: {e}")
+            workflow_run_response.status = RunStatus.error
+            workflow_run_response.content = f"Workflow execution failed: {e}"
+            raise e
+        finally:
+            if workflow_run_response.metrics:
+                workflow_run_response.metrics.stop_timer()
+
+            self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
+            session.upsert_run(run=workflow_run_response)
+            await self.asave_session(session=session)
+            cleanup_run(workflow_run_response.run_id)  # type: ignore
+
+        if self.telemetry:
+            self._log_workflow_telemetry(session_id=session.session_id, run_id=workflow_run_response.run_id)
+
+        return workflow_run_response
+
+    async def _acontinue_execute_stream(
+        self,
+        session: WorkflowSession,
+        execution_input: WorkflowExecutionInput,
+        workflow_run_response: WorkflowRunOutput,
+        run_context: RunContext,
+        start_step_index: int,
+        stream_events: bool = False,
+        background_tasks: Optional[Any] = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[WorkflowRunOutputEvent]:
+        """Continue executing a workflow from a specific step index with streaming (async version)."""
+        try:
+            # Restore previous step outputs from step_results
+            collected_step_outputs: List[Union[StepOutput, List[StepOutput]]] = list(workflow_run_response.step_results or [])
+            previous_step_outputs: Dict[str, StepOutput] = {}
+            for step_output in collected_step_outputs:
+                if isinstance(step_output, StepOutput) and step_output.step_name:
+                    previous_step_outputs[step_output.step_name] = step_output
+
+            shared_images: List[Image] = execution_input.images or []
+            output_images: List[Image] = (execution_input.images or []).copy()
+            shared_videos: List[Video] = execution_input.videos or []
+            output_videos: List[Video] = (execution_input.videos or []).copy()
+            shared_audio: List[Audio] = execution_input.audio or []
+            output_audio: List[Audio] = (execution_input.audio or []).copy()
+            shared_files: List[File] = execution_input.files or []
+            output_files: List[File] = (execution_input.files or []).copy()
+
+            # Restore shared media from previous steps
+            for step_output in collected_step_outputs:
+                if isinstance(step_output, StepOutput):
+                    shared_images.extend(step_output.images or [])
+                    shared_videos.extend(step_output.videos or [])
+                    shared_audio.extend(step_output.audio or [])
+                    shared_files.extend(step_output.files or [])
+                    output_images.extend(step_output.images or [])
+                    output_videos.extend(step_output.videos or [])
+                    output_audio.extend(step_output.audio or [])
+                    output_files.extend(step_output.files or [])
+
+            early_termination = False
+
+            # Continue from the paused step
+            for i, step in enumerate(self.steps[start_step_index:], start=start_step_index):  # type: ignore[arg-type]
+                await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+                step_name = getattr(step, "name", f"step_{i + 1}")
+                log_debug(f"Streaming continued step {i + 1}/{self._get_step_count()}: {step_name}")
+
+                # Create enhanced StepInput
+                step_input = self._create_step_input(
+                    execution_input=execution_input,
+                    previous_step_outputs=previous_step_outputs,
+                    shared_images=shared_images,
+                    shared_videos=shared_videos,
+                    shared_audio=shared_audio,
+                    shared_files=shared_files,
+                )
+
+                # Check if step requires confirmation (HITL) - for subsequent steps
+                if isinstance(step, Step) and step.requires_confirmation and i != start_step_index:
+                    log_debug(f"Step '{step_name}' requires confirmation - pausing workflow")
+
+                    step_requirement = StepRequirement(
+                        step_id=step.step_id or str(uuid4()),
+                        step_name=step_name,
+                        step_index=i,
+                        requires_confirmation=True,
+                        confirmation_message=step.confirmation_message,
+                        step_input=step_input,
+                    )
+
+                    workflow_run_response.status = RunStatus.paused
+                    workflow_run_response.step_requirements = [step_requirement]
+                    workflow_run_response._paused_step_index = i
+                    workflow_run_response.step_results = collected_step_outputs
+
+                    step_paused_event = StepPausedEvent(
+                        run_id=workflow_run_response.run_id or "",
+                        workflow_name=workflow_run_response.workflow_name,
+                        workflow_id=workflow_run_response.workflow_id,
+                        session_id=workflow_run_response.session_id,
+                        step_name=step_name,
+                        step_index=i,
+                        step_id=step.step_id,
+                        requires_confirmation=True,
+                        confirmation_message=step.confirmation_message,
+                    )
+                    yield self._handle_event(step_paused_event, workflow_run_response)
+
+                    self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
+                    session.upsert_run(run=workflow_run_response)
+                    await self.asave_session(session=session)
+
+                    return
+
+                # Execute step with streaming
+                async for event in step.aexecute_stream(  # type: ignore[union-attr]
+                    step_input,
+                    session_id=session.session_id,
+                    user_id=self.user_id,
+                    stream_events=stream_events,
+                    stream_executor_events=self.stream_executor_events,
+                    workflow_run_response=workflow_run_response,
+                    run_context=run_context,
+                    step_index=i,
+                    store_executor_outputs=self.store_executor_outputs,
+                    workflow_session=session,
+                    add_workflow_history_to_steps=self.add_workflow_history_to_steps
+                    if self.add_workflow_history_to_steps
+                    else None,
+                    num_history_runs=self.num_history_runs,
+                    background_tasks=background_tasks,
+                ):
+                    await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+
+                    if isinstance(event, StepOutput):
+                        step_output = event
+                        collected_step_outputs.append(step_output)
+                        previous_step_outputs[step_name] = step_output
+
+                        step_output_event = self._transform_step_output_to_event(
+                            step_output, workflow_run_response, step_index=i
+                        )
+
+                        if step_output.stop:
+                            logger.info(f"Early termination requested by step {step_name}")
+                            shared_images.extend(step_output.images or [])
+                            shared_videos.extend(step_output.videos or [])
+                            shared_audio.extend(step_output.audio or [])
+                            shared_files.extend(step_output.files or [])
+                            output_images.extend(step_output.images or [])
+                            output_videos.extend(step_output.videos or [])
+                            output_audio.extend(step_output.audio or [])
+                            output_files.extend(step_output.files or [])
+
+                            if getattr(step, "executor_type", None) == "function":
+                                yield step_output_event
+
+                            early_termination = True
+                            break
+
+                        shared_images.extend(step_output.images or [])
+                        shared_videos.extend(step_output.videos or [])
+                        shared_audio.extend(step_output.audio or [])
+                        shared_files.extend(step_output.files or [])
+                        output_images.extend(step_output.images or [])
+                        output_videos.extend(step_output.videos or [])
+                        output_audio.extend(step_output.audio or [])
+                        output_files.extend(step_output.files or [])
+
+                        if getattr(step, "executor_type", None) == "function":
+                            yield step_output_event
+
+                    elif isinstance(event, WorkflowRunOutputEvent):  # type: ignore
+                        enriched_event = self._enrich_event_with_workflow_context(
+                            event, workflow_run_response, step_index=i, step=step
+                        )
+                        yield self._handle_event(enriched_event, workflow_run_response)  # type: ignore
+
+                    else:
+                        enriched_event = self._enrich_event_with_workflow_context(
+                            event, workflow_run_response, step_index=i, step=step
+                        )
+                        if self.stream_executor_events:
+                            yield self._handle_event(enriched_event, workflow_run_response)  # type: ignore
+
+                if early_termination:
+                    break
+
+            # Update the workflow_run_response with completion data
+            if collected_step_outputs:
+                if workflow_run_response.metrics:
+                    workflow_run_response.metrics.stop_timer()
+
+                workflow_run_response.metrics = self._aggregate_workflow_metrics(
+                    collected_step_outputs,
+                    workflow_run_response.metrics,  # type: ignore[arg-type]
+                )
+                last_output = cast(StepOutput, collected_step_outputs[-1])
+
+                if getattr(last_output, "steps", None):
+                    _cur = last_output
+                    while getattr(_cur, "steps", None):
+                        _steps = _cur.steps or []
+                        if not _steps:
+                            break
+                        _cur = _steps[-1]
+                    workflow_run_response.content = _cur.content
+                else:
+                    workflow_run_response.content = last_output.content
+            else:
+                workflow_run_response.content = "No steps executed"
+
+            workflow_run_response.step_results = collected_step_outputs
+            workflow_run_response.images = output_images
+            workflow_run_response.videos = output_videos
+            workflow_run_response.audio = output_audio
+            workflow_run_response.status = RunStatus.completed
+            workflow_run_response._paused_step_index = None
+
+        except RunCancelledException as e:
+            logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled")
+            workflow_run_response.status = RunStatus.cancelled
+            workflow_run_response.content = str(e)
+
+            cancelled_event = WorkflowCancelledEvent(
+                run_id=workflow_run_response.run_id or "",
+                workflow_id=self.id,
+                workflow_name=self.name,
+                session_id=session.session_id,
+                reason=str(e),
+            )
+            yield self._handle_event(cancelled_event, workflow_run_response)
+        except Exception as e:
+            logger.error(f"Workflow execution failed: {e}")
+            workflow_run_response.status = RunStatus.error
+            workflow_run_response.content = f"Workflow execution failed: {e}"
+            raise e
+
+        # Yield workflow completed event
+        workflow_completed_event = WorkflowCompletedEvent(
+            run_id=workflow_run_response.run_id or "",
+            content=workflow_run_response.content,
+            workflow_name=workflow_run_response.workflow_name,
+            workflow_id=workflow_run_response.workflow_id,
+            session_id=workflow_run_response.session_id,
+            step_results=workflow_run_response.step_results,  # type: ignore
+            metadata=workflow_run_response.metadata,
+        )
+        yield self._handle_event(workflow_completed_event, workflow_run_response)
+
+        if workflow_run_response.metrics:
+            workflow_run_response.metrics.stop_timer()
+
+        self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
+        session.upsert_run(run=workflow_run_response)
+        await self.asave_session(session=session)
+        cleanup_run(workflow_run_response.run_id)  # type: ignore
+
+        if self.telemetry:
+            self._log_workflow_telemetry(session_id=session.session_id, run_id=workflow_run_response.run_id)
 
     @overload
     def run(

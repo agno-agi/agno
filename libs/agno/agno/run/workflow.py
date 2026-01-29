@@ -17,9 +17,10 @@ from agno.utils.media import (
 )
 
 if TYPE_CHECKING:
-    from agno.workflow.types import StepOutput, WorkflowMetrics
+    from agno.workflow.types import StepOutput, StepRequirement, WorkflowMetrics
 else:
     StepOutput = Any
+    StepRequirement = Any
     WorkflowMetrics = Any
 
 
@@ -36,6 +37,7 @@ class WorkflowRunEvent(str, Enum):
 
     step_started = "StepStarted"
     step_completed = "StepCompleted"
+    step_paused = "StepPaused"
     step_error = "StepError"
 
     loop_execution_started = "LoopExecutionStarted"
@@ -210,6 +212,19 @@ class StepCompletedEvent(BaseWorkflowRunOutputEvent):
 
     # Store actual step execution results as StepOutput objects
     step_response: Optional[StepOutput] = None
+
+
+@dataclass
+class StepPausedEvent(BaseWorkflowRunOutputEvent):
+    """Event sent when step execution is paused (e.g., requires user confirmation)"""
+
+    event: str = WorkflowRunEvent.step_paused.value
+    step_name: Optional[str] = None
+    step_index: Optional[Union[int, tuple]] = None
+
+    # Confirmation fields
+    requires_confirmation: bool = False
+    confirmation_message: Optional[str] = None
 
 
 @dataclass
@@ -431,6 +446,7 @@ WorkflowRunOutputEvent = Union[
     WorkflowCancelledEvent,
     StepStartedEvent,
     StepCompletedEvent,
+    StepPausedEvent,
     StepErrorEvent,
     LoopExecutionStartedEvent,
     LoopIterationStartedEvent,
@@ -458,6 +474,7 @@ WORKFLOW_RUN_EVENT_TYPE_REGISTRY = {
     WorkflowRunEvent.workflow_error.value: WorkflowErrorEvent,
     WorkflowRunEvent.step_started.value: StepStartedEvent,
     WorkflowRunEvent.step_completed.value: StepCompletedEvent,
+    WorkflowRunEvent.step_paused.value: StepPausedEvent,
     WorkflowRunEvent.step_error.value: StepErrorEvent,
     WorkflowRunEvent.loop_execution_started.value: LoopExecutionStartedEvent,
     WorkflowRunEvent.loop_iteration_started.value: LoopIterationStartedEvent,
@@ -532,9 +549,34 @@ class WorkflowRunOutput:
 
     status: RunStatus = RunStatus.pending
 
+    # Step-level HITL requirements to continue a paused workflow
+    step_requirements: Optional[List["StepRequirement"]] = None
+
+    # Track the current step index for resumption
+    _paused_step_index: Optional[int] = None
+
+    @property
+    def is_paused(self) -> bool:
+        """Check if the workflow is paused waiting for step confirmation"""
+        return self.status == RunStatus.paused
+
     @property
     def is_cancelled(self):
         return self.status == RunStatus.cancelled
+
+    @property
+    def active_step_requirements(self) -> List["StepRequirement"]:
+        """Get step requirements that still need to be resolved"""
+        if not self.step_requirements:
+            return []
+        return [req for req in self.step_requirements if not req.is_resolved]
+
+    @property
+    def steps_requiring_confirmation(self) -> List["StepRequirement"]:
+        """Get step requirements that need user confirmation"""
+        if not self.step_requirements:
+            return []
+        return [req for req in self.step_requirements if req.needs_confirmation]
 
     def to_dict(self) -> Dict[str, Any]:
         _dict = {
@@ -553,6 +595,8 @@ class WorkflowRunOutput:
                 "events",
                 "metrics",
                 "workflow_agent_run",
+                "step_requirements",
+                "_paused_step_index",
             ]
         }
 
@@ -605,6 +649,12 @@ class WorkflowRunOutput:
 
         if self.events is not None:
             _dict["events"] = [e.to_dict() for e in self.events]
+
+        if self.step_requirements is not None:
+            _dict["step_requirements"] = [req.to_dict() for req in self.step_requirements]
+
+        if self._paused_step_index is not None:
+            _dict["_paused_step_index"] = self._paused_step_index
 
         return _dict
 
@@ -672,6 +722,16 @@ class WorkflowRunOutput:
             final_events.append(event)
         events = final_events
 
+        # Parse step_requirements
+        step_requirements_data = data.pop("step_requirements", None)
+        step_requirements = None
+        if step_requirements_data:
+            from agno.workflow.types import StepRequirement
+
+            step_requirements = [StepRequirement.from_dict(req) for req in step_requirements_data]
+
+        paused_step_index = data.pop("_paused_step_index", None)
+
         input_data = data.pop("input", None)
 
         # Filter data to only include fields that are actually defined in the WorkflowRunOutput dataclass
@@ -680,7 +740,7 @@ class WorkflowRunOutput:
         supported_fields = {f.name for f in fields(cls)}
         filtered_data = {k: v for k, v in data.items() if k in supported_fields}
 
-        return cls(
+        result = cls(
             step_results=parsed_step_results,
             workflow_agent_run=workflow_agent_run,
             metadata=metadata,
@@ -691,9 +751,12 @@ class WorkflowRunOutput:
             events=events,
             metrics=workflow_metrics,
             step_executor_runs=step_executor_runs,
+            step_requirements=step_requirements,
             input=input_data,
             **filtered_data,
         )
+        result._paused_step_index = paused_step_index
+        return result
 
     def get_content_as_string(self, **kwargs) -> str:
         import json

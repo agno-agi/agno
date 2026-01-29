@@ -275,6 +275,34 @@ class StepInput:
             "files": [file for file in self.files] if self.files else None,
         }
 
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "StepInput":
+        """Create StepInput from dictionary"""
+        # Reconstruct media artifacts
+        images = reconstruct_images(data.get("images"))
+        videos = reconstruct_videos(data.get("videos"))
+        audio = reconstruct_audio_list(data.get("audio"))
+        files = reconstruct_files(data.get("files"))
+
+        # Reconstruct previous_step_outputs
+        previous_step_outputs = None
+        if data.get("previous_step_outputs"):
+            previous_step_outputs = {
+                name: StepOutput.from_dict(output_data)
+                for name, output_data in data["previous_step_outputs"].items()
+            }
+
+        return cls(
+            input=data.get("input"),
+            previous_step_content=data.get("previous_step_content"),
+            previous_step_outputs=previous_step_outputs,
+            additional_data=data.get("additional_data"),
+            images=images,
+            videos=videos,
+            audio=audio,
+            files=files,
+        )
+
 
 @dataclass
 class StepOutput:
@@ -481,3 +509,73 @@ class StepType(str, Enum):
     PARALLEL = "Parallel"
     CONDITION = "Condition"
     ROUTER = "Router"
+
+
+@dataclass
+class StepRequirement:
+    """Requirement to complete a paused step (used in step-level HITL flows)"""
+
+    step_id: str
+    step_name: Optional[str] = None
+    step_index: Optional[int] = None
+
+    # Confirmation fields
+    requires_confirmation: bool = False
+    confirmation_message: Optional[str] = None
+    confirmed: Optional[bool] = None
+
+    # The step input that was prepared before pausing
+    step_input: Optional["StepInput"] = None
+
+    def confirm(self) -> None:
+        """Confirm the step execution"""
+        self.confirmed = True
+
+    def reject(self) -> None:
+        """Reject the step execution"""
+        self.confirmed = False
+
+    @property
+    def needs_confirmation(self) -> bool:
+        """Check if this requirement still needs confirmation"""
+        if self.confirmed is not None:
+            return False
+        return self.requires_confirmation
+
+    @property
+    def is_resolved(self) -> bool:
+        """Check if this requirement has been resolved"""
+        if self.requires_confirmation:
+            return self.confirmed is not None
+        return True
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary"""
+        result = {
+            "step_id": self.step_id,
+            "step_name": self.step_name,
+            "step_index": self.step_index,
+            "requires_confirmation": self.requires_confirmation,
+            "confirmation_message": self.confirmation_message,
+            "confirmed": self.confirmed,
+        }
+        if self.step_input is not None:
+            result["step_input"] = self.step_input.to_dict()
+        return result
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "StepRequirement":
+        """Create StepRequirement from dictionary"""
+        step_input = None
+        if data.get("step_input"):
+            step_input = StepInput.from_dict(data["step_input"])
+
+        return cls(
+            step_id=data["step_id"],
+            step_name=data.get("step_name"),
+            step_index=data.get("step_index"),
+            requires_confirmation=data.get("requires_confirmation", False),
+            confirmation_message=data.get("confirmation_message"),
+            confirmed=data.get("confirmed"),
+            step_input=step_input,
+        )
