@@ -28,6 +28,8 @@ class RunContext:
     output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None
     # Resolved knowledge instance (when knowledge is provided as a callable)
     knowledge: Optional[Any] = None
+    # Resolved tools list (when tools is provided as a callable)
+    tools: Optional[List[Any]] = None
 
 
 @dataclass

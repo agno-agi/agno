@@ -93,7 +93,6 @@ from agno.utils.agent import (
     aget_session_metrics_util,
     aget_session_name_util,
     aget_session_state_util,
-    aresolve_knowledge,
     aset_session_name_util,
     aupdate_session_state_util,
     await_for_open_threads,
@@ -110,6 +109,7 @@ from agno.utils.agent import (
     get_session_name_util,
     get_session_state_util,
     resolve_knowledge,
+    resolve_tools,
     scrub_history_messages_from_run_output,
     scrub_media_from_run_output,
     scrub_tool_results_from_run_output,
@@ -291,7 +291,18 @@ class Agent:
     # --- Agent Tools ---
     # A list of tools provided to the Model.
     # Tools are functions the model may generate JSON inputs for.
-    tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]] = None
+    # Tools can be a list or a callable that returns a list. When a callable is provided,
+    # it's resolved at runtime with access to agent, session_state, and run_context.
+    # This enables dynamic tool creation, e.g., per-user tool instances:
+    #   def get_user_tools(run_context: RunContext) -> List:
+    #       return [DuckDbTools(db_path=f"./data/{run_context.user_id}.db")]
+    #   agent = Agent(tools=get_user_tools)
+    tools: Optional[
+        Union[
+            List[Union[Toolkit, Callable, Function, Dict]],
+            Callable[..., List[Union[Toolkit, Callable, Function, Dict]]],
+        ]
+    ] = None
 
     # Maximum number of tool calls allowed.
     tool_call_limit: Optional[int] = None
@@ -656,7 +667,11 @@ class Agent:
 
         self.metadata = metadata
 
-        self.tools = list(tools) if tools else []
+        # Tools can be a callable (resolved at runtime) or a list of tools
+        if callable(tools) and not isinstance(tools, (Toolkit, Function)):
+            self.tools = tools  # Keep as callable for runtime resolution
+        else:
+            self.tools = list(tools) if tools else []
         self.tool_call_limit = tool_call_limit
         self.tool_choice = tool_choice
         self.tool_hooks = tool_hooks
@@ -957,6 +972,12 @@ class Agent:
             self._formatter = SafeFormatter()
 
     def add_tool(self, tool: Union[Toolkit, Callable, Function, Dict]):
+        # If tools is a callable, convert to list first
+        if callable(self.tools) and not isinstance(self.tools, (Toolkit, Function)):
+            raise ValueError(
+                "Cannot add tool when tools is a callable. "
+                "Use set_tools() to replace the callable with a list of tools."
+            )
         if not self.tools:
             self.tools = []
         self.tools.append(tool)
@@ -964,10 +985,11 @@ class Agent:
     def set_tools(self, tools: Sequence[Union[Toolkit, Callable, Function, Dict]]):
         self.tools = list(tools) if tools else []
 
-    async def _connect_mcp_tools(self) -> None:
+    async def _connect_mcp_tools(self, run_context: Optional[RunContext] = None) -> None:
         """Connect the MCP tools to the agent."""
-        if self.tools:
-            for tool in self.tools:
+        tools = self._get_tools(run_context)
+        if tools:
+            for tool in tools:
                 # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
                 if (
                     hasattr(type(tool), "__mro__")
@@ -990,10 +1012,11 @@ class Agent:
                 log_warning(f"Error disconnecting tool: {str(e)}")
         self._mcp_tools_initialized_on_run = []
 
-    def _connect_connectable_tools(self) -> None:
+    def _connect_connectable_tools(self, run_context: Optional[RunContext] = None) -> None:
         """Connect tools that require connection management (e.g., database connections)."""
-        if self.tools:
-            for tool in self.tools:
+        tools = self._get_tools(run_context)
+        if tools:
+            for tool in tools:
                 if (
                     hasattr(tool, "requires_connect")
                     and tool.requires_connect  # type: ignore
@@ -1061,6 +1084,32 @@ class Agent:
         if callable(self.knowledge):
             return None
         return self.knowledge
+
+    def _get_tools(
+        self, run_context: Optional[RunContext] = None
+    ) -> Optional[List[Union[Toolkit, Callable, Function, Dict]]]:
+        """Get the resolved tools list.
+
+        If tools was provided as a callable, it should have been resolved
+        during run/arun and stored in run_context.tools. This method
+        returns the resolved list from run_context if available,
+        otherwise falls back to self.tools (for non-callable case).
+
+        Args:
+            run_context: The current run context containing resolved tools.
+
+        Returns:
+            The list of tools, or None if no tools are configured.
+        """
+        # If run_context has resolved tools, use it
+        if run_context is not None and run_context.tools is not None:
+            return run_context.tools
+        # If self.tools is a callable, it hasn't been resolved yet
+        # This shouldn't happen during a run, but we handle it gracefully
+        if callable(self.tools) and not isinstance(self.tools, (Toolkit, Function)):
+            return None
+        # self.tools is a list (or None)
+        return self.tools  # type: ignore
 
     def _run(
         self,
@@ -1942,6 +1991,21 @@ class Agent:
             )
         else:
             run_context.knowledge = self.knowledge
+
+        # Resolve tools if it's a callable (not a list, Toolkit, Function, or dict)
+        if (
+            self.tools is not None
+            and callable(self.tools)
+            and not isinstance(self.tools, (list, Toolkit, Function, dict))
+        ):
+            run_context.tools = resolve_tools(
+                tools=self.tools,
+                agent=self,
+                session_state=session_state,
+                run_context=run_context,
+            )
+        else:
+            run_context.tools = self.tools  # type: ignore
 
         add_dependencies = (
             add_dependencies_to_context if add_dependencies_to_context is not None else self.add_dependencies_to_context
@@ -3058,6 +3122,22 @@ class Agent:
         else:
             run_context.knowledge = self.knowledge
 
+        # Resolve tools if it's a callable (not a list, Toolkit, Function, or dict)
+        # Note: Using sync resolve_tools here since arun is not an async function
+        if (
+            self.tools is not None
+            and callable(self.tools)
+            and not isinstance(self.tools, (list, Toolkit, Function, dict))
+        ):
+            run_context.tools = resolve_tools(
+                tools=self.tools,
+                agent=self,
+                session_state=session_state,
+                run_context=run_context,
+            )
+        else:
+            run_context.tools = self.tools  # type: ignore
+
         # Prepare arguments for the model (must be after run_context is fully initialized)
         response_format = self._get_response_format(run_context=run_context) if self.parser_model is None else None
 
@@ -3244,6 +3324,21 @@ class Agent:
             )
         else:
             run_context.knowledge = self.knowledge
+
+        # Resolve tools if it's a callable (not a list, Toolkit, Function, or dict)
+        if (
+            self.tools is not None
+            and callable(self.tools)
+            and not isinstance(self.tools, (list, Toolkit, Function, dict))
+        ):
+            run_context.tools = resolve_tools(
+                tools=self.tools,
+                agent=self,
+                session_state=session_state,
+                run_context=run_context,
+            )
+        else:
+            run_context.tools = self.tools  # type: ignore
 
         # When filters are passed manually
         if self.knowledge_filters or run_context.knowledge_filters or knowledge_filters:
@@ -3959,6 +4054,22 @@ class Agent:
             )
         else:
             run_context.knowledge = self.knowledge
+
+        # Resolve tools if it's a callable (not a list, Toolkit, Function, or dict)
+        # Note: Using sync resolve_tools here since acontinue_run is not an async function
+        if (
+            self.tools is not None
+            and callable(self.tools)
+            and not isinstance(self.tools, (list, Toolkit, Function, dict))
+        ):
+            run_context.tools = resolve_tools(
+                tools=self.tools,
+                agent=self,
+                session_state=run_context.session_state,
+                run_context=run_context,
+            )
+        else:
+            run_context.tools = self.tools  # type: ignore
 
         if stream:
             return self._acontinue_run_stream(
@@ -6672,14 +6783,15 @@ class Agent:
 
         return None
 
-    def _raise_if_async_tools(self) -> None:
+    def _raise_if_async_tools(self, run_context: Optional[RunContext] = None) -> None:
         """Raise an exception if any tools contain async functions"""
-        if self.tools is None:
+        tools = self._get_tools(run_context)
+        if tools is None:
             return
 
         from inspect import iscoroutinefunction
 
-        for tool in self.tools:
+        for tool in tools:
             if isinstance(tool, Toolkit):
                 for func in tool.functions:
                     if iscoroutinefunction(tool.functions[func].entrypoint):
@@ -6710,13 +6822,14 @@ class Agent:
         agent_tools: List[Union[Toolkit, Callable, Function, Dict]] = []
 
         # Connect tools that require connection management
-        self._connect_connectable_tools()
+        self._connect_connectable_tools(run_context)
 
         # Add provided tools
-        if self.tools is not None:
+        tools = self._get_tools(run_context)
+        if tools is not None:
             # If not running in async mode, raise if any tool is async
-            self._raise_if_async_tools()
-            agent_tools.extend(self.tools)
+            self._raise_if_async_tools(run_context)
+            agent_tools.extend(tools)
 
         # Add tools for accessing memory
         if self.read_chat_history:
@@ -6793,14 +6906,15 @@ class Agent:
         agent_tools: List[Union[Toolkit, Callable, Function, Dict]] = []
 
         # Connect tools that require connection management
-        self._connect_connectable_tools()
+        self._connect_connectable_tools(run_context)
 
         # Connect MCP tools
-        await self._connect_mcp_tools()
+        await self._connect_mcp_tools(run_context)
 
         # Add provided tools
-        if self.tools is not None:
-            for tool in self.tools:
+        tools = self._get_tools(run_context)
+        if tools is not None:
+            for tool in tools:
                 # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
                 is_mcp_tool = hasattr(type(tool), "__mro__") and any(
                     c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
@@ -10955,7 +11069,7 @@ class Agent:
                 reasoning_agent=self.reasoning_agent,
                 min_steps=self.reasoning_min_steps,
                 max_steps=self.reasoning_max_steps,
-                tools=self.tools,
+                tools=self._get_tools(run_context),
                 tool_call_limit=self.tool_call_limit,
                 use_json_mode=self.use_json_mode,
                 telemetry=self.telemetry,
@@ -10998,7 +11112,7 @@ class Agent:
                 reasoning_agent=self.reasoning_agent,
                 min_steps=self.reasoning_min_steps,
                 max_steps=self.reasoning_max_steps,
-                tools=self.tools,
+                tools=self._get_tools(run_context),
                 tool_call_limit=self.tool_call_limit,
                 use_json_mode=self.use_json_mode,
                 telemetry=self.telemetry,
@@ -12426,7 +12540,8 @@ class Agent:
         from rich.prompt import Prompt
 
         # Ensuring the agent is not using our async MCP tools
-        if self.tools is not None:
+        # Note: If tools is a callable, we can't check this until runtime when tools are resolved
+        if self.tools is not None and not (callable(self.tools) and not isinstance(self.tools, (Toolkit, Function))):
             for tool in self.tools:
                 if isawaitable(tool):
                     raise NotImplementedError("Use `acli_app` to use async tools.")

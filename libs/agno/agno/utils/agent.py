@@ -1088,6 +1088,88 @@ async def aresolve_knowledge(
         return knowledge(**knowledge_args)
 
 
+def resolve_tools(
+    tools: Callable,
+    agent: Optional[Union["Agent", "Team"]] = None,
+    session_state: Optional[Dict[str, Any]] = None,
+    run_context: Optional[RunContext] = None,
+) -> List[Any]:
+    """Resolve a tools callable to get the list of tools.
+
+    The callable can accept any of these parameters based on its signature:
+    - agent: The Agent instance
+    - session_state: The current session state dict
+    - run_context: The RunContext with run_id, session_id, user_id, etc.
+
+    This enables dynamic tool creation at runtime, e.g., per-user tool instances:
+
+        def get_user_tools(run_context: RunContext) -> List:
+            user_id = run_context.user_id or "default"
+            return [
+                DuckDbTools(db_path=f"./data/{user_id}.db"),
+                SharedToolkit(),  # Stateless tools can be shared
+            ]
+
+        agent = Agent(tools=get_user_tools)
+    """
+    import inspect
+
+    signature = inspect.signature(tools)
+    tools_args: Dict[str, Any] = {}
+
+    # Check for agent parameter
+    if "agent" in signature.parameters:
+        tools_args["agent"] = agent
+
+    # Check for session_state parameter
+    if "session_state" in signature.parameters:
+        tools_args["session_state"] = session_state if session_state is not None else {}
+
+    # Check for run_context parameter
+    if "run_context" in signature.parameters:
+        tools_args["run_context"] = run_context or None
+
+    # Run the tools function, must be sync
+    if inspect.iscoroutinefunction(tools):
+        raise Exception("Tools function is async, use `agent.arun()` instead")
+
+    return tools(**tools_args)
+
+
+async def aresolve_tools(
+    tools: Callable,
+    agent: Optional[Union["Agent", "Team"]] = None,
+    session_state: Optional[Dict[str, Any]] = None,
+    run_context: Optional[RunContext] = None,
+) -> List[Any]:
+    """Async version of resolve_tools.
+
+    Resolves a tools callable to get the list of tools.
+    Supports both sync and async callables.
+    """
+    import inspect
+
+    signature = inspect.signature(tools)
+    tools_args: Dict[str, Any] = {}
+
+    # Check for agent parameter
+    if "agent" in signature.parameters:
+        tools_args["agent"] = agent
+
+    # Check for session_state parameter
+    if "session_state" in signature.parameters:
+        tools_args["session_state"] = session_state if session_state is not None else {}
+
+    # Check for run_context parameter
+    if "run_context" in signature.parameters:
+        tools_args["run_context"] = run_context or None
+
+    if inspect.iscoroutinefunction(tools):
+        return await tools(**tools_args)
+    else:
+        return tools(**tools_args)
+
+
 def validate_input(
     input: Union[str, List, Dict, Message, BaseModel], input_schema: Optional[Type[BaseModel]] = None
 ) -> Union[str, List, Dict, Message, BaseModel]:
