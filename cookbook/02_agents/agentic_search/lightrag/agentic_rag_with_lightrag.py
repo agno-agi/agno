@@ -11,8 +11,8 @@ vector_db = LightRag(
 )
 
 knowledge = Knowledge(
-    name="My Pinecone Knowledge Base",
-    description="This is a knowledge base that uses a Pinecone Vector DB",
+    name="My LightRag Knowledge Base",
+    description="This is a knowledge base that uses a LightRag Vector DB",
     vector_db=vector_db,
 )
 
