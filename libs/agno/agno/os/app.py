@@ -1129,20 +1129,16 @@ class AgentOS:
                     DatabaseConfig(
                         db_id=self.db.id,
                         domain_config=TracesDomainConfig(display_name=self.db.id),
-                        tables=[self.db.trace_table_name],
                     )
                 )
         else:
             # Fall back to all discovered databases
-            for db_id, dbs in self.dbs.items():
+            for db_id in self.dbs.keys():
                 if db_id not in dbs_with_specific_config:
-                    # Collect unique table names from all databases with the same id
-                    unique_tables = list(set(db.trace_table_name for db in dbs))
                     traces_config.dbs.append(
                         DatabaseConfig(
                             db_id=db_id,
                             domain_config=TracesDomainConfig(display_name=db_id),
-                            tables=unique_tables,
                         )
                     )
 

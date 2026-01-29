@@ -178,34 +178,3 @@ def test_config_endpoint_with_knowledge_tables(test_os_client_with_knowledge: Te
     )
 
 
-@pytest.fixture
-def test_os_client_with_traces():
-    """Create a test AgentOS with trace tables."""
-    db1 = SqliteDb("tmp/test.db", id="traces-db", traces_table="traces1")
-    db2 = SqliteDb("tmp/test.db", id="traces-db", traces_table="traces2")
-
-    agent1 = Agent(name="agent1", db=db1)
-    agent2 = Agent(name="agent2", db=db2)
-
-    agent_os = AgentOS(
-        id="test-os-with-traces",
-        name="Test AgentOS with Traces",
-        description="Test AgentOS configuration with traces",
-        agents=[agent1, agent2],
-    )
-    app = agent_os.get_app()
-    return TestClient(app)
-
-
-def test_config_endpoint_with_traces_tables(test_os_client_with_traces: TestClient):
-    """Test that the config endpoint returns correct traces table information."""
-    response = test_os_client_with_traces.get("/config")
-    assert response.status_code == 200
-
-    response_data = response.json()
-    assert "traces" in response_data
-    assert response_data["traces"]["dbs"]
-    assert len(response_data["traces"]["dbs"]) == 1
-    assert response_data["traces"]["dbs"][0]["db_id"] == "traces-db"
-    # Both agents use the same db_id but different trace tables
-    assert sorted(response_data["traces"]["dbs"][0]["tables"]) == sorted(["traces1", "traces2"])
