@@ -21,6 +21,7 @@ from agno.db.mysql.utils import (
     is_valid_table,
     serialize_cultural_knowledge_for_db,
 )
+from agno.db.schema import build_agno_metadata, compile_ddl_for_metadata
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
@@ -120,6 +121,51 @@ class MySQLDb(BaseDb):
 
         # Initialize database session
         self.Session: scoped_session = scoped_session(sessionmaker(bind=self.db_engine))
+
+    def _table_name_overrides(self) -> Dict[str, str]:
+        return {
+            "sessions": self.session_table_name,
+            "memories": self.memory_table_name,
+            "metrics": self.metrics_table_name,
+            "evals": self.eval_table_name,
+            "knowledge": self.knowledge_table_name,
+            "culture": self.culture_table_name,
+            "traces": self.trace_table_name,
+            "spans": self.span_table_name,
+            "versions": self.versions_table_name,
+        }
+
+    def _create_namespace_if_needed(self) -> None:
+        if not self.create_schema:
+            return
+        with self.Session() as sess:
+            create_schema(session=sess, db_schema=self.db_schema)
+            sess.commit()
+
+    def _get_namespace_ddl(self) -> List[str]:
+        if not self.create_schema:
+            return []
+        return [f"CREATE DATABASE IF NOT EXISTS {self.db_schema};"]
+
+    def create_all_tables(self) -> None:
+        self._create_namespace_if_needed()
+        metadata = build_agno_metadata(
+            schema=self.db_schema,
+            table_names=self._table_name_overrides(),
+            dialect_name=self.db_engine.dialect.name,
+        )
+        metadata.create_all(bind=self.db_engine, checkfirst=True)
+
+    def get_create_all_tables_ddl(self) -> List[str]:
+        metadata = build_agno_metadata(
+            schema=self.db_schema,
+            table_names=self._table_name_overrides(),
+            dialect_name=self.db_engine.dialect.name,
+        )
+        statements = self._get_namespace_ddl()
+        statements.extend(compile_ddl_for_metadata(metadata, dialect=self.db_engine.dialect))
+        statements.extend(self._get_extra_ddl())
+        return statements
 
     def close(self) -> None:
         """Close database connections and dispose of the connection pool.
