@@ -7,15 +7,18 @@ from agno.models.anthropic import Claude
 from agno.models.google.gemini import Gemini
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
-from agno.vectordb.pgvector import PgVector
 from agno.registry import Registry
 from agno.tools.calculator import CalculatorTools
 from agno.tools.parallel import ParallelTools
 from agno.tools.youtube import YouTubeTools
+from agno.vectordb.pgvector import PgVector
 from pydantic import BaseModel
 
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai", id="postgres_db")
-pgvector = PgVector(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai", table_name="custom_table")
+pgvector = PgVector(
+    db_url="postgresql+psycopg://ai:ai@localhost:5532/ai", table_name="custom_table"
+)
+
 
 def custom_function(input: str) -> str:
     return input + "Hello, world!"

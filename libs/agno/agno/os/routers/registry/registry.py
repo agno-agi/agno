@@ -329,9 +329,7 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
         if component_type is None or component_type == RegistryContentType.DB:
             for db in getattr(registry, "dbs", []) or []:
                 db_name = (
-                    _safe_str(getattr(db, "name", None))
-                    or _safe_str(getattr(db, "id", None))
-                    or db.__class__.__name__
+                    _safe_str(getattr(db, "name", None)) or _safe_str(getattr(db, "id", None)) or db.__class__.__name__
                 )
                 db_metadata = DbMetadata(
                     class_path=_class_path(db),

@@ -78,9 +78,8 @@ deep_tech_research_loop = Loop(
     description="Perform iterative deep research on tech topics",
 )
 
+
 # Router function that selects between simple web research or deep tech research loop
-
-
 def research_strategy_router(step_input: StepInput) -> List[Step]:
     """
     Decide between simple web research or deep tech research loop based on the input topic.
