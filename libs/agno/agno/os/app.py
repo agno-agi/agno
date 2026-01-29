@@ -975,18 +975,19 @@ class AgentOS:
 
     def _auto_discover_knowledge_instances(self) -> None:
         """Auto-discover the knowledge instances used by all contextual agents, teams and workflows."""
-        seen_ids: set[str] = set()
+        seen_instances: set[int] = set()  # Track by object identity
         knowledge_instances: List[Union[Knowledge, RemoteKnowledge]] = []
 
         def _add_knowledge_if_not_duplicate(knowledge: Any) -> None:
-            """Add knowledge instance if it's not already in the list (by object identity or db_id)."""
+            """Add knowledge instance if it's not already in the list (by object identity)."""
             # Only handle Knowledge and RemoteKnowledge instances that have contents_db
             contents_db = getattr(knowledge, "contents_db", None)
             if not contents_db:
                 return
-            if contents_db.id in seen_ids:
+            # Deduplicate by object identity to allow multiple knowledge instances with the same contents_db
+            if id(knowledge) in seen_instances:
                 return
-            seen_ids.add(contents_db.id)
+            seen_instances.add(id(knowledge))
             # Only append if it's a Knowledge or RemoteKnowledge instance
             if isinstance(knowledge, (Knowledge, RemoteKnowledge)):
                 knowledge_instances.append(knowledge)
@@ -1053,6 +1054,24 @@ class AgentOS:
         if knowledge_config.dbs is None:
             knowledge_config.dbs = []
 
+        # Build mapping: db_id -> set of unique knowledge names
+        db_id_to_knowledge_names: Dict[str, set] = {}
+        for knowledge in self.knowledge_instances:
+            contents_db = getattr(knowledge, "contents_db", None)
+            if contents_db:
+                # Use knowledge name or generate a fallback name from db_id
+                knowledge_name = knowledge.name or f"knowledge_{contents_db.id}"
+                if contents_db.id not in db_id_to_knowledge_names:
+                    db_id_to_knowledge_names[contents_db.id] = set()
+                # Warn if duplicate name is detected
+                if knowledge_name in db_id_to_knowledge_names[contents_db.id]:
+                    log_warning(
+                        f"Duplicate knowledge base name '{knowledge_name}' detected for database '{contents_db.id}'. "
+                        "Each knowledge instance should have a unique name for proper tracking."
+                    )
+                else:
+                    db_id_to_knowledge_names[contents_db.id].add(knowledge_name)
+
         dbs_with_specific_config = [db.db_id for db in knowledge_config.dbs]
 
         # Only add databases that are actually used for knowledge contents
@@ -1060,10 +1079,15 @@ class AgentOS:
             if db_id not in dbs_with_specific_config:
                 # Collect unique table names from all databases with the same id
                 unique_tables = list(set(db.knowledge_table_name for db in dbs))
+                # Convert set to sorted list for consistent ordering
+                names = sorted(db_id_to_knowledge_names.get(db_id, set()))
                 knowledge_config.dbs.append(
                     DatabaseConfig(
                         db_id=db_id,
-                        domain_config=KnowledgeDomainConfig(display_name=db_id),
+                        domain_config=KnowledgeDomainConfig(
+                            display_name=db_id,
+                            knowledge_base_names=names if names else None,
+                        ),
                         tables=unique_tables,
                     )
                 )

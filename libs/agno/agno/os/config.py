@@ -31,6 +31,7 @@ class KnowledgeDomainConfig(BaseModel):
     """Configuration for the Knowledge domain of the AgentOS"""
 
     display_name: Optional[str] = None
+    knowledge_base_names: Optional[List[str]] = None
 
 
 class MetricsDomainConfig(BaseModel):

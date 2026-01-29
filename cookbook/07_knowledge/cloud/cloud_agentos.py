@@ -83,7 +83,7 @@ agent = Agent(
 )
 
 agent_os = AgentOS(
-    knowledge=[knowledge],
+    knowledge=[knowledge, knowledge2, knowledge3],
     agents=[agent],
 )
 app = agent_os.get_app()
