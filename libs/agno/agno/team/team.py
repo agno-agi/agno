@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import threading
 import time
 from collections import ChainMap, deque
 from concurrent.futures import Future
@@ -10132,11 +10133,20 @@ class Team:
         from agno.api.team import TeamRunCreate, create_team_run
 
         try:
-            create_team_run(
-                run=TeamRunCreate(session_id=session_id, run_id=run_id, data=self._get_telemetry_data()),
-            )
+            telemetry_data = self._get_telemetry_data()
         except Exception as e:
             log_debug(f"Could not create Team run telemetry event: {e}")
+            return
+
+        def _log():
+            try:
+                create_team_run(
+                    run=TeamRunCreate(session_id=session_id, run_id=run_id, data=telemetry_data),
+                )
+            except Exception as e:
+                log_debug(f"Could not create Team run telemetry event: {e}")
+
+        threading.Thread(target=_log, daemon=True).start()
 
     async def _alog_team_telemetry(self, session_id: str, run_id: Optional[str] = None) -> None:
         """Send a telemetry event to the API for a created Team async run"""
@@ -10148,11 +10158,20 @@ class Team:
         from agno.api.team import TeamRunCreate, acreate_team_run
 
         try:
-            await acreate_team_run(
-                run=TeamRunCreate(session_id=session_id, run_id=run_id, data=self._get_telemetry_data())
-            )
+            telemetry_data = self._get_telemetry_data()
         except Exception as e:
             log_debug(f"Could not create Team run telemetry event: {e}")
+            return
+
+        async def _log():
+            try:
+                await acreate_team_run(
+                    run=TeamRunCreate(session_id=session_id, run_id=run_id, data=telemetry_data)
+                )
+            except Exception as e:
+                log_debug(f"Could not create Team run telemetry event: {e}")
+
+        asyncio.create_task(_log())
 
     def deep_copy(self, *, update: Optional[Dict[str, Any]] = None) -> "Team":
         """Create and return a deep copy of this Team, optionally updating fields.
