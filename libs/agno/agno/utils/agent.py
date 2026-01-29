@@ -1007,6 +1007,87 @@ async def aexecute_system_message(
         return system_message(**system_message_args)
 
 
+def resolve_knowledge(
+    knowledge: Callable,
+    agent: Optional[Union["Agent", "Team"]] = None,
+    session_state: Optional[Dict[str, Any]] = None,
+    run_context: Optional[RunContext] = None,
+) -> Any:
+    """Resolve a knowledge callable to get the KnowledgeProtocol instance.
+
+    The callable can accept any of these parameters based on its signature:
+    - agent: The Agent instance
+    - session_state: The current session state dict
+    - run_context: The RunContext with run_id, session_id, user_id, etc.
+
+    This enables dynamic knowledge creation at runtime, e.g., per-user namespacing:
+
+        def get_user_knowledge(run_context: RunContext) -> LanceDbKnowledge:
+            return LanceDbKnowledge(
+                table_name=f"user_{run_context.user_id}_docs",
+                uri=f"./lancedb/users/{run_context.user_id}"
+            )
+
+        agent = Agent(knowledge=get_user_knowledge)
+    """
+    import inspect
+
+    signature = inspect.signature(knowledge)
+    knowledge_args: Dict[str, Any] = {}
+
+    # Check for agent parameter
+    if "agent" in signature.parameters:
+        knowledge_args["agent"] = agent
+
+    # Check for session_state parameter
+    if "session_state" in signature.parameters:
+        knowledge_args["session_state"] = session_state if session_state is not None else {}
+
+    # Check for run_context parameter
+    if "run_context" in signature.parameters:
+        knowledge_args["run_context"] = run_context or None
+
+    # Run the knowledge function, must be sync
+    if inspect.iscoroutinefunction(knowledge):
+        raise Exception("Knowledge function is async, use `agent.arun()` instead")
+
+    return knowledge(**knowledge_args)
+
+
+async def aresolve_knowledge(
+    knowledge: Callable,
+    agent: Optional[Union["Agent", "Team"]] = None,
+    session_state: Optional[Dict[str, Any]] = None,
+    run_context: Optional[RunContext] = None,
+) -> Any:
+    """Async version of resolve_knowledge.
+
+    Resolves a knowledge callable to get the KnowledgeProtocol instance.
+    Supports both sync and async callables.
+    """
+    import inspect
+
+    signature = inspect.signature(knowledge)
+    knowledge_args: Dict[str, Any] = {}
+
+    # Check for agent parameter
+    if "agent" in signature.parameters:
+        knowledge_args["agent"] = agent
+
+    # Check for session_state parameter
+    if "session_state" in signature.parameters:
+        knowledge_args["session_state"] = session_state if session_state is not None else {}
+
+    # Check for run_context parameter
+    if "run_context" in signature.parameters:
+        knowledge_args["run_context"] = run_context or None
+
+    if inspect.iscoroutinefunction(knowledge):
+        return await knowledge(**knowledge_args)
+    else:
+        return knowledge(**knowledge_args)
+
+
 def validate_input(
     input: Union[str, List, Dict, Message, BaseModel], input_schema: Optional[Type[BaseModel]] = None
 ) -> Union[str, List, Dict, Message, BaseModel]:

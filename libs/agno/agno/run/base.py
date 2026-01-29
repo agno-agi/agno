@@ -26,6 +26,8 @@ class RunContext:
     metadata: Optional[Dict[str, Any]] = None
     session_state: Optional[Dict[str, Any]] = None
     output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None
+    # Resolved knowledge instance (when knowledge is provided as a callable)
+    knowledge: Optional[Any] = None
 
 
 @dataclass

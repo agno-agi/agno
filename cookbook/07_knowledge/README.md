@@ -68,9 +68,37 @@ Add docs, manuals, and databases so agents can search and cite specific sources 
 - **[specify_reader.py](./basic_operations/specify_reader.py)** - Use specific document readers
 - **[async_speedup.py](./basic_operations/async_speedup.py)** - Async processing for performance
 
+### Dynamic Knowledge (Callable Knowledge)
+Create knowledge bases dynamically at runtime for per-user or per-tenant isolation:
+- **[01_user_namespaced_knowledge.py](./dynamic_knowledge/01_user_namespaced_knowledge.py)** - Per-user knowledge namespacing
+- **[02_multi_tenant_knowledge.py](./dynamic_knowledge/02_multi_tenant_knowledge.py)** - Multi-tenant SaaS architecture
+
+```python
+from agno.agent import Agent
+from agno.run import RunContext
+
+def get_user_knowledge(run_context: RunContext) -> Knowledge:
+    """Create user-specific knowledge at runtime."""
+    user_id = run_context.user_id
+    return Knowledge(
+        vector_db=ChromaDb(
+            collection=f"user_{user_id}_docs",
+            path=f"tmp/chromadb/users/{user_id}",
+        )
+    )
+
+# Pass the function, not the instance
+agent = Agent(knowledge=get_user_knowledge)
+
+# Knowledge is resolved per-run based on user_id
+agent.run("Search my docs", user_id="alice")
+```
+
 ### Other Topics
 - **[chunking/](./chunking/)** - Text chunking strategies
-- **[embedders/](./embedders/)** - Embedding model providers  
+- **[custom_retriever/](./custom_retriever/)** - Custom retrieval logic
+- **[dynamic_knowledge/](./dynamic_knowledge/)** - Runtime-resolved knowledge bases
+- **[embedders/](./embedders/)** - Embedding model providers
 - **[filters/](./filters/)** - Content filtering and access control
 - **[readers/](./readers/)** - Document format processors
 - **[search_type/](./search_type/)** - Search algorithm options

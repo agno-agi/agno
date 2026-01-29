@@ -93,6 +93,7 @@ from agno.utils.agent import (
     aget_session_metrics_util,
     aget_session_name_util,
     aget_session_state_util,
+    aresolve_knowledge,
     aset_session_name_util,
     aupdate_session_state_util,
     await_for_open_threads,
@@ -108,6 +109,7 @@ from agno.utils.agent import (
     get_session_metrics_util,
     get_session_name_util,
     get_session_state_util,
+    resolve_knowledge,
     scrub_history_messages_from_run_output,
     scrub_media_from_run_output,
     scrub_tool_results_from_run_output,
@@ -261,7 +263,13 @@ class Agent:
     max_tool_calls_from_history: Optional[int] = None
 
     # --- Knowledge ---
-    knowledge: Optional[KnowledgeProtocol] = None
+    # Knowledge can be a KnowledgeProtocol instance or a callable that returns one.
+    # When a callable is provided, it's resolved at runtime with access to agent, session_state, and run_context.
+    # This enables dynamic knowledge creation, e.g., per-user namespacing:
+    #   def get_user_knowledge(run_context: RunContext) -> LanceDbKnowledge:
+    #       return LanceDbKnowledge(table_name=f"user_{run_context.user_id}_docs")
+    #   agent = Agent(knowledge=get_user_knowledge)
+    knowledge: Optional[Union[KnowledgeProtocol, Callable[..., KnowledgeProtocol]]] = None
     # Enable RAG by adding references from Knowledge to the user prompt.
     # Add knowledge_filters to the Agent class attributes
     knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
@@ -1030,6 +1038,29 @@ class Agent:
             user_id = self.user_id
 
         return session_id, user_id
+
+    def _get_knowledge(self, run_context: Optional[RunContext] = None) -> Optional[KnowledgeProtocol]:
+        """Get the resolved knowledge instance.
+
+        If knowledge was provided as a callable, it should have been resolved
+        during run/arun and stored in run_context.knowledge. This method
+        returns the resolved instance from run_context if available,
+        otherwise falls back to self.knowledge (for non-callable case).
+
+        Args:
+            run_context: The current run context containing resolved knowledge.
+
+        Returns:
+            The KnowledgeProtocol instance, or None if no knowledge is configured.
+        """
+        # If run_context has resolved knowledge, use it
+        if run_context is not None and run_context.knowledge is not None:
+            return run_context.knowledge
+        # If self.knowledge is a callable, it hasn't been resolved yet
+        # This shouldn't happen during a run, but we handle it gracefully
+        if callable(self.knowledge):
+            return None
+        return self.knowledge
 
     def _run(
         self,
@@ -1900,6 +1931,17 @@ class Agent:
         # Resolve dependencies
         if run_context.dependencies is not None:
             self._resolve_run_dependencies(run_context=run_context)
+
+        # Resolve knowledge if it's a callable
+        if callable(self.knowledge):
+            run_context.knowledge = resolve_knowledge(
+                knowledge=self.knowledge,
+                agent=self,
+                session_state=session_state,
+                run_context=run_context,
+            )
+        else:
+            run_context.knowledge = self.knowledge
 
         add_dependencies = (
             add_dependencies_to_context if add_dependencies_to_context is not None else self.add_dependencies_to_context
@@ -3003,6 +3045,19 @@ class Agent:
         # output_schema parameter takes priority, even if run_context was provided
         run_context.output_schema = output_schema
 
+        # Resolve knowledge if it's a callable
+        # Note: Using sync resolve_knowledge here since arun is not an async function
+        # (it returns async iterators/coroutines but is itself sync)
+        if callable(self.knowledge):
+            run_context.knowledge = resolve_knowledge(
+                knowledge=self.knowledge,
+                agent=self,
+                session_state=session_state,
+                run_context=run_context,
+            )
+        else:
+            run_context.knowledge = self.knowledge
+
         # Prepare arguments for the model (must be after run_context is fully initialized)
         response_format = self._get_response_format(run_context=run_context) if self.parser_model is None else None
 
@@ -3178,6 +3233,17 @@ class Agent:
         # Resolve dependencies
         if run_context.dependencies is not None:
             self._resolve_run_dependencies(run_context=run_context)
+
+        # Resolve knowledge if it's a callable
+        if callable(self.knowledge):
+            run_context.knowledge = resolve_knowledge(
+                knowledge=self.knowledge,
+                agent=self,
+                session_state=session_state,
+                run_context=run_context,
+            )
+        else:
+            run_context.knowledge = self.knowledge
 
         # When filters are passed manually
         if self.knowledge_filters or run_context.knowledge_filters or knowledge_filters:
@@ -3881,6 +3947,18 @@ class Agent:
             knowledge_filters=knowledge_filters,
             metadata=metadata,
         )
+
+        # Resolve knowledge if it's a callable
+        # Note: Using sync resolve_knowledge here since acontinue_run is not an async function
+        if callable(self.knowledge):
+            run_context.knowledge = resolve_knowledge(
+                knowledge=self.knowledge,
+                agent=self,
+                session_state=run_context.session_state,
+                run_context=run_context,
+            )
+        else:
+            run_context.knowledge = self.knowledge
 
         if stream:
             return self._acontinue_run_stream(
@@ -6671,9 +6749,10 @@ class Agent:
             agent_tools.append(Function(name="update_session_state", entrypoint=self._update_session_state_tool))
 
         # Add tools for accessing knowledge
-        if self.knowledge is not None and self.search_knowledge:
+        _knowledge = self._get_knowledge(run_context)
+        if _knowledge is not None and self.search_knowledge:
             # Use knowledge protocol's get_tools method
-            get_tools_fn = getattr(self.knowledge, "get_tools", None)
+            get_tools_fn = getattr(_knowledge, "get_tools", None)
             if callable(get_tools_fn):
                 knowledge_tools = get_tools_fn(
                     run_response=run_response,
@@ -6694,8 +6773,8 @@ class Agent:
                 )
             )
 
-        if self.knowledge is not None and self.update_knowledge:
-            agent_tools.append(self.add_to_knowledge)
+        if _knowledge is not None and self.update_knowledge:
+            agent_tools.append(self._create_add_to_knowledge_tool(_knowledge))
 
         # Add tools for accessing skills
         if self.skills is not None:
@@ -6781,10 +6860,11 @@ class Agent:
             agent_tools.append(Function(name="update_session_state", entrypoint=self._update_session_state_tool))
 
         # Add tools for accessing knowledge
-        if self.knowledge is not None and self.search_knowledge:
+        _knowledge = self._get_knowledge(run_context)
+        if _knowledge is not None and self.search_knowledge:
             # Use knowledge protocol's get_tools method
-            aget_tools_fn = getattr(self.knowledge, "aget_tools", None)
-            get_tools_fn = getattr(self.knowledge, "get_tools", None)
+            aget_tools_fn = getattr(_knowledge, "aget_tools", None)
+            get_tools_fn = getattr(_knowledge, "get_tools", None)
 
             if callable(aget_tools_fn):
                 knowledge_tools = await aget_tools_fn(
@@ -6816,8 +6896,8 @@ class Agent:
                 )
             )
 
-        if self.knowledge is not None and self.update_knowledge:
-            agent_tools.append(self.add_to_knowledge)
+        if _knowledge is not None and self.update_knowledge:
+            agent_tools.append(self._create_add_to_knowledge_tool(_knowledge))
 
         # Add tools for accessing skills
         if self.skills is not None:
@@ -9044,8 +9124,9 @@ class Agent:
                 system_message_content += learning_context + "\n"
 
         # 3.3.13 then add search_knowledge instructions to the system prompt
-        if self.knowledge is not None and self.search_knowledge and self.add_search_knowledge_instructions:
-            build_context_fn = getattr(self.knowledge, "build_context", None)
+        _knowledge = self._get_knowledge(run_context)
+        if _knowledge is not None and self.search_knowledge and self.add_search_knowledge_instructions:
+            build_context_fn = getattr(_knowledge, "build_context", None)
             if callable(build_context_fn):
                 knowledge_context = build_context_fn(
                     enable_agentic_filters=self.enable_agentic_knowledge_filters,
@@ -9384,10 +9465,11 @@ class Agent:
                 system_message_content += learning_context + "\n"
 
         # 3.3.13 then add search_knowledge instructions to the system prompt
-        if self.knowledge is not None and self.search_knowledge and self.add_search_knowledge_instructions:
+        _knowledge = self._get_knowledge(run_context)
+        if _knowledge is not None and self.search_knowledge and self.add_search_knowledge_instructions:
             # Prefer async version if available for async databases
-            abuild_context_fn = getattr(self.knowledge, "abuild_context", None)
-            build_context_fn = getattr(self.knowledge, "build_context", None)
+            abuild_context_fn = getattr(_knowledge, "abuild_context", None)
+            build_context_fn = getattr(_knowledge, "build_context", None)
             if callable(abuild_context_fn):
                 knowledge_context = await abuild_context_fn(
                     enable_agentic_filters=self.enable_agentic_knowledge_filters,
@@ -10286,12 +10368,15 @@ class Agent:
         # Extract dependencies from run_context if available
         dependencies = run_context.dependencies if run_context else None
 
-        if num_documents is None and self.knowledge is not None:
-            num_documents = getattr(self.knowledge, "max_results", None)
+        # Get resolved knowledge
+        _knowledge = self._get_knowledge(run_context)
+
+        if num_documents is None and _knowledge is not None:
+            num_documents = getattr(_knowledge, "max_results", None)
         # Validate the filters against known valid filter keys
-        if self.knowledge is not None and filters is not None:
+        if _knowledge is not None and filters is not None:
             if validate_filters:
-                valid_filters, invalid_keys = self.knowledge.validate_filters(filters)  # type: ignore
+                valid_filters, invalid_keys = _knowledge.validate_filters(filters)  # type: ignore
 
                 # Warn about invalid filter keys
                 if invalid_keys:
@@ -10330,17 +10415,17 @@ class Agent:
 
         # Use knowledge protocol's retrieve method
         try:
-            if self.knowledge is None:
+            if _knowledge is None:
                 return None
 
             # Use protocol retrieve() method if available
-            retrieve_fn = getattr(self.knowledge, "retrieve", None)
+            retrieve_fn = getattr(_knowledge, "retrieve", None)
             if not callable(retrieve_fn):
                 log_debug("Knowledge does not implement retrieve()")
                 return None
 
             if num_documents is None:
-                num_documents = getattr(self.knowledge, "max_results", 10)
+                num_documents = getattr(_knowledge, "max_results", 10)
 
             log_debug(f"Retrieving from knowledge base with filters: {filters}")
             relevant_docs: List[Document] = retrieve_fn(query=query, max_results=num_documents, filters=filters)
@@ -10369,13 +10454,16 @@ class Agent:
         # Extract dependencies from run_context if available
         dependencies = run_context.dependencies if run_context else None
 
-        if num_documents is None and self.knowledge is not None:
-            num_documents = getattr(self.knowledge, "max_results", None)
+        # Get resolved knowledge
+        _knowledge = self._get_knowledge(run_context)
+
+        if num_documents is None and _knowledge is not None:
+            num_documents = getattr(_knowledge, "max_results", None)
 
         # Validate the filters against known valid filter keys
-        if self.knowledge is not None and filters is not None:
+        if _knowledge is not None and filters is not None:
             if validate_filters:
-                valid_filters, invalid_keys = await self.knowledge.avalidate_filters(filters)  # type: ignore
+                valid_filters, invalid_keys = await _knowledge.avalidate_filters(filters)  # type: ignore
 
                 # Warn about invalid filter keys
                 if invalid_keys:  # type: ignore
@@ -10418,19 +10506,19 @@ class Agent:
 
         # Use knowledge protocol's retrieve method
         try:
-            if self.knowledge is None:
+            if _knowledge is None:
                 return None
 
             # Use protocol aretrieve() or retrieve() method if available
-            aretrieve_fn = getattr(self.knowledge, "aretrieve", None)
-            retrieve_fn = getattr(self.knowledge, "retrieve", None)
+            aretrieve_fn = getattr(_knowledge, "aretrieve", None)
+            retrieve_fn = getattr(_knowledge, "retrieve", None)
 
             if not callable(aretrieve_fn) and not callable(retrieve_fn):
                 log_debug("Knowledge does not implement retrieve()")
                 return None
 
             if num_documents is None:
-                num_documents = getattr(self.knowledge, "max_results", 10)
+                num_documents = getattr(_knowledge, "max_results", 10)
 
             log_debug(f"Retrieving from knowledge base with filters: {filters}")
 
@@ -11705,6 +11793,45 @@ class Agent:
 
         insert_fn(name=document_name, text_content=document_content, reader=TextReader())
         return "Successfully added to knowledge base"
+
+    def _create_add_to_knowledge_tool(self, knowledge: KnowledgeProtocol) -> Callable:
+        """Create an add_to_knowledge tool with the resolved knowledge captured.
+
+        This factory method creates a closure that captures the resolved knowledge
+        instance, enabling support for callable knowledge (dynamic knowledge creation).
+
+        Args:
+            knowledge: The resolved KnowledgeProtocol instance.
+
+        Returns:
+            A callable tool function for adding to the knowledge base.
+        """
+
+        def add_to_knowledge(query: str, result: str) -> str:
+            """Use this function to add information to the knowledge base for future use.
+
+            Args:
+                query (str): The query or topic to add.
+                result (str): The actual content or information to store.
+            Returns:
+                str: A string indicating the status of the addition.
+            """
+            import json
+
+            # Check if knowledge supports insert
+            insert_fn = getattr(knowledge, "insert", None)
+            if not callable(insert_fn):
+                return "Knowledge does not support insert"
+
+            document_name = query.replace(" ", "_").replace("?", "").replace("!", "").replace(".", "")
+            document_content = json.dumps({"query": query, "result": result})
+            log_info(f"Adding document to Knowledge: {document_name}: {document_content}")
+            from agno.knowledge.reader.text_reader import TextReader
+
+            insert_fn(name=document_name, text_content=document_content, reader=TextReader())
+            return "Successfully added to knowledge base"
+
+        return add_to_knowledge
 
     def _get_previous_sessions_messages_function(
         self, num_history_sessions: Optional[int] = 2, user_id: Optional[str] = None
