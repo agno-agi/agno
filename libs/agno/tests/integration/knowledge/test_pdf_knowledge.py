@@ -4,18 +4,29 @@ from pathlib import Path
 import pytest
 
 from agno.agent import Agent
+from agno.db.sqlite.sqlite import SqliteDb
 from agno.knowledge.knowledge import Knowledge
+from agno.vectordb.chroma import ChromaDb
 from agno.vectordb.lancedb.lance_db import LanceDb
 
 
 @pytest.fixture
 def setup_vector_db():
     """Setup a temporary vector DB for testing."""
-    table_name = f"docx_test_{os.urandom(4).hex()}"
-    vector_db = LanceDb(table_name=table_name, uri="tmp/lancedb")
+    path = f"tmp/chromadb_{os.urandom(4).hex()}"
+    vector_db = ChromaDb(collection="vectors", path=path, persistent_client=True)
     yield vector_db
     # Clean up after test
     vector_db.drop()
+
+
+@pytest.fixture
+def setup_contents_db():
+    """Setup a temporary contents DB for testing."""
+    contents_db = SqliteDb("tmp/contentsdb")
+    yield contents_db
+    # Clean up after test
+    os.remove("tmp/contentsdb")
 
 
 def get_filtered_data_dir():
@@ -23,17 +34,17 @@ def get_filtered_data_dir():
     return Path(__file__).parent / "data" / "filters"
 
 
-def prepare_knowledge(setup_vector_db):
+def prepare_knowledge(setup_vector_db, setup_contents_db):
     """Prepare a knowledge  with filtered data."""
-    kb = Knowledge(vector_db=setup_vector_db)
+    kb = Knowledge(vector_db=setup_vector_db, contents_db=setup_contents_db)
 
     # Load with different user IDs and metadata
-    kb.add_content(
+    kb.insert(
         path=get_filtered_data_dir() / "cv_1.pdf",
         metadata={"user_id": "jordan_mitchell", "document_type": "cv", "experience_level": "entry"},
     )
 
-    kb.add_content(
+    kb.insert(
         path=get_filtered_data_dir() / "cv_2.pdf",
         metadata={"user_id": "taylor_brooks", "document_type": "cv", "experience_level": "mid"},
     )
@@ -41,18 +52,18 @@ def prepare_knowledge(setup_vector_db):
     return kb
 
 
-async def aprepare_knowledge(setup_vector_db):
+async def aprepare_knowledge(setup_vector_db, setup_contents_db):
     """Prepare a knowledge  with filtered data asynchronously."""
     # Create knowledge
-    kb = Knowledge(vector_db=setup_vector_db)
+    kb = Knowledge(vector_db=setup_vector_db, contents_db=setup_contents_db)
 
     # Load documents with different user IDs and metadata
-    await kb.add_content_async(
+    await kb.ainsert(
         path=get_filtered_data_dir() / "cv_1.pdf",
         metadata={"user_id": "jordan_mitchell", "document_type": "cv", "experience_level": "entry"},
     )
 
-    await kb.add_content_async(
+    await kb.ainsert(
         path=get_filtered_data_dir() / "cv_2.pdf",
         metadata={"user_id": "taylor_brooks", "document_type": "cv", "experience_level": "mid"},
     )
@@ -71,7 +82,7 @@ def test_pdf_knowledge():
         vector_db=vector_db,
     )
 
-    knowledge.add_content(path=str(Path(__file__).parent / "data/thai_recipes_short.pdf"))
+    knowledge.insert(path=str(Path(__file__).parent / "data/thai_recipes_short.pdf"))
 
     assert vector_db.exists()
 
@@ -104,7 +115,7 @@ async def test_pdf_knowledge_async():
         vector_db=vector_db,
     )
 
-    await knowledge.add_content_async(path=str(Path(__file__).parent / "data/thai_recipes_short.pdf"))
+    await knowledge.ainsert(path=str(Path(__file__).parent / "data/thai_recipes_short.pdf"))
 
     assert await vector_db.async_exists()
 
@@ -135,12 +146,12 @@ def test_text_knowledge_with_metadata_path(setup_vector_db):
         vector_db=setup_vector_db,
     )
 
-    kb.add_content(
+    kb.insert(
         path=str(get_filtered_data_dir() / "cv_1.pdf"),
         metadata={"user_id": "jordan_mitchell", "document_type": "cv", "experience_level": "entry"},
     )
 
-    kb.add_content(
+    kb.insert(
         path=str(get_filtered_data_dir() / "cv_2.pdf"),
         metadata={"user_id": "taylor_brooks", "document_type": "cv", "experience_level": "mid"},
     )
@@ -166,12 +177,12 @@ def test_knowledge_with_metadata_path_invalid_filter(setup_vector_db):
         vector_db=setup_vector_db,
     )
 
-    kb.add_content(
+    kb.insert(
         path=str(get_filtered_data_dir() / "cv_1.pdf"),
         metadata={"user_id": "jordan_mitchell", "document_type": "cv", "experience_level": "entry"},
     )
 
-    kb.add_content(
+    kb.insert(
         path=str(get_filtered_data_dir() / "cv_2.pdf"),
         metadata={"user_id": "taylor_brooks", "document_type": "cv", "experience_level": "mid"},
     )
@@ -204,9 +215,9 @@ def test_knowledge_with_metadata_path_invalid_filter(setup_vector_db):
 
 
 # for the one with new knowledge filter DX- filters at load
-def test_knowledge_with_valid_filter(setup_vector_db):
+def test_knowledge_with_valid_filter(setup_vector_db, setup_contents_db):
     """Test filtering knowledge  with valid filters."""
-    kb = prepare_knowledge(setup_vector_db)
+    kb = prepare_knowledge(setup_vector_db, setup_contents_db)
 
     # Initialize agent with filters for Jordan Mitchell
     agent = Agent(knowledge=kb, knowledge_filters={"user_id": "jordan_mitchell"})
@@ -229,9 +240,9 @@ def test_knowledge_with_valid_filter(setup_vector_db):
     assert "senior developer" not in response_content.lower()
 
 
-def test_knowledge_with_run_level_filter(setup_vector_db):
+def test_knowledge_with_run_level_filter(setup_vector_db, setup_contents_db):
     """Test filtering knowledge  with filters passed at run time."""
-    kb = prepare_knowledge(setup_vector_db)
+    kb = prepare_knowledge(setup_vector_db, setup_contents_db)
 
     # Initialize agent without filters
     agent = Agent(knowledge=kb)
@@ -251,9 +262,9 @@ def test_knowledge_with_run_level_filter(setup_vector_db):
     assert any(term in response_content for term in ["jordan mitchell", "entry-level", "junior"])
 
 
-def test_knowledge_filter_override(setup_vector_db):
+def test_knowledge_filter_override(setup_vector_db, setup_contents_db):
     """Test that run-level filters override agent-level filters."""
-    kb = prepare_knowledge(setup_vector_db)
+    kb = prepare_knowledge(setup_vector_db, setup_contents_db)
 
     # Initialize agent with jordan_mitchell filter
     agent = Agent(knowledge=kb, knowledge_filters={"user_id": "taylor_brooks"})
@@ -291,7 +302,7 @@ async def test_pdf_url_knowledge_base_async():
         vector_db=vector_db,
     )
 
-    await knowledge.add_contents_async(
+    await knowledge.ainsert_many(
         urls=[
             "https://agno-public.s3.amazonaws.com/recipes/cape_recipes_short_2.pdf",
             "https://agno-public.s3.amazonaws.com/recipes/thai_recipes_short.pdf",
@@ -328,12 +339,12 @@ async def test_pdf_url_knowledge_base_with_metadata_path(setup_vector_db):
         vector_db=setup_vector_db,
     )
 
-    await kb.add_content_async(
+    await kb.ainsert(
         url="https://agno-public.s3.amazonaws.com/recipes/thai_recipes_short.pdf",
         metadata={"cuisine": "Thai", "source": "Thai Cookbook", "region": "Southeast Asia"},
     )
 
-    await kb.add_content_async(
+    await kb.ainsert(
         url="https://agno-public.s3.amazonaws.com/recipes/cape_recipes_short_2.pdf",
         metadata={"cuisine": "Cape", "source": "Cape Cookbook", "region": "South Africa"},
     )
@@ -351,18 +362,19 @@ async def test_pdf_url_knowledge_base_with_metadata_path(setup_vector_db):
     assert not any(term in response_content for term in ["cape malay", "bobotie", "south african"])
 
 
-def test_pdf_url_knowledge_base_with_metadata_path_invalid_filter(setup_vector_db):
+def test_pdf_url_knowledge_base_with_metadata_path_invalid_filter(setup_vector_db, setup_contents_db):
     """Test loading PDF URLs with metadata using the new path structure and invalid filters."""
     kb = Knowledge(
         vector_db=setup_vector_db,
+        contents_db=setup_contents_db,
     )
 
-    kb.add_content(
+    kb.insert(
         url="https://agno-public.s3.amazonaws.com/recipes/thai_recipes_short.pdf",
         metadata={"cuisine": "Thai", "source": "Thai Cookbook", "region": "Southeast Asia"},
     )
 
-    kb.add_content(
+    kb.insert(
         url="https://agno-public.s3.amazonaws.com/recipes/cape_recipes_short_2.pdf",
         metadata={"cuisine": "Cape", "source": "Cape Cookbook", "region": "South Africa"},
     )
@@ -384,6 +396,7 @@ def test_pdf_url_knowledge_base_with_metadata_path_invalid_filter(setup_vector_d
         "please clarify",
         "need more information",
         "be more specific",
+        "specific",
     ]
 
     recipes_mentioned = any(cuisine in response_content for cuisine in ["thai", "cape", "tom kha", "cape malay"])
@@ -427,11 +440,11 @@ async def test_async_pdf_url_knowledge_base_with_metadata_path(setup_vector_db):
         vector_db=setup_vector_db,
     )
 
-    await kb.add_content_async(
+    await kb.ainsert(
         url="https://agno-public.s3.amazonaws.com/recipes/thai_recipes_short.pdf",
         metadata={"cuisine": "Thai", "source": "Thai Cookbook", "region": "Southeast Asia"},
     )
-    await kb.add_content_async(
+    await kb.ainsert(
         url="https://agno-public.s3.amazonaws.com/recipes/cape_recipes_short_2.pdf",
         metadata={"cuisine": "Cape", "source": "Cape Cookbook", "region": "South Africa"},
     )
@@ -449,17 +462,18 @@ async def test_async_pdf_url_knowledge_base_with_metadata_path(setup_vector_db):
 
 
 @pytest.mark.asyncio
-async def test_async_pdf_url_knowledge_base_with_metadata_path_invalid_filter(setup_vector_db):
+async def test_async_pdf_url_knowledge_base_with_metadata_path_invalid_filter(setup_vector_db, setup_contents_db):
     """Test async loading of PDF URLs with metadata using the new path structure and invalid filters."""
     kb = Knowledge(
         vector_db=setup_vector_db,
+        contents_db=setup_contents_db,
     )
 
-    await kb.add_content_async(
+    await kb.ainsert(
         url="https://agno-public.s3.amazonaws.com/recipes/thai_recipes_short.pdf",
         metadata={"cuisine": "Thai", "source": "Thai Cookbook", "region": "Southeast Asia"},
     )
-    await kb.add_content_async(
+    await kb.ainsert(
         url="https://agno-public.s3.amazonaws.com/recipes/cape_recipes_short_2.pdf",
         metadata={"cuisine": "Cape", "source": "Cape Cookbook", "region": "South Africa"},
     )
@@ -481,6 +495,7 @@ async def test_async_pdf_url_knowledge_base_with_metadata_path_invalid_filter(se
         "please clarify",
         "need more information",
         "be more specific",
+        "specific",
     ]
 
     recipes_mentioned = any(cuisine in response_content for cuisine in ["thai", "cape", "tom kha", "cape malay"])
@@ -518,9 +533,9 @@ async def test_async_pdf_url_knowledge_base_with_metadata_path_invalid_filter(se
 
 
 # for the one with new knowledge filter DX - filters at load
-def test_pdf_url_knowledge_base_with_valid_filter(setup_vector_db):
+def test_pdf_url_knowledge_base_with_valid_filter(setup_vector_db, setup_contents_db):
     """Test filtering PDF URL knowledge base with valid filters."""
-    kb = prepare_knowledge(setup_vector_db)
+    kb = prepare_knowledge(setup_vector_db, setup_contents_db)
 
     # Initialize agent with filters for Thai cuisine
     agent = Agent(knowledge=kb, knowledge_filters={"cuisine": "Thai"})
@@ -542,9 +557,9 @@ def test_pdf_url_knowledge_base_with_valid_filter(setup_vector_db):
     assert not any(term in response_content for term in ["cape malay curry", "bobotie", "apricot jam"])
 
 
-def test_pdf_url_knowledge_base_with_run_level_filter(setup_vector_db):
+def test_pdf_url_knowledge_base_with_run_level_filter(setup_vector_db, setup_contents_db):
     """Test filtering PDF URL knowledge base with filters passed at run time."""
-    kb = prepare_knowledge(setup_vector_db)
+    kb = prepare_knowledge(setup_vector_db, setup_contents_db)
 
     # Initialize agent without filters
     agent = Agent(knowledge=kb)
@@ -566,9 +581,9 @@ def test_pdf_url_knowledge_base_with_run_level_filter(setup_vector_db):
     assert not any(term in response_content for term in ["pad thai", "tom kha gai", "galangal"])
 
 
-def test_pdf_url_knowledge_base_with_invalid_filter(setup_vector_db):
+def test_pdf_url_knowledge_base_with_invalid_filter(setup_vector_db, setup_contents_db):
     """Test filtering PDF URL knowledge base with invalid filters."""
-    kb = prepare_knowledge(setup_vector_db)
+    kb = prepare_knowledge(setup_vector_db, setup_contents_db)
 
     # Initialize agent with invalid filters
     agent = Agent(knowledge=kb, knowledge_filters={"nonexistent_filter": "value"})
@@ -604,9 +619,9 @@ def test_pdf_url_knowledge_base_with_invalid_filter(setup_vector_db):
     assert not found_invalid_filters
 
 
-def test_pdf_url_knowledge_base_filter_override(setup_vector_db):
+def test_pdf_url_knowledge_base_filter_override(setup_vector_db, setup_contents_db):
     """Test that run-level filters override agent-level filters."""
-    kb = prepare_knowledge(setup_vector_db)
+    kb = prepare_knowledge(setup_vector_db, setup_contents_db)
 
     # Initialize agent with Cape cuisine filter
     agent = Agent(knowledge=kb, knowledge_filters={"cuisine": "Cape"})
@@ -629,9 +644,9 @@ def test_pdf_url_knowledge_base_filter_override(setup_vector_db):
 
 
 @pytest.mark.asyncio
-async def test_async_pdf_url_knowledge_base_with_valid_filter(setup_vector_db):
+async def test_async_pdf_url_knowledge_base_with_valid_filter(setup_vector_db, setup_contents_db):
     """Test asynchronously filtering PDF URL knowledge base with valid filters."""
-    kb = await aprepare_knowledge(setup_vector_db)
+    kb = await aprepare_knowledge(setup_vector_db, setup_contents_db)
 
     # Initialize agent with filters for Thai cuisine
     agent = Agent(knowledge=kb, knowledge_filters={"cuisine": "Thai"})
@@ -654,9 +669,9 @@ async def test_async_pdf_url_knowledge_base_with_valid_filter(setup_vector_db):
 
 
 @pytest.mark.asyncio
-async def test_async_pdf_url_knowledge_base_with_run_level_filter(setup_vector_db):
+async def test_async_pdf_url_knowledge_base_with_run_level_filter(setup_vector_db, setup_contents_db):
     """Test asynchronously filtering PDF URL knowledge base with filters passed at run time."""
-    kb = await aprepare_knowledge(setup_vector_db)
+    kb = await aprepare_knowledge(setup_vector_db, setup_contents_db)
 
     # Initialize agent without filters
     agent = Agent(knowledge=kb)
@@ -681,9 +696,9 @@ async def test_async_pdf_url_knowledge_base_with_run_level_filter(setup_vector_d
 
 
 @pytest.mark.asyncio
-async def test_async_pdf_url_knowledge_base_with_invalid_filter(setup_vector_db):
+async def test_async_pdf_url_knowledge_base_with_invalid_filter(setup_vector_db, setup_contents_db):
     """Test asynchronously filtering PDF URL knowledge base with invalid filters."""
-    kb = await aprepare_knowledge(setup_vector_db)
+    kb = await aprepare_knowledge(setup_vector_db, setup_contents_db)
 
     # Initialize agent with invalid filters
     agent = Agent(knowledge=kb, knowledge_filters={"nonexistent_filter": "value"})
@@ -720,9 +735,9 @@ async def test_async_pdf_url_knowledge_base_with_invalid_filter(setup_vector_db)
 
 
 @pytest.mark.asyncio
-async def test_async_pdf_url_knowledge_base_filter_override(setup_vector_db):
+async def test_async_pdf_url_knowledge_base_filter_override(setup_vector_db, setup_contents_db):
     """Test that run-level filters override agent-level filters in async mode."""
-    kb = await aprepare_knowledge(setup_vector_db)
+    kb = await aprepare_knowledge(setup_vector_db, setup_contents_db)
 
     # Initialize agent with Cape cuisine filter
     agent = Agent(knowledge=kb, knowledge_filters={"cuisine": "Cape"})

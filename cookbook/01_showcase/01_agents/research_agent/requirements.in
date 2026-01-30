@@ -1,0 +1,11 @@
+# Research Agent Dependencies
+# Install: pip install -r requirements.in
+
+# Core framework
+agno
+
+# Web search and extraction
+parallel-web
+
+# Models
+anthropic

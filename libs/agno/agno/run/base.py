@@ -1,6 +1,6 @@
 from dataclasses import asdict, dataclass
 from enum import Enum
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Type, Union
 
 from pydantic import BaseModel
 
@@ -18,10 +18,14 @@ class RunContext:
     session_id: str
     user_id: Optional[str] = None
 
+    workflow_id: Optional[str] = None
+    workflow_name: Optional[str] = None
+
     dependencies: Optional[Dict[str, Any]] = None
     knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
     metadata: Optional[Dict[str, Any]] = None
     session_state: Optional[Dict[str, Any]] = None
+    output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None
 
 
 @dataclass
@@ -49,6 +53,9 @@ class BaseRunOutputEvent:
                 "additional_input",
                 "session_summary",
                 "metrics",
+                "run_input",
+                "requirements",
+                "memories",
             ]
         }
 
@@ -133,6 +140,15 @@ class BaseRunOutputEvent:
         if hasattr(self, "session_summary") and self.session_summary is not None:
             _dict["session_summary"] = self.session_summary.to_dict()
 
+        if hasattr(self, "run_input") and self.run_input is not None:
+            _dict["run_input"] = self.run_input.to_dict()
+
+        if hasattr(self, "requirements") and self.requirements is not None:
+            _dict["requirements"] = [req.to_dict() if hasattr(req, "to_dict") else req for req in self.requirements]
+
+        if hasattr(self, "memories") and self.memories is not None:
+            _dict["memories"] = [mem.to_dict() if hasattr(mem, "to_dict") else mem for mem in self.memories]
+
         return _dict
 
     def to_json(self, separators=(", ", ": "), indent: Optional[int] = 2) -> str:
@@ -201,7 +217,39 @@ class BaseRunOutputEvent:
 
             data["session_summary"] = SessionSummary.from_dict(session_summary)
 
+        run_input = data.pop("run_input", None)
+        if run_input:
+            from agno.run.team import BaseTeamRunEvent
+
+            if issubclass(cls, BaseTeamRunEvent):
+                from agno.run.team import TeamRunInput
+
+                data["run_input"] = TeamRunInput.from_dict(run_input)
+            else:
+                from agno.run.agent import RunInput
+
+                data["run_input"] = RunInput.from_dict(run_input)
+
+                # Handle requirements
+
+        # Handle requirements
+        requirements_data = data.pop("requirements", None)
+        if requirements_data is not None:
+            from agno.run.requirement import RunRequirement
+
+            requirements_list: List[RunRequirement] = []
+            for item in requirements_data:
+                if isinstance(item, RunRequirement):
+                    requirements_list.append(item)
+                elif isinstance(item, dict):
+                    requirements_list.append(RunRequirement.from_dict(item))
+            data["requirements"] = requirements_list if requirements_list else None
+
         # Filter data to only include fields that are actually defined in the target class
+        # CustomEvent accepts arbitrary fields, so skip filtering for it
+        if cls.__name__ == "CustomEvent":
+            return cls(**data)
+
         from dataclasses import fields
 
         supported_fields = {f.name for f in fields(cls)}

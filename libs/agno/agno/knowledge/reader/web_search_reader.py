@@ -37,7 +37,7 @@ class WebSearchReader(Reader):
     user_agent: str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
 
     # Search engine configuration
-    search_engine: Literal["duckduckgo", "google"] = "duckduckgo"
+    search_engine: Literal["duckduckgo"] = "duckduckgo"
     search_delay: float = 3.0  # Delay between search requests
     max_search_retries: int = 2  # Retries for search operations
 
@@ -53,9 +53,10 @@ class WebSearchReader(Reader):
     chunking_strategy: Optional[ChunkingStrategy] = SemanticChunking()
 
     @classmethod
-    def get_supported_chunking_strategies(self) -> List[ChunkingStrategyType]:
+    def get_supported_chunking_strategies(cls) -> List[ChunkingStrategyType]:
         """Get the list of supported chunking strategies for Web Search readers."""
         return [
+            ChunkingStrategyType.CODE_CHUNKER,
             ChunkingStrategyType.AGENTIC_CHUNKER,
             ChunkingStrategyType.DOCUMENT_CHUNKER,
             ChunkingStrategyType.RECURSIVE_CHUNKER,
@@ -64,7 +65,7 @@ class WebSearchReader(Reader):
         ]
 
     @classmethod
-    def get_supported_content_types(self) -> List[ContentType]:
+    def get_supported_content_types(cls) -> List[ContentType]:
         return [ContentType.TOPIC]
 
     def _respect_rate_limits(self):
@@ -121,57 +122,10 @@ class WebSearchReader(Reader):
                     return []
         return []
 
-    def _perform_google_search(self, query: str) -> List[Dict[str, str]]:
-        """Perform web search using Google (requires googlesearch-python)"""
-        log_debug(f"Performing Google search for: {query}")
-
-        try:
-            from googlesearch import search
-        except ImportError:
-            logger.error("Google search requires 'googlesearch-python'. Install with: pip install googlesearch-python")
-            return []
-
-        for attempt in range(self.max_search_retries):
-            try:
-                self._respect_rate_limits()
-
-                results = []
-                # Use the basic search function without unsupported parameters
-                # The googlesearch-python library's search function only accepts basic parameters
-                search_results = search(query)
-
-                # Convert iterator to list and limit results
-                result_list = list(search_results)[: self.max_results]
-
-                for result in result_list:
-                    # The search function returns URLs as strings
-                    results.append(
-                        {
-                            "title": "",  # Google search doesn't provide titles directly
-                            "url": result,
-                            "description": "",  # Google search doesn't provide descriptions directly
-                        }
-                    )
-
-                log_debug(f"Found {len(results)} Google search results")
-                return results
-
-            except Exception as e:
-                logger.warning(f"Google search attempt {attempt + 1} failed: {e}")
-                if attempt < self.max_search_retries - 1:
-                    time.sleep(self.search_delay)
-                else:
-                    logger.error(f"All Google search attempts failed: {e}")
-                    return []
-
-        return []
-
     def _perform_web_search(self, query: str) -> List[Dict[str, str]]:
         """Perform web search using the configured search engine"""
         if self.search_engine == "duckduckgo":
             return self._perform_duckduckgo_search(query)
-        elif self.search_engine == "google":
-            return self._perform_google_search(query)
         else:
             logger.error(f"Unsupported search engine: {self.search_engine}")
             return []
@@ -310,21 +264,17 @@ class WebSearchReader(Reader):
 
         log_debug(f"Starting async web search reader for query: {query}")
 
-        # Perform web search (synchronous operation)
         search_results = self._perform_web_search(query)
         if not search_results:
             logger.warning(f"No search results found for query: {query}")
             return []
 
-        # Create tasks for fetching content from each URL
         async def fetch_url_async(result: Dict[str, str]) -> Optional[Document]:
             url = result.get("url", "")
 
-            # Skip if URL is invalid or already visited
             if not self._is_valid_url(url):
                 return None
 
-            # Mark URL as visited
             self._visited_urls.add(url)
 
             try:
@@ -339,32 +289,25 @@ class WebSearchReader(Reader):
                     else:
                         content = response.text
 
-                    document = self._create_document_from_url(url, content, result)
-                    return document
+                    return self._create_document_from_url(url, content, result)
 
             except Exception as e:
                 logger.warning(f"Error fetching {url}: {e}")
                 return None
 
-        # Create tasks for all URLs
-        tasks = [fetch_url_async(result) for result in search_results]
-
-        # Execute all tasks concurrently with delays
         documents = []
-        for i, task in enumerate(tasks):
-            if i > 0:  # Add delay between requests (except for the first one)
+        for i, result in enumerate(search_results):
+            if i > 0:
                 await asyncio.sleep(self.delay_between_requests)
 
-            doc = await task
+            doc = await fetch_url_async(result)
             if doc is not None:
-                # Apply chunking if enabled
                 if self.chunk:
                     chunked_docs = await self.chunk_documents_async([doc])
                     documents.extend(chunked_docs)
                 else:
                     documents.append(doc)
 
-                # Stop if we've reached max_results
                 if len(documents) >= self.max_results:
                     break
 

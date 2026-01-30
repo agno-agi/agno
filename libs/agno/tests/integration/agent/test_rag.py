@@ -21,7 +21,7 @@ def event_loop():
     loop.close()
 
 
-@pytest_asyncio.fixture(scope="session")
+@pytest_asyncio.fixture()
 async def loaded_knowledge_base():
     knowledge = Knowledge(
         vector_db=LanceDb(
@@ -31,7 +31,7 @@ async def loaded_knowledge_base():
             embedder=OpenAIEmbedder(),
         ),
     )
-    await knowledge.add_content_async(
+    await knowledge.ainsert(
         url="https://agno-public.s3.amazonaws.com/recipes/thai_recipes_short.pdf",
     )
     return knowledge

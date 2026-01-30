@@ -6,7 +6,6 @@ from typing import Any, Dict, List, Optional, Union
 from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
-from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.utils.log import log_debug, log_info, log_warning, logger
 from agno.vectordb.base import VectorDb
 
@@ -62,7 +61,7 @@ class CouchbaseSearch(VectorDb):
         couchbase_connection_string: str,
         cluster_options: ClusterOptions,
         search_index: Union[str, SearchIndex],
-        embedder: Embedder = OpenAIEmbedder(),
+        embedder: Optional[Embedder] = None,
         overwrite: bool = False,
         is_global_level_index: bool = False,
         wait_until_index_ready: float = 0,
@@ -97,6 +96,11 @@ class CouchbaseSearch(VectorDb):
         self.collection_name = collection_name
         self.connection_string = couchbase_connection_string
         self.cluster_options = cluster_options
+        if embedder is None:
+            from agno.knowledge.embedder.openai import OpenAIEmbedder
+
+            embedder = OpenAIEmbedder()
+            log_debug("Embedder not provided, using OpenAIEmbedder as default.")
         self.embedder = embedder
         self.overwrite = overwrite
         self.is_global_level_index = is_global_level_index

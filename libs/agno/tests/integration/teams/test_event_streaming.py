@@ -11,8 +11,8 @@ from agno.run.team import TeamRunInput, TeamRunOutput
 from agno.team import Team, TeamRunEvent
 from agno.tools.calculator import CalculatorTools
 from agno.tools.decorator import tool
-from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.reasoning import ReasoningTools
+from agno.tools.websearch import WebSearchTools
 from agno.tools.yfinance import YFinanceTools
 
 
@@ -69,6 +69,8 @@ def test_basic_intermediate_steps_events(shared_db):
 
     assert events.keys() == {
         TeamRunEvent.run_started,
+        TeamRunEvent.model_request_started,
+        TeamRunEvent.model_request_completed,
         TeamRunEvent.run_content,
         TeamRunEvent.run_content_completed,
         TeamRunEvent.run_completed,
@@ -96,12 +98,16 @@ def test_basic_intermediate_steps_events(shared_db):
 
     assert run_response_from_storage is not None
     assert run_response_from_storage.events is not None
-    assert len(run_response_from_storage.events) == 3, "We should only have the run started and run completed events"
+    assert len(run_response_from_storage.events) == 5, (
+        "We should have run_started, model_request_started, model_request_completed, run_content_completed, and run_completed events"
+    )
     assert run_response_from_storage.events[0].event == TeamRunEvent.run_started
-    assert run_response_from_storage.events[1].event == TeamRunEvent.run_content_completed
-    assert run_response_from_storage.events[2].event == TeamRunEvent.run_completed
+    assert run_response_from_storage.events[1].event == TeamRunEvent.model_request_started
+    assert run_response_from_storage.events[2].event == TeamRunEvent.model_request_completed
+    assert run_response_from_storage.events[3].event == TeamRunEvent.run_content_completed
+    assert run_response_from_storage.events[4].event == TeamRunEvent.run_completed
 
-    persisted_team_completed_event = run_response_from_storage.events[2]
+    persisted_team_completed_event = run_response_from_storage.events[4]
     assert hasattr(persisted_team_completed_event, "metadata")
     assert hasattr(persisted_team_completed_event, "metrics")
 
@@ -127,6 +133,8 @@ def test_intermediate_steps_with_tools(shared_db):
 
     assert events.keys() == {
         TeamRunEvent.run_started,
+        TeamRunEvent.model_request_started,
+        TeamRunEvent.model_request_completed,
         TeamRunEvent.tool_call_started,
         TeamRunEvent.tool_call_completed,
         TeamRunEvent.run_content,
@@ -185,6 +193,8 @@ def test_intermediate_steps_with_reasoning():
 
     assert events.keys() == {
         TeamRunEvent.run_started,
+        TeamRunEvent.model_request_started,
+        TeamRunEvent.model_request_completed,
         TeamRunEvent.tool_call_started,
         TeamRunEvent.tool_call_completed,
         TeamRunEvent.reasoning_started,
@@ -284,7 +294,7 @@ def test_intermediate_steps_with_memory(shared_db):
         model=OpenAIChat(id="gpt-4o-mini"),
         members=[],
         db=shared_db,
-        enable_user_memories=True,
+        update_memory_on_run=True,
         telemetry=False,
     )
 
@@ -298,6 +308,8 @@ def test_intermediate_steps_with_memory(shared_db):
 
     assert events.keys() == {
         TeamRunEvent.run_started,
+        TeamRunEvent.model_request_started,
+        TeamRunEvent.model_request_completed,
         TeamRunEvent.run_content,
         TeamRunEvent.run_content_completed,
         TeamRunEvent.run_completed,
@@ -332,6 +344,8 @@ def test_intermediate_steps_with_session_summary(shared_db):
 
     assert events.keys() == {
         TeamRunEvent.run_started,
+        TeamRunEvent.model_request_started,
+        TeamRunEvent.model_request_completed,
         TeamRunEvent.run_content,
         TeamRunEvent.run_content_completed,
         TeamRunEvent.run_completed,
@@ -374,6 +388,8 @@ def test_pre_hook_events_are_emitted(shared_db):
 
     assert events.keys() == {
         TeamRunEvent.run_started,
+        TeamRunEvent.model_request_started,
+        TeamRunEvent.model_request_completed,
         TeamRunEvent.pre_hook_started,
         TeamRunEvent.pre_hook_completed,
         TeamRunEvent.run_content,
@@ -434,6 +450,8 @@ async def test_async_pre_hook_events_are_emitted(shared_db):
 
     assert events.keys() == {
         TeamRunEvent.run_started,
+        TeamRunEvent.model_request_started,
+        TeamRunEvent.model_request_completed,
         TeamRunEvent.pre_hook_started,
         TeamRunEvent.pre_hook_completed,
         TeamRunEvent.run_content,
@@ -493,6 +511,8 @@ def test_post_hook_events_are_emitted(shared_db):
 
     assert events.keys() == {
         TeamRunEvent.run_started,
+        TeamRunEvent.model_request_started,
+        TeamRunEvent.model_request_completed,
         TeamRunEvent.run_content,
         TeamRunEvent.run_content_completed,
         TeamRunEvent.post_hook_started,
@@ -549,6 +569,8 @@ async def test_async_post_hook_events_are_emitted(shared_db):
 
     assert events.keys() == {
         TeamRunEvent.run_started,
+        TeamRunEvent.model_request_started,
+        TeamRunEvent.model_request_completed,
         TeamRunEvent.run_content,
         TeamRunEvent.run_content_completed,
         TeamRunEvent.post_hook_started,
@@ -605,6 +627,8 @@ def test_pre_and_post_hook_events_are_emitted(shared_db):
 
     assert events.keys() == {
         TeamRunEvent.run_started,
+        TeamRunEvent.model_request_started,
+        TeamRunEvent.model_request_completed,
         TeamRunEvent.pre_hook_started,
         TeamRunEvent.pre_hook_completed,
         TeamRunEvent.run_content,
@@ -658,6 +682,8 @@ def test_intermediate_steps_with_structured_output(shared_db):
 
     assert events.keys() == {
         TeamRunEvent.run_started,
+        TeamRunEvent.model_request_started,
+        TeamRunEvent.model_request_completed,
         TeamRunEvent.run_content,
         TeamRunEvent.run_content_completed,
         TeamRunEvent.run_completed,
@@ -713,6 +739,8 @@ def test_intermediate_steps_with_parser_model(shared_db):
 
     assert events.keys() == {
         TeamRunEvent.run_started,
+        TeamRunEvent.model_request_started,
+        TeamRunEvent.model_request_completed,
         TeamRunEvent.parser_model_response_started,
         TeamRunEvent.parser_model_response_completed,
         TeamRunEvent.run_content,
@@ -794,8 +822,12 @@ def test_intermediate_steps_with_member_agents():
 
     assert events.keys() == {
         TeamRunEvent.run_started,
+        TeamRunEvent.model_request_started,
+        TeamRunEvent.model_request_completed,
         TeamRunEvent.tool_call_started,
         RunEvent.run_started,
+        RunEvent.model_request_started,
+        RunEvent.model_request_completed,
         RunEvent.tool_call_started,
         RunEvent.tool_call_completed,
         RunEvent.reasoning_started,
@@ -842,6 +874,65 @@ def test_intermediate_steps_with_member_agents():
     assert len(events[RunEvent.run_content_completed]) >= 1
 
 
+def test_intermediate_steps_with_member_agents_only_member_events():
+    agent_math = Agent(
+        name="Math Agent",
+        model=OpenAIChat(id="gpt-4o-mini"),
+        instructions="You can do Math!",
+        tools=[CalculatorTools()],
+    )
+    team = Team(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        members=[agent_math],
+        telemetry=False,
+        stream_member_events=True,
+    )
+
+    response_generator = team.run(
+        "Analyse and then solve the problem: 'solve 10 factorial'",
+        stream=True,
+        stream_events=False,  # stream_events=False to only stream member events
+    )
+
+    events = {}
+    for run_response_delta in response_generator:
+        if run_response_delta.event not in events:
+            events[run_response_delta.event] = []
+        events[run_response_delta.event].append(run_response_delta)
+
+    assert events.keys() == {
+        RunEvent.run_started,
+        RunEvent.model_request_started,
+        RunEvent.model_request_completed,
+        RunEvent.tool_call_started,
+        RunEvent.tool_call_completed,
+        RunEvent.run_content,
+        RunEvent.run_content_completed,
+        RunEvent.run_completed,
+        TeamRunEvent.run_content,
+    }
+
+    # Agent content restreamed as team content
+    assert len(events[TeamRunEvent.run_content]) > 1
+
+    assert len(events[RunEvent.run_started]) == 1
+    assert len(events[RunEvent.tool_call_started]) == 1
+    assert len(events[RunEvent.tool_call_completed]) == 1
+    assert len(events[RunEvent.run_content]) > 1
+    assert len(events[RunEvent.run_content_completed]) == 1
+    assert len(events[RunEvent.run_completed]) == 1
+    # Two member agents
+    assert len(events[RunEvent.run_started]) == 1
+    assert events[RunEvent.run_started][0].parent_run_id == events[TeamRunEvent.run_content][0].run_id
+    assert len(events[RunEvent.run_completed]) == 1
+    assert events[RunEvent.run_completed][0].parent_run_id == events[TeamRunEvent.run_content][0].run_id
+    # Lots of member tool calls
+    assert len(events[RunEvent.tool_call_started]) == 1
+    assert len(events[RunEvent.tool_call_completed]) == 1
+    assert len(events[RunEvent.run_content]) > 1
+    assert len(events[RunEvent.run_content_completed]) == 1
+
+
 def test_intermediate_steps_with_member_agents_nested_team():
     agent_1 = Agent(
         name="Finance Analyst",
@@ -853,7 +944,7 @@ def test_intermediate_steps_with_member_agents_nested_team():
         model=OpenAIChat(id="gpt-4o-mini"),
         name="News Team",
         members=[],
-        tools=[DuckDuckGoTools(cache_results=True)],
+        tools=[WebSearchTools(cache_results=True)],
         telemetry=False,
     )
     team = Team(
@@ -873,11 +964,16 @@ def test_intermediate_steps_with_member_agents_nested_team():
 
     assert set(events.keys()) == {
         TeamRunEvent.run_started,
+        TeamRunEvent.model_request_started,
+        TeamRunEvent.model_request_completed,
         TeamRunEvent.tool_call_started,
         TeamRunEvent.tool_call_completed,
         TeamRunEvent.reasoning_started,
         TeamRunEvent.reasoning_step,
+        TeamRunEvent.reasoning_completed,
         RunEvent.run_started,
+        RunEvent.model_request_started,
+        RunEvent.model_request_completed,
         RunEvent.tool_call_started,
         RunEvent.tool_call_completed,
         RunEvent.run_content,
@@ -886,7 +982,6 @@ def test_intermediate_steps_with_member_agents_nested_team():
         TeamRunEvent.run_content,
         TeamRunEvent.run_content_completed,
         TeamRunEvent.run_completed,
-        TeamRunEvent.reasoning_completed,
     }
 
 
@@ -922,6 +1017,8 @@ def test_intermediate_steps_with_member_agents_streaming_off():
 
     assert events.keys() == {
         TeamRunEvent.run_started,
+        TeamRunEvent.model_request_started,
+        TeamRunEvent.model_request_completed,
         TeamRunEvent.tool_call_started,
         TeamRunEvent.tool_call_completed,
         TeamRunEvent.run_content,
@@ -970,7 +1067,7 @@ def test_intermediate_steps_with_member_agents_delegate_to_all_members():
         model=OpenAIChat(id="o3-mini"),
         members=[agent_1, agent_2],
         telemetry=False,
-        delegate_task_to_all_members=True,
+        delegate_to_all_members=True,
         instructions="You are a discussion master. Forward the task to the member agents.",
     )
 
@@ -1034,8 +1131,9 @@ def test_tool_parent_run_id():
     assert len(events[TeamRunEvent.run_started]) == 1
     assert len(events[TeamRunEvent.run_completed]) == 1
 
-    assert len(events[TeamRunEvent.tool_call_started]) == 1
-    assert len(events[TeamRunEvent.tool_call_completed]) == 1
+    # Model may delegate multiple times depending on its behavior
+    assert len(events[TeamRunEvent.tool_call_started]) >= 1
+    assert len(events[TeamRunEvent.tool_call_completed]) >= 1
 
     team_session = team.get_session(session_id="test_session")
     assert team_session is not None
@@ -1045,7 +1143,7 @@ def test_tool_parent_run_id():
     assert member_run is not None
     assert member_run.parent_run_id == team_run.run_id
 
-    # Assert expected tool call events
+    # Assert expected tool call events - check the first delegate call
     assert events[TeamRunEvent.tool_call_started][0].tool.tool_name == "delegate_task_to_member"
     assert events[TeamRunEvent.tool_call_started][0].run_id == member_run.parent_run_id
     assert events[TeamRunEvent.tool_call_completed][0].tool.tool_name == "delegate_task_to_member"

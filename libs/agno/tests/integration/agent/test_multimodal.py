@@ -4,7 +4,7 @@ from agno.media import Image
 from agno.models.openai.chat import OpenAIChat
 
 
-def test_agent_image_input(shared_db):
+def test_agent_image_input(shared_db, image_path):
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
         markdown=True,
@@ -13,7 +13,7 @@ def test_agent_image_input(shared_db):
 
     response = agent.run(
         "Tell me about this image and give me the latest news about it.",
-        images=[Image(url="https://upload.wikimedia.org/wikipedia/commons/0/0c/GoldenGateBridge-001.jpg")],
+        images=[Image(filepath=image_path)],
     )
     assert response.content is not None
 
@@ -26,7 +26,4 @@ def test_agent_image_input(shared_db):
     assert session_in_db.runs[0].messages[1].role == "user"
     assert session_in_db.runs[0].messages[2].role == "assistant"
     assert session_in_db.runs[0].messages[1].images is not None
-    assert (
-        session_in_db.runs[0].messages[1].images[0].url
-        == "https://upload.wikimedia.org/wikipedia/commons/0/0c/GoldenGateBridge-001.jpg"
-    )
+    assert session_in_db.runs[0].messages[1].images[0].filepath == str(image_path)

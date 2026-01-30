@@ -62,9 +62,10 @@ class TavilyReader(Reader):
         self.extract_depth = extract_depth
 
     @classmethod
-    def get_supported_chunking_strategies(self) -> List[ChunkingStrategyType]:
+    def get_supported_chunking_strategies(cls) -> List[ChunkingStrategyType]:
         """Get the list of supported chunking strategies for Tavily readers."""
         return [
+            ChunkingStrategyType.CODE_CHUNKER,
             ChunkingStrategyType.SEMANTIC_CHUNKER,
             ChunkingStrategyType.FIXED_SIZE_CHUNKER,
             ChunkingStrategyType.AGENTIC_CHUNKER,
@@ -73,7 +74,7 @@ class TavilyReader(Reader):
         ]
 
     @classmethod
-    def get_supported_content_types(self) -> List[ContentType]:
+    def get_supported_content_types(cls) -> List[ContentType]:
         return [ContentType.URL]
 
     def _extract(self, url: str, name: Optional[str] = None) -> List[Document]:
@@ -140,7 +141,6 @@ class TavilyReader(Reader):
                 documents.extend(self.chunk_document(Document(name=name or url, id=url, content=content)))
             else:
                 documents.append(Document(name=name or url, id=url, content=content))
-
             return documents
 
         except Exception as e:

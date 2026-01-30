@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - "main"
+      - "v2.4.0"
   pull_request:
     types:
       - opened
@@ -11,6 +12,7 @@ on:
       - reopened
     branches:
       - "main"
+      - "v2.4.0"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -119,11 +121,11 @@ jobs:
           set -e
           curl -LsSf https://astral.sh/uv/install.sh | sh
           echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-      - name: Run dev setup
+      - name: Run test setup
         working-directory: .
         run: |
           set -e
-          ./scripts/dev_setup.sh
+          ./scripts/test_setup.sh
       - name: Run tests for Agno
         working-directory: .
         env:

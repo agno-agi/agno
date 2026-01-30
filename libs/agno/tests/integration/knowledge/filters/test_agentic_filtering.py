@@ -86,7 +86,7 @@ async def knowledge_base(setup_csv_files):
         chunk=False,
     )
 
-    await knowledge.add_content_async(
+    await knowledge.ainsert(
         path=str(csv_dir),
         reader=reader,
         metadata={"data_type": "sales", "region": "north_america", "currency": "USD"},
@@ -102,7 +102,7 @@ async def test_agentic_filtering_openai(knowledge_base):
     )
     found_tool = False
     for tool in response.tools:
-        if tool.tool_name == "search_knowledge_base_with_agentic_filters":
+        if tool.tool_name == "search_knowledge_base":
             assert tool.tool_args["filters"] == [
                 {"key": "region", "value": "north_america"},
                 {"key": "data_type", "value": "sales"},
@@ -127,7 +127,7 @@ async def test_agentic_filtering_openai_with_output_schema(knowledge_base):
     )
     found_tool = False
     for tool in response.tools:
-        if tool.tool_name == "search_knowledge_base_with_agentic_filters":
+        if tool.tool_name == "search_knowledge_base":
             assert tool.tool_args["filters"] == [
                 {"key": "region", "value": "north_america"},
                 {"key": "data_type", "value": "sales"},
@@ -152,7 +152,7 @@ async def test_agentic_filtering_gemini(knowledge_base):
     )
     found_tool = False
     for tool in response.tools:
-        if tool.tool_name == "search_knowledge_base_with_agentic_filters":
+        if tool.tool_name == "search_knowledge_base":
             assert tool.tool_args["filters"] == [
                 {"key": "region", "value": "north_america"},
                 {"key": "data_type", "value": "sales"},
@@ -170,7 +170,7 @@ async def test_agentic_filtering_claude(knowledge_base):
     )
     found_tool = False
     for tool in response.tools:
-        if tool.tool_name == "search_knowledge_base_with_agentic_filters":
+        if tool.tool_name == "search_knowledge_base":
             assert tool.tool_args["filters"] == [
                 {"key": "region", "value": "north_america"},
                 {"key": "data_type", "value": "sales"},

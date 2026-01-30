@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Dict, List, Optional, Union
 
@@ -75,6 +76,17 @@ class AgnoError(Exception):
 
     def __str__(self) -> str:
         return str(self.message)
+
+
+class ModelAuthenticationError(AgnoError):
+    """Raised when model authentication fails."""
+
+    def __init__(self, message: str, status_code: int = 401, model_name: Optional[str] = None):
+        super().__init__(message, status_code)
+        self.model_name = model_name
+
+        self.type = "model_authentication_error"
+        self.error_id = "model_authentication_error"
 
 
 class ModelProviderError(AgnoError):
@@ -159,3 +171,33 @@ class OutputCheckError(Exception):
         self.message = message
         self.check_trigger = check_trigger
         self.additional_data = additional_data
+
+
+@dataclass
+class RetryableModelProviderError(Exception):
+    original_error: Optional[str] = None
+    # Guidance message to retry a model invocation after an error
+    retry_guidance_message: Optional[str] = None
+
+
+class RemoteServerUnavailableError(AgnoError):
+    """Exception raised when a remote server is unavailable.
+
+    This can happen due to:
+    - Connection refused (server not running)
+    - Connection timeout
+    - Network errors
+    - DNS resolution failures
+    """
+
+    def __init__(
+        self,
+        message: str,
+        base_url: Optional[str] = None,
+        original_error: Optional[Exception] = None,
+    ):
+        super().__init__(message, status_code=503)
+        self.base_url = base_url
+        self.original_error = original_error
+        self.type = "remote_server_unavailable_error"
+        self.error_id = "remote_server_unavailable_error"

@@ -12,7 +12,7 @@ from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyT
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
 from agno.knowledge.types import ContentType
-from agno.utils.log import log_debug, logger
+from agno.utils.log import log_debug, log_error, log_warning
 
 try:
     from bs4 import BeautifulSoup, Tag  # noqa: F401
@@ -49,9 +49,10 @@ class WebsiteReader(Reader):
         self._urls_to_crawl = []
 
     @classmethod
-    def get_supported_chunking_strategies(self) -> List[ChunkingStrategyType]:
+    def get_supported_chunking_strategies(cls) -> List[ChunkingStrategyType]:
         """Get the list of supported chunking strategies for Website readers."""
         return [
+            ChunkingStrategyType.CODE_CHUNKER,
             ChunkingStrategyType.AGENTIC_CHUNKER,
             ChunkingStrategyType.DOCUMENT_CHUNKER,
             ChunkingStrategyType.RECURSIVE_CHUNKER,
@@ -60,7 +61,7 @@ class WebsiteReader(Reader):
         ]
 
     @classmethod
-    def get_supported_content_types(self) -> List[ContentType]:
+    def get_supported_content_types(cls) -> List[ContentType]:
         return [ContentType.URL]
 
     def delay(self, min_seconds=1, max_seconds=3):
@@ -229,21 +230,21 @@ class WebsiteReader(Reader):
                 # Log HTTP status errors but continue crawling other pages
                 # Skip redirect errors (3xx) as they should be handled by follow_redirects
                 if e.response.status_code >= 300 and e.response.status_code < 400:
-                    logger.debug(f"Redirect encountered for {current_url}, skipping: {e}")
+                    log_debug(f"Redirect encountered for {current_url}, skipping: {e}")
                 else:
-                    logger.warning(f"HTTP status error while crawling {current_url}: {e}")
+                    log_warning(f"HTTP status error while crawling {current_url}: {e}")
                 # For the initial URL, we should raise the error only if it's not a redirect
                 if current_url == url and not crawler_result and not (300 <= e.response.status_code < 400):
                     raise
             except httpx.RequestError as e:
                 # Log request errors but continue crawling other pages
-                logger.warning(f"Request error while crawling {current_url}: {e}")
+                log_warning(f"Request error while crawling {current_url}: {e}")
                 # For the initial URL, we should raise the error
                 if current_url == url and not crawler_result:
                     raise
             except Exception as e:
                 # Log other exceptions but continue crawling other pages
-                logger.warning(f"Failed to crawl {current_url}: {e}")
+                log_warning(f"Failed to crawl {current_url}: {e}")
                 # For the initial URL, we should raise the error
                 if current_url == url and not crawler_result:
                     # Wrap non-HTTP exceptions in a RequestError
@@ -332,19 +333,19 @@ class WebsiteReader(Reader):
 
                 except httpx.HTTPStatusError as e:
                     # Log HTTP status errors but continue crawling other pages
-                    logger.warning(f"HTTP status error while crawling asynchronously {current_url}: {e}")
+                    log_warning(f"HTTP status error while crawling asynchronously {current_url}: {e}")
                     # For the initial URL, we should raise the error
                     if current_url == url and not crawler_result:
                         raise
                 except httpx.RequestError as e:
                     # Log request errors but continue crawling other pages
-                    logger.warning(f"Request error while crawling asynchronously {current_url}: {e}")
+                    log_warning(f"Request error while crawling asynchronously {current_url}: {e}")
                     # For the initial URL, we should raise the error
                     if current_url == url and not crawler_result:
                         raise
                 except Exception as e:
                     # Log other exceptions but continue crawling other pages
-                    logger.warning(f"Failed to crawl asynchronously {current_url}: {e}")
+                    log_warning(f"Failed to crawl asynchronously {current_url}: {e}")
                     # For the initial URL, we should raise the error
                     if current_url == url and not crawler_result:
                         # Wrap non-HTTP exceptions in a RequestError
@@ -398,7 +399,7 @@ class WebsiteReader(Reader):
                     )
             return documents
         except (httpx.HTTPStatusError, httpx.RequestError) as e:
-            logger.error(f"Error reading website {url}: {e}")
+            log_error(f"Error reading website {url}: {e}")
             raise
 
     async def async_read(self, url: str, name: Optional[str] = None) -> List[Document]:
@@ -427,7 +428,8 @@ class WebsiteReader(Reader):
                         meta_data={"url": str(crawled_url)},
                         content=crawled_content,
                     )
-                    return self.chunk_document(doc)
+                    chunks = self.chunk_document(doc)
+                    return chunks
                 else:
                     return [
                         Document(
@@ -443,6 +445,7 @@ class WebsiteReader(Reader):
                 process_document(crawled_url, crawled_content)
                 for crawled_url, crawled_content in crawler_result.items()
             ]
+
             results = await asyncio.gather(*tasks)
 
             # Flatten the results
@@ -451,5 +454,5 @@ class WebsiteReader(Reader):
 
             return documents
         except (httpx.HTTPStatusError, httpx.RequestError) as e:
-            logger.error(f"Error reading website asynchronously {url}: {e}")
+            log_error(f"Error reading website asynchronously {url}: {e}")
             raise

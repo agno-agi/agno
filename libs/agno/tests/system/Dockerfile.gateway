@@ -1,0 +1,55 @@
+# Dockerfile for Gateway AgentOS Server
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    gcc \
+    libpq-dev \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy the entire agno library
+COPY . /app/agno
+
+# Install agno from local source
+WORKDIR /app/agno
+RUN pip install --no-cache-dir -e .
+
+# Install additional dependencies for the server
+RUN pip install --no-cache-dir \
+    sqlalchemy \
+    psycopg-binary \
+    psycopg \
+    fastapi \
+    uvicorn \
+    httpx \
+    ddgs \
+    pgvector \
+    openai \
+    opentelemetry-api \
+    opentelemetry-sdk \
+    openinference-instrumentation-agno \
+    PyJWT \
+    mcp \
+    fastmcp \
+    a2a-sdk \
+    agui \
+    ag-ui-protocol \
+    slack-sdk
+
+# Copy the gateway server script
+WORKDIR /app
+COPY tests/system/gateway_server.py /app/gateway_server.py
+
+# Expose the gateway port
+EXPOSE 7001
+
+# Health check
+HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=3 \
+    CMD curl -f http://localhost:7001/health || exit 1
+
+# Run the gateway server
+CMD ["python", "gateway_server.py"]
+

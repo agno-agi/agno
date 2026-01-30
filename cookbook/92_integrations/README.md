@@ -1,0 +1,34 @@
+# Integrations
+
+Integration examples showing how to connect Agno agents with external platforms and services.
+
+
+## Available Integrations
+
+### [Discord](./discord/)
+Discord bot implementation with media support and user memory capabilities.
+
+### [A2A - Agent to Agent](./a2a/)
+Agent-to-agent communication using Google's A2A protocol for distributed agent systems.
+
+### [CopilotKit](./copilotkit/)
+Agno backend with session persistence and AG-UI for use with CopilotKit 1.5 frontends (including frontend tools and session loading).
+
+### [Observability](./observability/)
+Monitoring and observability integrations for agent performance tracking.
+
+## Setup
+
+Install required dependencies based on the integration you want to use:
+
+```bash
+# For Discord integration
+uv pip install discord.py agno
+
+# For A2A integration
+uv pip install a2a-python agno
+```
+
+## Getting Started
+
+Navigate to the specific integration directory for detailed documentation and examples.

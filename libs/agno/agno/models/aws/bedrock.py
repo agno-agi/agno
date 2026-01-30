@@ -5,13 +5,14 @@ from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Tuple, Ty
 
 from pydantic import BaseModel
 
-from agno.exceptions import AgnoError, ModelProviderError
+from agno.exceptions import ModelProviderError
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.utils.log import log_debug, log_error, log_warning
+from agno.utils.tokens import count_schema_tokens
 
 try:
     from boto3 import client as AwsClient
@@ -102,9 +103,8 @@ class AwsBedrock(Model):
             self.client = AwsClient(service_name="bedrock-runtime", region_name=self.aws_region)
         else:
             if not self.aws_access_key_id or not self.aws_secret_access_key:
-                raise AgnoError(
-                    message="AWS credentials not found. Please set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables or provide a boto3 session.",
-                    status_code=400,
+                log_error(
+                    "AWS credentials not found. Please set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables or provide a boto3 session."
                 )
 
             self.client = AwsClient(
@@ -166,6 +166,26 @@ class AwsBedrock(Model):
 
         return self.async_session.client(**client_kwargs)
 
+    def to_dict(self) -> Dict[str, Any]:
+        """
+        Convert the model to a dictionary.
+
+        Returns:
+            Dict[str, Any]: The dictionary representation of the model.
+        """
+        model_dict = super().to_dict()
+        model_dict.update(
+            {
+                "aws_region": self.aws_region,
+                "max_tokens": self.max_tokens,
+                "temperature": self.temperature,
+                "top_p": self.top_p,
+                "stop_sequences": self.stop_sequences,
+            }
+        )
+        cleaned_dict = {k: v for k, v in model_dict.items() if v is not None}
+        return cleaned_dict
+
     def _format_tools_for_request(self, tools: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
         """
         Format the tools for the request.
@@ -219,21 +239,35 @@ class AwsBedrock(Model):
 
         return {k: v for k, v in request_kwargs.items() if v is not None}
 
-    def _format_messages(self, messages: List[Message]) -> Tuple[List[Dict[str, Any]], Optional[List[Dict[str, Any]]]]:
+    def _format_messages(
+        self, messages: List[Message], compress_tool_results: bool = False
+    ) -> Tuple[List[Dict[str, Any]], Optional[List[Dict[str, Any]]]]:
         """
         Format the messages for the request.
+
+        Args:
+            messages: List of messages to format
+            compress_tool_results: Whether to compress tool results
 
         Returns:
             Tuple[List[Dict[str, Any]], Optional[List[Dict[str, Any]]]]: The formatted messages.
         """
+
         formatted_messages: List[Dict[str, Any]] = []
         system_message = None
         for message in messages:
             if message.role == "system":
                 system_message = [{"text": message.content}]
+            elif message.role == "tool":
+                content = message.get_content(use_compressed_content=compress_tool_results)
+                tool_result = {
+                    "toolUseId": message.tool_call_id,
+                    "content": [{"json": {"result": content}}],
+                }
+                formatted_message: Dict[str, Any] = {"role": "user", "content": [{"toolResult": tool_result}]}
+                formatted_messages.append(formatted_message)
             else:
-                formatted_message: Dict[str, Any] = {"role": message.role, "content": []}
-                # Handle tool results
+                formatted_message = {"role": message.role, "content": []}
                 if isinstance(message.content, list):
                     formatted_message["content"].extend(message.content)
                 elif message.tool_calls:
@@ -344,6 +378,65 @@ class AwsBedrock(Model):
         # TODO: Add caching: https://docs.aws.amazon.com/bedrock/latest/userguide/conversation-inference-call.html
         return formatted_messages, system_message
 
+    def count_tokens(
+        self,
+        messages: List[Message],
+        tools: Optional[List[Dict[str, Any]]] = None,
+        output_schema: Optional[Union[Dict, Type[BaseModel]]] = None,
+    ) -> int:
+        try:
+            formatted_messages, system_message = self._format_messages(messages, compress_tool_results=True)
+            converse_input: Dict[str, Any] = {"messages": formatted_messages}
+            if system_message:
+                converse_input["system"] = system_message
+
+            response = self.get_client().count_tokens(modelId=self.id, input={"converse": converse_input})
+            tokens = response.get("inputTokens", 0)
+
+            # Count tool tokens
+            if tools:
+                from agno.utils.tokens import count_tool_tokens
+
+                tokens += count_tool_tokens(tools, self.id)
+
+            # Count schema tokens
+            tokens += count_schema_tokens(output_schema, self.id)
+
+            return tokens
+        except Exception as e:
+            log_warning(f"Failed to count tokens via Bedrock API: {e}")
+            return super().count_tokens(messages, tools, output_schema)
+
+    async def acount_tokens(
+        self,
+        messages: List[Message],
+        tools: Optional[List[Dict[str, Any]]] = None,
+        output_schema: Optional[Union[Dict, Type[BaseModel]]] = None,
+    ) -> int:
+        try:
+            formatted_messages, system_message = self._format_messages(messages, compress_tool_results=True)
+            converse_input: Dict[str, Any] = {"messages": formatted_messages}
+            if system_message:
+                converse_input["system"] = system_message
+
+            async with self.get_async_client() as client:
+                response = await client.count_tokens(modelId=self.id, input={"converse": converse_input})
+            tokens = response.get("inputTokens", 0)
+
+            # Count tool tokens
+            if tools:
+                from agno.utils.tokens import count_tool_tokens
+
+                tokens += count_tool_tokens(tools, self.id)
+
+            # Count schema tokens
+            tokens += count_schema_tokens(output_schema, self.id)
+
+            return tokens
+        except Exception as e:
+            log_warning(f"Failed to count tokens via Bedrock API: {e}")
+            return await super().acount_tokens(messages, tools, output_schema)
+
     def invoke(
         self,
         messages: List[Message],
@@ -352,12 +445,13 @@ class AwsBedrock(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
+        compress_tool_results: bool = False,
     ) -> ModelResponse:
         """
         Invoke the Bedrock API.
         """
         try:
-            formatted_messages, system_message = self._format_messages(messages)
+            formatted_messages, system_message = self._format_messages(messages, compress_tool_results)
 
             tool_config = None
             if tools:
@@ -400,12 +494,13 @@ class AwsBedrock(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
+        compress_tool_results: bool = False,
     ) -> Iterator[ModelResponse]:
         """
         Invoke the Bedrock API with streaming.
         """
         try:
-            formatted_messages, system_message = self._format_messages(messages)
+            formatted_messages, system_message = self._format_messages(messages, compress_tool_results)
 
             tool_config = None
             if tools:
@@ -452,12 +547,13 @@ class AwsBedrock(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
+        compress_tool_results: bool = False,
     ) -> ModelResponse:
         """
         Async invoke the Bedrock API.
         """
         try:
-            formatted_messages, system_message = self._format_messages(messages)
+            formatted_messages, system_message = self._format_messages(messages, compress_tool_results)
 
             tool_config = None
             if tools:
@@ -503,12 +599,13 @@ class AwsBedrock(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
+        compress_tool_results: bool = False,
     ) -> AsyncIterator[ModelResponse]:
         """
         Async invoke the Bedrock API with streaming.
         """
         try:
-            formatted_messages, system_message = self._format_messages(messages)
+            formatted_messages, system_message = self._format_messages(messages, compress_tool_results)
 
             tool_config = None
             if tools:
@@ -549,30 +646,34 @@ class AwsBedrock(Model):
 
     # Overwrite the default from the base model
     def format_function_call_results(
-        self, messages: List[Message], function_call_results: List[Message], **kwargs
+        self,
+        messages: List[Message],
+        function_call_results: List[Message],
+        compress_tool_results: bool = False,
+        **kwargs,
     ) -> None:
         """
-        Handle the results of function calls.
+        Handle the results of function calls for Bedrock.
+        Uses compressed_content if compress_tool_results is True.
 
         Args:
             messages (List[Message]): The list of conversation messages.
             function_call_results (List[Message]): The results of the function calls.
+            compress_tool_results: Whether to compress tool results.
             **kwargs: Additional arguments including tool_ids.
         """
+
         if function_call_results:
             tool_ids = kwargs.get("tool_ids", [])
-            tool_result_content: List = []
 
             for _fc_message_index, _fc_message in enumerate(function_call_results):
                 # Use tool_call_id from message if tool_ids list is insufficient
                 tool_id = tool_ids[_fc_message_index] if _fc_message_index < len(tool_ids) else _fc_message.tool_call_id
-                tool_result = {
-                    "toolUseId": tool_id,
-                    "content": [{"json": {"result": _fc_message.content}}],
-                }
-                tool_result_content.append({"toolResult": tool_result})
+                if not _fc_message.tool_call_id:
+                    _fc_message.tool_call_id = tool_id
 
-            messages.append(Message(role="user", content=tool_result_content))
+                # Append as standard role="tool" message
+                messages.append(_fc_message)
 
     def _parse_provider_response(self, response: Dict[str, Any], **kwargs) -> ModelResponse:
         """

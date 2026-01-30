@@ -1,15 +1,18 @@
 import inspect
 from copy import copy
 from dataclasses import dataclass
-from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union
+from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union, cast
 from uuid import uuid4
 
 from pydantic import BaseModel
 from typing_extensions import TypeGuard
 
 from agno.agent import Agent
+from agno.db.base import BaseDb
 from agno.media import Audio, Image, Video
+from agno.models.message import Message
 from agno.models.metrics import Metrics
+from agno.registry import Registry
 from agno.run import RunContext
 from agno.run.agent import RunContentEvent, RunOutput
 from agno.run.base import BaseRunOutputEvent
@@ -21,9 +24,11 @@ from agno.run.workflow import (
     WorkflowRunOutput,
     WorkflowRunOutputEvent,
 )
+from agno.session.agent import AgentSession
+from agno.session.team import TeamSession
 from agno.session.workflow import WorkflowSession
 from agno.team import Team
-from agno.utils.log import log_debug, logger, use_agent_logger, use_team_logger, use_workflow_logger
+from agno.utils.log import log_debug, log_warning, logger, use_agent_logger, use_team_logger, use_workflow_logger
 from agno.utils.merge_dict import merge_dictionaries
 from agno.workflow.types import StepInput, StepOutput, StepType
 
@@ -57,7 +62,6 @@ class Step:
 
     # Step configuration
     max_retries: int = 3
-    timeout_seconds: Optional[int] = None
 
     skip_on_failure: bool = False
 
@@ -79,7 +83,6 @@ class Step:
         step_id: Optional[str] = None,
         description: Optional[str] = None,
         max_retries: int = 3,
-        timeout_seconds: Optional[int] = None,
         skip_on_failure: bool = False,
         strict_input_validation: bool = False,
         add_workflow_history: Optional[bool] = None,
@@ -100,7 +103,6 @@ class Step:
         self.step_id = step_id
         self.description = description
         self.max_retries = max_retries
-        self.timeout_seconds = timeout_seconds
         self.skip_on_failure = skip_on_failure
         self.strict_input_validation = strict_input_validation
         self.add_workflow_history = add_workflow_history
@@ -112,6 +114,121 @@ class Step:
 
         # Set the active executor
         self._set_active_executor()
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert step to a dictionary representation."""
+        result = {
+            "name": self.name,
+            "step_id": self.step_id,
+            "description": self.description,
+            "max_retries": self.max_retries,
+            "skip_on_failure": self.skip_on_failure,
+            "strict_input_validation": self.strict_input_validation,
+            "add_workflow_history": self.add_workflow_history,
+            "num_history_runs": self.num_history_runs,
+        }
+
+        if self.agent is not None:
+            result["agent_id"] = self.agent.id
+        if self.team is not None:
+            result["team_id"] = self.team.id
+        # TODO: Add support for custom executors
+
+        return result
+
+    @classmethod
+    def from_dict(
+        cls,
+        data: Dict[str, Any],
+        registry: Optional[Registry] = None,
+        db: Optional["BaseDb"] = None,
+        links: Optional[List[Dict[str, Any]]] = None,
+    ) -> "Step":
+        """
+        Create a Step from a dictionary.
+
+        Args:
+            data: Dictionary containing step configuration
+            registry: Optional registry for rehydrating non-serializable objects
+            db: Optional database for loading agents/teams in steps
+            links: Optional links for this step version
+
+        Returns:
+            Step: Reconstructed step instance
+        """
+        config = data.copy()
+
+        agent = None
+        team = None
+        executor = None
+
+        # --- Handle Agent reconstruction ---
+        if "agent_id" in config and config["agent_id"]:
+            from agno.agent.agent import get_agent_by_id
+
+            agent_id = config.get("agent_id")
+            if db is not None and agent_id is not None:
+                agent = get_agent_by_id(db=db, id=agent_id, registry=registry)
+
+        # --- Handle Team reconstruction ---
+        # if "team_id" in config and config["team_id"] and registry:
+        #     from agno.team.team import get_team_by_id
+        #     team = get_team_by_id(db=db, id=config["team_id"])
+
+        # --- Handle Executor reconstruction ---
+        # TODO: Implement executor reconstruction
+        # if "executor_ref" in config and config["executor_ref"] and registry:
+        #     executor = registry.rehydrate_function(config["executor_ref"])
+
+        return cls(
+            name=config.get("name"),
+            step_id=config.get("step_id"),
+            description=config.get("description"),
+            max_retries=config.get("max_retries", 3),
+            skip_on_failure=config.get("skip_on_failure", False),
+            strict_input_validation=config.get("strict_input_validation", False),
+            add_workflow_history=config.get("add_workflow_history"),
+            num_history_runs=config.get("num_history_runs", 3),
+            agent=agent,
+            team=team,
+            executor=executor,
+        )
+
+    def get_links(self, position: int = 0) -> List[Dict[str, Any]]:
+        """Get links for this step's agent/team.
+
+        Args:
+            position: Position of this step in the workflow.
+
+        Returns:
+            List of link dictionaries for the links table.
+        """
+        links = []
+        link_key = self.step_id or self.name
+
+        if self.agent is not None:
+            links.append(
+                {
+                    "link_kind": "step_agent",
+                    "link_key": link_key,
+                    "child_component_id": self.agent.id,
+                    "child_version": None,
+                    "position": position,
+                }
+            )
+
+        if self.team is not None:
+            links.append(
+                {
+                    "link_kind": "step_team",
+                    "link_key": link_key,
+                    "child_component_id": self.team.id,
+                    "child_version": None,
+                    "position": position,
+                }
+            )
+
+        return links
 
     @property
     def executor_name(self) -> str:
@@ -225,6 +342,7 @@ class Step:
         workflow_session: Optional[WorkflowSession] = None,
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
+        background_tasks: Optional[Any] = None,
     ) -> StepOutput:
         """Execute the step with StepInput, returning final StepOutput (non-streaming)"""
         log_debug(f"Executing step: {self.name}")
@@ -272,17 +390,18 @@ class Step:
                                         elif isinstance(chunk.content, BaseModel):
                                             content = chunk.content  # type: ignore[assignment]
                                         else:
-                                            # Safeguard but should never happen
+                                            # Case when parse_response is False and the content is a dict
                                             content += str(chunk.content)
                                 elif isinstance(chunk, (RunOutput, TeamRunOutput)):
                                     # This is the final response from the agent/team
                                     content = chunk.content  # type: ignore[assignment]
-                                else:
-                                    # Non Agent/Team data structure that was yielded
-                                    content += str(chunk)
                                 # If the chunk is a StepOutput, use it as the final response
-                                if isinstance(chunk, StepOutput):
+                                elif isinstance(chunk, StepOutput):
                                     final_response = chunk
+                                    break
+                                # Non Agent/Team data structure that was yielded
+                                else:
+                                    content += str(chunk)
 
                         except StopIteration as e:
                             if hasattr(e, "value") and isinstance(e.value, StepOutput):
@@ -342,6 +461,10 @@ class Step:
                         kwargs: Dict[str, Any] = {}
                         if isinstance(self.active_executor, Team):
                             kwargs["store_member_responses"] = True
+
+                        # Forward background_tasks if provided
+                        if background_tasks is not None:
+                            kwargs["background_tasks"] = background_tasks
 
                         num_history_runs = self.num_history_runs if self.num_history_runs else num_history_runs
 
@@ -454,7 +577,6 @@ class Step:
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         stream_events: bool = False,
-        stream_intermediate_steps: bool = False,
         stream_executor_events: bool = True,
         workflow_run_response: Optional["WorkflowRunOutput"] = None,
         run_context: Optional[RunContext] = None,
@@ -465,6 +587,7 @@ class Step:
         workflow_session: Optional["WorkflowSession"] = None,
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
+        background_tasks: Optional[Any] = None,
     ) -> Iterator[Union[WorkflowRunOutputEvent, StepOutput]]:
         """Execute the step with event-driven streaming support"""
 
@@ -480,9 +603,6 @@ class Step:
             session_state_copy = run_context.session_state
         else:
             session_state_copy = copy(session_state) if session_state is not None else {}
-
-        # Considering both stream_events and stream_intermediate_steps (deprecated)
-        stream_events = stream_events or stream_intermediate_steps
 
         # Emit StepStartedEvent
         if stream_events and workflow_run_response:
@@ -537,11 +657,11 @@ class Step:
                                         yield enriched_event  # type: ignore[misc]
                                 elif isinstance(event, (RunOutput, TeamRunOutput)):
                                     content = event.content  # type: ignore[assignment]
-                                else:
-                                    content += str(event)
-                                if isinstance(event, StepOutput):
+                                elif isinstance(event, StepOutput):
                                     final_response = event
                                     break
+                                else:
+                                    content += str(event)
 
                             # Merge session_state changes back
                             if run_context is None and session_state is not None:
@@ -598,6 +718,10 @@ class Step:
                         if isinstance(self.active_executor, Team):
                             kwargs["store_member_responses"] = True
 
+                        # Forward background_tasks if provided
+                        if background_tasks is not None:
+                            kwargs["background_tasks"] = background_tasks
+
                         num_history_runs = self.num_history_runs if self.num_history_runs else num_history_runs
 
                         use_history = (
@@ -623,7 +747,7 @@ class Step:
                             session_state=session_state_copy,  # Send a copy to the executor
                             stream=True,
                             stream_events=stream_events,
-                            yield_run_response=True,
+                            yield_run_output=True,
                             run_context=run_context,
                             **kwargs,
                         )
@@ -632,7 +756,7 @@ class Step:
                         for event in response_stream:
                             if isinstance(event, RunOutput) or isinstance(event, TeamRunOutput):
                                 active_executor_run_response = event
-                                break
+                                continue
                             # Only yield executor events if stream_executor_events is True
                             if stream_executor_events:
                                 enriched_event = self._enrich_event_with_context(
@@ -709,6 +833,7 @@ class Step:
         workflow_session: Optional["WorkflowSession"] = None,
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
+        background_tasks: Optional[Any] = None,
     ) -> StepOutput:
         """Execute the step with StepInput, returning final StepOutput (non-streaming)"""
         logger.info(f"Executing async step (non-streaming): {self.name}")
@@ -758,10 +883,12 @@ class Step:
                                                 content = str(chunk.content)
                                     elif isinstance(chunk, (RunOutput, TeamRunOutput)):
                                         content = chunk.content  # type: ignore[assignment]
+                                    elif isinstance(chunk, StepOutput):
+                                        final_response = chunk
+                                        break
                                     else:
                                         content += str(chunk)
-                                    if isinstance(chunk, StepOutput):
-                                        final_response = chunk
+
                             else:
                                 if _is_async_generator_function(self.active_executor):
                                     iterator = await self._acall_custom_function(
@@ -784,10 +911,11 @@ class Step:
                                                     content = str(chunk.content)
                                         elif isinstance(chunk, (RunOutput, TeamRunOutput)):
                                             content = chunk.content  # type: ignore[assignment]
+                                        elif isinstance(chunk, StepOutput):
+                                            final_response = chunk
+                                            break
                                         else:
                                             content += str(chunk)
-                                        if isinstance(chunk, StepOutput):
-                                            final_response = chunk
 
                         except StopIteration as e:
                             if hasattr(e, "value") and isinstance(e.value, StepOutput):
@@ -856,6 +984,10 @@ class Step:
                         if isinstance(self.active_executor, Team):
                             kwargs["store_member_responses"] = True
 
+                        # Forward background_tasks if provided
+                        if background_tasks is not None:
+                            kwargs["background_tasks"] = background_tasks
+
                         num_history_runs = self.num_history_runs if self.num_history_runs else num_history_runs
 
                         use_history = (
@@ -920,7 +1052,6 @@ class Step:
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         stream_events: bool = False,
-        stream_intermediate_steps: bool = False,
         stream_executor_events: bool = True,
         workflow_run_response: Optional["WorkflowRunOutput"] = None,
         run_context: Optional[RunContext] = None,
@@ -931,6 +1062,7 @@ class Step:
         workflow_session: Optional["WorkflowSession"] = None,
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
+        background_tasks: Optional[Any] = None,
     ) -> AsyncIterator[Union[WorkflowRunOutputEvent, StepOutput]]:
         """Execute the step with event-driven streaming support"""
 
@@ -946,9 +1078,6 @@ class Step:
             session_state_copy = run_context.session_state
         else:
             session_state_copy = copy(session_state) if session_state is not None else {}
-
-        # Considering both stream_events and stream_intermediate_steps (deprecated)
-        stream_events = stream_events or stream_intermediate_steps
 
         if stream_events and workflow_run_response:
             # Emit StepStartedEvent
@@ -1003,11 +1132,11 @@ class Step:
                                     yield enriched_event  # type: ignore[misc]
                             elif isinstance(event, (RunOutput, TeamRunOutput)):
                                 content = event.content  # type: ignore[assignment]
-                            else:
-                                content += str(event)
-                            if isinstance(event, StepOutput):
+                            elif isinstance(event, StepOutput):
                                 final_response = event
                                 break
+                            else:
+                                content += str(event)
                         if not final_response:
                             final_response = StepOutput(content=content)
                     elif _is_async_callable(self.active_executor):
@@ -1054,11 +1183,14 @@ class Step:
                                     yield enriched_event  # type: ignore[misc]
                             elif isinstance(event, (RunOutput, TeamRunOutput)):
                                 content = event.content  # type: ignore[assignment]
-                            else:
-                                content += str(event)
-                            if isinstance(event, StepOutput):
+                            elif isinstance(event, StepOutput):
                                 final_response = event
                                 break
+                            else:
+                                if isinstance(content, str):
+                                    content += str(event)
+                                else:
+                                    content = str(event)
                         if not final_response:
                             final_response = StepOutput(content=content)
                     else:
@@ -1105,6 +1237,10 @@ class Step:
                         if isinstance(self.active_executor, Team):
                             kwargs["store_member_responses"] = True
 
+                        # Forward background_tasks if provided
+                        if background_tasks is not None:
+                            kwargs["background_tasks"] = background_tasks
+
                         num_history_runs = self.num_history_runs if self.num_history_runs else num_history_runs
 
                         use_history = (
@@ -1131,7 +1267,7 @@ class Step:
                             stream=True,
                             stream_events=stream_events,
                             run_context=run_context,
-                            yield_run_response=True,
+                            yield_run_output=True,
                             **kwargs,
                         )
 
@@ -1202,6 +1338,83 @@ class Step:
 
         return
 
+    def get_chat_history(self, session_id: str, last_n_runs: Optional[int] = None) -> List[Message]:
+        """Return the step's Agent or Team chat history for the given session.
+
+        Args:
+            session_id: The session ID to get the chat history for. If not provided, the current cached session ID is used.
+            last_n_runs: Number of recent runs to include. If None, all runs will be considered.
+
+        Returns:
+            List[Message]: The step's Agent or Team chat history for the given session.
+        """
+        session: Union[AgentSession, TeamSession, WorkflowSession, None] = None
+
+        if self.agent:
+            session = self.agent.get_session(session_id=session_id)
+            if not session:
+                log_warning("Session not found")
+                return []
+
+            if not isinstance(session, WorkflowSession):
+                raise ValueError("The provided session is not a WorkflowSession")
+
+            session = cast(WorkflowSession, session)
+            return session.get_messages(last_n_runs=last_n_runs, agent_id=self.agent.id)
+
+        elif self.team:
+            session = self.team.get_session(session_id=session_id)
+            if not session:
+                log_warning("Session not found")
+                return []
+
+            if not isinstance(session, WorkflowSession):
+                raise ValueError("The provided session is not a WorkflowSession")
+
+            session = cast(WorkflowSession, session)
+            return session.get_messages(last_n_runs=last_n_runs, team_id=self.team.id)
+
+        return []
+
+    async def aget_chat_history(
+        self, session_id: Optional[str] = None, last_n_runs: Optional[int] = None
+    ) -> List[Message]:
+        """Return the step's Agent or Team chat history for the given session.
+
+        Args:
+            session_id: The session ID to get the chat history for. If not provided, the current cached session ID is used.
+            last_n_runs: Number of recent runs to include. If None, all runs will be considered.
+
+        Returns:
+            List[Message]: The step's Agent or Team chat history for the given session.
+        """
+        session: Union[AgentSession, TeamSession, WorkflowSession, None] = None
+
+        if self.agent:
+            session = await self.agent.aget_session(session_id=session_id)
+            if not session:
+                log_warning("Session not found")
+                return []
+
+            if not isinstance(session, WorkflowSession):
+                raise ValueError("The provided session is not a WorkflowSession")
+
+            session = cast(WorkflowSession, session)
+            return session.get_messages(last_n_runs=last_n_runs, agent_id=self.agent.id)
+
+        elif self.team:
+            session = await self.team.aget_session(session_id=session_id)
+            if not session:
+                log_warning("Session not found")
+                return []
+
+            if not isinstance(session, WorkflowSession):
+                raise ValueError("The provided session is not a WorkflowSession")
+
+            return session.get_messages(last_n_runs=last_n_runs, team_id=self.team.id)
+
+        return []
+
     def _store_executor_response(
         self, workflow_run_response: "WorkflowRunOutput", executor_run_response: Union[RunOutput, TeamRunOutput]
     ) -> None:
@@ -1243,10 +1456,22 @@ class Step:
 
         For container steps (Steps, Router, Loop, etc.), this will recursively find the content from the
         last actual step rather than using the generic container message.
+
+        For Parallel steps, aggregates content from ALL inner steps (not just the last one).
         """
-        # If this step has nested steps (like Steps, Condition, Router, Loop, etc.)
+        # If this step has nested steps (like Steps, Condition, Router, Loop, Parallel, etc.)
         if hasattr(step_output, "steps") and step_output.steps and len(step_output.steps) > 0:
-            # Recursively get content from the last nested step
+            # For Parallel steps, aggregate content from ALL inner steps
+            if step_output.step_type == StepType.PARALLEL:
+                aggregated_parts = []
+                for i, inner_step in enumerate(step_output.steps):
+                    inner_content = self._get_deepest_content_from_step_output(inner_step)
+                    if inner_content:
+                        step_name = inner_step.step_name or f"Step {i + 1}"
+                        aggregated_parts.append(f"=== {step_name} ===\n{inner_content}")
+                return "\n\n".join(aggregated_parts) if aggregated_parts else step_output.content  # type: ignore
+
+            # For other nested step types, recursively get content from the last nested step
             return self._get_deepest_content_from_step_output(step_output.steps[-1])
 
         # For regular steps, return their content

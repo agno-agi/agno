@@ -12,6 +12,7 @@ from agno.models.message import Message
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
+from agno.utils.http import get_default_async_client, get_default_sync_client
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.models.llama import format_message
 
@@ -108,7 +109,12 @@ class Llama(Model):
             if isinstance(self.http_client, httpx.Client):
                 client_params["http_client"] = self.http_client
             else:
-                log_debug("http_client is not an instance of httpx.Client.")
+                log_warning("http_client is not an instance of httpx.Client. Using default global httpx.Client.")
+                # Use global sync client when user http_client is invalid
+                client_params["http_client"] = get_default_sync_client()
+        else:
+            # Use global sync client when no custom http_client is provided
+            client_params["http_client"] = get_default_sync_client()
         self.client = LlamaAPIClient(**client_params)
         return self.client
 
@@ -123,15 +129,20 @@ class Llama(Model):
             return self.async_client
 
         client_params: Dict[str, Any] = self._get_client_params()
-        if self.http_client and isinstance(self.http_client, httpx.AsyncClient):
-            client_params["http_client"] = self.http_client
+        if self.http_client:
+            if isinstance(self.http_client, httpx.AsyncClient):
+                client_params["http_client"] = self.http_client
+            else:
+                log_warning(
+                    "http_client is not an instance of httpx.AsyncClient. Using default global httpx.AsyncClient."
+                )
+                # Use global async client when user http_client is invalid
+                client_params["http_client"] = get_default_async_client()
         else:
-            if self.http_client:
-                log_debug("The current http_client is not async. A default httpx.AsyncClient will be used instead.")
-            # Create a new async HTTP client with custom limits
-            client_params["http_client"] = httpx.AsyncClient(
-                limits=httpx.Limits(max_connections=1000, max_keepalive_connections=100)
-            )
+            # Use global async client when no custom http_client is provided
+            client_params["http_client"] = get_default_async_client()
+
+        # Create and cache the client
         self.async_client = AsyncLlamaAPIClient(**client_params)
         return self.async_client
 
@@ -206,6 +217,7 @@ class Llama(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
+        compress_tool_results: bool = False,
     ) -> ModelResponse:
         """
         Send a chat completion request to the Llama API.
@@ -214,7 +226,10 @@ class Llama(Model):
 
         provider_response = self.get_client().chat.completions.create(
             model=self.id,
-            messages=[format_message(m, tool_calls=bool(tools)) for m in messages],  # type: ignore
+            messages=[
+                format_message(m, tool_calls=bool(tools), compress_tool_results=compress_tool_results)  # type: ignore
+                for m in messages
+            ],
             **self.get_request_params(tools=tools, response_format=response_format),
         )
 
@@ -231,6 +246,7 @@ class Llama(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
+        compress_tool_results: bool = False,
     ) -> ModelResponse:
         """
         Sends an asynchronous chat completion request to the Llama API.
@@ -242,7 +258,10 @@ class Llama(Model):
 
         provider_response = await self.get_async_client().chat.completions.create(
             model=self.id,
-            messages=[format_message(m, tool_calls=bool(tools)) for m in messages],  # type: ignore
+            messages=[
+                format_message(m, tool_calls=bool(tools), compress_tool_results=compress_tool_results)  # type: ignore
+                for m in messages
+            ],
             **self.get_request_params(tools=tools, response_format=response_format),
         )
 
@@ -259,6 +278,7 @@ class Llama(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
+        compress_tool_results: bool = False,
     ) -> Iterator[ModelResponse]:
         """
         Send a streaming chat completion request to the Llama API.
@@ -271,7 +291,10 @@ class Llama(Model):
 
             for chunk in self.get_client().chat.completions.create(
                 model=self.id,
-                messages=[format_message(m, tool_calls=bool(tools)) for m in messages],  # type: ignore
+                messages=[
+                    format_message(m, tool_calls=bool(tools), compress_tool_results=compress_tool_results)  # type: ignore
+                    for m in messages
+                ],
                 stream=True,
                 **self.get_request_params(tools=tools, response_format=response_format),
             ):
@@ -291,6 +314,7 @@ class Llama(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
+        compress_tool_results: bool = False,
     ) -> AsyncIterator[ModelResponse]:
         """
         Sends an asynchronous streaming chat completion request to the Llama API.
@@ -303,7 +327,10 @@ class Llama(Model):
         try:
             async for chunk in await self.get_async_client().chat.completions.create(
                 model=self.id,
-                messages=[format_message(m, tool_calls=bool(tools)) for m in messages],  # type: ignore
+                messages=[
+                    format_message(m, tool_calls=bool(tools), compress_tool_results=compress_tool_results)  # type: ignore
+                    for m in messages
+                ],
                 stream=True,
                 **self.get_request_params(tools=tools, response_format=response_format),
             ):

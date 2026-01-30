@@ -16,6 +16,10 @@ class ModelResponseEvent(str, Enum):
     tool_call_started = "ToolCallStarted"
     tool_call_completed = "ToolCallCompleted"
     assistant_response = "AssistantResponse"
+    compression_started = "CompressionStarted"
+    compression_completed = "CompressionCompleted"
+    model_request_started = "ModelRequestStarted"
+    model_request_completed = "ModelRequestCompleted"
 
 
 @dataclass
@@ -35,9 +39,9 @@ class ToolExecution:
     # If True, the agent will stop executing after this tool call.
     stop_after_tool_call: bool = False
 
-    created_at: int = int(time())
+    created_at: int = field(default_factory=lambda: int(time()))
 
-    # User control flow requirements
+    # User control flow (HITL) fields
     requires_confirmation: Optional[bool] = None
     confirmed: Optional[bool] = None
     confirmation_note: Optional[str] = None
@@ -47,6 +51,9 @@ class ToolExecution:
     answered: Optional[bool] = None
 
     external_execution_required: Optional[bool] = None
+
+    # If True (and external_execution_required=True), suppresses verbose paused messages
+    external_execution_silent: Optional[bool] = None
 
     @property
     def is_paused(self) -> bool:
@@ -80,7 +87,9 @@ class ToolExecution:
             if "user_input_schema" in data
             else None,
             external_execution_required=data.get("external_execution_required"),
+            external_execution_silent=data.get("external_execution_silent"),
             metrics=Metrics(**(data.get("metrics", {}) or {})),
+            **{"created_at": data["created_at"]} if "created_at" in data else {},
         )
 
 
@@ -122,6 +131,18 @@ class ModelResponse:
     extra: Optional[Dict[str, Any]] = None
 
     updated_session_state: Optional[Dict[str, Any]] = None
+
+    # Compression stats
+    compression_stats: Optional[Dict[str, Any]] = None
+
+    # Model request metrics (for model_request_completed events)
+    input_tokens: Optional[int] = None
+    output_tokens: Optional[int] = None
+    total_tokens: Optional[int] = None
+    time_to_first_token: Optional[float] = None
+    reasoning_tokens: Optional[int] = None
+    cache_read_tokens: Optional[int] = None
+    cache_write_tokens: Optional[int] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Serialize ModelResponse to dictionary for caching."""
@@ -197,3 +218,4 @@ class FileType(str, Enum):
     MP4 = "mp4"
     GIF = "gif"
     MP3 = "mp3"
+    WAV = "wav"

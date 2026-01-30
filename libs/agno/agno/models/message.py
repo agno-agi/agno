@@ -42,6 +42,9 @@ class Citations(BaseModel):
     # Raw citations from the model
     raw: Optional[Any] = None
 
+    # Search queries used to retrieve the citations
+    search_queries: Optional[List[str]] = None
+
     # URLs of the citations.
     urls: Optional[List[UrlCitation]] = None
 
@@ -59,6 +62,9 @@ class Message(BaseModel):
     role: str
     # The contents of the message.
     content: Optional[Union[List[Any], str]] = None
+    # Compressed content of the message
+    compressed_content: Optional[str] = None
+
     # An optional name for the participant.
     # Provides the model information to differentiate between participants of the same role.
     name: Optional[str] = None
@@ -109,6 +115,8 @@ class Message(BaseModel):
     references: Optional[MessageReferences] = None
     # The Unix timestamp the message was created.
     created_at: int = Field(default_factory=lambda: int(time()))
+    # When True, the message will be sent to the Model but not persisted afterwards.
+    temporary: bool = False
 
     model_config = ConfigDict(extra="allow", populate_by_name=True, arbitrary_types_allowed=True)
 
@@ -122,6 +130,12 @@ class Message(BaseModel):
             else:
                 return json.dumps(self.content)
         return ""
+
+    def get_content(self, use_compressed_content: bool = False) -> Optional[Union[List[Any], str]]:
+        """Return tool result content to send to API"""
+        if use_compressed_content and self.compressed_content is not None:
+            return self.compressed_content
+        return self.content
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Message":
@@ -266,6 +280,7 @@ class Message(BaseModel):
             "content": self.content,
             "reasoning_content": self.reasoning_content,
             "from_history": self.from_history,
+            "compressed_content": self.compressed_content,
             "stop_after_tool_call": self.stop_after_tool_call,
             "role": self.role,
             "name": self.name,
@@ -315,13 +330,14 @@ class Message(BaseModel):
             "created_at": self.created_at,
         }
 
-    def log(self, metrics: bool = True, level: Optional[str] = None):
+    def log(self, metrics: bool = True, level: Optional[str] = None, use_compressed_content: bool = False):
         """Log the message to the console
 
         Args:
             metrics (bool): Whether to log the metrics.
             level (str): The level to log the message at. One of debug, info, warning, or error.
                 Defaults to debug.
+            use_compressed_content (bool): Whether to use compressed content.
         """
         _logger = log_debug
         if level == "info":
@@ -348,10 +364,13 @@ class Message(BaseModel):
         if self.reasoning_content:
             _logger(f"<reasoning>\n{self.reasoning_content}\n</reasoning>")
         if self.content:
-            if isinstance(self.content, str) or isinstance(self.content, list):
-                _logger(self.content)
-            elif isinstance(self.content, dict):
-                _logger(json.dumps(self.content, indent=2))
+            if use_compressed_content and self.compressed_content:
+                _logger("Compressed content:\n" + self.compressed_content)
+            else:
+                if isinstance(self.content, str) or isinstance(self.content, list):
+                    _logger(self.content)
+                elif isinstance(self.content, dict):
+                    _logger(json.dumps(self.content, indent=2))
         if self.tool_calls:
             tool_calls_list = ["Tool Calls:"]
             for tool_call in self.tool_calls:

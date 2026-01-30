@@ -498,13 +498,16 @@ class PerformanceEval:
         from rich.live import Live
         from rich.status import Status
 
+        # Generate unique run_id for this execution (don't modify self.eval_id due to concurrency)
+        run_id = str(uuid4())
+
         run_times = []
         memory_usages = []
         previous_snapshot = None
 
         self._set_log_level()
 
-        log_debug(f"************ Evaluation Start: {self.eval_id} ************")
+        log_debug(f"************ Evaluation Start: {run_id} ************")
 
         # Add a spinner while running the evaluations
         console = Console()
@@ -615,7 +618,7 @@ class PerformanceEval:
                 ),
             )
 
-        log_debug(f"*********** Evaluation End: {self.eval_id} ***********")
+        log_debug(f"*********** Evaluation End: {run_id} ***********")
         return self.result
 
     async def arun(
@@ -641,13 +644,16 @@ class PerformanceEval:
         from rich.live import Live
         from rich.status import Status
 
+        # Generate unique run_id for this execution (don't modify self.eval_id due to concurrency)
+        run_id = str(uuid4())
+
         run_times = []
         memory_usages = []
         previous_snapshot = None
 
         self._set_log_level()
 
-        log_debug(f"************ Evaluation Start: {self.eval_id} ************")
+        log_debug(f"************ Evaluation Start: {run_id} ************")
 
         # Add a spinner while running the evaluations
         console = Console()
@@ -758,7 +764,7 @@ class PerformanceEval:
                 ),
             )
 
-        log_debug(f"*********** Evaluation End: {self.eval_id} ***********")
+        log_debug(f"*********** Evaluation End: {run_id} ***********")
         return self.result
 
     def _get_telemetry_data(self) -> Dict[str, Any]:

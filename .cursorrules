@@ -6,6 +6,10 @@ Core Rules
 - PostgreSQL in production, SQLite for dev only
 - Start with single agent, scale up only when needed
 
+Documentation:
+- Don't use f-strings for print lines where there are no variables to format.
+- Don't use emojis in examples and print lines
+
 Basic Agent (start here):
 ```python
 from agno.agent import Agent
@@ -21,11 +25,11 @@ agent.print_response("Your query", stream=True)
 
 Agent with Tools:
 ```python
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 
 agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     instructions="Search the web for information",
 )
 ```
@@ -68,7 +72,7 @@ from agno.team.team import Team
 web_agent = Agent(
     name="Researcher",
     model=OpenAIChat(id="gpt-4o"),
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
 )
 
 writer_agent = Agent(

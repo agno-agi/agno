@@ -56,6 +56,17 @@ def download_image(url: str, output_path: str) -> bool:
         return False
 
 
+def download_audio(url: str, output_path: str) -> str:
+    """Download audio from URL"""
+    response = httpx.get(url)
+    response.raise_for_status()
+
+    with open(output_path, "wb") as f:
+        for chunk in response.iter_bytes(chunk_size=8192):
+            f.write(chunk)
+    return output_path
+
+
 def download_video(url: str, output_path: str) -> str:
     """Download video from URL"""
     response = httpx.get(url)
@@ -280,7 +291,7 @@ def reconstruct_file_from_dict(file_data):
         if isinstance(file_data, dict):
             # If content is base64 string, decode it back to bytes
             if "content" in file_data and isinstance(file_data["content"], str):
-                return File.from_base64(
+                file_obj = File.from_base64(
                     file_data["content"],
                     id=file_data.get("id"),
                     mime_type=file_data.get("mime_type"),
@@ -288,6 +299,16 @@ def reconstruct_file_from_dict(file_data):
                     name=file_data.get("name"),
                     format=file_data.get("format"),
                 )
+                # Preserve additional fields that from_base64 doesn't handle
+                if file_data.get("size") is not None:
+                    file_obj.size = file_data.get("size")
+                if file_data.get("file_type") is not None:
+                    file_obj.file_type = file_data.get("file_type")
+                if file_data.get("filepath") is not None:
+                    file_obj.filepath = file_data.get("filepath")
+                if file_data.get("url") is not None:
+                    file_obj.url = file_data.get("url")
+                return file_obj
             else:
                 # Regular file (filepath/url)
                 return File(**file_data)

@@ -12,10 +12,12 @@ def _assert_metrics(response: RunOutput):
     input_tokens = response.metrics.input_tokens
     output_tokens = response.metrics.output_tokens
     total_tokens = response.metrics.total_tokens
+    cost = response.metrics.cost
 
     assert input_tokens > 0
     assert output_tokens > 0
     assert total_tokens > 0
+    assert cost > 0
     assert total_tokens == input_tokens + output_tokens
 
 
@@ -86,7 +88,7 @@ def test_with_memory():
     assert "John Smith" in response2.content
 
     # Verify memories were created
-    messages = agent.get_messages_for_session()
+    messages = agent.get_session_messages()
     assert len(messages) == 5
     assert [m.role for m in messages] == ["system", "user", "assistant", "user", "assistant"]
 

@@ -86,7 +86,7 @@ def test_with_memory():
     assert "John Smith" in response2.content
 
     # Verify memories were created
-    messages = agent.get_messages_for_session()
+    messages = agent.get_session_messages()
     assert len(messages) == 5
     assert [m.role for m in messages] == ["system", "user", "assistant", "user", "assistant"]
 

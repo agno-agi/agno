@@ -150,7 +150,7 @@ class SessionSummaryManager:
         response_format = self.get_response_format(self.model)
 
         system_message = self.get_system_message(
-            conversation=session.get_messages_for_session(),  # type: ignore
+            conversation=session.get_messages(),  # type: ignore
             response_format=response_format,
         )
 

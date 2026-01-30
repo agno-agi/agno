@@ -1,19 +1,19 @@
 from abc import ABC, abstractmethod
-from typing import List, Optional
+from typing import List, Optional, Union
 
 from fastapi import APIRouter
 
-from agno.agent import Agent
-from agno.team import Team
-from agno.workflow.workflow import Workflow
+from agno.agent import Agent, RemoteAgent
+from agno.team import RemoteTeam, Team
+from agno.workflow import RemoteWorkflow, Workflow
 
 
 class BaseInterface(ABC):
     type: str
     version: str = "1.0"
-    agent: Optional[Agent] = None
-    team: Optional[Team] = None
-    workflow: Optional[Workflow] = None
+    agent: Optional[Union[Agent, RemoteAgent]] = None
+    team: Optional[Union[Team, RemoteTeam]] = None
+    workflow: Optional[Union[Workflow, RemoteWorkflow]] = None
 
     prefix: str
     tags: List[str]

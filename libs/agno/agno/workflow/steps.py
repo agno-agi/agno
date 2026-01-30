@@ -125,6 +125,7 @@ class Steps:
         workflow_session: Optional[WorkflowSession] = None,
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
+        background_tasks: Optional[Any] = None,
     ) -> StepOutput:
         """Execute all steps in sequence and return the final result"""
         log_debug(f"Steps Start: {self.name} ({len(self.steps)} steps)", center=True, symbol="-")
@@ -158,6 +159,7 @@ class Steps:
                     workflow_session=workflow_session,
                     add_workflow_history_to_steps=add_workflow_history_to_steps,
                     num_history_runs=num_history_runs,
+                    background_tasks=background_tasks,
                 )
 
                 # Handle both single StepOutput and List[StepOutput] (from Loop/Condition/Router steps)
@@ -191,6 +193,7 @@ class Steps:
                 step_type=StepType.STEPS,
                 content=f"Steps {self.name} completed with {len(all_results)} results",
                 success=all(result.success for result in all_results) if all_results else True,
+                stop=any(result.stop for result in all_results) if all_results else False,
                 steps=all_results,
             )
 
@@ -212,7 +215,6 @@ class Steps:
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         stream_events: bool = False,
-        stream_intermediate_steps: bool = False,
         stream_executor_events: bool = True,
         step_index: Optional[Union[int, tuple]] = None,
         store_executor_outputs: bool = True,
@@ -220,6 +222,7 @@ class Steps:
         workflow_session: Optional[WorkflowSession] = None,
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
+        background_tasks: Optional[Any] = None,
     ) -> Iterator[Union[WorkflowRunOutputEvent, TeamRunOutputEvent, RunOutputEvent, StepOutput]]:
         """Execute all steps in sequence with streaming support"""
         log_debug(f"Steps Start: {self.name} ({len(self.steps)} steps)", center=True, symbol="-")
@@ -227,9 +230,6 @@ class Steps:
         steps_id = str(uuid4())
 
         self._prepare_steps()
-
-        # Considering both stream_events and stream_intermediate_steps (deprecated)
-        stream_events = stream_events or stream_intermediate_steps
 
         if stream_events:
             # Yield steps execution started event
@@ -284,6 +284,7 @@ class Steps:
                     workflow_session=workflow_session,
                     add_workflow_history_to_steps=add_workflow_history_to_steps,
                     num_history_runs=num_history_runs,
+                    background_tasks=background_tasks,
                 ):
                     if isinstance(event, StepOutput):
                         step_outputs_for_step.append(event)
@@ -340,6 +341,7 @@ class Steps:
                 step_type=StepType.STEPS,
                 content=f"Steps {self.name} completed with {len(all_results)} results",
                 success=all(result.success for result in all_results) if all_results else True,
+                stop=any(result.stop for result in all_results) if all_results else False,
                 steps=all_results,
             )
 
@@ -365,6 +367,7 @@ class Steps:
         workflow_session: Optional[WorkflowSession] = None,
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
+        background_tasks: Optional[Any] = None,
     ) -> StepOutput:
         """Execute all steps in sequence asynchronously and return the final result"""
         log_debug(f"Steps Start: {self.name} ({len(self.steps)} steps)", center=True, symbol="-")
@@ -398,6 +401,7 @@ class Steps:
                     workflow_session=workflow_session,
                     add_workflow_history_to_steps=add_workflow_history_to_steps,
                     num_history_runs=num_history_runs,
+                    background_tasks=background_tasks,
                 )
 
                 # Handle both single StepOutput and List[StepOutput] (from Loop/Condition/Router steps)
@@ -430,6 +434,7 @@ class Steps:
                 step_type=StepType.STEPS,
                 content=f"Steps {self.name} completed with {len(all_results)} results",
                 success=all(result.success for result in all_results) if all_results else True,
+                stop=any(result.stop for result in all_results) if all_results else False,
                 steps=all_results,
             )
 
@@ -451,7 +456,6 @@ class Steps:
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         stream_events: bool = False,
-        stream_intermediate_steps: bool = False,
         stream_executor_events: bool = True,
         step_index: Optional[Union[int, tuple]] = None,
         store_executor_outputs: bool = True,
@@ -459,6 +463,7 @@ class Steps:
         workflow_session: Optional[WorkflowSession] = None,
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
+        background_tasks: Optional[Any] = None,
     ) -> AsyncIterator[Union[WorkflowRunOutputEvent, TeamRunOutputEvent, RunOutputEvent, StepOutput]]:
         """Execute all steps in sequence with async streaming support"""
         log_debug(f"Steps Start: {self.name} ({len(self.steps)} steps)", center=True, symbol="-")
@@ -466,9 +471,6 @@ class Steps:
         steps_id = str(uuid4())
 
         self._prepare_steps()
-
-        # Considering both stream_events and stream_intermediate_steps (deprecated)
-        stream_events = stream_events or stream_intermediate_steps
 
         if stream_events:
             # Yield steps execution started event
@@ -523,6 +525,7 @@ class Steps:
                     workflow_session=workflow_session,
                     add_workflow_history_to_steps=add_workflow_history_to_steps,
                     num_history_runs=num_history_runs,
+                    background_tasks=background_tasks,
                 ):
                     if isinstance(event, StepOutput):
                         step_outputs_for_step.append(event)
@@ -578,6 +581,7 @@ class Steps:
                 step_type=StepType.STEPS,
                 content=f"Steps {self.name} completed with {len(all_results)} results",
                 success=all(result.success for result in all_results) if all_results else True,
+                stop=any(result.stop for result in all_results) if all_results else False,
                 steps=all_results,
             )
 

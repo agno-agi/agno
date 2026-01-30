@@ -7,7 +7,7 @@ from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyT
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
 from agno.knowledge.types import ContentType
-from agno.utils.log import log_info, logger
+from agno.utils.log import log_debug, log_error, log_warning
 
 DEFAULT_CHUNKER_STRATEGY: ChunkingStrategy
 
@@ -28,9 +28,10 @@ class MarkdownReader(Reader):
     """Reader for Markdown files"""
 
     @classmethod
-    def get_supported_chunking_strategies(self) -> List[ChunkingStrategyType]:
+    def get_supported_chunking_strategies(cls) -> List[ChunkingStrategyType]:
         """Get the list of supported chunking strategies for Markdown readers."""
         strategies = [
+            ChunkingStrategyType.CODE_CHUNKER,
             ChunkingStrategyType.DOCUMENT_CHUNKER,
             ChunkingStrategyType.AGENTIC_CHUNKER,
             ChunkingStrategyType.RECURSIVE_CHUNKER,
@@ -45,7 +46,7 @@ class MarkdownReader(Reader):
         return strategies
 
     @classmethod
-    def get_supported_content_types(self) -> List[ContentType]:
+    def get_supported_content_types(cls) -> List[ContentType]:
         return [ContentType.MARKDOWN]
 
     def __init__(
@@ -65,12 +66,12 @@ class MarkdownReader(Reader):
             if isinstance(file, Path):
                 if not file.exists():
                     raise FileNotFoundError(f"Could not find file: {file}")
-                log_info(f"Reading: {file}")
+                log_debug(f"Reading: {file}")
                 file_name = name or file.stem
                 file_contents = file.read_text(encoding=self.encoding or "utf-8")
             else:
-                log_info(f"Reading uploaded file: {file.name}")
-                file_name = name or file.name.split(".")[0]
+                log_debug(f"Reading uploaded file: {getattr(file, 'name', 'BytesIO')}")
+                file_name = name or getattr(file, "name", "file").split(".")[0]
                 file.seek(0)
                 file_contents = file.read().decode(self.encoding or "utf-8")
 
@@ -82,7 +83,7 @@ class MarkdownReader(Reader):
                 return chunked_documents
             return documents
         except Exception as e:
-            logger.error(f"Error reading: {file}: {e}")
+            log_error(f"Error reading: {file}: {e}")
             return []
 
     async def async_read(self, file: Union[Path, IO[Any]], name: Optional[str] = None) -> List[Document]:
@@ -91,7 +92,7 @@ class MarkdownReader(Reader):
                 if not file.exists():
                     raise FileNotFoundError(f"Could not find file: {file}")
 
-                log_info(f"Reading asynchronously: {file}")
+                log_debug(f"Reading asynchronously: {file}")
                 file_name = name or file.stem
 
                 try:
@@ -100,17 +101,17 @@ class MarkdownReader(Reader):
                     async with aiofiles.open(file, "r", encoding=self.encoding or "utf-8") as f:
                         file_contents = await f.read()
                 except ImportError:
-                    logger.warning("aiofiles not installed, using synchronous file I/O")
-                    file_contents = file.read_text(self.encoding or "utf-8")
+                    log_warning("aiofiles not installed, using synchronous file I/O")
+                    file_contents = file.read_text(encoding=self.encoding or "utf-8")
             else:
-                log_info(f"Reading uploaded file asynchronously: {file.name}")
-                file_name = name or file.name.split(".")[0]
+                log_debug(f"Reading uploaded file asynchronously: {getattr(file, 'name', 'BytesIO')}")
+                file_name = name or getattr(file, "name", "file").split(".")[0]
                 file.seek(0)
                 file_contents = file.read().decode(self.encoding or "utf-8")
 
             document = Document(
                 name=file_name,
-                id=str(uuid.uuid4()),  # Fixed an issue with the id creation
+                id=str(uuid.uuid4()),
                 content=file_contents,
             )
 
@@ -118,7 +119,7 @@ class MarkdownReader(Reader):
                 return await self._async_chunk_document(document)
             return [document]
         except Exception as e:
-            logger.error(f"Error reading asynchronously: {file}: {e}")
+            log_error(f"Error reading asynchronously: {file}: {e}")
             return []
 
     async def _async_chunk_document(self, document: Document) -> List[Document]:
