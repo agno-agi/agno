@@ -5,7 +5,7 @@ CEL spec: https://github.com/google/cel-spec
 
 import json
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from agno.utils.log import logger
 
@@ -14,10 +14,22 @@ try:
     from celpy import celtypes
 
     CEL_AVAILABLE = True
+    CelValue = Union[
+        celtypes.BoolType,
+        celtypes.IntType,
+        celtypes.DoubleType,
+        celtypes.StringType,
+        celtypes.ListType,
+        celtypes.MapType,
+    ]
 except ImportError:
     CEL_AVAILABLE = False
     celpy = None  # type: ignore
     celtypes = None  # type: ignore
+    CelValue = Any  # type: ignore
+
+# Type alias for Python values that can be converted to CEL
+PythonValue = Union[None, bool, int, float, str, List[Any], Dict[str, Any]]
 
 # Regex for simple Python identifiers (function names)
 _IDENTIFIER_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
@@ -200,8 +212,15 @@ def _evaluate_cel_string(expression: str, context: Dict[str, Any]) -> str:
         raise ValueError(f"Failed to evaluate CEL expression '{expression}': {e}") from e
 
 
-def _to_cel(value: Any) -> Any:
-    """Convert a Python value to a CEL-compatible type."""
+def _to_cel(value: PythonValue) -> Union[CelValue, None]:
+    """Convert a Python value to a CEL-compatible type.
+    
+    Args:
+        value: A Python value (None, bool, int, float, str, list, or dict)
+        
+    Returns:
+        The corresponding CEL type, or None if input is None
+    """
     if not CEL_AVAILABLE or value is None:
         return value
 
@@ -218,6 +237,7 @@ def _to_cel(value: Any) -> Any:
     if isinstance(value, dict):
         return celtypes.MapType({celtypes.StringType(k): _to_cel(v) for k, v in value.items()})
 
+    # Fallback for any other type - convert to string
     return celtypes.StringType(str(value))
 
 
