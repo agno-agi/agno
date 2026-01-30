@@ -28,10 +28,7 @@ from agno.os import AgentOS
 from agno.vectordb.pgvector import PgVector
 
 # Database connections
-contents_db = PostgresDb(
-    db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
-    knowledge_table="knowledge_contents",
-)
+contents_db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 vector_db = PgVector(
     table_name="knowledge_vectors",
     db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
@@ -76,6 +73,22 @@ knowledge = Knowledge(
     content_sources=[sharepoint, github_docs, azure_blob],
 )
 
+knowledge2 = Knowledge(
+    name="Personal Knowledge Base",
+    description="Personal knowledge from multiple sources",
+    contents_db=contents_db,
+    vector_db=vector_db,
+    content_sources=[sharepoint, github_docs, azure_blob],
+)
+contents_db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai", knowledge_table="knowledge_contents2")
+
+knowledge3 = Knowledge(
+    name="Personal Knowledge Base",
+    description="Personal knowledge from multiple sources",
+    contents_db=contents_db,
+    vector_db=vector_db,
+    content_sources=[sharepoint, github_docs, azure_blob],
+)
 agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
     knowledge=knowledge,
