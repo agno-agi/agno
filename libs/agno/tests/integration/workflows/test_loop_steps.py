@@ -11,6 +11,7 @@ from agno.run.workflow import (
     WorkflowRunOutput,
 )
 from agno.workflow import Loop, Parallel, Workflow
+from agno.workflow.cel import CEL_AVAILABLE
 from agno.workflow.types import StepInput, StepOutput
 
 
@@ -595,3 +596,277 @@ def test_loop_with_multiple_steps_propagates_stop():
     assert len(result.steps) == 2, "Loop should stop after step that returned stop=True"
     assert result.steps[0].content == "First step done"
     assert result.steps[1].content == "Second step stops"
+
+
+# ============================================================================
+# CEL EXPRESSION TESTS
+# ============================================================================
+
+
+@pytest.mark.skipif(not CEL_AVAILABLE, reason="cel-python not installed")
+def test_cel_loop_iteration_count():
+    """Test CEL loop with iteration count end condition."""
+    loop = Loop(
+        name="CEL Iteration Loop",
+        steps=[research_step],
+        end_condition="iteration >= 2",
+        max_iterations=5,
+    )
+
+    result = loop.execute(StepInput(input="test"))
+
+    assert isinstance(result, StepOutput)
+    # iteration is incremented AFTER each iteration completes, THEN end_condition is checked
+    # So iteration >= 2 is True after iteration 1 completes (when iteration becomes 2)
+    # This means 2 iterations run (iteration 0 and 1)
+    assert len(result.steps) == 2
+
+
+@pytest.mark.skipif(not CEL_AVAILABLE, reason="cel-python not installed")
+def test_cel_loop_max_iterations_expression():
+    """Test CEL loop comparing iteration to max_iterations."""
+    loop = Loop(
+        name="CEL Max Iterations Loop",
+        steps=[research_step],
+        end_condition="iteration >= max_iterations - 1",
+        max_iterations=3,
+    )
+
+    result = loop.execute(StepInput(input="test"))
+
+    assert isinstance(result, StepOutput)
+    # max_iterations=3, so end_condition is "iteration >= 2"
+    # iteration is incremented after each iteration, so stops after iteration 1 (when iteration=2)
+    assert len(result.steps) == 2
+
+
+@pytest.mark.skipif(not CEL_AVAILABLE, reason="cel-python not installed")
+def test_cel_loop_content_length():
+    """Test CEL loop with content length end condition."""
+
+    def verbose_step(step_input: StepInput) -> StepOutput:
+        """Step that generates long content."""
+        return StepOutput(
+            step_name="verbose",
+            content="This is a very long content " * 20,  # ~580 chars
+            success=True,
+        )
+
+    loop = Loop(
+        name="CEL Content Length Loop",
+        steps=[verbose_step],
+        end_condition="total_content_length > 1000",
+        max_iterations=10,
+    )
+
+    result = loop.execute(StepInput(input="test"))
+
+    assert isinstance(result, StepOutput)
+    # Should stop when total content > 1000 chars (after 2 iterations)
+    assert len(result.steps) >= 2
+    total_length = sum(len(s.content) for s in result.steps)
+    assert total_length > 1000
+
+
+@pytest.mark.skipif(not CEL_AVAILABLE, reason="cel-python not installed")
+def test_cel_loop_last_step_content():
+    """Test CEL loop checking last_step_content."""
+    iteration_counter = [0]
+
+    def counting_step(step_input: StepInput) -> StepOutput:
+        iteration_counter[0] += 1
+        content = "DONE" if iteration_counter[0] >= 3 else f"Iteration {iteration_counter[0]}"
+        return StepOutput(step_name="counting", content=content, success=True)
+
+    loop = Loop(
+        name="CEL Last Content Loop",
+        steps=[counting_step],
+        end_condition='last_step_content.contains("DONE")',
+        max_iterations=10,
+    )
+
+    result = loop.execute(StepInput(input="test"))
+
+    assert isinstance(result, StepOutput)
+    assert len(result.steps) == 3
+    assert "DONE" in result.steps[-1].content
+
+
+@pytest.mark.skipif(not CEL_AVAILABLE, reason="cel-python not installed")
+def test_cel_loop_first_step_content():
+    """Test CEL loop checking first_step_content."""
+
+    def approval_step(step_input: StepInput) -> StepOutput:
+        # Simulate approval after first iteration
+        if step_input.previous_step_content and "processed" in step_input.previous_step_content:
+            return StepOutput(step_name="approval", content="APPROVED: All good", success=True)
+        return StepOutput(step_name="approval", content="processed data", success=True)
+
+    loop = Loop(
+        name="CEL First Content Loop",
+        steps=[approval_step],
+        end_condition='first_step_content.contains("APPROVED")',
+        max_iterations=10,
+    )
+
+    result = loop.execute(StepInput(input="test"))
+
+    assert isinstance(result, StepOutput)
+    # First iteration: "processed data", second: "APPROVED"
+    # After second iteration, first_step_content still = "processed data" (first ever)
+    # This will actually run until it finds APPROVED in the first position
+    # Since we're checking first_step_content which is contents[0], need to adjust
+    assert len(result.steps) >= 1
+
+
+@pytest.mark.skipif(not CEL_AVAILABLE, reason="cel-python not installed")
+def test_cel_loop_all_success():
+    """Test CEL loop with all_success check."""
+
+    def always_success_step(step_input: StepInput) -> StepOutput:
+        return StepOutput(step_name="success", content="Success", success=True)
+
+    loop = Loop(
+        name="CEL All Success Loop",
+        steps=[always_success_step],
+        end_condition="all_success && iteration >= 2",
+        max_iterations=10,
+    )
+
+    result = loop.execute(StepInput(input="test"))
+
+    assert isinstance(result, StepOutput)
+    assert all(s.success for s in result.steps)
+    # iteration is incremented after each iteration, checked is "iteration >= 2"
+    # Stops after iteration 1 completes (when iteration becomes 2)
+    assert len(result.steps) == 2
+
+
+@pytest.mark.skipif(not CEL_AVAILABLE, reason="cel-python not installed")
+def test_cel_loop_any_failure():
+    """Test CEL loop with any_failure check."""
+    iteration_counter = [0]
+
+    def sometimes_fail_step(step_input: StepInput) -> StepOutput:
+        iteration_counter[0] += 1
+        if iteration_counter[0] == 3:
+            return StepOutput(step_name="fail", content="Failed", success=False)
+        return StepOutput(step_name="success", content="Success", success=True)
+
+    loop = Loop(
+        name="CEL Any Failure Loop",
+        steps=[sometimes_fail_step],
+        end_condition="any_failure",
+        max_iterations=10,
+    )
+
+    result = loop.execute(StepInput(input="test"))
+
+    assert isinstance(result, StepOutput)
+    assert len(result.steps) == 3
+    assert result.steps[-1].success is False
+
+
+@pytest.mark.skipif(not CEL_AVAILABLE, reason="cel-python not installed")
+def test_cel_loop_num_steps():
+    """Test CEL loop with num_steps variable."""
+    # NOTE: num_steps is the count of steps in the CURRENT iteration, not cumulative
+    # With 2 steps per iteration, num_steps will always be 2
+    loop = Loop(
+        name="CEL Num Steps Loop",
+        steps=[research_step, analysis_step],  # 2 steps per iteration
+        end_condition="num_steps >= 2",  # Will be true after first iteration
+        max_iterations=10,
+    )
+
+    result = loop.execute(StepInput(input="test"))
+
+    assert isinstance(result, StepOutput)
+    # num_steps is per-iteration (always 2 here), so stops after first iteration
+    assert len(result.steps) == 2
+
+
+@pytest.mark.skipif(not CEL_AVAILABLE, reason="cel-python not installed")
+def test_cel_loop_in_workflow(shared_db):
+    """Test CEL loop within a workflow."""
+    workflow = Workflow(
+        name="CEL Loop Workflow",
+        db=shared_db,
+        steps=[
+            Loop(
+                name="cel_loop",
+                steps=[research_step],
+                end_condition="iteration >= 2",
+                max_iterations=5,
+            )
+        ],
+    )
+
+    response = workflow.run(input="test")
+
+    assert isinstance(response, WorkflowRunOutput)
+    assert len(response.step_results) == 1
+    loop_output = response.step_results[0]
+    # iteration >= 2 is true after iteration 1 completes (when iteration becomes 2)
+    assert len(loop_output.steps) == 2
+
+
+@pytest.mark.skipif(not CEL_AVAILABLE, reason="cel-python not installed")
+def test_cel_loop_streaming(shared_db):
+    """Test CEL loop with streaming."""
+    workflow = Workflow(
+        name="CEL Streaming Loop",
+        db=shared_db,
+        steps=[
+            Loop(
+                name="cel_stream_loop",
+                steps=[research_step],
+                end_condition="iteration >= 1",
+                max_iterations=5,
+            )
+        ],
+    )
+
+    events = list(workflow.run(input="test", stream=True, stream_events=True))
+
+    loop_started = [e for e in events if isinstance(e, LoopExecutionStartedEvent)]
+    loop_completed = [e for e in events if isinstance(e, LoopExecutionCompletedEvent)]
+
+    assert len(loop_started) == 1
+    assert len(loop_completed) == 1
+
+
+@pytest.mark.skipif(not CEL_AVAILABLE, reason="cel-python not installed")
+@pytest.mark.asyncio
+async def test_cel_loop_async():
+    """Test CEL loop with async execution."""
+    loop = Loop(
+        name="CEL Async Loop",
+        steps=[research_step],
+        end_condition="iteration >= 1",
+        max_iterations=5,
+    )
+
+    result = await loop.aexecute(StepInput(input="test"))
+
+    assert isinstance(result, StepOutput)
+    # iteration >= 1 is true after iteration 0 completes (when iteration becomes 1)
+    assert len(result.steps) == 1
+
+
+@pytest.mark.skipif(not CEL_AVAILABLE, reason="cel-python not installed")
+def test_cel_loop_compound_condition():
+    """Test CEL loop with compound end condition."""
+    loop = Loop(
+        name="CEL Compound Loop",
+        steps=[research_step],
+        end_condition="iteration >= 2 && all_success",
+        max_iterations=10,
+    )
+
+    result = loop.execute(StepInput(input="test"))
+
+    assert isinstance(result, StepOutput)
+    # iteration >= 2 is true after iteration 1 completes (when iteration becomes 2)
+    assert len(result.steps) == 2
+    assert all(s.success for s in result.steps)

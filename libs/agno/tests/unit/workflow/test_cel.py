@@ -159,7 +159,7 @@ class TestIsCelExpression:
 
     def test_true_literal_standalone(self):
         """Standalone 'true' matches identifier regex, so returns False.
-        
+
         This is correct behavior - the function can't distinguish between
         a function named 'true' and the CEL boolean literal. Users should
         use selector_type='cel' explicitly if needed.
@@ -252,7 +252,7 @@ class TestIsCelExpression:
 
     def test_dotted_module_path_like(self):
         """Dotted strings that look like module paths should return True.
-        
+
         Note: This is a tradeoff - 'my.evaluator' looks like a module path but
         will be detected as CEL due to the dot. This is acceptable because:
         1. Registry lookups use simple function names, not dotted paths
@@ -263,7 +263,7 @@ class TestIsCelExpression:
 
     def test_reserved_words_standalone(self):
         """Standalone reserved words match identifier regex, so return False.
-        
+
         This is a known limitation - 'true', 'false', 'all_success' etc.
         are valid Python identifiers. The function prioritizes avoiding
         false positives (treating function names as CEL) over catching

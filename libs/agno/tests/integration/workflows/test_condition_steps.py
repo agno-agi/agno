@@ -12,6 +12,7 @@ from agno.run.workflow import (
     WorkflowRunOutput,
 )
 from agno.workflow import Condition, Parallel, Workflow
+from agno.workflow.cel import CEL_AVAILABLE
 from agno.workflow.types import StepInput, StepOutput
 
 
@@ -712,3 +713,219 @@ def test_condition_else_steps_in_workflow_if_branch(shared_db):
     assert len(condition_result.steps) == 1
     assert "Research findings" in condition_result.steps[0].content
     assert "if branch" in condition_result.content
+
+
+# ============================================================================
+# CEL EXPRESSION TESTS
+# ============================================================================
+
+
+@pytest.mark.skipif(not CEL_AVAILABLE, reason="cel-python not installed")
+def test_cel_condition_basic_input_contains():
+    """Test CEL condition with input.contains() expression."""
+    condition = Condition(
+        name="CEL Input Contains",
+        evaluator='input.contains("urgent")',
+        steps=[research_step],
+    )
+
+    # Should trigger - contains "urgent"
+    result_true = condition.execute(StepInput(input="This is an urgent request"))
+    assert len(result_true.steps) == 1
+    assert "Research findings" in result_true.steps[0].content
+
+    # Should not trigger - no "urgent"
+    result_false = condition.execute(StepInput(input="This is a normal request"))
+    assert result_false.steps is None or len(result_false.steps) == 0
+
+
+@pytest.mark.skipif(not CEL_AVAILABLE, reason="cel-python not installed")
+def test_cel_condition_previous_step_content():
+    """Test CEL condition checking previous_step_content."""
+    condition = Condition(
+        name="CEL Previous Content",
+        evaluator="has_previous_step_content && previous_step_content.size() > 10",
+        steps=[analysis_step],
+    )
+
+    # Should trigger - has previous content > 10 chars
+    result_true = condition.execute(
+        StepInput(input="test", previous_step_content="This is some longer content from previous step")
+    )
+    assert len(result_true.steps) == 1
+    assert "Analysis" in result_true.steps[0].content
+
+    # Should not trigger - short previous content
+    result_false = condition.execute(StepInput(input="test", previous_step_content="Short"))
+    assert result_false.steps is None or len(result_false.steps) == 0
+
+
+@pytest.mark.skipif(not CEL_AVAILABLE, reason="cel-python not installed")
+def test_cel_condition_additional_data():
+    """Test CEL condition with additional_data access."""
+    condition = Condition(
+        name="CEL Additional Data",
+        evaluator='additional_data.priority == "high"',
+        steps=[fact_check_step],
+    )
+
+    # Should trigger - high priority
+    result_true = condition.execute(StepInput(input="test", additional_data={"priority": "high"}))
+    assert len(result_true.steps) == 1
+
+    # Should not trigger - low priority
+    result_false = condition.execute(StepInput(input="test", additional_data={"priority": "low"}))
+    assert result_false.steps is None or len(result_false.steps) == 0
+
+
+@pytest.mark.skipif(not CEL_AVAILABLE, reason="cel-python not installed")
+def test_cel_condition_session_state():
+    """Test CEL condition with session_state access."""
+    condition = Condition(
+        name="CEL Session State",
+        evaluator="session_state.request_count > 5",
+        steps=[research_step],
+    )
+
+    # Should trigger - count > 5
+    result_true = condition.execute(StepInput(input="test"), session_state={"request_count": 10})
+    assert len(result_true.steps) == 1
+
+    # Should not trigger - count <= 5
+    result_false = condition.execute(StepInput(input="test"), session_state={"request_count": 3})
+    assert result_false.steps is None or len(result_false.steps) == 0
+
+
+@pytest.mark.skipif(not CEL_AVAILABLE, reason="cel-python not installed")
+def test_cel_condition_compound_expression():
+    """Test CEL condition with compound logical expression."""
+    condition = Condition(
+        name="CEL Compound",
+        evaluator='input.contains("urgent") && additional_data.priority == "high"',
+        steps=[fact_check_step],
+    )
+
+    # Should trigger - both conditions met
+    result_true = condition.execute(StepInput(input="This is urgent", additional_data={"priority": "high"}))
+    assert len(result_true.steps) == 1
+
+    # Should not trigger - only one condition met
+    result_partial = condition.execute(StepInput(input="This is urgent", additional_data={"priority": "low"}))
+    assert result_partial.steps is None or len(result_partial.steps) == 0
+
+
+@pytest.mark.skipif(not CEL_AVAILABLE, reason="cel-python not installed")
+def test_cel_condition_with_else_steps():
+    """Test CEL condition with else_steps."""
+
+    # Define else step locally to avoid any scope issues
+    def cel_else_step(step_input: StepInput) -> StepOutput:
+        return StepOutput(content=f"Else branch: {step_input.input}", success=True)
+
+    condition = Condition(
+        name="CEL With Else",
+        evaluator='input.contains("premium")',
+        steps=[research_step],
+        else_steps=[cel_else_step],
+    )
+
+    # Should trigger if branch
+    result_if = condition.execute(StepInput(input="premium user request"))
+    assert len(result_if.steps) == 1
+    assert "Research findings" in result_if.steps[0].content
+    assert "if branch" in result_if.content
+
+    # Should trigger else branch
+    result_else = condition.execute(StepInput(input="free user request"))
+    assert len(result_else.steps) == 1
+    assert "Else branch" in result_else.steps[0].content
+    assert "else branch" in result_else.content
+
+
+@pytest.mark.skipif(not CEL_AVAILABLE, reason="cel-python not installed")
+def test_cel_condition_in_workflow(shared_db):
+    """Test CEL condition within a workflow."""
+    workflow = Workflow(
+        name="CEL Condition Workflow",
+        db=shared_db,
+        steps=[
+            research_step,
+            Condition(
+                name="cel_check",
+                evaluator='input.contains("AI")',
+                steps=[analysis_step],
+            ),
+        ],
+    )
+
+    # Should trigger condition
+    response = workflow.run(input="AI technology trends")
+    assert len(response.step_results) == 2
+    condition_result = response.step_results[1]
+    assert len(condition_result.steps) == 1
+    assert "Analysis" in condition_result.steps[0].content
+
+
+@pytest.mark.skipif(not CEL_AVAILABLE, reason="cel-python not installed")
+def test_cel_condition_streaming(shared_db):
+    """Test CEL condition with streaming."""
+    workflow = Workflow(
+        name="CEL Streaming Condition",
+        db=shared_db,
+        steps=[
+            Condition(
+                name="cel_stream",
+                evaluator='input.contains("stream")',
+                steps=[research_step],
+            )
+        ],
+    )
+
+    events = list(workflow.run(input="stream test", stream=True, stream_events=True))
+
+    condition_started = [e for e in events if isinstance(e, ConditionExecutionStartedEvent)]
+    condition_completed = [e for e in events if isinstance(e, ConditionExecutionCompletedEvent)]
+
+    assert len(condition_started) == 1
+    assert len(condition_completed) == 1
+    assert condition_started[0].condition_result is True
+
+
+@pytest.mark.skipif(not CEL_AVAILABLE, reason="cel-python not installed")
+@pytest.mark.asyncio
+async def test_cel_condition_async():
+    """Test CEL condition with async execution."""
+    condition = Condition(
+        name="CEL Async",
+        evaluator="input.size() > 5",
+        steps=[research_step],
+    )
+
+    # Should trigger - input length > 5
+    result = await condition.aexecute(StepInput(input="longer input text"))
+    assert len(result.steps) == 1
+    assert "Research findings" in result.steps[0].content
+
+
+@pytest.mark.skipif(not CEL_AVAILABLE, reason="cel-python not installed")
+def test_cel_condition_all_previous_content():
+    """Test CEL condition with all_previous_content variable."""
+    condition = Condition(
+        name="CEL All Previous Content",
+        evaluator="all_previous_content.size() > 50",
+        steps=[fact_check_step],
+    )
+
+    from agno.workflow.types import StepOutput as SO
+
+    step_input = StepInput(
+        input="test",
+        previous_step_outputs={
+            "step1": SO(content="First step output with some content", success=True),
+            "step2": SO(content="Second step output with more content", success=True),
+        },
+    )
+
+    result = condition.execute(step_input)
+    assert len(result.steps) == 1
+    assert "Fact check" in result.steps[0].content

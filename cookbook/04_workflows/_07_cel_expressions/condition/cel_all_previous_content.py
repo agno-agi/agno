@@ -51,7 +51,7 @@ workflow = Workflow(
         # Check if combined content from all previous steps is substantial
         Condition(
             name="Content Length Check",
-            evaluator='all_previous_content.size() > 500',
+            evaluator="all_previous_content.size() > 500",
             steps=[
                 Step(name="Create Summary", agent=summarizer),
             ],

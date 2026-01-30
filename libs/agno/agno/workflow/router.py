@@ -251,7 +251,9 @@ class Router:
             if result in self._step_name_map:
                 return [self._step_name_map[result]]
             else:
-                logger.warning(f"Router selector returned unknown step name: '{result}'. Available steps: {list(self._step_name_map.keys())}")
+                logger.warning(
+                    f"Router selector returned unknown step name: '{result}'. Available steps: {list(self._step_name_map.keys())}"
+                )
                 return []
 
         # Handle step types (Step, Steps, Loop, Parallel, Condition, Router)

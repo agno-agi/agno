@@ -34,7 +34,9 @@ reviewer = Agent(
 )
 
 
-def dynamic_selector(step_input: StepInput, step_choices: list) -> Union[str, Step, List[Step]]:
+def dynamic_selector(
+    step_input: StepInput, step_choices: list
+) -> Union[str, Step, List[Step]]:
     """
     Selector receives step_choices - can select by name or return Step directly.
     step_choices contains the prepared Step objects from Router.choices.
