@@ -261,6 +261,15 @@ class Router:
 
         # Handle step types (Step, Steps, Loop, Parallel, Condition, Router)
         if isinstance(result, (Step, Steps, Loop, Parallel, Condition, Router)):
+            # Validate that the returned step is in the router's choices
+            step_name = getattr(result, "name", None)
+            if step_name and step_name not in self._step_name_map:
+                available_steps = list(self._step_name_map.keys())
+                logger.warning(
+                    f"Router '{self.name}' selector returned a Step '{step_name}' that is not in choices. "
+                    f"Available step names are: {available_steps}. "
+                    f"The step will still be executed, but this may indicate a configuration error."
+                )
             return [result]
 
         # Handle list of results (could be strings, Steps, or mixed)
