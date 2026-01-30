@@ -1,8 +1,7 @@
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple, Union
 
-from agno.knowledge.embedder.base import Embedder
-from agno.utils.log import logger
+from agno.knowledge.embedder.base import Embedder, log_embedding_error
 
 try:
     from sentence_transformers import SentenceTransformer
@@ -41,7 +40,7 @@ class SentenceTransformerEmbedder(Embedder):
 
             return embedding  # type: ignore
         except Exception as e:
-            logger.warning(e)
+            log_embedding_error(e, "embedding")
             return []
 
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:

@@ -2,7 +2,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-from agno.knowledge.embedder.base import Embedder
+from agno.knowledge.embedder.base import Embedder, log_embedding_error
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
 try:
@@ -179,7 +179,7 @@ class CohereEmbedder(Embedder):
                 log_warning("No embeddings found")
                 return []
         except Exception as e:
-            log_warning(e)
+            log_embedding_error(e, "embedding")
             return []
 
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict[str, Any]]]:
@@ -220,7 +220,7 @@ class CohereEmbedder(Embedder):
                 log_warning("No embeddings found")
                 return []
         except Exception as e:
-            log_warning(e)
+            log_embedding_error(e, "async embedding")
             return []
 
     async def async_get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict[str, Any]]]:

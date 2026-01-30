@@ -3,8 +3,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from typing_extensions import Literal
 
-from agno.knowledge.embedder.base import Embedder
-from agno.utils.log import log_info, log_warning, log_error
+from agno.knowledge.embedder.base import Embedder, log_embedding_error
+from agno.utils.log import log_info
 
 try:
     from openai import AsyncOpenAI
@@ -83,11 +83,7 @@ class OpenAIEmbedder(Embedder):
             response: CreateEmbeddingResponse = self.response(text=text)
             return response.data[0].embedding
         except Exception as e:
-            error_str = str(e).lower()
-            if "maximum context length" in error_str or "token" in error_str:
-                log_error(f"Token limit exceeded during embedding: {e}")
-            else:
-                log_warning(f"Embedding failed: {e}")
+            log_embedding_error(e, "embedding")
             return []
 
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:
@@ -100,11 +96,7 @@ class OpenAIEmbedder(Embedder):
                 return embedding, usage.model_dump()
             return embedding, None
         except Exception as e:
-            error_str = str(e).lower()
-            if "maximum context length" in error_str or "token" in error_str:
-                log_error(f"Token limit exceeded during embedding: {e}")
-            else:
-                log_warning(f"Embedding failed: {e}")
+            log_embedding_error(e, "embedding and usage")
             return [], None
 
     async def async_get_embedding(self, text: str) -> List[float]:
@@ -125,11 +117,7 @@ class OpenAIEmbedder(Embedder):
             response: CreateEmbeddingResponse = await self.aclient.embeddings.create(**req)
             return response.data[0].embedding
         except Exception as e:
-            error_str = str(e).lower()
-            if "maximum context length" in error_str or "token" in error_str:
-                log_error(f"Token limit exceeded during embedding: {e}")
-            else:
-                log_warning(f"Embedding failed: {e}")
+            log_embedding_error(e, "async embedding")
             return []
 
     async def async_get_embedding_and_usage(self, text: str):
@@ -152,11 +140,7 @@ class OpenAIEmbedder(Embedder):
             usage = response.usage
             return embedding, usage.model_dump() if usage else None
         except Exception as e:
-            error_str = str(e).lower()
-            if "maximum context length" in error_str or "token" in error_str:
-                log_error(f"Token limit exceeded during embedding: {e}")
-            else:
-                log_warning(f"Error getting embedding: {e}")
+            log_embedding_error(e, "async embedding and usage")
             return [], None
 
     async def async_get_embeddings_batch_and_usage(
@@ -200,23 +184,15 @@ class OpenAIEmbedder(Embedder):
                 usage_dict = response.usage.model_dump() if response.usage else None
                 all_usage.extend([usage_dict] * len(batch_embeddings))
             except Exception as e:
-                error_str = str(e).lower()
-                if "maximum context length" in error_str or "token" in error_str:
-                    log_error(f"Token limit exceeded in batch embedding: {e}")
-                else:
-                    log_warning(f"Error in async batch embedding: {e}")
+                log_embedding_error(e, "async batch embedding")
                 # Fallback to individual calls for this batch
                 for text in batch_texts:
                     try:
                         embedding, usage = await self.async_get_embedding_and_usage(text)
                         all_embeddings.append(embedding)
                         all_usage.append(usage)
-                    except Exception as e2:
-                        error_str2 = str(e2).lower()
-                        if "maximum context length" in error_str2 or "token" in error_str2:
-                            log_error(f"Token limit exceeded in individual embedding fallback: {e2}")
-                        else:
-                            log_warning(f"Error in individual async embedding fallback: {e2}")
+                    except Exception as fallback_error:
+                        log_embedding_error(fallback_error, "individual async embedding fallback")
                         all_embeddings.append([])
                         all_usage.append(None)
 

@@ -1337,7 +1337,9 @@ class Knowledge:
 
                     if reader:
                         password = content.auth.password if content.auth and content.auth.password is not None else None
-                        read_documents = await self._aread(reader, path, name=content.name or path.name, password=password)
+                        read_documents = await self._aread(
+                            reader, path, name=content.name or path.name, password=password
+                        )
                     else:
                         read_documents = []
 
