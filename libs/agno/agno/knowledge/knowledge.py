@@ -1561,7 +1561,49 @@ class Knowledge:
         # 6. Chunk documents if needed
         if reader and not reader.chunk:
             read_documents = await reader.chunk_documents_async(read_documents)
-        # 7. Prepare and insert the content in the vector database
+
+        # 7. Group documents by source URL for multi-page readers (like WebsiteReader)
+        docs_by_source: Dict[str, List[Document]] = {}
+        for doc in read_documents:
+            source_url = doc.meta_data.get("url", content.url) if doc.meta_data else content.url
+            source_url = source_url or "unknown"
+            if source_url not in docs_by_source:
+                docs_by_source[source_url] = []
+            docs_by_source[source_url].append(doc)
+
+        # 8. Process each source separately if multiple sources exist
+        if len(docs_by_source) > 1:
+            for source_url, source_docs in docs_by_source.items():
+                # Compute per-document hash based on actual source URL
+                doc_hash = self._build_document_content_hash(source_docs[0], content)
+
+                # Check skip_if_exists for each source individually
+                if self._should_skip(doc_hash, skip_if_exists):
+                    log_debug(f"Skipping already indexed: {source_url}")
+                    continue
+
+                doc_id = generate_id(doc_hash)
+                self._prepare_documents_for_insert(source_docs, doc_id, calculate_sizes=True)
+
+                # Insert with per-document hash
+                if self.vector_db.upsert_available() and upsert:
+                    try:
+                        await self.vector_db.async_upsert(doc_hash, source_docs, content.metadata)
+                    except Exception as e:
+                        log_error(f"Error upserting document from {source_url}: {e}")
+                        continue
+                else:
+                    try:
+                        await self.vector_db.async_insert(doc_hash, documents=source_docs, filters=content.metadata)
+                    except Exception as e:
+                        log_error(f"Error inserting document from {source_url}: {e}")
+                        continue
+
+            content.status = ContentStatus.COMPLETED
+            await self._aupdate_content(content)
+            return
+
+        # 9. Single source - use existing logic with original content hash
         if not content.id:
             content.id = generate_id(content.content_hash or "")
         self._prepare_documents_for_insert(read_documents, content.id, calculate_sizes=True)
@@ -1668,7 +1710,48 @@ class Knowledge:
         if reader:
             read_documents = self._chunk_documents_sync(reader, read_documents)
 
-        # 7. Prepare and insert the content in the vector database
+        # 7. Group documents by source URL for multi-page readers (like WebsiteReader)
+        docs_by_source: Dict[str, List[Document]] = {}
+        for doc in read_documents:
+            source_url = doc.meta_data.get("url", content.url) if doc.meta_data else content.url
+            source_url = source_url or "unknown"
+            if source_url not in docs_by_source:
+                docs_by_source[source_url] = []
+            docs_by_source[source_url].append(doc)
+
+        # 8. Process each source separately if multiple sources exist
+        if len(docs_by_source) > 1:
+            for source_url, source_docs in docs_by_source.items():
+                # Compute per-document hash based on actual source URL
+                doc_hash = self._build_document_content_hash(source_docs[0], content)
+
+                # Check skip_if_exists for each source individually
+                if self._should_skip(doc_hash, skip_if_exists):
+                    log_debug(f"Skipping already indexed: {source_url}")
+                    continue
+
+                doc_id = generate_id(doc_hash)
+                self._prepare_documents_for_insert(source_docs, doc_id, calculate_sizes=True)
+
+                # Insert with per-document hash
+                if self.vector_db.upsert_available() and upsert:
+                    try:
+                        self.vector_db.upsert(doc_hash, source_docs, content.metadata)
+                    except Exception as e:
+                        log_error(f"Error upserting document from {source_url}: {e}")
+                        continue
+                else:
+                    try:
+                        self.vector_db.insert(doc_hash, documents=source_docs, filters=content.metadata)
+                    except Exception as e:
+                        log_error(f"Error inserting document from {source_url}: {e}")
+                        continue
+
+            content.status = ContentStatus.COMPLETED
+            self._update_content(content)
+            return
+
+        # 9. Single source - use existing logic with original content hash
         if not content.id:
             content.id = generate_id(content.content_hash or "")
         self._prepare_documents_for_insert(read_documents, content.id, calculate_sizes=True)
@@ -3912,6 +3995,42 @@ class Knowledge:
                 or ("unknown_content" + "".join(random.choices(string.ascii_lowercase + string.digits, k=6)))
             )
             hash_parts.append(fallback)
+
+        hash_input = ":".join(hash_parts)
+        return hashlib.sha256(hash_input.encode()).hexdigest()
+
+    def _build_document_content_hash(self, document: Document, content: Content) -> str:
+        """
+        Build content hash for a specific document.
+
+        Used for multi-page readers (like WebsiteReader) where each crawled page
+        should have its own unique content hash based on its actual URL.
+
+        Args:
+            document: The document to build the hash for
+            content: The original content object (for fallback name/description)
+
+        Returns:
+            A unique hash string for this specific document
+        """
+        hash_parts = []
+
+        if content.name:
+            hash_parts.append(content.name)
+        if content.description:
+            hash_parts.append(content.description)
+
+        # Use document's own URL if available (set by WebsiteReader)
+        doc_url = document.meta_data.get("url") if document.meta_data else None
+        if doc_url:
+            hash_parts.append(str(doc_url))
+        elif content.url:
+            hash_parts.append(content.url)
+        elif content.path:
+            hash_parts.append(str(content.path))
+        else:
+            # Fallback: use content hash for uniqueness
+            hash_parts.append(hashlib.sha256(document.content.encode()).hexdigest()[:16])
 
         hash_input = ":".join(hash_parts)
         return hashlib.sha256(hash_input.encode()).hexdigest()
