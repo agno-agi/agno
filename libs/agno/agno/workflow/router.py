@@ -303,7 +303,8 @@ class Router:
                 )
                 return []
             try:
-                step_name = evaluate_cel_router_selector(self.selector, step_input, session_state)
+                step_names = list(self._step_name_map.keys())
+                step_name = evaluate_cel_router_selector(self.selector, step_input, session_state, step_choices=step_names)
                 return self._resolve_selector_result(step_name)
             except Exception as e:
                 logger.error(f"Router CEL evaluation failed: {e}")
@@ -337,7 +338,8 @@ class Router:
                 )
                 return []
             try:
-                step_name = evaluate_cel_router_selector(self.selector, step_input, session_state)
+                step_names = list(self._step_name_map.keys())
+                step_name = evaluate_cel_router_selector(self.selector, step_input, session_state, step_choices=step_names)
                 return self._resolve_selector_result(step_name)
             except Exception as e:
                 logger.error(f"Router CEL evaluation failed: {e}")

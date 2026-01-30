@@ -100,6 +100,7 @@ def evaluate_cel_condition_evaluator(
     expression: str,
     step_input: "StepInput",  # type: ignore  # noqa: F821
     session_state: Optional[Dict[str, Any]] = None,
+    step_choices: Optional[List[str]] = None,
 ) -> bool:
     """Evaluate a CEL expression for a Condition evaluator.
 
@@ -111,8 +112,11 @@ def evaluate_cel_condition_evaluator(
         - all_previous_content: Concatenated content from all previous steps (formatted)
         - additional_data: Map of additional data passed to the workflow
         - session_state: Map of session state values
+        - step_choices: List of step names available to the selector
     """
-    return _evaluate_cel(expression, _build_step_input_context(step_input, session_state))
+    context = _build_step_input_context(step_input, session_state)
+    context["step_choices"] = step_choices or []
+    return _evaluate_cel(expression, context)
 
 
 def evaluate_cel_loop_end_condition(
@@ -142,6 +146,7 @@ def evaluate_cel_router_selector(
     expression: str,
     step_input: "StepInput",  # type: ignore  # noqa: F821
     session_state: Optional[Dict[str, Any]] = None,
+    step_choices: Optional[List[str]] = None,
 ) -> str:
     """Evaluate a CEL expression for a Router selector.
 
@@ -161,7 +166,9 @@ def evaluate_cel_router_selector(
         - 'additional_data.route'
         - 'session_state.preferred_handler'
     """
-    return _evaluate_cel_string(expression, _build_step_input_context(step_input, session_state))
+    context = _build_step_input_context(step_input, session_state)
+    context["step_choices"] = step_choices or []
+    return _evaluate_cel_string(expression, context)
 
 
 # ********** Internal Functions **********
