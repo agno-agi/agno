@@ -646,32 +646,37 @@ Remember: You must only compare the agent_output to the expected_output. The exp
             </agent_output>\
             """)
 
-        result = self.evaluate_answer(
-            input=eval_input,
-            evaluator_agent=evaluator_agent,
-            evaluation_input=evaluation_input,
-            evaluator_expected_output=eval_expected_output,
-            agent_output=output,
-        )
+        for i in range(self.num_iterations):
+            result = self.evaluate_answer(
+                input=eval_input,
+                evaluator_agent=evaluator_agent,
+                evaluation_input=evaluation_input,
+                evaluator_expected_output=eval_expected_output,
+                agent_output=output,
+            )
 
-        if result is not None:
+            if result is None:
+                logger.error(f"Failed to generate a valid answer on iteration {i + 1}: {output}")
+                continue
+
             self.result.results.append(result)
             self.result.compute_stats()
 
-            # Print results if requested
-            if self.print_results or print_results:
-                self.result.print_results()
-            if self.print_summary or print_summary:
-                self.result.print_summary()
+        # Print results if requested
+        if self.print_results or print_results:
+            self.result.print_results()
+        if self.print_summary or print_summary:
+            self.result.print_summary()
 
-            # Save result to file if requested
-            if self.file_path_to_save_results is not None:
-                store_result_in_file(
-                    file_path=self.file_path_to_save_results,
-                    name=self.name,
-                    eval_id=self.eval_id,
-                    result=self.result,
-                )
+        # Save result to file if requested
+        if self.file_path_to_save_results is not None:
+            store_result_in_file(
+                file_path=self.file_path_to_save_results,
+                name=self.name,
+                eval_id=self.eval_id,
+                result=self.result,
+            )
+
         # Log results to the Agno DB if requested
         if self.db:
             if isinstance(self.db, AsyncBaseDb):
@@ -769,32 +774,37 @@ Remember: You must only compare the agent_output to the expected_output. The exp
             </agent_output>\
             """)
 
-        result = await self.aevaluate_answer(
-            input=eval_input,
-            evaluator_agent=evaluator_agent,
-            evaluation_input=evaluation_input,
-            evaluator_expected_output=eval_expected_output,
-            agent_output=output,
-        )
+        for i in range(self.num_iterations):
+            result = await self.aevaluate_answer(
+                input=eval_input,
+                evaluator_agent=evaluator_agent,
+                evaluation_input=evaluation_input,
+                evaluator_expected_output=eval_expected_output,
+                agent_output=output,
+            )
 
-        if result is not None:
+            if result is None:
+                logger.error(f"Failed to generate a valid answer on iteration {i + 1}: {output}")
+                continue
+
             self.result.results.append(result)
             self.result.compute_stats()
 
-            # Print results if requested
-            if self.print_results or print_results:
-                self.result.print_results()
-            if self.print_summary or print_summary:
-                self.result.print_summary()
+        # Print results if requested
+        if self.print_results or print_results:
+            self.result.print_results()
+        if self.print_summary or print_summary:
+            self.result.print_summary()
 
-            # Save result to file if requested
-            if self.file_path_to_save_results is not None:
-                store_result_in_file(
-                    file_path=self.file_path_to_save_results,
-                    name=self.name,
-                    eval_id=self.eval_id,
-                    result=self.result,
-                )
+        # Save result to file if requested
+        if self.file_path_to_save_results is not None:
+            store_result_in_file(
+                file_path=self.file_path_to_save_results,
+                name=self.name,
+                eval_id=self.eval_id,
+                result=self.result,
+            )
+
         # Log results to the Agno DB if requested
         if self.db:
             if self.agent is not None:
