@@ -100,46 +100,37 @@ def evaluate_cel_condition_evaluator(
     expression: str,
     step_input: "StepInput",  # type: ignore  # noqa: F821
     session_state: Optional[Dict[str, Any]] = None,
-    step_choices: Optional[List[str]] = None,
 ) -> bool:
     """Evaluate a CEL expression for a Condition evaluator.
 
     Context variables:
         - input: The workflow input as a string
         - previous_step_content: Content from the previous step
-        - has_previous_step_content: Whether previous content exists
-        - previous_step_contents: List of content strings from all previous steps
-        - all_previous_content: Concatenated content from all previous steps (formatted)
+        - previous_step_outputs: Map of step name to content string from all previous steps
         - additional_data: Map of additional data passed to the workflow
         - session_state: Map of session state values
-        - step_choices: List of step names available to the selector
     """
-    context = _build_step_input_context(step_input, session_state)
-    context["step_choices"] = step_choices or []
-    return _evaluate_cel(expression, context)
+    return _evaluate_cel(expression, _build_step_input_context(step_input, session_state))
 
 
 def evaluate_cel_loop_end_condition(
     expression: str,
     iteration_results: "List[StepOutput]",  # type: ignore  # noqa: F821
-    iteration: int = 0,
+    current_iteration: int = 0,
     max_iterations: int = 3,
 ) -> bool:
     """Evaluate a CEL expression as a Loop end condition.
 
     Context variables:
-        - iteration: Current iteration number (0-indexed)
+        - current_iteration: Current iteration number (1-indexed, after completion)
         - max_iterations: Maximum iterations configured for the loop
-        - num_steps: Number of step outputs in the current iteration
-        - all_success: True if all steps succeeded
-        - any_failure: True if any step failed
-        - step_contents: List of content strings from all steps in order
-        - first_step_content: Content string from the first step
-        - last_step_content: Content string from the last step
-        - total_content_length: Sum of all step content lengths
-        - max_content_length: Length of the longest step content
+        - all_success: True if all steps in this iteration succeeded
+        - last_step_content: Content string from the last step in this iteration
+        - step_outputs: Map of step name to content string from the current iteration
     """
-    return _evaluate_cel(expression, _build_loop_step_output_context(iteration_results, iteration, max_iterations))
+    return _evaluate_cel(
+        expression, _build_loop_step_output_context(iteration_results, current_iteration, max_iterations)
+    )
 
 
 def evaluate_cel_router_selector(
@@ -152,19 +143,13 @@ def evaluate_cel_router_selector(
 
     Returns the name of the step to execute as a string.
 
-    Context variables (same as Condition):
+    Context variables (same as Condition, plus step_choices):
         - input: The workflow input as a string
         - previous_step_content: Content from the previous step
-        - has_previous_step_content: Whether previous content exists
-        - previous_step_contents: List of content strings from all previous steps
-        - all_previous_content: Concatenated content from all previous steps (formatted)
+        - previous_step_outputs: Map of step name to content string from all previous steps
         - additional_data: Map of additional data passed to the workflow
         - session_state: Map of session state values
-
-    Example CEL expressions:
-        - 'input.contains("video") ? "video_step" : "image_step"'
-        - 'additional_data.route'
-        - 'session_state.preferred_handler'
+        - step_choices: List of step names available to the selector
     """
     context = _build_step_input_context(step_input, session_state)
     context["step_choices"] = step_choices or []
@@ -172,59 +157,52 @@ def evaluate_cel_router_selector(
 
 
 # ********** Internal Functions **********
-def _evaluate_cel(expression: str, context: Dict[str, Any]) -> bool:
-    """Core CEL evaluation: compile, run, and coerce to bool."""
+def _evaluate_cel_raw(expression: str, context: Dict[str, Any]) -> Any:
+    """Core CEL evaluation: compile, run, and return the raw result."""
     if not CEL_AVAILABLE:
         raise RuntimeError("cel-python is not installed. Install with: pip install cel-python")
 
     try:
         env = celpy.Environment()
         prog = env.program(env.compile(expression))
-        result = prog.evaluate({k: _to_cel(v) for k, v in context.items()})
-
-        if isinstance(result, celtypes.BoolType):
-            return bool(result)
-        if isinstance(result, bool):
-            return result
-
-        logger.warning(f"CEL expression '{expression}' returned {type(result).__name__}, converting to bool")
-        return bool(result)
-
+        return prog.evaluate({k: _to_cel(v) for k, v in context.items()})
     except Exception as e:
         logger.error(f"CEL evaluation failed for '{expression}': {e}")
         raise ValueError(f"Failed to evaluate CEL expression '{expression}': {e}") from e
+
+
+def _evaluate_cel(expression: str, context: Dict[str, Any]) -> bool:
+    """CEL evaluation that coerces the result to bool."""
+    result = _evaluate_cel_raw(expression, context)
+
+    if isinstance(result, celtypes.BoolType):
+        return bool(result)
+    if isinstance(result, bool):
+        return result
+
+    logger.warning(f"CEL expression '{expression}' returned {type(result).__name__}, converting to bool")
+    return bool(result)
 
 
 def _evaluate_cel_string(expression: str, context: Dict[str, Any]) -> str:
-    """CEL evaluation that returns a string result (for Router selector)."""
-    if not CEL_AVAILABLE:
-        raise RuntimeError("cel-python is not installed. Install with: pip install cel-python")
+    """CEL evaluation that coerces the result to string (for Router selector)."""
+    result = _evaluate_cel_raw(expression, context)
 
-    try:
-        env = celpy.Environment()
-        prog = env.program(env.compile(expression))
-        result = prog.evaluate({k: _to_cel(v) for k, v in context.items()})
-
-        if isinstance(result, celtypes.StringType):
-            return str(result)
-        if isinstance(result, str):
-            return result
-
-        # Convert other types to string
-        logger.warning(f"CEL expression '{expression}' returned {type(result).__name__}, converting to string")
+    if isinstance(result, celtypes.StringType):
         return str(result)
+    if isinstance(result, str):
+        return result
 
-    except Exception as e:
-        logger.error(f"CEL evaluation failed for '{expression}': {e}")
-        raise ValueError(f"Failed to evaluate CEL expression '{expression}': {e}") from e
+    logger.warning(f"CEL expression '{expression}' returned {type(result).__name__}, converting to string")
+    return str(result)
 
 
 def _to_cel(value: PythonValue) -> Union[CelValue, None]:
     """Convert a Python value to a CEL-compatible type.
-    
+
     Args:
         value: A Python value (None, bool, int, float, str, list, or dict)
-        
+
     Returns:
         The corresponding CEL type, or None if input is None
     """
@@ -252,7 +230,15 @@ def _build_step_input_context(
     step_input: "StepInput",  # type: ignore  # noqa: F821
     session_state: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """Build context for CEL evaluation of step input."""
+    """Build context for CEL evaluation of step input.
+
+    Maps directly to StepInput fields:
+        - input: from step_input.input (as string)
+        - previous_step_content: from step_input.previous_step_content (as string)
+        - previous_step_outputs: from step_input.previous_step_outputs (map of step name -> content string)
+        - additional_data: from step_input.additional_data
+        - session_state: passed separately
+    """
     input_str = ""
     if step_input.input is not None:
         input_str = step_input.get_input_as_string() or ""
@@ -266,25 +252,15 @@ def _build_step_input_context(
         else:
             previous_content = str(step_input.previous_step_content)
 
-    previous_step_contents: List[str] = []
+    previous_step_outputs: Dict[str, str] = {}
     if step_input.previous_step_outputs:
-        previous_step_contents = [str(output.content) for output in step_input.previous_step_outputs.values()]
-
-    # Build all_previous_content similar to StepInput.get_all_previous_content()
-    all_previous_content = ""
-    if step_input.previous_step_outputs:
-        content_parts = []
         for name, output in step_input.previous_step_outputs.items():
-            if output.content:
-                content_parts.append(f"=== {name} ===\n{output.content}")
-        all_previous_content = "\n\n".join(content_parts)
+            previous_step_outputs[name] = str(output.content) if output.content else ""
 
     return {
         "input": input_str,
         "previous_step_content": previous_content,
-        "has_previous_step_content": bool(step_input.previous_step_content),
-        "previous_step_contents": previous_step_contents,
-        "all_previous_content": all_previous_content,
+        "previous_step_outputs": previous_step_outputs,
         "additional_data": step_input.additional_data or {},
         "session_state": session_state or {},
     }
@@ -292,37 +268,32 @@ def _build_step_input_context(
 
 def _build_loop_step_output_context(
     iteration_results: "List[StepOutput]",  # type: ignore  # noqa: F821
-    iteration: int = 0,
+    current_iteration: int = 0,
     max_iterations: int = 3,
 ) -> Dict[str, Any]:
-    """Build context for CEL evaluation of loop end condition from iteration results."""
+    """Build context for CEL evaluation of loop end condition from iteration results.
+
+    Maps to StepOutput fields:
+        - step_outputs: map of StepOutput.step_name -> str(StepOutput.content)
+        - all_success: derived from StepOutput.success
+        - last_step_content: content from the last StepOutput of the current loop iteration
+    """
     all_success = True
-    any_failure = False
-    total_content_length = 0
-    max_content_length = 0
-    contents: List[str] = []
+    outputs: Dict[str, str] = {}
+    last_content = ""
 
     for result in iteration_results:
         content = str(result.content) if result.content else ""
-        contents.append(content)
-        content_len = len(content)
-        total_content_length += content_len
-        if content_len > max_content_length:
-            max_content_length = content_len
+        name = result.step_name or f"step_{len(outputs)}"
+        outputs[name] = content
+        last_content = content
         if not result.success:
             all_success = False
-            any_failure = True
-
-    last_content = contents[-1] if contents else ""
 
     return {
-        "iteration": iteration,
+        "current_iteration": current_iteration,
         "max_iterations": max_iterations,
-        "num_steps": len(iteration_results),
         "all_success": all_success,
-        "any_failure": any_failure,
-        "step_contents": contents,
         "last_step_content": last_content,
-        "total_content_length": total_content_length,
-        "max_content_length": max_content_length,
+        "step_outputs": outputs,
     }

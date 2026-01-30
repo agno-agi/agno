@@ -1,7 +1,7 @@
 """Condition with CEL expression: branching on previous step output.
 
-Runs a classifier step first, then uses has_previous_step_content
-and previous_step_content.contains() to decide the next step.
+Runs a classifier step first, then uses previous_step_content.contains()
+to decide the next step.
 
 Requirements:
     pip install cel-python

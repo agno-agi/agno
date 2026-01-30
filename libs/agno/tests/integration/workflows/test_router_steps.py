@@ -3,8 +3,8 @@
 import pytest
 
 from agno.run.workflow import (
-    RouterExecutionStartedEvent,
     RouterExecutionCompletedEvent,
+    RouterExecutionStartedEvent,
     StepCompletedEvent,
     StepStartedEvent,
     WorkflowCompletedEvent,
@@ -1122,7 +1122,7 @@ def test_cel_router_previous_step_content():
 
     router = Router(
         name="CEL Previous Content Router",
-        selector='has_previous_step_content && previous_step_content.contains("error") ? "error_handler" : "success_handler"',
+        selector='previous_step_content.contains("error") ? "error_handler" : "success_handler"',
         choices=[error_handler, success_handler],
     )
 

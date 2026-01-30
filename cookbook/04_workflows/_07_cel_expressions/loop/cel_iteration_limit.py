@@ -1,6 +1,6 @@
 """Loop with CEL end condition: stop after N iterations.
 
-Uses the iteration variable to stop after a specific number
+Uses current_iteration to stop after a specific number
 of iterations, independent of max_iterations.
 
 Requirements:
@@ -29,7 +29,7 @@ workflow = Workflow(
             name="Writing Loop",
             max_iterations=10,
             # Stop after 2 iterations even though max is 10
-            end_condition="iteration >= 2",
+            end_condition="current_iteration >= 2",
             steps=[
                 Step(name="Write", agent=writer),
             ],
@@ -38,7 +38,7 @@ workflow = Workflow(
 )
 
 if __name__ == "__main__":
-    print("Loop with CEL end condition: iteration >= 2 (max_iterations=10)")
+    print("Loop with CEL end condition: current_iteration >= 2 (max_iterations=10)")
     print("=" * 60)
     workflow.print_response(
         input="Write about the history of the internet",

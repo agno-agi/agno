@@ -46,23 +46,18 @@ class Loop:
         - None (loop runs for max_iterations)
 
     CEL expressions for end_condition have access to:
-        - iteration: Current iteration number (1-indexed, after completion)
+        - current_iteration: Current iteration number (1-indexed, after completion)
         - max_iterations: Maximum iterations configured for the loop
-        - num_steps: Number of step outputs in the current iteration
-        - all_success: Boolean - True if all steps succeeded
-        - any_failure: Boolean - True if any step failed
-        - step_contents: List of content strings from all steps in order
+        - all_success: Boolean - True if all steps in this iteration succeeded
         - last_step_content: Content string from the last step in the iteration
-        - total_content_length: Sum of all step content lengths
-        - max_content_length: Length of the longest step content
+        - step_outputs: Map of step name to content string from the current iteration
 
     Example CEL expressions:
-        - 'iteration >= 2'
-        - 'iteration >= max_iterations'
+        - 'current_iteration >= 2'
+        - 'current_iteration >= max_iterations'
         - 'all_success'
-        - 'total_content_length > 500'
-        - 'max_content_length > 200'
         - 'last_step_content.contains("DONE")'
+        - 'all_success && current_iteration >= 2'
     """
 
     steps: WorkflowSteps
@@ -164,7 +159,7 @@ class Loop:
             end_condition=end_condition,
         )
 
-    def _evaluate_end_condition(self, iteration_results: List[StepOutput], iteration: int = 0) -> bool:
+    def _evaluate_end_condition(self, iteration_results: List[StepOutput], current_iteration: int = 0) -> bool:
         """Evaluate the end condition and return whether the loop should stop."""
         if self.end_condition is None:
             return False
@@ -177,7 +172,7 @@ class Loop:
                 return False
             try:
                 return evaluate_cel_loop_end_condition(
-                    self.end_condition, iteration_results, iteration, self.max_iterations
+                    self.end_condition, iteration_results, current_iteration, self.max_iterations
                 )
             except Exception as e:
                 logger.warning(f"CEL end condition evaluation failed: {e}")
@@ -192,7 +187,7 @@ class Loop:
 
         return False
 
-    async def _aevaluate_end_condition(self, iteration_results: List[StepOutput], iteration: int = 0) -> bool:
+    async def _aevaluate_end_condition(self, iteration_results: List[StepOutput], current_iteration: int = 0) -> bool:
         """Async evaluate the end condition."""
         if self.end_condition is None:
             return False
@@ -205,7 +200,7 @@ class Loop:
                 return False
             try:
                 return evaluate_cel_loop_end_condition(
-                    self.end_condition, iteration_results, iteration, self.max_iterations
+                    self.end_condition, iteration_results, current_iteration, self.max_iterations
                 )
             except Exception as e:
                 logger.warning(f"CEL end condition evaluation failed: {e}")

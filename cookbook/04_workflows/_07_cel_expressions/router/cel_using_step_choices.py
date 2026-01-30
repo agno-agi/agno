@@ -54,7 +54,9 @@ workflow = Workflow(
 if __name__ == "__main__":
     # This will route to step_choices[0] ("Quick Analysis")
     print("=== Quick analysis request ===")
-    workflow.print_response(input="Give me a quick overview of quantum computing.", stream=True)
+    workflow.print_response(
+        input="Give me a quick overview of quantum computing.", stream=True
+    )
 
     print("\n" + "=" * 50 + "\n")
 

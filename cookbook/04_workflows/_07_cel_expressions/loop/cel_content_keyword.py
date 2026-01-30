@@ -1,7 +1,7 @@
-"""Loop with CEL end condition: stop when output contains a keyword.
+"""Loop with CEL end condition: stop when agent signals completion.
 
-Uses last_step_content.contains("DONE") so the agent can signal
-completion through its output.
+Uses last_step_content.contains() to detect a keyword in the output
+that signals the loop should stop.
 
 Requirements:
     pip install cel-python
@@ -15,25 +15,25 @@ if not CEL_AVAILABLE:
     print("CEL is not available. Install with: pip install cel-python")
     exit(1)
 
-planner = Agent(
-    name="Planner",
+editor = Agent(
+    name="Editor",
     model=OpenAIChat(id="gpt-4o-mini"),
     instructions=(
-        "You are a project planner. Break down the task into steps. "
-        "When you have a complete plan, end your response with the word DONE."
+        "Edit and refine the text. When the text is polished and ready, "
+        "include the word DONE at the end of your response."
     ),
     markdown=True,
 )
 
 workflow = Workflow(
-    name="CEL Keyword Loop",
+    name="CEL Content Keyword Loop",
     steps=[
         Loop(
-            name="Planning Loop",
+            name="Editing Loop",
             max_iterations=5,
             end_condition='last_step_content.contains("DONE")',
             steps=[
-                Step(name="Plan", agent=planner),
+                Step(name="Edit", agent=editor),
             ],
         ),
     ],
@@ -43,6 +43,6 @@ if __name__ == "__main__":
     print('Loop with CEL end condition: last_step_content.contains("DONE")')
     print("=" * 60)
     workflow.print_response(
-        input="Create a plan for building a REST API with authentication",
+        input="Refine this draft: AI is changing the world in many ways.",
         stream=True,
     )

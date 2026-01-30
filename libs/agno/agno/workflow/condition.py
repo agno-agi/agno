@@ -54,8 +54,7 @@ class Condition:
     CEL expressions have access to these variables:
         - input: The workflow input as a string
         - previous_step_content: Content from the previous step
-        - has_previous_step_content: Boolean flag for previous content presence
-        - previous_step_contents: List of content strings from all previous steps
+        - previous_step_outputs: Map of step name to content string from all previous steps
         - additional_data: Map of additional data passed to the workflow
         - session_state: Map of session state values
 
@@ -63,7 +62,7 @@ class Condition:
         - 'input.contains("urgent")'
         - 'session_state.retry_count < 3'
         - 'additional_data.priority > 5'
-        - 'previous_step_contents[0].contains("error")'
+        - 'previous_step_outputs.research.contains("error")'
     """
 
     # Evaluator should only return boolean

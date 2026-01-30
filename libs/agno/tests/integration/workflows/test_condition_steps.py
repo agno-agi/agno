@@ -744,7 +744,7 @@ def test_cel_condition_previous_step_content():
     """Test CEL condition checking previous_step_content."""
     condition = Condition(
         name="CEL Previous Content",
-        evaluator="has_previous_step_content && previous_step_content.size() > 10",
+        evaluator="previous_step_content.size() > 10",
         steps=[analysis_step],
     )
 
@@ -908,21 +908,22 @@ async def test_cel_condition_async():
 
 
 @pytest.mark.skipif(not CEL_AVAILABLE, reason="cel-python not installed")
-def test_cel_condition_all_previous_content():
-    """Test CEL condition with all_previous_content variable."""
+def test_cel_condition_previous_step_outputs():
+    """Test CEL condition with previous_step_outputs map variable."""
     condition = Condition(
-        name="CEL All Previous Content",
-        evaluator="all_previous_content.size() > 50",
+        name="CEL Previous Step Outputs",
+        evaluator='previous_step_outputs.step1.contains("important")',
         steps=[fact_check_step],
     )
 
     from agno.workflow.types import StepOutput as SO
 
+    # Should trigger - step1 contains "important"
     step_input = StepInput(
         input="test",
         previous_step_outputs={
-            "step1": SO(content="First step output with some content", success=True),
-            "step2": SO(content="Second step output with more content", success=True),
+            "step1": SO(content="This is important content", success=True),
+            "step2": SO(content="Second step output", success=True),
         },
     )
 

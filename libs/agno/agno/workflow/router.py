@@ -42,20 +42,20 @@ class Router:
         - A callable function that takes StepInput and returns step(s)
         - A CEL (Common Expression Language) expression string that returns a step name
 
-    CEL expressions for selector have access to (same as Condition):
+    CEL expressions for selector have access to (same as Condition, plus step_choices):
         - input: The workflow input as a string
         - previous_step_content: Content from the previous step
-        - has_previous_step_content: Whether previous content exists
-        - previous_step_contents: List of content strings from all previous steps
+        - previous_step_outputs: Map of step name to content string from all previous steps
         - additional_data: Map of additional data passed to the workflow
         - session_state: Map of session state values
+        - step_choices: List of step names available to the selector
 
     CEL expressions must return the name of a step from choices.
 
     Example CEL expressions:
         - 'input.contains("video") ? "video_step" : "image_step"'
         - 'additional_data.route'
-        - 'session_state.preferred_handler'
+        - 'previous_step_outputs.classifier.contains("billing") ? "Billing" : "Support"'
     """
 
     # Router function or CEL expression that selects step(s) to execute
@@ -304,7 +304,9 @@ class Router:
                 return []
             try:
                 step_names = list(self._step_name_map.keys())
-                step_name = evaluate_cel_router_selector(self.selector, step_input, session_state, step_choices=step_names)
+                step_name = evaluate_cel_router_selector(
+                    self.selector, step_input, session_state, step_choices=step_names
+                )
                 return self._resolve_selector_result(step_name)
             except Exception as e:
                 logger.error(f"Router CEL evaluation failed: {e}")
@@ -339,7 +341,9 @@ class Router:
                 return []
             try:
                 step_names = list(self._step_name_map.keys())
-                step_name = evaluate_cel_router_selector(self.selector, step_input, session_state, step_choices=step_names)
+                step_name = evaluate_cel_router_selector(
+                    self.selector, step_input, session_state, step_choices=step_names
+                )
                 return self._resolve_selector_result(step_name)
             except Exception as e:
                 logger.error(f"Router CEL evaluation failed: {e}")
@@ -367,13 +371,7 @@ class Router:
         return []
 
     def _selector_has_session_state_param(self) -> bool:
-        """Check if the selector function has a session_state parameter.
-
-        For CEL expressions, session_state is always available in the context.
-        """
-        if isinstance(self.selector, str):
-            return True  # CEL always has session_state in context
-
+        """Check if the selector function has a session_state parameter."""
         if not callable(self.selector):
             return False
 

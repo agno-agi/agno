@@ -1,7 +1,7 @@
-"""Loop with CEL end condition: stop when total output is large enough.
+"""Loop with CEL end condition: check a named step's output.
 
-Uses total_content_length to stop the loop once the combined
-output across all steps exceeds a threshold.
+Uses step_outputs map to access a specific step by name and
+check its content before deciding to stop the loop.
 
 Requirements:
     pip install cel-python
@@ -18,36 +18,40 @@ if not CEL_AVAILABLE:
 researcher = Agent(
     name="Researcher",
     model=OpenAIChat(id="gpt-4o-mini"),
-    instructions="Research the given topic. Add new findings each time.",
+    instructions="Research the given topic.",
     markdown=True,
 )
 
-analyst = Agent(
-    name="Analyst",
+reviewer = Agent(
+    name="Reviewer",
     model=OpenAIChat(id="gpt-4o-mini"),
-    instructions="Analyze the research and provide insights.",
+    instructions=(
+        "Review the research. If the research is thorough and complete, "
+        "include APPROVED in your response."
+    ),
     markdown=True,
 )
 
 workflow = Workflow(
-    name="CEL Total Content Length Loop",
+    name="CEL Step Outputs Check Loop",
     steps=[
         Loop(
             name="Research Loop",
             max_iterations=5,
-            end_condition="total_content_length > 500",
+            # Stop when the Reviewer step approves the research
+            end_condition='step_outputs.Review.contains("APPROVED")',
             steps=[
                 Step(name="Research", agent=researcher),
-                Step(name="Analyze", agent=analyst),
+                Step(name="Review", agent=reviewer),
             ],
         ),
     ],
 )
 
 if __name__ == "__main__":
-    print("Loop with CEL end condition: total_content_length > 500")
+    print('Loop with CEL end condition: step_outputs.Review.contains("APPROVED")')
     print("=" * 60)
     workflow.print_response(
-        input="Research the benefits of remote work",
+        input="Research renewable energy trends",
         stream=True,
     )

@@ -84,7 +84,7 @@ class TestIsCelExpression:
     def test_and_operator(self):
         """AND operator should return True."""
         assert is_cel_expression("a && b") is True
-        assert is_cel_expression("has_previous_step_content && input.size() > 0") is True
+        assert is_cel_expression("previous_step_content.size() > 0 && input.size() > 0") is True
 
     def test_or_operator(self):
         """OR operator should return True."""
@@ -93,8 +93,8 @@ class TestIsCelExpression:
 
     def test_not_operator(self):
         """NOT operator should return True."""
-        assert is_cel_expression("!has_previous_step_content") is True
         assert is_cel_expression("!is_empty") is True
+        assert is_cel_expression("!all_success") is True
 
     def test_complex_logical(self):
         """Complex logical expressions should return True."""
@@ -203,24 +203,23 @@ class TestIsCelExpression:
         # Session state
         assert is_cel_expression("session_state.request_count > 5") is True
         # Combined conditions
-        assert is_cel_expression('has_previous_step_content && previous_step_content.contains("error")') is True
+        assert is_cel_expression('previous_step_content.size() > 0 && previous_step_content.contains("error")') is True
 
     def test_cookbook_loop_examples(self):
         """Test CEL expressions from loop cookbooks."""
         # Iteration check
-        assert is_cel_expression("iteration >= 3") is True
+        assert is_cel_expression("current_iteration >= 3") is True
         # Max iterations
-        assert is_cel_expression("iteration >= max_iterations - 1") is True
-        # Content length
-        assert is_cel_expression("total_content_length > 1000") is True
+        assert is_cel_expression("current_iteration >= max_iterations - 1") is True
         # Success check - standalone identifier returns False (matches identifier regex)
-        # In practice, this is used in compound expressions like "all_success && iteration >= 2"
+        # In practice, this is used in compound expressions like "all_success && current_iteration >= 2"
         assert is_cel_expression("all_success") is False
-        assert is_cel_expression("all_success && iteration >= 2") is True
+        assert is_cel_expression("all_success && current_iteration >= 2") is True
         # Last step content
         assert is_cel_expression('last_step_content.contains("DONE")') is True
-        # First step content
-        assert is_cel_expression('first_step_content.contains("APPROVED")') is True
+        # Step outputs map
+        assert is_cel_expression("step_outputs.size() >= 2") is True
+        assert is_cel_expression('step_outputs.Research.contains("DONE")') is True
 
     def test_cookbook_router_examples(self):
         """Test CEL expressions from router cookbooks."""

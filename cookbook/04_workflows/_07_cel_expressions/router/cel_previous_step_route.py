@@ -1,7 +1,7 @@
-"""Router with CEL: route based on previous step output.
+"""Router with CEL: route based on a named previous step's output.
 
-A classifier step runs first, then the router uses
-previous_step_content to select the appropriate handler.
+Uses previous_step_outputs map to access the classifier step by name,
+then routes to the appropriate handler based on the classification.
 
 Requirements:
     pip install cel-python
@@ -48,14 +48,15 @@ general_agent = Agent(
 )
 
 workflow = Workflow(
-    name="CEL Previous Step Router",
+    name="CEL Previous Step Outputs Router",
     steps=[
         Step(name="Classify", agent=classifier),
         Router(
             name="Support Router",
+            # Access the classifier output by step name via previous_step_outputs map
             selector=(
-                'previous_step_content.contains("BILLING") ? "Billing Support" : '
-                'previous_step_content.contains("TECHNICAL") ? "Technical Support" : '
+                'previous_step_outputs.Classify.contains("BILLING") ? "Billing Support" : '
+                'previous_step_outputs.Classify.contains("TECHNICAL") ? "Technical Support" : '
                 '"General Support"'
             ),
             choices=[

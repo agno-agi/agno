@@ -1,7 +1,7 @@
-"""Loop with CEL end condition: compound exit with content and iteration.
+"""Loop with CEL end condition: compound exit condition.
 
-Combines content quality check with iteration progress to stop
-the loop when output is good enough OR we've iterated enough.
+Combines all_success and current_iteration to stop when both
+conditions are met: all steps succeeded AND enough iterations ran.
 
 Requirements:
     pip install cel-python
@@ -15,17 +15,17 @@ if not CEL_AVAILABLE:
     print("CEL is not available. Install with: pip install cel-python")
     exit(1)
 
-writer = Agent(
-    name="Writer",
+researcher = Agent(
+    name="Researcher",
     model=OpenAIChat(id="gpt-4o-mini"),
-    instructions="Write or refine an article on the given topic. Make each draft better than the last.",
+    instructions="Research the given topic and provide detailed findings.",
     markdown=True,
 )
 
-editor = Agent(
-    name="Editor",
+reviewer = Agent(
+    name="Reviewer",
     model=OpenAIChat(id="gpt-4o-mini"),
-    instructions="Edit and improve the article. If it is publication-ready, say APPROVED.",
+    instructions="Review the research for completeness and accuracy.",
     markdown=True,
 )
 
@@ -33,22 +33,21 @@ workflow = Workflow(
     name="CEL Compound Exit Loop",
     steps=[
         Loop(
-            name="Write-Edit Loop",
+            name="Research Loop",
             max_iterations=5,
-            # Stop if content is long enough OR we've done at least 2 iterations with success
-            end_condition="max_content_length > 300 || (iteration >= 2 && all_success)",
+            end_condition="all_success && current_iteration >= 2",
             steps=[
-                Step(name="Write", agent=writer),
-                Step(name="Edit", agent=editor),
+                Step(name="Research", agent=researcher),
+                Step(name="Review", agent=reviewer),
             ],
         ),
     ],
 )
 
 if __name__ == "__main__":
-    print("Loop with CEL: max_content_length > 300 || (iteration >= 2 && all_success)")
+    print("Loop with CEL end condition: all_success && current_iteration >= 2")
     print("=" * 60)
     workflow.print_response(
-        input="Write an article about the future of space tourism",
+        input="Research the impact of AI on healthcare",
         stream=True,
     )
