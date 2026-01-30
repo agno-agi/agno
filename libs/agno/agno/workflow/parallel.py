@@ -40,7 +40,16 @@ WorkflowSteps = List[
 
 @dataclass
 class Parallel:
-    """A list of steps that execute in parallel"""
+    """A list of steps that execute in parallel.
+
+    Unlike sequential constructs (Steps, Loop), Parallel uses variadic arguments
+    to emphasize that the steps are independent and unordered.
+
+    Supports flexible calling conventions:
+        Parallel(step1, step2, step3)                      # Steps only (name defaults to "Parallel")
+        Parallel(step1, step2, name="my_parallel")         # Name as keyword (at end)
+        Parallel("my_parallel", step1, step2)              # Name as first positional arg
+    """
 
     steps: WorkflowSteps
 
@@ -49,12 +58,30 @@ class Parallel:
 
     def __init__(
         self,
-        *steps: WorkflowSteps,
+        *args: Union[str, WorkflowSteps],
         name: Optional[str] = None,
         description: Optional[str] = None,
     ):
-        self.steps = list(steps)
-        self.name = name
+        resolved_name = name
+        resolved_steps: List[Any] = []
+
+        if args:
+            first_arg = args[0]
+            # Check if first argument is a plain string (likely a name, not a step)
+            if isinstance(first_arg, str):
+                # First arg is the name, rest are steps
+                resolved_name = first_arg
+                resolved_steps = list(args[1:])
+            else:
+                # All args are steps
+                resolved_steps = list(args)
+
+        # If name was provided as keyword, it takes precedence
+        if name is not None:
+            resolved_name = name
+
+        self.steps = resolved_steps
+        self.name = resolved_name
         self.description = description
 
     def to_dict(self) -> Dict[str, Any]:
