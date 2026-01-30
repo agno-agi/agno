@@ -11,6 +11,9 @@ Discord bot implementation with media support and user memory capabilities.
 ### [A2A - Agent to Agent](./a2a/)
 Agent-to-agent communication using Google's A2A protocol for distributed agent systems.
 
+### [CopilotKit](./copilotkit/)
+Agno backend with session persistence and AG-UI for use with CopilotKit 1.5 frontends (including frontend tools and session loading).
+
 ### [Observability](./observability/)
 Monitoring and observability integrations for agent performance tracking.
 
