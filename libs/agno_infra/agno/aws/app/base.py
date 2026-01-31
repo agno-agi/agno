@@ -15,7 +15,6 @@ if TYPE_CHECKING:
     from agno.aws.resource.ecs.container import EcsContainer
     from agno.aws.resource.ecs.service import EcsService
     from agno.aws.resource.ecs.task_definition import EcsTaskDefinition
-    from agno.aws.resource.ecs.volume import EcsVolume
     from agno.aws.resource.elb.listener import Listener
     from agno.aws.resource.elb.load_balancer import LoadBalancer
     from agno.aws.resource.elb.target_group import TargetGroup
@@ -54,7 +53,7 @@ class AwsApp(InfraApp):
     ecs_s3_access: bool = True
     # -*- ECS Volume Configuration
     # List of EcsVolume objects to attach to the task definition
-    ecs_volumes: Optional[List["EcsVolume"]] = None
+    ecs_volumes: Optional[List[Any]] = None
     # Mount points for the container: [{"sourceVolume": "name", "containerPath": "/path"}]
     ecs_container_mount_points: Optional[List[Dict[str, Any]]] = None
 
