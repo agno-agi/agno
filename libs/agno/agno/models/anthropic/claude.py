@@ -109,6 +109,7 @@ class Claude(Model):
     id: str = "claude-sonnet-4-5-20250929"
     name: str = "Claude"
     provider: str = "Anthropic"
+    is_cumulative_usage: bool = True
 
     # Request parameters
     max_tokens: Optional[int] = 8192
