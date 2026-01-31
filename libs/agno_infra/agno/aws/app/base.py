@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from agno.aws.resource.ecs.container import EcsContainer
     from agno.aws.resource.ecs.service import EcsService
     from agno.aws.resource.ecs.task_definition import EcsTaskDefinition
+    from agno.aws.resource.ecs.volume import EcsVolume
     from agno.aws.resource.elb.listener import Listener
     from agno.aws.resource.elb.load_balancer import LoadBalancer
     from agno.aws.resource.elb.target_group import TargetGroup
@@ -53,7 +54,7 @@ class AwsApp(InfraApp):
     ecs_s3_access: bool = True
     # -*- ECS Volume Configuration
     # List of EcsVolume objects to attach to the task definition
-    ecs_volumes: Optional[List[Any]] = None
+    ecs_volumes: Optional[List["EcsVolume"]] = None
     # Mount points for the container: [{"sourceVolume": "name", "containerPath": "/path"}]
     ecs_container_mount_points: Optional[List[Dict[str, Any]]] = None
 
@@ -148,6 +149,17 @@ class AwsApp(InfraApp):
 
         # If create_target_group is False, then create a target group if create_load_balancer is True
         return info.data.get("create_load_balancer", None)
+
+    @field_validator("ecs_volumes", mode="after")
+    def validate_ecs_volumes(cls, volumes):
+        if volumes is None:
+            return volumes
+        from agno.aws.resource.ecs.volume import EcsVolume
+
+        for vol in volumes:
+            if not isinstance(vol, EcsVolume):
+                raise ValueError(f"ecs_volumes must contain EcsVolume instances, got {type(vol).__name__}")
+        return volumes
 
     def get_container_context(self) -> Optional[ContainerContext]:
         logger.debug("Building ContainerContext")
