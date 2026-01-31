@@ -702,7 +702,7 @@ class AwsApp(InfraApp):
             )
 
             # Add shared volume to ecs_container (copy list to avoid aliasing)
-            ecs_container.mount_points = list(nginx_container.mount_points)
+            ecs_container.mount_points = list(nginx_container.mount_points) if nginx_container.mount_points else []
 
         # -*- Add user-defined mount points to ecs_container
         if self.ecs_container_mount_points and ecs_container is not None:
