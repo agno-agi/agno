@@ -149,17 +149,6 @@ class AwsApp(InfraApp):
         # If create_target_group is False, then create a target group if create_load_balancer is True
         return info.data.get("create_load_balancer", None)
 
-    @field_validator("ecs_volumes", mode="after")
-    def validate_ecs_volumes(cls, volumes):
-        if volumes is None:
-            return volumes
-        from agno.aws.resource.ecs.volume import EcsVolume
-
-        for vol in volumes:
-            if not isinstance(vol, EcsVolume):
-                raise ValueError(f"ecs_volumes must contain EcsVolume instances, got {type(vol).__name__}")
-        return volumes
-
     def get_container_context(self) -> Optional[ContainerContext]:
         logger.debug("Building ContainerContext")
 
@@ -388,6 +377,16 @@ class AwsApp(InfraApp):
             return self.ecs_cluster
         else:
             raise Exception(f"Invalid ECSCluster: {self.ecs_cluster} - Must be of type EcsCluster")
+
+    def get_ecs_volumes(self) -> Optional[List[Any]]:
+        from agno.aws.resource.ecs.volume import EcsVolume
+
+        if self.ecs_volumes is None:
+            return None
+        for vol in self.ecs_volumes:
+            if not isinstance(vol, EcsVolume):
+                raise Exception(f"Invalid EcsVolume: {vol} - Must be of type EcsVolume")
+        return self.ecs_volumes
 
     def load_balancer_definition(self) -> "LoadBalancer":
         from agno.aws.resource.elb.load_balancer import LoadBalancer
@@ -727,11 +726,12 @@ class AwsApp(InfraApp):
                     ecs_task_definition.volumes = [nginx_shared_volume]
 
         # -*- Add user-defined volumes to ecs_task_definition
-        if self.ecs_volumes and ecs_task_definition is not None:
+        ecs_volumes = self.get_ecs_volumes()
+        if ecs_volumes and ecs_task_definition is not None:
             if ecs_task_definition.volumes:
-                ecs_task_definition.volumes.extend(self.ecs_volumes)
+                ecs_task_definition.volumes.extend(ecs_volumes)
             else:
-                ecs_task_definition.volumes = list(self.ecs_volumes)
+                ecs_task_definition.volumes = list(ecs_volumes)
 
         # -*- Get ECS Service
         ecs_service: Optional[EcsService] = self.get_ecs_service(
