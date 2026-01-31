@@ -51,6 +51,11 @@ class AwsApp(InfraApp):
     ecs_exec_access: bool = True
     ecs_secret_access: bool = True
     ecs_s3_access: bool = True
+    # -*- ECS Volume Configuration
+    # List of EcsVolume objects to attach to the task definition
+    ecs_volumes: Optional[List[Any]] = None
+    # Mount points for the container: [{"sourceVolume": "name", "containerPath": "/path"}]
+    ecs_container_mount_points: Optional[List[Dict[str, Any]]] = None
 
     # -*- Security Group Configuration
     # List of security groups for the ECS Service. Type: SecurityGroup
@@ -688,6 +693,13 @@ class AwsApp(InfraApp):
             # Add shared volume to ecs_container
             ecs_container.mount_points = nginx_container.mount_points
 
+        # -*- Add user-defined mount points to ecs_container
+        if self.ecs_container_mount_points and ecs_container is not None:
+            if ecs_container.mount_points:
+                ecs_container.mount_points.extend(self.ecs_container_mount_points)
+            else:
+                ecs_container.mount_points = list(self.ecs_container_mount_points)
+
         # -*- Get ECS Task Definition
         ecs_task_definition: EcsTaskDefinition = self.get_ecs_task_definition(ecs_container=ecs_container)
         # -*- Add nginx container to ecs_task_definition if nginx is enabled
@@ -702,6 +714,13 @@ class AwsApp(InfraApp):
                     logger.error("While adding Nginx container, found nginx_container to be None")
                 if nginx_shared_volume:
                     ecs_task_definition.volumes = [nginx_shared_volume]
+
+        # -*- Add user-defined volumes to ecs_task_definition
+        if self.ecs_volumes and ecs_task_definition is not None:
+            if ecs_task_definition.volumes:
+                ecs_task_definition.volumes.extend(self.ecs_volumes)
+            else:
+                ecs_task_definition.volumes = list(self.ecs_volumes)
 
         # -*- Get ECS Service
         ecs_service: Optional[EcsService] = self.get_ecs_service(
