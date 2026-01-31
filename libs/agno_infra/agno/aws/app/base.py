@@ -701,8 +701,8 @@ class AwsApp(InfraApp):
                 wait_for_delete=ecs_container.wait_for_delete,
             )
 
-            # Add shared volume to ecs_container
-            ecs_container.mount_points = nginx_container.mount_points
+            # Add shared volume to ecs_container (copy list to avoid aliasing)
+            ecs_container.mount_points = list(nginx_container.mount_points)
 
         # -*- Add user-defined mount points to ecs_container
         if self.ecs_container_mount_points and ecs_container is not None:
