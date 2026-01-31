@@ -975,7 +975,7 @@ class Agent:
         # If tools is a callable, convert to list first
         if callable(self.tools) and not isinstance(self.tools, (Toolkit, Function)):
             raise ValueError(
-                "Cannot add tool when tools is a callable. "
+                "Cannot add tool when tools is a callable. Callable tools are added at runtime"
                 "Use set_tools() to replace the callable with a list of tools."
             )
         if not self.tools:
