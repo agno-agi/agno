@@ -111,8 +111,8 @@ class Router:
             description=data.get("description"),
         )
 
-    def _prepare_steps(self):
-        """Prepare the steps for execution - mirrors workflow logic"""
+    def _prepare_single_step(self, step: Any) -> Any:
+        """Prepare a single step for execution."""
         from agno.agent.agent import Agent
         from agno.team.team import Team
         from agno.workflow.condition import Condition
@@ -121,20 +121,41 @@ class Router:
         from agno.workflow.step import Step
         from agno.workflow.steps import Steps
 
+        if callable(step) and hasattr(step, "__name__"):
+            return Step(name=step.__name__, description="User-defined callable step", executor=step)
+        elif isinstance(step, Agent):
+            return Step(name=step.name, description=step.description, agent=step)
+        elif isinstance(step, Team):
+            return Step(name=step.name, description=step.description, team=step)
+        elif isinstance(step, (Step, Steps, Loop, Parallel, Condition, Router)):
+            return step
+        else:
+            raise ValueError(f"Invalid step type: {type(step).__name__}")
+
+    def _prepare_steps(self):
+        """Prepare the steps for execution - mirrors workflow logic"""
+        from agno.workflow.steps import Steps
+
         prepared_steps: WorkflowSteps = []
         for step in self.choices:
-            if callable(step) and hasattr(step, "__name__"):
-                prepared_steps.append(Step(name=step.__name__, description="User-defined callable step", executor=step))
-            elif isinstance(step, Agent):
-                prepared_steps.append(Step(name=step.name, description=step.description, agent=step))
-            elif isinstance(step, Team):
-                prepared_steps.append(Step(name=step.name, description=step.description, team=step))
-            elif isinstance(step, (Step, Steps, Loop, Parallel, Condition, Router)):
-                prepared_steps.append(step)
+            if isinstance(step, list):
+                # Handle nested list of steps - wrap in Steps container
+                nested_prepared = [self._prepare_single_step(s) for s in step]
+                # Create a Steps container with a generated name
+                steps_container = Steps(
+                    name=f"steps_group_{len(prepared_steps)}",
+                    steps=nested_prepared,
+                )
+                prepared_steps.append(steps_container)
             else:
-                raise ValueError(f"Invalid step type: {type(step).__name__}")
+                prepared_steps.append(self._prepare_single_step(step))
 
         self.steps = prepared_steps
+        # Build name-to-step mapping for string-based selection
+        self._step_name_map: Dict[str, Any] = {}
+        for step in self.steps:
+            if hasattr(step, "name") and step.name:
+                self._step_name_map[step.name] = step
 
     def _update_step_input_from_outputs(
         self,
@@ -174,22 +195,54 @@ class Router:
             audio=current_audio + all_audio,
         )
 
+    def _resolve_selector_result(self, result: Any) -> List[Any]:
+        """Resolve selector result to a list of steps, handling strings, Steps, and lists."""
+        from agno.workflow.condition import Condition
+        from agno.workflow.loop import Loop
+        from agno.workflow.parallel import Parallel
+        from agno.workflow.steps import Steps
+
+        if result is None:
+            return []
+
+        # Handle string - look up by name
+        if isinstance(result, str):
+            if result in self._step_name_map:
+                return [self._step_name_map[result]]
+            else:
+                logger.warning(f"Router selector returned unknown step name: {result}")
+                return []
+
+        # Handle step types (Step, Steps, Loop, Parallel, Condition, Router)
+        if isinstance(result, (Step, Steps, Loop, Parallel, Condition, Router)):
+            return [result]
+
+        # Handle list of results (could be strings, Steps, or mixed)
+        if isinstance(result, list):
+            resolved = []
+            for item in result:
+                resolved.extend(self._resolve_selector_result(item))
+            return resolved
+
+        logger.warning(f"Router function returned unexpected type: {type(result)}")
+        return []
+
     def _route_steps(self, step_input: StepInput, session_state: Optional[Dict[str, Any]] = None) -> List[Step]:  # type: ignore[return-value]
         """Route to the appropriate steps based on input"""
         if callable(self.selector):
-            if session_state is not None and self._selector_has_session_state_param():
-                result = self.selector(step_input, session_state)  # type: ignore[call-arg]
-            else:
-                result = self.selector(step_input)
+            has_session_state = session_state is not None and self._selector_has_session_state_param()
+            has_step_choices = self._selector_has_step_choices_param()
 
-            # Handle the result based on its type
-            if isinstance(result, Step):
-                return [result]
-            elif isinstance(result, list):
-                return result  # type: ignore
-            else:
-                logger.warning(f"Router function returned unexpected type: {type(result)}")
-                return []
+            # Build kwargs based on what parameters the selector accepts
+            kwargs: Dict[str, Any] = {}
+            if has_session_state:
+                kwargs["session_state"] = session_state
+            if has_step_choices:
+                kwargs["step_choices"] = self.steps
+
+            result = self.selector(step_input, **kwargs)  # type: ignore[call-arg]
+
+            return self._resolve_selector_result(result)
 
         return []
 
@@ -197,26 +250,21 @@ class Router:
         """Async version of step routing"""
         if callable(self.selector):
             has_session_state = session_state is not None and self._selector_has_session_state_param()
+            has_step_choices = self._selector_has_step_choices_param()
+
+            # Build kwargs based on what parameters the selector accepts
+            kwargs: Dict[str, Any] = {}
+            if has_session_state:
+                kwargs["session_state"] = session_state
+            if has_step_choices:
+                kwargs["step_choices"] = self.steps
 
             if inspect.iscoroutinefunction(self.selector):
-                if has_session_state:
-                    result = await self.selector(step_input, session_state)  # type: ignore[call-arg]
-                else:
-                    result = await self.selector(step_input)
+                result = await self.selector(step_input, **kwargs)  # type: ignore[call-arg]
             else:
-                if has_session_state:
-                    result = self.selector(step_input, session_state)  # type: ignore[call-arg]
-                else:
-                    result = self.selector(step_input)
+                result = self.selector(step_input, **kwargs)  # type: ignore[call-arg]
 
-            # Handle the result based on its type
-            if isinstance(result, Step):
-                return [result]
-            elif isinstance(result, list):
-                return result
-            else:
-                logger.warning(f"Router function returned unexpected type: {type(result)}")
-                return []
+            return self._resolve_selector_result(result)
 
         return []
 
@@ -228,6 +276,17 @@ class Router:
         try:
             sig = inspect.signature(self.selector)
             return "session_state" in sig.parameters
+        except Exception:
+            return False
+
+    def _selector_has_step_choices_param(self) -> bool:
+        """Check if the selector function has a step_choices parameter"""
+        if not callable(self.selector):
+            return False
+
+        try:
+            sig = inspect.signature(self.selector)
+            return "step_choices" in sig.parameters
         except Exception:
             return False
 
