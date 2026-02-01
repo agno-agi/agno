@@ -16,6 +16,8 @@ Key concepts:
 - tools=callable: The function is called at runtime with run_context
 - run_context.user_id: Available to create user-specific tool instances
 - DuckDbTools: Each user gets their own DuckDB database file
+- cache_callable_tools=True: Reuse tool instances for the same user_id
+  to avoid creating new database connections on every run
 
 Example prompts to try:
 - Run as user "alice": "Create a table called notes with columns id and text"
@@ -46,6 +48,10 @@ def get_user_tools(run_context: RunContext):
     It receives the run_context which contains user_id, session_id, and
     other runtime information.
 
+    With cache_callable_tools=True, this function is only called once per
+    user_id. Subsequent runs for the same user will reuse the cached tools,
+    avoiding the creation of new database connections.
+
     Args:
         run_context: Runtime context with user_id, session_id, etc.
 
@@ -64,8 +70,9 @@ def get_user_tools(run_context: RunContext):
     # Each user gets their own DuckDB database
     db_path = str(user_dir / "user_data.db")
 
-    print(f"Creating DuckDB tools for user: {user_id}")
-    print(f"Database path: {db_path}")
+    # This message will only appear once per user when cache_callable_tools=True
+    print(f"[INIT] Creating DuckDB tools for user: {user_id}")
+    print(f"[INIT] Database path: {db_path}")
 
     return [
         DuckDbTools(
@@ -84,6 +91,8 @@ agent = Agent(
     # Pass the function, not a list of tools
     # The function will be called at runtime with run_context
     tools=get_user_tools,
+    # Cache tool instances per user_id to reuse database connections
+    cache_callable_tools=True,
     instructions="""\
 You are a personal database assistant. You help users manage their
 personal DuckDB database.
