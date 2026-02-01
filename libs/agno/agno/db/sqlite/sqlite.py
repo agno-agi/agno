@@ -137,6 +137,21 @@ class SqliteDb(BaseDb):
         # Initialize database session
         self.Session: scoped_session = scoped_session(sessionmaker(bind=self.db_engine))
 
+        # Initialize table attributes for type checking
+        self.session_table: Optional[Table] = None
+        self.memory_table: Optional[Table] = None
+        self.metrics_table: Optional[Table] = None
+        self.eval_table: Optional[Table] = None
+        self.knowledge_table: Optional[Table] = None
+        self.traces_table: Optional[Table] = None
+        self.spans_table: Optional[Table] = None
+        self.culture_table: Optional[Table] = None
+        self.versions_table: Optional[Table] = None
+        self.components_table: Optional[Table] = None
+        self.component_configs_table: Optional[Table] = None
+        self.component_links_table: Optional[Table] = None
+        self.learnings_table: Optional[Table] = None
+
     # -- Serialization methods --
     def to_dict(self) -> Dict[str, Any]:
         base = super().to_dict()
@@ -403,6 +418,8 @@ class SqliteDb(BaseDb):
 
     def _get_table(self, table_type: str, create_table_if_not_found: Optional[bool] = False) -> Optional[Table]:
         if table_type == "sessions":
+            if self.session_table is not None:
+                return self.session_table
             self.session_table = self._get_or_create_table(
                 table_name=self.session_table_name,
                 table_type=table_type,
@@ -411,6 +428,8 @@ class SqliteDb(BaseDb):
             return self.session_table
 
         elif table_type == "memories":
+            if self.memory_table is not None:
+                return self.memory_table
             self.memory_table = self._get_or_create_table(
                 table_name=self.memory_table_name,
                 table_type="memories",
@@ -419,6 +438,8 @@ class SqliteDb(BaseDb):
             return self.memory_table
 
         elif table_type == "metrics":
+            if self.metrics_table is not None:
+                return self.metrics_table
             self.metrics_table = self._get_or_create_table(
                 table_name=self.metrics_table_name,
                 table_type="metrics",
@@ -427,6 +448,8 @@ class SqliteDb(BaseDb):
             return self.metrics_table
 
         elif table_type == "evals":
+            if self.eval_table is not None:
+                return self.eval_table
             self.eval_table = self._get_or_create_table(
                 table_name=self.eval_table_name,
                 table_type="evals",
@@ -436,6 +459,8 @@ class SqliteDb(BaseDb):
             return self.eval_table
 
         elif table_type == "knowledge":
+            if self.knowledge_table is not None:
+                return self.knowledge_table
             self.knowledge_table = self._get_or_create_table(
                 table_name=self.knowledge_table_name,
                 table_type="knowledge",
@@ -444,6 +469,8 @@ class SqliteDb(BaseDb):
             return self.knowledge_table
 
         elif table_type == "traces":
+            if self.traces_table is not None:
+                return self.traces_table
             self.traces_table = self._get_or_create_table(
                 table_name=self.trace_table_name,
                 table_type="traces",
@@ -456,6 +483,8 @@ class SqliteDb(BaseDb):
             if create_table_if_not_found:
                 self._get_table(table_type="traces", create_table_if_not_found=True)
 
+            if self.spans_table is not None:
+                return self.spans_table
             self.spans_table = self._get_or_create_table(
                 table_name=self.span_table_name,
                 table_type="spans",
@@ -464,6 +493,8 @@ class SqliteDb(BaseDb):
             return self.spans_table
 
         elif table_type == "culture":
+            if self.culture_table is not None:
+                return self.culture_table
             self.culture_table = self._get_or_create_table(
                 table_name=self.culture_table_name,
                 table_type="culture",
@@ -472,6 +503,8 @@ class SqliteDb(BaseDb):
             return self.culture_table
 
         elif table_type == "versions":
+            if self.versions_table is not None:
+                return self.versions_table
             self.versions_table = self._get_or_create_table(
                 table_name=self.versions_table_name,
                 table_type="versions",
@@ -480,6 +513,8 @@ class SqliteDb(BaseDb):
             return self.versions_table
 
         elif table_type == "components":
+            if self.components_table is not None:
+                return self.components_table
             self.components_table = self._get_or_create_table(
                 table_name=self.components_table_name,
                 table_type="components",
@@ -492,6 +527,8 @@ class SqliteDb(BaseDb):
             if create_table_if_not_found:
                 self._get_table(table_type="components", create_table_if_not_found=True)
 
+            if self.component_configs_table is not None:
+                return self.component_configs_table
             self.component_configs_table = self._get_or_create_table(
                 table_name=self.component_configs_table_name,
                 table_type="component_configs",
@@ -505,6 +542,8 @@ class SqliteDb(BaseDb):
                 self._get_table(table_type="components", create_table_if_not_found=True)
                 self._get_table(table_type="component_configs", create_table_if_not_found=True)
 
+            if self.component_links_table is not None:
+                return self.component_links_table
             self.component_links_table = self._get_or_create_table(
                 table_name=self.component_links_table_name,
                 table_type="component_links",
@@ -512,6 +551,8 @@ class SqliteDb(BaseDb):
             )
             return self.component_links_table
         elif table_type == "learnings":
+            if self.learnings_table is not None:
+                return self.learnings_table
             self.learnings_table = self._get_or_create_table(
                 table_name=self.learnings_table_name,
                 table_type="learnings",
