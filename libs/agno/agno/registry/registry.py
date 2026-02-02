@@ -6,6 +6,7 @@ from uuid import uuid4
 from pydantic import BaseModel
 
 from agno.db.base import BaseDb
+from agno.os.schema import Agent, Team
 from agno.models.base import Model
 from agno.tools.function import Function
 from agno.tools.toolkit import Toolkit
@@ -29,8 +30,8 @@ class Registry:
     schemas: List[Type[BaseModel]] = field(default_factory=list)
     functions: List[Callable] = field(default_factory=list)
     # Code-defined agents and teams (for workflow rehydration)
-    agents: List[Any] = field(default_factory=list)
-    teams: List[Any] = field(default_factory=list)
+    agents: List[Agent] = field(default_factory=list)
+    teams: List[Team] = field(default_factory=list)
 
     @cached_property
     def _entrypoint_lookup(self) -> Dict[str, Callable]:
@@ -75,13 +76,13 @@ class Registry:
     def get_function(self, name: str) -> Optional[Callable]:
         return next((f for f in self.functions if f.__name__ == name), None)
 
-    def get_agent(self, agent_id: str) -> Optional[Any]:
+    def get_agent(self, agent_id: str) -> Optional[Agent]:
         """Get an agent by id from the registry."""
         if self.agents:
             return next((a for a in self.agents if getattr(a, "id", None) == agent_id), None)
         return None
 
-    def get_team(self, team_id: str) -> Optional[Any]:
+    def get_team(self, team_id: str) -> Optional[Team]:
         """Get a team by id from the registry."""
         if self.teams:
             return next((t for t in self.teams if getattr(t, "id", None) == team_id), None)
