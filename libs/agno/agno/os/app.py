@@ -246,6 +246,9 @@ class AgentOS:
         self._initialize_teams()
         self._initialize_workflows()
 
+        # Populate registry with code-defined agents/teams
+        self._populate_registry()
+
         # Check for duplicate IDs
         self._raise_if_duplicate_ids()
 
@@ -290,6 +293,9 @@ class AgentOS:
         self._initialize_agents()
         self._initialize_teams()
         self._initialize_workflows()
+
+        # Populate registry with code-defined agents/teams
+        self._populate_registry()
 
         # Check for duplicate IDs
         self._raise_if_duplicate_ids()
@@ -505,6 +511,28 @@ class AgentOS:
 
             # Propagate run_hooks_in_background setting to workflow and all its step agents/teams
             workflow.propagate_run_hooks_in_background(self.run_hooks_in_background)
+
+    def _populate_registry(self) -> None:
+        """Populate the registry with code-defined agents and teams.
+
+        This ensures that workflows loaded from DB can rehydrate their steps
+        using code-defined agents/teams via the registry.
+        """
+        # Create registry if not provided
+        if self.registry is None:
+            self.registry = Registry()
+
+        # Add code-defined agents to registry
+        if self.agents:
+            for agent in self.agents:
+                if not isinstance(agent, RemoteAgent) and agent not in self.registry.agents:
+                    self.registry.agents.append(agent)
+
+        # Add code-defined teams to registry
+        if self.teams:
+            for team in self.teams:
+                if not isinstance(team, RemoteTeam) and team not in self.registry.teams:
+                    self.registry.teams.append(team)
 
     def _setup_tracing(self) -> None:
         """Set up OpenTelemetry tracing for this AgentOS.

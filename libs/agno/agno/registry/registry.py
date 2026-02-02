@@ -15,7 +15,8 @@ from agno.vectordb.base import VectorDb
 @dataclass
 class Registry:
     """
-    Registry is used to manage non serializable objects like tools, models, databases and vector databases.
+    Registry is used to manage non serializable objects like tools, models, databases, vector databases,
+    agents, and teams.
     """
 
     name: Optional[str] = None
@@ -27,6 +28,9 @@ class Registry:
     vector_dbs: List[VectorDb] = field(default_factory=list)
     schemas: List[Type[BaseModel]] = field(default_factory=list)
     functions: List[Callable] = field(default_factory=list)
+    # Code-defined agents and teams (for workflow rehydration)
+    agents: List[Any] = field(default_factory=list)
+    teams: List[Any] = field(default_factory=list)
 
     @cached_property
     def _entrypoint_lookup(self) -> Dict[str, Callable]:
@@ -70,3 +74,29 @@ class Registry:
 
     def get_function(self, name: str) -> Optional[Callable]:
         return next((f for f in self.functions if f.__name__ == name), None)
+
+    def get_agent(self, agent_id: str) -> Optional[Any]:
+        """Get an agent by id from the registry.
+
+        Args:
+            agent_id: The agent id to look up
+
+        Returns:
+            The agent instance if found, None otherwise
+        """
+        if self.agents:
+            return next((a for a in self.agents if getattr(a, "id", None) == agent_id), None)
+        return None
+
+    def get_team(self, team_id: str) -> Optional[Any]:
+        """Get a team by id from the registry.
+
+        Args:
+            team_id: The team id to look up
+
+        Returns:
+            The team instance if found, None otherwise
+        """
+        if self.teams:
+            return next((t for t in self.teams if getattr(t, "id", None) == team_id), None)
+        return None

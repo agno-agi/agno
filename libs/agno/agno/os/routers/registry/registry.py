@@ -329,9 +329,7 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
         if component_type is None or component_type == RegistryContentType.DB:
             for db in getattr(registry, "dbs", []) or []:
                 db_name = (
-                    _safe_str(getattr(db, "name", None))
-                    or _safe_str(getattr(db, "id", None))
-                    or db.__class__.__name__
+                    _safe_str(getattr(db, "name", None)) or _safe_str(getattr(db, "id", None)) or db.__class__.__name__
                 )
                 db_metadata = DbMetadata(
                     class_path=_class_path(db),
@@ -432,6 +430,40 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
                         type=RegistryContentType.FUNCTION,
                         description=func_description,
                         metadata=reg_func_metadata.model_dump(exclude_none=True),
+                    )
+                )
+
+        # Agents (code-defined agents for workflow rehydration)
+        if component_type is None or component_type == RegistryContentType.AGENT:
+            for agent in getattr(registry, "agents", []) or []:
+                agent_id = getattr(agent, "id", None)
+                agent_name = getattr(agent, "name", None) or agent.__class__.__name__
+                components.append(
+                    RegistryContentResponse(
+                        name=agent_name,
+                        type=RegistryContentType.AGENT,
+                        description=_safe_str(getattr(agent, "description", None)),
+                        metadata={
+                            "id": agent_id,
+                            "class_path": _class_path(agent),
+                        },
+                    )
+                )
+
+        # Teams (code-defined teams for workflow rehydration)
+        if component_type is None or component_type == RegistryContentType.TEAM:
+            for team in getattr(registry, "teams", []) or []:
+                team_id = getattr(team, "id", None)
+                team_name = getattr(team, "name", None) or team.__class__.__name__
+                components.append(
+                    RegistryContentResponse(
+                        name=team_name,
+                        type=RegistryContentType.TEAM,
+                        description=_safe_str(getattr(team, "description", None)),
+                        metadata={
+                            "id": team_id,
+                            "class_path": _class_path(team),
+                        },
                     )
                 )
 
