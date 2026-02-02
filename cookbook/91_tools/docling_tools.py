@@ -1,7 +1,6 @@
-from dotenv import load_dotenv
-
 from agno.agent import Agent
 from agno.tools.docling import DoclingTools
+from dotenv import load_dotenv
 
 load_dotenv()
 

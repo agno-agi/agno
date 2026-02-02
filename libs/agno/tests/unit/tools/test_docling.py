@@ -5,7 +5,10 @@ import pytest
 
 pytest.importorskip("docling")
 
-from agno.tools.docling import DoclingTools
+from docling.datamodel.base_models import InputFormat
+
+from agno.tools import docling as docling_module
+from agno.tools.docling import DoclingTools, PdfFormatOption, PdfPipelineOptions
 
 
 @pytest.fixture
@@ -55,6 +58,22 @@ class TestDoclingToolsInitialization:
         assert "convert_to_json" not in function_names
         assert "convert_to_doctags" not in function_names
 
+    def test_initialization_all_overrides_flags(self, mock_converter):
+        tools = DoclingTools(
+            all=True,
+            enable_convert_to_markdown=False,
+            enable_convert_to_text=False,
+            enable_convert_to_html=False,
+            enable_convert_to_json=False,
+            enable_convert_to_doctags=False,
+        )
+        function_names = [func.name for func in tools.functions.values()]
+        assert "convert_to_markdown" in function_names
+        assert "convert_to_text" in function_names
+        assert "convert_to_html" in function_names
+        assert "convert_to_json" in function_names
+        assert "convert_to_doctags" in function_names
+
 
 class TestDoclingToolsConversion:
     def test_convert_to_markdown_success(self, mock_converter):
@@ -66,6 +85,25 @@ class TestDoclingToolsConversion:
         assert result == "# Doc"
         mock_converter.convert.assert_called_once_with(
             "https://example.com/doc.pdf", headers=None, raises_on_error=True
+        )
+
+    def test_convert_with_page_and_size_limits(self, mock_converter):
+        tools = DoclingTools()
+        mock_converter.convert.return_value = _build_mock_result(text="Ok")
+
+        result = tools.convert_to_text(
+            "/tmp/doc.pdf",
+            max_num_pages=2,
+            max_file_size=1234,
+        )
+
+        assert result == "Ok"
+        mock_converter.convert.assert_called_once_with(
+            "/tmp/doc.pdf",
+            headers=None,
+            raises_on_error=True,
+            max_num_pages=2,
+            max_file_size=1234,
         )
 
     def test_convert_to_text_truncation(self, mock_converter):
@@ -112,3 +150,40 @@ class TestDoclingToolsConversion:
         result = tools.convert_to_markdown("/tmp/doc.pdf")
 
         assert result == "Error converting document: boom"
+
+
+class TestDoclingToolsPdfPipeline:
+    def test_pdf_pipeline_options_are_applied(self):
+        with patch("agno.tools.docling.DocumentConverter") as mock_converter_cls:
+            mock_converter_cls.return_value = Mock()
+
+            DoclingTools(
+                pdf_do_ocr=True,
+                pdf_ocr_engine="auto",
+                pdf_ocr_lang=["en"],
+                pdf_force_full_page_ocr=True,
+            )
+
+            _, kwargs = mock_converter_cls.call_args
+            assert "format_options" in kwargs
+            format_options = kwargs["format_options"]
+            assert InputFormat.PDF in format_options
+            pdf_format_option = format_options[InputFormat.PDF]
+            assert isinstance(pdf_format_option, PdfFormatOption)
+            assert isinstance(pdf_format_option.pipeline_options, PdfPipelineOptions)
+            assert pdf_format_option.pipeline_options.do_ocr is True
+            assert pdf_format_option.pipeline_options.ocr_options is not None
+
+
+class TestDoclingToolsOcrOptions:
+    def test_invalid_ocr_engine_logs_error(self, mock_converter):
+        tools = DoclingTools()
+        with patch.object(docling_module, "log_error") as mock_log_error:
+            result = tools._build_ocr_options(
+                engine="invalid-engine",
+                lang=["en"],
+                force_full_page_ocr=None,
+            )
+
+        assert result is None
+        mock_log_error.assert_called_once()

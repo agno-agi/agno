@@ -5,17 +5,17 @@ from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_error
 
 try:
+    from docling.datamodel.base_models import InputFormat
     from docling.datamodel.pipeline_options import (
         EasyOcrOptions,
         OcrAutoOptions,
-        OcrEngine,
         OcrMacOptions,
         PdfPipelineOptions,
         RapidOcrOptions,
         TesseractCliOcrOptions,
         TesseractOcrOptions,
     )
-    from docling.document_converter import DocumentConverter, InputFormat, PdfFormatOption
+    from docling.document_converter import DocumentConverter, PdfFormatOption
 except ImportError:
     raise ImportError("`docling` not installed. Please install using `pip install docling`")
 
@@ -326,21 +326,25 @@ class DoclingTools(Toolkit):
 
         engine_value = engine.lower()
         languages = lang or []
-        force_full = bool(force_full_page_ocr)
+        kwargs: Dict[str, Any] = {"lang": languages}
+        if force_full_page_ocr is not None:
+            kwargs["force_full_page_ocr"] = force_full_page_ocr
 
-        if engine_value == OcrEngine.AUTO.value:
-            return OcrAutoOptions(lang=languages, force_full_page_ocr=force_full)
-        if engine_value == OcrEngine.EASYOCR.value:
-            return EasyOcrOptions(lang=languages, force_full_page_ocr=force_full)
-        if engine_value == OcrEngine.TESSERACT.value:
-            return TesseractOcrOptions(lang=languages, force_full_page_ocr=force_full)
-        if engine_value == OcrEngine.TESSERACT_CLI.value:
-            return TesseractCliOcrOptions(lang=languages, force_full_page_ocr=force_full)
-        if engine_value == OcrEngine.OCRMAC.value:
-            return OcrMacOptions(lang=languages, force_full_page_ocr=force_full)
-        if engine_value == OcrEngine.RAPIDOCR.value:
-            return RapidOcrOptions(lang=languages, force_full_page_ocr=force_full)
+        engine_map = {
+            "auto": OcrAutoOptions,
+            "easyocr": EasyOcrOptions,
+            "tesseract": TesseractOcrOptions,
+            "tesseract_cli": TesseractCliOcrOptions,
+            "ocrmac": OcrMacOptions,
+            "rapidocr": RapidOcrOptions,
+        }
 
+        ocr_cls = engine_map.get(engine_value)
+        if ocr_cls is not None:
+            return ocr_cls(**kwargs)
+
+        valid_engines = list(engine_map.keys())
+        log_error(f"Invalid OCR engine '{engine}'. Expected one of: {', '.join(valid_engines)}.")
         return None
 
     def _truncate_content(self, content: str) -> str:
