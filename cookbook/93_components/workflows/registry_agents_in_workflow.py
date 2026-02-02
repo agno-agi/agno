@@ -1,28 +1,35 @@
 """
-Cookbook: Using code-defined agents in DB-saved workflows via Registry.
+Cookbook: Code-defined agents available to UI-built workflows.
 
-This demonstrates how a workflow saved to the database can reference
-code-defined agents. When the workflow is loaded back, Step.from_dict()
-resolves agents from the Registry (populated by AgentOS) before falling
-back to the database.
+This sets up an AgentOS with code-defined agents. When a user builds a
+workflow through the UI:
 
-Steps:
-1. Define agents in code (not saved to DB)
-2. Save a workflow that references those agents by ID
-3. Load the workflow back via AgentOS -- agents are resolved from the registry
+1. The UI fetches available agents from /registry (code-defined) and
+   /components (DB-stored) to populate the step agent dropdown.
+2. The user selects a code-defined agent (e.g. "research-agent") for a step.
+3. The workflow is saved to DB with just the agent_id reference.
+4. When the workflow is loaded back, Step.from_dict() resolves the agent
+   from the Registry first, falling back to DB only if not found.
+
+The agents below are never saved to the database -- they live in memory
+via the Registry, which AgentOS auto-populates on startup.
+
+Important: Code-defined agents MUST have explicit, stable `id` values.
+The UI stores these IDs in the workflow config. If the ID changes between
+restarts, the workflow will fail to resolve the agent.
 """
 
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
-from agno.workflow.step import Step
-from agno.workflow.workflow import Workflow
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 db = PostgresDb(db_url=db_url)
 
-# -- Code-defined agents (never saved to DB) --
+# Code-defined agents with stable IDs.
+# These appear in the UI workflow builder via the /registry endpoint.
+# They are NOT saved to the database.
 research_agent = Agent(
     id="research-agent",
     name="Research Agent",
@@ -37,29 +44,14 @@ writer_agent = Agent(
     role="Write content based on research",
 )
 
-# -- Build and save a workflow that references these agents by ID --
-workflow = Workflow(
-    id="registry-demo-workflow",
-    name="Registry Demo Workflow",
-    description="Workflow whose steps reference code-defined agents",
-    db=db,
-    steps=[
-        Step(name="Research", agent=research_agent),
-        Step(name="Write", agent=writer_agent),
-    ],
-)
-
-# Save workflow config to DB. The steps store agent_id references, not full agent configs.
-version = workflow.save(db=db)
-print(f"Saved workflow as version {version}")
-
-# -- AgentOS auto-populates the registry with code-defined agents --
-# When the workflow is loaded from DB, Step.from_dict() finds the agents
-# in the registry instead of looking them up in the DB (where they don't exist).
+# AgentOS auto-populates its registry with these agents.
+# The /registry?component_type=agent endpoint exposes them to the UI.
+# Workflows built in the UI that reference these agents by ID will
+# resolve them from the registry when loaded from DB.
 agent_os = AgentOS(
-    description="Demo: registry agents in workflows",
+    description="Demo: code-defined agents available to UI workflow builder",
+    db=db,
     agents=[research_agent, writer_agent],
-    workflows=[workflow],
 )
 app = agent_os.get_app()
 
