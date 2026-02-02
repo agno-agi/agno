@@ -215,7 +215,6 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
         description=(
             "Upload content from a remote source (S3, GCS, SharePoint, GitHub) to the knowledge base. "
             "Content is processed asynchronously in the background. "
-            "Use the /knowledge/config endpoint to see available remote content sources."
         ),
         responses={
             202: {
