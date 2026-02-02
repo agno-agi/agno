@@ -84,6 +84,7 @@ class WorkflowResponse(BaseModel):
     team: Optional[TeamResponse] = Field(None, description="Team configuration if used")
     metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata")
     workflow_agent: bool = Field(False, description="Whether this workflow uses a WorkflowAgent")
+    is_component: bool = Field(False, description="Whether this workflow was created via Builder")
 
     @classmethod
     async def _resolve_agents_and_teams_recursively(cls, steps: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -120,7 +121,7 @@ class WorkflowResponse(BaseModel):
         return steps
 
     @classmethod
-    async def from_workflow(cls, workflow: Workflow) -> "WorkflowResponse":
+    async def from_workflow(cls, workflow: Workflow, is_component: bool = False) -> "WorkflowResponse":
         workflow_dict = workflow.to_dict_for_steps()
         steps = workflow_dict.get("steps")
 
@@ -136,4 +137,5 @@ class WorkflowResponse(BaseModel):
             input_schema=get_workflow_input_schema_dict(workflow),
             metadata=workflow.metadata,
             workflow_agent=isinstance(workflow.agent, WorkflowAgent) if workflow.agent else False,
+            is_component=is_component,
         )
