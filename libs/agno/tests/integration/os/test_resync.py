@@ -647,3 +647,207 @@ class TestResyncMultipleTimes:
 
             # Verify no duplicate routes were created
             assert len(unique_paths_after) == len(unique_paths_before), "Resync created duplicate routes"
+
+
+class TestResyncPreservesCustomRoutes:
+    """Tests to verify that resync preserves custom routes from base_app."""
+
+    def test_resync_preserves_custom_get_route(self, test_agent: Agent, second_agent: Agent):
+        """Test that resync preserves a custom GET route from base_app."""
+        from fastapi import FastAPI
+
+        # Create a custom FastAPI app with a custom route
+        custom_app = FastAPI()
+
+        @custom_app.get("/status")
+        def get_status():
+            return {"status": "healthy"}
+
+        agent_os = AgentOS(agents=[test_agent], base_app=custom_app)
+        app = agent_os.get_app()
+
+        with TestClient(app) as client:
+            # Verify custom route works before resync
+            response = client.get("/status")
+            assert response.status_code == 200
+            assert response.json()["status"] == "healthy"
+
+            # Add new agent and resync
+            agent_os.agents.append(second_agent)
+            agent_os.resync(app=app)
+
+            # Verify custom route still works after resync
+            response = client.get("/status")
+            assert response.status_code == 200, "Custom route was deleted after resync"
+            assert response.json()["status"] == "healthy"
+
+    def test_resync_preserves_custom_post_route(self, test_agent: Agent, second_agent: Agent):
+        """Test that resync preserves a custom POST route from base_app."""
+        from fastapi import FastAPI
+
+        custom_app = FastAPI()
+
+        @custom_app.post("/custom/data")
+        def post_data():
+            return {"received": True}
+
+        agent_os = AgentOS(agents=[test_agent], base_app=custom_app)
+        app = agent_os.get_app()
+
+        with TestClient(app) as client:
+            # Verify custom route works before resync
+            response = client.post("/custom/data")
+            assert response.status_code == 200
+
+            # Add new agent and resync
+            agent_os.agents.append(second_agent)
+            agent_os.resync(app=app)
+
+            # Verify custom route still works after resync
+            response = client.post("/custom/data")
+            assert response.status_code == 200, "Custom POST route was deleted after resync"
+
+    def test_resync_preserves_multiple_custom_routes(self, test_agent: Agent, second_agent: Agent):
+        """Test that resync preserves multiple custom routes from base_app."""
+        from fastapi import FastAPI
+
+        custom_app = FastAPI()
+
+        @custom_app.get("/status")
+        def get_status():
+            return {"status": "healthy"}
+
+        @custom_app.get("/custom/endpoint")
+        def custom_endpoint():
+            return {"message": "custom"}
+
+        @custom_app.post("/custom/data")
+        def post_data():
+            return {"received": True}
+
+        @custom_app.put("/custom/update")
+        def update_data():
+            return {"updated": True}
+
+        @custom_app.delete("/custom/delete")
+        def delete_data():
+            return {"deleted": True}
+
+        agent_os = AgentOS(agents=[test_agent], base_app=custom_app)
+        app = agent_os.get_app()
+
+        with TestClient(app) as client:
+            # Verify all custom routes work before resync
+            assert client.get("/status").status_code == 200
+            assert client.get("/custom/endpoint").status_code == 200
+            assert client.post("/custom/data").status_code == 200
+            assert client.put("/custom/update").status_code == 200
+            assert client.delete("/custom/delete").status_code == 200
+
+            # Add new agent and resync
+            agent_os.agents.append(second_agent)
+            agent_os.resync(app=app)
+
+            # Verify all custom routes still work after resync
+            assert client.get("/status").status_code == 200, "GET /status was deleted"
+            assert client.get("/custom/endpoint").status_code == 200, "GET /custom/endpoint was deleted"
+            assert client.post("/custom/data").status_code == 200, "POST /custom/data was deleted"
+            assert client.put("/custom/update").status_code == 200, "PUT /custom/update was deleted"
+            assert client.delete("/custom/delete").status_code == 200, "DELETE /custom/delete was deleted"
+
+    def test_resync_preserves_custom_routes_after_multiple_resyncs(self, test_agent: Agent):
+        """Test that custom routes are preserved after multiple resync calls."""
+        from fastapi import FastAPI
+
+        custom_app = FastAPI()
+
+        @custom_app.get("/status")
+        def get_status():
+            return {"status": "healthy"}
+
+        agent_os = AgentOS(agents=[test_agent], base_app=custom_app)
+        app = agent_os.get_app()
+
+        with TestClient(app) as client:
+            # Perform multiple resyncs
+            for i in range(5):
+                agent_os.resync(app=app)
+
+                # Verify custom route still works after each resync
+                response = client.get("/status")
+                assert response.status_code == 200, f"Custom route deleted after resync {i + 1}"
+
+    def test_resync_preserves_custom_routes_and_updates_agents(self, test_agent: Agent, second_agent: Agent):
+        """Test that custom routes are preserved AND new agents are picked up after resync."""
+        from fastapi import FastAPI
+
+        custom_app = FastAPI()
+
+        @custom_app.get("/status")
+        def get_status():
+            return {"status": "healthy"}
+
+        agent_os = AgentOS(agents=[test_agent], base_app=custom_app)
+        app = agent_os.get_app()
+
+        with TestClient(app) as client:
+            # Verify initial state
+            response = client.get("/status")
+            assert response.status_code == 200
+
+            response = client.get("/agents")
+            assert response.status_code == 200
+            assert len(response.json()) == 1
+
+            # Add new agent and resync
+            agent_os.agents.append(second_agent)
+            agent_os.resync(app=app)
+
+            # Verify custom route preserved
+            response = client.get("/status")
+            assert response.status_code == 200, "Custom route was deleted"
+
+            # Verify new agent was picked up
+            response = client.get("/agents")
+            assert response.status_code == 200
+            assert len(response.json()) == 2, "New agent was not picked up after resync"
+
+    def test_resync_preserves_custom_routes_in_lifespan(self, test_agent: Agent, second_agent: Agent):
+        """Test that custom routes are preserved when resync is called in lifespan."""
+        from contextlib import asynccontextmanager
+
+        from fastapi import FastAPI
+
+        custom_app = FastAPI()
+
+        @custom_app.get("/status")
+        def get_status():
+            return {"status": "healthy"}
+
+        lifespan_executed = False
+
+        @asynccontextmanager
+        async def lifespan(app, agent_os):
+            nonlocal lifespan_executed
+            lifespan_executed = True
+
+            # Add new agent during lifespan
+            agent_os.agents.append(second_agent)
+            agent_os.resync(app=app)
+
+            yield
+
+        agent_os = AgentOS(agents=[test_agent], base_app=custom_app, lifespan=lifespan)
+        app = agent_os.get_app()
+
+        with TestClient(app) as client:
+            assert lifespan_executed is True
+
+            # Verify custom route still works after lifespan resync
+            response = client.get("/status")
+            assert response.status_code == 200, "Custom route was deleted during lifespan resync"
+
+            # Verify new agent was picked up
+            response = client.get("/agents")
+            assert response.status_code == 200
+            assert len(response.json()) == 2
