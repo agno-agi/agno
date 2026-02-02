@@ -12490,6 +12490,36 @@ def get_agent_by_id(
         return None
 
 
+def get_agents(
+    db: "BaseDb",
+    registry: Optional["Registry"] = None,
+) -> List["Agent"]:
+    """
+    Get all agents from the database.
+    """
+    agents: List[Agent] = []
+    try:
+        components, _ = db.list_components(component_type=ComponentType.AGENT)
+        for component in components:
+            config = db.get_config(component_id=component["component_id"])
+            if config is not None:
+                agent_config = config.get("config")
+                if agent_config is not None:
+                    component_id = component["component_id"]
+                    if "id" not in agent_config:
+                        agent_config["id"] = component_id
+                    agent = Agent.from_dict(agent_config, registry=registry)
+                    # Ensure agent.id is set to the component_id (the id used to load the agent)
+                    # This ensures events use the correct agent_id
+                    agent.id = component_id
+                    agents.append(agent)
+        return agents
+
+    except Exception as e:
+        log_error(f"Error loading Agents from database: {e}")
+        return []
+
+
 def get_agents_with_component_info(
     db: "BaseDb",
     registry: Optional["Registry"] = None,
@@ -12498,7 +12528,7 @@ def get_agents_with_component_info(
     Get all agents from the database along with their component metadata.
 
     Returns a list of (agent, component_info) tuples where component_info contains
-    keys like 'current_version' and 'stage'.
+    'current_version' and 'stage'.
     """
     results: List[Tuple[Agent, Dict[str, Any]]] = []
     try:
@@ -12513,23 +12543,17 @@ def get_agents_with_component_info(
                         agent_config["id"] = component_id
                     agent = Agent.from_dict(agent_config, registry=registry)
                     agent.id = component_id
-                    component_info = {
-                        "current_version": component.get("current_version"),
-                        "stage": config.get("stage"),
-                    }
-                    results.append((agent, component_info))
+                    results.append(
+                        (
+                            agent,
+                            {
+                                "current_version": component.get("current_version"),
+                                "stage": config.get("stage"),
+                            },
+                        )
+                    )
         return results
 
     except Exception as e:
         log_error(f"Error loading Agents from database: {e}")
         return []
-
-
-def get_agents(
-    db: "BaseDb",
-    registry: Optional["Registry"] = None,
-) -> List["Agent"]:
-    """
-    Get all agents from the database.
-    """
-    return [agent for agent, _ in get_agents_with_component_info(db=db, registry=registry)]

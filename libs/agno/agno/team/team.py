@@ -10331,6 +10331,34 @@ def get_team_by_id(
         return None
 
 
+def get_teams(
+    db: "BaseDb",
+    registry: Optional["Registry"] = None,
+) -> List["Team"]:
+    """
+    Get all teams from the database.
+    """
+    teams: List[Team] = []
+    try:
+        components, _ = db.list_components(component_type=ComponentType.TEAM)
+        for component in components:
+            component_id = component["component_id"]
+            config = db.get_config(component_id=component_id)
+            if config is not None:
+                team_config = config.get("config")
+                if team_config is not None:
+                    if "id" not in team_config:
+                        team_config["id"] = component_id
+                    team = Team.from_dict(team_config, db=db, registry=registry)
+                    team.id = component_id
+                    teams.append(team)
+        return teams
+
+    except Exception as e:
+        log_error(f"Error loading Teams from database: {e}")
+        return []
+
+
 def get_teams_with_component_info(
     db: "BaseDb",
     registry: Optional["Registry"] = None,
@@ -10339,7 +10367,7 @@ def get_teams_with_component_info(
     Get all teams from the database along with their component metadata.
 
     Returns a list of (team, component_info) tuples where component_info contains
-    keys like 'current_version' and 'stage'.
+    'current_version' and 'stage'.
     """
     results: List[Tuple[Team, Dict[str, Any]]] = []
     try:
@@ -10354,23 +10382,17 @@ def get_teams_with_component_info(
                         team_config["id"] = component_id
                     team = Team.from_dict(team_config, db=db, registry=registry)
                     team.id = component_id
-                    component_info = {
-                        "current_version": component.get("current_version"),
-                        "stage": config.get("stage"),
-                    }
-                    results.append((team, component_info))
+                    results.append(
+                        (
+                            team,
+                            {
+                                "current_version": component.get("current_version"),
+                                "stage": config.get("stage"),
+                            },
+                        )
+                    )
         return results
 
     except Exception as e:
         log_error(f"Error loading Teams from database: {e}")
         return []
-
-
-def get_teams(
-    db: "BaseDb",
-    registry: Optional["Registry"] = None,
-) -> List["Team"]:
-    """
-    Get all teams from the database.
-    """
-    return [team for team, _ in get_teams_with_component_info(db=db, registry=registry)]
