@@ -561,6 +561,9 @@ class Step:
             event.workflow_id = workflow_run_response.workflow_id
         if hasattr(event, "workflow_run_id"):
             event.workflow_run_id = workflow_run_response.run_id
+        # Set session_id to match workflow's session_id for consistent event tracking
+        if hasattr(event, "session_id") and workflow_run_response.session_id:
+            event.session_id = workflow_run_response.session_id
         if hasattr(event, "step_id"):
             event.step_id = self.step_id
         if hasattr(event, "step_name") and self.name is not None:
