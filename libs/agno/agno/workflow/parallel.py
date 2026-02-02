@@ -7,6 +7,7 @@ from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List
 from uuid import uuid4
 
 from agno.models.metrics import Metrics
+from agno.registry import Registry
 from agno.run.agent import RunOutputEvent
 from agno.run.base import RunContext
 from agno.run.team import TeamRunOutputEvent
@@ -96,7 +97,7 @@ class Parallel:
     def from_dict(
         cls,
         data: Dict[str, Any],
-        registry: Optional[Any] = None,
+        registry: Optional["Registry"] = None,
         db: Optional[Any] = None,
         links: Optional[List[Dict[str, Any]]] = None,
     ) -> "Parallel":

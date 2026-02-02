@@ -176,7 +176,9 @@ class Step:
         if "team_id" in config and config["team_id"] and registry:
             from agno.team.team import get_team_by_id
 
-            team = get_team_by_id(db=db, id=config["team_id"])
+            team_id = config.get("team_id")
+            if db is not None and team_id is not None:
+                team = get_team_by_id(db=db, id=team_id, registry=registry)
 
         # --- Handle Executor reconstruction ---
         if "executor_ref" in config and config["executor_ref"] and registry:
