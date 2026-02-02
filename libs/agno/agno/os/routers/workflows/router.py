@@ -550,28 +550,17 @@ def get_workflow_router(
                 workflows.append(WorkflowSummaryResponse.from_workflow(workflow=workflow, is_component=False))
 
         if os.db and isinstance(os.db, BaseDb):
-            from agno.db.base import ComponentType
-            from agno.workflow.workflow import Workflow as WorkflowClass
+            from agno.workflow.workflow import get_workflows_with_component_info
 
-            components, _ = os.db.list_components(component_type=ComponentType.WORKFLOW)
-            for component in components:
-                config = os.db.get_config(component_id=component["component_id"])
-                if config is not None:
-                    workflow_config = config.get("config")
-                    if workflow_config is not None:
-                        component_id = component["component_id"]
-                        if "id" not in workflow_config:
-                            workflow_config["id"] = component_id
-                        db_workflow = WorkflowClass.from_dict(workflow_config, db=os.db, registry=os.registry)
-                        db_workflow.id = component_id
-                        workflows.append(
-                            WorkflowSummaryResponse.from_workflow(
-                                workflow=db_workflow,
-                                is_component=True,
-                                current_version=component.get("current_version"),
-                                stage=config.get("stage"),
-                            )
-                        )
+            for db_workflow, component_info in get_workflows_with_component_info(db=os.db, registry=os.registry):
+                workflows.append(
+                    WorkflowSummaryResponse.from_workflow(
+                        workflow=db_workflow,
+                        is_component=True,
+                        current_version=component_info.get("current_version"),
+                        stage=component_info.get("stage"),
+                    )
+                )
 
         return workflows
 

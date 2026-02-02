@@ -10331,21 +10331,17 @@ def get_team_by_id(
         return None
 
 
-def get_teams(
+def get_teams_with_component_info(
     db: "BaseDb",
     registry: Optional["Registry"] = None,
-) -> List["Team"]:
+) -> List[Tuple["Team", Dict[str, Any]]]:
     """
-    Get all teams from the database.
+    Get all teams from the database along with their component metadata.
 
-    Args:
-        db: Database to load teams from
-        registry: Optional registry for rehydrating tools
-
-    Returns:
-        List of Team instances loaded from the database
+    Returns a list of (team, component_info) tuples where component_info contains
+    keys like 'current_version' and 'stage'.
     """
-    teams: List[Team] = []
+    results: List[Tuple[Team, Dict[str, Any]]] = []
     try:
         components, _ = db.list_components(component_type=ComponentType.TEAM)
         for component in components:
@@ -10357,11 +10353,24 @@ def get_teams(
                     if "id" not in team_config:
                         team_config["id"] = component_id
                     team = Team.from_dict(team_config, db=db, registry=registry)
-                    # Ensure team.id is set to the component_id
                     team.id = component_id
-                    teams.append(team)
-        return teams
+                    component_info = {
+                        "current_version": component.get("current_version"),
+                        "stage": config.get("stage"),
+                    }
+                    results.append((team, component_info))
+        return results
 
     except Exception as e:
         log_error(f"Error loading Teams from database: {e}")
         return []
+
+
+def get_teams(
+    db: "BaseDb",
+    registry: Optional["Registry"] = None,
+) -> List["Team"]:
+    """
+    Get all teams from the database.
+    """
+    return [team for team, _ in get_teams_with_component_info(db=db, registry=registry)]

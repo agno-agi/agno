@@ -443,27 +443,16 @@ def get_team_router(
 
         # Also load teams from database
         if os.db and isinstance(os.db, BaseDb):
-            from agno.db.base import ComponentType
-            from agno.team.team import Team as TeamClass
+            from agno.team.team import get_teams_with_component_info
 
-            components, _ = os.db.list_components(component_type=ComponentType.TEAM)
-            for component in components:
-                config = os.db.get_config(component_id=component["component_id"])
-                if config is not None:
-                    team_config = config.get("config")
-                    if team_config is not None:
-                        component_id = component["component_id"]
-                        if "id" not in team_config:
-                            team_config["id"] = component_id
-                        db_team = TeamClass.from_dict(team_config, db=os.db, registry=registry)
-                        db_team.id = component_id
-                        team_response = await TeamResponse.from_team(
-                            team=db_team,
-                            is_component=True,
-                            current_version=component.get("current_version"),
-                            stage=config.get("stage"),
-                        )
-                        teams.append(team_response)
+            for db_team, component_info in get_teams_with_component_info(db=os.db, registry=registry):
+                team_response = await TeamResponse.from_team(
+                    team=db_team,
+                    is_component=True,
+                    current_version=component_info.get("current_version"),
+                    stage=component_info.get("stage"),
+                )
+                teams.append(team_response)
 
         return teams
 
