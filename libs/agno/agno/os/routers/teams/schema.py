@@ -36,9 +36,10 @@ class TeamResponse(BaseModel):
     members: Optional[List[Union[AgentResponse, "TeamResponse"]]] = None
     metadata: Optional[Dict[str, Any]] = None
     input_schema: Optional[Dict[str, Any]] = None
+    is_component: bool = False
 
     @classmethod
-    async def from_team(cls, team: Team) -> "TeamResponse":
+    async def from_team(cls, team: Team, is_component: bool = False) -> "TeamResponse":
         def filter_meaningful_config(d: Dict[str, Any], defaults: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             """Filter out fields that match their default values, keeping only meaningful user configurations"""
             filtered = {}
@@ -277,4 +278,5 @@ class TeamResponse(BaseModel):
             members=members if members else None,
             metadata=team.metadata,
             input_schema=input_schema_dict,
+            is_component=is_component,
         )
