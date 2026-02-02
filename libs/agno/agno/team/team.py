@@ -343,6 +343,8 @@ class Team:
     # Add a tool to search the knowledge base (aka Agentic RAG)
     # Only added if knowledge is provided.
     search_knowledge: bool = True
+    # If True, add search_knowledge instructions to the system prompt
+    add_search_knowledge_instructions: bool = True
 
     # If False, media (images, videos, audio, files) is only available to tools and not sent to the LLM
     send_media_to_model: bool = True
@@ -530,6 +532,7 @@ class Team:
         share_member_interactions: bool = False,
         get_member_information_tool: bool = False,
         search_knowledge: bool = True,
+        add_search_knowledge_instructions: bool = True,
         read_chat_history: bool = False,
         store_media: bool = True,
         store_tool_messages: bool = True,
@@ -653,6 +656,7 @@ class Team:
         self.share_member_interactions = share_member_interactions
         self.get_member_information_tool = get_member_information_tool
         self.search_knowledge = search_knowledge
+        self.add_search_knowledge_instructions = add_search_knowledge_instructions
         self.read_chat_history = read_chat_history
 
         self.store_media = store_media
@@ -5675,16 +5679,6 @@ class Team:
         if self.name is not None and self.add_name_to_context:
             additional_information.append(f"Your name is: {self.name}.")
 
-        # Add knowledge context using protocol's build_context
-        if self.knowledge is not None:
-            build_context_fn = getattr(self.knowledge, "build_context", None)
-            if callable(build_context_fn):
-                knowledge_context = build_context_fn(
-                    enable_agentic_filters=self.enable_agentic_knowledge_filters,
-                )
-                if knowledge_context:
-                    additional_information.append(knowledge_context)
-
         # 2 Build the default system message for the Agent.
         system_message_content: str = ""
         if self.members is not None and len(self.members) > 0:
@@ -5787,6 +5781,16 @@ class Team:
                 "Note: this information is from previous interactions and may be outdated. "
                 "You should ALWAYS prefer information from this conversation over the past summary.\n\n"
             )
+
+        # Add search_knowledge instructions to the system prompt
+        if self.knowledge is not None and self.search_knowledge and self.add_search_knowledge_instructions:
+            build_context_fn = getattr(self.knowledge, "build_context", None)
+            if callable(build_context_fn):
+                knowledge_context = build_context_fn(
+                    enable_agentic_filters=self.enable_agentic_knowledge_filters,
+                )
+                if knowledge_context:
+                    system_message_content += knowledge_context + "\n"
 
         if self.description is not None:
             system_message_content += f"<description>\n{self.description}\n</description>\n\n"
@@ -5971,16 +5975,6 @@ class Team:
         if self.name is not None and self.add_name_to_context:
             additional_information.append(f"Your name is: {self.name}.")
 
-        # Add knowledge context using protocol's build_context
-        if self.knowledge is not None:
-            build_context_fn = getattr(self.knowledge, "build_context", None)
-            if callable(build_context_fn):
-                knowledge_context = build_context_fn(
-                    enable_agentic_filters=self.enable_agentic_knowledge_filters,
-                )
-                if knowledge_context:
-                    additional_information.append(knowledge_context)
-
         # 2 Build the default system message for the Agent.
         system_message_content: str = ""
         system_message_content += "You are the leader of a team and sub-teams of AI Agents.\n"
@@ -6088,6 +6082,16 @@ class Team:
                 "Note: this information is from previous interactions and may be outdated. "
                 "You should ALWAYS prefer information from this conversation over the past summary.\n\n"
             )
+
+        # Add search_knowledge instructions to the system prompt
+        if self.knowledge is not None and self.search_knowledge and self.add_search_knowledge_instructions:
+            build_context_fn = getattr(self.knowledge, "build_context", None)
+            if callable(build_context_fn):
+                knowledge_context = build_context_fn(
+                    enable_agentic_filters=self.enable_agentic_knowledge_filters,
+                )
+                if knowledge_context:
+                    system_message_content += knowledge_context + "\n"
 
         if self.description is not None:
             system_message_content += f"<description>\n{self.description}\n</description>\n\n"
@@ -8487,6 +8491,8 @@ class Team:
             config["add_knowledge_to_context"] = self.add_knowledge_to_context
         if not self.search_knowledge:  # default is True
             config["search_knowledge"] = self.search_knowledge
+        if self.add_search_knowledge_instructions:
+            config["add_search_knowledge_instructions"] = self.add_search_knowledge_instructions
         if self.references_format != "json":  # default is "json"
             config["references_format"] = self.references_format
 
@@ -8845,6 +8851,7 @@ class Team:
             add_knowledge_to_context=config.get("add_knowledge_to_context", False),
             update_knowledge=config.get("update_knowledge", False),
             search_knowledge=config.get("search_knowledge", True),
+            add_search_knowledge_instructions=config.get("add_search_knowledge_instructions", True),
             references_format=config.get("references_format", "json"),
             # --- Tools ---
             tools=config.get("tools"),
@@ -8852,8 +8859,8 @@ class Team:
             tool_choice=config.get("tool_choice"),
             get_member_information_tool=config.get("get_member_information_tool", False),
             # --- Schema settings ---
-            # input_schema=config.get("input_schema"),  # TODO
-            # output_schema=config.get("output_schema"),  # TODO
+            input_schema=config.get("input_schema"),
+            output_schema=config.get("output_schema"),
             # --- Parser and output settings ---
             # parser_model=config.get("parser_model"),  # TODO
             parser_model_prompt=config.get("parser_model_prompt"),

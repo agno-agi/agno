@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union
 from uuid import uuid4
 
+from agno.registry import Registry
 from agno.run.agent import RunOutputEvent
 from agno.run.base import RunContext
 from agno.run.team import TeamRunOutputEvent
@@ -14,6 +15,7 @@ from agno.run.workflow import (
 )
 from agno.session.workflow import WorkflowSession
 from agno.utils.log import log_debug, logger
+from agno.workflow.cel import CEL_AVAILABLE, evaluate_cel_router_selector, is_cel_expression
 from agno.workflow.step import Step
 from agno.workflow.types import StepInput, StepOutput, StepType
 
@@ -34,20 +36,119 @@ WorkflowSteps = List[
 
 @dataclass
 class Router:
-    """A router that dynamically selects which step(s) to execute based on input"""
+    """A router that dynamically selects which step(s) to execute based on input.
 
-    # Router function that returns the step(s) to execute
+    The selector can be:
+        - A callable function that takes StepInput and returns step(s)
+        - A CEL (Common Expression Language) expression string that returns a step name
+
+    CEL expressions for selector have access to (same as Condition, plus step_choices):
+        - input: The workflow input as a string
+        - previous_step_content: Content from the previous step
+        - previous_step_outputs: Map of step name to content string from all previous steps
+        - additional_data: Map of additional data passed to the workflow
+        - session_state: Map of session state values
+        - step_choices: List of step names available to the selector
+
+    CEL expressions must return the name of a step from choices.
+
+    Example CEL expressions:
+        - 'input.contains("video") ? "video_step" : "image_step"'
+        - 'additional_data.route'
+        - 'previous_step_outputs.classifier.contains("billing") ? "Billing" : "Support"'
+    """
+
+    # Router function or CEL expression that selects step(s) to execute
     selector: Union[
         Callable[[StepInput], Union[WorkflowSteps, List[WorkflowSteps]]],
         Callable[[StepInput], Awaitable[Union[WorkflowSteps, List[WorkflowSteps]]]],
+        str,  # CEL expression returning step name
     ]
     choices: WorkflowSteps  # Available steps that can be selected
 
     name: Optional[str] = None
     description: Optional[str] = None
 
-    def _prepare_steps(self):
-        """Prepare the steps for execution - mirrors workflow logic"""
+    def to_dict(self) -> Dict[str, Any]:
+        result: Dict[str, Any] = {
+            "type": "Router",
+            "name": self.name,
+            "description": self.description,
+            "choices": [step.to_dict() for step in self.choices if hasattr(step, "to_dict")],
+        }
+        # Serialize selector
+        if callable(self.selector):
+            result["selector"] = self.selector.__name__
+            result["selector_type"] = "function"
+        elif isinstance(self.selector, str):
+            result["selector"] = self.selector
+            result["selector_type"] = "cel"
+        else:
+            raise ValueError(f"Invalid selector type: {type(self.selector).__name__}")
+
+        return result
+
+    @classmethod
+    def from_dict(
+        cls,
+        data: Dict[str, Any],
+        registry: Optional["Registry"] = None,
+        db: Optional[Any] = None,
+        links: Optional[List[Dict[str, Any]]] = None,
+    ) -> "Router":
+        from agno.workflow.condition import Condition
+        from agno.workflow.loop import Loop
+        from agno.workflow.parallel import Parallel
+        from agno.workflow.steps import Steps
+
+        def deserialize_step(step_data: Dict[str, Any]) -> Any:
+            step_type = step_data.get("type", "Step")
+            if step_type == "Loop":
+                return Loop.from_dict(step_data, registry=registry, db=db, links=links)
+            elif step_type == "Parallel":
+                return Parallel.from_dict(step_data, registry=registry, db=db, links=links)
+            elif step_type == "Steps":
+                return Steps.from_dict(step_data, registry=registry, db=db, links=links)
+            elif step_type == "Condition":
+                return Condition.from_dict(step_data, registry=registry, db=db, links=links)
+            elif step_type == "Router":
+                return cls.from_dict(step_data, registry=registry, db=db, links=links)
+            else:
+                return Step.from_dict(step_data, registry=registry, db=db, links=links)
+
+        # Deserialize selector
+        selector_data = data.get("selector")
+        selector_type = data.get("selector_type")
+
+        selector: Any = None
+        if selector_data is None:
+            raise ValueError("Router requires a selector")
+        elif isinstance(selector_data, str):
+            # Determine if this is a CEL expression or a function name
+            if selector_type == "cel" or (selector_type is None and is_cel_expression(selector_data)):
+                # CEL expression - use as-is
+                selector = selector_data
+            else:
+                # Function name - look up in registry
+                if registry:
+                    func = registry.get_function(selector_data)
+                    if func is None:
+                        raise ValueError(f"Selector function '{selector_data}' not found in registry")
+                    selector = func
+                else:
+                    raise ValueError(f"Registry required to deserialize selector function '{selector_data}'")
+        else:
+            raise ValueError(f"Invalid selector type in data: {type(selector_data).__name__}")
+
+        return cls(
+            selector=selector,
+            choices=[deserialize_step(step) for step in data.get("choices", [])],
+            name=data.get("name"),
+            description=data.get("description"),
+        )
+
+    def _prepare_single_step(self, step: Any) -> Any:
+        """Prepare a single step for execution."""
         from agno.agent.agent import Agent
         from agno.team.team import Team
         from agno.workflow.condition import Condition
@@ -56,20 +157,41 @@ class Router:
         from agno.workflow.step import Step
         from agno.workflow.steps import Steps
 
+        if callable(step) and hasattr(step, "__name__"):
+            return Step(name=step.__name__, description="User-defined callable step", executor=step)
+        elif isinstance(step, Agent):
+            return Step(name=step.name, description=step.description, agent=step)
+        elif isinstance(step, Team):
+            return Step(name=step.name, description=step.description, team=step)
+        elif isinstance(step, (Step, Steps, Loop, Parallel, Condition, Router)):
+            return step
+        else:
+            raise ValueError(f"Invalid step type: {type(step).__name__}")
+
+    def _prepare_steps(self):
+        """Prepare the steps for execution - mirrors workflow logic"""
+        from agno.workflow.steps import Steps
+
         prepared_steps: WorkflowSteps = []
         for step in self.choices:
-            if callable(step) and hasattr(step, "__name__"):
-                prepared_steps.append(Step(name=step.__name__, description="User-defined callable step", executor=step))
-            elif isinstance(step, Agent):
-                prepared_steps.append(Step(name=step.name, description=step.description, agent=step))
-            elif isinstance(step, Team):
-                prepared_steps.append(Step(name=step.name, description=step.description, team=step))
-            elif isinstance(step, (Step, Steps, Loop, Parallel, Condition, Router)):
-                prepared_steps.append(step)
+            if isinstance(step, list):
+                # Handle nested list of steps - wrap in Steps container
+                nested_prepared = [self._prepare_single_step(s) for s in step]
+                # Create a Steps container with a generated name
+                steps_container = Steps(
+                    name=f"steps_group_{len(prepared_steps)}",
+                    steps=nested_prepared,
+                )
+                prepared_steps.append(steps_container)
             else:
-                raise ValueError(f"Invalid step type: {type(step).__name__}")
+                prepared_steps.append(self._prepare_single_step(step))
 
         self.steps = prepared_steps
+        # Build name-to-step mapping for string-based selection (used by CEL and callable selectors)
+        self._step_name_map: Dict[str, Any] = {}
+        for step in self.steps:
+            if hasattr(step, "name") and step.name:
+                self._step_name_map[step.name] = step
 
     def _update_step_input_from_outputs(
         self,
@@ -109,54 +231,148 @@ class Router:
             audio=current_audio + all_audio,
         )
 
-    def _route_steps(self, step_input: StepInput, session_state: Optional[Dict[str, Any]] = None) -> List[Step]:  # type: ignore[return-value]
-        """Route to the appropriate steps based on input"""
-        if callable(self.selector):
-            if session_state is not None and self._selector_has_session_state_param():
-                result = self.selector(step_input, session_state)  # type: ignore[call-arg]
-            else:
-                result = self.selector(step_input)
+    def _resolve_selector_result(self, result: Any) -> List[Any]:
+        """Resolve selector result to a list of steps, handling strings, Steps, and lists.
 
-            # Handle the result based on its type
-            if isinstance(result, Step):
-                return [result]
-            elif isinstance(result, list):
-                return result  # type: ignore
+        This unified resolver handles:
+        - String step names (from CEL expressions or callable selectors)
+        - Step objects directly returned by callable selectors
+        - Lists of strings or Steps
+        """
+        from agno.workflow.condition import Condition
+        from agno.workflow.loop import Loop
+        from agno.workflow.parallel import Parallel
+        from agno.workflow.steps import Steps
+
+        if result is None:
+            return []
+
+        # Handle string - look up by name in the step_name_map
+        if isinstance(result, str):
+            if result in self._step_name_map:
+                return [self._step_name_map[result]]
             else:
-                logger.warning(f"Router function returned unexpected type: {type(result)}")
+                available_steps = list(self._step_name_map.keys())
+                logger.warning(
+                    f"Router '{self.name}' selector returned unknown step name: '{result}'. "
+                    f"Available step names are: {available_steps}. "
+                    f"Make sure the selector returns one of the available step names."
+                )
                 return []
+
+        # Handle step types (Step, Steps, Loop, Parallel, Condition, Router)
+        if isinstance(result, (Step, Steps, Loop, Parallel, Condition, Router)):
+            # Validate that the returned step is in the router's choices
+            step_name = getattr(result, "name", None)
+            if step_name and step_name not in self._step_name_map:
+                available_steps = list(self._step_name_map.keys())
+                logger.warning(
+                    f"Router '{self.name}' selector returned a Step '{step_name}' that is not in choices. "
+                    f"Available step names are: {available_steps}. "
+                    f"The step will still be executed, but this may indicate a configuration error."
+                )
+            return [result]
+
+        # Handle list of results (could be strings, Steps, or mixed)
+        if isinstance(result, list):
+            resolved = []
+            for item in result:
+                resolved.extend(self._resolve_selector_result(item))
+            return resolved
+
+        logger.warning(f"Router selector returned unexpected type: {type(result)}")
+        return []
+
+    def _selector_has_step_choices_param(self) -> bool:
+        """Check if the selector function has a step_choices parameter"""
+        if not callable(self.selector):
+            return False
+
+        try:
+            sig = inspect.signature(self.selector)
+            return "step_choices" in sig.parameters
+        except Exception:
+            return False
+
+    def _route_steps(self, step_input: StepInput, session_state: Optional[Dict[str, Any]] = None) -> List[Step]:  # type: ignore[return-value]
+        """Route to the appropriate steps based on input."""
+        # Handle CEL expression selector
+        if isinstance(self.selector, str):
+            if not CEL_AVAILABLE:
+                logger.error(
+                    "CEL expression used but cel-python is not installed. Install with: pip install cel-python"
+                )
+                return []
+            try:
+                step_names = list(self._step_name_map.keys())
+                step_name = evaluate_cel_router_selector(
+                    self.selector, step_input, session_state, step_choices=step_names
+                )
+                return self._resolve_selector_result(step_name)
+            except Exception as e:
+                logger.error(f"Router CEL evaluation failed: {e}")
+                return []
+
+        # Handle callable selector
+        if callable(self.selector):
+            has_session_state = session_state is not None and self._selector_has_session_state_param()
+            has_step_choices = self._selector_has_step_choices_param()
+
+            # Build kwargs based on what parameters the selector accepts
+            kwargs: Dict[str, Any] = {}
+            if has_session_state:
+                kwargs["session_state"] = session_state
+            if has_step_choices:
+                kwargs["step_choices"] = self.steps
+
+            result = self.selector(step_input, **kwargs)  # type: ignore[call-arg]
+
+            return self._resolve_selector_result(result)
 
         return []
 
     async def _aroute_steps(self, step_input: StepInput, session_state: Optional[Dict[str, Any]] = None) -> List[Step]:  # type: ignore[return-value]
-        """Async version of step routing"""
+        """Async version of step routing."""
+        # Handle CEL expression selector (CEL evaluation is synchronous)
+        if isinstance(self.selector, str):
+            if not CEL_AVAILABLE:
+                logger.error(
+                    "CEL expression used but cel-python is not installed. Install with: pip install cel-python"
+                )
+                return []
+            try:
+                step_names = list(self._step_name_map.keys())
+                step_name = evaluate_cel_router_selector(
+                    self.selector, step_input, session_state, step_choices=step_names
+                )
+                return self._resolve_selector_result(step_name)
+            except Exception as e:
+                logger.error(f"Router CEL evaluation failed: {e}")
+                return []
+
+        # Handle callable selector
         if callable(self.selector):
             has_session_state = session_state is not None and self._selector_has_session_state_param()
+            has_step_choices = self._selector_has_step_choices_param()
+
+            # Build kwargs based on what parameters the selector accepts
+            kwargs: Dict[str, Any] = {}
+            if has_session_state:
+                kwargs["session_state"] = session_state
+            if has_step_choices:
+                kwargs["step_choices"] = self.steps
 
             if inspect.iscoroutinefunction(self.selector):
-                if has_session_state:
-                    result = await self.selector(step_input, session_state)  # type: ignore[call-arg]
-                else:
-                    result = await self.selector(step_input)
+                result = await self.selector(step_input, **kwargs)  # type: ignore[call-arg]
             else:
-                if has_session_state:
-                    result = self.selector(step_input, session_state)  # type: ignore[call-arg]
-                else:
-                    result = self.selector(step_input)
+                result = self.selector(step_input, **kwargs)  # type: ignore[call-arg]
 
-            # Handle the result based on its type
-            if isinstance(result, Step):
-                return [result]
-            elif isinstance(result, list):
-                return result
-            else:
-                logger.warning(f"Router function returned unexpected type: {type(result)}")
-                return []
+            return self._resolve_selector_result(result)
 
         return []
 
     def _selector_has_session_state_param(self) -> bool:
-        """Check if the selector function has a session_state parameter"""
+        """Check if the selector function has a session_state parameter."""
         if not callable(self.selector):
             return False
 

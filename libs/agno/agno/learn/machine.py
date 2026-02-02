@@ -645,12 +645,11 @@ class LearningMachine:
         for name, store in self.stores.items():
             try:
                 result = await store.arecall(**context)
-                if result is not None:
-                    results[name] = result
-                    try:
-                        log_debug(f"Recalled from {name}: {result}")
-                    except Exception:
-                        pass
+                results[name] = result
+                try:
+                    log_debug(f"Recalled from {name}: {result}")
+                except Exception:
+                    pass
             except Exception as e:
                 log_warning(f"Error recalling from {name}: {e}")
 
