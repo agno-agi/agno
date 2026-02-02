@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "2.4.0"
+version = "2.4.7"
 description = "Agno: a lightweight library for building Multi-Agent Systems"
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -63,6 +63,7 @@ dev = [
   "mcp",
   "openai",
   "fakeredis",
+  "xlwt",
 ]
 
 os = ["fastapi", "uvicorn", "PyJWT"]
@@ -108,6 +109,7 @@ duckdb = ["duckdb"]
 elevenlabs = ["elevenlabs"]
 evm = ["web3"]
 exa = ["exa_py"]
+seltz = ["seltz"]
 fal = ["fal_client"]
 firecrawl = ["firecrawl-py==3.4.0"]
 tavily = ["tavily-python"]
@@ -153,7 +155,7 @@ mysql = ["pymysql", "asyncmy"]
 # Dependencies for Vector databases
 pgvector = ["pgvector"]
 chromadb = ["chromadb"]
-lancedb = ["lancedb==0.24.0", "tantivy"]
+lancedb = ["lancedb>=0.26.0", "tantivy"]
 pylance = ["pylance"]
 qdrant = ["qdrant-client"]
 couchbase = ["couchbase"]
@@ -173,7 +175,8 @@ docx = ["python-docx"]
 pptx = ["python-pptx"]
 text = ["aiofiles"]
 csv = ["aiofiles"]
-markdown = ["unstructured", "markdown", "aiofiles"]
+excel = ["openpyxl", "xlrd"]
+markdown = ["unstructured<0.18.31", "markdown", "aiofiles"]
 chonkie = ["chonkie[semantic]", "chonkie[code]", "chonkie"]
 
 # Dependencies for AG-UI integration
@@ -225,6 +228,7 @@ tools = [
   "agno[arxiv]",
   # "agno[brave]",  # It clashes with other dependencies
   "agno[exa]",
+  "agno[seltz]",
   "agno[cartesia]",
   "agno[ddg]",
   "agno[duckdb]",
@@ -303,6 +307,7 @@ knowledge = [
   "agno[pptx]",
   "agno[text]",
   "agno[csv]",
+  "agno[excel]",
   "agno[markdown]",
   "agno[chonkie]"
 ]
@@ -444,6 +449,7 @@ module = [
   "e2b_code_interpreter.*",
   "eth_account.*",
   "exa_py.*",
+  "seltz.*",
   "fastapi.*",
   "fastembed.*",
   "fastmcp.*",
@@ -484,6 +490,7 @@ module = [
   "newspaper.*",
   "numpy.*",
   "ollama.*",
+  "openpyxl.*",
   "openai.*",
   "cv2.*",
   "openbb.*",
@@ -548,6 +555,7 @@ module = [
   "redshift_connector.*",
   "reportlab.*",
   "surrealdb.*",
-  "trafilatura.*"
+  "trafilatura.*",
+  "xlrd.*"
 ]
 ignore_missing_imports = true

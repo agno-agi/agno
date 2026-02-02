@@ -699,8 +699,7 @@ def test_delete_by_metadata_complex(mock_pgvector):
 
 
 def test_get_document_record_merges_filters_into_metadata(mock_pgvector, mock_embedder):
-    """Test that _get_document_record correctly merges filters into meta_data.
-    """
+    """Test that _get_document_record correctly merges filters into meta_data."""
     doc = Document(
         id="test-id",
         content="Test document content",
