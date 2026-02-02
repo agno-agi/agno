@@ -10,8 +10,7 @@ Tests cover:
 - Nested step serialization
 """
 
-from typing import Any, Dict, List
-from unittest.mock import MagicMock
+from typing import List
 
 import pytest
 

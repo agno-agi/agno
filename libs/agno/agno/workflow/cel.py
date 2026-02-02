@@ -197,7 +197,7 @@ def _evaluate_cel_string(expression: str, context: Dict[str, Any]) -> str:
     return str(result)
 
 
-def _to_cel(value: PythonValue) -> Union[CelValue, None]:
+def _to_cel(value: PythonValue) -> Union["CelValue", None]:
     """Convert a Python value to a CEL-compatible type.
 
     Args:
@@ -206,8 +206,8 @@ def _to_cel(value: PythonValue) -> Union[CelValue, None]:
     Returns:
         The corresponding CEL type, or None if input is None
     """
-    if not CEL_AVAILABLE or value is None:
-        return value
+    if value is None:
+        return None
 
     if isinstance(value, bool):
         return celtypes.BoolType(value)

@@ -8,9 +8,6 @@ Tests cover:
 - Nested step serialization
 """
 
-from typing import Any, Dict, List
-from unittest.mock import MagicMock, patch
-
 import pytest
 
 from agno.registry import Registry

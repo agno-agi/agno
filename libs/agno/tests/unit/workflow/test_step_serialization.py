@@ -7,7 +7,6 @@ Tests cover:
 - Roundtrip serialization (no data loss)
 """
 
-from typing import Any, Dict, List, Optional
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -153,7 +152,7 @@ class TestStepFromDict:
 
     def test_from_dict_basic(self):
         """Test from_dict creates step with basic config."""
-        data = {
+        _data = {  # noqa: F841
             "type": "Step",
             "name": "basic-step",
             "description": "A basic step",
@@ -165,7 +164,7 @@ class TestStepFromDict:
         }
 
         # Need to provide an executor since Step requires one
-        with patch("agno.workflow.step.Step.__init__", return_value=None) as mock_init:
+        with patch("agno.workflow.step.Step.__init__", return_value=None):
             # Skip actual initialization for this basic test
             pass
 

@@ -120,6 +120,7 @@ class Router:
         selector_data = data.get("selector")
         selector_type = data.get("selector_type")
 
+        selector: Any = None
         if selector_data is None:
             raise ValueError("Router requires a selector")
         elif isinstance(selector_data, str):

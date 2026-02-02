@@ -79,6 +79,23 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
         # Fallback to string to avoid serialization errors
         return str(value)
 
+    def _extract_entrypoint_metadata(
+        entrypoint: Any,
+    ) -> tuple[Optional[str], Optional[str], Optional[str], Optional[str]]:
+        """Extract module, qualname, signature, and return annotation from an entrypoint callable."""
+        ep_module: Optional[str] = getattr(entrypoint, "__module__", None)
+        ep_qualname: Optional[str] = getattr(entrypoint, "__qualname__", None)
+        ep_signature: Optional[str] = None
+        ep_return_annotation: Optional[str] = None
+        try:
+            sig = inspect.signature(entrypoint)
+            ep_signature = str(sig)
+            if sig.return_annotation is not inspect.Signature.empty:
+                ep_return_annotation = str(sig.return_annotation)
+        except (ValueError, TypeError):
+            pass
+        return ep_module, ep_qualname, ep_signature, ep_return_annotation
+
     def _get_callable_params(func: Any) -> Dict[str, Any]:
         """Extract JSON schema-like parameters from a callable using inspect."""
         try:
@@ -167,16 +184,9 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
                         func_signature: Optional[str] = None
                         func_return_annotation: Optional[str] = None
                         if func.entrypoint:
-                            ep = func.entrypoint
-                            func_module = getattr(ep, "__module__", None)
-                            func_qualname = getattr(ep, "__qualname__", None)
-                            try:
-                                sig = inspect.signature(ep)
-                                func_signature = str(sig)
-                                if sig.return_annotation is not inspect.Signature.empty:
-                                    func_return_annotation = str(sig.return_annotation)
-                            except (ValueError, TypeError):
-                                pass
+                            func_module, func_qualname, func_signature, func_return_annotation = (
+                                _extract_entrypoint_metadata(func.entrypoint)
+                            )
 
                         func_description = getattr(func, "description", None)
                         if func_description is None and func.entrypoint:
@@ -232,32 +242,25 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
                             pass
 
                     # Extract callable metadata from entrypoint
-                    func_module: Optional[str] = None
-                    func_qualname: Optional[str] = None
-                    func_signature: Optional[str] = None
-                    func_return_annotation: Optional[str] = None
+                    tool_module: Optional[str] = None
+                    tool_qualname: Optional[str] = None
+                    tool_signature: Optional[str] = None
+                    tool_return_annotation: Optional[str] = None
                     if tool.entrypoint:
-                        ep = tool.entrypoint
-                        func_module = getattr(ep, "__module__", None)
-                        func_qualname = getattr(ep, "__qualname__", None)
-                        try:
-                            sig = inspect.signature(ep)
-                            func_signature = str(sig)
-                            if sig.return_annotation is not inspect.Signature.empty:
-                                func_return_annotation = str(sig.return_annotation)
-                        except (ValueError, TypeError):
-                            pass
+                        tool_module, tool_qualname, tool_signature, tool_return_annotation = (
+                            _extract_entrypoint_metadata(tool.entrypoint)
+                        )
 
                     func_tool_metadata = ToolMetadata(
                         class_path=_class_path(tool),
-                        module=func_module,
-                        qualname=func_qualname,
+                        module=tool_module,
+                        qualname=tool_qualname,
                         has_entrypoint=bool(getattr(tool, "entrypoint", None)),
                         parameters=_maybe_jsonable(func_params),
                         requires_confirmation=requires_confirmation,
                         external_execution=external_execution,
-                        signature=func_signature,
-                        return_annotation=func_return_annotation,
+                        signature=tool_signature,
+                        return_annotation=tool_return_annotation,
                     )
                     components.append(
                         RegistryContentResponse(
