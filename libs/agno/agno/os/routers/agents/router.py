@@ -594,7 +594,7 @@ def get_agent_router(
 
         if os.db and isinstance(os.db, BaseDb):
             from agno.agent.agent import Agent as AgentClass
-            from agno.os.schema import ComponentType
+            from agno.db.base import ComponentType
 
             components, _ = os.db.list_components(component_type=ComponentType.AGENT)
             for component in components:

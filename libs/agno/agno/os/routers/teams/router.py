@@ -443,7 +443,7 @@ def get_team_router(
 
         # Also load teams from database
         if os.db and isinstance(os.db, BaseDb):
-            from agno.os.schema import ComponentType
+            from agno.db.base import ComponentType
             from agno.team.team import Team as TeamClass
 
             components, _ = os.db.list_components(component_type=ComponentType.TEAM)
