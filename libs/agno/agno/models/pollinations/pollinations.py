@@ -41,7 +41,7 @@ class Pollinations(Model):
 
     # Client parameters
     api_key: Optional[str] = None
-    base_url: str = "https://gen.pollinations.ai/v1"
+    base_url: str = self.base_url or f"https://gen.pollinations.ai/{self.version}"
     max_retries: Optional[int] = None
     timeout: Optional[int] = None
     client_params: Optional[Dict[str, Any]] = None
