@@ -2337,7 +2337,9 @@ class Workflow:
                         workflow_run_response.step_results = collected_step_outputs
 
                         # Save the session with paused state
-                        self._update_session_metrics(session=workflow_session, workflow_run_response=workflow_run_response)
+                        self._update_session_metrics(
+                            session=workflow_session, workflow_run_response=workflow_run_response
+                        )
                         workflow_session.upsert_run(run=workflow_run_response)
                         if self._has_async_db():
                             await self.asave_session(session=workflow_session)
@@ -2584,10 +2586,14 @@ class Workflow:
                             requires_confirmation=True,
                             confirmation_message=step.confirmation_message,
                         )
-                        yield self._handle_event(step_paused_event, workflow_run_response, websocket_handler=websocket_handler)
+                        yield self._handle_event(
+                            step_paused_event, workflow_run_response, websocket_handler=websocket_handler
+                        )
 
                         # Save the session with paused state
-                        self._update_session_metrics(session=workflow_session, workflow_run_response=workflow_run_response)
+                        self._update_session_metrics(
+                            session=workflow_session, workflow_run_response=workflow_run_response
+                        )
                         workflow_session.upsert_run(run=workflow_run_response)
                         if self._has_async_db():
                             await self.asave_session(session=workflow_session)
@@ -4054,7 +4060,8 @@ class Workflow:
 
         # Check if any step was rejected
         rejected_steps = [
-            req for req in (run_response.step_requirements or [])
+            req
+            for req in (run_response.step_requirements or [])
             if req.requires_confirmation and req.confirmed is False
         ]
         if rejected_steps:
@@ -4071,6 +4078,7 @@ class Workflow:
                     self.save_session(session=session)
 
             if stream:
+
                 def cancelled_generator() -> Iterator[WorkflowRunOutputEvent]:
                     yield WorkflowCancelledEvent(
                         run_id=run_response.run_id or "",
@@ -4079,6 +4087,7 @@ class Workflow:
                         session_id=run_response.session_id,
                         reason=run_response.content,
                     )
+
                 return cancelled_generator()
             return run_response
 
@@ -4159,7 +4168,9 @@ class Workflow:
         """Continue executing a workflow from a specific step index."""
         try:
             # Restore previous step outputs from step_results
-            collected_step_outputs: List[Union[StepOutput, List[StepOutput]]] = list(workflow_run_response.step_results or [])
+            collected_step_outputs: List[Union[StepOutput, List[StepOutput]]] = list(
+                workflow_run_response.step_results or []
+            )
             previous_step_outputs: Dict[str, StepOutput] = {}
             for step_output in collected_step_outputs:
                 if isinstance(step_output, StepOutput) and step_output.step_name:
@@ -4329,7 +4340,9 @@ class Workflow:
         """Continue executing a workflow from a specific step index with streaming."""
         try:
             # Restore previous step outputs from step_results
-            collected_step_outputs: List[Union[StepOutput, List[StepOutput]]] = list(workflow_run_response.step_results or [])
+            collected_step_outputs: List[Union[StepOutput, List[StepOutput]]] = list(
+                workflow_run_response.step_results or []
+            )
             previous_step_outputs: Dict[str, StepOutput] = {}
             for step_output in collected_step_outputs:
                 if isinstance(step_output, StepOutput) and step_output.step_name:
@@ -4660,7 +4673,8 @@ class Workflow:
 
         # Check if any step was rejected
         rejected_steps = [
-            req for req in (run_response.step_requirements or [])
+            req
+            for req in (run_response.step_requirements or [])
             if req.requires_confirmation and req.confirmed is False
         ]
         if rejected_steps:
@@ -4677,6 +4691,7 @@ class Workflow:
                     await self.asave_session(session=session)
 
             if stream:
+
                 async def cancelled_generator() -> AsyncIterator[WorkflowRunOutputEvent]:
                     yield WorkflowCancelledEvent(
                         run_id=run_response.run_id or "",
@@ -4685,6 +4700,7 @@ class Workflow:
                         session_id=run_response.session_id,
                         reason=run_response.content,
                     )
+
                 return cancelled_generator()
             return run_response
 
@@ -4765,7 +4781,9 @@ class Workflow:
         """Continue executing a workflow from a specific step index (async version)."""
         try:
             # Restore previous step outputs from step_results
-            collected_step_outputs: List[Union[StepOutput, List[StepOutput]]] = list(workflow_run_response.step_results or [])
+            collected_step_outputs: List[Union[StepOutput, List[StepOutput]]] = list(
+                workflow_run_response.step_results or []
+            )
             previous_step_outputs: Dict[str, StepOutput] = {}
             for step_output in collected_step_outputs:
                 if isinstance(step_output, StepOutput) and step_output.step_name:
@@ -4935,7 +4953,9 @@ class Workflow:
         """Continue executing a workflow from a specific step index with streaming (async version)."""
         try:
             # Restore previous step outputs from step_results
-            collected_step_outputs: List[Union[StepOutput, List[StepOutput]]] = list(workflow_run_response.step_results or [])
+            collected_step_outputs: List[Union[StepOutput, List[StepOutput]]] = list(
+                workflow_run_response.step_results or []
+            )
             previous_step_outputs: Dict[str, StepOutput] = {}
             for step_output in collected_step_outputs:
                 if isinstance(step_output, StepOutput) and step_output.step_name:

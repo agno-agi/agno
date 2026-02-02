@@ -96,6 +96,20 @@ class Step:
         requires_confirmation: bool = False,
         confirmation_message: Optional[str] = None,
     ):
+        # Auto-detect HITL metadata from @hitl decorator on executor function
+        if executor is not None:
+            from agno.workflow.decorators import get_hitl_metadata
+
+            hitl_metadata = get_hitl_metadata(executor)
+            if hitl_metadata:
+                # Use decorator values as defaults, but allow explicit params to override
+                if name is None and hitl_metadata.get("name"):
+                    name = hitl_metadata["name"]
+                if not requires_confirmation and hitl_metadata.get("requires_confirmation"):
+                    requires_confirmation = hitl_metadata["requires_confirmation"]
+                if confirmation_message is None and hitl_metadata.get("confirmation_message"):
+                    confirmation_message = hitl_metadata["confirmation_message"]
+
         # Auto-detect name for function executors if not provided
         if name is None and executor is not None:
             name = getattr(executor, "__name__", None)

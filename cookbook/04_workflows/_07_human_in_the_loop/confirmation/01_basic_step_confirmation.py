@@ -1,8 +1,8 @@
-from agno.workflow.workflow import Workflow
-from agno.workflow.step import Step
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
 from agno.db.sqlite import SqliteDb
+from agno.models.openai import OpenAIChat
+from agno.workflow.step import Step
+from agno.workflow.workflow import Workflow
 
 # Create agents for each step
 fetch_agent = Agent(
@@ -26,7 +26,9 @@ save_agent = Agent(
 # Create a workflow with a step that requires confirmation
 workflow = Workflow(
     name="data_processing",
-    db=SqliteDb(db_file="tmp/workflow_hitl.db"),  # Required for HITL to persist session state
+    db=SqliteDb(
+        db_file="tmp/workflow_hitl.db"
+    ),  # Required for HITL to persist session state
     steps=[
         Step(
             name="fetch_data",

@@ -288,8 +288,7 @@ class StepInput:
         previous_step_outputs = None
         if data.get("previous_step_outputs"):
             previous_step_outputs = {
-                name: StepOutput.from_dict(output_data)
-                for name, output_data in data["previous_step_outputs"].items()
+                name: StepOutput.from_dict(output_data) for name, output_data in data["previous_step_outputs"].items()
             }
 
         return cls(
