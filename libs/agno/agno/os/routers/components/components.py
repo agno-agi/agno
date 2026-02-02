@@ -122,11 +122,40 @@ def attach_routes(
             start_time_ms = time.time() * 1000
             offset = (page - 1) * limit
 
-            components, total_count = db.list_components(
-                component_type=DbComponentType(component_type.value) if component_type else None,
-                limit=limit,
-                offset=offset,
-            )
+            # Build set of registry IDs to exclude from DB results
+            registry_agent_ids: set = set()
+            registry_team_ids: set = set()
+            if registry:
+                registry_agent_ids = {
+                    getattr(a, "id", None) for a in getattr(registry, "agents", []) or [] if getattr(a, "id", None)
+                }
+                registry_team_ids = {
+                    getattr(t, "id", None) for t in getattr(registry, "teams", []) or [] if getattr(t, "id", None)
+                }
+
+            needs_filtering = bool(registry_agent_ids or registry_team_ids)
+
+            if needs_filtering:
+                # Fetch all components so we can filter before applying pagination
+                all_components, _ = db.list_components(
+                    component_type=DbComponentType(component_type.value) if component_type else None,
+                    limit=10000,
+                    offset=0,
+                )
+                all_components = [
+                    c
+                    for c in all_components
+                    if not (c.get("component_type") == "agent" and c.get("component_id") in registry_agent_ids)
+                    and not (c.get("component_type") == "team" and c.get("component_id") in registry_team_ids)
+                ]
+                total_count = len(all_components)
+                components = all_components[offset : offset + limit]
+            else:
+                components, total_count = db.list_components(
+                    component_type=DbComponentType(component_type.value) if component_type else None,
+                    limit=limit,
+                    offset=offset,
+                )
 
             total_pages = (total_count + limit - 1) // limit if limit > 0 else 0
 
