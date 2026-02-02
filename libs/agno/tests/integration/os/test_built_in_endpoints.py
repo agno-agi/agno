@@ -176,5 +176,3 @@ def test_config_endpoint_with_knowledge_tables(test_os_client_with_knowledge: Te
     assert sorted(response_data["knowledge"]["dbs"][0]["tables"]) == sorted(
         ["knowledge_contents1", "knowledge_contents2"]
     )
-
-

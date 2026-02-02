@@ -89,7 +89,9 @@ reviewer = Agent(
 )
 
 
-def dynamic_selector(step_input: StepInput, step_choices: list) -> Union[str, Step, List[Step]]:
+def dynamic_selector(
+    step_input: StepInput, step_choices: list
+) -> Union[str, Step, List[Step]]:
     """
     Selector receives step_choices - can select by name or return Step directly.
     step_choices contains the prepared Step objects from Router.choices.
@@ -137,7 +139,9 @@ step_b = Agent(name="step_b", model=OpenAIChat(id="gpt-4o-mini"), instructions="
 step_c = Agent(name="step_c", model=OpenAIChat(id="gpt-4o-mini"), instructions="Step C")
 
 
-def nested_selector(step_input: StepInput, step_choices: list) -> Union[str, Step, List[Step]]:
+def nested_selector(
+    step_input: StepInput, step_choices: list
+) -> Union[str, Step, List[Step]]:
     """
     When choices contains nested lists like [step_a, [step_b, step_c]],
     the nested list becomes a Steps container in step_choices.
