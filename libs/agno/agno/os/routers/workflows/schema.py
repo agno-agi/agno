@@ -85,6 +85,8 @@ class WorkflowResponse(BaseModel):
     metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata")
     workflow_agent: bool = Field(False, description="Whether this workflow uses a WorkflowAgent")
     is_component: bool = Field(False, description="Whether this workflow was created via Builder")
+    current_version: Optional[int] = Field(None, description="Current published version number")
+    stage: Optional[str] = Field(None, description="Stage of the loaded config (draft/published)")
 
     @classmethod
     async def _resolve_agents_and_teams_recursively(cls, steps: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -121,7 +123,13 @@ class WorkflowResponse(BaseModel):
         return steps
 
     @classmethod
-    async def from_workflow(cls, workflow: Workflow, is_component: bool = False) -> "WorkflowResponse":
+    async def from_workflow(
+        cls,
+        workflow: Workflow,
+        is_component: bool = False,
+        current_version: Optional[int] = None,
+        stage: Optional[str] = None,
+    ) -> "WorkflowResponse":
         workflow_dict = workflow.to_dict_for_steps()
         steps = workflow_dict.get("steps")
 
@@ -138,4 +146,6 @@ class WorkflowResponse(BaseModel):
             metadata=workflow.metadata,
             workflow_agent=isinstance(workflow.agent, WorkflowAgent) if workflow.agent else False,
             is_component=is_component,
+            current_version=current_version,
+            stage=stage,
         )

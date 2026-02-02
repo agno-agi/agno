@@ -125,10 +125,16 @@ class WorkflowSummaryResponse(BaseModel):
     description: Optional[str] = Field(None, description="Description of the workflow")
     db_id: Optional[str] = Field(None, description="Database identifier")
     is_component: bool = Field(False, description="Whether this workflow was created via Builder")
+    current_version: Optional[int] = Field(None, description="Current published version number")
+    stage: Optional[str] = Field(None, description="Stage of the loaded config (draft/published)")
 
     @classmethod
     def from_workflow(
-        cls, workflow: Union[Workflow, RemoteWorkflow], is_component: bool = False
+        cls,
+        workflow: Union[Workflow, RemoteWorkflow],
+        is_component: bool = False,
+        current_version: Optional[int] = None,
+        stage: Optional[str] = None,
     ) -> "WorkflowSummaryResponse":
         db_id = workflow.db.id if workflow.db else None
         return cls(
@@ -137,6 +143,8 @@ class WorkflowSummaryResponse(BaseModel):
             description=workflow.description,
             db_id=db_id,
             is_component=is_component,
+            current_version=current_version,
+            stage=stage,
         )
 
 

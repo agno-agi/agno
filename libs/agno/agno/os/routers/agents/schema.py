@@ -36,9 +36,17 @@ class AgentResponse(BaseModel):
     metadata: Optional[Dict[str, Any]] = None
     input_schema: Optional[Dict[str, Any]] = None
     is_component: bool = False
+    current_version: Optional[int] = None
+    stage: Optional[str] = None
 
     @classmethod
-    async def from_agent(cls, agent: Agent, is_component: bool = False) -> "AgentResponse":
+    async def from_agent(
+        cls,
+        agent: Agent,
+        is_component: bool = False,
+        current_version: Optional[int] = None,
+        stage: Optional[str] = None,
+    ) -> "AgentResponse":
         def filter_meaningful_config(d: Dict[str, Any], defaults: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             """Filter out fields that match their default values, keeping only meaningful user configurations"""
             filtered = {}
@@ -287,4 +295,6 @@ class AgentResponse(BaseModel):
             metadata=agent.metadata,
             input_schema=input_schema_dict,
             is_component=is_component,
+            current_version=current_version,
+            stage=stage,
         )

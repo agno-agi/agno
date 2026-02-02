@@ -593,13 +593,27 @@ def get_agent_router(
                     agents.append(agent_response)
 
         if os.db and isinstance(os.db, BaseDb):
-            from agno.agent.agent import get_agents
+            from agno.agent.agent import Agent as AgentClass
+            from agno.os.schema import ComponentType
 
-            db_agents = get_agents(db=os.db, registry=registry)
-            if db_agents:
-                for db_agent in db_agents:
-                    agent_response = await AgentResponse.from_agent(agent=db_agent, is_component=True)
-                    agents.append(agent_response)
+            components, _ = os.db.list_components(component_type=ComponentType.AGENT)
+            for component in components:
+                config = os.db.get_config(component_id=component["component_id"])
+                if config is not None:
+                    agent_config = config.get("config")
+                    if agent_config is not None:
+                        component_id = component["component_id"]
+                        if "id" not in agent_config:
+                            agent_config["id"] = component_id
+                        db_agent = AgentClass.from_dict(agent_config, registry=registry)
+                        db_agent.id = component_id
+                        agent_response = await AgentResponse.from_agent(
+                            agent=db_agent,
+                            is_component=True,
+                            current_version=component.get("current_version"),
+                            stage=config.get("stage"),
+                        )
+                        agents.append(agent_response)
 
         return agents
 
