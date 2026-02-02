@@ -1395,7 +1395,7 @@ class Workflow:
 
         # ALSO broadcast through websocket manager for reconnected clients
         # This ensures clients who reconnect after workflow started still receive events
-        if buffer_run_id:
+        if buffer_run_id and websocket_handler:
             try:
                 import asyncio
 
