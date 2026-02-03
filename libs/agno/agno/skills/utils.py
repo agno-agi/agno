@@ -72,8 +72,6 @@ def parse_shebang(script_path: Path) -> Optional[str]:
         return None
 
     parts = shebang.split()
-    if not parts:
-        return None
 
     # Handle /usr/bin/env style shebangs
     if Path(parts[0]).name == "env":
