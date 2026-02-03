@@ -1,10 +1,10 @@
 from agno.agent import Agent
 from agno.models.neosantara import Neosantara
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 
 agent = Agent(
     model=Neosantara(id="grok-4.1-fast-non-reasoning"),
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     markdown=True,
 )
 
