@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import time
 import warnings
 from asyncio import CancelledError, Task, create_task
@@ -10510,11 +10511,10 @@ class Agent:
             Agent: A new Agent instance.
         """
         from dataclasses import fields
-        
+
         # Detect fields declared as dataclass fields but absent from __init__ signature
         init_params = set(inspect.signature(self.__class__.__init__).parameters) - {"self"}
         non_init_fields = {f.name for f in fields(self) if f.name not in init_params}
-
 
         # Extract the fields to set for the new Agent
         fields_for_new_agent: Dict[str, Any] = {}
@@ -10523,7 +10523,7 @@ class Agent:
             # Skip private fields (not part of __init__ signature)
             if f.name.startswith("_"):
                 continue
-            
+
             # Skip fields that are not __init__ parameters
             if f.name in non_init_fields:
                 continue
