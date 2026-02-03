@@ -76,7 +76,7 @@ def parse_shebang(script_path: Path) -> Optional[str]:
         return None
 
     # Handle /usr/bin/env style shebangs
-    if parts[0].endswith("/env") or parts[0] == "env":
+    if Path(parts[0]).name == "env":
         # Skip any flags (like -S) and get the interpreter
         for part in parts[1:]:
             if not part.startswith("-"):
