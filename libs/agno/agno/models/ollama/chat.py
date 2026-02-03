@@ -306,14 +306,17 @@ class Ollama(Model):
             run_response.metrics.set_time_to_first_token()
 
         assistant_message.metrics.start_timer()
-
+        isThinking = False
         for chunk in self.get_client().chat(
             model=self.id,
             messages=[self._format_message(m, compress_tool_results) for m in messages],  # type: ignore
             stream=True,
             **self.get_request_params(tools=tools),
         ):
-            yield self._parse_provider_response_delta(chunk)
+            message = chunk.get('message', {}).get('content', '')
+            if message == '<think>' or message == '</think>':
+                isThinking = message == '<think>'            
+            yield self._parse_provider_response_delta(chunk, isThinking)
 
         assistant_message.metrics.stop_timer()
 
@@ -334,14 +337,17 @@ class Ollama(Model):
             run_response.metrics.set_time_to_first_token()
 
         assistant_message.metrics.start_timer()
-
+        isThinking = False
         async for chunk in await self.get_async_client().chat(
             model=self.id.strip(),
             messages=[self._format_message(m, compress_tool_results) for m in messages],  # type: ignore
             stream=True,
             **self.get_request_params(tools=tools),
         ):
-            yield self._parse_provider_response_delta(chunk)
+            message = chunk.get('message', {}).get('content', '')
+            if message == '<think>' or message == '</think>':
+                isThinking = message == '<think>'
+            yield self._parse_provider_response_delta(chunk, isThinking)
 
         assistant_message.metrics.stop_timer()
 
@@ -408,8 +414,10 @@ class Ollama(Model):
 
         if response_message is not None:
             content_delta = response_message.get("content")
-            if content_delta is not None and content_delta != "":
+            if content_delta is not None  and not isThinking and content_delta != "</think>":
                 model_response.content = content_delta
+            elif isThinking and content_delta != "<think>":
+                model_response.reasoning_content = content_delta
 
             tool_calls = response_message.get("tool_calls")
             if tool_calls is not None:
