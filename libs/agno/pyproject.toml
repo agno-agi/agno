@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "2.4.6"
+version = "2.4.7"
 description = "Agno: a lightweight library for building Multi-Agent Systems"
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -95,6 +95,9 @@ portkey = ["portkey-ai"]
 
 # Dependencies for Token Counting
 tokenizers = ["tiktoken", "tokenizers"]
+
+# Dependencies for Workflow Expression Evaluation
+cel = ["cel-python"]
 
 # Dependencies for Tools
 agentql = ["agentql"]
@@ -556,6 +559,7 @@ module = [
   "reportlab.*",
   "surrealdb.*",
   "trafilatura.*",
-  "xlrd.*"
+  "xlrd.*",
+  "celpy.*"
 ]
 ignore_missing_imports = true

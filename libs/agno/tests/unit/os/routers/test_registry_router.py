@@ -2,7 +2,7 @@
 Unit tests for the Registry router.
 
 Tests cover:
-- GET /registry - List registry components (tools, toolkits, models, dbs, vector_dbs, schemas)
+- GET /registry - List registry components (tools, models, dbs, vector_dbs, schemas, functions)
 """
 
 from unittest.mock import MagicMock
@@ -139,13 +139,13 @@ class TestListRegistryWithTools:
         assert data["meta"]["total_count"] >= 1
 
         # Find the tool in the response
-        tools = [c for c in data["data"] if c["component_type"] == "tool"]
+        tools = [c for c in data["data"] if c["type"] == "tool"]
         assert len(tools) >= 1
         tool_names = [t["name"] for t in tools]
         assert "my_tool" in tool_names
 
     def test_list_registry_with_toolkit(self, settings):
-        """Test list_registry includes Toolkit and its functions."""
+        """Test list_registry includes Toolkit with embedded functions."""
 
         class MyToolkit(Toolkit):
             def __init__(self):
@@ -175,16 +175,18 @@ class TestListRegistryWithTools:
         assert response.status_code == 200
         data = response.json()
 
-        # Should have the toolkit and its functions
-        toolkits = [c for c in data["data"] if c["component_type"] == "toolkit"]
-        assert len(toolkits) == 1
-        assert toolkits[0]["name"] == "my_toolkit"
+        # Toolkit is returned as type="tool" with is_toolkit=True
+        tools = [c for c in data["data"] if c["type"] == "tool"]
+        assert len(tools) == 1
+        assert tools[0]["name"] == "my_toolkit"
+        assert tools[0]["metadata"]["is_toolkit"] is True
 
-        # Individual functions should also be listed
-        tools = [c for c in data["data"] if c["component_type"] == "tool"]
-        tool_names = [t["name"] for t in tools]
-        assert "tool_one" in tool_names
-        assert "tool_two" in tool_names
+        # Functions are embedded in metadata
+        functions = tools[0]["metadata"]["functions"]
+        assert len(functions) == 2
+        func_names = [f["name"] for f in functions]
+        assert "tool_one" in func_names
+        assert "tool_two" in func_names
 
     def test_list_registry_with_callable(self, settings):
         """Test list_registry includes callable tools."""
@@ -205,7 +207,7 @@ class TestListRegistryWithTools:
         assert response.status_code == 200
         data = response.json()
 
-        tools = [c for c in data["data"] if c["component_type"] == "tool"]
+        tools = [c for c in data["data"] if c["type"] == "tool"]
         assert len(tools) >= 1
         tool_names = [t["name"] for t in tools]
         assert "simple_function" in tool_names
@@ -238,7 +240,7 @@ class TestListRegistryWithModels:
         assert response.status_code == 200
         data = response.json()
 
-        models = [c for c in data["data"] if c["component_type"] == "model"]
+        models = [c for c in data["data"] if c["type"] == "model"]
         assert len(models) == 1
         assert models[0]["name"] == "gpt-4"
         assert models[0]["metadata"]["provider"] == "OpenAI"
@@ -258,7 +260,6 @@ class TestListRegistryWithDatabases:
         db = MockDbClass()
         db.id = "main-db"
         db.name = "Main Database"
-        db.table_name = "sessions"
 
         registry = Registry(dbs=[db])
 
@@ -272,7 +273,7 @@ class TestListRegistryWithDatabases:
         assert response.status_code == 200
         data = response.json()
 
-        dbs = [c for c in data["data"] if c["component_type"] == "db"]
+        dbs = [c for c in data["data"] if c["type"] == "db"]
         assert len(dbs) == 1
         assert dbs[0]["name"] == "Main Database"
         assert dbs[0]["metadata"]["db_id"] == "main-db"
@@ -297,7 +298,7 @@ class TestListRegistryWithDatabases:
         assert response.status_code == 200
         data = response.json()
 
-        vdbs = [c for c in data["data"] if c["component_type"] == "vector_db"]
+        vdbs = [c for c in data["data"] if c["type"] == "vector_db"]
         assert len(vdbs) == 1
         assert vdbs[0]["name"] == "Vectors"
         assert vdbs[0]["metadata"]["collection"] == "embeddings"
@@ -330,7 +331,7 @@ class TestListRegistryWithSchemas:
         assert response.status_code == 200
         data = response.json()
 
-        schemas = [c for c in data["data"] if c["component_type"] == "schema"]
+        schemas = [c for c in data["data"] if c["type"] == "schema"]
         assert len(schemas) == 1
         assert schemas[0]["name"] == "UserInput"
 
@@ -353,7 +354,7 @@ class TestListRegistryWithSchemas:
         assert response.status_code == 200
         data = response.json()
 
-        schemas = [c for c in data["data"] if c["component_type"] == "schema"]
+        schemas = [c for c in data["data"] if c["type"] == "schema"]
         assert len(schemas) == 1
         assert "schema" in schemas[0]["metadata"]
         assert "properties" in schemas[0]["metadata"]["schema"]
@@ -368,7 +369,7 @@ class TestListRegistryFiltering:
     """Tests for GET /registry endpoint filtering."""
 
     def test_list_registry_filter_by_type(self, settings):
-        """Test list_registry filters by component_type."""
+        """Test list_registry filters by resource_type."""
 
         def my_tool():
             pass
@@ -385,13 +386,13 @@ class TestListRegistryFiltering:
         app.include_router(router)
         client = TestClient(app)
 
-        response = client.get("/registry?component_type=db")
+        response = client.get("/registry?resource_type=db")
 
         assert response.status_code == 200
         data = response.json()
 
         # Should only return db components
-        assert all(c["component_type"] == "db" for c in data["data"])
+        assert all(c["type"] == "db" for c in data["data"])
         assert data["meta"]["total_count"] == 1
 
     def test_list_registry_filter_by_name(self, settings):
@@ -525,7 +526,7 @@ class TestListRegistryMixed:
         data = response.json()
 
         # Should have all component types
-        component_types = set(c["component_type"] for c in data["data"])
+        component_types = set(c["type"] for c in data["data"])
         assert "tool" in component_types
         assert "model" in component_types
         assert "db" in component_types
@@ -560,5 +561,5 @@ class TestListRegistryMixed:
 
         # Results should be sorted by (component_type, name)
         # db comes before tool alphabetically
-        types = [c["component_type"] for c in data["data"]]
+        types = [c["type"] for c in data["data"]]
         assert types == sorted(types)
