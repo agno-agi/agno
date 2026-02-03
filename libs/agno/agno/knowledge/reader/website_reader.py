@@ -7,7 +7,7 @@ from urllib.parse import urljoin, urlparse
 
 import httpx
 
-from agno.knowledge.chunking.semantic import SemanticChunking
+from agno.knowledge.chunking.fixed import FixedSizeChunking
 from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyType
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
@@ -39,7 +39,7 @@ class WebsiteReader(Reader):
         proxy: Optional[str] = None,
         **kwargs,
     ):
-        super().__init__(chunking_strategy=chunking_strategy or SemanticChunking(), **kwargs)
+        super().__init__(chunking_strategy=chunking_strategy or FixedSizeChunking(), **kwargs)
         self.max_depth = max_depth
         self.max_links = max_links
         self.proxy = proxy
