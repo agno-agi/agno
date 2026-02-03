@@ -629,8 +629,8 @@ class ConfigUpdate(BaseModel):
     links: Optional[List[Dict[str, Any]]] = None
 
 
-class RegistryContentType(str, Enum):
-    """Types of components that can be stored in a registry."""
+class RegistryResourceType(str, Enum):
+    """Types of resources that can be stored in a registry."""
 
     TOOL = "tool"
     MODEL = "model"
@@ -727,6 +727,6 @@ RegistryMetadata = Union[
 
 class RegistryContentResponse(BaseModel):
     name: str
-    type: RegistryContentType
+    type: RegistryResourceType
     description: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
