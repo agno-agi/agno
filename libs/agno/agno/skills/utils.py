@@ -72,7 +72,15 @@ def run_script(
         FileNotFoundError: If script or interpreter not found.
     """
     ensure_executable(script_path)
-    cmd = [str(script_path), *(args or [])]
+
+    # get interpreter
+    interpreter = _get_interpreter(script_path)
+
+    # build command
+    if interpreter:
+        cmd = [interpreter, str(script_path), *(args or [])]
+    else:
+        cmd = [str(script_path), *(args or [])]
 
     result = subprocess.run(
         cmd,
@@ -88,6 +96,29 @@ def run_script(
         returncode=result.returncode,
     )
 
+
+def _get_interpreter(script_path: Path) -> Optional[str]:
+    """
+    Get the appropriate interpreter for a script.
+
+    Args:
+        script_path: Path to the script
+
+    Returns:
+        Interpreter command or None if directly executable
+    """
+    extension = script_path.suffix.lower()
+
+    interpreters = {
+        ".py": "python",
+        ".js": "node",
+        ".ts": "ts-node",
+        ".sh": "bash",
+        ".rb": "ruby",
+        ".pl": "perl",
+    }
+
+    return interpreters.get(extension)
 
 def read_file_safe(file_path: Path, encoding: str = "utf-8") -> str:
     """Read a file's contents safely.
