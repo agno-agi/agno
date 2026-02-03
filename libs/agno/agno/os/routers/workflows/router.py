@@ -547,15 +547,20 @@ def get_workflow_router(
         workflows: List[WorkflowSummaryResponse] = []
         if accessible_workflows:
             for workflow in accessible_workflows:
-                workflows.append(WorkflowSummaryResponse.from_workflow(workflow=workflow))
+                workflows.append(WorkflowSummaryResponse.from_workflow(workflow=workflow, is_component=False))
 
         if os.db and isinstance(os.db, BaseDb):
-            from agno.workflow.workflow import get_workflows
+            from agno.workflow.workflow import get_workflows_with_component_info
 
-            db_workflows = get_workflows(db=os.db, registry=os.registry)
-            if db_workflows:
-                for db_workflow in db_workflows:
-                    workflows.append(WorkflowSummaryResponse.from_workflow(workflow=db_workflow))
+            for db_workflow, component_info in get_workflows_with_component_info(db=os.db, registry=os.registry):
+                workflows.append(
+                    WorkflowSummaryResponse.from_workflow(
+                        workflow=db_workflow,
+                        is_component=True,
+                        current_version=component_info.get("current_version"),
+                        stage=component_info.get("stage"),
+                    )
+                )
 
         return workflows
 

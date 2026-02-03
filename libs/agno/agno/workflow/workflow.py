@@ -5097,10 +5097,48 @@ def get_workflows(
                     if "id" not in workflow_config:
                         workflow_config["id"] = component_id
                     workflow = Workflow.from_dict(workflow_config, db=db, registry=registry)
-                    # Ensure workflow.id is set to the component_id
                     workflow.id = component_id
                     workflows.append(workflow)
         return workflows
+
+    except Exception as e:
+        log_error(f"Error loading Workflows from database: {e}")
+        return []
+
+
+def get_workflows_with_component_info(
+    db: "BaseDb",
+    registry: Optional["Registry"] = None,
+) -> List[Tuple["Workflow", Dict[str, Any]]]:
+    """
+    Get all workflows from the database along with their component metadata.
+
+    Returns a list of (workflow, component_info) tuples where component_info contains
+    'current_version' and 'stage'.
+    """
+    results: List[Tuple[Workflow, Dict[str, Any]]] = []
+    try:
+        components, _ = db.list_components(component_type=ComponentType.WORKFLOW)
+        for component in components:
+            config = db.get_config(component_id=component["component_id"])
+            if config is not None:
+                workflow_config = config.get("config")
+                if workflow_config is not None:
+                    component_id = component["component_id"]
+                    if "id" not in workflow_config:
+                        workflow_config["id"] = component_id
+                    workflow = Workflow.from_dict(workflow_config, db=db, registry=registry)
+                    workflow.id = component_id
+                    results.append(
+                        (
+                            workflow,
+                            {
+                                "current_version": component.get("current_version"),
+                                "stage": config.get("stage"),
+                            },
+                        )
+                    )
+        return results
 
     except Exception as e:
         log_error(f"Error loading Workflows from database: {e}")
