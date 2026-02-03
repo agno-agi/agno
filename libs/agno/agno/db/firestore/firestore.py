@@ -43,6 +43,7 @@ class FirestoreDb(BaseDb):
         self,
         db_client: Optional[Client] = None,
         project_id: Optional[str] = None,
+        database_id: Optional[str] = None,
         session_collection: Optional[str] = None,
         memory_collection: Optional[str] = None,
         metrics_collection: Optional[str] = None,
@@ -59,6 +60,7 @@ class FirestoreDb(BaseDb):
         Args:
             db_client (Optional[Client]): The Firestore client to use.
             project_id (Optional[str]): The GCP project ID for Firestore.
+            database_id (Optional[str]): The Firestore database ID (defaults to "(default)").
             session_collection (Optional[str]): Name of the collection to store sessions.
             memory_collection (Optional[str]): Name of the collection to store memories.
             metrics_collection (Optional[str]): Name of the collection to store metrics.
@@ -96,6 +98,7 @@ class FirestoreDb(BaseDb):
 
         self.project_id: Optional[str] = project_id
         self.db_client: Client = _client
+        self.database_id: str = database_id or "(default)"
 
     # -- DB methods --
 
@@ -224,7 +227,7 @@ class FirestoreDb(BaseDb):
             if not hasattr(self, f"_{collection_name}_initialized"):
                 if not create_collection_if_not_found:
                     return None
-                create_collection_indexes(self.db_client, collection_name, collection_type)
+                create_collection_indexes(self.db_client, collection_name, collection_type, database_id=self.database_id)
                 setattr(self, f"_{collection_name}_initialized", True)
 
             return collection_ref
