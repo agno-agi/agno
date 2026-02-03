@@ -1,0 +1,31 @@
+Reunião de planejamento - Equipe Projudi
+Data: 18-07-2025
+Hora: 9:30 AM - 9:45 AM
+Sprint: 1 - 18-07-2025 a 25-07-2025
+
+Participantes:
+- Laura Melo (Scrum Master)
+- Wagner Silva (Arquiteto de software)
+- Rodrigo Menescal (Desenvolvedor)
+- Gean Correia (Desenvolvedor)
+- Deise Lobo (Desenvolvedor)
+
+Laura Melo (Scrum Master):
+"Bom dia pessoal! Na minha tela vocês podem ver as tarefas selecionadas para a próxima sprint, temos 5 tarefas, uma para cada desenvolvedor. Gostaria que vocês me indicassem em qual tarefa trabalharão. Deise, gostaria de começar?"
+
+Deise Lobo (Desenvolvedor):
+"Claro. Eu farei a tarefa de implementação do novo serviço de autenticação. As principais atividades incluem ajustar a gestão do token JWT e integrar isso a autenticação para controle de acesso dos usuários."
+
+Gean Correia (Desenvolvedor):
+"Vou trabalhar na tarefa de redesign do dashboard para usuários. Isso inclui a implementação de novos widgets analíticos e melhorar a responsividade do dashboard."
+
+Rodrigo Menescal (Desenvolvedor):
+"Eu vou trabalhar nos ajustes no novo sistema de monitoração. Vou configurar o Prometheus e Grafana para obter melhor observabilidade."
+
+Wagner Silva (Arquiteto de software):
+"Vou trabalhar na avaliação dos requisitos da migração para o sistema e-Proc."
+
+Laura Melo (Scrum Master):
+"Excelentes definições pessoal. Desejo uma sprint muito produtiva para todos!"
+
+Reunião encerrada às 9:45 AM
