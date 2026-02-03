@@ -427,8 +427,39 @@ class MCPTools(Toolkit):
         except (RuntimeError, BaseException):
             return False
 
+    async def _safe_cleanup(self) -> None:
+        """Safely clean up all MCP resources, suppressing all errors.
+
+        This method ensures that async generator cleanup errors don't propagate
+        and crash the event loop. It should be called when the connection fails.
+        """
+        # Clean up session context
+        if self._session_context is not None:
+            try:
+                await self._session_context.__aexit__(None, None, None)
+            except Exception:
+                pass
+            self._session_context = None
+            self.session = None
+
+        # Clean up main context (async generator)
+        if self._context is not None:
+            try:
+                await self._context.aclose()
+            except Exception:
+                try:
+                    await self._context.__aexit__(None, None, None)
+                except Exception:
+                    pass
+            self._context = None
+
+        # Clear active contexts list
+        self._active_contexts = []
+        self._initialized = False
+
     async def connect(self, force: bool = False):
         """Initialize a MCPTools instance and connect to the contextual MCP server"""
+        import asyncio
 
         if force:
             # Clean up the session and context so we force a new connection
@@ -443,9 +474,16 @@ class MCPTools(Toolkit):
             return
 
         try:
-            await self._connect()
+            # Shield the connection to prevent cancel scope errors from propagating
+            await asyncio.shield(self._connect())
+        except asyncio.CancelledError as e:
+            # Catch CancelledError specifically to prevent it from propagating
+            log_error(f"Failed to connect to {str(self)}: {e}")
+            await self._safe_cleanup()
         except (RuntimeError, BaseException) as e:
             log_error(f"Failed to connect to {str(self)}: {e}")
+            # Ensure all resources are cleaned up to prevent async generator errors
+            await self._safe_cleanup()
 
     async def _connect(self) -> None:
         """Connects to the MCP server and initializes the tools"""
@@ -482,12 +520,40 @@ class MCPTools(Toolkit):
             self._context = stdio_client(self.server_params)  # type: ignore
             client_timeout = self.timeout_seconds
 
-        session_params = await self._context.__aenter__()  # type: ignore
+        try:
+            session_params = await self._context.__aenter__()  # type: ignore
+        except Exception:
+            # Clean up the async generator that failed to enter properly
+            # This prevents RuntimeError during garbage collection
+            if self._context is not None:
+                try:
+                    await self._context.aclose()
+                except Exception:
+                    pass
+                self._context = None
+            raise
         self._active_contexts.append(self._context)
         read, write = session_params[0:2]
 
         self._session_context = ClientSession(read, write, read_timeout_seconds=timedelta(seconds=client_timeout))  # type: ignore
-        self.session = await self._session_context.__aenter__()  # type: ignore
+        try:
+            self.session = await self._session_context.__aenter__()  # type: ignore
+        except Exception:
+            # Clean up the session context that failed to enter
+            if self._session_context is not None:
+                try:
+                    await self._session_context.__aexit__(None, None, None)
+                except Exception:
+                    pass
+                self._session_context = None
+            # Also clean up the already-entered context
+            if self._context is not None:
+                try:
+                    await self._context.__aexit__(None, None, None)
+                except Exception:
+                    pass
+                self._context = None
+            raise
         self._active_contexts.append(self._session_context)
 
         # Initialize with the new session
