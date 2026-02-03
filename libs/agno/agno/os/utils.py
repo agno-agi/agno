@@ -260,6 +260,15 @@ async def get_db(
     return next(db for dbs in dbs.values() for db in dbs)
 
 
+def _generate_knowledge_id(name: str, db_id: str) -> str:
+    """Generate a deterministic ID for a knowledge instance based on name and db_id."""
+    import hashlib
+
+    id_seed = f"{name}:{db_id}"
+    hash_hex = hashlib.md5(id_seed.encode()).hexdigest()
+    return f"{hash_hex[:8]}-{hash_hex[8:12]}-{hash_hex[12:16]}-{hash_hex[16:20]}-{hash_hex[20:32]}"
+
+
 def get_knowledge_instance(
     knowledge_instances: List[Union[Knowledge, RemoteKnowledge]],
     db_id: Optional[str] = None,
@@ -270,7 +279,7 @@ def get_knowledge_instance(
     Args:
         knowledge_instances: List of knowledge instances to search
         db_id: Database ID to filter by (optional)
-        knowledge_id: Knowledge base name/ID to filter by (optional)
+        knowledge_id: Knowledge base name or generated ID to filter by (optional)
 
     Returns:
         The matching knowledge instance
@@ -278,14 +287,20 @@ def get_knowledge_instance(
     Raises:
         HTTPException: If no matching instance is found or parameters are invalid
     """
-    # If knowledge_id provided, find by name
+    # If knowledge_id provided, find by name or generated ID
     if knowledge_id:
         for knowledge in knowledge_instances:
+            if not knowledge.contents_db:
+                continue
             # Use knowledge name or generate fallback name from db_id
-            name = knowledge.name or (f"knowledge_{knowledge.contents_db.id}" if knowledge.contents_db else None)
-            if name == knowledge_id:
+            name = knowledge.name or f"knowledge_{knowledge.contents_db.id}"
+            # Generate the ID for this knowledge instance
+            generated_id = _generate_knowledge_id(name, knowledge.contents_db.id)
+
+            # Match by name or generated ID
+            if name == knowledge_id or generated_id == knowledge_id:
                 # If db_id also provided, validate it matches
-                if db_id and knowledge.contents_db and knowledge.contents_db.id != db_id:
+                if db_id and knowledge.contents_db.id != db_id:
                     raise HTTPException(
                         status_code=400,
                         detail=f"Knowledge base '{knowledge_id}' belongs to db '{knowledge.contents_db.id}', not '{db_id}'",

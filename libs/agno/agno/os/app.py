@@ -24,6 +24,7 @@ from agno.os.config import (
     EvalsDomainConfig,
     KnowledgeConfig,
     KnowledgeDomainConfig,
+    KnowledgeInstanceConfig,
     MemoryConfig,
     MemoryDomainConfig,
     MetricsConfig,
@@ -51,6 +52,7 @@ from agno.os.routers.traces import get_traces_router
 from agno.os.routers.workflows import get_workflow_router
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
+    _generate_knowledge_id,
     collect_mcp_tools_from_team,
     collect_mcp_tools_from_workflow,
     find_conflicting_routes,
@@ -1054,23 +1056,40 @@ class AgentOS:
         if knowledge_config.dbs is None:
             knowledge_config.dbs = []
 
-        # Build mapping: db_id -> set of unique knowledge names
-        db_id_to_knowledge_names: Dict[str, set] = {}
+        if knowledge_config.knowledge_instances is None:
+            knowledge_config.knowledge_instances = []
+
+        # Track seen knowledge names to detect duplicates
+        seen_names: set = set()
+
+        # Build knowledge_instances list
         for knowledge in self.knowledge_instances:
             contents_db = getattr(knowledge, "contents_db", None)
             if contents_db:
                 # Use knowledge name or generate a fallback name from db_id
                 knowledge_name = knowledge.name or f"knowledge_{contents_db.id}"
-                if contents_db.id not in db_id_to_knowledge_names:
-                    db_id_to_knowledge_names[contents_db.id] = set()
+
                 # Warn if duplicate name is detected
-                if knowledge_name in db_id_to_knowledge_names[contents_db.id]:
+                if knowledge_name in seen_names:
                     log_warning(
-                        f"Duplicate knowledge base name '{knowledge_name}' detected for database '{contents_db.id}'. "
+                        f"Duplicate knowledge base name '{knowledge_name}' detected. "
                         "Each knowledge instance should have a unique name for proper tracking."
                     )
-                else:
-                    db_id_to_knowledge_names[contents_db.id].add(knowledge_name)
+                    continue
+                seen_names.add(knowledge_name)
+
+                # Generate a deterministic ID based on name and db_id
+                knowledge_id = _generate_knowledge_id(knowledge_name, contents_db.id)
+
+                knowledge_config.knowledge_instances.append(
+                    KnowledgeInstanceConfig(
+                        id=knowledge_id,
+                        name=knowledge_name,
+                        description=knowledge.description,
+                        db_id=contents_db.id,
+                        table=contents_db.knowledge_table_name,
+                    )
+                )
 
         dbs_with_specific_config = [db.db_id for db in knowledge_config.dbs]
 
@@ -1079,15 +1098,10 @@ class AgentOS:
             if db_id not in dbs_with_specific_config:
                 # Collect unique table names from all databases with the same id
                 unique_tables = list(set(db.knowledge_table_name for db in dbs))
-                # Convert set to sorted list for consistent ordering
-                names = sorted(db_id_to_knowledge_names.get(db_id, set()))
                 knowledge_config.dbs.append(
                     DatabaseConfig(
                         db_id=db_id,
-                        domain_config=KnowledgeDomainConfig(
-                            display_name=db_id,
-                            knowledge_base_names=names if names else None,
-                        ),
+                        domain_config=KnowledgeDomainConfig(display_name=db_id),
                         tables=unique_tables,
                     )
                 )
