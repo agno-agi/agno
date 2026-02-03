@@ -576,6 +576,7 @@ class BaseDb(ABC):
         component_type: Optional[ComponentType] = None,
         name: Optional[str] = None,
         description: Optional[str] = None,
+        current_version: Optional[int] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Create or update a component.
@@ -585,6 +586,7 @@ class BaseDb(ABC):
             component_type: Type (agent|team|workflow). Required for create, optional for update.
             name: Display name.
             description: Optional description.
+            current_version: Optional current version.
             metadata: Optional metadata dict.
 
         Returns:

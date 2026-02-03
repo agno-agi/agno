@@ -7,6 +7,7 @@ from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List
 from uuid import uuid4
 
 from agno.models.metrics import Metrics
+from agno.registry import Registry
 from agno.run.agent import RunOutputEvent
 from agno.run.base import RunContext
 from agno.run.team import TeamRunOutputEvent
@@ -40,7 +41,16 @@ WorkflowSteps = List[
 
 @dataclass
 class Parallel:
-    """A list of steps that execute in parallel"""
+    """A list of steps that execute in parallel.
+
+    Unlike sequential constructs (Steps, Loop), Parallel uses variadic arguments
+    to emphasize that the steps are independent and unordered.
+
+    Supports flexible calling conventions:
+        Parallel(step1, step2, step3)                      # Steps only (name defaults to "Parallel")
+        Parallel(step1, step2, name="my_parallel")         # Name as keyword (at end)
+        Parallel("my_parallel", step1, step2)              # Name as first positional arg
+    """
 
     steps: WorkflowSteps
 
@@ -49,13 +59,74 @@ class Parallel:
 
     def __init__(
         self,
-        *steps: WorkflowSteps,
+        *args: Union[str, WorkflowSteps],
         name: Optional[str] = None,
         description: Optional[str] = None,
     ):
-        self.steps = list(steps)
-        self.name = name
+        resolved_name = name
+        resolved_steps: List[Any] = []
+
+        if args:
+            first_arg = args[0]
+            # Check if first argument is a plain string (likely a name, not a step)
+            if isinstance(first_arg, str):
+                # First arg is the name, rest are steps
+                resolved_name = first_arg
+                resolved_steps = list(args[1:])
+            else:
+                # All args are steps
+                resolved_steps = list(args)
+
+        # If name was provided as keyword, it takes precedence
+        if name is not None:
+            resolved_name = name
+
+        self.steps = resolved_steps
+        self.name = resolved_name
         self.description = description
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "type": "Parallel",
+            "name": self.name,
+            "description": self.description,
+            "steps": [step.to_dict() for step in self.steps if hasattr(step, "to_dict")],
+        }
+
+    @classmethod
+    def from_dict(
+        cls,
+        data: Dict[str, Any],
+        registry: Optional["Registry"] = None,
+        db: Optional[Any] = None,
+        links: Optional[List[Dict[str, Any]]] = None,
+    ) -> "Parallel":
+        from agno.workflow.condition import Condition
+        from agno.workflow.loop import Loop
+        from agno.workflow.router import Router
+        from agno.workflow.steps import Steps
+
+        def deserialize_step(step_data: Dict[str, Any]) -> Any:
+            step_type = step_data.get("type", "Step")
+            if step_type == "Loop":
+                return Loop.from_dict(step_data, registry=registry, db=db, links=links)
+            elif step_type == "Parallel":
+                return cls.from_dict(step_data, registry=registry, db=db, links=links)
+            elif step_type == "Steps":
+                return Steps.from_dict(step_data, registry=registry, db=db, links=links)
+            elif step_type == "Condition":
+                return Condition.from_dict(step_data, registry=registry, db=db, links=links)
+            elif step_type == "Router":
+                return Router.from_dict(step_data, registry=registry, db=db, links=links)
+            else:
+                return Step.from_dict(step_data, registry=registry, db=db, links=links)
+
+        deserialized_steps = [deserialize_step(step) for step in data.get("steps", [])]
+        return cls(
+            *deserialized_steps,
+            name=data.get("name"),
+            description=data.get("description"),
+        )
 
     def _prepare_steps(self):
         """Prepare the steps for execution - mirrors workflow logic"""
