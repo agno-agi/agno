@@ -526,7 +526,7 @@ class Claude(Model):
 
     def _prepare_request_kwargs(
         self,
-        system_message: str,
+        system_message: Union[str, List[Dict[str, Any]]],
         tools: Optional[List[Dict[str, Any]]] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
     ) -> Dict[str, Any]:
@@ -534,7 +534,9 @@ class Claude(Model):
         Prepare the request keyword arguments for the API call.
 
         Args:
-            system_message (str): The concatenated system messages.
+            system_message: The system messages, either as:
+                - A concatenated string (legacy format)
+                - A list of structured blocks with optional cache_control (multi-block format)
             tools: Optional list of tools
             response_format: Optional response format (Pydantic model or dict)
 
@@ -547,7 +549,11 @@ class Claude(Model):
         # Pass response_format and tools to get_request_params for beta header handling
         request_kwargs = self.get_request_params(response_format=response_format, tools=tools).copy()
         if system_message:
-            if self.cache_system_prompt:
+            if isinstance(system_message, list):
+                # Multi-block format with per-message cache_control from format_messages()
+                request_kwargs["system"] = system_message
+            elif self.cache_system_prompt:
+                # Legacy string format with model-level cache settings
                 cache_control = (
                     {"type": "ephemeral", "ttl": "1h"}
                     if self.extended_cache_time is not None and self.extended_cache_time is True
