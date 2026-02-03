@@ -6,7 +6,7 @@ from agno.tools import Toolkit
 from agno.utils.log import log_info, logger
 
 try:
-    from seltz import Seltz
+    from seltz import Includes, Seltz
     from seltz.exceptions import (
         SeltzAPIError,
         SeltzAuthenticationError,
@@ -28,6 +28,8 @@ class SeltzTools(Toolkit):
         endpoint: Optional Seltz gRPC endpoint. If not provided, uses SDK default.
         insecure: Use an insecure gRPC channel. Defaults to False.
         max_documents: Default maximum number of documents to return per search.
+        context: Default context to improve search quality (e.g., "user is looking for Python docs").
+        profile: Default search profile to use for ranking.
         show_results: Log search results for debugging.
         enable_search: Enable search tool functionality. Defaults to True.
         all: Enable all tools. Overrides individual flags when True. Defaults to False.
@@ -39,6 +41,8 @@ class SeltzTools(Toolkit):
         endpoint: Optional[str] = None,
         insecure: bool = False,
         max_documents: int = 10,
+        context: Optional[str] = None,
+        profile: Optional[str] = None,
         show_results: bool = False,
         enable_search: bool = True,
         all: bool = False,
@@ -54,6 +58,8 @@ class SeltzTools(Toolkit):
         self.endpoint = endpoint
         self.insecure = insecure
         self.max_documents = max_documents
+        self.context = context
+        self.profile = profile
         self.show_results = show_results
 
         self.client: Optional[Seltz] = None
@@ -75,24 +81,34 @@ class SeltzTools(Toolkit):
         """Convert Seltz documents into JSON for the agent."""
         parsed: List[dict[str, Any]] = []
         for doc in documents or []:
-            doc_dict: dict[str, Any] = {}
-            url = getattr(doc, "url", None)
-            content = getattr(doc, "content", None)
-
-            if url is not None:
-                doc_dict["url"] = url
-            if content:
-                doc_dict["content"] = content
+            # New SDK documents have a to_dict() method
+            if hasattr(doc, "to_dict"):
+                doc_dict = doc.to_dict()
+            else:
+                # Fallback for compatibility
+                doc_dict = {}
+                url = getattr(doc, "url", None)
+                content = getattr(doc, "content", None)
+                if url is not None:
+                    doc_dict["url"] = url
+                if content:
+                    doc_dict["content"] = content
             if doc_dict:
                 parsed.append(doc_dict)
         return json.dumps(parsed, indent=4, ensure_ascii=False)
 
-    def search_seltz(self, query: str, max_documents: Optional[int] = None) -> str:
+    def search_seltz(
+        self,
+        query: str,
+        max_documents: Optional[int] = None,
+        context: Optional[str] = None,
+    ) -> str:
         """Use this function to search Seltz for a query.
 
         Args:
             query: The query to search for.
             max_documents: Maximum number of documents to return. Defaults to toolkit `max_documents`.
+            context: Additional context to improve search quality. Defaults to toolkit `context`.
 
         Returns:
             str: Search results in JSON format.
@@ -107,12 +123,20 @@ class SeltzTools(Toolkit):
         if limit <= 0:
             return "Error: max_documents must be greater than 0."
 
+        search_context = context if context is not None else self.context
+
         try:
             if self.show_results:
                 log_info(f"Searching Seltz for: {query}")
 
-            response = self.client.search(query, max_documents=limit)
-            result = self._parse_documents(getattr(response, "documents", []))
+            includes = Includes(max_documents=limit)
+            response = self.client.search(
+                query=query,
+                includes=includes,
+                context=search_context,
+                profile=self.profile,
+            )
+            result = self._parse_documents(response.documents)
 
             if self.show_results:
                 log_info(result)
