@@ -68,22 +68,66 @@ class FalTools(Toolkit):
                 on_queue_update=self.on_queue_update,
             )
 
-            media_id = str(uuid4())
-
-            if "image" in result:
+            # Handle images array (plural)
+            if "images" in result and isinstance(result["images"], list) and len(result["images"]) > 0:
+                images = []
+                urls = []
+                for img_data in result["images"]:
+                    url = img_data.get("url", "")
+                    if url:
+                        urls.append(url)
+                        image_artifact = Image(
+                            id=str(uuid4()),
+                            url=url,
+                        )
+                        images.append(image_artifact)
+                
+                if images:
+                    urls_text = ", ".join(urls)
+                    return ToolResult(
+                        content=f"Generated {len(images)} image(s) successfully: {urls_text}",
+                        images=images
+                    )
+            
+            # Handle single image (singular)
+            elif "image" in result:
                 url = result.get("image", {}).get("url", "")
                 image_artifact = Image(
-                    id=media_id,
+                    id=str(uuid4()),
                     url=url,
                 )
                 return ToolResult(content=f"Image generated successfully at {url}", images=[image_artifact])
+            
+            # Handle videos array (plural)
+            elif "videos" in result and isinstance(result["videos"], list) and len(result["videos"]) > 0:
+                videos = []
+                urls = []
+                for vid_data in result["videos"]:
+                    url = vid_data.get("url", "")
+                    if url:
+                        urls.append(url)
+                        video_artifact = Video(
+                            id=str(uuid4()),
+                            url=url,
+                        )
+                        videos.append(video_artifact)
+                
+                if videos:
+                    urls_text = ", ".join(urls)
+                    return ToolResult(
+                        content=f"Generated {len(videos)} video(s) successfully: {urls_text}",
+                        videos=videos
+                    )
+            
+            # Handle single video (singular)
             elif "video" in result:
                 url = result.get("video", {}).get("url", "")
                 video_artifact = Video(
-                    id=media_id,
+                    id=str(uuid4()),
                     url=url,
                 )
                 return ToolResult(content=f"Video generated successfully at {url}", videos=[video_artifact])
+            
             else:
                 logger.error(f"Unsupported type in result: {result}")
                 return ToolResult(content=f"Unsupported type in result: {result}")
