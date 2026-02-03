@@ -178,7 +178,7 @@ class GoogleDriveTools(Toolkit):
                 # Opens up a browser window for OAuth authentication
                 self.creds = flow.run_local_server(port=self.auth_port)  # type: ignore
 
-            token_file.write_text(self.creds.to_json()) if self.creds else None
+            token_file.write_text(self.creds.to_json(), encoding="utf-8") if self.creds else None
 
     @authenticate
     def list_files(self, query: Optional[str] = None, page_size: int = 10) -> List[dict]:

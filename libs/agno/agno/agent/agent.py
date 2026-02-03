@@ -10649,11 +10649,11 @@ class Agent:
                 if not fn_path.parent.exists():
                     fn_path.parent.mkdir(parents=True, exist_ok=True)
                 if isinstance(run_response.content, str):
-                    fn_path.write_text(run_response.content)
+                    fn_path.write_text(run_response.content, encoding="utf-8")
                 else:
                     import json
 
-                    fn_path.write_text(json.dumps(run_response.content, indent=2))
+                    fn_path.write_text(json.dumps(run_response.content, indent=2), encoding="utf-8")
             except Exception as e:
                 log_warning(f"Failed to save output to file: {e}")
 

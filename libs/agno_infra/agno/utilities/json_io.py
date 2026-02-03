@@ -20,11 +20,11 @@ class CustomJSONEncoder(json.JSONEncoder):
 def read_json_file(file_path: Optional[Path]) -> Optional[Union[Dict, List]]:
     if file_path is not None and file_path.exists() and file_path.is_file():
         # log_debug(f"Reading {file_path}")
-        return json.loads(file_path.read_text())
+        return json.loads(file_path.read_text(encoding="utf-8"))
     return None
 
 
 def write_json_file(file_path: Optional[Path], data: Optional[Union[Dict, List]], **kwargs) -> None:
     if file_path is not None and data is not None:
         log_debug(f"Writing {file_path}")
-        file_path.write_text(json.dumps(data, cls=CustomJSONEncoder, indent=4, **kwargs))
+        file_path.write_text(json.dumps(data, cls=CustomJSONEncoder, indent=4, **kwargs), encoding="utf-8")
