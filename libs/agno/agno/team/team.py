@@ -8734,8 +8734,8 @@ class Team:
             tool_choice=config.get("tool_choice"),
             get_member_information_tool=config.get("get_member_information_tool", False),
             # --- Schema settings ---
-            # input_schema=config.get("input_schema"),  # TODO
-            # output_schema=config.get("output_schema"),  # TODO
+            input_schema=config.get("input_schema"),
+            output_schema=config.get("output_schema"),
             # --- Parser and output settings ---
             # parser_model=config.get("parser_model"),  # TODO
             parser_model_prompt=config.get("parser_model_prompt"),
