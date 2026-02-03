@@ -1740,7 +1740,31 @@ class Model(ABC):
         if model_response_delta.response_usage is not None:
             if stream_data.response_metrics is None:
                 stream_data.response_metrics = Metrics()
-            stream_data.response_metrics += model_response_delta.response_usage
+            usage = model_response_delta.response_usage
+            current = stream_data.response_metrics
+            for field in ("input_tokens", "output_tokens", "total_tokens"):
+                value = getattr(usage, field, None)
+                if value is not None:
+                    if getattr(current, field, None) is None or value > getattr(current, field):
+                        setattr(current, field, value)
+            current.audio_input_tokens += usage.audio_input_tokens
+            current.audio_output_tokens += usage.audio_output_tokens
+            current.audio_total_tokens += usage.audio_total_tokens
+            current.cache_read_tokens += usage.cache_read_tokens
+            current.cache_write_tokens += usage.cache_write_tokens
+            current.reasoning_tokens += usage.reasoning_tokens
+            if usage.duration:
+                current.duration = (current.duration or 0) + usage.duration
+            if usage.time_to_first_token and (
+                current.time_to_first_token is None or usage.time_to_first_token < current.time_to_first_token
+            ):
+                current.time_to_first_token = usage.time_to_first_token
+            if usage.provider_metrics:
+                current.provider_metrics = current.provider_metrics or {}
+                current.provider_metrics.update(usage.provider_metrics)
+            if usage.additional_metrics:
+                current.additional_metrics = current.additional_metrics or {}
+                current.additional_metrics.update(usage.additional_metrics)
 
         # Update stream_data content
         if model_response_delta.content is not None:
