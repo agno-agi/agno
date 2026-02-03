@@ -260,23 +260,55 @@ async def get_db(
     return next(db for dbs in dbs.values() for db in dbs)
 
 
-def get_knowledge_instance_by_db_id(
-    knowledge_instances: List[Union[Knowledge, RemoteKnowledge]], db_id: Optional[str] = None
+def get_knowledge_instance(
+    knowledge_instances: List[Union[Knowledge, RemoteKnowledge]],
+    db_id: Optional[str] = None,
+    knowledge_id: Optional[str] = None,
 ) -> Union[Knowledge, RemoteKnowledge]:
-    """Return the knowledge instance with the given ID, or the first knowledge instance if no ID is provided."""
+    """Return the knowledge instance matching the given criteria.
+
+    Args:
+        knowledge_instances: List of knowledge instances to search
+        db_id: Database ID to filter by (optional)
+        knowledge_id: Knowledge base name/ID to filter by (optional)
+
+    Returns:
+        The matching knowledge instance
+
+    Raises:
+        HTTPException: If no matching instance is found or parameters are invalid
+    """
+    # If knowledge_id provided, find by name
+    if knowledge_id:
+        for knowledge in knowledge_instances:
+            # Use knowledge name or generate fallback name from db_id
+            name = knowledge.name or (f"knowledge_{knowledge.contents_db.id}" if knowledge.contents_db else None)
+            if name == knowledge_id:
+                # If db_id also provided, validate it matches
+                if db_id and knowledge.contents_db and knowledge.contents_db.id != db_id:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Knowledge base '{knowledge_id}' belongs to db '{knowledge.contents_db.id}', not '{db_id}'",
+                    )
+                return knowledge
+        raise HTTPException(status_code=404, detail=f"Knowledge base '{knowledge_id}' not found")
+
+    # If only one instance, return it (backwards compatible)
     if not db_id and len(knowledge_instances) == 1:
         return next(iter(knowledge_instances))
 
+    # If no identifiers provided, require one
     if not db_id:
         raise HTTPException(
-            status_code=400, detail="The db_id query parameter is required when using multiple databases"
+            status_code=400, detail="Either db_id or knowledge_id query parameter is required when using multiple knowledge bases"
         )
 
+    # Find by db_id (backwards compatible behavior)
     for knowledge in knowledge_instances:
         if knowledge.contents_db and knowledge.contents_db.id == db_id:
             return knowledge
 
-    raise HTTPException(status_code=404, detail=f"Knowledge instance with id '{db_id}' not found")
+    raise HTTPException(status_code=404, detail=f"Knowledge instance with db_id '{db_id}' not found")
 
 
 def get_run_input(run_dict: Dict[str, Any], is_workflow_run: bool = False) -> str:
