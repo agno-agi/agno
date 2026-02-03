@@ -106,6 +106,43 @@ STEP_TYPE_MAPPING = {
     Router: StepType.ROUTER,
 }
 
+
+def _step_from_dict(
+    data: Dict[str, Any],
+    registry: Optional["Registry"] = None,
+    db: Optional["BaseDb"] = None,
+    links: Optional[List[Dict[str, Any]]] = None,
+) -> Union[Step, Steps, Loop, Parallel, Condition, Router]:
+    """
+    Deserialize a step from a dictionary based on its type.
+
+    Args:
+        data: Dictionary containing step configuration with a "type" field
+        registry: Optional registry for rehydrating non-serializable objects
+        db: Optional database for loading agents/teams in steps
+        links: Optional links for this step version
+
+    Returns:
+        The appropriate step type instance (Step, Steps, Loop, Parallel, Condition, or Router)
+    """
+    step_type = data.get("type", "Step")
+
+    if step_type == "Loop":
+        return Loop.from_dict(data, registry=registry, db=db, links=links)
+    elif step_type == "Parallel":
+        return Parallel.from_dict(data, registry=registry, db=db, links=links)
+    elif step_type == "Steps":
+        return Steps.from_dict(data, registry=registry, db=db, links=links)
+    elif step_type == "Condition":
+        return Condition.from_dict(data, registry=registry, db=db, links=links)
+    elif step_type == "Router":
+        return Router.from_dict(data, registry=registry, db=db, links=links)
+    elif step_type == "Step":
+        return Step.from_dict(data, registry=registry, db=db, links=links)
+    else:
+        raise ValueError(f"Unknown step type: {step_type}")
+
+
 WorkflowSteps = Union[
     Callable[
         ["Workflow", WorkflowExecutionInput],
@@ -597,7 +634,6 @@ class Workflow:
         config["telemetry"] = self.telemetry
 
         # --- Steps ---
-        # TODO: Implement steps serialization for step types other than Step
         if self.steps and isinstance(self.steps, list):
             config["steps"] = [step.to_dict() for step in self.steps if hasattr(step, "to_dict")]
 
@@ -630,7 +666,7 @@ class Workflow:
             db_data = config["db"]
             db_id = db_data.get("id")
 
-            # First try to get the db from the registry (preferred - reuses existing connection)
+            # Try to get the db from the registry
             if registry and db_id:
                 registry_db = registry.get_db(db_id)
                 if registry_db is not None:
@@ -655,7 +691,7 @@ class Workflow:
         # --- Handle steps reconstruction ---
         steps: Optional[WorkflowSteps] = None
         if "steps" in config and config["steps"]:
-            steps = [Step.from_dict(step_data, db=db, links=links, registry=registry) for step_data in config["steps"]]
+            steps = [_step_from_dict(step_data, db=db, links=links, registry=registry) for step_data in config["steps"]]
             del config["steps"]
 
         return cls(
@@ -681,7 +717,7 @@ class Workflow:
             store_events=config.get("store_events", False),
             store_executor_outputs=config.get("store_executor_outputs", True),
             # --- Schema settings ---
-            # input_schema=config.get("input_schema"),  # TODO
+            input_schema=config.get("input_schema"),
             # --- Metadata ---
             metadata=config.get("metadata"),
             # --- Debug and telemetry settings ---
@@ -723,40 +759,53 @@ class Workflow:
         saved_versions: Dict[str, int] = {}
 
         # Collect all links
-        all_links = []
-        steps_config = []
+        all_links: List[Dict[str, Any]] = []
+
+        def _save_step_agents(
+            step: Any,
+            position: int,
+            saved_versions: Dict[str, int],
+            all_links: List[Dict[str, Any]],
+        ) -> None:
+            """Recursively save agents/teams in steps, including nested containers."""
+            if isinstance(step, Step):
+                # Save agent if present
+                if step.agent and isinstance(step.agent, Agent):
+                    agent_version = step.agent.save(
+                        db=db_,
+                        stage=stage,
+                        label=label,
+                        notes=notes,
+                    )
+                    if step.agent.id is not None and agent_version is not None:
+                        saved_versions[step.agent.id] = agent_version
+
+                # Save team if present
+                if step.team and isinstance(step.team, Team):
+                    team_version = step.team.save(db=db_, stage=stage, label=label, notes=notes)
+                    if step.team.id is not None and team_version is not None:
+                        saved_versions[step.team.id] = team_version
+
+                # Add links with position and pinned version
+                for link in step.get_links(position=position):
+                    if link["child_component_id"] in saved_versions:
+                        link["child_version"] = saved_versions[link["child_component_id"]]
+                    all_links.append(link)
+
+            elif isinstance(step, (Parallel, Loop, Steps, Condition)):
+                # Recursively process nested steps
+                for nested_position, nested_step in enumerate(step.steps):
+                    _save_step_agents(nested_step, nested_position, saved_versions, all_links)
+
+            elif isinstance(step, Router):
+                # Router uses 'choices' instead of 'steps'
+                for nested_position, nested_step in enumerate(step.choices):
+                    _save_step_agents(nested_step, nested_position, saved_versions, all_links)
 
         try:
             steps_to_save = self.steps if isinstance(self.steps, list) else []
             for position, step in enumerate(steps_to_save):
-                # TODO: Support other Step types
-                if isinstance(step, Step):
-                    # TODO: Allow not saving a new config if the agent/team already has a published config and no changes have been made
-                    # Save agent/team if present and capture version
-                    if step.agent and isinstance(step.agent, Agent):
-                        agent_version = step.agent.save(
-                            db=db_,
-                            stage=stage,
-                            label=label,
-                            notes=notes,
-                        )
-                        if step.agent.id is not None and agent_version is not None:
-                            saved_versions[step.agent.id] = agent_version
-
-                    if step.team and isinstance(step.team, Team):
-                        team_version = step.team.save(db=db_, stage=stage, label=label, notes=notes)
-                        if step.team.id is not None and team_version is not None:
-                            saved_versions[step.team.id] = team_version
-
-                    # Add step config
-                    steps_config.append(step.to_dict())
-
-                    # Add links with position and pinned version
-                    for link in step.get_links(position=position):
-                        # Pin the version if we just saved it
-                        if link["child_component_id"] in saved_versions:
-                            link["child_version"] = saved_versions[link["child_component_id"]]
-                        all_links.append(link)
+                _save_step_agents(step, position, saved_versions, all_links)
 
             db_.upsert_component(
                 component_id=self.id,
@@ -1346,7 +1395,7 @@ class Workflow:
 
         # ALSO broadcast through websocket manager for reconnected clients
         # This ensures clients who reconnect after workflow started still receive events
-        if buffer_run_id:
+        if buffer_run_id and websocket_handler:
             try:
                 import asyncio
 
@@ -1392,6 +1441,9 @@ class Workflow:
             event.workflow_id = workflow_run_response.workflow_id
         if hasattr(event, "workflow_run_id"):
             event.workflow_run_id = workflow_run_response.run_id
+        # Set session_id to match workflow's session_id for consistent event tracking
+        if hasattr(event, "session_id") and workflow_run_response.session_id:
+            event.session_id = workflow_run_response.session_id
         if hasattr(event, "step_id") and step_id:
             event.step_id = step_id
         if hasattr(event, "step_name") and step_name is not None:
@@ -3822,6 +3874,7 @@ class Workflow:
         stream_events: Optional[bool] = None,
         background: Optional[bool] = False,
         background_tasks: Optional[Any] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
     ) -> WorkflowRunOutput: ...
 
     @overload
@@ -3841,6 +3894,7 @@ class Workflow:
         stream_events: Optional[bool] = None,
         background: Optional[bool] = False,
         background_tasks: Optional[Any] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
     ) -> Iterator[WorkflowRunOutputEvent]: ...
 
     def run(
@@ -3859,6 +3913,7 @@ class Workflow:
         stream_events: Optional[bool] = None,
         background: Optional[bool] = False,
         background_tasks: Optional[Any] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> Union[WorkflowRunOutput, Iterator[WorkflowRunOutputEvent]]:
         """Execute the workflow synchronously with optional streaming"""
@@ -3938,6 +3993,7 @@ class Workflow:
             session_state=session_state,
             workflow_id=self.id,
             workflow_name=self.name,
+            dependencies=dependencies,
         )
 
         # Execute workflow agent if configured
@@ -4005,6 +4061,7 @@ class Workflow:
         background: Optional[bool] = False,
         websocket: Optional[WebSocket] = None,
         background_tasks: Optional[Any] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
     ) -> WorkflowRunOutput: ...
 
     @overload
@@ -4025,6 +4082,7 @@ class Workflow:
         background: Optional[bool] = False,
         websocket: Optional[WebSocket] = None,
         background_tasks: Optional[Any] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
     ) -> AsyncIterator[WorkflowRunOutputEvent]: ...
 
     def arun(  # type: ignore
@@ -4044,6 +4102,7 @@ class Workflow:
         background: Optional[bool] = False,
         websocket: Optional[WebSocket] = None,
         background_tasks: Optional[Any] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> Union[WorkflowRunOutput, AsyncIterator[WorkflowRunOutputEvent]]:
         """Execute the workflow synchronously with optional streaming"""
@@ -4109,6 +4168,7 @@ class Workflow:
             session_id=session_id,
             user_id=user_id,
             session_state=session_state,
+            dependencies=dependencies,
         )
 
         log_debug(f"Async Workflow Run Start: {self.name}", center=True)
