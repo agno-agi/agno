@@ -128,7 +128,7 @@ class SessionSummaryManager:
         system_prompt += "\n".join(conversation_messages)
         system_prompt += "</conversation>"
 
-        if response_format == {"type": "json_object"}:
+        if response_format == {"type": "json_object"} or response_format == SessionSummaryResponse:
             from agno.utils.prompts import get_json_output_prompt
 
             system_prompt += "\n" + get_json_output_prompt(SessionSummaryResponse)  # type: ignore
