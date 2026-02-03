@@ -1089,6 +1089,8 @@ class Claude(Model):
 
         if hasattr(response, "message") and hasattr(response.message, "usage") and response.message.usage is not None:  # type: ignore
             model_response.response_usage = self._get_metrics(response.message.usage)  # type: ignore
+            # Mark as cumulative so base.py doesn't accumulate
+            model_response._is_cumulative_usage = True
 
         # Capture the Beta response
         try:
