@@ -83,7 +83,7 @@ knowledge2 = Knowledge(
 contents_db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai", knowledge_table="knowledge_contents2")
 
 knowledge3 = Knowledge(
-    name="Personal Knowledge Base",
+    name="Personal Knowledge Base2",
     description="Personal knowledge from multiple sources",
     contents_db=contents_db,
     vector_db=vector_db,

@@ -1007,6 +1007,41 @@ class AgentOS:
 
         self.knowledge_instances = knowledge_instances
 
+        # Validate that all knowledge instances have unique names
+        # Duplicate names cause content isolation issues since linked_to uses the name
+        self._validate_knowledge_instance_names()
+
+    def _validate_knowledge_instance_names(self) -> None:
+        """Validate that all knowledge instances have unique names.
+
+        Raises:
+            ValueError: If duplicate knowledge instance names are detected.
+        """
+        seen_names: dict[str, str] = {}  # name -> first occurrence description
+        duplicates: list[str] = []
+
+        for knowledge in self.knowledge_instances:
+            contents_db = getattr(knowledge, "contents_db", None)
+            if not contents_db:
+                continue
+
+            # Get the name (with fallback)
+            knowledge_name = knowledge.name or f"knowledge_{contents_db.id}"
+
+            if knowledge_name in seen_names:
+                duplicates.append(knowledge_name)
+            else:
+                seen_names[knowledge_name] = f"db_id={contents_db.id}"
+
+        if duplicates:
+            unique_duplicates = list(set(duplicates))
+            raise ValueError(
+                f"Duplicate knowledge instance names detected: {unique_duplicates}. "
+                "Each knowledge instance must have a unique name for proper content isolation. "
+                "Content is filtered by the 'linked_to' field which uses the knowledge instance name. "
+                "Duplicate names will cause content from different instances to be mixed together."
+            )
+
     def _get_session_config(self) -> SessionConfig:
         session_config = self.config.session if self.config and self.config.session else SessionConfig()
 
@@ -1069,11 +1104,12 @@ class AgentOS:
                 # Use knowledge name or generate a fallback name from db_id
                 knowledge_name = knowledge.name or f"knowledge_{contents_db.id}"
 
-                # Warn if duplicate name is detected
+                # Warn if duplicate name is detected (should be caught by startup validation)
                 if knowledge_name in seen_names:
                     log_warning(
                         f"Duplicate knowledge base name '{knowledge_name}' detected. "
-                        "Each knowledge instance should have a unique name for proper tracking."
+                        "This will cause content isolation issues - content from different instances "
+                        "with the same name will be mixed together. Each knowledge instance must have a unique name."
                     )
                     continue
                 seen_names.add(knowledge_name)
