@@ -1518,6 +1518,7 @@ class FirestoreDb(BaseDb):
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
+        linked_to: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
         """Get all knowledge contents from the database.
 
@@ -1526,7 +1527,7 @@ class FirestoreDb(BaseDb):
             page (Optional[int]): The page number.
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
-            create_table_if_not_found (Optional[bool]): Whether to create the table if it doesn't exist.
+            linked_to (Optional[str]): Filter by linked_to value (knowledge instance name).
 
         Returns:
             Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
@@ -1540,6 +1541,10 @@ class FirestoreDb(BaseDb):
                 return [], 0
 
             query = collection_ref
+
+            # Apply linked_to filter if provided
+            if linked_to is not None:
+                query = query.where("linked_to", "==", linked_to)
 
             # Apply sorting
             query = apply_sorting(query, sort_by, sort_order)
