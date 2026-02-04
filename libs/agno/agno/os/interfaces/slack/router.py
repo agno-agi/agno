@@ -135,9 +135,9 @@ def attach_routes(
             if italics:
                 # Handle multi-line messages by making each line italic
                 formatted_message = "\n".join([f"_{line}_" for line in message.split("\n")])
-                SlackTools().send_message_thread(channel=channel, text=formatted_message or "", thread_ts=thread_ts)
+                SlackTools().send_message(channel=channel, text=formatted_message or "", thread_ts=thread_ts)
             else:
-                SlackTools().send_message_thread(channel=channel, text=message or "", thread_ts=thread_ts)
+                SlackTools().send_message(channel=channel, text=message or "", thread_ts=thread_ts)
             return
 
         # Split message into batches of 4000 characters (WhatsApp message limit is 4096)
@@ -149,8 +149,8 @@ def attach_routes(
             if italics:
                 # Handle multi-line messages by making each line italic
                 formatted_batch = "\n".join([f"_{line}_" for line in batch_message.split("\n")])
-                SlackTools().send_message_thread(channel=channel, text=formatted_batch or "", thread_ts=thread_ts)
+                SlackTools().send_message(channel=channel, text=formatted_batch or "", thread_ts=thread_ts)
             else:
-                SlackTools().send_message_thread(channel=channel, text=batch_message or "", thread_ts=thread_ts)
+                SlackTools().send_message(channel=channel, text=batch_message or "", thread_ts=thread_ts)
 
     return router

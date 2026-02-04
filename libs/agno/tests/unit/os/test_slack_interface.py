@@ -193,7 +193,7 @@ def test_slack_dm_message_triggers_reply(monkeypatch):
         def __init__(self):
             pass
 
-        def send_message_thread(self, channel: str, text: str, thread_ts: str) -> str:
+        def send_message(self, channel: str, text: str, thread_ts: str = None) -> str:
             sent.append({"channel": channel, "text": text, "thread_ts": thread_ts})
             return json.dumps({"ok": True})
 
@@ -247,7 +247,7 @@ def test_slack_non_dm_message_ignored_when_reply_to_mentions_only(monkeypatch):
         def __init__(self):
             pass
 
-        def send_message_thread(self, channel: str, text: str, thread_ts: str) -> str:
+        def send_message(self, channel: str, text: str, thread_ts: str = None) -> str:
             sent.append({"channel": channel, "text": text, "thread_ts": thread_ts})
             return json.dumps({"ok": True})
 
@@ -296,7 +296,7 @@ def test_slack_app_mention_triggers_reply(monkeypatch):
         def __init__(self):
             pass
 
-        def send_message_thread(self, channel: str, text: str, thread_ts: str) -> str:
+        def send_message(self, channel: str, text: str, thread_ts: str = None) -> str:
             sent.append({"channel": channel, "text": text, "thread_ts": thread_ts})
             return json.dumps({"ok": True})
 

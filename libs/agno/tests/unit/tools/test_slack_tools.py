@@ -59,14 +59,14 @@ def test_init_registers_default_tools():
             tools = SlackTools()
             names = [f.name for f in tools.functions.values()]
             assert "send_message" in names
-            assert len(names) == 6
+            assert len(names) == 5
 
 
 def test_init_all_flag_enables_all():
     with patch.dict("os.environ", {"SLACK_TOKEN": "test"}):
         with patch("agno.tools.slack.WebClient"):
             tools = SlackTools(all=True)
-            assert len(tools.functions) == 10
+            assert len(tools.functions) == 9
 
 
 # === Core Tools ===
@@ -84,10 +84,11 @@ def test_send_message_error(slack_tools):
     assert "error" in json.loads(result)
 
 
-def test_send_message_thread(slack_tools):
+def test_send_message_in_thread(slack_tools):
     slack_tools.client.chat_postMessage.return_value = Mock(data={"ok": True, "thread_ts": "1.0"})
-    result = slack_tools.send_message_thread("C1", "reply", "1.0")
+    result = slack_tools.send_message("C1", "reply", thread_ts="1.0")
     assert json.loads(result)["ok"] is True
+    slack_tools.client.chat_postMessage.assert_called_with(channel="C1", text="reply", thread_ts="1.0", mrkdwn=True)
 
 
 def test_list_channels(slack_tools):

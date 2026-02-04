@@ -23,7 +23,6 @@ class SlackTools(Toolkit):
         markdown: bool = True,
         output_directory: Optional[str] = None,
         enable_send_message: bool = True,
-        enable_send_message_thread: bool = True,
         enable_list_channels: bool = True,
         enable_get_channel_history: bool = True,
         enable_upload_file: bool = True,
@@ -35,24 +34,6 @@ class SlackTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
-        """
-        Initialize the SlackTools class.
-        Args:
-            token: The Slack API token. Defaults to the SLACK_TOKEN environment variable.
-            markdown: Whether to enable Slack markdown formatting. Defaults to True.
-            output_directory: Optional directory to save copies of uploaded/downloaded files.
-            enable_send_message: Whether to enable the send_message tool. Defaults to True.
-            enable_send_message_thread: Whether to enable the send_message_thread tool. Defaults to True.
-            enable_list_channels: Whether to enable the list_channels tool. Defaults to True.
-            enable_get_channel_history: Whether to enable the get_channel_history tool. Defaults to True.
-            enable_upload_file: Whether to enable the upload_file tool. Defaults to True.
-            enable_download_file: Whether to enable the download_file tool. Defaults to True.
-            enable_search_messages: Whether to enable the search_messages tool. Defaults to False.
-            enable_get_thread: Whether to enable the get_thread tool. Defaults to False.
-            enable_list_users: Whether to enable the list_users tool. Defaults to False.
-            enable_get_user_info: Whether to enable the get_user_info tool. Defaults to False.
-            all: Whether to enable all tools. Defaults to False.
-        """
         self.token: Optional[str] = token or getenv("SLACK_TOKEN")
         if self.token is None or self.token == "":
             raise ValueError("SLACK_TOKEN is not set")
@@ -67,8 +48,6 @@ class SlackTools(Toolkit):
         tools: List[Any] = []
         if enable_send_message or all:
             tools.append(self.send_message)
-        if enable_send_message_thread or all:
-            tools.append(self.send_message_thread)
         if enable_list_channels or all:
             tools.append(self.list_channels)
         if enable_get_channel_history or all:
@@ -88,40 +67,8 @@ class SlackTools(Toolkit):
 
         super().__init__(name="slack", tools=tools, **kwargs)
 
-    def send_message(self, channel: str, text: str) -> str:
-        """
-        Send a message to a Slack channel.
-
-        Use Slack mrkdwn formatting in text: *bold*, _italic_, `code`, <url|text>.
-
-        Args:
-            channel (str): The channel ID or name to send the message to.
-            text (str): The text of the message (supports Slack mrkdwn formatting).
-
-        Returns:
-            str: A JSON string containing the response from the Slack API.
-        """
-        try:
-            response = self.client.chat_postMessage(channel=channel, text=text, mrkdwn=self.markdown)
-            return json.dumps(response.data)
-        except SlackApiError as e:
-            logger.error(f"Error sending message: {e}")
-            return json.dumps({"error": str(e)})
-
-    def send_message_thread(self, channel: str, text: str, thread_ts: str) -> str:
-        """
-        Send a message to a Slack channel thread.
-
-        Use Slack mrkdwn formatting in text: *bold*, _italic_, `code`, <url|text>.
-
-        Args:
-            channel (str): The channel ID or name to send the message to.
-            text (str): The text of the message (supports Slack mrkdwn formatting).
-            thread_ts (str): The thread timestamp to reply to.
-
-        Returns:
-            str: A JSON string containing the response from the Slack API.
-        """
+    def send_message(self, channel: str, text: str, thread_ts: Optional[str] = None) -> str:
+        """Send a message. If thread_ts provided, replies in that thread. Supports mrkdwn."""
         try:
             response = self.client.chat_postMessage(
                 channel=channel, text=text, thread_ts=thread_ts, mrkdwn=self.markdown
@@ -132,12 +79,7 @@ class SlackTools(Toolkit):
             return json.dumps({"error": str(e)})
 
     def list_channels(self) -> str:
-        """
-        List all channels in the Slack workspace.
-
-        Returns:
-            str: A JSON string containing the list of channels.
-        """
+        """List all channels in the workspace."""
         try:
             response = self.client.conversations_list()
             channels = [{"id": channel["id"], "name": channel["name"]} for channel in response["channels"]]
@@ -147,16 +89,7 @@ class SlackTools(Toolkit):
             return json.dumps({"error": str(e)})
 
     def get_channel_history(self, channel: str, limit: int = 100) -> str:
-        """
-        Get the message history of a Slack channel.
-
-        Args:
-            channel (str): The channel ID to fetch history from.
-            limit (int): The maximum number of messages to fetch. Defaults to 100.
-
-        Returns:
-            str: A JSON string containing the channel's message history.
-        """
+        """Get recent messages from a channel."""
         try:
             response = self.client.conversations_history(channel=channel, limit=limit)
             messages: List[Dict[str, Any]] = [  # type: ignore
@@ -197,21 +130,7 @@ class SlackTools(Toolkit):
         initial_comment: Optional[str] = None,
         thread_ts: Optional[str] = None,
     ) -> str:
-        """
-        Upload a file to a Slack channel.
-
-        Args:
-            channel (str): The channel ID or name to upload the file to.
-            content (str | bytes): The file content as text or bytes. Use bytes for
-                binary files (e.g., PDFs) or when integrating with FileGenerationTools.
-            filename (str): The name for the file (e.g., "report.csv").
-            title (str, optional): The title to display for the file in Slack.
-            initial_comment (str, optional): A message to post with the file.
-            thread_ts (str, optional): The thread timestamp to upload the file as a reply.
-
-        Returns:
-            str: A JSON string containing the response from the Slack API.
-        """
+        """Upload a file to a channel. Content can be text or bytes."""
         try:
             # Handle both string and bytes content
             if isinstance(content, str):
@@ -242,18 +161,7 @@ class SlackTools(Toolkit):
             return json.dumps({"error": str(e)})
 
     def download_file(self, file_id: str, dest_path: Optional[str] = None) -> str:
-        """
-        Download a file from Slack.
-
-        Args:
-            file_id (str): The Slack file ID (e.g., "F12345").
-            dest_path (str, optional): Destination path for the file. If not provided,
-                uses output_directory. If neither is set, returns base64-encoded content.
-
-        Returns:
-            str: A JSON string containing file metadata and either the local path
-                 or base64-encoded content.
-        """
+        """Download a file by ID. Returns path or base64 content."""
         try:
             # Get file info from Slack API
             response = self.client.files_info(file=file_id)
@@ -309,22 +217,7 @@ class SlackTools(Toolkit):
             return json.dumps({"error": f"HTTP error: {str(e)}"})
 
     def search_messages(self, query: str, limit: int = 20) -> str:
-        """
-        Search for messages across the workspace.
-
-        Use Slack search modifiers in query:
-        - from:@username - Messages from a specific user
-        - in:#channel - Messages in a specific channel
-        - has:link - Messages containing links
-        - before:2024-01-01 / after:2024-01-01 - Date filters
-
-        Args:
-            query (str): Search query with optional Slack modifiers.
-            limit (int): Maximum results to return (max 100). Defaults to 20.
-
-        Returns:
-            str: JSON string with matching messages.
-        """
+        """Search messages. Modifiers: from:@user, in:#channel, has:link, before:/after:date."""
         try:
             response = self.client.search_messages(query=query, count=min(limit, 100))
             matches = response.get("messages", {}).get("matches", [])
@@ -345,17 +238,7 @@ class SlackTools(Toolkit):
             return json.dumps({"error": str(e)})
 
     def get_thread(self, channel: str, thread_ts: str, limit: int = 100) -> str:
-        """
-        Get all messages in a thread.
-
-        Args:
-            channel (str): Channel ID containing the thread.
-            thread_ts (str): Timestamp of the parent message.
-            limit (int): Max replies to fetch (max 200). Defaults to 100.
-
-        Returns:
-            str: JSON string with thread messages (parent first, then replies).
-        """
+        """Get all messages in a thread by its timestamp."""
         try:
             response = self.client.conversations_replies(
                 channel=channel,
@@ -382,17 +265,7 @@ class SlackTools(Toolkit):
             return json.dumps({"error": str(e)})
 
     def list_users(self, limit: int = 100) -> str:
-        """
-        List all users in the workspace.
-
-        Use this to find experts by name or role, or to resolve user IDs to names.
-
-        Args:
-            limit (int): Maximum users to return. Defaults to 100.
-
-        Returns:
-            str: JSON string with user list.
-        """
+        """List all users in the workspace."""
         try:
             response = self.client.users_list(limit=limit)
             users = [
@@ -412,15 +285,7 @@ class SlackTools(Toolkit):
             return json.dumps({"error": str(e)})
 
     def get_user_info(self, user_id: str) -> str:
-        """
-        Get information about a Slack user.
-
-        Args:
-            user_id (str): Slack user ID (e.g., "U12345678").
-
-        Returns:
-            str: JSON string with user info including name, email, title, timezone.
-        """
+        """Get user details by ID (name, email, title, timezone)."""
         try:
             response = self.client.users_info(user=user_id)
             user = response.get("user", {})

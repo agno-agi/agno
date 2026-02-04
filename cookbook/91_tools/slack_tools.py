@@ -18,7 +18,6 @@ agent_specific = Agent(
     tools=[
         SlackTools(
             enable_send_message=True,
-            enable_send_message_thread=True,
             enable_list_channels=True,
             enable_get_channel_history=False,
             enable_upload_file=False,
@@ -28,12 +27,11 @@ agent_specific = Agent(
     markdown=True,
 )
 
-# Example 3: Read-only agent
+# Example 3: Read-only agent (no send_message)
 agent_readonly = Agent(
     tools=[
         SlackTools(
             enable_send_message=False,
-            enable_send_message_thread=False,
             enable_list_channels=True,
             enable_get_channel_history=True,
             enable_upload_file=False,
