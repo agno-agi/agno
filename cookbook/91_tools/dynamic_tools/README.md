@@ -79,7 +79,6 @@ def get_user_tools(run_context: RunContext):
 agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
     tools=get_user_tools,  # Pass the function, not a list
-    cache_callable_tools=True,  # Cache per user_id
 )
 
 # Each user gets their own database
@@ -87,18 +86,11 @@ agent.run("Create a table", user_id="alice")
 agent.run("Create a table", user_id="bob")
 ```
 
-## Caching Callable Tools
+## Caching
 
-By default, the tool factory function is called on every `run()`. This can be wasteful for tools that create expensive resources like database connections.
-
-Use `cache_callable_tools=True` to cache tool instances per `user_id`:
+By default, callable tools and knowledge are cached per `user_id` (`cache_callables=True`). This avoids creating new database connections or expensive resources on every `run()`.
 
 ```python
-agent = Agent(
-    tools=get_user_tools,
-    cache_callable_tools=True,  # Reuse tools for same user_id
-)
-
 # First run for alice - calls get_user_tools()
 agent.run("Create table", user_id="alice")
 
@@ -109,16 +101,22 @@ agent.run("Insert data", user_id="alice")
 agent.run("Create table", user_id="bob")
 ```
 
+To disable caching (e.g., for role-based tools that may change):
+
+```python
+agent = Agent(
+    tools=get_user_tools,
+    cache_callables=False,  # Resolve tools on every run
+)
+```
+
 ### Cache Management
 
 ```python
 # Clear cache for a specific user
-agent.clear_tool_cache(user_id="alice")
+agent.clear_callable_cache(user_id="alice")
 
-# Clear all cached tools
-agent.clear_tool_cache()
-
-# Clear both tool and knowledge caches
+# Clear all cached tools and knowledge
 agent.clear_callable_cache()
 ```
 

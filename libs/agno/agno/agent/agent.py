@@ -272,9 +272,6 @@ class Agent:
     #       return LanceDbKnowledge(table_name=f"user_{run_context.user_id}_docs")
     #   agent = Agent(knowledge=get_user_knowledge)
     knowledge: Optional[Union[KnowledgeProtocol, Callable[..., KnowledgeProtocol]]] = None
-    # When True, cache resolved knowledge by user_id to avoid creating new instances
-    # on every run. Useful for callable knowledge that creates expensive resources.
-    cache_callable_knowledge: bool = False
     # Enable RAG by adding references from Knowledge to the user prompt.
     # Add knowledge_filters to the Agent class attributes
     knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
@@ -308,10 +305,10 @@ class Agent:
             Callable[..., List[Union[Toolkit, Callable, Function, Dict]]],
         ]
     ] = None
-    # When True, cache resolved tools by user_id to avoid creating new instances
-    # (e.g., new database connections) on every run. Useful for callable tools that
-    # create expensive resources. The cache is keyed by user_id.
-    cache_callable_tools: bool = False
+    # When True, cache resolved callable tools and knowledge by user_id to avoid
+    # creating new instances (e.g., new database connections) on every run.
+    # Recommended when using callable tools/knowledge for per-user isolation.
+    cache_callables: bool = True
 
     # Maximum number of tool calls allowed.
     tool_call_limit: Optional[int] = None
@@ -1129,11 +1126,11 @@ class Agent:
         user_id = run_context.user_id or "_default_"
         return user_id
 
-    def clear_tool_cache(self, user_id: Optional[str] = None) -> None:
-        """Clear the callable tools cache.
+    def clear_callable_cache(self, user_id: Optional[str] = None) -> None:
+        """Clear the callable tools and knowledge cache.
 
-        Use this to force re-creation of tool instances, for example when
-        user configuration changes or to free resources.
+        Use this to force re-creation of tool/knowledge instances, for example
+        when user configuration changes or to free resources.
 
         Args:
             user_id: If provided, only clear cache for this user.
@@ -1141,35 +1138,10 @@ class Agent:
         """
         if user_id is not None:
             self._tool_cache.pop(user_id, None)
-        else:
-            self._tool_cache.clear()
-
-    def clear_knowledge_cache(self, user_id: Optional[str] = None) -> None:
-        """Clear the callable knowledge cache.
-
-        Use this to force re-creation of knowledge instances, for example when
-        user configuration changes or to free resources.
-
-        Args:
-            user_id: If provided, only clear cache for this user.
-                    If None, clear the entire cache.
-        """
-        if user_id is not None:
             self._knowledge_cache.pop(user_id, None)
         else:
+            self._tool_cache.clear()
             self._knowledge_cache.clear()
-
-    def clear_callable_cache(self, user_id: Optional[str] = None) -> None:
-        """Clear both tool and knowledge caches.
-
-        Convenience method to clear all callable resource caches.
-
-        Args:
-            user_id: If provided, only clear cache for this user.
-                    If None, clear all caches.
-        """
-        self.clear_tool_cache(user_id)
-        self.clear_knowledge_cache(user_id)
 
     def _get_tools(
         self, run_context: Optional[RunContext] = None
@@ -2070,7 +2042,7 @@ class Agent:
         # Resolve knowledge if it's a callable
         if callable(self.knowledge):
             cache_key = self._get_cache_key(run_context)
-            if self.cache_callable_knowledge and cache_key in self._knowledge_cache:
+            if self.cache_callables and cache_key in self._knowledge_cache:
                 run_context.knowledge = self._knowledge_cache[cache_key]
             else:
                 run_context.knowledge = resolve_knowledge(
@@ -2079,7 +2051,7 @@ class Agent:
                     session_state=session_state,
                     run_context=run_context,
                 )
-                if self.cache_callable_knowledge:
+                if self.cache_callables:
                     self._knowledge_cache[cache_key] = run_context.knowledge
         else:
             run_context.knowledge = self.knowledge
@@ -2088,7 +2060,7 @@ class Agent:
         if self._is_tools_callable():
             # Check cache first if caching is enabled
             cache_key = self._get_cache_key(run_context)
-            if self.cache_callable_tools and cache_key in self._tool_cache:
+            if self.cache_callables and cache_key in self._tool_cache:
                 run_context.tools = self._tool_cache[cache_key]
             else:
                 run_context.tools = resolve_tools(
@@ -2098,7 +2070,7 @@ class Agent:
                     run_context=run_context,
                 )
                 # Cache the resolved tools if caching is enabled
-                if self.cache_callable_tools:
+                if self.cache_callables:
                     self._tool_cache[cache_key] = run_context.tools
         else:
             run_context.tools = self.tools  # type: ignore
@@ -3211,7 +3183,7 @@ class Agent:
         # the callable itself can use sync code or wrap async code.
         if callable(self.knowledge):
             cache_key = self._get_cache_key(run_context)
-            if self.cache_callable_knowledge and cache_key in self._knowledge_cache:
+            if self.cache_callables and cache_key in self._knowledge_cache:
                 run_context.knowledge = self._knowledge_cache[cache_key]
             else:
                 run_context.knowledge = resolve_knowledge(
@@ -3220,7 +3192,7 @@ class Agent:
                     session_state=session_state,
                     run_context=run_context,
                 )
-                if self.cache_callable_knowledge:
+                if self.cache_callables:
                     self._knowledge_cache[cache_key] = run_context.knowledge
         else:
             run_context.knowledge = self.knowledge
@@ -3230,7 +3202,7 @@ class Agent:
         if self._is_tools_callable():
             # Check cache first if caching is enabled
             cache_key = self._get_cache_key(run_context)
-            if self.cache_callable_tools and cache_key in self._tool_cache:
+            if self.cache_callables and cache_key in self._tool_cache:
                 run_context.tools = self._tool_cache[cache_key]
             else:
                 run_context.tools = resolve_tools(
@@ -3240,7 +3212,7 @@ class Agent:
                     run_context=run_context,
                 )
                 # Cache the resolved tools if caching is enabled
-                if self.cache_callable_tools:
+                if self.cache_callables:
                     self._tool_cache[cache_key] = run_context.tools
         else:
             run_context.tools = self.tools  # type: ignore
@@ -3424,7 +3396,7 @@ class Agent:
         # Resolve knowledge if it's a callable
         if callable(self.knowledge):
             cache_key = self._get_cache_key(run_context)
-            if self.cache_callable_knowledge and cache_key in self._knowledge_cache:
+            if self.cache_callables and cache_key in self._knowledge_cache:
                 run_context.knowledge = self._knowledge_cache[cache_key]
             else:
                 run_context.knowledge = resolve_knowledge(
@@ -3433,7 +3405,7 @@ class Agent:
                     session_state=session_state,
                     run_context=run_context,
                 )
-                if self.cache_callable_knowledge:
+                if self.cache_callables:
                     self._knowledge_cache[cache_key] = run_context.knowledge
         else:
             run_context.knowledge = self.knowledge
@@ -3442,7 +3414,7 @@ class Agent:
         if self._is_tools_callable():
             # Check cache first if caching is enabled
             cache_key = self._get_cache_key(run_context)
-            if self.cache_callable_tools and cache_key in self._tool_cache:
+            if self.cache_callables and cache_key in self._tool_cache:
                 run_context.tools = self._tool_cache[cache_key]
             else:
                 run_context.tools = resolve_tools(
@@ -3452,7 +3424,7 @@ class Agent:
                     run_context=run_context,
                 )
                 # Cache the resolved tools if caching is enabled
-                if self.cache_callable_tools:
+                if self.cache_callables:
                     self._tool_cache[cache_key] = run_context.tools
         else:
             run_context.tools = self.tools  # type: ignore
@@ -4164,7 +4136,7 @@ class Agent:
         # Note: Using sync resolve_knowledge here since acontinue_run setup phase is synchronous
         if callable(self.knowledge):
             cache_key = self._get_cache_key(run_context)
-            if self.cache_callable_knowledge and cache_key in self._knowledge_cache:
+            if self.cache_callables and cache_key in self._knowledge_cache:
                 run_context.knowledge = self._knowledge_cache[cache_key]
             else:
                 run_context.knowledge = resolve_knowledge(
@@ -4173,7 +4145,7 @@ class Agent:
                     session_state=run_context.session_state,
                     run_context=run_context,
                 )
-                if self.cache_callable_knowledge:
+                if self.cache_callables:
                     self._knowledge_cache[cache_key] = run_context.knowledge
         else:
             run_context.knowledge = self.knowledge
@@ -4183,7 +4155,7 @@ class Agent:
         if self._is_tools_callable():
             # Check cache first if caching is enabled
             cache_key = self._get_cache_key(run_context)
-            if self.cache_callable_tools and cache_key in self._tool_cache:
+            if self.cache_callables and cache_key in self._tool_cache:
                 run_context.tools = self._tool_cache[cache_key]
             else:
                 run_context.tools = resolve_tools(
@@ -4193,7 +4165,7 @@ class Agent:
                     run_context=run_context,
                 )
                 # Cache the resolved tools if caching is enabled
-                if self.cache_callable_tools:
+                if self.cache_callables:
                     self._tool_cache[cache_key] = run_context.tools
         else:
             run_context.tools = self.tools  # type: ignore
