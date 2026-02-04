@@ -156,18 +156,3 @@ def test_get_user_info(slack_tools):
     slack_tools.client.users_info.return_value = {"user": {"id": "U1", "name": "user", "profile": {}}}
     result = slack_tools.get_user_info("U1")
     assert json.loads(result)["name"] == "user"
-
-
-# === Format Helpers ===
-
-
-def test_format_bold():
-    assert SlackTools.format_bold("text") == "*text*"
-
-
-def test_format_list():
-    assert SlackTools.format_list(["a", "b"]) == "• a\n• b"
-
-
-def test_format_code_block():
-    assert "```python" in SlackTools.format_code_block("code", "python")

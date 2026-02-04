@@ -93,7 +93,6 @@ class SlackTools(Toolkit):
         Send a message to a Slack channel.
 
         Use Slack mrkdwn formatting in text: *bold*, _italic_, `code`, <url|text>.
-        Use format_bold(), format_list(), etc. helpers to construct formatted messages.
 
         Args:
             channel (str): The channel ID or name to send the message to.
@@ -114,7 +113,6 @@ class SlackTools(Toolkit):
         Send a message to a Slack channel thread.
 
         Use Slack mrkdwn formatting in text: *bold*, _italic_, `code`, <url|text>.
-        Use format_bold(), format_list(), etc. helpers to construct formatted messages.
 
         Args:
             channel (str): The channel ID or name to send the message to.
@@ -441,35 +439,3 @@ class SlackTools(Toolkit):
         except SlackApiError as e:
             logger.error(f"Error getting user info: {e}")
             return json.dumps({"error": str(e)})
-
-    @staticmethod
-    def format_bold(text: str) -> str:
-        """Format text as bold using Slack mrkdwn syntax (*text*)."""
-        return f"*{text}*"
-
-    @staticmethod
-    def format_italic(text: str) -> str:
-        """Format text as italic using Slack mrkdwn syntax (_text_)."""
-        return f"_{text}_"
-
-    @staticmethod
-    def format_code(text: str) -> str:
-        """Format text as inline code using Slack mrkdwn syntax (`text`)."""
-        return f"`{text}`"
-
-    @staticmethod
-    def format_code_block(text: str, language: str = "") -> str:
-        """Format text as a code block using Slack mrkdwn syntax (```text```)."""
-        return f"```{language}\n{text}\n```"
-
-    @staticmethod
-    def format_link(url: str, text: str) -> str:
-        """Format a hyperlink using Slack mrkdwn syntax (<url|text>)."""
-        return f"<{url}|{text}>"
-
-    @staticmethod
-    def format_list(items: List[str], ordered: bool = False) -> str:
-        """Format a list of items using Slack mrkdwn syntax."""
-        if ordered:
-            return "\n".join(f"{i + 1}. {item}" for i, item in enumerate(items))
-        return "\n".join(f"• {item}" for item in items)
