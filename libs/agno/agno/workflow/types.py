@@ -1,22 +1,18 @@
-import json
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-from fastapi import WebSocket
 from pydantic import BaseModel
 
 from agno.media import Audio, File, Image, Video
 from agno.models.metrics import Metrics
 from agno.session.workflow import WorkflowSession
-from agno.utils.log import log_warning
 from agno.utils.media import (
     reconstruct_audio_list,
     reconstruct_files,
     reconstruct_images,
     reconstruct_videos,
 )
-from agno.utils.serialize import json_serializer
 from agno.utils.timer import Timer
 
 
@@ -107,10 +103,46 @@ class StepInput:
             return str(self.input)
 
     def get_step_output(self, step_name: str) -> Optional["StepOutput"]:
-        """Get output from a specific previous step by name"""
+        """Get output from a specific previous step by name
+
+        Searches recursively through nested steps (Parallel, Condition, Router, Loop, Steps)
+        to find step outputs at any depth.
+        """
         if not self.previous_step_outputs:
             return None
-        return self.previous_step_outputs.get(step_name)
+
+        # First try direct lookup
+        direct = self.previous_step_outputs.get(step_name)
+        if direct:
+            return direct
+
+        # Search recursively in nested steps
+        return self._search_nested_steps(step_name)
+
+    def _search_nested_steps(self, step_name: str) -> Optional["StepOutput"]:
+        """Recursively search for a step output in nested steps (Parallel, Condition, etc.)"""
+        if not self.previous_step_outputs:
+            return None
+
+        for step_output in self.previous_step_outputs.values():
+            result = self._search_in_step_output(step_output, step_name)
+            if result:
+                return result
+        return None
+
+    def _search_in_step_output(self, step_output: "StepOutput", step_name: str) -> Optional["StepOutput"]:
+        """Helper to recursively search within a single StepOutput"""
+        if not step_output.steps:
+            return None
+
+        for nested_step in step_output.steps:
+            if nested_step.step_name == step_name:
+                return nested_step
+            # Recursively search deeper
+            result = self._search_in_step_output(nested_step, step_name)
+            if result:
+                return result
+        return None
 
     def get_step_content(self, step_name: str) -> Optional[Union[str, Dict[str, str]]]:
         """Get content from a specific previous step by name
@@ -439,75 +471,6 @@ class WorkflowMetrics:
             self.timer.stop()
             if set_duration:
                 self.duration = self.timer.elapsed
-
-
-@dataclass
-class WebSocketHandler:
-    """Generic WebSocket handler for real-time workflow events"""
-
-    websocket: Optional[WebSocket] = None
-
-    def format_sse_event(self, json_data: str) -> str:
-        """Parse JSON data into SSE-compliant format.
-
-        Args:
-            json_data: JSON string containing the event data
-
-        Returns:
-            SSE-formatted response with event type and data
-        """
-        import json
-
-        try:
-            # Parse the JSON to extract the event type
-            data = json.loads(json_data)
-            event_type = data.get("event", "message")
-
-            # Format as SSE: event: <event_type>\ndata: <json_data>\n\n
-            return f"event: {event_type}\ndata: {json_data}\n\n"
-        except (json.JSONDecodeError, KeyError):
-            # Fallback to generic message event if parsing fails
-            return f"event: message\ndata: {json_data}\n\n"
-
-    async def handle_event(self, event: Any) -> None:
-        """Handle an event object - serializes and sends via WebSocket"""
-        if not self.websocket:
-            return
-
-        try:
-            if hasattr(event, "to_dict"):
-                data = event.to_dict()
-            elif hasattr(event, "__dict__"):
-                data = event.__dict__
-            elif isinstance(event, dict):
-                data = event
-            else:
-                data = {"type": "message", "content": str(event)}
-
-            await self.websocket.send_text(self.format_sse_event(json.dumps(data, default=json_serializer)))
-
-        except Exception as e:
-            log_warning(f"Failed to handle WebSocket event: {e}")
-
-    async def handle_text(self, message: str) -> None:
-        """Handle a plain text message"""
-        if not self.websocket:
-            return
-
-        try:
-            await self.websocket.send_text(self.format_sse_event(message))
-        except Exception as e:
-            log_warning(f"Failed to send WebSocket text: {e}")
-
-    async def handle_dict(self, data: Dict[str, Any]) -> None:
-        """Handle a dictionary directly"""
-        if not self.websocket:
-            return
-
-        try:
-            await self.websocket.send_text(self.format_sse_event(json.dumps(data, default=json_serializer)))
-        except Exception as e:
-            log_warning(f"Failed to send WebSocket dict: {e}")
 
 
 class StepType(str, Enum):

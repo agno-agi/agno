@@ -1,17 +1,22 @@
-"""Minimal demo of the AgentOS."""
+"""Agno Demo - Showcasing the power of Agno."""
 
 from pathlib import Path
-from textwrap import dedent
 
+from agents.deep_knowledge_agent import deep_knowledge_agent
+from agents.finance_agent import finance_agent
+from agents.knowledge_agent import knowledge_agent
+from agents.mcp_agent import mcp_agent
+from agents.pal_agent import pal_agent
+from agents.report_writer_agent import report_writer_agent
+from agents.research_agent import research_agent
+from agents.web_intelligence_agent import web_intelligence_agent
 from agno.os import AgentOS
-from agno_knowledge_agent import agno_knowledge_agent
-from agno_mcp_agent import agno_mcp_agent
-from competitive_brief import competitive_brief
-from finance_agent import finance_agent, reasoning_finance_agent
-from finance_team import finance_team
-from memory_agent import memory_manager
-from research_agent import research_agent
-from youtube_agent import youtube_agent
+from db import demo_db
+from registry import registry
+from teams.due_diligence_team import due_diligence_team
+from teams.investment_team import investment_team
+from workflows.deep_research_workflow import deep_research_workflow
+from workflows.startup_analyst_workflow import startup_analyst_workflow
 
 # ============================================================================
 # AgentOS Config
@@ -22,27 +27,28 @@ config_path = str(Path(__file__).parent.joinpath("config.yaml"))
 # Create AgentOS
 # ============================================================================
 agent_os = AgentOS(
-    description=dedent("""\
-        Demo AgentOS — a lightweight runtime wiring together demo agents and teams.
-        Includes knowledge lookup (Agno docs), MCP-powered assistance, YouTube QA,
-        market analysis, memory management, and web research — all in one process.
-        """),
     agents=[
-        finance_agent,
-        reasoning_finance_agent,
-        agno_knowledge_agent,
-        agno_mcp_agent,
-        memory_manager,
+        pal_agent,
         research_agent,
-        youtube_agent,
+        finance_agent,
+        deep_knowledge_agent,
+        web_intelligence_agent,
+        report_writer_agent,
+        knowledge_agent,
+        mcp_agent,
     ],
     teams=[
-        finance_team,
+        investment_team,
+        due_diligence_team,
     ],
     workflows=[
-        competitive_brief,
+        deep_research_workflow,
+        startup_analyst_workflow,
     ],
+    registry=registry,
     config=config_path,
+    tracing=True,
+    db=demo_db,
 )
 app = agent_os.get_app()
 

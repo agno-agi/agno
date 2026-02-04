@@ -1,10 +1,13 @@
 from types import MethodType
-from typing import Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
 import pytest
 
 from agno.db.base import AsyncBaseDb
 from agno.memory import MemoryManager, UserMemory
+
+if TYPE_CHECKING:
+    from agno.tracing.schemas import Span, Trace
 
 
 class DummyAsyncMemoryDb(AsyncBaseDb):
@@ -133,10 +136,66 @@ class DummyAsyncMemoryDb(AsyncBaseDb):
     async def upsert_cultural_knowledge(self, *args, **kwargs):
         raise NotImplementedError
 
+    # --- Traces ---
+    async def upsert_trace(self, trace: "Trace") -> None:
+        raise NotImplementedError
+
+    async def get_trace(self, trace_id: str):
+        raise NotImplementedError
+
+    async def get_traces(
+        self,
+        run_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        status: Optional[str] = None,
+        start_time: Optional[int] = None,
+        end_time: Optional[int] = None,
+        limit: Optional[int] = 100,
+    ) -> List:
+        raise NotImplementedError
+
+    async def get_trace_stats(self, *args, **kwargs):
+        raise NotImplementedError
+
+    # --- Spans ---
+    async def create_span(self, span: "Span") -> None:
+        raise NotImplementedError
+
+    async def create_spans(self, spans: List) -> None:
+        raise NotImplementedError
+
+    async def get_span(self, span_id: str):
+        raise NotImplementedError
+
+    async def get_spans(
+        self,
+        trace_id: Optional[str] = None,
+        parent_span_id: Optional[str] = None,
+        limit: Optional[int] = 1000,
+    ) -> List:
+        raise NotImplementedError
+
+    # -----------
+
     async def get_latest_schema_version(self, *args, **kwargs):
         raise NotImplementedError
 
     async def upsert_schema_version(self, *args, **kwargs):
+        raise NotImplementedError
+
+    # --- Learnings ---
+    async def get_learning(self, *args, **kwargs):
+        raise NotImplementedError
+
+    async def upsert_learning(self, *args, **kwargs):
+        raise NotImplementedError
+
+    async def delete_learning(self, *args, **kwargs):
+        raise NotImplementedError
+
+    async def get_learnings(self, *args, **kwargs):
         raise NotImplementedError
 
 

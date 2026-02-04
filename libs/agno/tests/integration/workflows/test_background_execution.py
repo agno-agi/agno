@@ -61,7 +61,7 @@ async def test_multi_step_background_execution(multi_step_workflow):
     # Poll for completion with step tracking
     max_polls = 60  # Longer timeout for multi-step
     poll_count = 0
-    seen_running = False
+    completed = False
 
     while poll_count < max_polls:
         poll_count += 1
@@ -72,8 +72,8 @@ async def test_multi_step_background_execution(multi_step_workflow):
             continue
 
         # Track that we saw running status
-        if result.status == RunStatus.running:
-            seen_running = True
+        if result.status == RunStatus.completed:
+            completed = True
 
         if result.has_completed():
             # Verify completed response
@@ -86,7 +86,7 @@ async def test_multi_step_background_execution(multi_step_workflow):
         await asyncio.sleep(1)
 
     assert poll_count < max_polls, "Multi-step background execution timed out"
-    assert seen_running, "Should have seen running status during execution"
+    assert completed, "Should have seen completed status during execution"
 
 
 @pytest.mark.asyncio

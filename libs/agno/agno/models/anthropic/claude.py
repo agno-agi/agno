@@ -13,9 +13,11 @@ from agno.models.message import Citations, DocumentCitation, Message, UrlCitatio
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
+from agno.tools.function import Function
 from agno.utils.http import get_default_async_client, get_default_sync_client
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.models.claude import MCPServerConfiguration, format_messages, format_tools_for_model
+from agno.utils.tokens import count_schema_tokens
 
 try:
     from anthropic import Anthropic as AnthropicClient
@@ -100,8 +102,8 @@ class Claude(Model):
         # Claude Sonnet 4.x family (versions before 4.5)
         "claude-sonnet-4-20250514",
         "claude-sonnet-4",
-        # Claude Opus 4.x family (versions before 4.1)
-        # (Add any Opus 4.x models released before 4.1 if they exist)
+        # Claude Opus 4.x family (versions before 4.1 and 4.5)
+        # (Add any Opus 4.x models released before 4.1/4.5 if they exist)
     }
 
     id: str = "claude-sonnet-4-5-20250929"
@@ -129,6 +131,7 @@ class Claude(Model):
 
     # Client parameters
     api_key: Optional[str] = None
+    auth_token: Optional[str] = None
     default_headers: Optional[Dict[str, Any]] = None
     timeout: Optional[float] = None
     http_client: Optional[Union[httpx.Client, httpx.AsyncClient]] = None
@@ -153,11 +156,15 @@ class Claude(Model):
         client_params: Dict[str, Any] = {}
 
         self.api_key = self.api_key or getenv("ANTHROPIC_API_KEY")
-        if not self.api_key:
-            log_error("ANTHROPIC_API_KEY not set. Please set the ANTHROPIC_API_KEY environment variable.")
+        self.auth_token = self.auth_token or getenv("ANTHROPIC_AUTH_TOKEN")
+        if not (self.api_key or self.auth_token):
+            log_error(
+                "ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN not set. Please set the ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN environment variable."
+            )
 
         # Add API key to client parameters
         client_params["api_key"] = self.api_key
+        client_params["auth_token"] = self.auth_token
         if self.timeout is not None:
             client_params["timeout"] = self.timeout
 
@@ -177,10 +184,6 @@ class Claude(Model):
         """
         # If model is in blacklist, it doesn't support structured outputs
         if self.id in self.NON_STRUCTURED_OUTPUT_MODELS:
-            log_warning(
-                f"Model '{self.id}' does not support structured outputs. "
-                "Structured output features will not be available for this model."
-            )
             return False
 
         # Check for legacy model patterns which don't support structured outputs
@@ -188,7 +191,9 @@ class Claude(Model):
             return False
         if self.id.startswith("claude-sonnet-4-") and not self.id.startswith("claude-sonnet-4-5"):
             return False
-        if self.id.startswith("claude-opus-4-") and not self.id.startswith("claude-opus-4-1"):
+        if self.id.startswith("claude-opus-4-") and not (
+            self.id.startswith("claude-opus-4-1") or self.id.startswith("claude-opus-4-5")
+        ):
             return False
 
         return True
@@ -209,8 +214,14 @@ class Claude(Model):
             bool: True if structured outputs are in use
         """
         # Check for output_format usage
-        if response_format is not None and self._supports_structured_outputs():
-            return True
+        if response_format is not None:
+            if self._supports_structured_outputs():
+                return True
+            else:
+                log_warning(
+                    f"Model '{self.id}' does not support structured outputs. "
+                    "Structured output features will not be available for this model."
+                )
 
         # Check for strict tools
         if tools:
@@ -311,8 +322,11 @@ class Claude(Model):
 
             return {"type": "json_schema", "schema": schema}
 
-        # Handle dict format (already in correct structure)
+        # Handle dict format
         elif isinstance(response_format, dict):
+            # Claude only supports json_schema, not json_object
+            if response_format.get("type") == "json_object":
+                return None
             return response_format
 
         return None
@@ -391,6 +405,72 @@ class Claude(Model):
             _client_params["http_client"] = get_default_async_client()
         self.async_client = AsyncAnthropicClient(**_client_params)
         return self.async_client
+
+    def to_dict(self) -> Dict[str, Any]:
+        """
+        Convert the model to a dictionary.
+
+        Returns:
+            Dict[str, Any]: The dictionary representation of the model.
+        """
+        model_dict = super().to_dict()
+        model_dict.update(
+            {
+                "max_tokens": self.max_tokens,
+                "thinking": self.thinking,
+                "temperature": self.temperature,
+                "stop_sequences": self.stop_sequences,
+                "top_p": self.top_p,
+                "top_k": self.top_k,
+                "cache_system_prompt": self.cache_system_prompt,
+                "extended_cache_time": self.extended_cache_time,
+                "betas": self.betas,
+            }
+        )
+        cleaned_dict = {k: v for k, v in model_dict.items() if v is not None}
+        return cleaned_dict
+
+    def count_tokens(
+        self,
+        messages: List[Message],
+        tools: Optional[List[Union[Function, Dict[str, Any]]]] = None,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+    ) -> int:
+        anthropic_messages, system_prompt = format_messages(messages, compress_tool_results=True)
+        anthropic_tools = None
+        if tools:
+            formatted_tools = self._format_tools(tools)
+            anthropic_tools = format_tools_for_model(formatted_tools)
+
+        kwargs: Dict[str, Any] = {"messages": anthropic_messages, "model": self.id}
+        if system_prompt:
+            kwargs["system"] = system_prompt
+        if anthropic_tools:
+            kwargs["tools"] = anthropic_tools
+
+        response = self.get_client().messages.count_tokens(**kwargs)
+        return response.input_tokens + count_schema_tokens(response_format, self.id)
+
+    async def acount_tokens(
+        self,
+        messages: List[Message],
+        tools: Optional[List[Union[Function, Dict[str, Any]]]] = None,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+    ) -> int:
+        anthropic_messages, system_prompt = format_messages(messages, compress_tool_results=True)
+        anthropic_tools = None
+        if tools:
+            formatted_tools = self._format_tools(tools)
+            anthropic_tools = format_tools_for_model(formatted_tools)
+
+        kwargs: Dict[str, Any] = {"messages": anthropic_messages, "model": self.id}
+        if system_prompt:
+            kwargs["system"] = system_prompt
+        if anthropic_tools:
+            kwargs["tools"] = anthropic_tools
+
+        response = await self.get_async_client().messages.count_tokens(**kwargs)
+        return response.input_tokens + count_schema_tokens(response_format, self.id)
 
     def get_request_params(
         self,
@@ -926,8 +1006,8 @@ class Claude(Model):
         elif isinstance(response, (ContentBlockStopEvent, ParsedBetaContentBlockStopEvent)):
             if response.content_block.type == "tool_use":  # type: ignore
                 tool_use = response.content_block  # type: ignore
-                tool_name = tool_use.name
-                tool_input = tool_use.input
+                tool_name = tool_use.name  # type: ignore
+                tool_input = tool_use.input  # type: ignore
 
                 function_def = {"name": tool_name}
                 if tool_input:
@@ -937,7 +1017,7 @@ class Claude(Model):
 
                 model_response.tool_calls = [
                     {
-                        "id": tool_use.id,
+                        "id": tool_use.id,  # type: ignore
                         "type": "function",
                         "function": function_def,
                     }
@@ -958,7 +1038,7 @@ class Claude(Model):
             for block in response.message.content:  # type: ignore
                 # Handle text blocks for structured output parsing
                 if block.type == "text":
-                    accumulated_text += block.text
+                    accumulated_text += block.text  # type: ignore
 
                 # Handle citations
                 citations = getattr(block, "citations", None)

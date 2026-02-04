@@ -5,6 +5,7 @@ on:
     branches:
       - "*release*" # Run on release-* format
       - "release/*" # Run on release/1.2.3 branch format
+      - "feat-workflow-step-serialization"
   workflow_dispatch: # Allows manual triggering
     inputs:
       branch:
@@ -633,7 +634,58 @@ jobs:
           AGNO_TELEMETRY: false
         run: |
           source .venv/bin/activate
-          python -m pytest ./libs/agno/tests/integration/agent
+          python -m pytest ./libs/agno/tests/integration/agent/test_guardrails.py \
+          ./libs/agno/tests/integration/agent/test_output_model.py \
+          ./libs/agno/tests/integration/agent/test_input.py \
+          ./libs/agno/tests/integration/agent/test_memory_impact.py \
+          ./libs/agno/tests/integration/agent/test_async_tool_calling.py \
+          ./libs/agno/tests/integration/agent/test_disable_storing_tool_and_history_messages.py \
+          ./libs/agno/tests/integration/agent/test_agent_convenience_functions.py \
+          ./libs/agno/tests/integration/agent/test_session.py \
+          ./libs/agno/tests/integration/agent/test_reasoning_content_default_COT.py \
+          ./libs/agno/tests/integration/agent/test_introduction.py
+
+  test-agents-2:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+      fail-fast: true # Stop all matrix jobs if one fails
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - name: Run dev setup
+        working-directory: .
+        run: |
+          ./scripts/test_setup.sh
+      - name: Run agent integration tests
+        working-directory: .
+        env:
+          AGNO_TELEMETRY: false
+        run: |
+          source .venv/bin/activate
+          python -m pytest ./libs/agno/tests/integration/agent \
+          --ignore=./libs/agno/tests/integration/agent/test_guardrails.py \
+          --ignore=./libs/agno/tests/integration/agent/test_output_model.py \
+          --ignore=./libs/agno/tests/integration/agent/test_input.py \
+          --ignore=./libs/agno/tests/integration/agent/test_memory_impact.py \
+          --ignore=./libs/agno/tests/integration/agent/test_async_tool_calling.py \
+          --ignore=./libs/agno/tests/integration/agent/test_disable_storing_tool_and_history_messages.py \
+          --ignore=./libs/agno/tests/integration/agent/test_agent_convenience_functions.py \
+          --ignore=./libs/agno/tests/integration/agent/test_session.py \
+          --ignore=./libs/agno/tests/integration/agent/test_reasoning_content_default_COT.py \
+          --ignore=./libs/agno/tests/integration/agent/test_introduction.py
 
   test-teams:
     runs-on: ubuntu-latest
@@ -665,7 +717,46 @@ jobs:
           AGNO_TELEMETRY: false
         run: |
           source .venv/bin/activate
-          python -m pytest ./libs/agno/tests/integration/teams
+          python -m pytest ./libs/agno/tests/integration/teams/test_output_schema_override.py \
+          ./libs/agno/tests/integration/teams/test_event_streaming.py \
+          ./libs/agno/tests/integration/teams/test_memory_impact.py \
+          ./libs/agno/tests/integration/teams/test_history.py
+
+  test-teams-2:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+      fail-fast: true # Stop all matrix jobs if one fails
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - name: Run dev setup
+        working-directory: .
+        run: |
+          ./scripts/test_setup.sh
+      - name: Run teams integration tests
+        working-directory: .
+        env:
+          AGNO_TELEMETRY: false
+        run: |
+          source .venv/bin/activate
+          python -m pytest ./libs/agno/tests/integration/teams \
+          --ignore=./libs/agno/tests/integration/teams/test_output_schema_override.py \
+          --ignore=./libs/agno/tests/integration/teams/test_event_streaming.py \
+          --ignore=./libs/agno/tests/integration/teams/test_memory_impact.py \
+          --ignore=./libs/agno/tests/integration/teams/test_history.py
 
   test-workflows:
     runs-on: ubuntu-latest
@@ -959,7 +1050,7 @@ jobs:
           AGNO_TELEMETRY: false
         run: |
           source .venv/bin/activate
-          python -m pytest --ignore=./libs/agno/tests/integration/db --ignore=./libs/agno/tests/integration/models --ignore=./libs/agno/tests/integration/agent --ignore=./libs/agno/tests/integration/knowledge --ignore=./libs/agno/tests/integration/teams --ignore=./libs/agno/tests/integration/embedder --ignore=./libs/agno/tests/integration/workflows --ignore=./libs/agno/tests/integration/workflows_2 --ignore=./libs/agno/tests/integration/os/interfaces/test_a2a.py ./libs/agno/tests/integration
+          python -m pytest --ignore=./libs/agno/tests/integration/db --ignore=./libs/agno/tests/integration/models --ignore=./libs/agno/tests/integration/agent --ignore=./libs/agno/tests/integration/knowledge --ignore=./libs/agno/tests/integration/teams --ignore=./libs/agno/tests/integration/embedder --ignore=./libs/agno/tests/integration/workflows --ignore=./libs/agno/tests/integration/workflows_2 --ignore=./libs/agno/tests/integration/os/interfaces/test_a2a.py --ignore=./libs/agno/tests/integration/os ./libs/agno/tests/integration
 
   test-dev-setup:
     runs-on: ubuntu-latest
@@ -1001,3 +1092,95 @@ jobs:
         run: |
           source .venv/bin/activate
           uv pip list
+
+  # Run AgentOS System Tests (multi-container Docker setup)
+  test-agentos-system:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+      fail-fast: true
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - name: Create virtual environment
+        working-directory: ./libs/agno/tests/system
+        run: |
+          VIRTUAL_ENV=.venv uv venv --python 3.12
+      - name: Install test dependencies
+        working-directory: ./libs/agno/tests/system
+        run: |
+          source .venv/bin/activate
+          VIRTUAL_ENV=.venv uv pip install -r requirements.txt
+      - name: Start Docker Compose services
+        working-directory: ./libs/agno/tests/system
+        run: |
+          docker compose up --build -d
+      - name: Wait for services to be healthy
+        working-directory: ./libs/agno/tests/system
+        run: |
+          echo "Waiting for services to become healthy..."
+          MAX_WAIT=180
+          WAIT_INTERVAL=10
+          ELAPSED=0
+
+          while [ $ELAPSED -lt $MAX_WAIT ]; do
+            GATEWAY_HEALTH=$(docker inspect --format='{{.State.Health.Status}}' system-test-gateway 2>/dev/null || echo "not_found")
+            REMOTE_HEALTH=$(docker inspect --format='{{.State.Health.Status}}' system-test-remote 2>/dev/null || echo "not_found")
+            POSTGRES_HEALTH=$(docker inspect --format='{{.State.Health.Status}}' system-test-postgres 2>/dev/null || echo "not_found")
+
+            echo "  Postgres: $POSTGRES_HEALTH, Remote: $REMOTE_HEALTH, Gateway: $GATEWAY_HEALTH"
+
+            if [ "$GATEWAY_HEALTH" = "healthy" ] && [ "$REMOTE_HEALTH" = "healthy" ] && [ "$POSTGRES_HEALTH" = "healthy" ]; then
+              echo "All services are healthy!"
+              break
+            fi
+
+            sleep $WAIT_INTERVAL
+            ELAPSED=$((ELAPSED + WAIT_INTERVAL))
+          done
+
+          if [ $ELAPSED -ge $MAX_WAIT ]; then
+            echo "Timeout waiting for services to be healthy"
+            docker compose logs
+            exit 1
+          fi
+      - name: Run system tests
+        working-directory: ./libs/agno/tests/system
+        env:
+          GATEWAY_URL: http://localhost:7001
+          AGNO_TELEMETRY: false
+        run: |
+          source .venv/bin/activate
+          python -m pytest ./tests -v --tb=short
+      - name: Show container logs on failure
+        if: failure()
+        working-directory: ./libs/agno/tests/system
+        run: |
+          echo "=== Gateway Server Logs ==="
+          docker compose logs gateway-server --tail=100
+          echo ""
+          echo "=== Remote Server Logs ==="
+          docker compose logs remote-server --tail=100
+          echo ""
+          echo "=== A2A Server Logs ==="
+          docker compose logs agno-a2a-server --tail=100
+          echo ""
+          echo "=== ADK Server Logs ==="
+          docker compose logs adk-server --tail=100
+          echo ""
+      - name: Cleanup Docker resources
+        if: always()
+        working-directory: ./libs/agno/tests/system
+        run: |
+          docker compose down -v

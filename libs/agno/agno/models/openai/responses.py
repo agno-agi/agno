@@ -6,17 +6,19 @@ import httpx
 from pydantic import BaseModel
 from typing_extensions import Literal
 
-from agno.exceptions import ModelProviderError
+from agno.exceptions import ModelAuthenticationError, ModelProviderError
 from agno.media import File
 from agno.models.base import Model
 from agno.models.message import Citations, Message, UrlCitation
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
+from agno.tools.function import Function
 from agno.utils.http import get_default_async_client, get_default_sync_client
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.models.openai_responses import images_to_message
 from agno.utils.models.schema_utils import get_response_schema_for_provider
+from agno.utils.tokens import count_schema_tokens
 
 try:
     from openai import APIConnectionError, APIStatusError, AsyncOpenAI, OpenAI, RateLimitError
@@ -117,7 +119,10 @@ class OpenAIResponses(Model):
         if not self.api_key:
             self.api_key = getenv("OPENAI_API_KEY")
             if not self.api_key:
-                log_error("OPENAI_API_KEY not set. Please set the OPENAI_API_KEY environment variable.")
+                raise ModelAuthenticationError(
+                    message="OPENAI_API_KEY not set. Please set the OPENAI_API_KEY environment variable.",
+                    model_name=self.name,
+                )
 
         # Define base client params
         base_params = {
@@ -230,8 +235,8 @@ class OpenAIResponses(Model):
                     "strict": self.strict_output,
                 }
             else:
-                # JSON mode
-                text_params["format"] = {"type": "json_object"}
+                # Pass through directly, user handles everything
+                text_params["format"] = response_format
 
         # Add text parameter if there are any text-level params
         if text_params:
@@ -304,6 +309,8 @@ class OpenAIResponses(Model):
 
     def _upload_file(self, file: File) -> Optional[str]:
         """Upload a file to the OpenAI vector database."""
+        from pathlib import Path
+        from urllib.parse import urlparse
 
         if file.url is not None:
             file_content_tuple = file.file_url_content
@@ -311,13 +318,12 @@ class OpenAIResponses(Model):
                 file_content = file_content_tuple[0]
             else:
                 return None
-            file_name = file.url.split("/")[-1]
+            file_name = Path(urlparse(file.url).path).name or "file"
             file_tuple = (file_name, file_content)
             result = self.get_client().files.create(file=file_tuple, purpose="assistants")
             return result.id
         elif file.filepath is not None:
             import mimetypes
-            from pathlib import Path
 
             file_path = file.filepath if isinstance(file.filepath, Path) else Path(file.filepath)
             if file_path.exists() and file_path.is_file():
@@ -359,19 +365,25 @@ class OpenAIResponses(Model):
         return vector_store.id
 
     def _format_tool_params(
-        self, messages: List[Message], tools: Optional[List[Dict[str, Any]]] = None
+        self, messages: List[Message], tools: Optional[List[Union[Function, Dict[str, Any]]]] = None
     ) -> List[Dict[str, Any]]:
         """Format the tool parameters for the OpenAI Responses API."""
         formatted_tools = []
         if tools:
             for _tool in tools:
-                if _tool.get("type") == "function":
+                if isinstance(_tool, Function):
+                    _tool_dict = _tool.to_dict()
+                    _tool_dict["type"] = "function"
+                    for prop in _tool_dict.get("parameters", {}).get("properties", {}).values():
+                        if isinstance(prop.get("type", ""), list):
+                            prop["type"] = prop["type"][0]
+                    formatted_tools.append(_tool_dict)
+                elif _tool.get("type") == "function":
                     _tool_dict = _tool.get("function", {})
                     _tool_dict["type"] = "function"
                     for prop in _tool_dict.get("parameters", {}).get("properties", {}).values():
                         if isinstance(prop.get("type", ""), list):
                             prop["type"] = prop["type"][0]
-
                     formatted_tools.append(_tool_dict)
                 else:
                     formatted_tools.append(_tool)
@@ -390,7 +402,7 @@ class OpenAIResponses(Model):
 
         # Add the file IDs to the tool parameters
         for _tool in formatted_tools:
-            if _tool["type"] == "file_search" and vector_store_id is not None:
+            if _tool.get("type", "") == "file_search" and vector_store_id is not None:
                 _tool["vector_store_ids"] = [vector_store_id]
 
         return formatted_tools
@@ -516,6 +528,49 @@ class OpenAIResponses(Model):
                         formatted_messages.append(reasoning_output)
         return formatted_messages
 
+    def count_tokens(
+        self,
+        messages: List[Message],
+        tools: Optional[List[Union[Function, Dict[str, Any]]]] = None,
+        output_schema: Optional[Union[Dict, Type[BaseModel]]] = None,
+    ) -> int:
+        try:
+            formatted_input = self._format_messages(messages, compress_tool_results=True)
+            formatted_tools = self._format_tool_params(messages, tools) if tools is not None else None
+
+            response = self.get_client().responses.input_tokens.count(
+                model=self.id,
+                input=formatted_input,  # type: ignore
+                instructions=self.instructions,  # type: ignore
+                tools=formatted_tools,  # type: ignore
+            )
+            return response.input_tokens + count_schema_tokens(output_schema, self.id)
+        except Exception as e:
+            log_warning(f"Failed to count tokens via API: {e}")
+            return super().count_tokens(messages, tools, output_schema)
+
+    async def acount_tokens(
+        self,
+        messages: List[Message],
+        tools: Optional[List[Union[Function, Dict[str, Any]]]] = None,
+        output_schema: Optional[Union[Dict, Type[BaseModel]]] = None,
+    ) -> int:
+        """Async version of count_tokens using the async client."""
+        try:
+            formatted_input = self._format_messages(messages, compress_tool_results=True)
+            formatted_tools = self._format_tool_params(messages, tools) if tools else None
+
+            response = await self.get_async_client().responses.input_tokens.count(
+                model=self.id,
+                input=formatted_input,  # type: ignore
+                instructions=self.instructions,  # type: ignore
+                tools=formatted_tools,  # type: ignore
+            )
+            return response.input_tokens + count_schema_tokens(output_schema, self.id)
+        except Exception as e:
+            log_warning(f"Failed to count tokens via API: {e}")
+            return await super().acount_tokens(messages, tools, output_schema)
+
     def invoke(
         self,
         messages: List[Message],
@@ -582,6 +637,9 @@ class OpenAIResponses(Model):
                 model_name=self.name,
                 model_id=self.id,
             ) from exc
+        except ModelAuthenticationError as exc:
+            log_error(f"Model authentication error from OpenAI API: {exc}")
+            raise exc
         except Exception as exc:
             log_error(f"Error from OpenAI API: {exc}")
             raise ModelProviderError(message=str(exc), model_name=self.name, model_id=self.id) from exc
@@ -652,6 +710,9 @@ class OpenAIResponses(Model):
                 model_name=self.name,
                 model_id=self.id,
             ) from exc
+        except ModelAuthenticationError as exc:
+            log_error(f"Model authentication error from OpenAI API: {exc}")
+            raise exc
         except Exception as exc:
             log_error(f"Error from OpenAI API: {exc}")
             raise ModelProviderError(message=str(exc), model_name=self.name, model_id=self.id) from exc
@@ -726,6 +787,9 @@ class OpenAIResponses(Model):
                 model_name=self.name,
                 model_id=self.id,
             ) from exc
+        except ModelAuthenticationError as exc:
+            log_error(f"Model authentication error from OpenAI API: {exc}")
+            raise exc
         except Exception as exc:
             log_error(f"Error from OpenAI API: {exc}")
             raise ModelProviderError(message=str(exc), model_name=self.name, model_id=self.id) from exc
@@ -797,6 +861,9 @@ class OpenAIResponses(Model):
                 model_name=self.name,
                 model_id=self.id,
             ) from exc
+        except ModelAuthenticationError as exc:
+            log_error(f"Model authentication error from OpenAI API: {exc}")
+            raise exc
         except Exception as exc:
             log_error(f"Error from OpenAI API: {exc}")
             raise ModelProviderError(message=str(exc), model_name=self.name, model_id=self.id) from exc

@@ -1,12 +1,13 @@
 import asyncio
-import warnings
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextvars import copy_context
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union
 from uuid import uuid4
 
 from agno.models.metrics import Metrics
+from agno.registry import Registry
 from agno.run.agent import RunOutputEvent
 from agno.run.base import RunContext
 from agno.run.team import TeamRunOutputEvent
@@ -40,7 +41,16 @@ WorkflowSteps = List[
 
 @dataclass
 class Parallel:
-    """A list of steps that execute in parallel"""
+    """A list of steps that execute in parallel.
+
+    Unlike sequential constructs (Steps, Loop), Parallel uses variadic arguments
+    to emphasize that the steps are independent and unordered.
+
+    Supports flexible calling conventions:
+        Parallel(step1, step2, step3)                      # Steps only (name defaults to "Parallel")
+        Parallel(step1, step2, name="my_parallel")         # Name as keyword (at end)
+        Parallel("my_parallel", step1, step2)              # Name as first positional arg
+    """
 
     steps: WorkflowSteps
 
@@ -49,13 +59,74 @@ class Parallel:
 
     def __init__(
         self,
-        *steps: WorkflowSteps,
+        *args: Union[str, WorkflowSteps],
         name: Optional[str] = None,
         description: Optional[str] = None,
     ):
-        self.steps = list(steps)
-        self.name = name
+        resolved_name = name
+        resolved_steps: List[Any] = []
+
+        if args:
+            first_arg = args[0]
+            # Check if first argument is a plain string (likely a name, not a step)
+            if isinstance(first_arg, str):
+                # First arg is the name, rest are steps
+                resolved_name = first_arg
+                resolved_steps = list(args[1:])
+            else:
+                # All args are steps
+                resolved_steps = list(args)
+
+        # If name was provided as keyword, it takes precedence
+        if name is not None:
+            resolved_name = name
+
+        self.steps = resolved_steps
+        self.name = resolved_name
         self.description = description
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "type": "Parallel",
+            "name": self.name,
+            "description": self.description,
+            "steps": [step.to_dict() for step in self.steps if hasattr(step, "to_dict")],
+        }
+
+    @classmethod
+    def from_dict(
+        cls,
+        data: Dict[str, Any],
+        registry: Optional["Registry"] = None,
+        db: Optional[Any] = None,
+        links: Optional[List[Dict[str, Any]]] = None,
+    ) -> "Parallel":
+        from agno.workflow.condition import Condition
+        from agno.workflow.loop import Loop
+        from agno.workflow.router import Router
+        from agno.workflow.steps import Steps
+
+        def deserialize_step(step_data: Dict[str, Any]) -> Any:
+            step_type = step_data.get("type", "Step")
+            if step_type == "Loop":
+                return Loop.from_dict(step_data, registry=registry, db=db, links=links)
+            elif step_type == "Parallel":
+                return cls.from_dict(step_data, registry=registry, db=db, links=links)
+            elif step_type == "Steps":
+                return Steps.from_dict(step_data, registry=registry, db=db, links=links)
+            elif step_type == "Condition":
+                return Condition.from_dict(step_data, registry=registry, db=db, links=links)
+            elif step_type == "Router":
+                return Router.from_dict(step_data, registry=registry, db=db, links=links)
+            else:
+                return Step.from_dict(step_data, registry=registry, db=db, links=links)
+
+        deserialized_steps = [deserialize_step(step) for step in data.get("steps", [])]
+        return cls(
+            *deserialized_steps,
+            name=data.get("name"),
+            description=data.get("description"),
+        )
 
     def _prepare_steps(self):
         """Prepare the steps for execution - mirrors workflow logic"""
@@ -101,7 +172,7 @@ class Parallel:
                 step_name=self.name or "Parallel",
                 step_id=str(uuid4()),
                 step_type=StepType.PARALLEL,
-                content=f"Parallel {self.name or 'execution'} completed with 1 result",
+                content=self._build_aggregated_content(step_outputs),
                 executor_name=self.name or "Parallel",
                 images=single_result.images,
                 videos=single_result.videos,
@@ -115,8 +186,8 @@ class Parallel:
 
         early_termination_requested = any(output.stop for output in step_outputs if hasattr(output, "stop"))
 
-        # Multiple results - aggregate them
-        aggregated_content = f"Parallel {self.name or 'execution'} completed with {len(step_outputs)} results"
+        # Multiple results - aggregate them with actual content from all steps
+        aggregated_content = self._build_aggregated_content(step_outputs)
 
         # Combine all media from parallel steps
         all_images = []
@@ -207,6 +278,7 @@ class Parallel:
         workflow_session: Optional[WorkflowSession] = None,
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
+        background_tasks: Optional[Any] = None,
     ) -> StepOutput:
         """Execute all steps in parallel and return aggregated result"""
         # Use workflow logger for parallel orchestration
@@ -244,6 +316,7 @@ class Parallel:
                     num_history_runs=num_history_runs,
                     run_context=run_context,
                     session_state=step_session_state,
+                    background_tasks=background_tasks,
                 )  # type: ignore[union-attr]
                 return idx, step_result, step_session_state
             except Exception as exc:
@@ -265,8 +338,9 @@ class Parallel:
 
         with ThreadPoolExecutor(max_workers=len(self.steps)) as executor:
             # Submit all tasks with their original indices
+            # Use copy_context().run to propagate context variables to child threads
             future_to_index = {
-                executor.submit(execute_step_with_index, indexed_step): indexed_step[0]
+                executor.submit(copy_context().run, execute_step_with_index, indexed_step): indexed_step[0]
                 for indexed_step in indexed_steps
             }
 
@@ -325,7 +399,6 @@ class Parallel:
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         stream_events: bool = False,
-        stream_intermediate_steps: bool = False,
         stream_executor_events: bool = True,
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         step_index: Optional[Union[int, tuple]] = None,
@@ -336,6 +409,7 @@ class Parallel:
         workflow_session: Optional[WorkflowSession] = None,
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
+        background_tasks: Optional[Any] = None,
     ) -> Iterator[Union[WorkflowRunOutputEvent, StepOutput]]:
         """Execute all steps in parallel with streaming support"""
         log_debug(f"Parallel Start: {self.name} ({len(self.steps)} steps)", center=True, symbol="=")
@@ -355,15 +429,6 @@ class Parallel:
                     session_state_copies.append(deepcopy(session_state))
                 else:
                     session_state_copies.append({})
-
-        # Considering both stream_events and stream_intermediate_steps (deprecated)
-        if stream_intermediate_steps is not None:
-            warnings.warn(
-                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-        stream_events = stream_events or stream_intermediate_steps
 
         if stream_events and workflow_run_response:
             # Yield parallel step started event
@@ -414,10 +479,12 @@ class Parallel:
                     step_index=sub_step_index,
                     store_executor_outputs=store_executor_outputs,
                     session_state=step_session_state,
+                    run_context=run_context,
                     parent_step_id=parallel_step_id,
                     workflow_session=workflow_session,
                     add_workflow_history_to_steps=add_workflow_history_to_steps,
                     num_history_runs=num_history_runs,
+                    background_tasks=background_tasks,
                 ):
                     # Put event immediately in queue
                     event_queue.put(("event", idx, event))
@@ -445,7 +512,11 @@ class Parallel:
 
         with ThreadPoolExecutor(max_workers=len(self.steps)) as executor:
             # Submit all tasks
-            futures = [executor.submit(execute_step_stream_with_index, indexed_step) for indexed_step in indexed_steps]
+            # Use copy_context().run to propagate context variables to child threads
+            futures = [
+                executor.submit(copy_context().run, execute_step_stream_with_index, indexed_step)
+                for indexed_step in indexed_steps
+            ]
 
             # Process events from queue as they arrive
             completed_steps = 0
@@ -533,6 +604,7 @@ class Parallel:
         workflow_session: Optional[WorkflowSession] = None,
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
+        background_tasks: Optional[Any] = None,
     ) -> StepOutput:
         """Execute all steps in parallel using asyncio and return aggregated result"""
         # Use workflow logger for async parallel orchestration
@@ -569,6 +641,8 @@ class Parallel:
                     add_workflow_history_to_steps=add_workflow_history_to_steps,
                     num_history_runs=num_history_runs,
                     session_state=step_session_state,
+                    run_context=run_context,
+                    background_tasks=background_tasks,
                 )  # type: ignore[union-attr]
                 return idx, inner_step_result, step_session_state
             except Exception as exc:
@@ -651,7 +725,6 @@ class Parallel:
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         stream_events: bool = False,
-        stream_intermediate_steps: bool = False,
         stream_executor_events: bool = True,
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         step_index: Optional[Union[int, tuple]] = None,
@@ -662,6 +735,7 @@ class Parallel:
         workflow_session: Optional[WorkflowSession] = None,
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
+        background_tasks: Optional[Any] = None,
     ) -> AsyncIterator[Union[WorkflowRunOutputEvent, TeamRunOutputEvent, RunOutputEvent, StepOutput]]:
         """Execute all steps in parallel with async streaming support"""
         log_debug(f"Parallel Start: {self.name} ({len(self.steps)} steps)", center=True, symbol="=")
@@ -681,15 +755,6 @@ class Parallel:
                     session_state_copies.append(deepcopy(session_state))
                 else:
                     session_state_copies.append({})
-
-        # Considering both stream_events and stream_intermediate_steps (deprecated)
-        if stream_intermediate_steps is not None:
-            warnings.warn(
-                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-        stream_events = stream_events or stream_intermediate_steps
 
         if stream_events and workflow_run_response:
             # Yield parallel step started event
@@ -745,6 +810,7 @@ class Parallel:
                     workflow_session=workflow_session,
                     add_workflow_history_to_steps=add_workflow_history_to_steps,
                     num_history_runs=num_history_runs,
+                    background_tasks=background_tasks,
                 ):  # type: ignore[union-attr]
                     # Yield events immediately to the queue
                     await event_queue.put(("event", idx, event))

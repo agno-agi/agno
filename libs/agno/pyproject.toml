@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "2.3.3"
+version = "2.4.8"
 description = "Agno: a lightweight library for building Multi-Agent Systems"
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -47,10 +47,26 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["mypy==1.18.2", "ruff==0.14.3", "pytest", "pytest-asyncio", "pytest-cov", "pytest-mock", "timeout-decorator", "types-pyyaml", "types-aiofiles", "fastapi", "uvicorn", "PyJWT", "mcp", "openai"]
+dev = [
+  "mypy==1.18.2",
+  "ruff==0.14.3",
+  "pytest",
+  "pytest-asyncio",
+  "pytest-cov",
+  "pytest-mock",
+  "timeout-decorator",
+  "types-pyyaml",
+  "types-aiofiles",
+  "fastapi",
+  "uvicorn",
+  "PyJWT",
+  "mcp",
+  "openai",
+  "fakeredis",
+  "xlwt",
+]
 
 os = ["fastapi", "uvicorn", "PyJWT"]
-
 
 # Dependencies for Telemetry
 opentelemetry = ["opentelemetry-sdk", "opentelemetry-exporter-otlp"]
@@ -77,6 +93,12 @@ ollama = ["ollama"]
 openai = ["openai"]
 portkey = ["portkey-ai"]
 
+# Dependencies for Token Counting
+tokenizers = ["tiktoken", "tokenizers"]
+
+# Dependencies for Workflow Expression Evaluation
+cel = ["cel-python"]
+
 # Dependencies for Tools
 agentql = ["agentql"]
 apify = ["apify-client"]
@@ -90,6 +112,7 @@ duckdb = ["duckdb"]
 elevenlabs = ["elevenlabs"]
 evm = ["web3"]
 exa = ["exa_py"]
+seltz = ["seltz"]
 fal = ["fal_client"]
 firecrawl = ["firecrawl-py==3.4.0"]
 tavily = ["tavily-python"]
@@ -101,12 +124,13 @@ googlemaps = ["googlemaps", "google-maps-places"]
 matplotlib = ["matplotlib"]
 mcp = ["mcp>=1.9.2"]
 mem0 = ["mem0ai"]
-memori = ["memorisdk"]
+memori = ["memori>=3.0.5"]
 newspaper = ["newspaper4k", "lxml_html_clean"]
 notion = ["notion-client"]
 opencv = ["opencv-python"]
 parallel = ["parallel-web"]
 psycopg = ["psycopg-binary", "psycopg"]
+redshift = ["redshift-connector"]
 reportlab = ["reportlab"]
 scrapegraph = ["scrapegraph-py"]
 todoist = ["todoist-api-python"]
@@ -128,12 +152,13 @@ async_mongo = ["pymongo>=4.9", "motor"]
 sqlite = ["sqlalchemy"]
 gcs = ["google-cloud-storage"]
 firestore = ["google-cloud-firestore"]
-redis = ["redis", "redisvl"]
+redis = ["redis", "redisvl>=0.12.1"]
+mysql = ["pymysql", "asyncmy"]
 
 # Dependencies for Vector databases
 pgvector = ["pgvector"]
 chromadb = ["chromadb"]
-lancedb = ["lancedb==0.24.0", "tantivy"]
+lancedb = ["lancedb>=0.26.0", "tantivy"]
 pylance = ["pylance"]
 qdrant = ["qdrant-client"]
 couchbase = ["couchbase"]
@@ -153,8 +178,9 @@ docx = ["python-docx"]
 pptx = ["python-pptx"]
 text = ["aiofiles"]
 csv = ["aiofiles"]
-markdown = ["unstructured", "markdown", "aiofiles"]
-chonkie = ["chonkie[st]", "chonkie"]
+excel = ["openpyxl", "xlrd"]
+markdown = ["unstructured<0.18.31", "markdown", "aiofiles"]
+chonkie = ["chonkie[semantic]", "chonkie[code]", "chonkie"]
 
 # Dependencies for AG-UI integration
 agui = ["ag-ui-protocol"]
@@ -205,6 +231,7 @@ tools = [
   "agno[arxiv]",
   # "agno[brave]",  # It clashes with other dependencies
   "agno[exa]",
+  "agno[seltz]",
   "agno[cartesia]",
   "agno[ddg]",
   "agno[duckdb]",
@@ -229,7 +256,7 @@ tools = [
   "agno[parallel]",
   "agno[scrapegraph]",
   "agno[valyu]",
-  "agno[yfinance]",  
+  "agno[yfinance]",
   "agno[confluence]",
   "agno[notion]",
   "agno[oxylabs]",
@@ -238,6 +265,7 @@ tools = [
   "agno[memori]",
   "agno[google_bigquery]",
   "agno[psycopg]",
+  "agno[redshift]",
   "agno[reportlab]",
   "agno[trafilatura]",
   "agno[neo4j]",
@@ -272,6 +300,7 @@ vectordbs = [
   "agno[surrealdb]",
   "agno[upstash]",
   "agno[pylance]",
+  "agno[redis]",
 ]
 
 # All knowledge
@@ -281,6 +310,7 @@ knowledge = [
   "agno[pptx]",
   "agno[text]",
   "agno[csv]",
+  "agno[excel]",
   "agno[markdown]",
   "agno[chonkie]"
 ]
@@ -307,6 +337,7 @@ tests = [
     "agno[integration-tests]",
     "twine",
     "build",
+    "grpcio==1.74.0",
 ]
 
 # Models integration test dependencies
@@ -317,6 +348,32 @@ integration-tests = [
     "sqlalchemy",
     "Pillow",
     "fastmcp"
+]
+
+# Dependencies for demo application
+demo = [
+    "agno[dev]",
+    "anthropic",
+    "chromadb",
+    "ddgs",
+    "fastapi[standard]",
+    "google-genai",
+    "matplotlib",
+    "mcp",
+    "nest_asyncio",
+    "openai",
+    "openinference-instrumentation-agno",
+    "opentelemetry-api",
+    "opentelemetry-sdk",
+    "pandas",
+    "parallel-web",
+    "pgvector",
+    "pillow",
+    "psycopg[binary]",
+    "pypdf",
+    "sqlalchemy",
+    "yfinance",
+    "youtube-transcript-api",
 ]
 
 [project.urls]
@@ -395,6 +452,7 @@ module = [
   "e2b_code_interpreter.*",
   "eth_account.*",
   "exa_py.*",
+  "seltz.*",
   "fastapi.*",
   "fastembed.*",
   "fastmcp.*",
@@ -435,6 +493,7 @@ module = [
   "newspaper.*",
   "numpy.*",
   "ollama.*",
+  "openpyxl.*",
   "openai.*",
   "cv2.*",
   "openbb.*",
@@ -472,6 +531,7 @@ module = [
   "textract.*",
   "timeout_decorator.*",
   "tiktoken.*",
+  "tokenizers.*",
   "torch.*",
   "todoist_api_python.*",
   "tweepy.*",
@@ -495,8 +555,11 @@ module = [
   "zep_cloud.*",
   "oxylabs.*",
   "parallel.*",
+  "redshift_connector.*",
   "reportlab.*",
   "surrealdb.*",
-  "trafilatura.*"
+  "trafilatura.*",
+  "xlrd.*",
+  "celpy.*"
 ]
 ignore_missing_imports = true

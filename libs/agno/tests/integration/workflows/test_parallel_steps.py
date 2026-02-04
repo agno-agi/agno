@@ -1,8 +1,16 @@
 """Integration tests for Parallel steps functionality."""
 
+from contextvars import ContextVar
+from secrets import token_hex
+
 import pytest
 
-from agno.run.workflow import WorkflowCompletedEvent, WorkflowRunOutput
+from agno.run.workflow import (
+    StepCompletedEvent,
+    StepStartedEvent,
+    WorkflowCompletedEvent,
+    WorkflowRunOutput,
+)
 from agno.workflow import Workflow
 from agno.workflow.parallel import Parallel
 from agno.workflow.step import Step
@@ -49,7 +57,10 @@ def test_parallel_direct_execute():
     assert isinstance(result, StepOutput)
     assert result.step_name == "Direct Parallel"
     assert result.step_type == "Parallel"
-    assert "Parallel Direct Parallel completed with 2 results" in result.content
+    # Content should contain aggregated results from all inner steps
+    assert "## Parallel Execution Results" in result.content
+    assert "Output A" in result.content
+    assert "Output B" in result.content
 
     # The actual step outputs should be in the steps field
     assert len(result.steps) == 2
@@ -68,7 +79,10 @@ async def test_parallel_direct_aexecute():
     assert isinstance(result, StepOutput)
     assert result.step_name == "Direct Async Parallel"
     assert result.step_type == "Parallel"
-    assert "Parallel Direct Async Parallel completed with 2 results" in result.content
+    # Content should contain aggregated results from all inner steps
+    assert "## Parallel Execution Results" in result.content
+    assert "Output A" in result.content
+    assert "Output B" in result.content
 
     # The actual step outputs should be in the steps field
     assert len(result.steps) == 2
@@ -106,7 +120,10 @@ def test_parallel_direct_execute_stream():
 
     # Check the parallel container output
     parallel_output = step_outputs[0]
-    assert "Parallel Direct Stream Parallel completed with 2 results" in parallel_output.content
+    # Content should contain aggregated results from all inner steps
+    assert "## Parallel Execution Results" in parallel_output.content
+    assert "Output A" in parallel_output.content
+    assert "Output B" in parallel_output.content
     assert len(parallel_output.steps) == 2
     assert find_content_in_steps(parallel_output, "Output A")
     assert find_content_in_steps(parallel_output, "Output B")
@@ -122,11 +139,95 @@ def test_parallel_direct_single_step():
     assert isinstance(result, StepOutput)
     assert result.step_name == "Single Step Parallel"
     assert result.step_type == "Parallel"
-    assert "Parallel Single Step Parallel completed with 1 result" in result.content
+    # Content should contain aggregated results from all inner steps
+    assert "## Parallel Execution Results" in result.content
+    assert "Output A" in result.content
 
     # Single step should still be in the steps field
     assert len(result.steps) == 1
     assert result.steps[0].content == "Output A"
+
+
+# ============================================================================
+# CONTEXT PROPAGATION TESTS
+# ============================================================================
+
+# ContextVar for testing context propagation to child threads
+_test_context_var: ContextVar[str] = ContextVar("test_context_var", default="not_set")
+
+
+def _step_read_context(step_input: StepInput) -> StepOutput:
+    """Step that reads a context variable to verify propagation."""
+    value = _test_context_var.get()
+    return StepOutput(content=f"context_value={value}")
+
+
+def test_parallel_context_propagation():
+    """Test that context variables are propagated to parallel step threads.
+
+    This verifies that copy_context().run() is used when submitting tasks
+    to the ThreadPoolExecutor, ensuring contextvars are available in child threads.
+    """
+    # Set context variable in main thread
+    value = token_hex(16)
+    token = _test_context_var.set(value)
+
+    try:
+        parallel = Parallel(
+            _step_read_context,
+            _step_read_context,
+            name="Context Propagation Test",
+        )
+        step_input = StepInput(input="context test")
+
+        result = parallel.execute(step_input)
+
+        # Both parallel steps should have received the context variable
+        assert len(result.steps) == 2
+        for step_result in result.steps:
+            assert f"context_value={value}" in step_result.content, (
+                f"Context variable was not propagated to child thread. Got: {step_result.content}"
+            )
+    finally:
+        _test_context_var.reset(token)
+
+
+def test_parallel_context_propagation_streaming():
+    """Test context propagation in streaming parallel execution."""
+    from agno.run.workflow import WorkflowRunOutput
+
+    value = token_hex(16)
+    token = _test_context_var.set(value)
+
+    try:
+        parallel = Parallel(
+            _step_read_context,
+            _step_read_context,
+            name="Context Stream Test",
+        )
+        step_input = StepInput(input="context stream test")
+
+        mock_response = WorkflowRunOutput(
+            run_id="test-run",
+            workflow_name="test-workflow",
+            workflow_id="test-id",
+            session_id="test-session",
+            content="",
+        )
+
+        events = list(parallel.execute_stream(step_input, workflow_run_response=mock_response, stream_events=True))
+        step_outputs = [e for e in events if isinstance(e, StepOutput)]
+
+        assert len(step_outputs) == 1
+        parallel_output = step_outputs[0]
+        assert len(parallel_output.steps) == 2
+
+        for step_result in parallel_output.steps:
+            assert f"context_value={value}" in step_result.content, (
+                f"Context variable was not propagated in streaming mode. Got: {step_result.content}"
+            )
+    finally:
+        _test_context_var.reset(token)
 
 
 # ============================================================================
@@ -150,7 +251,10 @@ def test_basic_parallel(shared_db):
     parallel_output = response.step_results[0]
     assert isinstance(parallel_output, StepOutput)
     assert parallel_output.step_type == "Parallel"
-    assert "Parallel Parallel Phase completed with 2 results" in parallel_output.content
+    # Content should contain aggregated results from all inner steps
+    assert "## Parallel Execution Results" in parallel_output.content
+    assert "Output A" in parallel_output.content
+    assert "Output B" in parallel_output.content
 
     # The actual step outputs should be in the nested steps
     assert len(parallel_output.steps) == 2
@@ -193,7 +297,9 @@ def test_parallel_with_agent(shared_db, test_agent):
     parallel_output = response.step_results[0]
     assert isinstance(parallel_output, StepOutput)
     assert parallel_output.step_type == "Parallel"
-    assert "Parallel Mixed Parallel completed with 2 results" in parallel_output.content
+    # Content should contain aggregated results from all inner steps
+    assert "## Parallel Execution Results" in parallel_output.content
+    assert "Output A" in parallel_output.content
 
     # Check nested steps contain both function and agent outputs
     assert len(parallel_output.steps) == 2
@@ -242,3 +348,323 @@ async def test_async_parallel_streaming(shared_db):
     parallel_output = final_response.step_results[0]
     assert parallel_output.step_type == "Parallel"
     assert len(parallel_output.steps) == 2
+
+
+# ============================================================================
+# EARLY TERMINATION / STOP PROPAGATION TESTS
+# ============================================================================
+
+
+def early_stop_step(step_input: StepInput) -> StepOutput:
+    """Step that requests early termination."""
+    return StepOutput(
+        content="Early stop requested",
+        success=True,
+        stop=True,
+    )
+
+
+def should_not_run_step(step_input: StepInput) -> StepOutput:
+    """Step that should not run after early stop."""
+    return StepOutput(
+        content="This step should not have run",
+        success=True,
+    )
+
+
+def normal_parallel_step(step_input: StepInput) -> StepOutput:
+    """Normal step for parallel testing."""
+    return StepOutput(
+        content="Normal parallel step output",
+        success=True,
+    )
+
+
+def test_parallel_propagates_stop_flag():
+    """Test that Parallel propagates stop flag from any inner step."""
+    parallel = Parallel(
+        normal_parallel_step,
+        early_stop_step,  # This step requests stop
+        name="Stop Parallel",
+    )
+    step_input = StepInput(input="test")
+
+    result = parallel.execute(step_input)
+
+    assert isinstance(result, StepOutput)
+    assert result.stop is True, "Parallel should propagate stop=True from any inner step"
+
+
+def test_parallel_stop_propagation_in_workflow(shared_db):
+    """Test that workflow stops when Parallel's inner step returns stop=True."""
+    workflow = Workflow(
+        name="Parallel Stop Propagation Test",
+        db=shared_db,
+        steps=[
+            Parallel(
+                normal_parallel_step,
+                early_stop_step,
+                name="stop_parallel",
+            ),
+            should_not_run_step,  # This should NOT execute
+        ],
+    )
+
+    response = workflow.run(input="test")
+
+    assert isinstance(response, WorkflowRunOutput)
+    # Should only have 1 step result (the Parallel), not 2
+    assert len(response.step_results) == 1, "Workflow should stop after Parallel with stop=True"
+    assert response.step_results[0].stop is True
+
+
+def test_parallel_streaming_propagates_stop(shared_db):
+    """Test that streaming Parallel propagates stop flag and stops workflow."""
+    workflow = Workflow(
+        name="Streaming Parallel Stop Test",
+        db=shared_db,
+        steps=[
+            Parallel(
+                normal_parallel_step,
+                early_stop_step,
+                name="stop_parallel",
+            ),
+            should_not_run_step,
+        ],
+    )
+
+    events = list(workflow.run(input="test", stream=True, stream_events=True))
+
+    # Verify workflow completed
+    workflow_completed = [e for e in events if isinstance(e, WorkflowCompletedEvent)]
+    assert len(workflow_completed) == 1
+
+    # Should only have 1 step result (the Parallel), not 2
+    assert len(workflow_completed[0].step_results) == 1, "Workflow should stop after Parallel with stop=True"
+
+    # Check that the parallel output has stop=True
+    parallel_output = workflow_completed[0].step_results[0]
+    assert parallel_output.stop is True
+
+    # Check that at least one inner step has stop=True in results
+    assert len(parallel_output.steps) == 2
+    assert any(r.stop for r in parallel_output.steps), "At least one step should have stop=True"
+
+    # Most importantly: verify should_not_run_step was NOT executed
+    step_events = [e for e in events if isinstance(e, (StepStartedEvent, StepCompletedEvent))]
+    step_names = [e.step_name for e in step_events]
+    assert "should_not_run_step" not in step_names, "Workflow should have stopped before should_not_run_step"
+
+
+@pytest.mark.asyncio
+async def test_async_parallel_propagates_stop():
+    """Test that async Parallel propagates stop flag."""
+    parallel = Parallel(
+        normal_parallel_step,
+        early_stop_step,
+        name="Async Stop Parallel",
+    )
+    step_input = StepInput(input="test")
+
+    result = await parallel.aexecute(step_input)
+
+    assert isinstance(result, StepOutput)
+    assert result.stop is True, "Async Parallel should propagate stop=True from any inner step"
+
+
+@pytest.mark.asyncio
+async def test_async_parallel_streaming_propagates_stop(shared_db):
+    """Test that async streaming Parallel propagates stop flag and stops workflow."""
+    workflow = Workflow(
+        name="Async Streaming Parallel Stop Test",
+        db=shared_db,
+        steps=[
+            Parallel(
+                normal_parallel_step,
+                early_stop_step,
+                name="stop_parallel",
+            ),
+            should_not_run_step,
+        ],
+    )
+
+    events = []
+    async for event in workflow.arun(input="test", stream=True, stream_events=True):
+        events.append(event)
+
+    # Verify workflow completed
+    workflow_completed = [e for e in events if isinstance(e, WorkflowCompletedEvent)]
+    assert len(workflow_completed) == 1
+
+    # Should only have 1 step result (the Parallel), not 2
+    assert len(workflow_completed[0].step_results) == 1, "Workflow should stop after Parallel with stop=True"
+
+    # Check that the parallel output has stop=True
+    parallel_output = workflow_completed[0].step_results[0]
+    assert parallel_output.stop is True
+
+    # Check that at least one inner step has stop=True in results
+    assert len(parallel_output.steps) == 2
+    assert any(r.stop for r in parallel_output.steps), "At least one step should have stop=True"
+
+    # Most importantly: verify should_not_run_step was NOT executed
+    step_events = [e for e in events if isinstance(e, (StepStartedEvent, StepCompletedEvent))]
+    step_names = [e.step_name for e in step_events]
+    assert "should_not_run_step" not in step_names, "Workflow should have stopped before should_not_run_step"
+
+
+def test_parallel_all_steps_stop():
+    """Test Parallel when all inner steps request stop."""
+
+    def stop_step_1(step_input: StepInput) -> StepOutput:
+        return StepOutput(content="Stop 1", success=True, stop=True)
+
+    def stop_step_2(step_input: StepInput) -> StepOutput:
+        return StepOutput(content="Stop 2", success=True, stop=True)
+
+    parallel = Parallel(
+        stop_step_1,
+        stop_step_2,
+        name="All Stop Parallel",
+    )
+    step_input = StepInput(input="test")
+
+    result = parallel.execute(step_input)
+
+    assert isinstance(result, StepOutput)
+    assert result.stop is True
+    assert len(result.steps) == 2
+    assert all(step.stop for step in result.steps)
+
+
+def test_parallel_no_stop():
+    """Test Parallel when no inner steps request stop."""
+    parallel = Parallel(
+        normal_parallel_step,
+        step_b,  # Using existing step_b from the file
+        name="No Stop Parallel",
+    )
+    step_input = StepInput(input="test")
+
+    result = parallel.execute(step_input)
+
+    assert isinstance(result, StepOutput)
+    assert result.stop is False, "Parallel should not set stop when no inner step requests it"
+
+
+def test_parallel_name_as_first_positional_arg():
+    """Test Parallel with name as first positional argument."""
+    parallel = Parallel("My Named Parallel", step_a, step_b)
+    step_input = StepInput(input="test")
+
+    result = parallel.execute(step_input)
+
+    assert isinstance(result, StepOutput)
+    assert parallel.name == "My Named Parallel"
+    assert result.step_name == "My Named Parallel"
+    assert len(result.steps) == 2
+    assert find_content_in_steps(result, "Output A")
+    assert find_content_in_steps(result, "Output B")
+
+
+def test_parallel_name_as_keyword_arg():
+    """Test Parallel with name as keyword argument (original behavior)."""
+    parallel = Parallel(step_a, step_b, name="Keyword Named Parallel")
+    step_input = StepInput(input="test")
+
+    result = parallel.execute(step_input)
+
+    assert isinstance(result, StepOutput)
+    assert parallel.name == "Keyword Named Parallel"
+    assert result.step_name == "Keyword Named Parallel"
+    assert len(result.steps) == 2
+    assert find_content_in_steps(result, "Output A")
+    assert find_content_in_steps(result, "Output B")
+
+
+def test_parallel_no_name():
+    """Test Parallel without any name."""
+    parallel = Parallel(step_a, step_b)
+    step_input = StepInput(input="test")
+
+    result = parallel.execute(step_input)
+
+    assert isinstance(result, StepOutput)
+    assert parallel.name is None
+    assert result.step_name == "Parallel"  # Default name
+    assert len(result.steps) == 2
+
+
+def test_parallel_keyword_name_overrides_positional():
+    """Test that keyword name takes precedence over positional name."""
+    parallel = Parallel("Positional Name", step_a, step_b, name="Keyword Name")
+    step_input = StepInput(input="test")
+
+    result = parallel.execute(step_input)
+
+    assert isinstance(result, StepOutput)
+    assert parallel.name == "Keyword Name"
+    assert result.step_name == "Keyword Name"
+
+
+def test_parallel_name_first_single_step():
+    """Test Parallel with name first and single step."""
+    parallel = Parallel("Single Step Named", step_a)
+    step_input = StepInput(input="test")
+
+    result = parallel.execute(step_input)
+
+    assert isinstance(result, StepOutput)
+    assert parallel.name == "Single Step Named"
+    assert len(result.steps) == 1
+    assert find_content_in_steps(result, "Output A")
+
+
+def test_parallel_name_first_with_description():
+    """Test Parallel with name first and description as keyword."""
+    parallel = Parallel("Described Parallel", step_a, step_b, description="A parallel with description")
+    step_input = StepInput(input="test")
+
+    result = parallel.execute(step_input)
+
+    assert isinstance(result, StepOutput)
+    assert parallel.name == "Described Parallel"
+    assert parallel.description == "A parallel with description"
+    assert len(result.steps) == 2
+
+
+@pytest.mark.asyncio
+async def test_parallel_name_first_async():
+    """Test async Parallel with name as first positional argument."""
+    parallel = Parallel("Async Named Parallel", step_a, step_b)
+    step_input = StepInput(input="test")
+
+    result = await parallel.aexecute(step_input)
+
+    assert isinstance(result, StepOutput)
+    assert parallel.name == "Async Named Parallel"
+    assert result.step_name == "Async Named Parallel"
+    assert len(result.steps) == 2
+
+
+def test_parallel_name_first_streaming():
+    """Test streaming Parallel with name as first positional argument."""
+    from agno.run.workflow import WorkflowRunOutput
+
+    parallel = Parallel("Streaming Named Parallel", step_a, step_b)
+    step_input = StepInput(input="test")
+
+    mock_response = WorkflowRunOutput(
+        run_id="test-run",
+        workflow_name="test-workflow",
+        workflow_id="test-id",
+        session_id="test-session",
+        content="",
+    )
+
+    events = list(parallel.execute_stream(step_input, workflow_run_response=mock_response, stream_events=True))
+    step_outputs = [e for e in events if isinstance(e, StepOutput)]
+
+    assert len(step_outputs) == 1
+    assert parallel.name == "Streaming Named Parallel"
+    assert step_outputs[0].step_name == "Streaming Named Parallel"

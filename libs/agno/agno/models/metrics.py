@@ -13,6 +13,10 @@ class Metrics:
     output_tokens: int = 0
     total_tokens: int = 0
 
+    # Cost of the run
+    # Currently only supported by some providers
+    cost: Optional[float] = None
+
     # Audio token usage
     audio_input_tokens: int = 0
     audio_output_tokens: int = 0
@@ -43,6 +47,7 @@ class Metrics:
         metrics_dict = asdict(self)
         # Remove the timer util if present
         metrics_dict.pop("timer", None)
+        # Remove any None, 0, or empty dict values
         metrics_dict = {
             k: v
             for k, v in metrics_dict.items()
@@ -64,6 +69,13 @@ class Metrics:
             cache_write_tokens=self.cache_write_tokens + other.cache_write_tokens,
             reasoning_tokens=self.reasoning_tokens + other.reasoning_tokens,
         )
+
+        if self.cost is not None and other.cost is not None:
+            result.cost = self.cost + other.cost
+        elif self.cost is not None:
+            result.cost = self.cost
+        elif other.cost is not None:
+            result.cost = other.cost
 
         # Handle provider_metrics
         if self.provider_metrics or other.provider_metrics:

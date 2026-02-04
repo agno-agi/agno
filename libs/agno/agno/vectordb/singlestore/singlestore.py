@@ -56,7 +56,7 @@ class SingleStore(VectorDb):
             from agno.knowledge.embedder.openai import OpenAIEmbedder
 
             embedder = OpenAIEmbedder()
-            log_info("Embedder not provided, using OpenAIEmbedder as default.")
+            log_debug("Embedder not provided, using OpenAIEmbedder as default.")
         self.embedder: Embedder = embedder
         self.dimensions: Optional[int] = self.embedder.dimensions
 
@@ -185,8 +185,10 @@ class SingleStore(VectorDb):
             for document in documents:
                 document.embed(embedder=self.embedder)
                 cleaned_content = document.content.replace("\x00", "\ufffd")
-                record_id = md5(cleaned_content.encode()).hexdigest()
-                _id = document.id or record_id
+                # Include content_hash in ID to ensure uniqueness across different content hashes
+                base_id = document.id or md5(cleaned_content.encode()).hexdigest()
+                record_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
+                _id = record_id
 
                 meta_data_json = json.dumps(document.meta_data)
                 usage_json = json.dumps(document.usage)
@@ -246,8 +248,10 @@ class SingleStore(VectorDb):
             for document in documents:
                 document.embed(embedder=self.embedder)
                 cleaned_content = document.content.replace("\x00", "\ufffd")
-                record_id = md5(cleaned_content.encode()).hexdigest()
-                _id = document.id or record_id
+                # Include content_hash in ID to ensure uniqueness across different content hashes
+                base_id = document.id or md5(cleaned_content.encode()).hexdigest()
+                record_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
+                _id = record_id
 
                 meta_data_json = json.dumps(document.meta_data)
                 usage_json = json.dumps(document.usage)
@@ -548,8 +552,10 @@ class SingleStore(VectorDb):
             counter = 0
             for document in documents:
                 cleaned_content = document.content.replace("\x00", "\ufffd")
-                record_id = md5(cleaned_content.encode()).hexdigest()
-                _id = document.id or record_id
+                # Include content_hash in ID to ensure uniqueness across different content hashes
+                base_id = document.id or md5(cleaned_content.encode()).hexdigest()
+                record_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
+                _id = record_id
 
                 meta_data_json = json.dumps(document.meta_data)
                 usage_json = json.dumps(document.usage)
@@ -632,8 +638,10 @@ class SingleStore(VectorDb):
             counter = 0
             for document in documents:
                 cleaned_content = document.content.replace("\x00", "\ufffd")
-                record_id = md5(cleaned_content.encode()).hexdigest()
-                _id = document.id or record_id
+                # Include content_hash in ID to ensure uniqueness across different content hashes
+                base_id = document.id or md5(cleaned_content.encode()).hexdigest()
+                record_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
+                _id = record_id
 
                 meta_data_json = json.dumps(document.meta_data)
                 usage_json = json.dumps(document.usage)

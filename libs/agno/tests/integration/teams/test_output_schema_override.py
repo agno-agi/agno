@@ -29,6 +29,40 @@ class BookSchema(BaseModel):
     year: int = Field(..., description="Publication year")
 
 
+person_json_schema = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "PersonInfo",
+        "schema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Person's full name"},
+                "age": {"type": "integer", "description": "Person's age"},
+            },
+            "required": ["name", "age"],
+            "additionalProperties": False,
+        },
+    },
+}
+
+book_json_schema = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "BookInfo",
+        "schema": {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string", "description": "Book title"},
+                "author": {"type": "string", "description": "Author name"},
+                "year": {"type": "integer", "description": "Publication year"},
+            },
+            "required": ["title", "author", "year"],
+            "additionalProperties": False,
+        },
+    },
+}
+
+
 def test_team_run_with_output_schema():
     """Test that output_schema can be overridden in team.run() and is restored after."""
     agent1 = Agent(
@@ -689,3 +723,172 @@ async def test_team_arun_with_default():
     assert response.content.name is not None
     assert response.content.age is not None
     assert team.output_schema == PersonSchema
+
+
+def test_team_run_with_json_schema():
+    """Test that JSON schema works as team output_schema."""
+    agent1 = Agent(
+        name="Agent1",
+        role="Information provider",
+        model=OpenAIChat(id="gpt-4o-mini"),
+    )
+
+    team = Team(
+        name="TestTeam",
+        members=[agent1],
+        output_schema=person_json_schema,
+        markdown=False,
+    )
+
+    response = team.run(
+        "Tell me about Albert Einstein who was 76 years old",
+        stream=False,
+    )
+
+    assert isinstance(response.content, dict)
+    assert "name" in response.content
+    assert "age" in response.content
+    assert response.content_type == "dict"
+
+
+@pytest.mark.asyncio
+async def test_team_arun_with_json_schema():
+    """Test that JSON schema works with team async run."""
+    agent1 = Agent(
+        name="Agent1",
+        role="Information provider",
+        model=OpenAIChat(id="gpt-4o-mini"),
+    )
+
+    team = Team(
+        name="TestTeam",
+        members=[agent1],
+        output_schema=person_json_schema,
+        markdown=False,
+    )
+
+    response = await team.arun(
+        "Tell me about Isaac Newton who was 84 years old",
+        stream=False,
+    )
+
+    assert isinstance(response.content, dict)
+    assert "name" in response.content
+    assert "age" in response.content
+    assert response.content_type == "dict"
+
+
+def test_team_run_with_json_schema_override():
+    """Test that JSON schema can be overridden at runtime in team."""
+    agent1 = Agent(
+        name="Agent1",
+        role="Information provider",
+        model=OpenAIChat(id="gpt-4o-mini"),
+    )
+
+    team = Team(
+        name="TestTeam",
+        members=[agent1],
+        output_schema=person_json_schema,
+        markdown=False,
+    )
+
+    assert team.output_schema == person_json_schema
+
+    response = team.run(
+        "Tell me about '1984' by George Orwell published in 1949",
+        output_schema=book_json_schema,
+        stream=False,
+    )
+
+    assert isinstance(response.content, dict)
+    assert "title" in response.content
+    assert "author" in response.content
+    assert "year" in response.content
+    assert team.output_schema == person_json_schema
+
+
+@pytest.mark.asyncio
+async def test_team_arun_with_json_schema_override():
+    """Test that JSON schema override works with team async."""
+    agent1 = Agent(
+        name="Agent1",
+        role="Information provider",
+        model=OpenAIChat(id="gpt-4o-mini"),
+    )
+
+    team = Team(
+        name="TestTeam",
+        members=[agent1],
+        output_schema=person_json_schema,
+        markdown=False,
+    )
+
+    response = await team.arun(
+        "Tell me about 'The Great Gatsby' by F. Scott Fitzgerald published in 1925",
+        output_schema=book_json_schema,
+        stream=False,
+    )
+
+    assert isinstance(response.content, dict)
+    assert "title" in response.content
+    assert "author" in response.content
+    assert "year" in response.content
+    assert team.output_schema == person_json_schema
+
+
+def test_team_run_json_schema_without_default():
+    """Test JSON schema override when team has no default schema."""
+    agent1 = Agent(
+        name="Agent1",
+        role="Information provider",
+        model=OpenAIChat(id="gpt-4o-mini"),
+    )
+
+    team = Team(
+        name="TestTeam",
+        members=[agent1],
+        markdown=False,
+    )
+
+    assert team.output_schema is None
+
+    response = team.run(
+        "Tell me about Ada Lovelace who was 36 years old",
+        output_schema=person_json_schema,
+        stream=False,
+    )
+
+    assert isinstance(response.content, dict)
+    assert "name" in response.content
+    assert "age" in response.content
+    assert team.output_schema is None
+
+
+@pytest.mark.asyncio
+async def test_team_arun_json_schema_without_default():
+    """Test JSON schema override in async when team has no default schema."""
+    agent1 = Agent(
+        name="Agent1",
+        role="Information provider",
+        model=OpenAIChat(id="gpt-4o-mini"),
+    )
+
+    team = Team(
+        name="TestTeam",
+        members=[agent1],
+        markdown=False,
+    )
+
+    assert team.output_schema is None
+
+    response = await team.arun(
+        "Tell me about Alan Turing who was 41 years old",
+        output_schema=person_json_schema,
+        stream=False,
+    )
+
+    assert isinstance(response.content, dict)
+    assert "name" in response.content
+    assert "age" in response.content
+    assert team.output_schema is None

@@ -1,14 +1,16 @@
 from dataclasses import asdict
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from datetime import datetime
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
 from agno.db.schemas.evals import EvalType
-from agno.eval import AccuracyResult, PerformanceResult, ReliabilityResult
+from agno.eval import AccuracyResult, AgentAsJudgeResult, PerformanceResult, ReliabilityResult
 from agno.eval.accuracy import AccuracyEval
+from agno.eval.agent_as_judge import AgentAsJudgeEval
 from agno.eval.performance import PerformanceEval
 from agno.eval.reliability import ReliabilityEval
+from agno.os.utils import to_utc_datetime
 
 
 class EvalRunInput(BaseModel):
@@ -26,6 +28,15 @@ class EvalRunInput(BaseModel):
 
     # Accuracy eval specific fields
     expected_output: Optional[str] = Field(None, description="Expected output for accuracy evaluation")
+
+    # AgentAsJudge eval specific fields
+    criteria: Optional[str] = Field(None, description="Evaluation criteria for agent-as-judge evaluation")
+    scoring_strategy: Optional[Literal["numeric", "binary"]] = Field(
+        "binary", description="Scoring strategy: 'numeric' (1-10 with threshold) or 'binary' (PASS/FAIL)"
+    )
+    threshold: Optional[int] = Field(
+        7, description="Score threshold for pass/fail (1-10), only used with numeric scoring", ge=1, le=10
+    )
 
     # Performance eval specific fields
     warmup_runs: int = Field(0, description="Number of warmup runs before measuring performance", ge=0, le=10)
@@ -64,8 +75,8 @@ class EvalSchema(BaseModel):
             eval_type=eval_run["eval_type"],
             eval_data=eval_run["eval_data"],
             eval_input=eval_run.get("eval_input"),
-            created_at=datetime.fromtimestamp(eval_run["created_at"], tz=timezone.utc),
-            updated_at=datetime.fromtimestamp(eval_run["updated_at"], tz=timezone.utc),
+            created_at=to_utc_datetime(eval_run.get("created_at")),
+            updated_at=to_utc_datetime(eval_run.get("updated_at")),
         )
 
     @classmethod
@@ -86,6 +97,28 @@ class EvalSchema(BaseModel):
             model_id=accuracy_eval.agent.model.id if accuracy_eval.agent else accuracy_eval.team.model.id,  # type: ignore
             model_provider=model_provider,
             eval_type=EvalType.ACCURACY,
+            eval_data=asdict(result),
+        )
+
+    @classmethod
+    def from_agent_as_judge_eval(
+        cls,
+        agent_as_judge_eval: AgentAsJudgeEval,
+        result: AgentAsJudgeResult,
+        model_id: Optional[str] = None,
+        model_provider: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+    ) -> "EvalSchema":
+        return cls(
+            id=result.run_id,
+            name=agent_as_judge_eval.name,
+            agent_id=agent_id,
+            team_id=team_id,
+            workflow_id=None,
+            model_id=model_id,
+            model_provider=model_provider,
+            eval_type=EvalType.AGENT_AS_JUDGE,
             eval_data=asdict(result),
         )
 

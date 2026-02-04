@@ -40,6 +40,8 @@ dist
 .venv*
 .perfenv*
 .demoenv*
+.gemini-agents*
+.getting-started*
 venv*
 agnoenv*
 aienv*
@@ -74,6 +76,15 @@ agno_json_data/
 .claude/
 .cursor/
 
+# Private design documents (symlinked)
+specs
+projects
+agno-os
+
+# Private Claude coding session preferences
+CLAUDE_PRIVATE.md
+
 # ignore pyrightconfig.json
 pyrightconfig.json
 .python-version
+CLAUDE_PRIVATE.md

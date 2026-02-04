@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional, Type, Union
 
 from pydantic import BaseModel
 
+from agno.exceptions import ModelAuthenticationError
 from agno.models.message import Message
 from agno.models.openai.like import OpenAILike
 from agno.utils.log import log_debug
@@ -19,6 +20,22 @@ class CerebrasOpenAI(OpenAILike):
     parallel_tool_calls: Optional[bool] = None
     base_url: str = "https://api.cerebras.ai/v1"
     api_key: Optional[str] = field(default_factory=lambda: getenv("CEREBRAS_API_KEY", None))
+
+    def _get_client_params(self) -> Dict[str, Any]:
+        """
+        Returns client parameters for API requests, checking for CEREBRAS_API_KEY.
+
+        Returns:
+            Dict[str, Any]: A dictionary of client parameters for API requests.
+        """
+        if not self.api_key:
+            self.api_key = getenv("CEREBRAS_API_KEY")
+            if not self.api_key:
+                raise ModelAuthenticationError(
+                    message="CEREBRAS_API_KEY not set. Please set the CEREBRAS_API_KEY environment variable.",
+                    model_name=self.name,
+                )
+        return super()._get_client_params()
 
     def get_request_params(
         self,

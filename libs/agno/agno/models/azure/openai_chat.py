@@ -4,6 +4,7 @@ from typing import Any, Dict, Optional
 
 import httpx
 
+from agno.exceptions import ModelAuthenticationError
 from agno.models.openai.like import OpenAILike
 from agno.utils.http import get_default_async_client, get_default_sync_client
 from agno.utils.log import log_warning
@@ -63,6 +64,14 @@ class AzureOpenAI(OpenAILike):
         self.api_key = self.api_key or getenv("AZURE_OPENAI_API_KEY")
         self.azure_endpoint = self.azure_endpoint or getenv("AZURE_OPENAI_ENDPOINT")
         self.azure_deployment = self.azure_deployment or getenv("AZURE_OPENAI_DEPLOYMENT")
+
+        if not (self.api_key or self.azure_ad_token or self.azure_ad_token_provider):
+            raise ModelAuthenticationError(
+                message="Azure OpenAI authentication not configured. Please provide one of:"
+                "AZURE_OPENAI_API_KEY environment variable, azure_ad_token, or azure_ad_token_provider",
+                model_name=self.name,
+            )
+
         params_mapping = {
             "api_key": self.api_key,
             "api_version": self.api_version,

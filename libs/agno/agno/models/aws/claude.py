@@ -70,8 +70,8 @@ class Claude(AnthropicClaude):
                 if self.aws_region:
                     client_params["aws_region"] = self.aws_region
             else:
-                self.aws_access_key = self.aws_access_key or getenv("AWS_ACCESS_KEY")
-                self.aws_secret_key = self.aws_secret_key or getenv("AWS_SECRET_KEY")
+                self.aws_access_key = self.aws_access_key or getenv("AWS_ACCESS_KEY_ID") or getenv("AWS_ACCESS_KEY")
+                self.aws_secret_key = self.aws_secret_key or getenv("AWS_SECRET_ACCESS_KEY") or getenv("AWS_SECRET_KEY")
                 self.aws_region = self.aws_region or getenv("AWS_REGION")
 
                 client_params = {
@@ -79,6 +79,11 @@ class Claude(AnthropicClaude):
                     "aws_access_key": self.aws_access_key,
                     "aws_region": self.aws_region,
                 }
+
+            if not (self.api_key or (self.aws_access_key and self.aws_secret_key)):
+                log_warning(
+                    "AWS credentials not found. Please set AWS_BEDROCK_API_KEY or AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables or provide a boto3 session."
+                )
 
         if self.timeout is not None:
             client_params["timeout"] = self.timeout

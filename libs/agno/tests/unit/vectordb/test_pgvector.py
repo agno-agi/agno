@@ -229,7 +229,8 @@ def test_insert_builds_records_and_uses_expected_ids(mock_pgvector, mock_embedde
         insert_stmt_sentinel = object()
         mock_insert.return_value = insert_stmt_sentinel
 
-        mock_pgvector.insert("test_content_hash", docs, filters={"tag": "t1"})
+        content_hash = "test_content_hash"
+        mock_pgvector.insert(content_hash, docs, filters={"tag": "t1"})
 
         # Ensure we executed with an insert statement and batch records
         assert sess.execute.call_count == 1
@@ -238,13 +239,21 @@ def test_insert_builds_records_and_uses_expected_ids(mock_pgvector, mock_embedde
         batch_records = args[1]
         assert isinstance(batch_records, list) and len(batch_records) == 2
 
-        # First record should use explicit id
-        assert batch_records[0]["id"] == "id-1"
+        # IDs now include content_hash for uniqueness
+        from hashlib import md5
+
+        expected_id_0 = md5(f"{docs[0].id}_{content_hash}".encode()).hexdigest()
+        cleaned_content_1 = docs[1].content.replace("\x00", "\ufffd")
+        base_id_1 = md5(cleaned_content_1.encode()).hexdigest()
+        expected_id_1 = md5(f"{base_id_1}_{content_hash}".encode()).hexdigest()
+
+        # First record should use explicit id hashed with content_hash
+        assert batch_records[0]["id"] == expected_id_0
         assert batch_records[0]["meta_data"] == {"k": "v", "tag": "t1"}
         assert batch_records[0]["filters"] == {"tag": "t1"}
 
-        # Second record should fall back to content_hash
-        assert batch_records[1]["id"] == batch_records[1]["content_hash"]
+        # Second record should use content hash hashed with content_hash
+        assert batch_records[1]["id"] == expected_id_1
         assert batch_records[1]["meta_data"] == {"m": 3, "tag": "t1"}
         assert batch_records[1]["filters"] == {"tag": "t1"}
 
@@ -276,15 +285,25 @@ def test_upsert_builds_records_and_sets_conflict_on_id(mock_pgvector, mock_embed
         insert_stmt.values.return_value = after_values
         after_values.on_conflict_do_update.return_value = upsert_stmt
 
-        mock_pgvector.upsert("test_content_hash", docs, filters={"role": "test"})
+        content_hash = "test_content_hash"
+        mock_pgvector.upsert(content_hash, docs, filters={"role": "test"})
 
         # Ensure values() received our batch_records so we can validate IDs
         assert insert_stmt.values.called
         (values_arg,), _ = insert_stmt.values.call_args
         batch_records = values_arg
         assert isinstance(batch_records, list) and len(batch_records) == 2
-        assert batch_records[0]["id"] == "cid-1"  # respects explicit id
-        assert batch_records[1]["id"] == batch_records[1]["content_hash"]  # fallback to hash
+
+        # IDs now include content_hash for uniqueness
+        from hashlib import md5
+
+        expected_id_0 = md5(f"{docs[0].id}_{content_hash}".encode()).hexdigest()
+        cleaned_content_1 = docs[1].content.replace("\x00", "\ufffd")
+        base_id_1 = md5(cleaned_content_1.encode()).hexdigest()
+        expected_id_1 = md5(f"{base_id_1}_{content_hash}".encode()).hexdigest()
+
+        assert batch_records[0]["id"] == expected_id_0  # explicit id hashed with content_hash
+        assert batch_records[1]["id"] == expected_id_1  # content hash hashed with content_hash
 
         # Ensure ON CONFLICT was invoked with index_elements=["id"] and executed
         after_values.on_conflict_do_update.assert_called()
@@ -677,3 +696,98 @@ def test_delete_by_metadata_complex(mock_pgvector):
         result = mock_pgvector.delete_by_metadata({"spicy": False})
         assert result is True
         mock_delete_by_metadata.assert_called_once_with({"spicy": False})
+
+
+def test_get_document_record_merges_filters_into_metadata(mock_pgvector, mock_embedder):
+    """Test that _get_document_record correctly merges filters into meta_data."""
+    doc = Document(
+        id="test-id",
+        content="Test document content",
+        meta_data={"existing_key": "existing_value"},
+        name="test_doc",
+    )
+
+    filters = {"filter_key": "filter_value", "another_filter": "another_value"}
+
+    # Call _get_document_record with filters
+    record = mock_pgvector._get_document_record(doc, filters=filters, content_hash="test_hash")
+
+    # Verify that meta_data in the record includes both original metadata and filters
+    assert record["meta_data"]["existing_key"] == "existing_value"
+    assert record["meta_data"]["filter_key"] == "filter_value"
+    assert record["meta_data"]["another_filter"] == "another_value"
+
+    # Verify filters are stored separately as well
+    assert record["filters"] == filters
+
+
+def test_get_document_record_without_filters(mock_pgvector, mock_embedder):
+    """Test that _get_document_record works correctly without filters."""
+    doc = Document(
+        id="test-id",
+        content="Test document content",
+        meta_data={"key": "value"},
+        name="test_doc",
+    )
+
+    # Call _get_document_record without filters
+    record = mock_pgvector._get_document_record(doc, filters=None, content_hash="test_hash")
+
+    # Verify that meta_data is preserved
+    assert record["meta_data"] == {"key": "value"}
+    assert record["filters"] is None
+
+
+def test_get_document_record_with_empty_document_metadata(mock_pgvector, mock_embedder):
+    """Test that _get_document_record works when document has no metadata."""
+    doc = Document(
+        id="test-id",
+        content="Test document content",
+        name="test_doc",
+    )
+
+    filters = {"filter_key": "filter_value"}
+
+    # Call _get_document_record with filters but no document metadata
+    record = mock_pgvector._get_document_record(doc, filters=filters, content_hash="test_hash")
+
+    # Verify that meta_data contains only the filters
+    assert record["meta_data"]["filter_key"] == "filter_value"
+
+
+def test_insert_merges_filters_into_metadata(mock_pgvector, mock_embedder):
+    """Test that insert correctly merges filters into document metadata.
+
+    This is a regression test for issue #6077.
+    """
+    docs = [
+        Document(
+            id="doc-1",
+            content="Document 1 content",
+            meta_data={"doc_key": "doc_value"},
+            name="doc_1",
+        ),
+    ]
+
+    # Prepare session context manager mock
+    sess = MagicMock()
+    cm = MagicMock()
+    cm.__enter__.return_value = sess
+    mock_pgvector.Session.return_value = cm
+
+    filters = {"knowledge_base_id": "kb-123", "source": "test"}
+
+    with patch("agno.vectordb.pgvector.pgvector.postgresql.insert") as mock_insert:
+        insert_stmt_sentinel = object()
+        mock_insert.return_value = insert_stmt_sentinel
+
+        mock_pgvector.insert("test_hash", docs, filters=filters)
+
+        # Get the batch records that were passed to execute
+        args, kwargs = sess.execute.call_args
+        batch_records = args[1]
+
+        # Verify meta_data includes both document metadata and filters
+        assert batch_records[0]["meta_data"]["doc_key"] == "doc_value"
+        assert batch_records[0]["meta_data"]["knowledge_base_id"] == "kb-123"
+        assert batch_records[0]["meta_data"]["source"] == "test"

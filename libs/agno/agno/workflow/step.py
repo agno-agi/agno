@@ -1,5 +1,4 @@
 import inspect
-import warnings
 from copy import copy
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union, cast
@@ -9,9 +8,11 @@ from pydantic import BaseModel
 from typing_extensions import TypeGuard
 
 from agno.agent import Agent
+from agno.db.base import BaseDb
 from agno.media import Audio, Image, Video
 from agno.models.message import Message
 from agno.models.metrics import Metrics
+from agno.registry import Registry
 from agno.run import RunContext
 from agno.run.agent import RunContentEvent, RunOutput
 from agno.run.base import BaseRunOutputEvent
@@ -61,7 +62,6 @@ class Step:
 
     # Step configuration
     max_retries: int = 3
-    timeout_seconds: Optional[int] = None
 
     skip_on_failure: bool = False
 
@@ -83,7 +83,6 @@ class Step:
         step_id: Optional[str] = None,
         description: Optional[str] = None,
         max_retries: int = 3,
-        timeout_seconds: Optional[int] = None,
         skip_on_failure: bool = False,
         strict_input_validation: bool = False,
         add_workflow_history: Optional[bool] = None,
@@ -104,7 +103,6 @@ class Step:
         self.step_id = step_id
         self.description = description
         self.max_retries = max_retries
-        self.timeout_seconds = timeout_seconds
         self.skip_on_failure = skip_on_failure
         self.strict_input_validation = strict_input_validation
         self.add_workflow_history = add_workflow_history
@@ -116,6 +114,125 @@ class Step:
 
         # Set the active executor
         self._set_active_executor()
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert step to a dictionary representation."""
+        result = {
+            "type": "Step",
+            "name": self.name,
+            "step_id": self.step_id,
+            "description": self.description,
+            "max_retries": self.max_retries,
+            "skip_on_failure": self.skip_on_failure,
+            "strict_input_validation": self.strict_input_validation,
+            "add_workflow_history": self.add_workflow_history,
+            "num_history_runs": self.num_history_runs,
+        }
+
+        if self.agent is not None:
+            result["agent_id"] = self.agent.id
+        if self.team is not None:
+            result["team_id"] = self.team.id
+        if self.executor is not None:
+            result["executor_ref"] = self.executor.__name__
+
+        return result
+
+    @classmethod
+    def from_dict(
+        cls,
+        data: Dict[str, Any],
+        registry: Optional[Registry] = None,
+        db: Optional["BaseDb"] = None,
+        links: Optional[List[Dict[str, Any]]] = None,
+    ) -> "Step":
+        """
+        Create a Step from a dictionary.
+
+        Args:
+            data: Dictionary containing step configuration
+            registry: Optional registry for rehydrating non-serializable objects
+            db: Optional database for loading agents/teams in steps
+            links: Optional links for this step version
+
+        Returns:
+            Step: Reconstructed step instance
+        """
+        config = data.copy()
+
+        agent = None
+        team = None
+        executor = None
+
+        # --- Handle Agent reconstruction ---
+        if "agent_id" in config and config["agent_id"]:
+            from agno.agent.agent import get_agent_by_id
+
+            agent_id = config.get("agent_id")
+            if db is not None and agent_id is not None:
+                agent = get_agent_by_id(db=db, id=agent_id, registry=registry)
+
+        # --- Handle Team reconstruction ---
+        if "team_id" in config and config["team_id"] and registry:
+            from agno.team.team import get_team_by_id
+
+            team_id = config.get("team_id")
+            if db is not None and team_id is not None:
+                team = get_team_by_id(db=db, id=team_id, registry=registry)
+
+        # --- Handle Executor reconstruction ---
+        if "executor_ref" in config and config["executor_ref"] and registry:
+            executor = registry.get_function(config["executor_ref"])
+
+        return cls(
+            name=config.get("name"),
+            step_id=config.get("step_id"),
+            description=config.get("description"),
+            max_retries=config.get("max_retries", 3),
+            skip_on_failure=config.get("skip_on_failure", False),
+            strict_input_validation=config.get("strict_input_validation", False),
+            add_workflow_history=config.get("add_workflow_history"),
+            num_history_runs=config.get("num_history_runs", 3),
+            agent=agent,
+            team=team,
+            executor=executor,
+        )
+
+    def get_links(self, position: int = 0) -> List[Dict[str, Any]]:
+        """Get links for this step's agent/team.
+
+        Args:
+            position: Position of this step in the workflow.
+
+        Returns:
+            List of link dictionaries for the links table.
+        """
+        links = []
+        link_key = self.step_id or self.name
+
+        if self.agent is not None:
+            links.append(
+                {
+                    "link_kind": "step_agent",
+                    "link_key": link_key,
+                    "child_component_id": self.agent.id,
+                    "child_version": None,
+                    "position": position,
+                }
+            )
+
+        if self.team is not None:
+            links.append(
+                {
+                    "link_kind": "step_team",
+                    "link_key": link_key,
+                    "child_component_id": self.team.id,
+                    "child_version": None,
+                    "position": position,
+                }
+            )
+
+        return links
 
     @property
     def executor_name(self) -> str:
@@ -229,6 +346,7 @@ class Step:
         workflow_session: Optional[WorkflowSession] = None,
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
+        background_tasks: Optional[Any] = None,
     ) -> StepOutput:
         """Execute the step with StepInput, returning final StepOutput (non-streaming)"""
         log_debug(f"Executing step: {self.name}")
@@ -348,6 +466,10 @@ class Step:
                         if isinstance(self.active_executor, Team):
                             kwargs["store_member_responses"] = True
 
+                        # Forward background_tasks if provided
+                        if background_tasks is not None:
+                            kwargs["background_tasks"] = background_tasks
+
                         num_history_runs = self.num_history_runs if self.num_history_runs else num_history_runs
 
                         use_history = (
@@ -441,6 +563,9 @@ class Step:
             event.workflow_id = workflow_run_response.workflow_id
         if hasattr(event, "workflow_run_id"):
             event.workflow_run_id = workflow_run_response.run_id
+        # Set session_id to match workflow's session_id for consistent event tracking
+        if hasattr(event, "session_id") and workflow_run_response.session_id:
+            event.session_id = workflow_run_response.session_id
         if hasattr(event, "step_id"):
             event.step_id = self.step_id
         if hasattr(event, "step_name") and self.name is not None:
@@ -459,7 +584,6 @@ class Step:
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         stream_events: bool = False,
-        stream_intermediate_steps: bool = False,
         stream_executor_events: bool = True,
         workflow_run_response: Optional["WorkflowRunOutput"] = None,
         run_context: Optional[RunContext] = None,
@@ -470,6 +594,7 @@ class Step:
         workflow_session: Optional["WorkflowSession"] = None,
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
+        background_tasks: Optional[Any] = None,
     ) -> Iterator[Union[WorkflowRunOutputEvent, StepOutput]]:
         """Execute the step with event-driven streaming support"""
 
@@ -485,15 +610,6 @@ class Step:
             session_state_copy = run_context.session_state
         else:
             session_state_copy = copy(session_state) if session_state is not None else {}
-
-        # Considering both stream_events and stream_intermediate_steps (deprecated)
-        if stream_intermediate_steps is not None:
-            warnings.warn(
-                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-        stream_events = stream_events or stream_intermediate_steps
 
         # Emit StepStartedEvent
         if stream_events and workflow_run_response:
@@ -609,6 +725,10 @@ class Step:
                         if isinstance(self.active_executor, Team):
                             kwargs["store_member_responses"] = True
 
+                        # Forward background_tasks if provided
+                        if background_tasks is not None:
+                            kwargs["background_tasks"] = background_tasks
+
                         num_history_runs = self.num_history_runs if self.num_history_runs else num_history_runs
 
                         use_history = (
@@ -634,7 +754,7 @@ class Step:
                             session_state=session_state_copy,  # Send a copy to the executor
                             stream=True,
                             stream_events=stream_events,
-                            yield_run_response=True,
+                            yield_run_output=True,
                             run_context=run_context,
                             **kwargs,
                         )
@@ -643,7 +763,7 @@ class Step:
                         for event in response_stream:
                             if isinstance(event, RunOutput) or isinstance(event, TeamRunOutput):
                                 active_executor_run_response = event
-                                break
+                                continue
                             # Only yield executor events if stream_executor_events is True
                             if stream_executor_events:
                                 enriched_event = self._enrich_event_with_context(
@@ -720,6 +840,7 @@ class Step:
         workflow_session: Optional["WorkflowSession"] = None,
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
+        background_tasks: Optional[Any] = None,
     ) -> StepOutput:
         """Execute the step with StepInput, returning final StepOutput (non-streaming)"""
         logger.info(f"Executing async step (non-streaming): {self.name}")
@@ -870,6 +991,10 @@ class Step:
                         if isinstance(self.active_executor, Team):
                             kwargs["store_member_responses"] = True
 
+                        # Forward background_tasks if provided
+                        if background_tasks is not None:
+                            kwargs["background_tasks"] = background_tasks
+
                         num_history_runs = self.num_history_runs if self.num_history_runs else num_history_runs
 
                         use_history = (
@@ -934,7 +1059,6 @@ class Step:
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         stream_events: bool = False,
-        stream_intermediate_steps: bool = False,
         stream_executor_events: bool = True,
         workflow_run_response: Optional["WorkflowRunOutput"] = None,
         run_context: Optional[RunContext] = None,
@@ -945,6 +1069,7 @@ class Step:
         workflow_session: Optional["WorkflowSession"] = None,
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
+        background_tasks: Optional[Any] = None,
     ) -> AsyncIterator[Union[WorkflowRunOutputEvent, StepOutput]]:
         """Execute the step with event-driven streaming support"""
 
@@ -960,15 +1085,6 @@ class Step:
             session_state_copy = run_context.session_state
         else:
             session_state_copy = copy(session_state) if session_state is not None else {}
-
-        # Considering both stream_events and stream_intermediate_steps (deprecated)
-        if stream_intermediate_steps is not None:
-            warnings.warn(
-                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-        stream_events = stream_events or stream_intermediate_steps
 
         if stream_events and workflow_run_response:
             # Emit StepStartedEvent
@@ -1128,6 +1244,10 @@ class Step:
                         if isinstance(self.active_executor, Team):
                             kwargs["store_member_responses"] = True
 
+                        # Forward background_tasks if provided
+                        if background_tasks is not None:
+                            kwargs["background_tasks"] = background_tasks
+
                         num_history_runs = self.num_history_runs if self.num_history_runs else num_history_runs
 
                         use_history = (
@@ -1154,7 +1274,7 @@ class Step:
                             stream=True,
                             stream_events=stream_events,
                             run_context=run_context,
-                            yield_run_response=True,
+                            yield_run_output=True,
                             **kwargs,
                         )
 
@@ -1343,10 +1463,22 @@ class Step:
 
         For container steps (Steps, Router, Loop, etc.), this will recursively find the content from the
         last actual step rather than using the generic container message.
+
+        For Parallel steps, aggregates content from ALL inner steps (not just the last one).
         """
-        # If this step has nested steps (like Steps, Condition, Router, Loop, etc.)
+        # If this step has nested steps (like Steps, Condition, Router, Loop, Parallel, etc.)
         if hasattr(step_output, "steps") and step_output.steps and len(step_output.steps) > 0:
-            # Recursively get content from the last nested step
+            # For Parallel steps, aggregate content from ALL inner steps
+            if step_output.step_type == StepType.PARALLEL:
+                aggregated_parts = []
+                for i, inner_step in enumerate(step_output.steps):
+                    inner_content = self._get_deepest_content_from_step_output(inner_step)
+                    if inner_content:
+                        step_name = inner_step.step_name or f"Step {i + 1}"
+                        aggregated_parts.append(f"=== {step_name} ===\n{inner_content}")
+                return "\n\n".join(aggregated_parts) if aggregated_parts else step_output.content  # type: ignore
+
+            # For other nested step types, recursively get content from the last nested step
             return self._get_deepest_content_from_step_output(step_output.steps[-1])
 
         # For regular steps, return their content

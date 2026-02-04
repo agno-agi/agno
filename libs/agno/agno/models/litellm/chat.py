@@ -1,3 +1,4 @@
+import copy
 import json
 from dataclasses import dataclass
 from os import getenv
@@ -10,8 +11,10 @@ from agno.models.message import Message
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
+from agno.tools.function import Function
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.openai import _format_file_for_message, audio_to_message, images_to_message
+from agno.utils.tokens import count_schema_tokens
 
 try:
     import litellm
@@ -46,9 +49,17 @@ class LiteLLM(Model):
 
     client: Optional[Any] = None
 
+    # Store the original client to preserve it across copies (e.g., for Router instances)
+    _original_client: Optional[Any] = None
+
     def __post_init__(self):
         """Initialize the model after the dataclass initialization."""
         super().__post_init__()
+
+        # Store the original client if provided (e.g., Router instance)
+        # This ensures the client is preserved when the model is copied for background tasks
+        if self.client is not None and self._original_client is None:
+            self._original_client = self.client
 
         # Set up API key from environment variable if not already set
         if not self.client and not self.api_key:
@@ -57,8 +68,8 @@ class LiteLLM(Model):
                 # Check for other present valid keys, e.g. OPENAI_API_KEY if self.id is an OpenAI model
                 env_validation = validate_environment(model=self.id, api_base=self.api_base)
                 if not env_validation.get("keys_in_environment"):
-                    log_warning(
-                        "Missing required key. Please set the LITELLM_API_KEY or other valid environment variables."
+                    log_error(
+                        "LITELLM_API_KEY not set. Please set the LITELLM_API_KEY or other valid environment variables."
                     )
 
     def get_client(self) -> Any:
@@ -68,11 +79,40 @@ class LiteLLM(Model):
         Returns:
             Any: An instance of the LiteLLM client.
         """
+        # First check if we have a current client
         if self.client is not None:
+            return self.client
+
+        # Check if we have an original client (e.g., Router) that was preserved
+        # This handles the case where the model was copied for background tasks
+        if self._original_client is not None:
+            self.client = self._original_client
             return self.client
 
         self.client = litellm
         return self.client
+
+    def __deepcopy__(self, memo: Dict[int, Any]) -> "LiteLLM":
+        """
+        Custom deepcopy to preserve the client (e.g., Router) across copies.
+
+        This is needed because when the model is copied for background tasks
+        (memory, summarization), the client reference needs to be preserved.
+        """
+        # Create a shallow copy first
+        cls = self.__class__
+        result = cls.__new__(cls)
+        memo[id(self)] = result
+
+        # Copy all attributes, but keep the same client reference
+        for k, v in self.__dict__.items():
+            if k in ("client", "_original_client"):
+                # Keep the same client reference (don't deepcopy Router instances)
+                setattr(result, k, v)
+            else:
+                setattr(result, k, copy.deepcopy(v, memo))
+
+        return result
 
     def _format_messages(self, messages: List[Message], compress_tool_results: bool = False) -> List[Dict[str, Any]]:
         """Format messages for LiteLLM API."""
@@ -305,6 +345,9 @@ class LiteLLM(Model):
         if response_message.content is not None:
             model_response.content = response_message.content
 
+        if hasattr(response_message, "reasoning_content") and response_message.reasoning_content is not None:
+            model_response.reasoning_content = response_message.reasoning_content
+
         if hasattr(response_message, "tool_calls") and response_message.tool_calls:
             model_response.tool_calls = []
             for tool_call in response_message.tool_calls:
@@ -331,6 +374,9 @@ class LiteLLM(Model):
             if choice_delta:
                 if hasattr(choice_delta, "content") and choice_delta.content is not None:
                     model_response.content = choice_delta.content
+
+                if hasattr(choice_delta, "reasoning_content") and choice_delta.reasoning_content is not None:
+                    model_response.reasoning_content = choice_delta.reasoning_content
 
                 if hasattr(choice_delta, "tool_calls") and choice_delta.tool_calls:
                     processed_tool_calls = []
@@ -476,3 +522,26 @@ class LiteLLM(Model):
         metrics.total_tokens = metrics.input_tokens + metrics.output_tokens
 
         return metrics
+
+    def count_tokens(
+        self,
+        messages: List[Message],
+        tools: Optional[List[Union[Function, Dict[str, Any]]]] = None,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+    ) -> int:
+        formatted_messages = self._format_messages(messages, compress_tool_results=True)
+        formatted_tools = self._format_tools(tools) if tools else None
+        tokens = litellm.token_counter(
+            model=self.id,
+            messages=formatted_messages,
+            tools=formatted_tools,  # type: ignore
+        )
+        return tokens + count_schema_tokens(response_format, self.id)
+
+    async def acount_tokens(
+        self,
+        messages: List[Message],
+        tools: Optional[List[Union[Function, Dict[str, Any]]]] = None,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+    ) -> int:
+        return self.count_tokens(messages, tools, response_format)

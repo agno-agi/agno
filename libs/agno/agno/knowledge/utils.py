@@ -1,5 +1,6 @@
-from typing import Dict, List
+from typing import Any, Dict, List, Optional
 
+from agno.knowledge.reader.base import Reader
 from agno.knowledge.reader.reader_factory import ReaderFactory
 from agno.knowledge.types import ContentType
 from agno.utils.log import log_debug
@@ -14,6 +15,7 @@ def _get_chunker_class(strategy_type):
         ChunkingStrategyType.AGENTIC_CHUNKER: lambda: _import_class(
             "agno.knowledge.chunking.agentic", "AgenticChunking"
         ),
+        ChunkingStrategyType.CODE_CHUNKER: lambda: _import_class("agno.knowledge.chunking.code", "CodeChunking"),
         ChunkingStrategyType.DOCUMENT_CHUNKER: lambda: _import_class(
             "agno.knowledge.chunking.document", "DocumentChunking"
         ),
@@ -47,26 +49,28 @@ def _import_class(module_name: str, class_name: str):
 
 
 def get_reader_info(reader_key: str) -> Dict:
-    """Get information about a reader without instantiating it."""
-    # Try to create the reader to get its info, but don't cache it
+    """Get information about a reader without instantiating it.
+
+    Uses class methods and static metadata from ReaderFactory to avoid
+    the overhead of creating reader instances.
+    """
     try:
-        reader_factory_method = ReaderFactory._get_reader_method(reader_key)
+        # Get the reader CLASS without instantiation
+        reader_class = ReaderFactory.get_reader_class(reader_key)
 
-        # Create an instance to get the class, then call class methods
-        reader_instance = reader_factory_method()
-        reader_class = reader_instance.__class__
+        # Get metadata from static registry (no instantiation needed)
+        metadata = ReaderFactory.READER_METADATA.get(reader_key, {})
 
-        supported_strategies = reader_class.get_supported_chunking_strategies()
-        supported_content_types = reader_class.get_supported_content_types()
+        # Call class methods directly (no instance needed)
+        supported_strategies = reader_class.get_supported_chunking_strategies()  # type: ignore[attr-defined]
+        supported_content_types = reader_class.get_supported_content_types()  # type: ignore[attr-defined]
 
         return {
             "id": reader_key,
-            "name": "".join(word.capitalize() for word in reader_key.split("_")) + "Reader",
-            "description": reader_instance.description,
-            "chunking_strategies": [
-                strategy.value for strategy in supported_strategies
-            ],  # Convert enums to string values
-            "content_types": [ct.value for ct in supported_content_types],  # Convert enums to string values
+            "name": metadata.get("name", reader_class.__name__),
+            "description": metadata.get("description", f"{reader_class.__name__} reader"),
+            "chunking_strategies": [strategy.value for strategy in supported_strategies],
+            "content_types": [ct.value for ct in supported_content_types],
         }
     except ImportError as e:
         # Skip readers with missing dependencies
@@ -75,31 +79,79 @@ def get_reader_info(reader_key: str) -> Dict:
         raise ValueError(f"Unknown reader: {reader_key}. Error: {str(e)}")
 
 
-def get_all_readers_info() -> List[Dict]:
-    """Get information about all available readers."""
+def get_reader_info_from_instance(reader: Reader, reader_id: str) -> Dict:
+    """Get information about a reader instance."""
+    try:
+        reader_class = reader.__class__
+        supported_strategies = reader_class.get_supported_chunking_strategies()
+        supported_content_types = reader_class.get_supported_content_types()
+
+        return {
+            "id": reader_id,
+            "name": getattr(reader, "name", reader_class.__name__),
+            "description": getattr(reader, "description", f"Custom {reader_class.__name__}"),
+            "chunking_strategies": [strategy.value for strategy in supported_strategies],
+            "content_types": [ct.value for ct in supported_content_types],
+        }
+    except Exception as e:
+        raise ValueError(f"Failed to get info for reader '{reader_id}': {str(e)}")
+
+
+def get_all_readers_info(knowledge_instance: Optional[Any] = None) -> List[Dict]:
+    """Get information about all available readers, including custom readers from a Knowledge instance.
+
+    Custom readers are added first and take precedence over factory readers with the same ID.
+
+    Args:
+        knowledge_instance: Optional Knowledge instance to include custom readers from.
+
+    Returns:
+        List of reader info dictionaries (custom readers first, then factory readers).
+    """
     readers_info = []
+    seen_ids: set = set()
+
+    # 1. Add custom readers FIRST (they take precedence over factory readers)
+    if knowledge_instance is not None:
+        custom_readers = knowledge_instance.get_readers()
+        if isinstance(custom_readers, dict):
+            for reader_id, reader in custom_readers.items():
+                try:
+                    reader_info = get_reader_info_from_instance(reader, reader_id)
+                    readers_info.append(reader_info)
+                    seen_ids.add(reader_id)
+                except ValueError as e:
+                    log_debug(f"Skipping custom reader '{reader_id}': {e}")
+                    continue
+
+    # 2. Add factory readers (skip if custom reader with same ID already exists)
     keys = ReaderFactory.get_all_reader_keys()
     for key in keys:
+        if key in seen_ids:
+            # Custom reader with this ID already added, skip factory version
+            continue
         try:
             reader_info = get_reader_info(key)
             readers_info.append(reader_info)
         except ValueError as e:
             # Skip readers with missing dependencies or other issues
-            # Log the error but don't fail the entire request
             log_debug(f"Skipping reader '{key}': {e}")
             continue
+
     return readers_info
 
 
-def get_content_types_to_readers_mapping() -> Dict[str, List[str]]:
+def get_content_types_to_readers_mapping(knowledge_instance: Optional[Any] = None) -> Dict[str, List[str]]:
     """Get mapping of content types to list of reader IDs that support them.
+
+    Args:
+        knowledge_instance: Optional Knowledge instance to include custom readers from.
 
     Returns:
         Dictionary mapping content type strings (ContentType enum values) to list of reader IDs.
     """
     content_type_mapping: Dict[str, List[str]] = {}
-    readers_info = get_all_readers_info()
-
+    readers_info = get_all_readers_info(knowledge_instance)
     for reader_info in readers_info:
         reader_id = reader_info["id"]
         content_types = reader_info.get("content_types", [])
@@ -107,7 +159,9 @@ def get_content_types_to_readers_mapping() -> Dict[str, List[str]]:
         for content_type in content_types:
             if content_type not in content_type_mapping:
                 content_type_mapping[content_type] = []
-            content_type_mapping[content_type].append(reader_id)
+            # Avoid duplicates
+            if reader_id not in content_type_mapping[content_type]:
+                content_type_mapping[content_type].append(reader_id)
 
     return content_type_mapping
 

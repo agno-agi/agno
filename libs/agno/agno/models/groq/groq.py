@@ -6,7 +6,7 @@ from typing import Any, Dict, Iterator, List, Optional, Type, Union
 import httpx
 from pydantic import BaseModel
 
-from agno.exceptions import ModelProviderError
+from agno.exceptions import ModelAuthenticationError, ModelProviderError
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.metrics import Metrics
@@ -74,7 +74,10 @@ class Groq(Model):
         if not self.api_key:
             self.api_key = getenv("GROQ_API_KEY")
             if not self.api_key:
-                log_error("GROQ_API_KEY not set. Please set the GROQ_API_KEY environment variable.")
+                raise ModelAuthenticationError(
+                    message="GROQ_API_KEY not set. Please set the GROQ_API_KEY environment variable.",
+                    model_name=self.name,
+                )
 
         # Define base client params
         base_params = {

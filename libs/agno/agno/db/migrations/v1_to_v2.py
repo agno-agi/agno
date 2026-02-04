@@ -7,9 +7,11 @@ from typing import Any, Dict, List, Optional, Union, cast
 from sqlalchemy import text
 
 from agno.db.base import BaseDb
+from agno.db.migrations.utils import quote_db_identifier
 from agno.db.schemas.memory import UserMemory
 from agno.session import AgentSession, TeamSession, WorkflowSession
 from agno.utils.log import log_error, log_info, log_warning
+from agno.utils.string import sanitize_postgres_string, sanitize_postgres_strings
 
 
 def convert_v1_metrics_to_v2(metrics_dict: Dict[str, Any]) -> Dict[str, Any]:
@@ -45,7 +47,10 @@ def convert_v1_metrics_to_v2(metrics_dict: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def convert_any_metrics_in_data(data: Any) -> Any:
-    """Recursively find and convert any metrics dictionaries and handle v1 to v2 field conversion."""
+    """Recursively find and convert any metrics dictionaries and handle v1 to v2 field conversion.
+
+    Also sanitizes all string values to remove null bytes for PostgreSQL compatibility.
+    """
     if isinstance(data, dict):
         # First apply v1 to v2 field conversion (handles extra_data extraction, thinking/reasoning_content consolidation, etc.)
         data = convert_v1_fields_to_v2(data)
@@ -62,13 +67,19 @@ def convert_any_metrics_in_data(data: Any) -> Any:
                 converted_dict[key] = convert_v1_metrics_to_v2(value)
             else:
                 converted_dict[key] = convert_any_metrics_in_data(value)
-        return converted_dict
+
+        # Sanitize all strings in the converted dict to remove null bytes
+        return sanitize_postgres_strings(converted_dict)
 
     elif isinstance(data, list):
         return [convert_any_metrics_in_data(item) for item in data]
 
+    elif isinstance(data, str):
+        # Sanitize string values to remove null bytes
+        return sanitize_postgres_string(data)
+
     else:
-        # Not a dict or list, return as-is
+        # Not a dict, list, or string, return as-is
         return data
 
 
@@ -485,15 +496,21 @@ def get_table_content_in_batches(db: BaseDb, db_schema: str, table_name: str, ba
             else:
                 raise ValueError(f"Invalid database type: {type(db).__name__}")
 
+            db_type = type(db).__name__
+            quoted_schema = (
+                quote_db_identifier(db_type=db_type, identifier=db_schema) if db_schema and db_schema.strip() else None
+            )
+            quoted_table = quote_db_identifier(db_type=db_type, identifier=table_name)
+
             offset = 0
             while True:
                 # Create a new session for each batch to avoid transaction conflicts
                 with db.Session() as sess:
                     # Handle empty schema by omitting the schema prefix (needed for SQLite)
-                    if db_schema and db_schema.strip():
-                        sql_query = f"SELECT * FROM {db_schema}.{table_name} LIMIT {batch_size} OFFSET {offset}"
+                    if quoted_schema:
+                        sql_query = f"SELECT * FROM {quoted_schema}.{quoted_table} LIMIT {batch_size} OFFSET {offset}"
                     else:
-                        sql_query = f"SELECT * FROM {table_name} LIMIT {batch_size} OFFSET {offset}"
+                        sql_query = f"SELECT * FROM {quoted_table} LIMIT {batch_size} OFFSET {offset}"
 
                     result = sess.execute(text(sql_query))
                     batch = [row._asdict() for row in result]
@@ -530,13 +547,16 @@ def get_all_table_content(db, db_schema: str, table_name: str) -> list[dict[str,
 
 
 def parse_agent_sessions(v1_content: List[Dict[str, Any]]) -> List[AgentSession]:
-    """Parse v1 Agent sessions into v2 Agent sessions and Memories"""
+    """Parse v1 Agent sessions into v2 Agent sessions and Memories
+
+    Sanitizes all string and JSON fields to remove null bytes for PostgreSQL compatibility.
+    """
     sessions_v2 = []
 
     for item in v1_content:
         session = {
             "agent_id": item.get("agent_id"),
-            "agent_data": item.get("agent_data"),
+            "agent_data": sanitize_postgres_strings(item.get("agent_data")) if item.get("agent_data") else None,
             "session_id": item.get("session_id"),
             "user_id": item.get("user_id"),
             "session_data": convert_session_data_comprehensively(item.get("session_data")),
@@ -545,6 +565,7 @@ def parse_agent_sessions(v1_content: List[Dict[str, Any]]) -> List[AgentSession]
             "created_at": item.get("created_at"),
             "updated_at": item.get("updated_at"),
         }
+        # Summary field sanitization is handled in convert_session_data_comprehensively
 
         try:
             agent_session = AgentSession.from_dict(session)
@@ -559,13 +580,16 @@ def parse_agent_sessions(v1_content: List[Dict[str, Any]]) -> List[AgentSession]
 
 
 def parse_team_sessions(v1_content: List[Dict[str, Any]]) -> List[TeamSession]:
-    """Parse v1 Team sessions into v2 Team sessions and Memories"""
+    """Parse v1 Team sessions into v2 Team sessions and Memories
+
+    Sanitizes all string and JSON fields to remove null bytes for PostgreSQL compatibility.
+    """
     sessions_v2 = []
 
     for item in v1_content:
         session = {
             "team_id": item.get("team_id"),
-            "team_data": item.get("team_data"),
+            "team_data": sanitize_postgres_strings(item.get("team_data")) if item.get("team_data") else None,
             "session_id": item.get("session_id"),
             "user_id": item.get("user_id"),
             "session_data": convert_session_data_comprehensively(item.get("session_data")),
@@ -574,6 +598,8 @@ def parse_team_sessions(v1_content: List[Dict[str, Any]]) -> List[TeamSession]:
             "created_at": item.get("created_at"),
             "updated_at": item.get("updated_at"),
         }
+        # Summary field sanitization is handled in convert_session_data_comprehensively
+
         try:
             team_session = TeamSession.from_dict(session)
         except Exception as e:
@@ -587,13 +613,18 @@ def parse_team_sessions(v1_content: List[Dict[str, Any]]) -> List[TeamSession]:
 
 
 def parse_workflow_sessions(v1_content: List[Dict[str, Any]]) -> List[WorkflowSession]:
-    """Parse v1 Workflow sessions into v2 Workflow sessions"""
+    """Parse v1 Workflow sessions into v2 Workflow sessions
+
+    Sanitizes all string and JSON fields to remove null bytes for PostgreSQL compatibility.
+    """
     sessions_v2 = []
 
     for item in v1_content:
         session = {
             "workflow_id": item.get("workflow_id"),
-            "workflow_data": item.get("workflow_data"),
+            "workflow_data": sanitize_postgres_strings(item.get("workflow_data"))
+            if item.get("workflow_data")
+            else None,
             "session_id": item.get("session_id"),
             "user_id": item.get("user_id"),
             "session_data": convert_session_data_comprehensively(item.get("session_data")),
@@ -601,9 +632,11 @@ def parse_workflow_sessions(v1_content: List[Dict[str, Any]]) -> List[WorkflowSe
             "created_at": item.get("created_at"),
             "updated_at": item.get("updated_at"),
             # Workflow v2 specific fields
-            "workflow_name": item.get("workflow_name"),
+            "workflow_name": sanitize_postgres_string(item.get("workflow_name")) if item.get("workflow_name") else None,
             "runs": convert_any_metrics_in_data(item.get("runs")),
         }
+        # Summary field sanitization is handled in convert_session_data_comprehensively
+
         try:
             workflow_session = WorkflowSession.from_dict(session)
         except Exception as e:
@@ -617,18 +650,23 @@ def parse_workflow_sessions(v1_content: List[Dict[str, Any]]) -> List[WorkflowSe
 
 
 def parse_memories(v1_content: List[Dict[str, Any]]) -> List[UserMemory]:
-    """Parse v1 Memories into v2 Memories"""
+    """Parse v1 Memories into v2 Memories
+
+    Sanitizes all string fields to remove null bytes for PostgreSQL compatibility.
+    """
     memories_v2 = []
 
     for item in v1_content:
         memory = {
             "memory_id": item.get("memory_id"),
-            "memory": item.get("memory"),
-            "input": item.get("input"),
+            "memory": sanitize_postgres_strings(item.get("memory")) if item.get("memory") else None,
+            "input": sanitize_postgres_string(item.get("input")) if item.get("input") else None,
             "updated_at": item.get("updated_at"),
             "agent_id": item.get("agent_id"),
             "team_id": item.get("team_id"),
             "user_id": item.get("user_id"),
+            "topics": sanitize_postgres_strings(item.get("topics")) if item.get("topics") else None,
+            "feedback": sanitize_postgres_string(item.get("feedback")) if item.get("feedback") else None,
         }
         memories_v2.append(UserMemory.from_dict(memory))
 

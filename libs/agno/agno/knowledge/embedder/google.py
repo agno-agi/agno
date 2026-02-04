@@ -15,7 +15,7 @@ except ImportError:
 
 @dataclass
 class GeminiEmbedder(Embedder):
-    id: str = "gemini-embedding-exp-03-07"
+    id: str = "gemini-embedding-001"
     task_type: str = "RETRIEVAL_QUERY"
     title: Optional[str] = None
     dimensions: Optional[int] = 1536
