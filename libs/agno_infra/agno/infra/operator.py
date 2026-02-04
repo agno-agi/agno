@@ -21,11 +21,13 @@ TEMPLATE_TO_NAME_MAP: Dict[InfraStarterTemplate, str] = {
     InfraStarterTemplate.agentos_docker: "agentos-docker",
     InfraStarterTemplate.agentos_aws: "agentos-aws",
     InfraStarterTemplate.agentos_railway: "agentos-railway",
+    InfraStarterTemplate.agentos_render: "agentos-render",
 }
 TEMPLATE_TO_REPO_MAP: Dict[InfraStarterTemplate, str] = {
     InfraStarterTemplate.agentos_docker: "https://github.com/agno-agi/agentos-docker-template",
     InfraStarterTemplate.agentos_aws: "https://github.com/agno-agi/agentos-aws-template",
     InfraStarterTemplate.agentos_railway: "https://github.com/agno-agi/agentos-railway-template",
+    InfraStarterTemplate.agentos_render: "https://github.com/agno-agi/agentos-render-template",
 }
 
 
