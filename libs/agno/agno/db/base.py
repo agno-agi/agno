@@ -11,6 +11,7 @@ from agno.db.schemas import UserMemory
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
+from agno.db.schemas.scheduler import Schedule, ScheduleRun
 from agno.session import Session
 
 
@@ -47,6 +48,8 @@ class BaseDb(ABC):
         component_configs_table: Optional[str] = None,
         component_links_table: Optional[str] = None,
         learnings_table: Optional[str] = None,
+        schedule_table: Optional[str] = None,
+        schedule_runs_table: Optional[str] = None,
         id: Optional[str] = None,
     ):
         self.id = id or str(uuid4())
@@ -63,6 +66,8 @@ class BaseDb(ABC):
         self.component_configs_table_name = component_configs_table or "agno_component_configs"
         self.component_links_table_name = component_links_table or "agno_component_links"
         self.learnings_table_name = learnings_table or "agno_learnings"
+        self.schedule_table_name = schedule_table or "agno_schedules"
+        self.schedule_runs_table_name = schedule_runs_table or "agno_schedule_runs"
 
     def to_dict(self) -> Dict[str, Any]:
         """
@@ -82,6 +87,8 @@ class BaseDb(ABC):
             "components_table": self.components_table_name,
             "component_configs_table": self.component_configs_table_name,
             "component_links_table": self.component_links_table_name,
+            "schedule_table": self.schedule_table_name,
+            "schedule_runs_table": self.schedule_runs_table_name,
         }
 
     @classmethod
@@ -102,6 +109,8 @@ class BaseDb(ABC):
             components_table=data.get("components_table"),
             component_configs_table=data.get("component_configs_table"),
             component_links_table=data.get("component_links_table"),
+            schedule_table=data.get("schedule_table"),
+            schedule_runs_table=data.get("schedule_runs_table"),
             id=data.get("id"),
         )
 
@@ -945,6 +954,178 @@ class BaseDb(ABC):
         """
         raise NotImplementedError
 
+    # --- Schedules ---
+    @abstractmethod
+    def get_schedule(self, schedule_id: str) -> Optional[Schedule]:
+        """Get a schedule by ID.
+
+        Args:
+            schedule_id: The schedule ID.
+
+        Returns:
+            Schedule or None if not found.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_schedule_by_name(self, name: str) -> Optional[Schedule]:
+        """Get a schedule by name.
+
+        Args:
+            name: The schedule name.
+
+        Returns:
+            Schedule or None if not found.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_schedules(
+        self,
+        enabled: Optional[bool] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+    ) -> Tuple[List[Schedule], int]:
+        """Get schedules with optional filtering.
+
+        Args:
+            enabled: Filter by enabled status.
+            limit: Maximum number of schedules to return.
+            offset: Number of schedules to skip.
+
+        Returns:
+            Tuple of (list of schedules, total count).
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def create_schedule(self, schedule: Schedule) -> Schedule:
+        """Create a new schedule.
+
+        Args:
+            schedule: The schedule to create.
+
+        Returns:
+            The created schedule.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def update_schedule(self, schedule: Schedule) -> Schedule:
+        """Update an existing schedule.
+
+        Args:
+            schedule: The schedule to update.
+
+        Returns:
+            The updated schedule.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def delete_schedule(self, schedule_id: str) -> bool:
+        """Delete a schedule.
+
+        Args:
+            schedule_id: The schedule ID to delete.
+
+        Returns:
+            True if deleted, False if not found.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def claim_due_schedule(
+        self,
+        container_id: str,
+        lock_grace_seconds: int = 60,
+    ) -> Optional[Schedule]:
+        """Atomically claim one due schedule for execution.
+
+        This method should use database-level locking to ensure only one
+        container can claim a schedule at a time (exactly-once execution).
+
+        Args:
+            container_id: The ID of the container claiming the schedule.
+            lock_grace_seconds: Grace period in seconds after timeout before
+                considering a lock stale (default: 60). This accounts for
+                clock skew and network delays.
+
+        Returns:
+            The claimed schedule, or None if no schedules are due.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def release_schedule(
+        self,
+        schedule_id: str,
+        next_run_at: int,
+    ) -> None:
+        """Release a schedule lock and set the next run time.
+
+        Args:
+            schedule_id: The schedule ID.
+            next_run_at: Epoch seconds for the next run.
+        """
+        raise NotImplementedError
+
+    # --- Schedule Runs ---
+    @abstractmethod
+    def create_schedule_run(self, run: ScheduleRun) -> ScheduleRun:
+        """Create a schedule run record.
+
+        Args:
+            run: The schedule run to create.
+
+        Returns:
+            The created schedule run.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def update_schedule_run(self, run: ScheduleRun) -> ScheduleRun:
+        """Update a schedule run record.
+
+        Args:
+            run: The schedule run to update.
+
+        Returns:
+            The updated schedule run.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_schedule_runs(
+        self,
+        schedule_id: str,
+        limit: Optional[int] = 100,
+        offset: Optional[int] = None,
+    ) -> Tuple[List[ScheduleRun], int]:
+        """Get execution history for a schedule.
+
+        Args:
+            schedule_id: The schedule ID.
+            limit: Maximum number of runs to return.
+            offset: Number of runs to skip.
+
+        Returns:
+            Tuple of (list of schedule runs, total count).
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_schedule_run(self, run_id: str) -> Optional[ScheduleRun]:
+        """Get a specific schedule run.
+
+        Args:
+            run_id: The run ID.
+
+        Returns:
+            ScheduleRun or None if not found.
+        """
+        raise NotImplementedError
+
 
 class AsyncBaseDb(ABC):
     """Base abstract class for all our async database implementations."""
@@ -962,6 +1143,8 @@ class AsyncBaseDb(ABC):
         culture_table: Optional[str] = None,
         versions_table: Optional[str] = None,
         learnings_table: Optional[str] = None,
+        schedule_table: Optional[str] = None,
+        schedule_runs_table: Optional[str] = None,
     ):
         self.id = id or str(uuid4())
         self.session_table_name = session_table or "agno_sessions"
@@ -974,6 +1157,8 @@ class AsyncBaseDb(ABC):
         self.culture_table_name = culture_table or "agno_culture"
         self.versions_table_name = versions_table or "agno_schema_versions"
         self.learnings_table_name = learnings_table or "agno_learnings"
+        self.schedule_table_name = schedule_table or "agno_schedules"
+        self.schedule_runs_table_name = schedule_runs_table or "agno_schedule_runs"
 
     async def _create_all_tables(self) -> None:
         """Create all tables for this database. Override in subclasses."""
@@ -1517,5 +1702,177 @@ class AsyncBaseDb(ABC):
 
         Returns:
             List of learning records.
+        """
+        raise NotImplementedError
+
+    # --- Schedules ---
+    @abstractmethod
+    async def get_schedule(self, schedule_id: str) -> Optional[Schedule]:
+        """Get a schedule by ID.
+
+        Args:
+            schedule_id: The schedule ID.
+
+        Returns:
+            Schedule or None if not found.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def get_schedule_by_name(self, name: str) -> Optional[Schedule]:
+        """Get a schedule by name.
+
+        Args:
+            name: The schedule name.
+
+        Returns:
+            Schedule or None if not found.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def get_schedules(
+        self,
+        enabled: Optional[bool] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+    ) -> Tuple[List[Schedule], int]:
+        """Get schedules with optional filtering.
+
+        Args:
+            enabled: Filter by enabled status.
+            limit: Maximum number of schedules to return.
+            offset: Number of schedules to skip.
+
+        Returns:
+            Tuple of (list of schedules, total count).
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def create_schedule(self, schedule: Schedule) -> Schedule:
+        """Create a new schedule.
+
+        Args:
+            schedule: The schedule to create.
+
+        Returns:
+            The created schedule.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def update_schedule(self, schedule: Schedule) -> Schedule:
+        """Update an existing schedule.
+
+        Args:
+            schedule: The schedule to update.
+
+        Returns:
+            The updated schedule.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def delete_schedule(self, schedule_id: str) -> bool:
+        """Delete a schedule.
+
+        Args:
+            schedule_id: The schedule ID to delete.
+
+        Returns:
+            True if deleted, False if not found.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def claim_due_schedule(
+        self,
+        container_id: str,
+        lock_grace_seconds: int = 60,
+    ) -> Optional[Schedule]:
+        """Atomically claim one due schedule for execution.
+
+        This method should use database-level locking to ensure only one
+        container can claim a schedule at a time (exactly-once execution).
+
+        Args:
+            container_id: The ID of the container claiming the schedule.
+            lock_grace_seconds: Grace period in seconds after timeout before
+                considering a lock stale (default: 60). This accounts for
+                clock skew and network delays.
+
+        Returns:
+            The claimed schedule, or None if no schedules are due.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def release_schedule(
+        self,
+        schedule_id: str,
+        next_run_at: int,
+    ) -> None:
+        """Release a schedule lock and set the next run time.
+
+        Args:
+            schedule_id: The schedule ID.
+            next_run_at: Epoch seconds for the next run.
+        """
+        raise NotImplementedError
+
+    # --- Schedule Runs ---
+    @abstractmethod
+    async def create_schedule_run(self, run: ScheduleRun) -> ScheduleRun:
+        """Create a schedule run record.
+
+        Args:
+            run: The schedule run to create.
+
+        Returns:
+            The created schedule run.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def update_schedule_run(self, run: ScheduleRun) -> ScheduleRun:
+        """Update a schedule run record.
+
+        Args:
+            run: The schedule run to update.
+
+        Returns:
+            The updated schedule run.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def get_schedule_runs(
+        self,
+        schedule_id: str,
+        limit: Optional[int] = 100,
+        offset: Optional[int] = None,
+    ) -> Tuple[List[ScheduleRun], int]:
+        """Get execution history for a schedule.
+
+        Args:
+            schedule_id: The schedule ID.
+            limit: Maximum number of runs to return.
+            offset: Number of runs to skip.
+
+        Returns:
+            Tuple of (list of schedule runs, total count).
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def get_schedule_run(self, run_id: str) -> Optional[ScheduleRun]:
+        """Get a specific schedule run.
+
+        Args:
+            run_id: The run ID.
+
+        Returns:
+            ScheduleRun or None if not found.
         """
         raise NotImplementedError

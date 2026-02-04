@@ -144,6 +144,9 @@ oxylabs = ["oxylabs"]
 trafilatura = ["trafilatura"]
 neo4j = ["neo4j"]
 
+# Dependencies for Scheduler
+scheduler = ["croniter>=2.0.0"]
+
 # Dependencies for Storage
 sql = ["sqlalchemy"]
 postgres = ["psycopg-binary"]
@@ -560,6 +563,7 @@ module = [
   "surrealdb.*",
   "trafilatura.*",
   "xlrd.*",
-  "celpy.*"
+  "celpy.*",
+  "croniter.*"
 ]
 ignore_missing_imports = true

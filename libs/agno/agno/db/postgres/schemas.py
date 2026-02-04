@@ -230,6 +230,57 @@ LEARNINGS_TABLE_SCHEMA = {
     "updated_at": {"type": BigInteger, "nullable": True},
 }
 
+SCHEDULE_TABLE_SCHEMA = {
+    # Identity
+    "id": {"type": String, "primary_key": True, "nullable": False},
+    "name": {"type": String, "nullable": False},
+    "description": {"type": Text, "nullable": True},
+    # What to call (HTTP request)
+    "method": {"type": String, "nullable": False, "default": "POST"},
+    "endpoint": {"type": String, "nullable": False},
+    "payload": {"type": JSONB, "nullable": True},
+    # When to run
+    "cron_expr": {"type": String, "nullable": False},
+    "timezone": {"type": String, "nullable": False, "default": "UTC"},
+    # Execution settings
+    "timeout_seconds": {"type": Integer, "nullable": False, "default": 3600},
+    "max_retries": {"type": Integer, "nullable": False, "default": 0},
+    "retry_delay_seconds": {"type": Integer, "nullable": False, "default": 60},
+    # State
+    "enabled": {"type": Boolean, "nullable": False, "default": True},
+    "next_run_at": {"type": BigInteger, "nullable": True, "index": True},
+    # Distributed locking (for multi-container)
+    "locked_by": {"type": String, "nullable": True},
+    "locked_at": {"type": BigInteger, "nullable": True},
+    # Metadata
+    "created_at": {"type": BigInteger, "nullable": False, "index": True},
+    "updated_at": {"type": BigInteger, "nullable": True},
+    "_unique_constraints": [
+        {
+            "name": "uq_schedule_name",
+            "columns": ["name"],
+        },
+    ],
+}
+
+SCHEDULE_RUNS_TABLE_SCHEMA = {
+    "id": {"type": String, "primary_key": True, "nullable": False},
+    "schedule_id": {"type": String, "nullable": False, "index": True},
+    # Attempt tracking
+    "attempt": {"type": Integer, "nullable": False, "default": 1},
+    # Timing
+    "triggered_at": {"type": BigInteger, "nullable": False},
+    "completed_at": {"type": BigInteger, "nullable": True},
+    # Result
+    "status": {"type": String, "nullable": False, "default": "running", "index": True},
+    "status_code": {"type": Integer, "nullable": True},
+    "run_id": {"type": String, "nullable": True},
+    "session_id": {"type": String, "nullable": True},
+    "error": {"type": Text, "nullable": True},
+    # Metadata
+    "created_at": {"type": BigInteger, "nullable": False, "index": True},
+}
+
 
 def get_table_schema_definition(
     table_type: str, traces_table_name: str = "agno_traces", db_schema: str = "agno"
@@ -262,6 +313,8 @@ def get_table_schema_definition(
         "component_configs": COMPONENT_CONFIGS_TABLE_SCHEMA,
         "component_links": COMPONENT_LINKS_TABLE_SCHEMA,
         "learnings": LEARNINGS_TABLE_SCHEMA,
+        "schedules": SCHEDULE_TABLE_SCHEMA,
+        "schedule_runs": SCHEDULE_RUNS_TABLE_SCHEMA,
     }
 
     schema = schemas.get(table_type, {})

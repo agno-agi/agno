@@ -1,7 +1,8 @@
+import secrets
 from contextlib import asynccontextmanager
 from functools import partial
 from os import getenv
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Union
 from uuid import uuid4
 
 from fastapi import APIRouter, FastAPI, HTTPException
@@ -49,6 +50,7 @@ from agno.os.routers.session import get_session_router
 from agno.os.routers.teams import get_team_router
 from agno.os.routers.traces import get_traces_router
 from agno.os.routers.workflows import get_workflow_router
+from agno.os.routers.schedules import get_schedule_router
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
     collect_mcp_tools_from_team,
@@ -65,6 +67,9 @@ from agno.team import RemoteTeam, Team
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id, generate_id_from_name
 from agno.workflow import RemoteWorkflow, Workflow
+
+if TYPE_CHECKING:
+    from agno.scheduler.poller import SchedulePoller
 
 
 @asynccontextmanager
@@ -99,6 +104,61 @@ async def db_lifespan(app: FastAPI, agent_os: "AgentOS"):
     yield
 
     await agent_os._close_databases()
+
+
+@asynccontextmanager
+async def scheduler_lifespan(app: FastAPI, agent_os: "AgentOS"):
+    """Manage scheduler lifecycle - start polling on startup, stop on shutdown.
+
+    Supports both sync (BaseDb) and async (AsyncBaseDb) database adapters.
+    When using an async adapter, database operations are non-blocking.
+    """
+    import asyncio
+
+    from agno.scheduler.poller import SchedulePoller
+
+    if not agent_os.enable_scheduler:
+        yield
+        return
+
+    # Get the database - support both sync and async
+    db = agent_os.db
+    if db is None:
+        log_warning("Scheduler enabled but no database available. Provide 'db' parameter to AgentOS.")
+        yield
+        return
+
+    # Verify the db has scheduler methods
+    if not (isinstance(db, BaseDb) or isinstance(db, AsyncBaseDb)):
+        log_warning(
+            "Scheduler enabled but database does not support scheduler operations. Use BaseDb or AsyncBaseDb instance."
+        )
+        yield
+        return
+
+    poller = SchedulePoller(
+        db=db,
+        base_url=agent_os.scheduler_base_url,
+        token=agent_os._internal_service_token,
+        poll_interval=agent_os.scheduler_poll_interval,
+    )
+    agent_os._scheduler_poller = poller
+
+    # Start polling in background
+    poll_task = asyncio.create_task(poller.start(), name="scheduler-poller")
+    log_info("Scheduler started")
+
+    try:
+        yield
+    finally:
+        # Graceful shutdown
+        await poller.stop()
+        poll_task.cancel()
+        try:
+            await poll_task
+        except asyncio.CancelledError:
+            pass
+        log_info("Scheduler stopped")
 
 
 def _combine_app_lifespans(lifespans: list) -> Any:
@@ -153,6 +213,9 @@ class AgentOS:
         run_hooks_in_background: bool = False,
         telemetry: bool = True,
         registry: Optional[Registry] = None,
+        enable_scheduler: bool = False,
+        scheduler_poll_interval: int = 30,
+        scheduler_base_url: Optional[str] = None,
     ):
         """Initialize AgentOS.
 
@@ -182,6 +245,9 @@ class AgentOS:
             run_hooks_in_background: If True, run agent/team pre/post hooks as FastAPI background tasks (non-blocking)
             telemetry: Whether to enable telemetry
             registry: Optional registry to use for the AgentOS
+            enable_scheduler: Whether to enable the built-in scheduler (default: False, use external schedulers in production)
+            scheduler_poll_interval: Seconds between schedule claim attempts (default: 30)
+            scheduler_base_url: Base URL for scheduler HTTP calls (default: http://localhost:7777)
 
         """
         if not agents and not workflows and not teams and not knowledge and not db:
@@ -241,6 +307,13 @@ class AgentOS:
         # List of all MCP tools used inside the AgentOS
         self.mcp_tools: List[Any] = []
         self._mcp_app: Optional[Any] = None
+
+        # Scheduler configuration
+        self.enable_scheduler = enable_scheduler
+        self.scheduler_poll_interval = scheduler_poll_interval
+        self.scheduler_base_url = scheduler_base_url or "http://localhost:7777"
+        self._scheduler_poller: Optional["SchedulePoller"] = None
+        self._internal_service_token: str = secrets.token_urlsafe(32)
 
         self._initialize_agents()
         self._initialize_teams()
@@ -322,6 +395,16 @@ class AgentOS:
         if self.registry is not None:
             updated_routers.append(get_registry_router(registry=self.registry))
 
+        # Add schedule router if scheduler is enabled (supports both sync and async db)
+        if self.enable_scheduler and self.db is not None:
+            updated_routers.append(
+                get_schedule_router(
+                    dbs=self.dbs,
+                    settings=self.settings,
+                    poller=self._scheduler_poller,
+                )
+            )
+
         # Clear all previously existing routes
         app.router.routes = [
             route
@@ -354,6 +437,17 @@ class AgentOS:
         self._add_router(app, get_team_router(self, settings=self.settings, registry=self.registry))
         self._add_router(app, get_workflow_router(self, settings=self.settings))
         self._add_router(app, get_websocket_router(self, settings=self.settings))
+
+        # Add schedule router if scheduler is enabled (supports both sync and async db)
+        if self.enable_scheduler and self.db is not None:
+            self._add_router(
+                app,
+                get_schedule_router(
+                    dbs=self.dbs,
+                    settings=self.settings,
+                    poller=self._scheduler_poller,
+                ),
+            )
 
         # Add A2A interface if relevant
         has_a2a_interface = False
@@ -580,6 +674,10 @@ class AgentOS:
             # The async database lifespan
             lifespans.append(partial(db_lifespan, agent_os=self))
 
+            # The scheduler lifespan (after db, before httpx client)
+            if self.enable_scheduler:
+                lifespans.append(partial(scheduler_lifespan, agent_os=self))
+
             # The httpx client cleanup lifespan (should be last to close after other lifespans)
             lifespans.append(http_client_lifespan)
 
@@ -607,6 +705,10 @@ class AgentOS:
 
             # Async database initialization lifespan
             lifespans.append(partial(db_lifespan, agent_os=self))  # type: ignore
+
+            # The scheduler lifespan (after db, before httpx client)
+            if self.enable_scheduler:
+                lifespans.append(partial(scheduler_lifespan, agent_os=self))  # type: ignore
 
             # The httpx client cleanup lifespan (should be last to close after other lifespans)
             lifespans.append(http_client_lifespan)
