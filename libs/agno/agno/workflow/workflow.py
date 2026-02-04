@@ -5089,17 +5089,23 @@ def get_workflows(
     try:
         components, _ = db.list_components(component_type=ComponentType.WORKFLOW)
         for component in components:
-            config = db.get_config(component_id=component["component_id"])
-            if config is not None:
-                workflow_config = config.get("config")
-                if workflow_config is not None:
-                    component_id = component["component_id"]
-                    if "id" not in workflow_config:
-                        workflow_config["id"] = component_id
-                    workflow = Workflow.from_dict(workflow_config, db=db, registry=registry)
-                    # Ensure workflow.id is set to the component_id
-                    workflow.id = component_id
-                    workflows.append(workflow)
+            try:
+                config = db.get_config(component_id=component["component_id"])
+                if config is not None:
+                    workflow_config = config.get("config")
+                    if workflow_config is not None:
+                        component_id = component["component_id"]
+                        if "id" not in workflow_config:
+                            workflow_config["id"] = component_id
+                        workflow = Workflow.from_dict(workflow_config, db=db, registry=registry)
+                        # Ensure workflow.id is set to the component_id
+                        workflow.id = component_id
+                        workflows.append(workflow)
+            except Exception as e:
+                component_id = component.get("component_id", "unknown")
+                log_error(f"Error loading Workflow {component_id} from database: {e}")
+                # Continue loading other workflows even if this one fails
+                continue
         return workflows
 
     except Exception as e:
