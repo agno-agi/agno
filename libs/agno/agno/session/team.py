@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
-from typing import Any, Dict, List, Mapping, Optional, Tuple, Union
+from dataclasses import asdict, dataclass, field
+from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Tuple, Union
 
 from pydantic import BaseModel
 
@@ -11,10 +11,20 @@ from agno.run.team import TeamRunOutput
 from agno.session.summary import SessionSummary
 from agno.utils.log import log_debug, log_warning
 
+if TYPE_CHECKING:
+    from agno.db.base import BaseDb
+
 
 @dataclass
 class TeamSession:
-    """Team Session that is stored in the database"""
+    """Team Session that is stored in the database
+
+    Supports both legacy JSONB storage (runs stored in session) and
+    normalized storage (v2.5+, runs stored in separate tables).
+
+    When use_normalized_storage=True, runs are loaded lazily from the
+    database and messages are queried directly from the messages table.
+    """
 
     # Session UUID
     session_id: str
@@ -32,7 +42,7 @@ class TeamSession:
     session_data: Optional[Dict[str, Any]] = None
     # Metadata stored with this team
     metadata: Optional[Dict[str, Any]] = None
-    # List of all runs in the session
+    # List of all runs in the session (legacy storage or cached from normalized)
     runs: Optional[list[Union[TeamRunOutput, RunOutput]]] = None
     # Summary of the session
     summary: Optional[SessionSummary] = None
@@ -42,34 +52,145 @@ class TeamSession:
     # The unix timestamp when this session was last updated
     updated_at: Optional[int] = None
 
-    def to_dict(self) -> Dict[str, Any]:
-        session_dict = asdict(self)
+    # v2.5+ Normalized storage support
+    # When True, runs are stored in separate tables instead of JSONB
+    use_normalized_storage: bool = field(default=False, repr=False)
+    # Database reference for lazy loading (not serialized)
+    _db: Optional["BaseDb"] = field(default=None, repr=False)
+    # Flag to track if runs have been loaded from normalized storage
+    _runs_loaded: bool = field(default=False, repr=False)
 
-        session_dict["runs"] = [run.to_dict() for run in self.runs] if self.runs else None
+    def to_dict(self, include_runs: bool = True) -> Dict[str, Any]:
+        """Convert session to dictionary for storage.
+
+        Args:
+            include_runs: If True (default), includes runs in the dict.
+                         Set to False when using normalized storage to avoid
+                         storing runs in the session JSONB.
+        """
+        session_dict = {
+            "session_id": self.session_id,
+            "team_id": self.team_id,
+            "user_id": self.user_id,
+            "workflow_id": self.workflow_id,
+            "team_data": self.team_data,
+            "session_data": self.session_data,
+            "metadata": self.metadata,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        }
+
+        # Only include runs if not using normalized storage or explicitly requested
+        if include_runs and not self.use_normalized_storage:
+            session_dict["runs"] = [run.to_dict() for run in self.runs] if self.runs else None
+        else:
+            session_dict["runs"] = None
+
         session_dict["summary"] = self.summary.to_dict() if self.summary else None
 
         return session_dict
 
+    def set_db(self, db: "BaseDb") -> None:
+        """Set the database reference for lazy loading runs.
+
+        Args:
+            db: Database instance to use for loading runs.
+        """
+        self._db = db
+
+    def enable_normalized_storage(self, db: Optional["BaseDb"] = None) -> None:
+        """Enable normalized storage mode for this session.
+
+        When enabled, runs are stored in separate tables instead of JSONB.
+
+        Args:
+            db: Optional database instance to use for lazy loading.
+        """
+        self.use_normalized_storage = True
+        if db:
+            self._db = db
+
+    def _load_runs_from_db(self) -> None:
+        """Load runs from the normalized storage tables."""
+        if self._runs_loaded or self._db is None:
+            return
+
+        try:
+            # Check if db has the normalized storage methods
+            if not hasattr(self._db, "get_runs"):
+                log_debug("Database does not support normalized storage, using legacy runs")
+                self._runs_loaded = True
+                return
+
+            run_dicts = self._db.get_runs(session_id=self.session_id)
+            if run_dicts:
+                self.runs = []
+                for run_dict in run_dicts:
+                    # Load messages for this run
+                    if hasattr(self._db, "get_messages"):
+                        raw_messages = self._db.get_messages(run_id=run_dict.get("run_id"))
+                        if raw_messages:
+                            # Clean up message dicts for Message.from_dict
+                            db_only_fields = ("message_id", "run_id", "session_id", "message_order")
+                            cleaned_messages = []
+                            for msg in raw_messages:
+                                cleaned_msg = {
+                                    k: v for k, v in msg.items()
+                                    if v is not None and k not in db_only_fields
+                                }
+                                if "message_id" in msg and msg["message_id"]:
+                                    cleaned_msg["id"] = msg["message_id"]
+                                cleaned_messages.append(cleaned_msg)
+                            run_dict["messages"] = cleaned_messages
+
+                    if "agent_id" in run_dict:
+                        self.runs.append(RunOutput.from_dict(run_dict))
+                    elif "team_id" in run_dict:
+                        self.runs.append(TeamRunOutput.from_dict(run_dict))
+
+            self._runs_loaded = True
+            log_debug(f"Loaded {len(self.runs or [])} runs from normalized storage")
+
+        except Exception as e:
+            log_warning(f"Failed to load runs from normalized storage: {e}")
+            self._runs_loaded = True
+
     @classmethod
-    def from_dict(cls, data: Mapping[str, Any]) -> Optional[TeamSession]:
+    def from_dict(
+        cls,
+        data: Mapping[str, Any],
+        db: Optional["BaseDb"] = None,
+        use_normalized_storage: bool = False,
+    ) -> Optional[TeamSession]:
+        """Create a TeamSession from a dictionary.
+
+        Args:
+            data: Dictionary containing session data.
+            db: Optional database reference for lazy loading runs.
+            use_normalized_storage: If True, runs will be loaded from
+                                   normalized tables instead of JSONB.
+        """
         if data is None or data.get("session_id") is None:
             log_warning("TeamSession is missing session_id")
             return None
 
         summary = data.get("summary")
         if summary is not None and isinstance(summary, dict):
-            data["summary"] = SessionSummary.from_dict(data["summary"])  # type: ignore
+            summary = SessionSummary.from_dict(summary)
 
         runs = data.get("runs")
         serialized_runs: List[Union[TeamRunOutput, RunOutput]] = []
-        if runs is not None and isinstance(runs[0], dict):
-            for run in runs:
-                if "agent_id" in run:
-                    serialized_runs.append(RunOutput.from_dict(run))
-                elif "team_id" in run:
-                    serialized_runs.append(TeamRunOutput.from_dict(run))
 
-        return cls(
+        # Only deserialize runs if not using normalized storage and runs exist
+        if runs is not None and not use_normalized_storage:
+            if isinstance(runs, list) and len(runs) > 0 and isinstance(runs[0], dict):
+                for run in runs:
+                    if "agent_id" in run:
+                        serialized_runs.append(RunOutput.from_dict(run))
+                    elif "team_id" in run:
+                        serialized_runs.append(TeamRunOutput.from_dict(run))
+
+        session = cls(
             session_id=data.get("session_id"),  # type: ignore
             team_id=data.get("team_id"),
             user_id=data.get("user_id"),
@@ -79,18 +200,55 @@ class TeamSession:
             metadata=data.get("metadata"),
             created_at=data.get("created_at"),
             updated_at=data.get("updated_at"),
-            runs=serialized_runs,
-            summary=data.get("summary"),
+            runs=serialized_runs if serialized_runs else None,
+            summary=summary,
+            use_normalized_storage=use_normalized_storage,
         )
 
+        if db:
+            session._db = db
+
+        return session
+
     def get_run(self, run_id: str) -> Optional[Union[TeamRunOutput, RunOutput]]:
+        """Get a run by ID.
+
+        If using normalized storage and runs haven't been loaded, will attempt
+        to load from the database.
+        """
+        # Try to load from normalized storage if not already loaded
+        if self.use_normalized_storage and not self._runs_loaded:
+            self._load_runs_from_db()
+
         for run in self.runs or []:
             if run.run_id == run_id:
                 return run
+
+        # If not found in cache and using normalized storage, try direct lookup
+        if self.use_normalized_storage and self._db is not None and hasattr(self._db, "get_run"):
+            run_dict = self._db.get_run(run_id)
+            if run_dict:
+                # Load messages for this run
+                if hasattr(self._db, "get_messages"):
+                    messages = self._db.get_messages(run_id=run_id)
+                    if messages:
+                        run_dict["messages"] = messages
+
+                if "agent_id" in run_dict:
+                    return RunOutput.from_dict(run_dict)
+                elif "team_id" in run_dict:
+                    return TeamRunOutput.from_dict(run_dict)
+
         return None
 
-    def upsert_run(self, run_response: Union[TeamRunOutput, RunOutput]):
-        """Adds a RunOutput, together with some calculated data, to the runs list."""
+    def upsert_run(self, run_response: Union[TeamRunOutput, RunOutput], persist_to_db: bool = False):
+        """Adds a RunOutput, together with some calculated data, to the runs list.
+
+        Args:
+            run_response: The RunOutput or TeamRunOutput to add or update.
+            persist_to_db: If True and using normalized storage, persist the run
+                          to the database immediately.
+        """
         messages = run_response.messages
 
         # Make message duration None
@@ -107,6 +265,27 @@ class TeamSession:
                 break
         else:
             self.runs.append(run_response)
+
+        # Persist to normalized storage if enabled
+        if persist_to_db and self.use_normalized_storage and self._db is not None:
+            try:
+                if hasattr(self._db, "upsert_run"):
+                    run_dict = run_response.to_dict()
+                    self._db.upsert_run(
+                        run_id=run_response.run_id,  # type: ignore
+                        session_id=self.session_id,
+                        run_data=run_dict,
+                    )
+
+                    # Also persist messages
+                    if hasattr(self._db, "upsert_messages") and run_response.messages:
+                        message_dicts = [m.to_dict() for m in run_response.messages if not m.from_history]
+                        if message_dicts:
+                            self._db.upsert_messages(run_id=run_response.run_id, messages=message_dicts)  # type: ignore
+
+                    log_debug("Persisted run to normalized storage")
+            except Exception as e:
+                log_warning(f"Failed to persist run to normalized storage: {e}")
 
         log_debug("Added RunOutput to Team Session")
 
@@ -131,10 +310,44 @@ class TeamSession:
             skip_roles: Skip messages with these roles.
             skip_statuses: Skip messages with these statuses.
             skip_history_messages: Skip messages that were tagged as history in previous runs.
+                                  Note: In normalized storage (v2.5+), history messages are never
+                                  stored, so this flag only affects legacy storage.
             skip_member_messages: Skip messages created by members of the team.
 
         Returns:
             A list of Messages belonging to the session.
+        """
+        # Try to use normalized storage for efficient message retrieval
+        # Note: For teams, we still need to filter by team/member, so we use the runs approach
+        # but load from normalized storage if needed
+        if self.use_normalized_storage and not self._runs_loaded:
+            self._load_runs_from_db()
+
+        return self._get_messages_from_runs(
+            team_id=team_id,
+            member_ids=member_ids,
+            last_n_runs=last_n_runs,
+            limit=limit,
+            skip_roles=skip_roles,
+            skip_statuses=skip_statuses,
+            skip_history_messages=skip_history_messages,
+            skip_member_messages=skip_member_messages,
+        )
+
+    def _get_messages_from_runs(
+        self,
+        team_id: Optional[str] = None,
+        member_ids: Optional[List[str]] = None,
+        last_n_runs: Optional[int] = None,
+        limit: Optional[int] = None,
+        skip_roles: Optional[List[str]] = None,
+        skip_statuses: Optional[List[RunStatus]] = None,
+        skip_history_messages: bool = True,
+        skip_member_messages: bool = True,
+    ) -> List[Message]:
+        """Get messages by iterating through runs.
+
+        Used for both legacy and normalized storage.
         """
 
         def _should_skip_message(
@@ -242,6 +455,9 @@ class TeamSession:
 
     def get_tool_calls(self, num_calls: Optional[int] = None) -> List[Dict[str, Any]]:
         """Returns a list of tool calls from the messages"""
+        # Load runs from normalized storage if needed
+        if self.use_normalized_storage and not self._runs_loaded:
+            self._load_runs_from_db()
 
         tool_calls = []
         session_runs = self.runs
@@ -264,6 +480,10 @@ class TeamSession:
         Args:
             num_runs: Number of recent runs to include. If None, returns all available history.
         """
+        # Load runs from normalized storage if needed
+        if self.use_normalized_storage and not self._runs_loaded:
+            self._load_runs_from_db()
+
         if not self.runs:
             return []
 

@@ -623,7 +623,37 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         if not session:
             raise HTTPException(status_code=404, detail=f"Session with ID {session_id} not found")
 
-        runs = session.get("runs")  # type: ignore
+        # Try to get runs from normalized storage first
+        runs = None
+        if hasattr(db, "get_runs"):
+            try:
+                runs = db.get_runs(session_id=session_id)
+                # Load messages for each run from normalized storage
+                if runs and hasattr(db, "get_messages"):
+                    for run in runs:
+                        run_id = run.get("run_id")
+                        if run_id:
+                            messages = db.get_messages(run_id=run_id)
+                            if messages:
+                                # Clean up message dicts for schema conversion
+                                db_only_fields = ("message_id", "run_id", "session_id", "message_order")
+                                cleaned_messages = []
+                                for msg in messages:
+                                    cleaned_msg = {
+                                        k: v for k, v in msg.items()
+                                        if v is not None and k not in db_only_fields
+                                    }
+                                    if "message_id" in msg and msg["message_id"]:
+                                        cleaned_msg["id"] = msg["message_id"]
+                                    cleaned_messages.append(cleaned_msg)
+                                run["messages"] = cleaned_messages
+            except Exception:
+                pass  # Fall back to legacy storage
+
+        # Fall back to legacy storage (runs in session dict)
+        if not runs:
+            runs = session.get("runs")  # type: ignore
+
         if not runs:
             return []
 
@@ -748,17 +778,39 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         if not session:
             raise HTTPException(status_code=404, detail=f"Session with ID {session_id} not found")
 
-        runs = session.get("runs")  # type: ignore
-        if not runs:
-            raise HTTPException(status_code=404, detail=f"Session with ID {session_id} has no runs")
-
-        # Find the specific run
-        # TODO: Move this filtering into the DB layer
+        # Try to get the specific run from normalized storage first
         target_run = None
-        for run in runs:
-            if run.get("run_id") == run_id:
-                target_run = run
-                break
+        if hasattr(db, "get_run"):
+            try:
+                target_run = db.get_run(run_id=run_id)
+                # Load messages for this run from normalized storage
+                if target_run and hasattr(db, "get_messages"):
+                    messages = db.get_messages(run_id=run_id)
+                    if messages:
+                        # Clean up message dicts for schema conversion
+                        db_only_fields = ("message_id", "run_id", "session_id", "message_order")
+                        cleaned_messages = []
+                        for msg in messages:
+                            cleaned_msg = {
+                                k: v for k, v in msg.items()
+                                if v is not None and k not in db_only_fields
+                            }
+                            if "message_id" in msg and msg["message_id"]:
+                                cleaned_msg["id"] = msg["message_id"]
+                            cleaned_messages.append(cleaned_msg)
+                        target_run["messages"] = cleaned_messages
+            except Exception:
+                pass  # Fall back to legacy storage
+
+        # Fall back to legacy storage (runs in session dict)
+        if not target_run:
+            runs = session.get("runs")  # type: ignore
+            if runs:
+                # Find the specific run
+                for run in runs:
+                    if run.get("run_id") == run_id:
+                        target_run = run
+                        break
 
         if not target_run:
             raise HTTPException(status_code=404, detail=f"Run with ID {run_id} not found in session {session_id}")

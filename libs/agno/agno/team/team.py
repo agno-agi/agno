@@ -354,6 +354,10 @@ class Team:
     store_tool_messages: bool = True
     # If True, store history messages in run output
     store_history_messages: bool = True
+    # If True, use normalized storage (v2.5+) for runs and messages
+    # This stores runs and messages in separate tables instead of JSONB,
+    # eliminating the O(N^2) storage growth issue
+    use_normalized_storage: bool = False
 
     # --- Team Tools ---
     # A list of tools provided to the Model.
@@ -537,6 +541,7 @@ class Team:
         store_media: bool = True,
         store_tool_messages: bool = True,
         store_history_messages: bool = True,
+        use_normalized_storage: bool = False,
         send_media_to_model: bool = True,
         add_history_to_context: bool = False,
         num_history_runs: Optional[int] = None,
@@ -662,6 +667,7 @@ class Team:
         self.store_media = store_media
         self.store_tool_messages = store_tool_messages
         self.store_history_messages = store_history_messages
+        self.use_normalized_storage = use_normalized_storage
         self.send_media_to_model = send_media_to_model
 
         self.tools = tools
@@ -5010,7 +5016,8 @@ class Team:
             session_metrics += run_response.metrics
         session_metrics.time_to_first_token = None
         if session.session_data is not None:
-            session.session_data["session_metrics"] = session_metrics
+            # Store as dict for JSON serialization
+            session.session_data["session_metrics"] = session_metrics.to_dict()
 
     def _format_reasoning_step_content(self, run_response: TeamRunOutput, reasoning_step: ReasoningStep) -> str:
         """Format content for a reasoning step without changing any existing logic."""
@@ -8026,6 +8033,11 @@ class Team:
             if not self.db:
                 raise ValueError("Db not initialized")
             session = self.db.get_session(session_id=session_id, session_type=session_type)
+
+            # Enable normalized storage on the session if configured
+            if session and self.use_normalized_storage and hasattr(session, "enable_normalized_storage"):
+                session.enable_normalized_storage(self.db)
+
             return session  # type: ignore
         except Exception as e:
             import traceback
@@ -8043,6 +8055,11 @@ class Team:
                 raise ValueError("Db not initialized")
             self.db = cast(AsyncBaseDb, self.db)
             session = await self.db.get_session(session_id=session_id, session_type=session_type)
+
+            # Enable normalized storage on the session if configured
+            if session and self.use_normalized_storage and hasattr(session, "enable_normalized_storage"):
+                session.enable_normalized_storage(self.db)
+
             return session  # type: ignore
         except Exception as e:
             import traceback
@@ -8057,7 +8074,29 @@ class Team:
         try:
             if not self.db:
                 raise ValueError("Db not initialized")
-            return self.db.upsert_session(session=session)  # type: ignore
+
+            # If using normalized storage, enable it on session so to_dict() excludes runs
+            if self.use_normalized_storage and hasattr(session, "enable_normalized_storage"):
+                session.enable_normalized_storage(self.db)
+
+            # First upsert the session (without runs in JSONB if normalized storage)
+            result = self.db.upsert_session(session=session)  # type: ignore
+
+            # Then persist runs to normalized tables (session must exist first due to FK)
+            if self.use_normalized_storage and hasattr(self.db, "upsert_run"):
+                # Track if session_name was set before
+                had_session_name = (
+                    session.session_data is not None
+                    and session.session_data.get("session_name") is not None
+                )
+
+                self._persist_runs_normalized(session)
+
+                # If session_name was just set, save the session again
+                if not had_session_name and session.session_data and session.session_data.get("session_name"):
+                    result = self.db.upsert_session(session=session)  # type: ignore
+
+            return result
         except Exception as e:
             import traceback
 
@@ -8071,13 +8110,94 @@ class Team:
         try:
             if not self.db:
                 raise ValueError("Db not initialized")
-            return await self.db.upsert_session(session=session)  # type: ignore
+
+            # If using normalized storage, enable it on session so to_dict() excludes runs
+            if self.use_normalized_storage and hasattr(session, "enable_normalized_storage"):
+                session.enable_normalized_storage(self.db)
+
+            # First upsert the session (without runs in JSONB if normalized storage)
+            result = await self.db.upsert_session(session=session)  # type: ignore
+
+            # Then persist runs to normalized tables (session must exist first due to FK)
+            if self.use_normalized_storage and hasattr(self.db, "upsert_run"):
+                # Track if session_name was set before
+                had_session_name = (
+                    session.session_data is not None
+                    and session.session_data.get("session_name") is not None
+                )
+
+                self._persist_runs_normalized(session)
+
+                # If session_name was just set, save the session again
+                if not had_session_name and session.session_data and session.session_data.get("session_name"):
+                    result = await self.db.upsert_session(session=session)  # type: ignore
+
+            return result
         except Exception as e:
             import traceback
 
             traceback.print_exc(limit=3)
             log_warning(f"Error upserting session into db: {e}")
         return None
+
+    def _persist_runs_normalized(self, session: TeamSession) -> None:
+        """Persist runs to normalized storage tables.
+
+        This stores runs and messages in separate tables instead of JSONB,
+        eliminating the O(N^2) storage growth issue.
+        """
+        if not self.db or not hasattr(self.db, "upsert_run"):
+            return
+
+        if not session.runs:
+            return
+
+        # Check if session name needs to be set (first user message)
+        session_name_set = False
+        if session.session_data is not None and session.session_data.get("session_name"):
+            session_name_set = True
+
+        for run in session.runs:
+            try:
+                run_dict = run.to_dict()
+
+                # Persist the run
+                self.db.upsert_run(
+                    run_id=run.run_id,  # type: ignore
+                    session_id=session.session_id,
+                    run_data=run_dict,
+                )
+
+                # Persist messages (excluding history messages)
+                if hasattr(self.db, "upsert_messages") and run.messages:
+                    # Only persist non-history messages
+                    message_dicts = [
+                        m.to_dict()
+                        for m in run.messages
+                        if not (hasattr(m, "from_history") and m.from_history)
+                    ]
+                    if message_dicts:
+                        self.db.upsert_messages(run_id=run.run_id, messages=message_dicts)  # type: ignore
+
+                    # Set session name from first user message if not already set
+                    if not session_name_set and run.messages:
+                        for msg in run.messages:
+                            if msg.role == "user" and msg.content and not getattr(msg, "from_history", False):
+                                user_content = msg.content
+                                if isinstance(user_content, str):
+                                    # Truncate to reasonable length for session name
+                                    session_name = user_content[:100].strip()
+                                    if session_name:
+                                        if session.session_data is None:
+                                            session.session_data = {}
+                                        session.session_data["session_name"] = session_name
+                                        session_name_set = True
+                                        break
+
+                log_debug(f"Persisted run {run.run_id} to normalized storage")
+
+            except Exception as e:
+                log_warning(f"Failed to persist run {run.run_id} to normalized storage: {e}")
 
     def _read_or_create_session(self, session_id: str, user_id: Optional[str] = None) -> TeamSession:
         """Load the TeamSession from storage
@@ -8464,6 +8584,8 @@ class Team:
             config["store_tool_messages"] = self.store_tool_messages
         if not self.store_history_messages:  # default is True
             config["store_history_messages"] = self.store_history_messages
+        if self.use_normalized_storage:
+            config["use_normalized_storage"] = self.use_normalized_storage
 
         # --- Compression settings ---
         if self.compress_tool_results:
@@ -8775,6 +8897,7 @@ class Team:
             store_media=config.get("store_media", True),
             store_tool_messages=config.get("store_tool_messages", True),
             store_history_messages=config.get("store_history_messages", True),
+            use_normalized_storage=config.get("use_normalized_storage", False),
             # --- Retry settings ---
             retries=config.get("retries", 0),
             delay_between_retries=config.get("delay_between_retries", 1),

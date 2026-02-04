@@ -236,9 +236,13 @@ class PostgresDb(BaseDb):
         - column-level foreign_key: "logical_table.column" (resolved via _resolve_* helpers)
         """
         try:
-            # Pass traces_table_name and db_schema for spans table foreign key resolution
+            # Pass table names and db_schema for foreign key resolution
             table_schema = get_table_schema_definition(
-                table_type, traces_table_name=self.trace_table_name, db_schema=self.db_schema
+                table_type,
+                traces_table_name=self.trace_table_name,
+                sessions_table_name=self.session_table_name,
+                runs_table_name=self.runs_table_name,
+                db_schema=self.db_schema,
             ).copy()
 
             columns: List[Column] = []
@@ -415,6 +419,10 @@ class PostgresDb(BaseDb):
             "components": self.components_table_name,
             "component_configs": self.component_configs_table_name,
             "component_links": self.component_links_table_name,
+            # Normalized storage tables (v2.5+)
+            "runs": self.runs_table_name,
+            "messages": self.messages_table_name,
+            "tool_calls": self.tool_calls_table_name,
         }
         return table_map.get(logical_name, logical_name)
 
@@ -525,6 +533,43 @@ class PostgresDb(BaseDb):
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.learnings_table
+
+        # Normalized storage tables (v2.5+)
+        if table_type == "runs":
+            # Ensure sessions table exists first (runs has FK to sessions)
+            if create_table_if_not_found:
+                self._get_table(table_type="sessions", create_table_if_not_found=True)
+
+            self.runs_table = self._get_or_create_table(
+                table_name=self.runs_table_name,
+                table_type="runs",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.runs_table
+
+        if table_type == "messages":
+            # Ensure runs table exists first (messages has FK to runs)
+            if create_table_if_not_found:
+                self._get_table(table_type="runs", create_table_if_not_found=True)
+
+            self.messages_table = self._get_or_create_table(
+                table_name=self.messages_table_name,
+                table_type="messages",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.messages_table
+
+        if table_type == "tool_calls":
+            # Ensure messages table exists first (tool_calls has FK to messages)
+            if create_table_if_not_found:
+                self._get_table(table_type="messages", create_table_if_not_found=True)
+
+            self.tool_calls_table = self._get_or_create_table(
+                table_name=self.tool_calls_table_name,
+                table_type="tool_calls",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.tool_calls_table
 
         raise ValueError(f"Unknown table type: {table_type}")
 
@@ -1255,6 +1300,540 @@ class PostgresDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception bulk upserting sessions: {e}")
+            return []
+
+    # ==========================================================================
+    # Normalized Storage Methods (v2.5+)
+    # These methods provide CRUD operations for the normalized runs, messages,
+    # and tool_calls tables, eliminating the O(N^2) storage growth issue.
+    # ==========================================================================
+
+    def upsert_run(
+        self,
+        run_id: str,
+        session_id: str,
+        run_data: Dict[str, Any],
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Insert or update a run in the normalized runs table.
+
+        Args:
+            run_id: Unique identifier for the run.
+            session_id: The session this run belongs to.
+            run_data: Dictionary containing run fields (from RunOutput.to_dict()).
+
+        Returns:
+            The upserted run data as a dictionary, or None if failed.
+        """
+        try:
+            table = self._get_table(table_type="runs", create_table_if_not_found=True)
+            if table is None:
+                return None
+
+            # Sanitize string fields
+            run_data = sanitize_postgres_strings(run_data)
+
+            # Get current run count for ordering
+            run_order = run_data.get("run_order", 0)
+            if run_order == 0:
+                with self.Session() as sess:
+                    count_stmt = select(func.count()).select_from(table).where(table.c.session_id == session_id)
+                    run_order = sess.execute(count_stmt).scalar() or 0
+
+            with self.Session() as sess, sess.begin():
+                stmt = postgresql.insert(table).values(
+                    run_id=run_id,
+                    session_id=session_id,
+                    parent_run_id=run_data.get("parent_run_id"),
+                    agent_id=run_data.get("agent_id"),
+                    agent_name=run_data.get("agent_name"),
+                    team_id=run_data.get("team_id"),
+                    workflow_id=run_data.get("workflow_id"),
+                    workflow_step_id=run_data.get("workflow_step_id"),
+                    user_id=run_data.get("user_id"),
+                    model=run_data.get("model"),
+                    model_provider=run_data.get("model_provider"),
+                    status=run_data.get("status", "running"),
+                    content=str(run_data.get("content")) if run_data.get("content") else None,
+                    content_type=run_data.get("content_type", "str"),
+                    reasoning_content=run_data.get("reasoning_content"),
+                    input=run_data.get("input"),
+                    metrics=run_data.get("metrics"),
+                    metadata=run_data.get("metadata"),
+                    session_state=run_data.get("session_state"),
+                    tools=run_data.get("tools"),
+                    citations=run_data.get("citations"),
+                    references=run_data.get("references"),
+                    images=run_data.get("images"),
+                    videos=run_data.get("videos"),
+                    audio=run_data.get("audio"),
+                    files=run_data.get("files"),
+                    response_audio=run_data.get("response_audio"),
+                    additional_input=run_data.get("additional_input"),
+                    reasoning_steps=run_data.get("reasoning_steps"),
+                    reasoning_messages=run_data.get("reasoning_messages"),
+                    requirements=run_data.get("requirements"),
+                    events=run_data.get("events"),
+                    model_provider_data=run_data.get("model_provider_data"),
+                    member_responses=run_data.get("member_responses"),
+                    created_at=run_data.get("created_at") or int(time.time()),
+                    run_order=run_order,
+                )
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=["run_id"],
+                    set_={
+                        "status": run_data.get("status", "running"),
+                        "content": str(run_data.get("content")) if run_data.get("content") else None,
+                        "content_type": run_data.get("content_type", "str"),
+                        "reasoning_content": run_data.get("reasoning_content"),
+                        "metrics": run_data.get("metrics"),
+                        "metadata": run_data.get("metadata"),
+                        "session_state": run_data.get("session_state"),
+                        "tools": run_data.get("tools"),
+                        "citations": run_data.get("citations"),
+                        "references": run_data.get("references"),
+                        "images": run_data.get("images"),
+                        "videos": run_data.get("videos"),
+                        "audio": run_data.get("audio"),
+                        "files": run_data.get("files"),
+                        "response_audio": run_data.get("response_audio"),
+                        "additional_input": run_data.get("additional_input"),
+                        "reasoning_steps": run_data.get("reasoning_steps"),
+                        "reasoning_messages": run_data.get("reasoning_messages"),
+                        "requirements": run_data.get("requirements"),
+                        "events": run_data.get("events"),
+                        "model_provider_data": run_data.get("model_provider_data"),
+                        "member_responses": run_data.get("member_responses"),
+                    },
+                ).returning(table)
+                result = sess.execute(stmt)
+                row = result.fetchone()
+                return dict(row._mapping) if row else None
+
+        except Exception as e:
+            log_error(f"Exception upserting run: {e}")
+            raise e
+
+    def get_run(self, run_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get a single run by ID from the normalized runs table.
+
+        Args:
+            run_id: The run ID to retrieve.
+
+        Returns:
+            Run data as a dictionary, or None if not found.
+        """
+        try:
+            table = self._get_table(table_type="runs")
+            if table is None:
+                return None
+
+            with self.Session() as sess:
+                stmt = select(table).where(table.c.run_id == run_id)
+                result = sess.execute(stmt).fetchone()
+                return dict(result._mapping) if result else None
+
+        except Exception as e:
+            log_error(f"Exception getting run: {e}")
+            return None
+
+    def get_runs(
+        self,
+        session_id: str,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        last_n_runs: Optional[int] = None,
+        skip_statuses: Optional[List[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Get runs for a session from the normalized runs table.
+
+        Args:
+            session_id: The session ID to get runs for.
+            agent_id: Optional filter by agent ID.
+            team_id: Optional filter by team ID.
+            last_n_runs: Optional limit to last N runs.
+            skip_statuses: Optional list of statuses to skip.
+
+        Returns:
+            List of run dictionaries ordered by run_order.
+        """
+        try:
+            table = self._get_table(table_type="runs")
+            if table is None:
+                return []
+
+            with self.Session() as sess:
+                stmt = select(table).where(table.c.session_id == session_id)
+
+                if agent_id:
+                    stmt = stmt.where(table.c.agent_id == agent_id)
+                if team_id:
+                    stmt = stmt.where(table.c.team_id == team_id)
+                if skip_statuses:
+                    stmt = stmt.where(~table.c.status.in_(skip_statuses))
+
+                stmt = stmt.order_by(table.c.run_order.asc())
+
+                if last_n_runs:
+                    # Get total count first
+                    count_stmt = select(func.count()).select_from(table).where(table.c.session_id == session_id)
+                    if agent_id:
+                        count_stmt = count_stmt.where(table.c.agent_id == agent_id)
+                    if team_id:
+                        count_stmt = count_stmt.where(table.c.team_id == team_id)
+                    if skip_statuses:
+                        count_stmt = count_stmt.where(~table.c.status.in_(skip_statuses))
+
+                    total = sess.execute(count_stmt).scalar() or 0
+                    offset = max(0, total - last_n_runs)
+                    stmt = stmt.offset(offset)
+
+                result = sess.execute(stmt).fetchall()
+                return [dict(row._mapping) for row in result]
+
+        except Exception as e:
+            log_error(f"Exception getting runs: {e}")
+            return []
+
+    def delete_run(self, run_id: str) -> bool:
+        """
+        Delete a run and its associated messages from the normalized tables.
+
+        Args:
+            run_id: The run ID to delete.
+
+        Returns:
+            True if deleted, False otherwise.
+        """
+        try:
+            runs_table = self._get_table(table_type="runs")
+            messages_table = self._get_table(table_type="messages")
+
+            if runs_table is None:
+                return False
+
+            with self.Session() as sess, sess.begin():
+                # Delete messages first (foreign key constraint)
+                if messages_table is not None:
+                    delete_messages = messages_table.delete().where(messages_table.c.run_id == run_id)
+                    sess.execute(delete_messages)
+
+                # Delete the run
+                delete_run = runs_table.delete().where(runs_table.c.run_id == run_id)
+                result = sess.execute(delete_run)
+                return result.rowcount > 0
+
+        except Exception as e:
+            log_error(f"Exception deleting run: {e}")
+            return False
+
+    def upsert_message(
+        self,
+        message_id: str,
+        run_id: str,
+        message_data: Dict[str, Any],
+        message_order: int = 0,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Insert or update a message in the normalized messages table.
+
+        Args:
+            message_id: Unique identifier for the message.
+            run_id: The run this message belongs to.
+            message_data: Dictionary containing message fields (from Message.to_dict()).
+            message_order: Order of the message within the run.
+
+        Returns:
+            The upserted message data as a dictionary, or None if failed.
+        """
+        try:
+            table = self._get_table(table_type="messages", create_table_if_not_found=True)
+            if table is None:
+                return None
+
+            # Sanitize string fields
+            message_data = sanitize_postgres_strings(message_data)
+
+            # Handle content - could be string or list
+            content = message_data.get("content")
+            if isinstance(content, list):
+                import json
+
+                content = json.dumps(content)
+
+            with self.Session() as sess, sess.begin():
+                stmt = postgresql.insert(table).values(
+                    message_id=message_id,
+                    run_id=run_id,
+                    role=message_data.get("role"),
+                    content=content,
+                    compressed_content=message_data.get("compressed_content"),
+                    name=message_data.get("name"),
+                    tool_call_id=message_data.get("tool_call_id"),
+                    tool_name=message_data.get("tool_name"),
+                    tool_args=message_data.get("tool_args"),
+                    tool_call_error=message_data.get("tool_call_error"),
+                    tool_calls=message_data.get("tool_calls"),
+                    provider_data=message_data.get("provider_data"),
+                    reasoning_content=message_data.get("reasoning_content"),
+                    redacted_reasoning_content=message_data.get("redacted_reasoning_content"),
+                    citations=message_data.get("citations"),
+                    references=message_data.get("references"),
+                    metrics=message_data.get("metrics"),
+                    images=message_data.get("images"),
+                    audio=message_data.get("audio"),
+                    videos=message_data.get("videos"),
+                    files=message_data.get("files"),
+                    audio_output=message_data.get("audio_output"),
+                    image_output=message_data.get("image_output"),
+                    video_output=message_data.get("video_output"),
+                    file_output=message_data.get("file_output"),
+                    stop_after_tool_call=message_data.get("stop_after_tool_call", False),
+                    add_to_agent_memory=message_data.get("add_to_agent_memory", True),
+                    temporary=message_data.get("temporary", False),
+                    created_at=message_data.get("created_at") or int(time.time()),
+                    message_order=message_order,
+                )
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=["message_id"],
+                    set_={
+                        "content": content,
+                        "compressed_content": message_data.get("compressed_content"),
+                        "tool_calls": message_data.get("tool_calls"),
+                        "provider_data": message_data.get("provider_data"),
+                        "reasoning_content": message_data.get("reasoning_content"),
+                        "metrics": message_data.get("metrics"),
+                    },
+                ).returning(table)
+                result = sess.execute(stmt)
+                row = result.fetchone()
+                return dict(row._mapping) if row else None
+
+        except Exception as e:
+            log_error(f"Exception upserting message: {e}")
+            raise e
+
+    def upsert_messages(
+        self,
+        run_id: str,
+        messages: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """
+        Bulk insert or update messages for a run.
+
+        Args:
+            run_id: The run these messages belong to.
+            messages: List of message dictionaries (from Message.to_dict()).
+
+        Returns:
+            List of upserted message dictionaries.
+        """
+        results = []
+        for i, msg_data in enumerate(messages):
+            message_id = msg_data.get("id") or str(uuid4())
+            result = self.upsert_message(
+                message_id=message_id,
+                run_id=run_id,
+                message_data=msg_data,
+                message_order=i,
+            )
+            if result:
+                results.append(result)
+        return results
+
+    def get_messages(
+        self,
+        run_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        last_n_runs: Optional[int] = None,
+        limit: Optional[int] = None,
+        skip_roles: Optional[List[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Get messages from the normalized messages table.
+
+        Args:
+            run_id: Get messages for a specific run.
+            session_id: Get messages for all runs in a session.
+            last_n_runs: If session_id provided, limit to last N runs.
+            limit: Limit total number of messages returned.
+            skip_roles: Skip messages with these roles.
+
+        Returns:
+            List of message dictionaries ordered by run_order then message_order.
+        """
+        try:
+            messages_table = self._get_table(table_type="messages")
+            if messages_table is None:
+                return []
+
+            with self.Session() as sess:
+                if run_id:
+                    # Simple case: get messages for a single run
+                    stmt = select(messages_table).where(messages_table.c.run_id == run_id)
+                    if skip_roles:
+                        stmt = stmt.where(~messages_table.c.role.in_(skip_roles))
+                    stmt = stmt.order_by(messages_table.c.message_order.asc())
+                    if limit:
+                        stmt = stmt.limit(limit)
+                    result = sess.execute(stmt).fetchall()
+                    return [dict(row._mapping) for row in result]
+
+                elif session_id:
+                    # Get messages across all runs in a session
+                    runs_table = self._get_table(table_type="runs")
+                    if runs_table is None:
+                        return []
+
+                    # First get the relevant run IDs
+                    runs_stmt = (
+                        select(runs_table.c.run_id)
+                        .where(runs_table.c.session_id == session_id)
+                        .order_by(runs_table.c.run_order.asc())
+                    )
+
+                    if last_n_runs:
+                        # Get total count
+                        count_stmt = (
+                            select(func.count()).select_from(runs_table).where(runs_table.c.session_id == session_id)
+                        )
+                        total = sess.execute(count_stmt).scalar() or 0
+                        offset = max(0, total - last_n_runs)
+                        runs_stmt = runs_stmt.offset(offset)
+
+                    run_ids = [row[0] for row in sess.execute(runs_stmt).fetchall()]
+
+                    if not run_ids:
+                        return []
+
+                    # Now get messages for those runs
+                    stmt = select(messages_table).where(messages_table.c.run_id.in_(run_ids))
+                    if skip_roles:
+                        stmt = stmt.where(~messages_table.c.role.in_(skip_roles))
+
+                    # Order by run order then message order
+                    # We need to join with runs to get proper ordering
+                    stmt = (
+                        select(messages_table)
+                        .select_from(messages_table.join(runs_table, messages_table.c.run_id == runs_table.c.run_id))
+                        .where(messages_table.c.run_id.in_(run_ids))
+                    )
+                    if skip_roles:
+                        stmt = stmt.where(~messages_table.c.role.in_(skip_roles))
+                    stmt = stmt.order_by(runs_table.c.run_order.asc(), messages_table.c.message_order.asc())
+
+                    if limit:
+                        stmt = stmt.limit(limit)
+
+                    result = sess.execute(stmt).fetchall()
+                    return [dict(row._mapping) for row in result]
+
+                else:
+                    log_warning("Either run_id or session_id must be provided to get_messages")
+                    return []
+
+        except Exception as e:
+            log_error(f"Exception getting messages: {e}")
+            return []
+
+    def delete_messages(self, run_id: str) -> bool:
+        """
+        Delete all messages for a run.
+
+        Args:
+            run_id: The run ID whose messages to delete.
+
+        Returns:
+            True if any messages were deleted, False otherwise.
+        """
+        try:
+            table = self._get_table(table_type="messages")
+            if table is None:
+                return False
+
+            with self.Session() as sess, sess.begin():
+                delete_stmt = table.delete().where(table.c.run_id == run_id)
+                result = sess.execute(delete_stmt)
+                return result.rowcount > 0
+
+        except Exception as e:
+            log_error(f"Exception deleting messages: {e}")
+            return False
+
+    def upsert_tool_call(
+        self,
+        tool_call_id: str,
+        message_id: str,
+        tool_call_data: Dict[str, Any],
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Insert or update a tool call in the normalized tool_calls table.
+
+        Args:
+            tool_call_id: Unique identifier for the tool call.
+            message_id: The message this tool call belongs to.
+            tool_call_data: Dictionary containing tool call fields.
+
+        Returns:
+            The upserted tool call data as a dictionary, or None if failed.
+        """
+        try:
+            table = self._get_table(table_type="tool_calls", create_table_if_not_found=True)
+            if table is None:
+                return None
+
+            # Sanitize string fields
+            tool_call_data = sanitize_postgres_strings(tool_call_data)
+
+            with self.Session() as sess, sess.begin():
+                stmt = postgresql.insert(table).values(
+                    tool_call_id=tool_call_id,
+                    message_id=message_id,
+                    tool_name=tool_call_data.get("tool_name"),
+                    tool_args=tool_call_data.get("tool_args"),
+                    tool_result=tool_call_data.get("tool_result"),
+                    tool_call_error=tool_call_data.get("tool_call_error"),
+                    created_at=tool_call_data.get("created_at") or int(time.time()),
+                )
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=["tool_call_id"],
+                    set_={
+                        "tool_result": tool_call_data.get("tool_result"),
+                        "tool_call_error": tool_call_data.get("tool_call_error"),
+                    },
+                ).returning(table)
+                result = sess.execute(stmt)
+                row = result.fetchone()
+                return dict(row._mapping) if row else None
+
+        except Exception as e:
+            log_error(f"Exception upserting tool call: {e}")
+            raise e
+
+    def get_tool_calls(self, message_id: str) -> List[Dict[str, Any]]:
+        """
+        Get tool calls for a message.
+
+        Args:
+            message_id: The message ID to get tool calls for.
+
+        Returns:
+            List of tool call dictionaries.
+        """
+        try:
+            table = self._get_table(table_type="tool_calls")
+            if table is None:
+                return []
+
+            with self.Session() as sess:
+                stmt = select(table).where(table.c.message_id == message_id)
+                result = sess.execute(stmt).fetchall()
+                return [dict(row._mapping) for row in result]
+
+        except Exception as e:
+            log_error(f"Exception getting tool calls: {e}")
             return []
 
     # -- Memory methods --

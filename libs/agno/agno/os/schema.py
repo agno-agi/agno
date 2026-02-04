@@ -186,10 +186,17 @@ class SessionSchema(BaseModel):
 
     @classmethod
     def from_dict(cls, session: Dict[str, Any]) -> "SessionSchema":
-        session_name = session.get("session_name")
-        if not session_name:
-            session_name = get_session_name(session)
         session_data = session.get("session_data", {}) or {}
+        # Check session_data.session_name first (where normalized storage puts it)
+        session_name = session_data.get("session_name")
+        if not session_name:
+            # Fall back to top-level session_name
+            session_name = session.get("session_name")
+        if not session_name:
+            # Fall back to extracting from runs (legacy)
+            session_name = get_session_name(session)
+        if not session_name:
+            session_name = "Untitled Session"
 
         created_at = session.get("created_at", 0)
         updated_at = session.get("updated_at", created_at)

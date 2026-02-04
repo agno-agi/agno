@@ -47,6 +47,9 @@ class BaseDb(ABC):
         component_configs_table: Optional[str] = None,
         component_links_table: Optional[str] = None,
         learnings_table: Optional[str] = None,
+        runs_table: Optional[str] = None,
+        messages_table: Optional[str] = None,
+        tool_calls_table: Optional[str] = None,
         id: Optional[str] = None,
     ):
         self.id = id or str(uuid4())
@@ -63,6 +66,10 @@ class BaseDb(ABC):
         self.component_configs_table_name = component_configs_table or "agno_component_configs"
         self.component_links_table_name = component_links_table or "agno_component_links"
         self.learnings_table_name = learnings_table or "agno_learnings"
+        # Normalized storage tables (v2.5+)
+        self.runs_table_name = runs_table or "agno_runs"
+        self.messages_table_name = messages_table or "agno_messages"
+        self.tool_calls_table_name = tool_calls_table or "agno_tool_calls"
 
     def to_dict(self) -> Dict[str, Any]:
         """
@@ -82,6 +89,9 @@ class BaseDb(ABC):
             "components_table": self.components_table_name,
             "component_configs_table": self.component_configs_table_name,
             "component_links_table": self.component_links_table_name,
+            "runs_table": self.runs_table_name,
+            "messages_table": self.messages_table_name,
+            "tool_calls_table": self.tool_calls_table_name,
         }
 
     @classmethod
@@ -102,6 +112,9 @@ class BaseDb(ABC):
             components_table=data.get("components_table"),
             component_configs_table=data.get("component_configs_table"),
             component_links_table=data.get("component_links_table"),
+            runs_table=data.get("runs_table"),
+            messages_table=data.get("messages_table"),
+            tool_calls_table=data.get("tool_calls_table"),
             id=data.get("id"),
         )
 

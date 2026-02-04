@@ -230,9 +230,134 @@ LEARNINGS_TABLE_SCHEMA = {
     "updated_at": {"type": BigInteger, "nullable": True},
 }
 
+# =============================================================================
+# Normalized Storage Tables (v2.5+)
+# These tables replace the JSONB 'runs' column in agno_sessions to eliminate
+# the O(N^2) storage growth caused by recursive history message storage.
+# =============================================================================
+
+
+def _get_runs_table_schema(sessions_table_name: str = "agno_sessions", db_schema: str = "agno") -> dict[str, Any]:
+    """Get the runs table schema with the correct foreign key reference.
+
+    Args:
+        sessions_table_name: The name of the sessions table to reference in the foreign key.
+        db_schema: The database schema name.
+
+    Returns:
+        The runs table schema dictionary.
+    """
+    return {
+        "run_id": {"type": String, "primary_key": True, "nullable": False},
+        "session_id": {
+            "type": String,
+            "nullable": False,
+            "index": True,
+            "foreign_key": f"{db_schema}.{sessions_table_name}.session_id",
+        },
+        "parent_run_id": {"type": String, "nullable": True, "index": True},
+        "agent_id": {"type": String, "nullable": True, "index": True},
+        "agent_name": {"type": String, "nullable": True},
+        "team_id": {"type": String, "nullable": True, "index": True},
+        "workflow_id": {"type": String, "nullable": True, "index": True},
+        "workflow_step_id": {"type": String, "nullable": True},
+        "user_id": {"type": String, "nullable": True, "index": True},
+        "model": {"type": String, "nullable": True},
+        "model_provider": {"type": String, "nullable": True},
+        "status": {"type": String, "nullable": False, "index": True, "default": "running"},
+        "content": {"type": Text, "nullable": True},
+        "content_type": {"type": String, "nullable": True, "default": "str"},
+        "reasoning_content": {"type": Text, "nullable": True},
+        "input": {"type": JSONB, "nullable": True},
+        "metrics": {"type": JSONB, "nullable": True},
+        "metadata": {"type": JSONB, "nullable": True},
+        "session_state": {"type": JSONB, "nullable": True},
+        "tools": {"type": JSONB, "nullable": True},
+        "citations": {"type": JSONB, "nullable": True},
+        "references": {"type": JSONB, "nullable": True},
+        "images": {"type": JSONB, "nullable": True},
+        "videos": {"type": JSONB, "nullable": True},
+        "audio": {"type": JSONB, "nullable": True},
+        "files": {"type": JSONB, "nullable": True},
+        "response_audio": {"type": JSONB, "nullable": True},
+        "additional_input": {"type": JSONB, "nullable": True},
+        "reasoning_steps": {"type": JSONB, "nullable": True},
+        "reasoning_messages": {"type": JSONB, "nullable": True},
+        "requirements": {"type": JSONB, "nullable": True},
+        "events": {"type": JSONB, "nullable": True},
+        "model_provider_data": {"type": JSONB, "nullable": True},
+        "member_responses": {"type": JSONB, "nullable": True},
+        "created_at": {"type": BigInteger, "nullable": False, "index": True},
+        "run_order": {"type": Integer, "nullable": False, "default": 0},
+    }
+
+
+def _get_messages_table_schema(runs_table_name: str = "agno_runs", db_schema: str = "agno") -> dict[str, Any]:
+    """Get the messages table schema with the correct foreign key reference.
+
+    Args:
+        runs_table_name: The name of the runs table to reference in the foreign key.
+        db_schema: The database schema name.
+
+    Returns:
+        The messages table schema dictionary.
+    """
+    return {
+        "message_id": {"type": String, "primary_key": True, "nullable": False},
+        "run_id": {
+            "type": String,
+            "nullable": False,
+            "index": True,
+            "foreign_key": f"{db_schema}.{runs_table_name}.run_id",
+        },
+        "role": {"type": String, "nullable": False, "index": True},
+        "content": {"type": Text, "nullable": True},
+        "compressed_content": {"type": Text, "nullable": True},
+        "name": {"type": String, "nullable": True},
+        "tool_call_id": {"type": String, "nullable": True, "index": True},
+        "tool_name": {"type": String, "nullable": True},
+        "tool_args": {"type": JSONB, "nullable": True},
+        "tool_call_error": {"type": Boolean, "nullable": True},
+        "tool_calls": {"type": JSONB, "nullable": True},
+        "provider_data": {"type": JSONB, "nullable": True},
+        "reasoning_content": {"type": Text, "nullable": True},
+        "redacted_reasoning_content": {"type": Text, "nullable": True},
+        "citations": {"type": JSONB, "nullable": True},
+        "references": {"type": JSONB, "nullable": True},
+        "metrics": {"type": JSONB, "nullable": True},
+        "images": {"type": JSONB, "nullable": True},
+        "audio": {"type": JSONB, "nullable": True},
+        "videos": {"type": JSONB, "nullable": True},
+        "files": {"type": JSONB, "nullable": True},
+        "audio_output": {"type": JSONB, "nullable": True},
+        "image_output": {"type": JSONB, "nullable": True},
+        "video_output": {"type": JSONB, "nullable": True},
+        "file_output": {"type": JSONB, "nullable": True},
+        "stop_after_tool_call": {"type": Boolean, "nullable": False, "default": False},
+        "add_to_agent_memory": {"type": Boolean, "nullable": False, "default": True},
+        "temporary": {"type": Boolean, "nullable": False, "default": False},
+        "created_at": {"type": BigInteger, "nullable": False, "index": True},
+        "message_order": {"type": Integer, "nullable": False, "default": 0},
+    }
+
+
+TOOL_CALLS_TABLE_SCHEMA = {
+    "tool_call_id": {"type": String, "primary_key": True, "nullable": False},
+    "message_id": {"type": String, "nullable": False, "index": True},
+    "tool_name": {"type": String, "nullable": False, "index": True},
+    "tool_args": {"type": JSONB, "nullable": True},
+    "tool_result": {"type": Text, "nullable": True},
+    "tool_call_error": {"type": Boolean, "nullable": True},
+    "created_at": {"type": BigInteger, "nullable": False, "index": True},
+}
+
 
 def get_table_schema_definition(
-    table_type: str, traces_table_name: str = "agno_traces", db_schema: str = "agno"
+    table_type: str,
+    traces_table_name: str = "agno_traces",
+    sessions_table_name: str = "agno_sessions",
+    runs_table_name: str = "agno_runs",
+    db_schema: str = "agno",
 ) -> dict[str, Any]:
     """
     Get the expected schema definition for the given table.
@@ -240,14 +365,20 @@ def get_table_schema_definition(
     Args:
         table_type (str): The type of table to get the schema for.
         traces_table_name (str): The name of the traces table (used for spans foreign key).
-        db_schema (str): The database schema name (used for spans foreign key).
+        sessions_table_name (str): The name of the sessions table (used for runs foreign key).
+        runs_table_name (str): The name of the runs table (used for messages foreign key).
+        db_schema (str): The database schema name (used for foreign keys).
 
     Returns:
         Dict[str, Any]: Dictionary containing column definitions for the table
     """
-    # Handle spans table specially to resolve the foreign key reference
+    # Handle tables with foreign keys specially to resolve the references
     if table_type == "spans":
         return _get_span_table_schema(traces_table_name, db_schema)
+    if table_type == "runs":
+        return _get_runs_table_schema(sessions_table_name, db_schema)
+    if table_type == "messages":
+        return _get_messages_table_schema(runs_table_name, db_schema)
 
     schemas = {
         "sessions": SESSION_TABLE_SCHEMA,
@@ -262,6 +393,7 @@ def get_table_schema_definition(
         "component_configs": COMPONENT_CONFIGS_TABLE_SCHEMA,
         "component_links": COMPONENT_LINKS_TABLE_SCHEMA,
         "learnings": LEARNINGS_TABLE_SCHEMA,
+        "tool_calls": TOOL_CALLS_TABLE_SCHEMA,
     }
 
     schema = schemas.get(table_type, {})
