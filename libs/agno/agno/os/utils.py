@@ -315,7 +315,8 @@ def get_knowledge_instance(
     # If no identifiers provided, require one
     if not db_id:
         raise HTTPException(
-            status_code=400, detail="Either db_id or knowledge_id query parameter is required when using multiple knowledge bases"
+            status_code=400,
+            detail="Either db_id or knowledge_id query parameter is required when using multiple knowledge bases",
         )
 
     # Find by db_id (backwards compatible behavior)

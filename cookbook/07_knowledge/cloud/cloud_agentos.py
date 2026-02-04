@@ -80,7 +80,10 @@ knowledge2 = Knowledge(
     vector_db=vector_db,
     content_sources=[sharepoint, github_docs, azure_blob],
 )
-contents_db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai", knowledge_table="knowledge_contents2")
+contents_db = PostgresDb(
+    db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
+    knowledge_table="knowledge_contents2",
+)
 
 knowledge3 = Knowledge(
     name="Personal Knowledge Base2",
