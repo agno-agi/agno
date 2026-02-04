@@ -7,7 +7,7 @@ from agno.agent import Agent, RemoteAgent
 from agno.os.interfaces.slack.security import verify_slack_signature
 from agno.team import RemoteTeam, Team
 from agno.tools.slack import SlackTools
-from agno.utils.log import log_error, log_info
+from agno.utils.log import log_error
 from agno.workflow import RemoteWorkflow, Workflow
 
 
@@ -67,7 +67,6 @@ def attach_routes(
         if "event" in data:
             event = data["event"]
             if event.get("bot_id"):
-                log_info("bot event")
                 pass
             else:
                 background_tasks.add_task(_process_slack_event, event)

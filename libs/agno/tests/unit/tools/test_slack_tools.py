@@ -135,7 +135,8 @@ class TestSlackToolsInit:
                 assert "list_channels" in tool_names
                 assert "get_channel_history" in tool_names
                 assert "upload_file" in tool_names
-                assert len(tool_names) == 5
+                assert "download_file" in tool_names
+                assert len(tool_names) == 6
 
     def test_init_with_selective_tools(self):
         """Only enabled tools should be registered."""
@@ -147,6 +148,7 @@ class TestSlackToolsInit:
                     enable_list_channels=False,
                     enable_get_channel_history=False,
                     enable_upload_file=False,
+                    enable_download_file=False,
                 )
 
                 tool_names = [f.name for f in tools.functions.values()]
@@ -155,6 +157,7 @@ class TestSlackToolsInit:
                 assert "list_channels" not in tool_names
                 assert "get_channel_history" not in tool_names
                 assert "upload_file" not in tool_names
+                assert "download_file" not in tool_names
                 assert len(tool_names) == 1
 
     def test_init_with_all_flag_enables_all(self):
@@ -167,11 +170,12 @@ class TestSlackToolsInit:
                     enable_list_channels=False,
                     enable_get_channel_history=False,
                     enable_upload_file=False,
+                    enable_download_file=False,
                     all=True,
                 )
 
                 tool_names = [f.name for f in tools.functions.values()]
-                assert len(tool_names) == 5
+                assert len(tool_names) == 10
 
     def test_init_markdown_default_true(self):
         """Markdown should be enabled by default."""
@@ -442,7 +446,7 @@ class TestUploadFile:
         )
         result = slack_tools.upload_file(
             channel="C12345",
-            content=b"col1,col2\nval1,val2",
+            content="col1,col2\nval1,val2",
             filename="test.csv",
         )
         data = json.loads(result)
@@ -454,7 +458,7 @@ class TestUploadFile:
         slack_tools.client.files_upload_v2.return_value = Mock(data={"ok": True})
         slack_tools.upload_file(
             channel="C12345",
-            content=b"test content",
+            content="test content",
             filename="report.csv",
             title="Sales Report",
             initial_comment="Here's the data you requested",
@@ -475,7 +479,7 @@ class TestUploadFile:
         slack_tools.client.files_upload_v2.return_value = Mock(data={"ok": True})
         slack_tools.upload_file(
             channel="C12345",
-            content=b"data",
+            content="data",
             filename="file.txt",
         )
 
@@ -493,35 +497,12 @@ class TestUploadFile:
         slack_tools.client.files_upload_v2.side_effect = SlackApiError(message="file_upload_failed", response=Mock())
         result = slack_tools.upload_file(
             channel="C12345",
-            content=b"data",
+            content="data",
             filename="file.txt",
         )
         data = json.loads(result)
         assert "error" in data
         assert "file_upload_failed" in data["error"]
-
-    def test_upload_file_with_binary_content(self, slack_tools):
-        """upload_file should handle binary content (e.g., images, PDFs)."""
-        binary_content = b"\x89PNG\r\n\x1a\n\x00\x00\x00"
-        slack_tools.client.files_upload_v2.return_value = Mock(
-            data={"ok": True, "file": {"id": "F12345", "mimetype": "image/png"}}
-        )
-        result = slack_tools.upload_file(
-            channel="C12345",
-            content=binary_content,
-            filename="chart.png",
-        )
-        data = json.loads(result)
-        assert data["ok"] is True
-
-        slack_tools.client.files_upload_v2.assert_called_once_with(
-            channel="C12345",
-            content=binary_content,
-            filename="chart.png",
-            title=None,
-            initial_comment=None,
-            thread_ts=None,
-        )
 
     def test_upload_file_with_output_directory(self, tmp_path):
         """upload_file should save file to disk when output_directory is set."""
@@ -534,7 +515,7 @@ class TestUploadFile:
                 tools = SlackTools(output_directory=str(tmp_path))
                 tools.client = mock_client
 
-                content = b"col1,col2\nval1,val2"
+                content = "col1,col2\nval1,val2"
                 result = tools.upload_file(
                     channel="C12345",
                     content=content,
@@ -548,7 +529,7 @@ class TestUploadFile:
 
                 saved_file = tmp_path / "test.csv"
                 assert saved_file.exists()
-                assert saved_file.read_bytes() == content
+                assert saved_file.read_bytes() == content.encode("utf-8")
 
     def test_upload_file_without_output_directory_no_local_path(self, slack_tools):
         """upload_file should not include local_path when output_directory is not set."""
@@ -557,13 +538,34 @@ class TestUploadFile:
 
         result = slack_tools.upload_file(
             channel="C12345",
-            content=b"data",
+            content="data",
             filename="file.txt",
         )
 
         data = json.loads(result)
         assert data["ok"] is True
         assert "local_path" not in data
+
+    def test_upload_file_with_bytes_content(self, slack_tools):
+        """upload_file should accept bytes content directly (for FileGenerationTools integration)."""
+        slack_tools.client.files_upload_v2.return_value = Mock(data={"ok": True, "file": {"id": "F12345"}})
+
+        # Pass bytes directly (like from FileGenerationTools)
+        content_bytes = b"col1,col2\nval1,val2"
+        slack_tools.upload_file(
+            channel="C12345",
+            content=content_bytes,
+            filename="data.csv",
+        )
+
+        slack_tools.client.files_upload_v2.assert_called_once_with(
+            channel="C12345",
+            content=content_bytes,
+            filename="data.csv",
+            title=None,
+            initial_comment=None,
+            thread_ts=None,
+        )
 
     def test_upload_file_disk_write_failure_still_uploads(self, tmp_path):
         """upload_file should still upload to Slack even if local save fails."""
@@ -584,7 +586,7 @@ class TestUploadFile:
 
                     result = tools.upload_file(
                         channel="C12345",
-                        content=b"data",
+                        content="data",
                         filename="test.txt",
                     )
 
@@ -596,3 +598,389 @@ class TestUploadFile:
                 finally:
                     # Restore permissions for cleanup
                     readonly_dir.chmod(0o755)
+
+
+# =============================================================================
+# download_file Tests
+# =============================================================================
+
+
+class TestDownloadFile:
+    """Tests for download_file method."""
+
+    def test_download_file_with_dest_path(self, slack_tools, tmp_path):
+        """download_file should save to dest_path when provided."""
+        slack_tools.client.files_info.return_value = {
+            "file": {
+                "id": "F12345",
+                "name": "report.csv",
+                "size": 1024,
+                "url_private": "https://files.slack.com/files-pri/T123/F12345/report.csv",
+            }
+        }
+
+        with patch("agno.tools.slack.requests.get") as mock_get:
+            mock_get.return_value.content = b"col1,col2\nval1,val2"
+            mock_get.return_value.raise_for_status = Mock()
+
+            dest_path = tmp_path / "download" / "report.csv"
+            result = slack_tools.download_file(file_id="F12345", dest_path=str(dest_path))
+
+            data = json.loads(result)
+            assert data["file_id"] == "F12345"
+            assert data["filename"] == "report.csv"
+            assert data["size"] == 1024
+            assert data["path"] == str(dest_path)
+            assert dest_path.exists()
+            assert dest_path.read_bytes() == b"col1,col2\nval1,val2"
+
+    def test_download_file_with_output_directory(self, tmp_path):
+        """download_file should use output_directory when dest_path not provided."""
+        with patch.dict("os.environ", {"SLACK_TOKEN": "test-token"}):
+            with patch("agno.tools.slack.WebClient") as mock_web_client:
+                mock_client = Mock()
+                mock_web_client.return_value = mock_client
+                mock_client.files_info.return_value = {
+                    "file": {
+                        "id": "F12345",
+                        "name": "data.json",
+                        "size": 512,
+                        "url_private": "https://files.slack.com/files-pri/T123/F12345/data.json",
+                    }
+                }
+
+                tools = SlackTools(output_directory=str(tmp_path))
+                tools.client = mock_client
+
+                with patch("agno.tools.slack.requests.get") as mock_get:
+                    mock_get.return_value.content = b'{"key": "value"}'
+                    mock_get.return_value.raise_for_status = Mock()
+
+                    result = tools.download_file(file_id="F12345")
+
+                    data = json.loads(result)
+                    assert data["path"] == str(tmp_path / "data.json")
+                    assert (tmp_path / "data.json").exists()
+
+    def test_download_file_returns_base64_when_no_dest(self, slack_tools):
+        """download_file should return base64 content when no dest_path or output_directory."""
+        import base64
+
+        slack_tools.output_directory = None
+        slack_tools.client.files_info.return_value = {
+            "file": {
+                "id": "F12345",
+                "name": "image.png",
+                "size": 2048,
+                "url_private": "https://files.slack.com/files-pri/T123/F12345/image.png",
+            }
+        }
+
+        with patch("agno.tools.slack.requests.get") as mock_get:
+            mock_get.return_value.content = b"\x89PNG\r\n\x1a\n"
+            mock_get.return_value.raise_for_status = Mock()
+
+            result = slack_tools.download_file(file_id="F12345")
+
+            data = json.loads(result)
+            assert data["file_id"] == "F12345"
+            assert data["filename"] == "image.png"
+            assert data["size"] == 2048
+            assert "content_base64" in data
+            assert "path" not in data
+
+            # Verify base64 encoding
+            decoded = base64.b64decode(data["content_base64"])
+            assert decoded == b"\x89PNG\r\n\x1a\n"
+
+    def test_download_file_error_no_url(self, slack_tools):
+        """download_file should handle missing url_private."""
+        slack_tools.client.files_info.return_value = {
+            "file": {
+                "id": "F12345",
+                "name": "file.txt",
+            }
+        }
+
+        result = slack_tools.download_file(file_id="F12345")
+        data = json.loads(result)
+        assert "error" in data
+        assert "File URL not available" in data["error"]
+
+    def test_download_file_slack_api_error(self, slack_tools):
+        """download_file should return JSON with error on SlackApiError."""
+        slack_tools.client.files_info.side_effect = SlackApiError(message="file_not_found", response=Mock())
+
+        result = slack_tools.download_file(file_id="F12345")
+        data = json.loads(result)
+        assert "error" in data
+        assert "file_not_found" in data["error"]
+
+    def test_download_file_http_error(self, slack_tools):
+        """download_file should handle HTTP errors gracefully."""
+        import requests as req
+
+        slack_tools.client.files_info.return_value = {
+            "file": {
+                "id": "F12345",
+                "name": "file.txt",
+                "url_private": "https://files.slack.com/files-pri/T123/F12345/file.txt",
+            }
+        }
+
+        with patch("agno.tools.slack.requests.get") as mock_get:
+            mock_get.side_effect = req.RequestException("Connection timeout")
+
+            result = slack_tools.download_file(file_id="F12345")
+            data = json.loads(result)
+            assert "error" in data
+            assert "HTTP error" in data["error"]
+
+
+# =============================================================================
+# search_messages Tests
+# =============================================================================
+
+
+class TestSearchMessages:
+    """Tests for search_messages method."""
+
+    def test_search_messages_success(self, slack_tools):
+        """search_messages should return formatted results."""
+        slack_tools.client.search_messages.return_value = {
+            "messages": {
+                "matches": [
+                    {
+                        "text": "API redesign decision",
+                        "user": "U123",
+                        "channel": {"id": "C456", "name": "engineering"},
+                        "ts": "1234.5678",
+                        "permalink": "https://slack.com/archives/C456/p1234",
+                    }
+                ]
+            }
+        }
+        result = slack_tools.search_messages("API redesign")
+        data = json.loads(result)
+        assert data["count"] == 1
+        assert data["messages"][0]["text"] == "API redesign decision"
+        assert data["messages"][0]["channel_name"] == "engineering"
+
+    def test_search_messages_calls_api_correctly(self, slack_tools):
+        """search_messages should call search_messages with correct params."""
+        slack_tools.client.search_messages.return_value = {"messages": {"matches": []}}
+        slack_tools.search_messages("test query", limit=50)
+        slack_tools.client.search_messages.assert_called_once_with(query="test query", count=50)
+
+    def test_search_messages_limits_to_100(self, slack_tools):
+        """search_messages should cap limit at 100."""
+        slack_tools.client.search_messages.return_value = {"messages": {"matches": []}}
+        slack_tools.search_messages("test", limit=200)
+        slack_tools.client.search_messages.assert_called_once_with(query="test", count=100)
+
+    def test_search_messages_error(self, slack_tools):
+        """search_messages error should return JSON error."""
+        slack_tools.client.search_messages.side_effect = SlackApiError(message="search_failed", response=Mock())
+        result = slack_tools.search_messages("test")
+        data = json.loads(result)
+        assert "error" in data
+
+
+# =============================================================================
+# get_thread Tests
+# =============================================================================
+
+
+class TestGetThread:
+    """Tests for get_thread method."""
+
+    def test_get_thread_success(self, slack_tools):
+        """get_thread should return parent + replies."""
+        slack_tools.client.conversations_replies.return_value = {
+            "messages": [
+                {"text": "Parent message", "user": "U123", "ts": "1234.0000"},
+                {"text": "First reply", "user": "U456", "ts": "1234.0001"},
+                {"text": "Second reply", "user": "U789", "ts": "1234.0002"},
+            ]
+        }
+        result = slack_tools.get_thread("C123", "1234.0000")
+        data = json.loads(result)
+        assert data["reply_count"] == 2
+        assert len(data["messages"]) == 3
+        assert data["messages"][0]["text"] == "Parent message"
+
+    def test_get_thread_calls_api_correctly(self, slack_tools):
+        """get_thread should call conversations_replies with correct params."""
+        slack_tools.client.conversations_replies.return_value = {"messages": []}
+        slack_tools.get_thread("C123", "1234.5678", limit=50)
+        slack_tools.client.conversations_replies.assert_called_once_with(channel="C123", ts="1234.5678", limit=50)
+
+    def test_get_thread_limits_to_200(self, slack_tools):
+        """get_thread should cap limit at 200."""
+        slack_tools.client.conversations_replies.return_value = {"messages": []}
+        slack_tools.get_thread("C123", "1234.5678", limit=500)
+        slack_tools.client.conversations_replies.assert_called_once_with(channel="C123", ts="1234.5678", limit=200)
+
+    def test_get_thread_error(self, slack_tools):
+        """get_thread error should return JSON error."""
+        slack_tools.client.conversations_replies.side_effect = SlackApiError(
+            message="thread_not_found", response=Mock()
+        )
+        result = slack_tools.get_thread("C123", "1234.5678")
+        data = json.loads(result)
+        assert "error" in data
+
+
+# =============================================================================
+# list_users Tests
+# =============================================================================
+
+
+class TestListUsers:
+    """Tests for list_users method."""
+
+    def test_list_users_success(self, slack_tools):
+        """list_users should return user list with details."""
+        slack_tools.client.users_list.return_value = {
+            "members": [
+                {
+                    "id": "U123",
+                    "name": "jsmith",
+                    "deleted": False,
+                    "is_bot": False,
+                    "profile": {"real_name": "John Smith", "title": "Engineer"},
+                },
+                {"id": "U456", "name": "deleted_user", "deleted": True},
+            ]
+        }
+        result = slack_tools.list_users()
+        data = json.loads(result)
+        assert data["count"] == 1
+        assert data["users"][0]["name"] == "jsmith"
+        assert data["users"][0]["title"] == "Engineer"
+
+    def test_list_users_excludes_deleted(self, slack_tools):
+        """list_users should exclude deleted users."""
+        slack_tools.client.users_list.return_value = {
+            "members": [
+                {"id": "U123", "name": "active", "deleted": False, "is_bot": False, "profile": {}},
+                {"id": "U456", "name": "deleted", "deleted": True, "is_bot": False, "profile": {}},
+            ]
+        }
+        result = slack_tools.list_users()
+        data = json.loads(result)
+        assert data["count"] == 1
+        assert data["users"][0]["name"] == "active"
+
+    def test_list_users_error(self, slack_tools):
+        """list_users error should return JSON error."""
+        slack_tools.client.users_list.side_effect = SlackApiError(message="users_list_failed", response=Mock())
+        result = slack_tools.list_users()
+        data = json.loads(result)
+        assert "error" in data
+
+
+# =============================================================================
+# get_user_info Tests
+# =============================================================================
+
+
+class TestGetUserInfo:
+    """Tests for get_user_info method."""
+
+    def test_get_user_info_success(self, slack_tools):
+        """get_user_info should return user details."""
+        slack_tools.client.users_info.return_value = {
+            "user": {
+                "id": "U123",
+                "name": "jsmith",
+                "tz": "America/New_York",
+                "is_bot": False,
+                "profile": {
+                    "real_name": "John Smith",
+                    "email": "john@example.com",
+                    "title": "Engineer",
+                },
+            }
+        }
+        result = slack_tools.get_user_info("U123")
+        data = json.loads(result)
+        assert data["name"] == "jsmith"
+        assert data["email"] == "john@example.com"
+        assert data["title"] == "Engineer"
+        assert data["tz"] == "America/New_York"
+
+    def test_get_user_info_no_email(self, slack_tools):
+        """get_user_info handles missing email gracefully."""
+        slack_tools.client.users_info.return_value = {
+            "user": {
+                "id": "U123",
+                "name": "jsmith",
+                "is_bot": False,
+                "profile": {"real_name": "John Smith"},
+            }
+        }
+        result = slack_tools.get_user_info("U123")
+        data = json.loads(result)
+        assert data["email"] == ""
+
+    def test_get_user_info_error(self, slack_tools):
+        """get_user_info error should return JSON error."""
+        slack_tools.client.users_info.side_effect = SlackApiError(message="user_not_found", response=Mock())
+        result = slack_tools.get_user_info("U123")
+        data = json.loads(result)
+        assert "error" in data
+
+
+# =============================================================================
+# Format Helper Tests
+# =============================================================================
+
+
+class TestFormatHelpers:
+    """Tests for format helper methods."""
+
+    def test_format_bold(self):
+        """format_bold should wrap text in asterisks."""
+        result = SlackTools.format_bold("hello")
+        assert result == "*hello*"
+
+    def test_format_italic(self):
+        """format_italic should wrap text in underscores."""
+        result = SlackTools.format_italic("hello")
+        assert result == "_hello_"
+
+    def test_format_code(self):
+        """format_code should wrap text in backticks."""
+        result = SlackTools.format_code("print('hello')")
+        assert result == "`print('hello')`"
+
+    def test_format_code_block(self):
+        """format_code_block should create code block with language."""
+        result = SlackTools.format_code_block("def foo():\n    pass", "python")
+        assert result == "```python\ndef foo():\n    pass\n```"
+
+    def test_format_code_block_no_language(self):
+        """format_code_block should work without language."""
+        result = SlackTools.format_code_block("some code")
+        assert result == "```\nsome code\n```"
+
+    def test_format_link(self):
+        """format_link should create Slack link format."""
+        result = SlackTools.format_link("https://example.com", "Example")
+        assert result == "<https://example.com|Example>"
+
+    def test_format_list_unordered(self):
+        """format_list should create bullet list by default."""
+        result = SlackTools.format_list(["item1", "item2", "item3"])
+        assert result == "• item1\n• item2\n• item3"
+
+    def test_format_list_ordered(self):
+        """format_list should create numbered list when ordered=True."""
+        result = SlackTools.format_list(["first", "second", "third"], ordered=True)
+        assert result == "1. first\n2. second\n3. third"
+
+    def test_format_list_empty(self):
+        """format_list should handle empty list."""
+        result = SlackTools.format_list([])
+        assert result == ""
