@@ -1143,6 +1143,129 @@ class Agent:
             self._tool_cache.clear()
             self._knowledge_cache.clear()
 
+    def _resolve_callables(
+        self,
+        run_context: RunContext,
+        session_state: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Resolve callable tools and knowledge, storing results in run_context.
+
+        This method handles the resolution of callable tools and knowledge factories,
+        with caching support based on user_id. It should be called early in run/arun
+        before tools or knowledge are accessed.
+
+        Args:
+            run_context: The run context to populate with resolved resources.
+            session_state: The current session state for passing to callables.
+
+        Raises:
+            RuntimeError: If a callable fails to resolve, with context about the failure.
+        """
+        # Resolve knowledge if it's a callable
+        if callable(self.knowledge):
+            cache_key = self._get_cache_key(run_context)
+            if self.cache_callables and cache_key in self._knowledge_cache:
+                run_context.knowledge = self._knowledge_cache[cache_key]
+            else:
+                try:
+                    run_context.knowledge = resolve_knowledge(
+                        knowledge=self.knowledge,
+                        agent=self,
+                        session_state=session_state,
+                        run_context=run_context,
+                    )
+                except Exception as e:
+                    raise RuntimeError(
+                        f"Failed to resolve callable knowledge for user_id={run_context.user_id}: {e}"
+                    ) from e
+                if self.cache_callables:
+                    self._knowledge_cache[cache_key] = run_context.knowledge
+        else:
+            run_context.knowledge = self.knowledge
+
+        # Resolve tools if it's a callable (not a list, Toolkit, Function, or dict)
+        if self._is_tools_callable():
+            cache_key = self._get_cache_key(run_context)
+            if self.cache_callables and cache_key in self._tool_cache:
+                run_context.tools = self._tool_cache[cache_key]
+            else:
+                try:
+                    run_context.tools = resolve_tools(
+                        tools=self.tools,
+                        agent=self,
+                        session_state=session_state,
+                        run_context=run_context,
+                    )
+                except Exception as e:
+                    raise RuntimeError(
+                        f"Failed to resolve callable tools for user_id={run_context.user_id}: {e}"
+                    ) from e
+                if self.cache_callables:
+                    self._tool_cache[cache_key] = run_context.tools
+        else:
+            run_context.tools = self.tools  # type: ignore
+
+    async def _aresolve_callables(
+        self,
+        run_context: RunContext,
+        session_state: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Async version of _resolve_callables.
+
+        Resolves callable tools and knowledge, supporting both sync and async factories.
+        Results are stored in run_context with caching based on user_id.
+
+        Args:
+            run_context: The run context to populate with resolved resources.
+            session_state: The current session state for passing to callables.
+
+        Raises:
+            RuntimeError: If a callable fails to resolve, with context about the failure.
+        """
+        # Resolve knowledge if it's a callable
+        if callable(self.knowledge):
+            cache_key = self._get_cache_key(run_context)
+            if self.cache_callables and cache_key in self._knowledge_cache:
+                run_context.knowledge = self._knowledge_cache[cache_key]
+            else:
+                try:
+                    run_context.knowledge = await aresolve_knowledge(
+                        knowledge=self.knowledge,
+                        agent=self,
+                        session_state=session_state,
+                        run_context=run_context,
+                    )
+                except Exception as e:
+                    raise RuntimeError(
+                        f"Failed to resolve callable knowledge for user_id={run_context.user_id}: {e}"
+                    ) from e
+                if self.cache_callables:
+                    self._knowledge_cache[cache_key] = run_context.knowledge
+        else:
+            run_context.knowledge = self.knowledge
+
+        # Resolve tools if it's a callable (not a list, Toolkit, Function, or dict)
+        if self._is_tools_callable():
+            cache_key = self._get_cache_key(run_context)
+            if self.cache_callables and cache_key in self._tool_cache:
+                run_context.tools = self._tool_cache[cache_key]
+            else:
+                try:
+                    run_context.tools = await aresolve_tools(
+                        tools=self.tools,
+                        agent=self,
+                        session_state=session_state,
+                        run_context=run_context,
+                    )
+                except Exception as e:
+                    raise RuntimeError(
+                        f"Failed to resolve callable tools for user_id={run_context.user_id}: {e}"
+                    ) from e
+                if self.cache_callables:
+                    self._tool_cache[cache_key] = run_context.tools
+        else:
+            run_context.tools = self.tools  # type: ignore
+
     def _get_tools(
         self, run_context: Optional[RunContext] = None
     ) -> Optional[List[Union[Toolkit, Callable, Function, Dict]]]:
@@ -2039,41 +2162,8 @@ class Agent:
         if run_context.dependencies is not None:
             self._resolve_run_dependencies(run_context=run_context)
 
-        # Resolve knowledge if it's a callable
-        if callable(self.knowledge):
-            cache_key = self._get_cache_key(run_context)
-            if self.cache_callables and cache_key in self._knowledge_cache:
-                run_context.knowledge = self._knowledge_cache[cache_key]
-            else:
-                run_context.knowledge = resolve_knowledge(
-                    knowledge=self.knowledge,
-                    agent=self,
-                    session_state=session_state,
-                    run_context=run_context,
-                )
-                if self.cache_callables:
-                    self._knowledge_cache[cache_key] = run_context.knowledge
-        else:
-            run_context.knowledge = self.knowledge
-
-        # Resolve tools if it's a callable (not a list, Toolkit, Function, or dict)
-        if self._is_tools_callable():
-            # Check cache first if caching is enabled
-            cache_key = self._get_cache_key(run_context)
-            if self.cache_callables and cache_key in self._tool_cache:
-                run_context.tools = self._tool_cache[cache_key]
-            else:
-                run_context.tools = resolve_tools(
-                    tools=self.tools,
-                    agent=self,
-                    session_state=session_state,
-                    run_context=run_context,
-                )
-                # Cache the resolved tools if caching is enabled
-                if self.cache_callables:
-                    self._tool_cache[cache_key] = run_context.tools
-        else:
-            run_context.tools = self.tools  # type: ignore
+        # Resolve callable tools and knowledge
+        self._resolve_callables(run_context=run_context, session_state=session_state)
 
         add_dependencies = (
             add_dependencies_to_context if add_dependencies_to_context is not None else self.add_dependencies_to_context
@@ -3177,45 +3267,10 @@ class Agent:
         # output_schema parameter takes priority, even if run_context was provided
         run_context.output_schema = output_schema
 
-        # Resolve knowledge if it's a callable
-        # Note: Using sync resolve_knowledge here since arun setup phase is synchronous
-        # (the async work happens in the returned iterator). For async knowledge callables,
-        # the callable itself can use sync code or wrap async code.
-        if callable(self.knowledge):
-            cache_key = self._get_cache_key(run_context)
-            if self.cache_callables and cache_key in self._knowledge_cache:
-                run_context.knowledge = self._knowledge_cache[cache_key]
-            else:
-                run_context.knowledge = resolve_knowledge(
-                    knowledge=self.knowledge,
-                    agent=self,
-                    session_state=session_state,
-                    run_context=run_context,
-                )
-                if self.cache_callables:
-                    self._knowledge_cache[cache_key] = run_context.knowledge
-        else:
-            run_context.knowledge = self.knowledge
-
-        # Resolve tools if it's a callable (not a list, Toolkit, Function, or dict)
-        # Note: Using sync resolve_tools here since arun setup phase is synchronous
-        if self._is_tools_callable():
-            # Check cache first if caching is enabled
-            cache_key = self._get_cache_key(run_context)
-            if self.cache_callables and cache_key in self._tool_cache:
-                run_context.tools = self._tool_cache[cache_key]
-            else:
-                run_context.tools = resolve_tools(
-                    tools=self.tools,
-                    agent=self,
-                    session_state=session_state,
-                    run_context=run_context,
-                )
-                # Cache the resolved tools if caching is enabled
-                if self.cache_callables:
-                    self._tool_cache[cache_key] = run_context.tools
-        else:
-            run_context.tools = self.tools  # type: ignore
+        # Resolve callable tools and knowledge
+        # Note: Using sync resolution since arun setup phase is synchronous
+        # (the async work happens in the returned iterator)
+        self._resolve_callables(run_context=run_context, session_state=session_state)
 
         # Prepare arguments for the model (must be after run_context is fully initialized)
         response_format = self._get_response_format(run_context=run_context) if self.parser_model is None else None
@@ -3393,41 +3448,8 @@ class Agent:
         if run_context.dependencies is not None:
             self._resolve_run_dependencies(run_context=run_context)
 
-        # Resolve knowledge if it's a callable
-        if callable(self.knowledge):
-            cache_key = self._get_cache_key(run_context)
-            if self.cache_callables and cache_key in self._knowledge_cache:
-                run_context.knowledge = self._knowledge_cache[cache_key]
-            else:
-                run_context.knowledge = resolve_knowledge(
-                    knowledge=self.knowledge,
-                    agent=self,
-                    session_state=session_state,
-                    run_context=run_context,
-                )
-                if self.cache_callables:
-                    self._knowledge_cache[cache_key] = run_context.knowledge
-        else:
-            run_context.knowledge = self.knowledge
-
-        # Resolve tools if it's a callable (not a list, Toolkit, Function, or dict)
-        if self._is_tools_callable():
-            # Check cache first if caching is enabled
-            cache_key = self._get_cache_key(run_context)
-            if self.cache_callables and cache_key in self._tool_cache:
-                run_context.tools = self._tool_cache[cache_key]
-            else:
-                run_context.tools = resolve_tools(
-                    tools=self.tools,
-                    agent=self,
-                    session_state=session_state,
-                    run_context=run_context,
-                )
-                # Cache the resolved tools if caching is enabled
-                if self.cache_callables:
-                    self._tool_cache[cache_key] = run_context.tools
-        else:
-            run_context.tools = self.tools  # type: ignore
+        # Resolve callable tools and knowledge
+        self._resolve_callables(run_context=run_context, session_state=session_state)
 
         # When filters are passed manually
         if self.knowledge_filters or run_context.knowledge_filters or knowledge_filters:
@@ -4132,43 +4154,9 @@ class Agent:
             metadata=metadata,
         )
 
-        # Resolve knowledge if it's a callable
-        # Note: Using sync resolve_knowledge here since acontinue_run setup phase is synchronous
-        if callable(self.knowledge):
-            cache_key = self._get_cache_key(run_context)
-            if self.cache_callables and cache_key in self._knowledge_cache:
-                run_context.knowledge = self._knowledge_cache[cache_key]
-            else:
-                run_context.knowledge = resolve_knowledge(
-                    knowledge=self.knowledge,
-                    agent=self,
-                    session_state=run_context.session_state,
-                    run_context=run_context,
-                )
-                if self.cache_callables:
-                    self._knowledge_cache[cache_key] = run_context.knowledge
-        else:
-            run_context.knowledge = self.knowledge
-
-        # Resolve tools if it's a callable (not a list, Toolkit, Function, or dict)
-        # Note: Using sync resolve_tools here since acontinue_run setup phase is synchronous
-        if self._is_tools_callable():
-            # Check cache first if caching is enabled
-            cache_key = self._get_cache_key(run_context)
-            if self.cache_callables and cache_key in self._tool_cache:
-                run_context.tools = self._tool_cache[cache_key]
-            else:
-                run_context.tools = resolve_tools(
-                    tools=self.tools,
-                    agent=self,
-                    session_state=run_context.session_state,
-                    run_context=run_context,
-                )
-                # Cache the resolved tools if caching is enabled
-                if self.cache_callables:
-                    self._tool_cache[cache_key] = run_context.tools
-        else:
-            run_context.tools = self.tools  # type: ignore
+        # Resolve callable tools and knowledge
+        # Note: Using sync resolution since acontinue_run setup phase is synchronous
+        self._resolve_callables(run_context=run_context, session_state=run_context.session_state)
 
         if stream:
             return self._acontinue_run_stream(
