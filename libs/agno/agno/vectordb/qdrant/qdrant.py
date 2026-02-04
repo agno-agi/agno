@@ -148,7 +148,7 @@ class Qdrant(VectorDb):
             try:
                 from fastembed import SparseTextEmbedding  # type: ignore
 
-                default_kwargs = {"model_name": DEFAULT_SPARSE_MODEL}
+                default_kwargs = {"model_name": DEFAULT_SPARSE_MODEL, "local_files_only": True}
                 if fastembed_kwargs:
                     default_kwargs.update(fastembed_kwargs)
 
