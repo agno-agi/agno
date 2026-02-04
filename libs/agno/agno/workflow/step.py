@@ -77,6 +77,12 @@ class Step:
     requires_confirmation: bool = False
     # Message to display to the user when requesting confirmation
     confirmation_message: Optional[str] = None
+    # If True, the step will pause before execution and require user input
+    requires_user_input: bool = False
+    # Message to display to the user when requesting input
+    user_input_message: Optional[str] = None
+    # Schema for user input fields (list of dicts with name, field_type, description, required)
+    user_input_schema: Optional[List[Dict[str, Any]]] = None
 
     _retry_count: int = 0
 
@@ -95,6 +101,9 @@ class Step:
         num_history_runs: int = 3,
         requires_confirmation: bool = False,
         confirmation_message: Optional[str] = None,
+        requires_user_input: bool = False,
+        user_input_message: Optional[str] = None,
+        user_input_schema: Optional[List[Dict[str, Any]]] = None,
     ):
         # Auto-detect HITL metadata from @hitl decorator on executor function
         if executor is not None:
@@ -109,6 +118,12 @@ class Step:
                     requires_confirmation = hitl_metadata["requires_confirmation"]
                 if confirmation_message is None and hitl_metadata.get("confirmation_message"):
                     confirmation_message = hitl_metadata["confirmation_message"]
+                if not requires_user_input and hitl_metadata.get("requires_user_input"):
+                    requires_user_input = hitl_metadata["requires_user_input"]
+                if user_input_message is None and hitl_metadata.get("user_input_message"):
+                    user_input_message = hitl_metadata["user_input_message"]
+                if user_input_schema is None and hitl_metadata.get("user_input_schema"):
+                    user_input_schema = hitl_metadata["user_input_schema"]
 
         # Auto-detect name for function executors if not provided
         if name is None and executor is not None:
@@ -131,6 +146,9 @@ class Step:
         self.num_history_runs = num_history_runs
         self.requires_confirmation = requires_confirmation
         self.confirmation_message = confirmation_message
+        self.requires_user_input = requires_user_input
+        self.user_input_message = user_input_message
+        self.user_input_schema = user_input_schema
         self.step_id = step_id
 
         if step_id is None:
@@ -152,6 +170,9 @@ class Step:
             "num_history_runs": self.num_history_runs,
             "requires_confirmation": self.requires_confirmation,
             "confirmation_message": self.confirmation_message,
+            "requires_user_input": self.requires_user_input,
+            "user_input_message": self.user_input_message,
+            "user_input_schema": self.user_input_schema,
         }
 
         if self.agent is not None:
@@ -217,6 +238,9 @@ class Step:
             num_history_runs=config.get("num_history_runs", 3),
             requires_confirmation=config.get("requires_confirmation", False),
             confirmation_message=config.get("confirmation_message"),
+            requires_user_input=config.get("requires_user_input", False),
+            user_input_message=config.get("user_input_message"),
+            user_input_schema=config.get("user_input_schema"),
             agent=agent,
             team=team,
             executor=executor,

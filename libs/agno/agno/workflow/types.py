@@ -511,6 +511,36 @@ class StepType(str, Enum):
 
 
 @dataclass
+class UserInputField:
+    """A field that requires user input"""
+
+    name: str
+    field_type: str  # "str", "int", "float", "bool", "list", "dict"
+    description: Optional[str] = None
+    value: Optional[Any] = None
+    required: bool = True
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "name": self.name,
+            "field_type": self.field_type,
+            "description": self.description,
+            "value": self.value,
+            "required": self.required,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "UserInputField":
+        return cls(
+            name=data["name"],
+            field_type=data.get("field_type", "str"),
+            description=data.get("description"),
+            value=data.get("value"),
+            required=data.get("required", True),
+        )
+
+
+@dataclass
 class StepRequirement:
     """Requirement to complete a paused step (used in step-level HITL flows)"""
 
@@ -523,6 +553,12 @@ class StepRequirement:
     confirmation_message: Optional[str] = None
     confirmed: Optional[bool] = None
 
+    # User input fields
+    requires_user_input: bool = False
+    user_input_message: Optional[str] = None
+    user_input_schema: Optional[List[UserInputField]] = None
+    user_input: Optional[Dict[str, Any]] = None  # The actual user input values
+
     # The step input that was prepared before pausing
     step_input: Optional["StepInput"] = None
 
@@ -534,6 +570,24 @@ class StepRequirement:
         """Reject the step execution"""
         self.confirmed = False
 
+    def set_user_input(self, **kwargs) -> None:
+        """Set user input values"""
+        if self.user_input is None:
+            self.user_input = {}
+        self.user_input.update(kwargs)
+
+        # Also update the schema values if present
+        if self.user_input_schema:
+            for field in self.user_input_schema:
+                if field.name in kwargs:
+                    field.value = kwargs[field.name]
+
+    def get_user_input(self, field_name: str) -> Optional[Any]:
+        """Get a specific user input value"""
+        if self.user_input:
+            return self.user_input.get(field_name)
+        return None
+
     @property
     def needs_confirmation(self) -> bool:
         """Check if this requirement still needs confirmation"""
@@ -542,10 +596,26 @@ class StepRequirement:
         return self.requires_confirmation
 
     @property
+    def needs_user_input(self) -> bool:
+        """Check if this requirement still needs user input"""
+        if not self.requires_user_input:
+            return False
+        if self.user_input_schema:
+            # Check if all required fields have values
+            for field in self.user_input_schema:
+                if field.required and field.value is None:
+                    return True
+            return False
+        # If no schema, check if user_input dict has any values
+        return self.user_input is None or len(self.user_input) == 0
+
+    @property
     def is_resolved(self) -> bool:
         """Check if this requirement has been resolved"""
-        if self.requires_confirmation:
-            return self.confirmed is not None
+        if self.requires_confirmation and self.confirmed is None:
+            return False
+        if self.requires_user_input and self.needs_user_input:
+            return False
         return True
 
     def to_dict(self) -> Dict[str, Any]:
@@ -557,7 +627,12 @@ class StepRequirement:
             "requires_confirmation": self.requires_confirmation,
             "confirmation_message": self.confirmation_message,
             "confirmed": self.confirmed,
+            "requires_user_input": self.requires_user_input,
+            "user_input_message": self.user_input_message,
+            "user_input": self.user_input,
         }
+        if self.user_input_schema is not None:
+            result["user_input_schema"] = [f.to_dict() for f in self.user_input_schema]
         if self.step_input is not None:
             result["step_input"] = self.step_input.to_dict()
         return result
@@ -569,6 +644,10 @@ class StepRequirement:
         if data.get("step_input"):
             step_input = StepInput.from_dict(data["step_input"])
 
+        user_input_schema = None
+        if data.get("user_input_schema"):
+            user_input_schema = [UserInputField.from_dict(f) for f in data["user_input_schema"]]
+
         return cls(
             step_id=data["step_id"],
             step_name=data.get("step_name"),
@@ -576,5 +655,9 @@ class StepRequirement:
             requires_confirmation=data.get("requires_confirmation", False),
             confirmation_message=data.get("confirmation_message"),
             confirmed=data.get("confirmed"),
+            requires_user_input=data.get("requires_user_input", False),
+            user_input_message=data.get("user_input_message"),
+            user_input_schema=user_input_schema,
+            user_input=data.get("user_input"),
             step_input=step_input,
         )

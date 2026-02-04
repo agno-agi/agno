@@ -1,15 +1,18 @@
 """Decorators for workflow step configuration."""
 
 from functools import wraps
-from typing import Callable, Optional, TypeVar
+from typing import Any, Callable, Dict, List, Optional, TypeVar
 
 F = TypeVar("F", bound=Callable)
 
 
 def hitl(
     name: Optional[str] = None,
-    requires_confirmation: bool = True,
+    requires_confirmation: bool = False,
     confirmation_message: Optional[str] = None,
+    requires_user_input: bool = False,
+    user_input_message: Optional[str] = None,
+    user_input_schema: Optional[List[Dict[str, Any]]] = None,
 ) -> Callable[[F], F]:
     """Decorator to mark a step function with Human-In-The-Loop (HITL) configuration.
 
@@ -20,9 +23,16 @@ def hitl(
     Args:
         name: Optional name for the step. If not provided, the function name will be used.
         requires_confirmation: Whether the step requires user confirmation before execution.
-            Defaults to True.
+            Defaults to False.
         confirmation_message: Message to display to the user when requesting confirmation.
-            If not provided, a default message will be generated.
+        requires_user_input: Whether the step requires user input before execution.
+            Defaults to False.
+        user_input_message: Message to display to the user when requesting input.
+        user_input_schema: Schema for user input fields. Each field is a dict with:
+            - name: Field name (required)
+            - field_type: "str", "int", "float", "bool" (default: "str")
+            - description: Field description (optional)
+            - required: Whether field is required (default: True)
 
     Returns:
         A decorator that adds HITL metadata to the function.
@@ -32,22 +42,31 @@ def hitl(
         from agno.workflow.decorators import hitl
         from agno.workflow.types import StepInput, StepOutput
 
+        # Confirmation-based HITL
         @hitl(
-            name="Process Data",
+            name="Delete Records",
             requires_confirmation=True,
-            confirmation_message="About to process sensitive data. Confirm?"
+            confirmation_message="About to delete records. Confirm?"
         )
-        def process_data(step_input: StepInput) -> StepOutput:
-            # Process data here
-            return StepOutput(content="Data processed")
+        def delete_records(step_input: StepInput) -> StepOutput:
+            return StepOutput(content="Records deleted")
 
-        # Use in workflow - HITL config is auto-detected
-        workflow = Workflow(
-            steps=[process_data],  # No need to wrap in Step manually
+        # User input-based HITL
+        @hitl(
+            name="Process with Parameters",
+            requires_user_input=True,
+            user_input_message="Please provide processing parameters:",
+            user_input_schema=[
+                {"name": "threshold", "field_type": "float", "description": "Processing threshold"},
+                {"name": "mode", "field_type": "str", "description": "Processing mode (fast/accurate)"},
+            ]
         )
-
-        # Or explicitly wrap in Step - HITL config is still auto-detected
-        step = Step(executor=process_data)
+        def process_with_params(step_input: StepInput) -> StepOutput:
+            # User input is available in step_input.additional_data["user_input"]
+            user_input = step_input.additional_data.get("user_input", {})
+            threshold = user_input.get("threshold", 0.5)
+            mode = user_input.get("mode", "fast")
+            return StepOutput(content=f"Processed with threshold={threshold}, mode={mode}")
         ```
     """
 
@@ -56,6 +75,9 @@ def hitl(
         func._hitl_name = name  # type: ignore[attr-defined]
         func._hitl_requires_confirmation = requires_confirmation  # type: ignore[attr-defined]
         func._hitl_confirmation_message = confirmation_message  # type: ignore[attr-defined]
+        func._hitl_requires_user_input = requires_user_input  # type: ignore[attr-defined]
+        func._hitl_user_input_message = user_input_message  # type: ignore[attr-defined]
+        func._hitl_user_input_schema = user_input_schema  # type: ignore[attr-defined]
 
         @wraps(func)
         def wrapper(*args, **kwargs):
@@ -65,6 +87,9 @@ def hitl(
         wrapper._hitl_name = name  # type: ignore[attr-defined]
         wrapper._hitl_requires_confirmation = requires_confirmation  # type: ignore[attr-defined]
         wrapper._hitl_confirmation_message = confirmation_message  # type: ignore[attr-defined]
+        wrapper._hitl_requires_user_input = requires_user_input  # type: ignore[attr-defined]
+        wrapper._hitl_user_input_message = user_input_message  # type: ignore[attr-defined]
+        wrapper._hitl_user_input_schema = user_input_schema  # type: ignore[attr-defined]
 
         return wrapper  # type: ignore[return-value]
 
@@ -94,6 +119,15 @@ def get_hitl_metadata(func: Callable) -> dict:
     if hasattr(func, "_hitl_confirmation_message"):
         metadata["confirmation_message"] = func._hitl_confirmation_message  # type: ignore[attr-defined]
 
+    if hasattr(func, "_hitl_requires_user_input"):
+        metadata["requires_user_input"] = func._hitl_requires_user_input  # type: ignore[attr-defined]
+
+    if hasattr(func, "_hitl_user_input_message"):
+        metadata["user_input_message"] = func._hitl_user_input_message  # type: ignore[attr-defined]
+
+    if hasattr(func, "_hitl_user_input_schema"):
+        metadata["user_input_schema"] = func._hitl_user_input_schema  # type: ignore[attr-defined]
+
     return metadata
 
 
@@ -106,4 +140,4 @@ def has_hitl_metadata(func: Callable) -> bool:
     Returns:
         True if the function has HITL metadata, False otherwise.
     """
-    return hasattr(func, "_hitl_requires_confirmation")
+    return hasattr(func, "_hitl_requires_confirmation") or hasattr(func, "_hitl_requires_user_input")

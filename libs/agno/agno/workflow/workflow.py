@@ -95,6 +95,7 @@ from agno.workflow.types import (
     StepOutput,
     StepRequirement,
     StepType,
+    UserInputField,
     WorkflowExecutionInput,
     WorkflowMetrics,
 )
@@ -1664,17 +1665,34 @@ class Workflow:
                     # Check for cancellation before executing step
                     raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
 
-                    # Check if step requires confirmation (HITL)
-                    if isinstance(step, Step) and step.requires_confirmation:
-                        log_debug(f"Step '{step_name}' requires confirmation - pausing workflow")
+                    # Check if step requires HITL (confirmation or user input)
+                    if isinstance(step, Step) and (step.requires_confirmation or step.requires_user_input):
+                        hitl_type = "confirmation" if step.requires_confirmation else "user input"
+                        log_debug(f"Step '{step_name}' requires {hitl_type} - pausing workflow")
+
+                        # Build user input schema if needed
+                        user_input_schema = None
+                        if step.requires_user_input and step.user_input_schema:
+                            user_input_schema = [
+                                UserInputField(
+                                    name=f["name"],
+                                    field_type=f.get("field_type", "str"),
+                                    description=f.get("description"),
+                                    required=f.get("required", True),
+                                )
+                                for f in step.user_input_schema
+                            ]
 
                         # Create step requirement
                         step_requirement = StepRequirement(
                             step_id=step.step_id or str(uuid4()),
                             step_name=step_name,
                             step_index=i,
-                            requires_confirmation=True,
+                            requires_confirmation=step.requires_confirmation,
                             confirmation_message=step.confirmation_message,
+                            requires_user_input=step.requires_user_input,
+                            user_input_message=step.user_input_message,
+                            user_input_schema=user_input_schema,
                             step_input=step_input,
                         )
 
@@ -4096,12 +4114,22 @@ class Workflow:
         if paused_step_index is None:
             raise ValueError("Cannot continue run - no paused step index found")
 
-        # Clear the confirmation requirement since it's now resolved
+        # Extract user input from requirements to pass to the step
+        user_input_data: Optional[Dict[str, Any]] = None
+        if step_requirements or run_response.step_requirements:
+            reqs = step_requirements or run_response.step_requirements or []
+            for req in reqs:
+                if req.user_input:
+                    user_input_data = req.user_input
+                    break
+
+        # Clear the HITL requirements since they're now resolved
         # This allows the step to execute on resume
         if isinstance(self.steps, list) and paused_step_index < len(self.steps):
             step = self.steps[paused_step_index]
             if isinstance(step, Step):
                 step.requires_confirmation = False
+                step.requires_user_input = False
 
         # Resume execution
         session_id = run_response.session_id or self.session_id
@@ -4134,6 +4162,10 @@ class Workflow:
         execution_input = WorkflowExecutionInput(
             input=run_response.input,
         )
+
+        # Store user input in kwargs to pass to continue_execute
+        if user_input_data:
+            kwargs["user_input"] = user_input_data
 
         if stream:
             return self._continue_execute_stream(
@@ -4197,6 +4229,9 @@ class Workflow:
                     output_audio.extend(step_output.audio or [])
                     output_files.extend(step_output.files or [])
 
+            # Get user input from kwargs if provided
+            user_input = kwargs.get("user_input")
+
             # Continue from the paused step
             for i, step in enumerate(self.steps[start_step_index:], start=start_step_index):  # type: ignore[arg-type]
                 raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
@@ -4213,18 +4248,41 @@ class Workflow:
                     shared_files=shared_files,
                 )
 
+                # Inject user input into step_input for the first step (the one that was paused)
+                if i == start_step_index and user_input:
+                    if step_input.additional_data is None:
+                        step_input.additional_data = {}
+                    step_input.additional_data["user_input"] = user_input
+
                 raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
 
-                # Check if step requires confirmation (HITL) - for subsequent steps
-                if isinstance(step, Step) and step.requires_confirmation and i != start_step_index:
-                    log_debug(f"Step '{step_name}' requires confirmation - pausing workflow")
+                # Check if step requires HITL (confirmation or user input) - for subsequent steps
+                if isinstance(step, Step) and (step.requires_confirmation or step.requires_user_input) and i != start_step_index:
+                    hitl_type = "confirmation" if step.requires_confirmation else "user input"
+                    log_debug(f"Step '{step_name}' requires {hitl_type} - pausing workflow")
+
+                    # Build user input schema if needed
+                    user_input_schema = None
+                    if step.requires_user_input and step.user_input_schema:
+                        user_input_schema = [
+                            UserInputField(
+                                name=f["name"],
+                                field_type=f.get("field_type", "str"),
+                                description=f.get("description"),
+                                required=f.get("required", True),
+                            )
+                            for f in step.user_input_schema
+                        ]
 
                     step_requirement = StepRequirement(
                         step_id=step.step_id or str(uuid4()),
                         step_name=step_name,
                         step_index=i,
-                        requires_confirmation=True,
+                        requires_confirmation=step.requires_confirmation,
                         confirmation_message=step.confirmation_message,
+                        requires_user_input=step.requires_user_input,
+                        user_input_message=step.user_input_message,
+                        user_input_schema=user_input_schema,
                         step_input=step_input,
                     )
 

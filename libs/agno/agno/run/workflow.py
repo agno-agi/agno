@@ -575,6 +575,13 @@ class WorkflowRunOutput:
             return []
         return [req for req in self.step_requirements if req.needs_confirmation]
 
+    @property
+    def steps_requiring_user_input(self) -> List["StepRequirement"]:
+        """Get step requirements that need user input"""
+        if not self.step_requirements:
+            return []
+        return [req for req in self.step_requirements if req.needs_user_input]
+
     def to_dict(self) -> Dict[str, Any]:
         _dict = {
             k: v
