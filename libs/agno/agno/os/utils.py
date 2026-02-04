@@ -293,7 +293,7 @@ def get_knowledge_instance(
             if not knowledge.contents_db:
                 continue
             # Use knowledge name or generate fallback name from db_id
-            name = knowledge.name or f"knowledge_{knowledge.contents_db.id}"
+            name = getattr(knowledge, "name", None) or f"knowledge_{knowledge.contents_db.id}"
             # Generate the ID for this knowledge instance
             generated_id = _generate_knowledge_id(name, knowledge.contents_db.id)
 

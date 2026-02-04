@@ -1026,7 +1026,7 @@ class AgentOS:
                 continue
 
             # Get the name (with fallback)
-            knowledge_name = knowledge.name or f"knowledge_{contents_db.id}"
+            knowledge_name = getattr(knowledge, "name", None) or f"knowledge_{contents_db.id}"
 
             if knowledge_name in seen_names:
                 duplicates.append(knowledge_name)
@@ -1102,7 +1102,7 @@ class AgentOS:
             contents_db = getattr(knowledge, "contents_db", None)
             if contents_db:
                 # Use knowledge name or generate a fallback name from db_id
-                knowledge_name = knowledge.name or f"knowledge_{contents_db.id}"
+                knowledge_name = getattr(knowledge, "name", None) or f"knowledge_{contents_db.id}"
 
                 # Warn if duplicate name is detected (should be caught by startup validation)
                 if knowledge_name in seen_names:
@@ -1121,7 +1121,7 @@ class AgentOS:
                     KnowledgeInstanceConfig(
                         id=knowledge_id,
                         name=knowledge_name,
-                        description=knowledge.description,
+                        description=getattr(knowledge, "description", None),
                         db_id=contents_db.id,
                         table=contents_db.knowledge_table_name,
                     )
