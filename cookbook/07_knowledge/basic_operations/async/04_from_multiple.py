@@ -51,6 +51,8 @@ async def main():
 
 asyncio.run(main())
 
-agent = Agent(model=OpenAIChat(id="gpt-4o-mini"), knowledge=knowledge)
+agent = Agent(
+    model=OpenAIChat(id="gpt-4o-mini"), knowledge=knowledge, search_knowledge=True
+)
 
 agent.print_response("What can you tell me about my documents?", markdown=True)

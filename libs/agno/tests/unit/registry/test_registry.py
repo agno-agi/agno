@@ -178,6 +178,7 @@ class TestRegistryInit:
         assert basic_registry.dbs == []
         assert basic_registry.vector_dbs == []
         assert basic_registry.schemas == []
+        assert basic_registry.functions == []
 
     def test_init_generates_unique_id(self):
         """Test that each registry gets a unique ID."""
@@ -226,6 +227,14 @@ class TestRegistryInit:
         assert len(reg.schemas) == 2
         assert SampleInputSchema in reg.schemas
         assert SampleOutputSchema in reg.schemas
+
+    def test_init_with_functions(self):
+        """Test registry initialization with functions."""
+        reg = Registry(functions=[sample_function, another_function])
+
+        assert len(reg.functions) == 2
+        assert sample_function in reg.functions
+        assert another_function in reg.functions
 
     def test_init_full_registry(self, full_registry):
         """Test registry with all component types."""
@@ -503,3 +512,132 @@ class TestRegistryIntegration:
         }
         rehydrated = reg.rehydrate_function(func_dict)
         assert rehydrated.entrypoint is None
+
+
+# =============================================================================
+# get_function() Tests
+# =============================================================================
+
+
+class TestGetFunction:
+    """Tests for Registry.get_function() method."""
+
+    def test_get_function_found(self):
+        """Test getting a function that exists."""
+        reg = Registry(functions=[sample_function, another_function])
+
+        func = reg.get_function("sample_function")
+
+        assert func is sample_function
+
+    def test_get_function_multiple(self):
+        """Test getting different functions."""
+        reg = Registry(functions=[sample_function, another_function, search_function])
+
+        func1 = reg.get_function("sample_function")
+        func2 = reg.get_function("another_function")
+        func3 = reg.get_function("search_function")
+
+        assert func1 is sample_function
+        assert func2 is another_function
+        assert func3 is search_function
+
+    def test_get_function_not_found(self):
+        """Test getting a function that doesn't exist."""
+        reg = Registry(functions=[sample_function])
+
+        func = reg.get_function("nonexistent_function")
+
+        assert func is None
+
+    def test_get_function_empty_registry(self, basic_registry):
+        """Test getting function from empty registry."""
+        func = basic_registry.get_function("sample_function")
+
+        assert func is None
+
+    def test_get_function_case_sensitive(self):
+        """Test that function lookup is case sensitive."""
+        reg = Registry(functions=[sample_function])
+
+        # Correct name
+        found = reg.get_function("sample_function")
+        assert found is sample_function
+
+        # Wrong case
+        not_found = reg.get_function("Sample_Function")
+        assert not_found is None
+
+        not_found2 = reg.get_function("SAMPLE_FUNCTION")
+        assert not_found2 is None
+
+    def test_get_function_with_lambda(self):
+        """Test that lambdas work (they have __name__ = '<lambda>')."""
+        my_lambda = lambda x: x * 2  # noqa: E731
+        reg = Registry(functions=[my_lambda])
+
+        # Lambda functions have __name__ = '<lambda>'
+        func = reg.get_function("<lambda>")
+
+        assert func is my_lambda
+
+
+# =============================================================================
+# get_db() Tests
+# =============================================================================
+
+
+class TestGetDb:
+    """Tests for Registry.get_db() method."""
+
+    def test_get_db_found(self, mock_db):
+        """Test getting a database that exists."""
+        reg = Registry(dbs=[mock_db])
+
+        db = reg.get_db("test-db")
+
+        assert db is mock_db
+
+    def test_get_db_multiple(self):
+        """Test getting different databases."""
+        db1 = MagicMock()
+        db1.id = "db-1"
+        db2 = MagicMock()
+        db2.id = "db-2"
+        db3 = MagicMock()
+        db3.id = "db-3"
+
+        reg = Registry(dbs=[db1, db2, db3])
+
+        assert reg.get_db("db-1") is db1
+        assert reg.get_db("db-2") is db2
+        assert reg.get_db("db-3") is db3
+
+    def test_get_db_not_found(self, mock_db):
+        """Test getting a database that doesn't exist."""
+        reg = Registry(dbs=[mock_db])
+
+        db = reg.get_db("nonexistent-db")
+
+        assert db is None
+
+    def test_get_db_empty_registry(self, basic_registry):
+        """Test getting database from empty registry."""
+        db = basic_registry.get_db("some-db")
+
+        assert db is None
+
+    def test_get_db_case_sensitive(self, mock_db):
+        """Test that database lookup is case sensitive."""
+        reg = Registry(dbs=[mock_db])
+
+        # Correct id
+        found = reg.get_db("test-db")
+        assert found is mock_db
+
+        # Wrong case
+        not_found = reg.get_db("Test-Db")
+        assert not_found is None
+
+        not_found2 = reg.get_db("TEST-DB")
+        assert not_found2 is None

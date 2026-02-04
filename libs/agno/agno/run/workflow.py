@@ -326,6 +326,9 @@ class ConditionExecutionCompletedEvent(BaseWorkflowRunOutputEvent):
     condition_result: Optional[bool] = None
     executed_steps: Optional[int] = None
 
+    # Which branch was executed: "if", "else", or None (condition false with no else_steps)
+    branch: Optional[str] = None
+
     # Results from executed steps
     step_results: List[StepOutput] = field(default_factory=list)
 
