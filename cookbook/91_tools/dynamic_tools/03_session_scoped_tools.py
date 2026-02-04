@@ -14,6 +14,7 @@ Key concepts:
 - run_context.session_id: Unique identifier for the current session
 - Ephemeral data: Data exists only for the duration of the session
 - Clean slate: Each new session starts fresh
+- cache_callables=False: Required! Cache key is user_id, not session_id
 """
 
 import tempfile
@@ -73,6 +74,10 @@ agent = Agent(
     name="Session Workspace Assistant",
     model=OpenAIChat(id="gpt-4o-mini"),
     tools=get_session_tools,
+    # IMPORTANT: Disable caching for session-scoped tools!
+    # The cache key is based on user_id, not session_id, so caching
+    # would cause different sessions to share the same tools.
+    cache_callables=False,
     instructions="""\
 You are a workspace assistant with a session-scoped database.
 

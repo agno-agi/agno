@@ -13,6 +13,7 @@ Key concepts:
 - run_context.session_state: Contains user attributes like role
 - run_context.dependencies: Can contain auth/permission info
 - Conditional tool lists: Different users get different capabilities
+- cache_callables=False: Required! Role may change between runs
 """
 
 from typing import Any, Dict, List, Union
@@ -141,6 +142,10 @@ agent = Agent(
     name="Role-Based Assistant",
     model=OpenAIChat(id="gpt-4o-mini"),
     tools=get_role_based_tools,
+    # IMPORTANT: Disable caching for role-based tools!
+    # If a user's role changes, they should get different tools.
+    # Caching would serve stale tools based on user_id.
+    cache_callables=False,
     instructions="""\
 You are an assistant with role-based tool access.
 
