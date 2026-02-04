@@ -310,10 +310,6 @@ class SlackTools(Toolkit):
             logger.error(f"Error downloading file content: {e}")
             return json.dumps({"error": f"HTTP error: {str(e)}"})
 
-    # =========================================================================
-    # Scout Data Source Tools - Read from Slack as a knowledge source
-    # =========================================================================
-
     def search_messages(self, query: str, limit: int = 20) -> str:
         """
         Search for messages across the workspace.
@@ -445,10 +441,6 @@ class SlackTools(Toolkit):
         except SlackApiError as e:
             logger.error(f"Error getting user info: {e}")
             return json.dumps({"error": str(e)})
-
-    # =========================================================================
-    # Format Helpers - Slack mrkdwn formatting utilities
-    # =========================================================================
 
     @staticmethod
     def format_bold(text: str) -> str:

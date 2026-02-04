@@ -1,10 +1,3 @@
-"""Unit tests for Slack interface (signature + router behavior).
-
-These tests do NOT require real Slack credentials and do NOT make network calls
-to Slack. Slack API calls are intercepted by patching the SlackTools class used
-by the router.
-"""
-
 import asyncio
 import hashlib
 import hmac
@@ -21,13 +14,7 @@ from fastapi.testclient import TestClient
 
 
 def _install_fake_slack_sdk():
-    """Install a minimal fake slack_sdk into sys.modules for tests.
-
-    `agno.tools.slack` imports slack_sdk at module import time and raises if the
-    dependency is missing. The Slack interface router imports SlackTools, so we
-    stub slack_sdk to keep these unit tests dependency-free.
-    """
-
+    # Stub slack_sdk so tests run without the dependency
     slack_sdk = types.ModuleType("slack_sdk")
     slack_sdk_errors = types.ModuleType("slack_sdk.errors")
 
@@ -67,7 +54,6 @@ def _compute_slack_signature(body: bytes, timestamp: str, signing_secret: str) -
 
 
 def test_verify_slack_signature_valid(monkeypatch):
-    """verify_slack_signature should accept valid signatures."""
     secret = "test-secret"
     monkeypatch.setattr(slack_security, "SLACK_SIGNING_SECRET", secret)
 
@@ -79,7 +65,6 @@ def test_verify_slack_signature_valid(monkeypatch):
 
 
 def test_verify_slack_signature_invalid(monkeypatch):
-    """verify_slack_signature should reject invalid signatures."""
     monkeypatch.setattr(slack_security, "SLACK_SIGNING_SECRET", "test-secret")
     body = b'{"type":"url_verification","challenge":"abc"}'
     timestamp = str(int(time.time()))
@@ -87,7 +72,6 @@ def test_verify_slack_signature_invalid(monkeypatch):
 
 
 def test_verify_slack_signature_stale_timestamp(monkeypatch):
-    """verify_slack_signature should reject old timestamps to prevent replay."""
     secret = "test-secret"
     monkeypatch.setattr(slack_security, "SLACK_SIGNING_SECRET", secret)
 
@@ -98,7 +82,6 @@ def test_verify_slack_signature_stale_timestamp(monkeypatch):
 
 
 def test_verify_slack_signature_missing_secret(monkeypatch):
-    """verify_slack_signature should error when secret is not set."""
     monkeypatch.setattr(slack_security, "SLACK_SIGNING_SECRET", None)
     with pytest.raises(HTTPException) as e:
         slack_security.verify_slack_signature(body=b"{}", timestamp=str(int(time.time())), slack_signature="v0=bad")
@@ -138,7 +121,6 @@ def _make_app(
 
 
 def test_slack_url_verification_happy_path(monkeypatch):
-    """POST /slack/events should echo the URL verification challenge."""
     monkeypatch.setattr("agno.os.interfaces.slack.router.verify_slack_signature", lambda *args, **kwargs: True)
     app = _make_app(agent=_FakeAgent(_FakeRunResponse(status="SUCCESS", content="ok")))
     client = TestClient(app)
@@ -153,7 +135,6 @@ def test_slack_url_verification_happy_path(monkeypatch):
 
 
 def test_slack_missing_headers_returns_400():
-    """Slack route should reject requests missing Slack signature headers."""
     app = _make_app(agent=_FakeAgent(_FakeRunResponse(status="SUCCESS", content="ok")))
     client = TestClient(app)
     response = client.post("/slack/events", json={"type": "url_verification", "challenge": "abc"})
@@ -162,7 +143,6 @@ def test_slack_missing_headers_returns_400():
 
 
 def test_slack_invalid_signature_returns_403(monkeypatch):
-    """Slack route should reject invalid signatures."""
     monkeypatch.setattr("agno.os.interfaces.slack.router.verify_slack_signature", lambda *args, **kwargs: False)
     app = _make_app(agent=_FakeAgent(_FakeRunResponse(status="SUCCESS", content="ok")))
     client = TestClient(app)
@@ -176,7 +156,6 @@ def test_slack_invalid_signature_returns_403(monkeypatch):
 
 
 def test_slack_bot_event_is_ignored(monkeypatch):
-    """Events with bot_id should not be scheduled for processing."""
     monkeypatch.setattr("agno.os.interfaces.slack.router.verify_slack_signature", lambda *args, **kwargs: True)
 
     tasks: List[Tuple[Any, tuple, dict]] = []
@@ -202,7 +181,6 @@ def test_slack_bot_event_is_ignored(monkeypatch):
 
 
 def test_slack_dm_message_triggers_reply(monkeypatch):
-    """DM message events should call SlackTools.send_message_thread."""
     monkeypatch.setattr("agno.os.interfaces.slack.router.verify_slack_signature", lambda *args, **kwargs: True)
 
     tasks: List[Tuple[Any, tuple, dict]] = []
@@ -257,7 +235,6 @@ def test_slack_dm_message_triggers_reply(monkeypatch):
 
 
 def test_slack_non_dm_message_ignored_when_reply_to_mentions_only(monkeypatch):
-    """Non-DM message events should be ignored when reply_to_mentions_only=True."""
     monkeypatch.setattr("agno.os.interfaces.slack.router.verify_slack_signature", lambda *args, **kwargs: True)
 
     tasks: List[Tuple[Any, tuple, dict]] = []
@@ -307,7 +284,6 @@ def test_slack_non_dm_message_ignored_when_reply_to_mentions_only(monkeypatch):
 
 
 def test_slack_app_mention_triggers_reply(monkeypatch):
-    """app_mention events should be processed when reply_to_mentions_only=True."""
     monkeypatch.setattr("agno.os.interfaces.slack.router.verify_slack_signature", lambda *args, **kwargs: True)
 
     tasks: List[Tuple[Any, tuple, dict]] = []
@@ -352,7 +328,6 @@ def test_slack_app_mention_triggers_reply(monkeypatch):
     func, args, kwargs = tasks[0]
     asyncio.run(func(*args, **kwargs))
 
-    # Reasoning is sent first, then final content
     assert len(sent) == 2
     assert "Reasoning" in sent[0]["text"]
     assert "Because math" in sent[0]["text"]
