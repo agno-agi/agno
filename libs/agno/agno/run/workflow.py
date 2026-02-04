@@ -17,10 +17,11 @@ from agno.utils.media import (
 )
 
 if TYPE_CHECKING:
-    from agno.workflow.types import StepOutput, StepRequirement, WorkflowMetrics
+    from agno.workflow.types import RouterRequirement, StepOutput, StepRequirement, WorkflowMetrics
 else:
     StepOutput = Any
     StepRequirement = Any
+    RouterRequirement = Any
     WorkflowMetrics = Any
 
 
@@ -53,6 +54,7 @@ class WorkflowRunEvent(str, Enum):
 
     router_execution_started = "RouterExecutionStarted"
     router_execution_completed = "RouterExecutionCompleted"
+    router_paused = "RouterPaused"
 
     steps_execution_started = "StepsExecutionStarted"
     steps_execution_completed = "StepsExecutionCompleted"
@@ -360,6 +362,21 @@ class RouterExecutionCompletedEvent(BaseWorkflowRunOutputEvent):
 
 
 @dataclass
+class RouterPausedEvent(BaseWorkflowRunOutputEvent):
+    """Event sent when router pauses for user input (HITL)"""
+
+    event: str = WorkflowRunEvent.router_paused.value
+    step_name: Optional[str] = None
+    step_index: Optional[Union[int, tuple]] = None
+    # Available choices for user to select from
+    available_choices: List[str] = field(default_factory=list)
+    # Message to display to user
+    user_input_message: Optional[str] = None
+    # Whether multiple selections are allowed
+    allow_multiple_selections: bool = False
+
+
+@dataclass
 class StepsExecutionStartedEvent(BaseWorkflowRunOutputEvent):
     """Event sent when steps execution starts"""
 
@@ -458,6 +475,7 @@ WorkflowRunOutputEvent = Union[
     ConditionExecutionCompletedEvent,
     RouterExecutionStartedEvent,
     RouterExecutionCompletedEvent,
+    RouterPausedEvent,
     StepsExecutionStartedEvent,
     StepsExecutionCompletedEvent,
     StepOutputEvent,
@@ -486,6 +504,7 @@ WORKFLOW_RUN_EVENT_TYPE_REGISTRY = {
     WorkflowRunEvent.condition_execution_completed.value: ConditionExecutionCompletedEvent,
     WorkflowRunEvent.router_execution_started.value: RouterExecutionStartedEvent,
     WorkflowRunEvent.router_execution_completed.value: RouterExecutionCompletedEvent,
+    WorkflowRunEvent.router_paused.value: RouterPausedEvent,
     WorkflowRunEvent.steps_execution_started.value: StepsExecutionStartedEvent,
     WorkflowRunEvent.steps_execution_completed.value: StepsExecutionCompletedEvent,
     WorkflowRunEvent.step_output.value: StepOutputEvent,
@@ -552,12 +571,15 @@ class WorkflowRunOutput:
     # Step-level HITL requirements to continue a paused workflow
     step_requirements: Optional[List["StepRequirement"]] = None
 
+    # Router-level HITL requirements for user-driven routing
+    router_requirements: Optional[List["RouterRequirement"]] = None
+
     # Track the current step index for resumption
     _paused_step_index: Optional[int] = None
 
     @property
     def is_paused(self) -> bool:
-        """Check if the workflow is paused waiting for step confirmation"""
+        """Check if the workflow is paused waiting for step confirmation or router selection"""
         return self.status == RunStatus.paused
 
     @property
@@ -585,6 +607,20 @@ class WorkflowRunOutput:
             return []
         return [req for req in self.step_requirements if req.needs_user_input]
 
+    @property
+    def active_router_requirements(self) -> List["RouterRequirement"]:
+        """Get router requirements that still need user selection"""
+        if not self.router_requirements:
+            return []
+        return [req for req in self.router_requirements if not req.is_resolved]
+
+    @property
+    def routers_requiring_selection(self) -> List["RouterRequirement"]:
+        """Get routers that need user to select a route"""
+        if not self.router_requirements:
+            return []
+        return [req for req in self.router_requirements if req.needs_selection]
+
     def to_dict(self) -> Dict[str, Any]:
         _dict = {
             k: v
@@ -603,6 +639,7 @@ class WorkflowRunOutput:
                 "metrics",
                 "workflow_agent_run",
                 "step_requirements",
+                "router_requirements",
                 "_paused_step_index",
             ]
         }
@@ -659,6 +696,9 @@ class WorkflowRunOutput:
 
         if self.step_requirements is not None:
             _dict["step_requirements"] = [req.to_dict() for req in self.step_requirements]
+
+        if self.router_requirements is not None:
+            _dict["router_requirements"] = [req.to_dict() for req in self.router_requirements]
 
         if self._paused_step_index is not None:
             _dict["_paused_step_index"] = self._paused_step_index
@@ -737,6 +777,14 @@ class WorkflowRunOutput:
 
             step_requirements = [StepRequirement.from_dict(req) for req in step_requirements_data]
 
+        # Parse router_requirements
+        router_requirements_data = data.pop("router_requirements", None)
+        router_requirements = None
+        if router_requirements_data:
+            from agno.workflow.types import RouterRequirement
+
+            router_requirements = [RouterRequirement.from_dict(req) for req in router_requirements_data]
+
         paused_step_index = data.pop("_paused_step_index", None)
 
         input_data = data.pop("input", None)
@@ -759,6 +807,7 @@ class WorkflowRunOutput:
             metrics=workflow_metrics,
             step_executor_runs=step_executor_runs,
             step_requirements=step_requirements,
+            router_requirements=router_requirements,
             input=input_data,
             **filtered_data,
         )

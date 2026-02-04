@@ -54,6 +54,7 @@ from agno.run.cancel import (
 from agno.run.team import RunContentEvent as TeamRunContentEvent
 from agno.run.team import TeamRunEvent
 from agno.run.workflow import (
+    RouterPausedEvent,
     StepOutputEvent,
     StepPausedEvent,
     WorkflowCancelledEvent,
@@ -1761,6 +1762,29 @@ class Workflow:
 
                         return workflow_run_response
 
+                    # Check if Router requires HITL (user-driven routing)
+                    if isinstance(step, Router) and step.requires_user_input:
+                        log_debug(f"Router '{step_name}' requires user selection - pausing workflow")
+
+                        # Create router requirement for user selection
+                        router_requirement = step.create_router_requirement(
+                            router_id=str(uuid4()),
+                            step_input=step_input,
+                        )
+
+                        # Store the paused state
+                        workflow_run_response.status = RunStatus.paused
+                        workflow_run_response.router_requirements = [router_requirement]
+                        workflow_run_response._paused_step_index = i
+                        workflow_run_response.step_results = collected_step_outputs
+
+                        # Save the session with paused state
+                        self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
+                        session.upsert_run(run=workflow_run_response)
+                        self.save_session(session=session)
+
+                        return workflow_run_response
+
                     step_output = step.execute(  # type: ignore[union-attr]
                         step_input,
                         session_id=session.session_id,
@@ -1952,17 +1976,34 @@ class Workflow:
                         shared_files=shared_files,
                     )
 
-                    # Check if step requires confirmation (HITL)
-                    if isinstance(step, Step) and step.requires_confirmation:
-                        log_debug(f"Step '{step_name}' requires confirmation - pausing workflow")
+                    # Check if step requires HITL (confirmation or user input)
+                    if isinstance(step, Step) and (step.requires_confirmation or step.requires_user_input):
+                        hitl_type = "confirmation" if step.requires_confirmation else "user input"
+                        log_debug(f"Step '{step_name}' requires {hitl_type} - pausing workflow")
+
+                        # Build user input schema if needed
+                        user_input_schema = None
+                        if step.requires_user_input and step.user_input_schema:
+                            user_input_schema = [
+                                UserInputField(
+                                    name=f["name"],
+                                    field_type=f.get("field_type", "str"),
+                                    description=f.get("description"),
+                                    required=f.get("required", True),
+                                )
+                                for f in step.user_input_schema
+                            ]
 
                         # Create step requirement
                         step_requirement = StepRequirement(
                             step_id=step.step_id or str(uuid4()),
                             step_name=step_name,
                             step_index=i,
-                            requires_confirmation=True,
+                            requires_confirmation=step.requires_confirmation,
                             confirmation_message=step.confirmation_message,
+                            requires_user_input=step.requires_user_input,
+                            user_input_message=step.user_input_message,
+                            user_input_schema=user_input_schema,
                             step_input=step_input,
                         )
 
@@ -1981,10 +2022,48 @@ class Workflow:
                             step_name=step_name,
                             step_index=i,
                             step_id=step.step_id,
-                            requires_confirmation=True,
+                            requires_confirmation=step.requires_confirmation,
                             confirmation_message=step.confirmation_message,
+                            requires_user_input=step.requires_user_input,
+                            user_input_message=step.user_input_message,
                         )
                         yield self._handle_event(step_paused_event, workflow_run_response)
+
+                        # Save the session with paused state
+                        self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
+                        session.upsert_run(run=workflow_run_response)
+                        self.save_session(session=session)
+
+                        return
+
+                    # Check if Router requires HITL (user-driven routing)
+                    if isinstance(step, Router) and step.requires_user_input:
+                        log_debug(f"Router '{step_name}' requires user selection - pausing workflow")
+
+                        router_requirement = step.create_router_requirement(
+                            router_id=str(uuid4()),
+                            step_input=step_input,
+                        )
+
+                        # Store the paused state
+                        workflow_run_response.status = RunStatus.paused
+                        workflow_run_response.router_requirements = [router_requirement]
+                        workflow_run_response._paused_step_index = i
+                        workflow_run_response.step_results = collected_step_outputs
+
+                        # Yield RouterPausedEvent
+                        router_paused_event = RouterPausedEvent(
+                            run_id=workflow_run_response.run_id or "",
+                            workflow_name=workflow_run_response.workflow_name,
+                            workflow_id=workflow_run_response.workflow_id,
+                            session_id=workflow_run_response.session_id,
+                            step_name=step_name,
+                            step_index=i,
+                            available_choices=router_requirement.available_choices or [],
+                            user_input_message=router_requirement.user_input_message,
+                            allow_multiple_selections=router_requirement.allow_multiple_selections,
+                        )
+                        yield self._handle_event(router_paused_event, workflow_run_response)
 
                         # Save the session with paused state
                         self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
@@ -4123,10 +4202,15 @@ class Workflow:
         if step_requirements is not None:
             run_response.step_requirements = step_requirements
 
-        # Validate that all requirements are resolved
+        # Validate that all step requirements are resolved
         if run_response.active_step_requirements:
             unresolved = [req.step_name for req in run_response.active_step_requirements]
             raise ValueError(f"Cannot continue run - unresolved step requirements: {unresolved}")
+
+        # Validate that all router requirements are resolved
+        if run_response.active_router_requirements:
+            unresolved = [req.router_name for req in run_response.active_router_requirements]
+            raise ValueError(f"Cannot continue run - unresolved router requirements: {unresolved}")
 
         # Check if any step was rejected
         rejected_steps = [
@@ -4166,7 +4250,7 @@ class Workflow:
         if paused_step_index is None:
             raise ValueError("Cannot continue run - no paused step index found")
 
-        # Extract user input from requirements to pass to the step
+        # Extract user input from step requirements to pass to the step
         user_input_data: Optional[Dict[str, Any]] = None
         if step_requirements or run_response.step_requirements:
             reqs = step_requirements or run_response.step_requirements or []
@@ -4175,12 +4259,22 @@ class Workflow:
                     user_input_data = req.user_input
                     break
 
+        # Extract router selection to pass to the router
+        router_selection: Optional[List[str]] = None
+        if run_response.router_requirements:
+            for req in run_response.router_requirements:
+                if req.selected_choices:
+                    router_selection = req.selected_choices
+                    break
+
         # Clear the HITL requirements since they're now resolved
         # This allows the step to execute on resume
         if isinstance(self.steps, list) and paused_step_index < len(self.steps):
             step = self.steps[paused_step_index]
             if isinstance(step, Step):
                 step.requires_confirmation = False
+                step.requires_user_input = False
+            elif isinstance(step, Router):
                 step.requires_user_input = False
 
         # Resume execution
@@ -4201,6 +4295,7 @@ class Workflow:
         # Update run status to running
         run_response.status = RunStatus.running
         run_response.step_requirements = None
+        run_response.router_requirements = None
 
         # Create run context
         run_context = RunContext(
@@ -4218,6 +4313,10 @@ class Workflow:
         # Store user input in kwargs to pass to continue_execute
         if user_input_data:
             kwargs["user_input"] = user_input_data
+
+        # Store router selection in kwargs to pass to continue_execute
+        if router_selection:
+            kwargs["router_selection"] = router_selection
 
         if stream:
             return self._continue_execute_stream(
@@ -4281,8 +4380,9 @@ class Workflow:
                     output_audio.extend(step_output.audio or [])
                     output_files.extend(step_output.files or [])
 
-            # Get user input from kwargs if provided
+            # Get user input and router selection from kwargs if provided
             user_input = kwargs.get("user_input")
+            router_selection = kwargs.get("router_selection")
 
             # Continue from the paused step
             for i, step in enumerate(self.steps[start_step_index:], start=start_step_index):  # type: ignore[arg-type]
@@ -4305,6 +4405,68 @@ class Workflow:
                     if step_input.additional_data is None:
                         step_input.additional_data = {}
                     step_input.additional_data["user_input"] = user_input
+
+                # Handle Router with user selection - execute only the selected steps
+                if i == start_step_index and isinstance(step, Router) and router_selection:
+                    log_debug(f"Router '{step_name}' executing with user selection: {router_selection}")
+
+                    # Get the selected steps from the router
+                    step._prepare_steps()
+                    selected_steps = step._get_steps_from_user_selection(router_selection)
+
+                    if not selected_steps:
+                        logger.warning(f"Router '{step_name}': No valid steps found for selection {router_selection}")
+                        step_output = StepOutput(
+                            step_name=step_name,
+                            step_id=str(uuid4()),
+                            step_type=StepType.ROUTER,
+                            content=f"Router {step_name} completed with 0 results (no valid steps selected)",
+                            success=True,
+                        )
+                    else:
+                        # Execute the selected steps using the router's internal logic
+                        # Temporarily set a selector that returns the selected steps
+                        original_selector = step.selector
+                        step.selector = lambda _: selected_steps  # type: ignore[assignment]
+
+                        step_output = step.execute(
+                            step_input,
+                            session_id=session.session_id,
+                            user_id=self.user_id,
+                            workflow_run_response=workflow_run_response,
+                            run_context=run_context,
+                            store_executor_outputs=self.store_executor_outputs,
+                            workflow_session=session,
+                            add_workflow_history_to_steps=self.add_workflow_history_to_steps
+                            if self.add_workflow_history_to_steps
+                            else None,
+                            num_history_runs=self.num_history_runs,
+                            background_tasks=background_tasks,
+                        )
+
+                        # Restore original selector
+                        step.selector = original_selector
+
+                    # Update tracking
+                    previous_step_outputs[step_name] = step_output
+                    collected_step_outputs.append(step_output)
+
+                    shared_images.extend(step_output.images or [])
+                    shared_videos.extend(step_output.videos or [])
+                    shared_audio.extend(step_output.audio or [])
+                    shared_files.extend(step_output.files or [])
+                    output_images.extend(step_output.images or [])
+                    output_videos.extend(step_output.videos or [])
+                    output_audio.extend(step_output.audio or [])
+                    output_files.extend(step_output.files or [])
+
+                    if step_output.stop:
+                        logger.info(f"Early termination requested by router {step_name}")
+                        break
+
+                    # Clear router_selection after using it
+                    router_selection = None
+                    continue
 
                 raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
 
@@ -4340,6 +4502,26 @@ class Workflow:
 
                     workflow_run_response.status = RunStatus.paused
                     workflow_run_response.step_requirements = [step_requirement]
+                    workflow_run_response._paused_step_index = i
+                    workflow_run_response.step_results = collected_step_outputs
+
+                    self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
+                    session.upsert_run(run=workflow_run_response)
+                    self.save_session(session=session)
+
+                    return workflow_run_response
+
+                # Check if Router requires HITL (user-driven routing) - for subsequent steps
+                if isinstance(step, Router) and step.requires_user_input and i != start_step_index:
+                    log_debug(f"Router '{step_name}' requires user selection - pausing workflow")
+
+                    router_requirement = step.create_router_requirement(
+                        router_id=str(uuid4()),
+                        step_input=step_input,
+                    )
+
+                    workflow_run_response.status = RunStatus.paused
+                    workflow_run_response.router_requirements = [router_requirement]
                     workflow_run_response._paused_step_index = i
                     workflow_run_response.step_results = collected_step_outputs
 

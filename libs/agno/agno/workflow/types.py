@@ -661,3 +661,96 @@ class StepRequirement:
             user_input=data.get("user_input"),
             step_input=step_input,
         )
+
+
+@dataclass
+class RouterRequirement:
+    """Requirement to complete a paused router (used for user-driven routing decisions).
+
+    When a Router has `requires_user_input=True`, it pauses and creates this requirement.
+    The user selects which route(s) to take from the available choices.
+    """
+
+    router_id: str
+    router_name: Optional[str] = None
+
+    # User input for route selection
+    requires_user_input: bool = True
+    user_input_message: Optional[str] = None
+    user_input_schema: Optional[List[UserInputField]] = None
+
+    # Available choices (step names)
+    available_choices: Optional[List[str]] = None
+    allow_multiple_selections: bool = False
+
+    # User's selection
+    selected_choices: Optional[List[str]] = None
+
+    # The step input at the time of pausing
+    step_input: Optional["StepInput"] = None
+
+    def select(self, *choices: str) -> None:
+        """Select one or more choices by name."""
+        if not self.allow_multiple_selections and len(choices) > 1:
+            raise ValueError("This router only allows single selection. Use select() with one choice.")
+        self.selected_choices = list(choices)
+
+    def select_single(self, choice: str) -> None:
+        """Select a single choice by name."""
+        self.selected_choices = [choice]
+
+    def select_multiple(self, choices: List[str]) -> None:
+        """Select multiple choices by name."""
+        if not self.allow_multiple_selections:
+            raise ValueError("This router does not allow multiple selections.")
+        self.selected_choices = choices
+
+    @property
+    def needs_selection(self) -> bool:
+        """Check if this requirement still needs user selection."""
+        return self.selected_choices is None or len(self.selected_choices) == 0
+
+    @property
+    def is_resolved(self) -> bool:
+        """Check if this requirement has been resolved."""
+        return not self.needs_selection
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary."""
+        result = {
+            "router_id": self.router_id,
+            "router_name": self.router_name,
+            "requires_user_input": self.requires_user_input,
+            "user_input_message": self.user_input_message,
+            "available_choices": self.available_choices,
+            "allow_multiple_selections": self.allow_multiple_selections,
+            "selected_choices": self.selected_choices,
+        }
+        if self.user_input_schema is not None:
+            result["user_input_schema"] = [f.to_dict() for f in self.user_input_schema]
+        if self.step_input is not None:
+            result["step_input"] = self.step_input.to_dict()
+        return result
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "RouterRequirement":
+        """Create RouterRequirement from dictionary."""
+        step_input = None
+        if data.get("step_input"):
+            step_input = StepInput.from_dict(data["step_input"])
+
+        user_input_schema = None
+        if data.get("user_input_schema"):
+            user_input_schema = [UserInputField.from_dict(f) for f in data["user_input_schema"]]
+
+        return cls(
+            router_id=data["router_id"],
+            router_name=data.get("router_name"),
+            requires_user_input=data.get("requires_user_input", True),
+            user_input_message=data.get("user_input_message"),
+            user_input_schema=user_input_schema,
+            available_choices=data.get("available_choices"),
+            allow_multiple_selections=data.get("allow_multiple_selections", False),
+            selected_choices=data.get("selected_choices"),
+            step_input=step_input,
+        )
