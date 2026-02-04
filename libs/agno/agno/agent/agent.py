@@ -305,10 +305,16 @@ class Agent:
             Callable[..., List[Union[Toolkit, Callable, Function, Dict]]],
         ]
     ] = None
-    # When True, cache resolved callable tools and knowledge by user_id to avoid
+    # When True, cache resolved callable tools and knowledge to avoid
     # creating new instances (e.g., new database connections) on every run.
     # Recommended when using callable tools/knowledge for per-user isolation.
     cache_callables: bool = True
+    # Custom cache key function for callable tools/knowledge. Receives RunContext
+    # and returns a string key. Default uses user_id. Use this to cache by
+    # session_id, tenant_id, or any combination:
+    #   cache_key=lambda ctx: ctx.session_id  # Cache per session
+    #   cache_key=lambda ctx: f"{ctx.user_id}:{ctx.dependencies.get('tenant_id')}"
+    callable_cache_key: Optional[Callable[[RunContext], str]] = None
 
     # Maximum number of tool calls allowed.
     tool_call_limit: Optional[int] = None
@@ -1113,9 +1119,8 @@ class Agent:
     def _get_cache_key(self, run_context: RunContext) -> str:
         """Generate a cache key for callable resources based on run context.
 
-        The key is based on user_id to enable per-user resource reuse.
-        This avoids creating new database connections or expensive resources
-        for the same user across multiple runs.
+        Uses callable_cache_key if provided, otherwise defaults to user_id.
+        This enables per-user, per-session, or custom caching strategies.
 
         Args:
             run_context: The current run context.
@@ -1123,22 +1128,28 @@ class Agent:
         Returns:
             A string key for the cache.
         """
+        if self.callable_cache_key is not None:
+            return self.callable_cache_key(run_context)
         user_id = run_context.user_id or "_default_"
         return user_id
 
-    def clear_callable_cache(self, user_id: Optional[str] = None) -> None:
+    def clear_callable_cache(self, key: Optional[str] = None, user_id: Optional[str] = None) -> None:
         """Clear the callable tools and knowledge cache.
 
         Use this to force re-creation of tool/knowledge instances, for example
         when user configuration changes or to free resources.
 
         Args:
-            user_id: If provided, only clear cache for this user.
-                    If None, clear the entire cache.
+            key: If provided, clear cache for this specific key.
+                 Use this when using a custom callable_cache_key.
+            user_id: Alias for key (for backwards compatibility).
+                     If both provided, key takes precedence.
+                     If neither provided, clear the entire cache.
         """
-        if user_id is not None:
-            self._tool_cache.pop(user_id, None)
-            self._knowledge_cache.pop(user_id, None)
+        cache_key = key or user_id
+        if cache_key is not None:
+            self._tool_cache.pop(cache_key, None)
+            self._knowledge_cache.pop(cache_key, None)
         else:
             self._tool_cache.clear()
             self._knowledge_cache.clear()

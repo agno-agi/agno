@@ -110,10 +110,37 @@ agent = Agent(
 )
 ```
 
+### Custom Cache Key
+
+By default, caching uses `user_id`. Use `callable_cache_key` to cache by session, tenant, or any custom key:
+
+```python
+# Cache by session_id instead of user_id
+agent = Agent(
+    tools=get_session_tools,
+    callable_cache_key=lambda ctx: ctx.session_id,
+)
+
+# Cache by tenant_id from dependencies
+agent = Agent(
+    tools=get_tenant_tools,
+    callable_cache_key=lambda ctx: ctx.dependencies.get("tenant_id", "_default_"),
+)
+
+# Cache by combination of user and tenant
+agent = Agent(
+    tools=get_tools,
+    callable_cache_key=lambda ctx: f"{ctx.user_id}:{ctx.dependencies.get('tenant_id')}",
+)
+```
+
 ### Cache Management
 
 ```python
-# Clear cache for a specific user
+# Clear cache for a specific key
+agent.clear_callable_cache(key="session_123")
+
+# Clear cache for a user (shorthand)
 agent.clear_callable_cache(user_id="alice")
 
 # Clear all cached tools and knowledge
