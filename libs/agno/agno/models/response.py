@@ -57,7 +57,12 @@ class ToolExecution:
 
     @property
     def is_paused(self) -> bool:
-        return bool(self.requires_confirmation or self.requires_user_input or self.external_execution_required)
+        return bool(
+            self.requires_confirmation
+            or self.requires_user_input
+            or self.external_execution_required
+            or self.stop_after_tool_call
+        )
 
     def to_dict(self) -> Dict[str, Any]:
         _dict = asdict(self)
