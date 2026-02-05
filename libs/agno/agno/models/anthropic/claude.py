@@ -660,6 +660,19 @@ class Claude(Model):
             RateLimitError: If the API rate limit is exceeded
             APIStatusError: For other API-related errors
         """
+        # Guard: streaming with structured outputs + tools is not supported due to
+        # Anthropic's constraint that output_format doesn't support pre-filling
+        if response_format is not None and tools and self._using_structured_outputs(response_format=response_format):
+            raise ModelProviderError(
+                message=(
+                    "Claude streaming with structured outputs (output_format) and tools "
+                    "is not supported due to Anthropic API constraints. "
+                    "Disable streaming or structured outputs, or remove tools."
+                ),
+                model_name=self.name,
+                model_id=self.id,
+            )
+
         chat_messages, system_message = format_messages(messages, compress_tool_results=compress_tool_results)
         request_kwargs = self._prepare_request_kwargs(system_message, tools=tools, response_format=response_format)
 
@@ -783,6 +796,19 @@ class Claude(Model):
             RateLimitError: If the API rate limit is exceeded
             APIStatusError: For other API-related errors
         """
+        # Guard: streaming with structured outputs + tools is not supported due to
+        # Anthropic's constraint that output_format doesn't support pre-filling
+        if response_format is not None and tools and self._using_structured_outputs(response_format=response_format):
+            raise ModelProviderError(
+                message=(
+                    "Claude streaming with structured outputs (output_format) and tools "
+                    "is not supported due to Anthropic API constraints. "
+                    "Disable streaming or structured outputs, or remove tools."
+                ),
+                model_name=self.name,
+                model_id=self.id,
+            )
+
         try:
             if run_response and run_response.metrics:
                 run_response.metrics.set_time_to_first_token()
@@ -1130,3 +1156,104 @@ class Claude(Model):
                 metrics.provider_metrics["service_tier"] = response_usage.service_tier
 
         return metrics
+
+    def _finalize_structured_output_if_needed(
+        self,
+        messages: List[Message],
+        model_response: ModelResponse,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        run_response: Optional[RunOutput] = None,
+        compress_tool_results: bool = False,
+        had_tool_calls: bool = False,
+        tool_flow_incomplete: bool = False,
+    ) -> None:
+        """
+        Handle Anthropic's constraint: when using output_format, messages cannot end with
+        an assistant message (pre-filling not supported).
+
+        After tool calls complete normally, strip trailing assistant messages and make
+        a final structured-output call with tools disabled.
+        """
+        # Only relevant if structured outputs are in use
+        if not response_format:
+            return
+
+        # Only if tool calls occurred and flow completed normally
+        if not had_tool_calls or tool_flow_incomplete:
+            return
+
+        # Only for models that support native structured outputs
+        if not self._using_structured_outputs(response_format=response_format, tools=tools):
+            return
+
+        # Anthropic constraint: strip trailing assistant messages
+        while messages and messages[-1].role == self.assistant_message_role:
+            messages.pop()
+
+        if not messages:
+            return
+
+        # Final call: no tools to prevent further tool calls
+        final_assistant = Message(role=self.assistant_message_role)
+
+        self._process_model_response(
+            messages=messages,
+            assistant_message=final_assistant,
+            model_response=model_response,
+            response_format=response_format,
+            tools=None,
+            tool_choice=None,
+            run_response=run_response,
+            compress_tool_results=compress_tool_results,
+        )
+
+        messages.append(final_assistant)
+        final_assistant.log(metrics=True)
+
+    async def _afinalize_structured_output_if_needed(
+        self,
+        messages: List[Message],
+        model_response: ModelResponse,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        run_response: Optional[RunOutput] = None,
+        compress_tool_results: bool = False,
+        had_tool_calls: bool = False,
+        tool_flow_incomplete: bool = False,
+    ) -> None:
+        """
+        Async version: Handle Anthropic's constraint for structured outputs after tool calls.
+        """
+        if not response_format:
+            return
+
+        if not had_tool_calls or tool_flow_incomplete:
+            return
+
+        if not self._using_structured_outputs(response_format=response_format, tools=tools):
+            return
+
+        while messages and messages[-1].role == self.assistant_message_role:
+            messages.pop()
+
+        if not messages:
+            return
+
+        final_assistant = Message(role=self.assistant_message_role)
+
+        await self._aprocess_model_response(
+            messages=messages,
+            assistant_message=final_assistant,
+            model_response=model_response,
+            response_format=response_format,
+            tools=None,
+            tool_choice=None,
+            run_response=run_response,
+            compress_tool_results=compress_tool_results,
+        )
+
+        messages.append(final_assistant)
+        final_assistant.log(metrics=True)
