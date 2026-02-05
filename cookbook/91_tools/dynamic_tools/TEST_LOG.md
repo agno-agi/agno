@@ -2,6 +2,13 @@
 
 Test results for callable tools examples.
 
+Last updated: 2026-02-05
+
+## Test Environment
+
+- Python: `.venvs/demo/bin/python` (via `direnv exec .` to load `.envrc`)
+- Model: `gpt-4o-mini` (OpenAI)
+
 ---
 
 ## 01_user_namespaced_tools.py
@@ -20,7 +27,7 @@ Test results for callable tools examples.
 
 **Description:** Multi-tenant SaaS pattern where each tenant (organization) gets isolated tool resources.
 
-**Result:** Successfully creates tenant-specific database paths based on `dependencies["tenant_id"]`. Proper tenant isolation at the tool level.
+**Result:** Successfully creates tenant-specific database paths based on `dependencies["tenant_id"]`, with isolation enforced via `callable_tools_cache_key`. Proper tenant isolation at the tool level.
 
 ---
 
@@ -30,7 +37,7 @@ Test results for callable tools examples.
 
 **Description:** Per-session ephemeral databases. Each conversation session gets its own isolated database.
 
-**Result:** Successfully creates session-scoped databases using `run_context.session_id`. Data is isolated between sessions.
+**Result:** Successfully creates session-scoped databases using `run_context.session_id`, with isolation enforced via `callable_tools_cache_key`. Data is isolated between sessions.
 
 ---
 
