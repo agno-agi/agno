@@ -152,25 +152,10 @@ def _format_file_for_message(file: File) -> Optional[Dict[str, Any]]:
     Add a document url or base64 encoded content to a message.
     """
 
-    mime_mapping: dict[str, str] = {
+    mime_mapping = {
         "application/pdf": "base64",
+        "text/plain": "text",
     }
-    # All text/* MIME types use the "text" source type
-    for _mt in (
-        "text/plain",
-        "text/csv",
-        "text/html",
-        "text/css",
-        "text/md",
-        "text/xml",
-        "text/rtf",
-        "text/javascript",
-        "text/x-python",
-        "application/json",
-        "application/x-javascript",
-        "application/x-python",
-    ):
-        mime_mapping[_mt] = "text"
 
     # Case 0: File is an Anthropic uploaded file
     if file.external is not None and hasattr(file.external, "id"):
@@ -199,7 +184,7 @@ def _format_file_for_message(file: File) -> Optional[Dict[str, Any]]:
 
         path = Path(file.filepath) if isinstance(file.filepath, str) else file.filepath
         if path.exists() and path.is_file():
-            raw_bytes = path.read_bytes()
+            file_data = base64.standard_b64encode(path.read_bytes()).decode("utf-8")
 
             # Determine media type
             media_type = file.mime_type
@@ -208,58 +193,31 @@ def _format_file_for_message(file: File) -> Optional[Dict[str, Any]]:
 
                 media_type = mimetypes.guess_type(file.filepath)[0] or "application/pdf"
 
-            source_type = mime_mapping.get(media_type, "base64")
+            # Map media type to type, default to "base64" if no mapping exists
+            type = mime_mapping.get(media_type, "base64")
 
-            if source_type == "text":
-                return {
-                    "type": "document",
-                    "source": {
-                        "type": "text",
-                        "media_type": "text/plain",
-                        "data": raw_bytes.decode("utf-8", errors="replace"),
-                    },
-                    "citations": {"enabled": True},
-                }
-            else:
-                return {
-                    "type": "document",
-                    "source": {
-                        "type": "base64",
-                        "media_type": media_type,
-                        "data": base64.standard_b64encode(raw_bytes).decode("utf-8"),
-                    },
-                    "citations": {"enabled": True},
-                }
+            return {
+                "type": "document",
+                "source": {
+                    "type": type,
+                    "media_type": media_type,
+                    "data": file_data,
+                },
+                "citations": {"enabled": True},
+            }
         else:
             log_error(f"Document file not found: {file}")
             return None
     # Case 3: Document is bytes content
     elif file.content is not None:
-        media_type = file.mime_type or "application/pdf"
-        source_type = mime_mapping.get(media_type, "base64")
+        import base64
 
-        if source_type == "text":
-            return {
-                "type": "document",
-                "source": {
-                    "type": "text",
-                    "media_type": "text/plain",
-                    "data": file.content.decode("utf-8", errors="replace"),
-                },
-                "citations": {"enabled": True},
-            }
-        else:
-            import base64
-
-            return {
-                "type": "document",
-                "source": {
-                    "type": "base64",
-                    "media_type": media_type,
-                    "data": base64.standard_b64encode(file.content).decode("utf-8"),
-                },
-                "citations": {"enabled": True},
-            }
+        file_data = base64.standard_b64encode(file.content).decode("utf-8")
+        return {
+            "type": "document",
+            "source": {"type": "base64", "media_type": file.mime_type or "application/pdf", "data": file_data},
+            "citations": {"enabled": True},
+        }
     return None
 
 
