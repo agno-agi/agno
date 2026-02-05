@@ -26,6 +26,8 @@ class RunContext:
     metadata: Optional[Dict[str, Any]] = None
     session_state: Optional[Dict[str, Any]] = None
     output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None
+    # This allows correlating workflow events to the workflow agent's run
+    workflow_agent_run_id: Optional[str] = None
 
 
 @dataclass

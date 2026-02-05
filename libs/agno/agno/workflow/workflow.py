@@ -1453,6 +1453,9 @@ class Workflow:
         if hasattr(event, "step_index") and step_index is not None:
             if event.step_index is None:
                 event.step_index = step_index
+        # Set workflow_agent_run_id if available (for workflow agent correlation)
+        if hasattr(event, "workflow_agent_run_id") and workflow_run_response.workflow_agent_run_id:
+            event.workflow_agent_run_id = workflow_run_response.workflow_agent_run_id
 
         return event
 
@@ -1835,11 +1838,16 @@ class Workflow:
 
         workflow_run_response.status = RunStatus.running
 
+        # Copy workflow_agent_run_id from run_context to workflow_run_response for event enrichment
+        if run_context.workflow_agent_run_id:
+            workflow_run_response.workflow_agent_run_id = run_context.workflow_agent_run_id
+
         workflow_started_event = WorkflowStartedEvent(
             run_id=workflow_run_response.run_id or "",
             workflow_name=workflow_run_response.workflow_name,
             workflow_id=workflow_run_response.workflow_id,
             session_id=workflow_run_response.session_id,
+            workflow_agent_run_id=run_context.workflow_agent_run_id,
         )
         yield self._handle_event(workflow_started_event, workflow_run_response)
 
@@ -2116,6 +2124,7 @@ class Workflow:
             session_id=workflow_run_response.session_id,
             step_results=workflow_run_response.step_results,  # type: ignore
             metadata=workflow_run_response.metadata,
+            workflow_agent_run_id=run_context.workflow_agent_run_id,
         )
         yield self._handle_event(workflow_completed_event, workflow_run_response)
 
@@ -2426,11 +2435,16 @@ class Workflow:
 
         workflow_run_response.status = RunStatus.running
 
+        # Copy workflow_agent_run_id from run_context to workflow_run_response for event enrichment
+        if run_context.workflow_agent_run_id:
+            workflow_run_response.workflow_agent_run_id = run_context.workflow_agent_run_id
+
         workflow_started_event = WorkflowStartedEvent(
             run_id=workflow_run_response.run_id or "",
             workflow_name=workflow_run_response.workflow_name,
             workflow_id=workflow_run_response.workflow_id,
             session_id=workflow_run_response.session_id,
+            workflow_agent_run_id=run_context.workflow_agent_run_id,
         )
         yield self._handle_event(workflow_started_event, workflow_run_response, websocket_handler=websocket_handler)
 
@@ -2722,6 +2736,7 @@ class Workflow:
             session_id=workflow_run_response.session_id,
             step_results=workflow_run_response.step_results,  # type: ignore[arg-type]
             metadata=workflow_run_response.metadata,
+            workflow_agent_run_id=run_context.workflow_agent_run_id,
         )
         yield self._handle_event(workflow_completed_event, workflow_run_response, websocket_handler=websocket_handler)
 
@@ -3186,6 +3201,8 @@ class Workflow:
         )
         yield agent_started_event
 
+        from agno.run.agent import RunStartedEvent as AgentRunStartedEvent
+
         # Run the agent in streaming mode and yield all events
         for event in self.agent.run(  # type: ignore[union-attr]
             input=agent_input,
@@ -3196,6 +3213,12 @@ class Workflow:
             dependencies=run_context.dependencies,  # Pass context dynamically per-run
             session_state=run_context.session_state,  # Pass session state dynamically per-run
         ):  # type: ignore
+            # Capture the workflow agent's run_id from the FIRST RunStartedEvent only
+            # (subsequent RunStartedEvents are from step agents, not the workflow agent)
+            if isinstance(event, AgentRunStartedEvent) and event.run_id and not run_context.workflow_agent_run_id:
+                run_context.workflow_agent_run_id = event.run_id
+                log_debug(f"Captured workflow agent run_id: {event.run_id}")
+
             if isinstance(event, tuple(get_args(WorkflowRunOutputEvent))):
                 yield event  # type: ignore[misc]
 
@@ -3575,6 +3598,8 @@ class Workflow:
         self._broadcast_to_websocket(agent_started_event, websocket_handler)
         yield agent_started_event
 
+        from agno.run.agent import RunStartedEvent as AgentRunStartedEvent
+
         # Run the agent in streaming mode and yield all events
         async for event in self.agent.arun(  # type: ignore[union-attr]
             input=agent_input,
@@ -3585,6 +3610,12 @@ class Workflow:
             dependencies=run_context.dependencies,  # Pass context dynamically per-run
             session_state=run_context.session_state,  # Pass session state dynamically per-run
         ):  # type: ignore
+            # Capture the workflow agent's run_id from the FIRST RunStartedEvent only
+            # (subsequent RunStartedEvents are from step agents, not the workflow agent)
+            if isinstance(event, AgentRunStartedEvent) and event.run_id and not run_context.workflow_agent_run_id:
+                run_context.workflow_agent_run_id = event.run_id
+                log_debug(f"Captured workflow agent run_id: {event.run_id}")
+
             if isinstance(event, tuple(get_args(WorkflowRunOutputEvent))):
                 yield event  # type: ignore[misc]
 
