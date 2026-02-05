@@ -128,6 +128,26 @@ def attach_routes(
                 offset=offset,
             )
 
+            # Filter out agents/teams that exist in registry (registry takes precedence)
+            if registry:
+                registry_agent_ids = {
+                    getattr(a, "id", None) for a in getattr(registry, "agents", []) or [] if getattr(a, "id", None)
+                }
+                registry_team_ids = {
+                    getattr(t, "id", None) for t in getattr(registry, "teams", []) or [] if getattr(t, "id", None)
+                }
+                if registry_agent_ids or registry_team_ids:
+                    pre_filter_count = len(components)
+                    components = [
+                        c
+                        for c in components
+                        if not (c.get("component_type") == "agent" and c.get("component_id") in registry_agent_ids)
+                        and not (c.get("component_type") == "team" and c.get("component_id") in registry_team_ids)
+                    ]
+                    # Adjust total_count by the number of items filtered from this page.
+                    # Not perfectly accurate across all pages, but avoids fetching the entire table.
+                    total_count -= pre_filter_count - len(components)
+
             total_pages = (total_count + limit - 1) // limit if limit > 0 else 0
 
             return PaginatedResponse(

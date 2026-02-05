@@ -638,6 +638,8 @@ class RegistryResourceType(str, Enum):
     VECTOR_DB = "vector_db"
     SCHEMA = "schema"
     FUNCTION = "function"
+    AGENT = "agent"
+    TEAM = "team"
 
 
 class CallableMetadata(BaseModel):
