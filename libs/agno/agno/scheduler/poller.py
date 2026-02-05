@@ -5,7 +5,7 @@ due schedules and spawns execution tasks.
 """
 
 import asyncio
-from typing import TYPE_CHECKING, Optional, Set, Union
+from typing import TYPE_CHECKING, Optional, Set, Union, cast
 from uuid import uuid4
 
 from agno.db.schemas.scheduler import Schedule
@@ -67,18 +67,19 @@ class SchedulePoller:
                 self.container_id,
                 lock_grace_seconds=self.lock_grace_seconds,
             )
-        result: Optional[Schedule] = self.db.claim_due_schedule(  # type: ignore[union-attr]
-            self.container_id,
-            lock_grace_seconds=self.lock_grace_seconds,
+        return cast(
+            Optional[Schedule],
+            self.db.claim_due_schedule(  # type: ignore[union-attr]
+                self.container_id,
+                lock_grace_seconds=self.lock_grace_seconds,
+            ),
         )
-        return result
 
     async def _get_schedule(self, schedule_id: str) -> Optional[Schedule]:
         """Get a schedule by ID (async-aware)."""
         if self._is_async_db:
             return await self.db.aget_schedule(schedule_id)  # type: ignore[union-attr]
-        result: Optional[Schedule] = self.db.get_schedule(schedule_id)  # type: ignore[union-attr]
-        return result
+        return cast(Optional[Schedule], self.db.get_schedule(schedule_id))  # type: ignore[union-attr]
 
     @property
     def is_running(self) -> bool:
