@@ -12,7 +12,7 @@ Use case: Share a CSV in Slack, ask "What are the top 5 trends in this data?"
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
-from agno.models.openai import OpenAIChat
+from agno.models.anthropic import Claude
 from agno.os.app import AgentOS
 from agno.os.interfaces.slack import Slack
 from agno.tools.slack import SlackTools
@@ -21,7 +21,7 @@ agent_db = SqliteDb(session_table="agent_sessions", db_file="tmp/file_analyst.db
 
 file_analyst = Agent(
     name="File Analyst",
-    model=OpenAIChat(id="gpt-4o"),
+    model=Claude(id="claude-sonnet-4-20250514"),
     db=agent_db,
     tools=[
         SlackTools(

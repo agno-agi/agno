@@ -163,7 +163,8 @@ def attach_routes(
                     if mimetype.startswith("image/"):
                         images.append(Image(content=file_content, id=file_id))
                     else:
-                        files.append(File(content=file_content, filename=filename, mime_type=mimetype))
+                        safe_mime = mimetype if mimetype in File.valid_mime_types() else None
+                        files.append(File(content=file_content, filename=filename, mime_type=safe_mime))
             except Exception as e:
                 log_error(f"Failed to download file {file_id}: {e}")
 
@@ -239,7 +240,7 @@ def attach_routes(
                 SlackTools().send_message(channel=channel, text=message or "", thread_ts=thread_ts)
             return
 
-        # Split message into batches of 4000 characters (WhatsApp message limit is 4096)
+        # Split message into batches of 40000 characters (Slack message limit is 40000)
         message_batches = [message[i : i + 40000] for i in range(0, len(message), 40000)]
 
         # Add a prefix with the batch number
