@@ -1,7 +1,5 @@
 """Unit tests for ToolExecution class."""
 
-import pytest
-
 from agno.models.response import ToolExecution
 
 
