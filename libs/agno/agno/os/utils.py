@@ -463,7 +463,7 @@ def get_agent_by_id(
 
     # Try to get the agent from the database
     if db and isinstance(db, BaseDb):
-        from agno.agent.agent import get_agent_by_id as get_agent_by_id_db
+        from agno.agent.registry import get_agent_by_id as get_agent_by_id_db
 
         try:
             db_agent = get_agent_by_id_db(db=db, id=agent_id, version=version, registry=registry)

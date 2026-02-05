@@ -16,7 +16,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from agno.agent.agent import Agent, get_agent_by_id, get_agents
+from agno.agent.agent import Agent
+from agno.agent.registry import get_agent_by_id, get_agents
 from agno.db.base import BaseDb, ComponentType
 from agno.registry import Registry
 
