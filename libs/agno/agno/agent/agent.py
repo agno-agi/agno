@@ -221,7 +221,7 @@ class Agent(
     # If True, store tool results in run output
     store_tool_messages: bool = True
     # If True, store history messages in run output
-    store_history_messages: bool = True
+    store_history_messages: bool = False
 
     # --- System message settings ---
     # Provide the system message as a string or function
@@ -392,7 +392,7 @@ class Agent(
         max_tool_calls_from_history: Optional[int] = None,
         store_media: bool = True,
         store_tool_messages: bool = True,
-        store_history_messages: bool = True,
+        store_history_messages: bool = False,
         knowledge: Optional[KnowledgeProtocol] = None,
         knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         enable_agentic_knowledge_filters: Optional[bool] = None,
