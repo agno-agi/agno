@@ -109,7 +109,9 @@ def get_tenant_cache_key(run_context: RunContext) -> str:
     """Cache knowledge per tenant_id so users in the same tenant share it."""
     dependencies = run_context.dependencies or {}
     session_state = run_context.session_state or {}
-    tenant_id = dependencies.get("tenant_id") or session_state.get("tenant_id") or "public"
+    tenant_id = (
+        dependencies.get("tenant_id") or session_state.get("tenant_id") or "public"
+    )
     return str(tenant_id)
 
 

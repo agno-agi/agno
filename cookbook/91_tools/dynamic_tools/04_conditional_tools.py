@@ -25,7 +25,6 @@ from agno.tools.duckdb import DuckDbTools
 from agno.tools.function import Function
 from agno.tools.toolkit import Toolkit
 
-
 # ============================================================================
 # Custom Tools for Different Roles
 # ============================================================================

@@ -24,7 +24,6 @@ from agno.run import RunContext
 from agno.tools.function import Function
 from agno.tools.toolkit import Toolkit
 
-
 # ============================================================================
 # Mock External Service Client
 # ============================================================================
@@ -62,6 +61,7 @@ class MockWeatherClient:
 # Tools Factory with API Key Configuration
 # ============================================================================
 
+
 def get_api_cache_key(run_context: RunContext) -> str:
     """Cache key that scopes tools to the provided credentials.
 
@@ -70,7 +70,9 @@ def get_api_cache_key(run_context: RunContext) -> str:
     dependencies = run_context.dependencies or {}
     api_key = str(dependencies.get("weather_api_key", ""))
     tier = str(dependencies.get("tier", "free"))
-    api_key_hash = hashlib.sha256(api_key.encode()).hexdigest()[:16] if api_key else "_no_key_"
+    api_key_hash = (
+        hashlib.sha256(api_key.encode()).hexdigest()[:16] if api_key else "_no_key_"
+    )
     return f"{tier}:{api_key_hash}"
 
 

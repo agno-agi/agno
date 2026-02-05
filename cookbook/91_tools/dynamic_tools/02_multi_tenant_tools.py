@@ -31,6 +31,7 @@ from agno.tools.toolkit import Toolkit
 # Create a temp directory for tenant databases
 TENANT_DATA_DIR = Path(tempfile.mkdtemp(prefix="tenant_dbs_"))
 
+
 def _safe_tenant_id(tenant_id: str) -> str:
     """Sanitize tenant_id for safe directory/file names."""
     return (

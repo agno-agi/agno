@@ -41,7 +41,6 @@ from agno.tools.function import Function
 from agno.tools.mcp import MCPTools
 from agno.tools.toolkit import Toolkit
 from agno.vectordb.pgvector import PgVector, SearchType
-
 from db import db_url, demo_db
 
 # ============================================================================
