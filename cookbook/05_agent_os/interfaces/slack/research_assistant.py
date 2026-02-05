@@ -1,19 +1,3 @@
-"""
-Research Assistant - Slack bot that can search both Slack and the web.
-
-This agent combines:
-- SlackTools: Search workspace messages, find experts, get threads
-- WebSearchTools: Search the internet for current information
-
-Use case: "Find what we discussed about the API redesign and get current best practices"
-
-Note: search_messages requires a user token (xoxp-...), not a bot token (xoxb-...).
-Bot tokens will receive 'not_allowed_token_type' error. To use search, you need to:
-1. Create a Slack app with user token scopes (search:read)
-2. Use OAuth to get a user token
-3. Set SLACK_TOKEN to the user token instead of bot token
-"""
-
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat

@@ -1,15 +1,3 @@
-"""
-File Analyst - Slack bot that can download, analyze, and discuss files.
-
-This agent can:
-- Download files shared in Slack
-- Analyze file contents (CSV, JSON, text, code)
-- Answer questions about the files
-- Generate summaries and insights
-
-Use case: Share a CSV in Slack, ask "What are the top 5 trends in this data?"
-"""
-
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.anthropic import Claude

@@ -1,14 +1,3 @@
-"""
-Support Team - Multiple specialized agents working together on Slack.
-
-This example shows a Team of agents:
-- Coordinator: Routes questions to the right specialist
-- Technical Support: Handles code and technical questions
-- Documentation: Finds and explains documentation
-
-Use case: "@SupportTeam How do I implement authentication?" routes to Technical Support
-"""
-
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat

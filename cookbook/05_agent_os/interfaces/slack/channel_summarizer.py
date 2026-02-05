@@ -1,15 +1,3 @@
-"""
-Channel Summarizer - Slack bot that summarizes channel activity.
-
-This agent can:
-- Read recent channel history
-- Identify key discussions and decisions
-- Summarize threads
-- Create daily/weekly digests
-
-Use case: "@Summarizer What happened in #engineering this week?"
-"""
-
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
