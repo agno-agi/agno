@@ -19,6 +19,7 @@ Instructions for Claude Code when testing and maintaining the Demo cookbook.
 ```bash
 python cookbook/demo/agents/pal_agent.py
 python cookbook/demo/agents/research_agent.py "Your query here"
+python cookbook/demo/agents/summarizer_agent.py "Summarize: ..."
 ```
 
 **Test results file:**
@@ -42,6 +43,7 @@ cookbook/demo/
 │   ├── knowledge_agent.py         # General RAG agent
 │   ├── mcp_agent.py               # General MCP agent
 │   ├── devil_advocate_agent.py    # Critical review (used in teams)
+│   ├── summarizer_agent.py        # Condenses long-form content into summaries
 │   └── db.py                      # Database configuration
 ├── teams/
 │   ├── investment_team.py         # Finance + Research + Report Writer
@@ -89,6 +91,7 @@ cookbook/demo/
 | `report_writer_agent` | Professional report generation |
 | `knowledge_agent` | General RAG agent |
 | `mcp_agent` | General MCP integration |
+| `summarizer_agent` | Condenses long-form content into structured summaries |
 
 ### Team-Only Agents
 
