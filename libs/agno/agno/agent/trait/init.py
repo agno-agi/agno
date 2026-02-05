@@ -5,6 +5,7 @@ from typing import (
     Any,
     Callable,
     Dict,
+    List,
     Literal,
     Optional,
     Sequence,
@@ -19,6 +20,7 @@ from agno.db.base import AsyncBaseDb
 from agno.learn.machine import LearningMachine
 from agno.memory import MemoryManager
 from agno.models.utils import get_model
+from agno.run import RunContext
 from agno.session import AgentSession, SessionSummaryManager
 from agno.tools import Toolkit
 from agno.tools.function import Function
@@ -238,17 +240,30 @@ class AgentInitTrait(AgentTraitBase):
             self._formatter = SafeFormatter()
 
     def add_tool(self, tool: Union[Toolkit, Callable, Function, Dict]):
+        if self._is_tools_callable():
+            raise ValueError("Cannot add tools when `tools` is a callable factory. Set `tools` to a list first.")
+
         if not self.tools:
             self.tools = []
         self.tools.append(tool)
 
-    def set_tools(self, tools: Sequence[Union[Toolkit, Callable, Function, Dict]]):
-        self.tools = list(tools) if tools else []
+    def set_tools(
+        self,
+        tools: Union[
+            Sequence[Union[Toolkit, Callable, Function, Dict]],
+            Callable[..., List[Union[Toolkit, Callable, Function, Dict]]],
+        ],
+    ):
+        if callable(tools) and not isinstance(tools, (Toolkit, Function)):
+            self.tools = tools
+        else:
+            self.tools = list(tools) if tools else []
 
-    async def _connect_mcp_tools(self) -> None:
+    async def _connect_mcp_tools(self, run_context: Optional[RunContext] = None) -> None:
         """Connect the MCP tools to the agent."""
-        if self.tools:
-            for tool in self.tools:
+        tools = self._get_tools(run_context=run_context)
+        if tools:
+            for tool in tools:
                 # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
                 if (
                     hasattr(type(tool), "__mro__")
@@ -271,10 +286,11 @@ class AgentInitTrait(AgentTraitBase):
                 log_warning(f"Error disconnecting tool: {str(e)}")
         self._mcp_tools_initialized_on_run = []
 
-    def _connect_connectable_tools(self) -> None:
+    def _connect_connectable_tools(self, run_context: Optional[RunContext] = None) -> None:
         """Connect tools that require connection management (e.g., database connections)."""
-        if self.tools:
-            for tool in self.tools:
+        tools = self._get_tools(run_context=run_context)
+        if tools:
+            for tool in tools:
                 if (
                     hasattr(tool, "requires_connect")
                     and tool.requires_connect  # type: ignore

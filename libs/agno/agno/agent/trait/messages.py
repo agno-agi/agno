@@ -390,8 +390,9 @@ class AgentMessagesTrait(AgentTraitBase):
                 system_message_content += learning_context + "\n"
 
         # 3.3.13 then add search_knowledge instructions to the system prompt
-        if self.knowledge is not None and self.search_knowledge and self.add_search_knowledge_instructions:
-            build_context_fn = getattr(self.knowledge, "build_context", None)
+        knowledge = self._get_knowledge(run_context=run_context)
+        if knowledge is not None and self.search_knowledge and self.add_search_knowledge_instructions:
+            build_context_fn = getattr(knowledge, "build_context", None)
             if callable(build_context_fn):
                 knowledge_context = build_context_fn(
                     enable_agentic_filters=self.enable_agentic_knowledge_filters,
@@ -736,10 +737,11 @@ class AgentMessagesTrait(AgentTraitBase):
                 system_message_content += learning_context + "\n"
 
         # 3.3.13 then add search_knowledge instructions to the system prompt
-        if self.knowledge is not None and self.search_knowledge and self.add_search_knowledge_instructions:
+        knowledge = self._get_knowledge(run_context=run_context)
+        if knowledge is not None and self.search_knowledge and self.add_search_knowledge_instructions:
             # Prefer async version if available for async databases
-            abuild_context_fn = getattr(self.knowledge, "abuild_context", None)
-            build_context_fn = getattr(self.knowledge, "build_context", None)
+            abuild_context_fn = getattr(knowledge, "abuild_context", None)
+            build_context_fn = getattr(knowledge, "build_context", None)
             if callable(abuild_context_fn):
                 knowledge_context = await abuild_context_fn(
                     enable_agentic_filters=self.enable_agentic_knowledge_filters,
@@ -1638,12 +1640,14 @@ class AgentMessagesTrait(AgentTraitBase):
         # Extract dependencies from run_context if available
         dependencies = run_context.dependencies if run_context else None
 
-        if num_documents is None and self.knowledge is not None:
-            num_documents = getattr(self.knowledge, "max_results", None)
+        knowledge = self._get_knowledge(run_context=run_context)
+
+        if num_documents is None and knowledge is not None:
+            num_documents = getattr(knowledge, "max_results", None)
         # Validate the filters against known valid filter keys
-        if self.knowledge is not None and filters is not None:
+        if knowledge is not None and filters is not None:
             if validate_filters:
-                valid_filters, invalid_keys = self.knowledge.validate_filters(filters)  # type: ignore
+                valid_filters, invalid_keys = knowledge.validate_filters(filters)  # type: ignore
 
                 # Warn about invalid filter keys
                 if invalid_keys:
@@ -1682,17 +1686,17 @@ class AgentMessagesTrait(AgentTraitBase):
 
         # Use knowledge protocol's retrieve method
         try:
-            if self.knowledge is None:
+            if knowledge is None:
                 return None
 
             # Use protocol retrieve() method if available
-            retrieve_fn = getattr(self.knowledge, "retrieve", None)
+            retrieve_fn = getattr(knowledge, "retrieve", None)
             if not callable(retrieve_fn):
                 log_debug("Knowledge does not implement retrieve()")
                 return None
 
             if num_documents is None:
-                num_documents = getattr(self.knowledge, "max_results", 10)
+                num_documents = getattr(knowledge, "max_results", 10)
 
             log_debug(f"Retrieving from knowledge base with filters: {filters}")
             relevant_docs: List[Document] = retrieve_fn(query=query, max_results=num_documents, filters=filters)
@@ -1721,13 +1725,15 @@ class AgentMessagesTrait(AgentTraitBase):
         # Extract dependencies from run_context if available
         dependencies = run_context.dependencies if run_context else None
 
-        if num_documents is None and self.knowledge is not None:
-            num_documents = getattr(self.knowledge, "max_results", None)
+        knowledge = self._get_knowledge(run_context=run_context)
+
+        if num_documents is None and knowledge is not None:
+            num_documents = getattr(knowledge, "max_results", None)
 
         # Validate the filters against known valid filter keys
-        if self.knowledge is not None and filters is not None:
+        if knowledge is not None and filters is not None:
             if validate_filters:
-                valid_filters, invalid_keys = await self.knowledge.avalidate_filters(filters)  # type: ignore
+                valid_filters, invalid_keys = await knowledge.avalidate_filters(filters)  # type: ignore
 
                 # Warn about invalid filter keys
                 if invalid_keys:  # type: ignore
@@ -1770,19 +1776,19 @@ class AgentMessagesTrait(AgentTraitBase):
 
         # Use knowledge protocol's retrieve method
         try:
-            if self.knowledge is None:
+            if knowledge is None:
                 return None
 
             # Use protocol aretrieve() or retrieve() method if available
-            aretrieve_fn = getattr(self.knowledge, "aretrieve", None)
-            retrieve_fn = getattr(self.knowledge, "retrieve", None)
+            aretrieve_fn = getattr(knowledge, "aretrieve", None)
+            retrieve_fn = getattr(knowledge, "retrieve", None)
 
             if not callable(aretrieve_fn) and not callable(retrieve_fn):
                 log_debug("Knowledge does not implement retrieve()")
                 return None
 
             if num_documents is None:
-                num_documents = getattr(self.knowledge, "max_results", 10)
+                num_documents = getattr(knowledge, "max_results", 10)
 
             log_debug(f"Retrieving from knowledge base with filters: {filters}")
 

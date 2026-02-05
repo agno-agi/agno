@@ -6,7 +6,9 @@ from typing import (
     Callable,
     Dict,
     List,
+    Literal,
     Optional,
+    Sequence,
     Type,
     Union,
     cast,
@@ -30,10 +32,14 @@ from agno.session import AgentSession
 from agno.tools import Toolkit
 from agno.tools.function import Function
 from agno.utils.agent import (
+    aresolve_knowledge,
+    aresolve_tools,
     collect_joint_audios,
     collect_joint_files,
     collect_joint_images,
     collect_joint_videos,
+    resolve_knowledge,
+    resolve_tools,
 )
 from agno.utils.log import (
     log_debug,
@@ -42,6 +48,280 @@ from agno.utils.log import (
 
 
 class AgentToolsTrait(AgentTraitBase):
+    def _get_knowledge(self, run_context: Optional[RunContext] = None) -> Any:
+        """Get the resolved knowledge instance.
+
+        If knowledge was provided as a callable, it should be resolved during
+        run/arun and stored in run_context.knowledge. This method returns the
+        resolved instance from run_context if available, otherwise falls back to
+        self.knowledge (for non-callable knowledge).
+        """
+
+        if run_context is not None and run_context.knowledge is not None:
+            return run_context.knowledge
+        if callable(self.knowledge):
+            return None
+        return self.knowledge
+
+    def _is_tools_callable(self) -> bool:
+        """Check if tools is a callable factory function (not a Toolkit/Function instance)."""
+
+        return self.tools is not None and callable(self.tools) and not isinstance(self.tools, (Toolkit, Function))
+
+    def _get_cache_key(self, run_context: RunContext, *, kind: Literal["tools", "knowledge"]) -> str:
+        """Generate a cache key for callable tools/knowledge based on run context."""
+
+        if kind == "tools" and self.callable_tools_cache_key is not None:
+            return self.callable_tools_cache_key(run_context)
+        if kind == "knowledge" and self.callable_knowledge_cache_key is not None:
+            return self.callable_knowledge_cache_key(run_context)
+        if run_context.user_id:
+            return run_context.user_id
+        return run_context.session_id
+
+    def _try_close_cached_resource(self, resource: Any) -> None:
+        """Best-effort close for cached resources (sync)."""
+
+        from inspect import isawaitable
+
+        close_fn = getattr(resource, "close", None)
+        if callable(close_fn):
+            try:
+                result = close_fn()
+                if isawaitable(result):
+                    log_warning(
+                        "close() returned an awaitable when clearing callable cache. "
+                        "Use `await agent.aclear_callable_cache(close=True)` to close async resources."
+                    )
+            except Exception as e:
+                log_warning(f"Failed to close cached resource {resource!r}: {e}")
+            return
+
+        aclose_fn = getattr(resource, "aclose", None)
+        if callable(aclose_fn):
+            log_warning(
+                "Cached resource exposes `aclose()` but no `close()`. "
+                "Use `await agent.aclear_callable_cache(close=True)` to close async resources."
+            )
+
+    async def _atry_close_cached_resource(self, resource: Any) -> None:
+        """Best-effort close for cached resources (async)."""
+
+        from inspect import isawaitable
+
+        for attr in ("aclose", "close"):
+            close_fn = getattr(resource, attr, None)
+            if not callable(close_fn):
+                continue
+            try:
+                result = close_fn()
+                if isawaitable(result):
+                    await result
+            except Exception as e:
+                log_warning(f"Failed to close cached resource {resource!r}: {e}")
+            return
+
+    def _try_close_cached_tools(self, tools: Sequence[Any]) -> None:
+        """Best-effort close for cached tool instances (sync)."""
+
+        seen: set[int] = set()
+        for tool in tools:
+            tool_id = id(tool)
+            if tool_id in seen:
+                continue
+            seen.add(tool_id)
+            self._try_close_cached_resource(tool)
+
+    async def _atry_close_cached_tools(self, tools: Sequence[Any]) -> None:
+        """Best-effort close for cached tool instances (async)."""
+
+        seen: set[int] = set()
+        for tool in tools:
+            tool_id = id(tool)
+            if tool_id in seen:
+                continue
+            seen.add(tool_id)
+            await self._atry_close_cached_resource(tool)
+
+    def clear_callable_cache(
+        self,
+        key: Optional[str] = None,
+        user_id: Optional[str] = None,
+        *,
+        kind: Optional[Literal["tools", "knowledge"]] = None,
+        close: bool = False,
+    ) -> None:
+        """Clear the callable tools and knowledge cache."""
+
+        cache_key = key or user_id
+        if cache_key is not None:
+            if kind in (None, "tools"):
+                tools = self._tool_cache.pop(cache_key, None)
+                if close and tools:
+                    self._try_close_cached_tools(tools)
+            if kind in (None, "knowledge"):
+                knowledge = self._knowledge_cache.pop(cache_key, None)
+                if close and knowledge is not None:
+                    self._try_close_cached_resource(knowledge)
+        else:
+            if kind in (None, "tools"):
+                if close:
+                    for tools in self._tool_cache.values():
+                        self._try_close_cached_tools(tools)
+                self._tool_cache.clear()
+            if kind in (None, "knowledge"):
+                if close:
+                    for knowledge in self._knowledge_cache.values():
+                        self._try_close_cached_resource(knowledge)
+                self._knowledge_cache.clear()
+
+    async def aclear_callable_cache(
+        self,
+        key: Optional[str] = None,
+        user_id: Optional[str] = None,
+        *,
+        kind: Optional[Literal["tools", "knowledge"]] = None,
+        close: bool = False,
+    ) -> None:
+        """Async version of clear_callable_cache."""
+
+        cache_key = key or user_id
+        if cache_key is not None:
+            if kind in (None, "tools"):
+                tools = self._tool_cache.pop(cache_key, None)
+                if close and tools:
+                    await self._atry_close_cached_tools(tools)
+            if kind in (None, "knowledge"):
+                knowledge = self._knowledge_cache.pop(cache_key, None)
+                if close and knowledge is not None:
+                    await self._atry_close_cached_resource(knowledge)
+        else:
+            if kind in (None, "tools"):
+                if close:
+                    for tools in self._tool_cache.values():
+                        await self._atry_close_cached_tools(tools)
+                self._tool_cache.clear()
+            if kind in (None, "knowledge"):
+                if close:
+                    for knowledge in self._knowledge_cache.values():
+                        await self._atry_close_cached_resource(knowledge)
+                self._knowledge_cache.clear()
+
+    def _resolve_callables(
+        self,
+        run_context: RunContext,
+        session_state: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Resolve callable tools and knowledge, storing results in run_context."""
+
+        if callable(self.knowledge):
+            cache_key = self._get_cache_key(run_context, kind="knowledge")
+            if self.cache_callables and cache_key in self._knowledge_cache:
+                run_context.knowledge = self._knowledge_cache[cache_key]
+            else:
+                try:
+                    run_context.knowledge = resolve_knowledge(
+                        knowledge=self.knowledge,
+                        agent=cast(Any, self),
+                        session_state=session_state,
+                        run_context=run_context,
+                    )
+                except Exception as e:
+                    raise RuntimeError(
+                        "Failed to resolve callable knowledge "
+                        f"(cache_key={cache_key}, user_id={run_context.user_id}, session_id={run_context.session_id}): {e}"
+                    ) from e
+                if self.cache_callables:
+                    self._knowledge_cache[cache_key] = run_context.knowledge
+        else:
+            run_context.knowledge = self.knowledge
+
+        if self._is_tools_callable():
+            cache_key = self._get_cache_key(run_context, kind="tools")
+            if self.cache_callables and cache_key in self._tool_cache:
+                run_context.tools = self._tool_cache[cache_key]
+            else:
+                try:
+                    tools_callable = cast(Callable[..., Any], self.tools)
+                    run_context.tools = resolve_tools(
+                        tools=tools_callable,
+                        agent=cast(Any, self),
+                        session_state=session_state,
+                        run_context=run_context,
+                    )
+                except Exception as e:
+                    raise RuntimeError(
+                        "Failed to resolve callable tools "
+                        f"(cache_key={cache_key}, user_id={run_context.user_id}, session_id={run_context.session_id}): {e}"
+                    ) from e
+                if self.cache_callables:
+                    self._tool_cache[cache_key] = run_context.tools
+        else:
+            run_context.tools = self.tools  # type: ignore
+
+    async def _aresolve_callables(
+        self,
+        run_context: RunContext,
+        session_state: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Async version of _resolve_callables."""
+
+        if callable(self.knowledge):
+            cache_key = self._get_cache_key(run_context, kind="knowledge")
+            if self.cache_callables and cache_key in self._knowledge_cache:
+                run_context.knowledge = self._knowledge_cache[cache_key]
+            else:
+                try:
+                    run_context.knowledge = await aresolve_knowledge(
+                        knowledge=self.knowledge,
+                        agent=cast(Any, self),
+                        session_state=session_state,
+                        run_context=run_context,
+                    )
+                except Exception as e:
+                    raise RuntimeError(
+                        "Failed to resolve callable knowledge "
+                        f"(cache_key={cache_key}, user_id={run_context.user_id}, session_id={run_context.session_id}): {e}"
+                    ) from e
+                if self.cache_callables:
+                    self._knowledge_cache[cache_key] = run_context.knowledge
+        else:
+            run_context.knowledge = self.knowledge
+
+        if self._is_tools_callable():
+            cache_key = self._get_cache_key(run_context, kind="tools")
+            if self.cache_callables and cache_key in self._tool_cache:
+                run_context.tools = self._tool_cache[cache_key]
+            else:
+                try:
+                    tools_callable = cast(Callable[..., Any], self.tools)
+                    run_context.tools = await aresolve_tools(
+                        tools=tools_callable,
+                        agent=cast(Any, self),
+                        session_state=session_state,
+                        run_context=run_context,
+                    )
+                except Exception as e:
+                    raise RuntimeError(
+                        "Failed to resolve callable tools "
+                        f"(cache_key={cache_key}, user_id={run_context.user_id}, session_id={run_context.session_id}): {e}"
+                    ) from e
+                if self.cache_callables:
+                    self._tool_cache[cache_key] = run_context.tools
+        else:
+            run_context.tools = self.tools  # type: ignore
+
+    def _get_tools(
+        self, run_context: Optional[RunContext] = None
+    ) -> Optional[List[Union[Toolkit, Callable, Function, Dict]]]:
+        """Get the resolved tools list."""
+
+        if run_context is not None and run_context.tools is not None:
+            return run_context.tools
+        if self._is_tools_callable():
+            return None
+        return self.tools  # type: ignore
+
     def get_tools(
         self,
         run_response: RunOutput,
@@ -52,13 +332,16 @@ class AgentToolsTrait(AgentTraitBase):
         agent_tools: List[Union[Toolkit, Callable, Function, Dict]] = []
 
         # Connect tools that require connection management
-        self._connect_connectable_tools()
+        self._connect_connectable_tools(run_context=run_context)
+
+        tools = self._get_tools(run_context=run_context)
+        knowledge = self._get_knowledge(run_context=run_context)
 
         # Add provided tools
-        if self.tools is not None:
+        if tools is not None:
             # If not running in async mode, raise if any tool is async
-            self._raise_if_async_tools()
-            agent_tools.extend(self.tools)
+            self._raise_if_async_tools(run_context=run_context)
+            agent_tools.extend(tools)
 
         # Add tools for accessing memory
         if self.read_chat_history:
@@ -91,9 +374,9 @@ class AgentToolsTrait(AgentTraitBase):
             agent_tools.append(Function(name="update_session_state", entrypoint=self._update_session_state_tool))
 
         # Add tools for accessing knowledge
-        if self.knowledge is not None and self.search_knowledge:
+        if knowledge is not None and self.search_knowledge:
             # Use knowledge protocol's get_tools method
-            get_tools_fn = getattr(self.knowledge, "get_tools", None)
+            get_tools_fn = getattr(knowledge, "get_tools", None)
             if callable(get_tools_fn):
                 knowledge_tools = get_tools_fn(
                     run_response=run_response,
@@ -114,8 +397,8 @@ class AgentToolsTrait(AgentTraitBase):
                 )
             )
 
-        if self.knowledge is not None and self.update_knowledge:
-            agent_tools.append(self.add_to_knowledge)
+        if knowledge is not None and self.update_knowledge:
+            agent_tools.append(self._create_add_to_knowledge_tool(knowledge=knowledge))
 
         # Add tools for accessing skills
         if self.skills is not None:
@@ -134,14 +417,17 @@ class AgentToolsTrait(AgentTraitBase):
         agent_tools: List[Union[Toolkit, Callable, Function, Dict]] = []
 
         # Connect tools that require connection management
-        self._connect_connectable_tools()
+        self._connect_connectable_tools(run_context=run_context)
 
         # Connect MCP tools
-        await self._connect_mcp_tools()
+        await self._connect_mcp_tools(run_context=run_context)
+
+        tools = self._get_tools(run_context=run_context)
+        knowledge = self._get_knowledge(run_context=run_context)
 
         # Add provided tools
-        if self.tools is not None:
-            for tool in self.tools:
+        if tools is not None:
+            for tool in tools:
                 # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
                 is_mcp_tool = hasattr(type(tool), "__mro__") and any(
                     c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
@@ -201,10 +487,10 @@ class AgentToolsTrait(AgentTraitBase):
             agent_tools.append(Function(name="update_session_state", entrypoint=self._update_session_state_tool))
 
         # Add tools for accessing knowledge
-        if self.knowledge is not None and self.search_knowledge:
+        if knowledge is not None and self.search_knowledge:
             # Use knowledge protocol's get_tools method
-            aget_tools_fn = getattr(self.knowledge, "aget_tools", None)
-            get_tools_fn = getattr(self.knowledge, "get_tools", None)
+            aget_tools_fn = getattr(knowledge, "aget_tools", None)
+            get_tools_fn = getattr(knowledge, "get_tools", None)
 
             if callable(aget_tools_fn):
                 knowledge_tools = await aget_tools_fn(
@@ -236,8 +522,8 @@ class AgentToolsTrait(AgentTraitBase):
                 )
             )
 
-        if self.knowledge is not None and self.update_knowledge:
-            agent_tools.append(self.add_to_knowledge)
+        if knowledge is not None and self.update_knowledge:
+            agent_tools.append(self._create_add_to_knowledge_tool(knowledge=knowledge))
 
         # Add tools for accessing skills
         if self.skills is not None:

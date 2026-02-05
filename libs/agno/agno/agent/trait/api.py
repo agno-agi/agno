@@ -493,8 +493,9 @@ class AgentApiTrait(AgentTraitBase):
         from rich.prompt import Prompt
 
         # Ensuring the agent is not using our async MCP tools
-        if self.tools is not None:
-            for tool in self.tools:
+        tools = self._get_tools()
+        if tools is not None:
+            for tool in tools:
                 if isawaitable(tool):
                     raise NotImplementedError("Use `acli_app` to use async tools.")
                 # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports

@@ -975,6 +975,9 @@ class AgentRunTrait(AgentTraitBase):
         if run_context.dependencies is not None:
             self._resolve_run_dependencies(run_context=run_context)
 
+        # Resolve callable tools and knowledge
+        self._resolve_callables(run_context=run_context, session_state=session_state)
+
         add_dependencies = (
             add_dependencies_to_context if add_dependencies_to_context is not None else self.add_dependencies_to_context
         )
@@ -1125,6 +1128,9 @@ class AgentRunTrait(AgentTraitBase):
                     # 3. Resolve dependencies
                     if run_context.dependencies is not None:
                         await self._aresolve_run_dependencies(run_context=run_context)
+
+                    # Resolve callable tools and knowledge after session state & dependencies are resolved.
+                    await self._aresolve_callables(run_context=run_context, session_state=run_context.session_state)
 
                     # 4. Execute pre-hooks
                     run_input = cast(RunInput, run_response.input)
@@ -1488,6 +1494,9 @@ class AgentRunTrait(AgentTraitBase):
                     # 3. Resolve dependencies
                     if run_context.dependencies is not None:
                         await self._aresolve_run_dependencies(run_context=run_context)
+
+                    # Resolve callable tools and knowledge after session state & dependencies are resolved.
+                    await self._aresolve_callables(run_context=run_context, session_state=run_context.session_state)
 
                     # 4. Execute pre-hooks
                     run_input = cast(RunInput, run_response.input)
@@ -2252,6 +2261,9 @@ class AgentRunTrait(AgentTraitBase):
         # Resolve dependencies
         if run_context.dependencies is not None:
             self._resolve_run_dependencies(run_context=run_context)
+
+        # Resolve callable tools and knowledge
+        self._resolve_callables(run_context=run_context, session_state=session_state)
 
         # When filters are passed manually
         if self.knowledge_filters or run_context.knowledge_filters or knowledge_filters:
@@ -3045,6 +3057,9 @@ class AgentRunTrait(AgentTraitBase):
                         session_state=run_context.session_state if run_context.session_state is not None else {},
                     )
 
+                    # Resolve callable tools and knowledge after session state & dependencies are resolved.
+                    await self._aresolve_callables(run_context=run_context, session_state=run_context.session_state)
+
                     # 4. Prepare run response
                     if run_response is not None:
                         # The run is continued from a provided run_response. This contains the updated tools.
@@ -3350,6 +3365,9 @@ class AgentRunTrait(AgentTraitBase):
                     # 3. Resolve dependencies
                     if run_context.dependencies is not None:
                         await self._aresolve_run_dependencies(run_context=run_context)
+
+                    # Resolve callable tools and knowledge after session state & dependencies are resolved.
+                    await self._aresolve_callables(run_context=run_context, session_state=run_context.session_state)
 
                     # 4. Prepare run response
                     if run_response is not None:

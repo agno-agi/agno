@@ -47,6 +47,9 @@ class AgentTraitBase:
     references_format: Any
     skills: Any
     tools: Any
+    cache_callables: Any
+    callable_tools_cache_key: Any
+    callable_knowledge_cache_key: Any
     tool_call_limit: Any
     tool_choice: Any
     tool_hooks: Any
@@ -126,6 +129,8 @@ class AgentTraitBase:
     _hooks_normalised: Any
     _mcp_tools_initialized_on_run: Any
     _connectable_tools_initialized_on_run: Any
+    _tool_cache: Any
+    _knowledge_cache: Any
     _background_executor: Any
 
     if TYPE_CHECKING:

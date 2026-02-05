@@ -42,6 +42,7 @@ from agno.learn.machine import LearningMachine
 from agno.memory import MemoryManager
 from agno.models.base import Model
 from agno.models.message import Message
+from agno.run import RunContext
 from agno.run.agent import RunEvent, RunInput, RunOutput, RunOutputEvent  # noqa: F401
 from agno.session import AgentSession, SessionSummaryManager
 from agno.skills import Skills
@@ -153,7 +154,9 @@ class Agent(
     max_tool_calls_from_history: Optional[int] = None
 
     # --- Knowledge ---
-    knowledge: Optional[KnowledgeProtocol] = None
+    # Knowledge can be a KnowledgeProtocol instance or a callable that returns one.
+    # When a callable is provided, it's resolved at runtime with access to agent, session_state, and run_context.
+    knowledge: Optional[Union[KnowledgeProtocol, Callable[..., KnowledgeProtocol]]] = None
     # Enable RAG by adding references from Knowledge to the user prompt.
     # Add knowledge_filters to the Agent class attributes
     knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
@@ -175,7 +178,21 @@ class Agent(
     # --- Agent Tools ---
     # A list of tools provided to the Model.
     # Tools are functions the model may generate JSON inputs for.
-    tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]] = None
+    tools: Optional[
+        Union[
+            List[Union[Toolkit, Callable, Function, Dict]],
+            Callable[..., List[Union[Toolkit, Callable, Function, Dict]]],
+        ]
+    ] = None
+    # When True, cache resolved callable tools and knowledge to avoid
+    # creating new instances (e.g., new database connections) on every run.
+    cache_callables: bool = True
+    # Tool-specific callable cache key function.
+    # Receives RunContext and returns a string key. Default uses user_id (falls back to session_id).
+    callable_tools_cache_key: Optional[Callable[[RunContext], str]] = None
+    # Knowledge-specific callable cache key function.
+    # Receives RunContext and returns a string key. Default uses user_id (falls back to session_id).
+    callable_knowledge_cache_key: Optional[Callable[[RunContext], str]] = None
 
     # Maximum number of tool calls allowed.
     tool_call_limit: Optional[int] = None
@@ -397,7 +414,7 @@ class Agent(
         store_media: bool = True,
         store_tool_messages: bool = True,
         store_history_messages: bool = False,
-        knowledge: Optional[KnowledgeProtocol] = None,
+        knowledge: Optional[Union[KnowledgeProtocol, Callable[..., KnowledgeProtocol]]] = None,
         knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         enable_agentic_knowledge_filters: Optional[bool] = None,
         add_knowledge_to_context: bool = False,
@@ -405,7 +422,15 @@ class Agent(
         references_format: Literal["json", "yaml"] = "json",
         skills: Optional[Skills] = None,
         metadata: Optional[Dict[str, Any]] = None,
-        tools: Optional[Sequence[Union[Toolkit, Callable, Function, Dict]]] = None,
+        tools: Optional[
+            Union[
+                Sequence[Union[Toolkit, Callable, Function, Dict]],
+                Callable[..., List[Union[Toolkit, Callable, Function, Dict]]],
+            ]
+        ] = None,
+        cache_callables: bool = True,
+        callable_tools_cache_key: Optional[Callable[[RunContext], str]] = None,
+        callable_knowledge_cache_key: Optional[Callable[[RunContext], str]] = None,
         tool_call_limit: Optional[int] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_hooks: Optional[List[Callable]] = None,
@@ -540,7 +565,14 @@ class Agent(
 
         self.metadata = metadata
 
-        self.tools = list(tools) if tools else []
+        # Tools can be a callable (resolved at runtime) or a list of tools
+        if callable(tools) and not isinstance(tools, (Toolkit, Function)):
+            self.tools = tools  # Keep as callable for runtime resolution
+        else:
+            self.tools = list(tools) if tools else []
+        self.cache_callables = cache_callables
+        self.callable_tools_cache_key = callable_tools_cache_key
+        self.callable_knowledge_cache_key = callable_knowledge_cache_key
         self.tool_call_limit = tool_call_limit
         self.tool_choice = tool_choice
         self.tool_hooks = tool_hooks
@@ -633,6 +665,10 @@ class Agent(
 
         self._mcp_tools_initialized_on_run: List[Any] = []
         self._connectable_tools_initialized_on_run: List[Any] = []
+
+        # Caches for callable tools and knowledge, keyed by the callable cache key to reuse instances
+        self._tool_cache: Dict[str, List[Any]] = {}
+        self._knowledge_cache: Dict[str, Any] = {}
 
         # Lazy-initialized shared thread pool executor for background tasks (memory, cultural knowledge, etc.)
         self._background_executor: Optional[Any] = None
