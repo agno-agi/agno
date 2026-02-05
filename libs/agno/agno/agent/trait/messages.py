@@ -144,9 +144,9 @@ class AgentMessagesTrait(AgentTraitBase):
         if self.model is None:
             raise Exception("model not set")
 
-            # 3. Build and return the default system message for the Agent.
-            # 3.1 Build the list of instructions for the system message
-            instructions: List[str] = []
+        # 3. Build and return the default system message for the Agent.
+        # 3.1 Build the list of instructions for the system message
+        instructions: List[str] = []
         if self.instructions is not None:
             _instructions = self.instructions
             if callable(self.instructions):
@@ -487,9 +487,9 @@ class AgentMessagesTrait(AgentTraitBase):
         if self.model is None:
             raise Exception("model not set")
 
-            # 3. Build and return the default system message for the Agent.
-            # 3.1 Build the list of instructions for the system message
-            instructions: List[str] = []
+        # 3. Build and return the default system message for the Agent.
+        # 3.1 Build the list of instructions for the system message
+        instructions: List[str] = []
         if self.instructions is not None:
             _instructions = self.instructions
             if callable(self.instructions):
