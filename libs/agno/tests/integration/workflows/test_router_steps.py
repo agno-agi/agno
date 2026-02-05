@@ -4,11 +4,13 @@ import pytest
 
 from agno.run.workflow import (
     RouterExecutionCompletedEvent,
+    RouterExecutionStartedEvent,
     StepCompletedEvent,
     StepStartedEvent,
     WorkflowCompletedEvent,
     WorkflowRunOutput,
 )
+from agno.workflow.cel import CEL_AVAILABLE
 from agno.workflow.router import Router
 from agno.workflow.step import Step
 from agno.workflow.steps import Steps
@@ -1007,3 +1009,291 @@ def test_string_selector_in_workflow(shared_db):
     # Test general routing
     response = workflow.run(input="random topic")
     assert find_content_in_steps(response.step_results[0], "General content")
+
+
+# ============================================================================
+# CEL EXPRESSION TESTS
+# ============================================================================
+
+
+@pytest.mark.skipif(not CEL_AVAILABLE, reason="cel-python not installed")
+def test_cel_router_basic_ternary():
+    """Test CEL router with basic ternary expression."""
+    video_step = Step(name="video_step", executor=lambda x: StepOutput(content="Video processing"))
+    image_step = Step(name="image_step", executor=lambda x: StepOutput(content="Image processing"))
+
+    router = Router(
+        name="CEL Ternary Router",
+        selector='input.contains("video") ? "video_step" : "image_step"',
+        choices=[video_step, image_step],
+    )
+
+    # Should route to video_step
+    result_video = router.execute(StepInput(input="Process this video file"))
+    assert len(result_video.steps) == 1
+    assert "Video processing" in result_video.steps[0].content
+
+    # Should route to image_step
+    result_image = router.execute(StepInput(input="Process this image file"))
+    assert len(result_image.steps) == 1
+    assert "Image processing" in result_image.steps[0].content
+
+
+@pytest.mark.skipif(not CEL_AVAILABLE, reason="cel-python not installed")
+def test_cel_router_additional_data():
+    """Test CEL router using additional_data for routing."""
+    fast_step = Step(name="fast_step", executor=lambda x: StepOutput(content="Fast processing"))
+    normal_step = Step(name="normal_step", executor=lambda x: StepOutput(content="Normal processing"))
+
+    router = Router(
+        name="CEL Additional Data Router",
+        selector="additional_data.route",
+        choices=[fast_step, normal_step],
+    )
+
+    # Route to fast_step
+    result_fast = router.execute(StepInput(input="test", additional_data={"route": "fast_step"}))
+    assert len(result_fast.steps) == 1
+    assert "Fast processing" in result_fast.steps[0].content
+
+    # Route to normal_step
+    result_normal = router.execute(StepInput(input="test", additional_data={"route": "normal_step"}))
+    assert len(result_normal.steps) == 1
+    assert "Normal processing" in result_normal.steps[0].content
+
+
+@pytest.mark.skipif(not CEL_AVAILABLE, reason="cel-python not installed")
+def test_cel_router_session_state():
+    """Test CEL router using session_state for routing."""
+    premium_step = Step(name="premium_step", executor=lambda x: StepOutput(content="Premium service"))
+    basic_step = Step(name="basic_step", executor=lambda x: StepOutput(content="Basic service"))
+
+    router = Router(
+        name="CEL Session State Router",
+        selector='session_state.user_tier == "premium" ? "premium_step" : "basic_step"',
+        choices=[premium_step, basic_step],
+    )
+
+    # Route to premium_step
+    result_premium = router.execute(
+        StepInput(input="test"),
+        session_state={"user_tier": "premium"},
+    )
+    assert len(result_premium.steps) == 1
+    assert "Premium service" in result_premium.steps[0].content
+
+    # Route to basic_step
+    result_basic = router.execute(
+        StepInput(input="test"),
+        session_state={"user_tier": "free"},
+    )
+    assert len(result_basic.steps) == 1
+    assert "Basic service" in result_basic.steps[0].content
+
+
+@pytest.mark.skipif(not CEL_AVAILABLE, reason="cel-python not installed")
+def test_cel_router_compound_condition():
+    """Test CEL router with compound condition."""
+    urgent_step = Step(name="urgent_step", executor=lambda x: StepOutput(content="Urgent handling"))
+    normal_step = Step(name="normal_step", executor=lambda x: StepOutput(content="Normal handling"))
+
+    router = Router(
+        name="CEL Compound Router",
+        selector='additional_data.priority == "high" && input.contains("urgent") ? "urgent_step" : "normal_step"',
+        choices=[urgent_step, normal_step],
+    )
+
+    # Both conditions met - route to urgent
+    result_urgent = router.execute(StepInput(input="This is urgent!", additional_data={"priority": "high"}))
+    assert len(result_urgent.steps) == 1
+    assert "Urgent handling" in result_urgent.steps[0].content
+
+    # Only one condition met - route to normal
+    result_normal = router.execute(StepInput(input="This is urgent!", additional_data={"priority": "low"}))
+    assert len(result_normal.steps) == 1
+    assert "Normal handling" in result_normal.steps[0].content
+
+
+@pytest.mark.skipif(not CEL_AVAILABLE, reason="cel-python not installed")
+def test_cel_router_previous_step_content():
+    """Test CEL router using previous_step_content."""
+    error_handler = Step(name="error_handler", executor=lambda x: StepOutput(content="Error handled"))
+    success_handler = Step(name="success_handler", executor=lambda x: StepOutput(content="Success processed"))
+
+    router = Router(
+        name="CEL Previous Content Router",
+        selector='previous_step_content.contains("error") ? "error_handler" : "success_handler"',
+        choices=[error_handler, success_handler],
+    )
+
+    # Route based on error in previous content
+    result_error = router.execute(StepInput(input="test", previous_step_content="An error occurred in processing"))
+    assert len(result_error.steps) == 1
+    assert "Error handled" in result_error.steps[0].content
+
+    # Route to success when no error
+    result_success = router.execute(StepInput(input="test", previous_step_content="Processing completed successfully"))
+    assert len(result_success.steps) == 1
+    assert "Success processed" in result_success.steps[0].content
+
+
+@pytest.mark.skipif(not CEL_AVAILABLE, reason="cel-python not installed")
+def test_cel_router_input_size():
+    """Test CEL router using input size for routing."""
+    detailed_step = Step(name="detailed_step", executor=lambda x: StepOutput(content="Detailed analysis"))
+    quick_step = Step(name="quick_step", executor=lambda x: StepOutput(content="Quick analysis"))
+
+    router = Router(
+        name="CEL Input Size Router",
+        selector='input.size() > 50 ? "detailed_step" : "quick_step"',
+        choices=[detailed_step, quick_step],
+    )
+
+    # Long input - detailed analysis
+    result_detailed = router.execute(
+        StepInput(input="This is a very long input that contains more than fifty characters for sure")
+    )
+    assert len(result_detailed.steps) == 1
+    assert "Detailed analysis" in result_detailed.steps[0].content
+
+    # Short input - quick analysis
+    result_quick = router.execute(StepInput(input="Short input"))
+    assert len(result_quick.steps) == 1
+    assert "Quick analysis" in result_quick.steps[0].content
+
+
+@pytest.mark.skipif(not CEL_AVAILABLE, reason="cel-python not installed")
+def test_cel_router_unknown_step_name():
+    """Test CEL router with unknown step name returns empty."""
+    step_a = Step(name="step_a", executor=lambda x: StepOutput(content="Step A"))
+
+    router = Router(
+        name="CEL Unknown Step Router",
+        selector='"nonexistent_step"',  # Returns a step name that doesn't exist
+        choices=[step_a],
+    )
+
+    result = router.execute(StepInput(input="test"))
+    # Should complete but with no steps executed (unknown step name)
+    assert result.steps is None or len(result.steps) == 0
+
+
+@pytest.mark.skipif(not CEL_AVAILABLE, reason="cel-python not installed")
+def test_cel_router_in_workflow(shared_db):
+    """Test CEL router within a workflow."""
+    tech_step = Step(name="tech_step", executor=lambda x: StepOutput(content="Tech content"))
+    general_step = Step(name="general_step", executor=lambda x: StepOutput(content="General content"))
+
+    workflow = Workflow(
+        name="CEL Router Workflow",
+        db=shared_db,
+        steps=[
+            Router(
+                name="cel_router",
+                selector='input.contains("tech") ? "tech_step" : "general_step"',
+                choices=[tech_step, general_step],
+            )
+        ],
+    )
+
+    # Route to tech_step
+    response_tech = workflow.run(input="tech topic discussion")
+    assert find_content_in_steps(response_tech.step_results[0], "Tech content")
+
+    # Route to general_step
+    response_general = workflow.run(input="general topic discussion")
+    assert find_content_in_steps(response_general.step_results[0], "General content")
+
+
+@pytest.mark.skipif(not CEL_AVAILABLE, reason="cel-python not installed")
+def test_cel_router_streaming(shared_db):
+    """Test CEL router with streaming."""
+    step_a = Step(name="step_a", executor=lambda x: StepOutput(content="Step A output"))
+    step_b = Step(name="step_b", executor=lambda x: StepOutput(content="Step B output"))
+
+    workflow = Workflow(
+        name="CEL Streaming Router",
+        db=shared_db,
+        steps=[
+            Router(
+                name="cel_stream_router",
+                selector='"step_a"',
+                choices=[step_a, step_b],
+            )
+        ],
+    )
+
+    events = list(workflow.run(input="test", stream=True, stream_events=True))
+
+    router_started = [e for e in events if isinstance(e, RouterExecutionStartedEvent)]
+    router_completed = [e for e in events if isinstance(e, RouterExecutionCompletedEvent)]
+
+    assert len(router_started) == 1
+    assert len(router_completed) == 1
+    assert "step_a" in router_started[0].selected_steps
+
+
+@pytest.mark.skipif(not CEL_AVAILABLE, reason="cel-python not installed")
+@pytest.mark.asyncio
+async def test_cel_router_async():
+    """Test CEL router with async execution."""
+    step_a = Step(name="step_a", executor=lambda x: StepOutput(content="Async Step A"))
+    step_b = Step(name="step_b", executor=lambda x: StepOutput(content="Async Step B"))
+
+    router = Router(
+        name="CEL Async Router",
+        selector='input.contains("option_a") ? "step_a" : "step_b"',
+        choices=[step_a, step_b],
+    )
+
+    result = await router.aexecute(StepInput(input="Select option_a please"))
+
+    assert len(result.steps) == 1
+    assert "Async Step A" in result.steps[0].content
+
+
+@pytest.mark.skipif(not CEL_AVAILABLE, reason="cel-python not installed")
+def test_cel_router_with_steps_component():
+    """Test CEL router routing to a Steps component."""
+    step_1 = Step(name="step_1", executor=lambda x: StepOutput(content="Step 1"))
+    step_2 = Step(name="step_2", executor=lambda x: StepOutput(content="Step 2"))
+    sequence = Steps(name="sequence", steps=[step_1, step_2])
+    single = Step(name="single", executor=lambda x: StepOutput(content="Single"))
+
+    router = Router(
+        name="CEL Steps Router",
+        selector='input.contains("multi") ? "sequence" : "single"',
+        choices=[sequence, single],
+    )
+
+    # Route to sequence
+    result_multi = router.execute(StepInput(input="multi step request"))
+    assert find_content_in_steps(result_multi, "Step 1")
+    assert find_content_in_steps(result_multi, "Step 2")
+
+    # Route to single
+    result_single = router.execute(StepInput(input="simple request"))
+    assert len(result_single.steps) == 1
+    assert "Single" in result_single.steps[0].content
+
+
+@pytest.mark.skipif(not CEL_AVAILABLE, reason="cel-python not installed")
+def test_cel_router_nested_additional_data():
+    """Test CEL router with nested additional_data access."""
+    step_a = Step(name="step_a", executor=lambda x: StepOutput(content="Step A"))
+    step_b = Step(name="step_b", executor=lambda x: StepOutput(content="Step B"))
+
+    router = Router(
+        name="CEL Nested Data Router",
+        selector='additional_data.config.mode == "advanced" ? "step_a" : "step_b"',
+        choices=[step_a, step_b],
+    )
+
+    # Route based on nested config
+    result_advanced = router.execute(StepInput(input="test", additional_data={"config": {"mode": "advanced"}}))
+    assert len(result_advanced.steps) == 1
+    assert "Step A" in result_advanced.steps[0].content
+
+    result_basic = router.execute(StepInput(input="test", additional_data={"config": {"mode": "basic"}}))
+    assert len(result_basic.steps) == 1
+    assert "Step B" in result_basic.steps[0].content

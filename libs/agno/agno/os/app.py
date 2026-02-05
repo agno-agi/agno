@@ -425,7 +425,7 @@ class AgentOS:
         return FastAPI(
             title=self.name or "Agno AgentOS",
             version=self.version or "1.0.0",
-            description=self.description or "An agent operating system.",
+            description=self.description or "Your multi-agent operating system.",
             docs_url="/docs" if self.settings.docs_enabled else None,
             redoc_url="/redoc" if self.settings.docs_enabled else None,
             openapi_url="/openapi.json" if self.settings.docs_enabled else None,
