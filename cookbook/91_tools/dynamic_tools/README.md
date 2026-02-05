@@ -133,10 +133,13 @@ agent = Agent(
     callable_knowledge_cache_key=lambda ctx: ctx.dependencies.get("tenant_id", "_default_"),
 )
 
-# Cache by combination of user and tenant (applies to both tools and knowledge)
+# Cache by combination of user and tenant (set both if you want the same key)
+cache_key = lambda ctx: f"{ctx.user_id}:{ctx.dependencies.get('tenant_id')}"
 agent = Agent(
     tools=get_tools,
-    callable_cache_key=lambda ctx: f"{ctx.user_id}:{ctx.dependencies.get('tenant_id')}",
+    knowledge=get_knowledge,
+    callable_tools_cache_key=cache_key,
+    callable_knowledge_cache_key=cache_key,
 )
 ```
 

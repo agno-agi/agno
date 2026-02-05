@@ -49,7 +49,7 @@ def test_callable_tools_cached_by_session_id_when_user_id_missing():
     assert ctx1.tools is not ctx2.tools
 
 
-def test_callable_cache_key_overrides_default():
+def test_callable_tools_cache_key_overrides_default():
     calls = {"count": 0}
 
     def get_tools(run_context: RunContext):
@@ -59,7 +59,7 @@ def test_callable_cache_key_overrides_default():
     agent = Agent(
         tools=get_tools,
         cache_callables=True,
-        callable_cache_key=lambda ctx: str((ctx.dependencies or {}).get("tenant_id")),
+        callable_tools_cache_key=lambda ctx: str((ctx.dependencies or {}).get("tenant_id")),
     )
 
     ctx_a = RunContext(run_id="r1", session_id="s1", user_id="alice", dependencies={"tenant_id": "acme"})
@@ -138,7 +138,8 @@ def test_clear_callable_cache_can_close_sync_resources():
         tools=get_tools,
         knowledge=get_knowledge,  # type: ignore[arg-type]
         cache_callables=True,
-        callable_cache_key=lambda ctx: "k",
+        callable_tools_cache_key=lambda ctx: "k",
+        callable_knowledge_cache_key=lambda ctx: "k",
     )
 
     ctx = RunContext(run_id="r1", session_id="s1", user_id="alice")
@@ -204,7 +205,8 @@ async def test_aclear_callable_cache_can_close_async_resources():
         tools=get_tools,
         knowledge=get_knowledge,  # type: ignore[arg-type]
         cache_callables=True,
-        callable_cache_key=lambda ctx: "k",
+        callable_tools_cache_key=lambda ctx: "k",
+        callable_knowledge_cache_key=lambda ctx: "k",
     )
 
     ctx = RunContext(run_id="r1", session_id="s1", user_id="alice")

@@ -309,16 +309,11 @@ class Agent:
     # creating new instances (e.g., new database connections) on every run.
     # Recommended when using callable tools/knowledge for per-user isolation.
     cache_callables: bool = True
-    # Custom cache key function for callable tools/knowledge. Receives RunContext
-    # and returns a string key. Default uses user_id (falls back to session_id).
-    # Use this to cache by
-    # session_id, tenant_id, or any combination:
-    #   cache_key=lambda ctx: ctx.session_id  # Cache per session
-    #   cache_key=lambda ctx: f"{ctx.user_id}:{ctx.dependencies.get('tenant_id')}"
-    callable_cache_key: Optional[Callable[[RunContext], str]] = None
-    # Tool-specific callable cache key function. Overrides callable_cache_key for tools.
+    # Tool-specific callable cache key function.
+    # Receives RunContext and returns a string key. Default uses user_id (falls back to session_id).
     callable_tools_cache_key: Optional[Callable[[RunContext], str]] = None
-    # Knowledge-specific callable cache key function. Overrides callable_cache_key for knowledge.
+    # Knowledge-specific callable cache key function.
+    # Receives RunContext and returns a string key. Default uses user_id (falls back to session_id).
     callable_knowledge_cache_key: Optional[Callable[[RunContext], str]] = None
 
     # Maximum number of tool calls allowed.
@@ -556,7 +551,6 @@ class Agent:
             ]
         ] = None,
         cache_callables: bool = True,
-        callable_cache_key: Optional[Callable[[RunContext], str]] = None,
         callable_tools_cache_key: Optional[Callable[[RunContext], str]] = None,
         callable_knowledge_cache_key: Optional[Callable[[RunContext], str]] = None,
         tool_call_limit: Optional[int] = None,
@@ -699,7 +693,6 @@ class Agent:
         else:
             self.tools = list(tools) if tools else []
         self.cache_callables = cache_callables
-        self.callable_cache_key = callable_cache_key
         self.callable_tools_cache_key = callable_tools_cache_key
         self.callable_knowledge_cache_key = callable_knowledge_cache_key
         self.tool_call_limit = tool_call_limit
@@ -1135,8 +1128,7 @@ class Agent:
 
         Resolution order:
         1. kind-specific callable cache key (callable_tools_cache_key / callable_knowledge_cache_key)
-        2. shared callable cache key (callable_cache_key)
-        3. default: user_id (fallback to session_id)
+        2. default: user_id (fallback to session_id)
 
         Args:
             run_context: The current run context.
@@ -1149,8 +1141,6 @@ class Agent:
             return self.callable_tools_cache_key(run_context)
         if kind == "knowledge" and self.callable_knowledge_cache_key is not None:
             return self.callable_knowledge_cache_key(run_context)
-        if self.callable_cache_key is not None:
-            return self.callable_cache_key(run_context)
         if run_context.user_id:
             return run_context.user_id
         return run_context.session_id
