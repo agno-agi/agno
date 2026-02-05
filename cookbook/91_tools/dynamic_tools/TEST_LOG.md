@@ -79,6 +79,6 @@ Tools are correctly filtered based on role from `session_state`.
 ## Notes
 
 - All cookbooks require `OPENAI_API_KEY` for the agent's model
-- DuckDB tools require `duckdb` package (`pip install duckdb`)
-- Cookbook 05 requires `chromadb` for the knowledge base
+- DuckDB tools require `duckdb` (`VIRTUAL_ENV=.venvs/demo uv pip install duckdb`)
+- Cookbook 05 requires `chromadb` (`VIRTUAL_ENV=.venvs/demo uv pip install chromadb`)
 - API errors (401) in test output are expected when `OPENAI_API_KEY` is not set

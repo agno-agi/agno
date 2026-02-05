@@ -162,11 +162,14 @@ agent.clear_callable_cache()
 ## Running Examples
 
 ```bash
-# Ensure dependencies are installed
-pip install duckdb chromadb
+# Ensure the demo venv exists
+./scripts/demo_setup.sh
+
+# Install optional deps used by these examples
+VIRTUAL_ENV=.venvs/demo uv pip install duckdb chromadb
 
 # Run any example
-python cookbook/91_tools/dynamic_tools/01_user_namespaced_tools.py
+OPENAI_API_KEY=... .venvs/demo/bin/python cookbook/91_tools/dynamic_tools/01_user_namespaced_tools.py
 ```
 
 ## Related
