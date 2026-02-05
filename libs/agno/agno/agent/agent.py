@@ -55,16 +55,16 @@ from agno.utils.safe_formatter import SafeFormatter
 
 @dataclass(init=False)
 class Agent(
-    AgentInitTrait,
-    AgentRunTrait,
-    AgentHooksTrait,
-    AgentToolsTrait,
-    AgentStorageTrait,
-    AgentMessagesTrait,
-    AgentResponseTrait,
-    AgentDefaultToolsTrait,
-    AgentApiTrait,
-    AgentTelemetryTrait,
+    AgentInitTrait,  # Initialization, configuration, and model setup
+    AgentRunTrait,  # Core run loop (sync/async) + streaming lifecycle
+    AgentHooksTrait,  # Pre/post-run hooks + tool execution glue
+    AgentToolsTrait,  # Tool registration, resolution, and invocation
+    AgentStorageTrait,  # Session persistence + serialization helpers
+    AgentMessagesTrait,  # Prompt + message history construction
+    AgentResponseTrait,  # Response formatting + structured output helpers
+    AgentDefaultToolsTrait,  # Built-in tools (memory, knowledge, etc.)
+    AgentApiTrait,  # Convenience APIs (print_response, etc.)
+    AgentTelemetryTrait,  # Logging, metrics, and observability
 ):
     """Agent: The core AI agent class.
 
@@ -79,6 +79,10 @@ class Agent(
         - AgentDefaultToolsTrait: Built-in tools (memory, knowledge, etc.).
         - AgentApiTrait: API endpoint generation and serving.
         - AgentTelemetryTrait: Logging, metrics, and observability.
+
+    Note:
+        Trait order is intentional. If two traits define the same method, Python's
+        Method Resolution Order (MRO) means traits listed earlier take precedence.
     """
 
     # --- Agent settings ---

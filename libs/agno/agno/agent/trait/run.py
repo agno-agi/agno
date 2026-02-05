@@ -5,6 +5,7 @@ import time
 import warnings
 from collections import deque
 from typing import (
+    TYPE_CHECKING,
     Any,
     AsyncIterator,
     Dict,
@@ -21,20 +22,12 @@ from typing import (
 )
 from uuid import uuid4
 
-from pydantic import BaseModel
-
 from agno.agent.trait.base import AgentTraitBase
-from agno.exceptions import (
-    InputCheckError,
-    OutputCheckError,
-    RunCancelledException,
-)
-from agno.filters import FilterExpr
-from agno.media import Audio, File, Image, Video
+
+from agno.exceptions import InputCheckError, OutputCheckError, RunCancelledException
 from agno.models.base import Model
-from agno.models.message import Message
 from agno.models.metrics import Metrics
-from agno.models.response import ModelResponse, ToolExecution
+
 from agno.run import RunContext, RunStatus
 from agno.run.agent import (
     RunInput,
@@ -49,10 +42,7 @@ from agno.run.cancel import (
     raise_if_cancelled,
     register_run,
 )
-from agno.run.messages import RunMessages
-from agno.run.requirement import RunRequirement
-from agno.session import AgentSession
-from agno.tools.function import Function
+
 from agno.utils.agent import (
     await_for_open_threads,
     await_for_thread_tasks_stream,
@@ -74,17 +64,21 @@ from agno.utils.events import (
     create_session_summary_started_event,
     handle_event,
 )
-from agno.utils.hooks import (
-    normalize_post_hooks,
-    normalize_pre_hooks,
-)
-from agno.utils.log import (
-    log_debug,
-    log_error,
-    log_info,
-    log_warning,
-)
+from agno.utils.hooks import normalize_post_hooks, normalize_pre_hooks
+from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.merge_dict import merge_dictionaries
+
+if TYPE_CHECKING:
+    from pydantic import BaseModel
+
+    from agno.filters import FilterExpr
+    from agno.media import Audio, File, Image, Video
+    from agno.models.message import Message
+    from agno.models.response import ModelResponse, ToolExecution
+    from agno.run.messages import RunMessages
+    from agno.run.requirement import RunRequirement
+    from agno.session import AgentSession
+    from agno.tools.function import Function
 
 
 class AgentRunTrait(AgentTraitBase):
