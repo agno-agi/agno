@@ -181,8 +181,8 @@ def session_selector_widget(agent: Agent, model_id: str, agent_creation_callback
                             if result:
                                 logger.info(f"Session renamed to: {new_name.strip()}")
                                 # Clear any cached session data to ensure fresh reload
-                                if hasattr(agent, "_agent_session") and agent._agent_session:
-                                    agent._agent_session = None
+                                if getattr(agent, "_cached_session", None) is not None:
+                                    agent._cached_session = None
                             st.session_state.session_edit_mode = False
                             st.sidebar.success("Session renamed!")
                             st.rerun()

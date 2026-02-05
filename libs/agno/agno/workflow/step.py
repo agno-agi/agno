@@ -166,7 +166,7 @@ class Step:
 
         # --- Handle Agent reconstruction ---
         if "agent_id" in config and config["agent_id"]:
-            from agno.agent.agent import get_agent_by_id
+            from agno.agent.registry import get_agent_by_id
 
             agent_id = config.get("agent_id")
             if db is not None and agent_id is not None:

@@ -183,7 +183,7 @@ class TestStepFromDict:
             "strict_input_validation": False,
         }
 
-        with patch("agno.agent.agent.get_agent_by_id") as mock_get_agent:
+        with patch("agno.agent.registry.get_agent_by_id") as mock_get_agent:
             mock_get_agent.return_value = mock_agent
 
             mock_db = MagicMock()

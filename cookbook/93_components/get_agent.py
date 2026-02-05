@@ -2,7 +2,7 @@
 This cookbook demonstrates how to get an agent from the database.
 """
 
-from agno.agent.agent import get_agent_by_id, get_agents  # noqa: F401
+from agno.agent.registry import get_agent_by_id, get_agents  # noqa: F401
 from agno.db.postgres import PostgresDb
 
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
