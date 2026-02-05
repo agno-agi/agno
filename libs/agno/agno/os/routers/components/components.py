@@ -243,6 +243,8 @@ def attach_routes(
                 update_kwargs["description"] = body.description
             if body.metadata is not None:
                 update_kwargs["metadata"] = body.metadata
+            if body.current_version is not None:
+                update_kwargs["current_version"] = body.current_version
             if body.component_type is not None:
                 update_kwargs["component_type"] = DbComponentType(body.component_type)
 
