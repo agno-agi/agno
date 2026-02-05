@@ -40,6 +40,12 @@ python cookbook/92_models/azure/openai/basic_stream.py
 python cookbook/92_models/azure/openai/basic.py
 ```
 
+- Responses API (streaming off)
+
+```shell
+python cookbook/92_models/azure/openai/responses_basic.py
+```
+
 ### 5. Run Agent with Tools
 
 - DuckDuckGo Search
