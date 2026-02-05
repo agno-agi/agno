@@ -229,6 +229,39 @@ def test_get_messages_with_limit_skip_incomplete_tool_results(shared_db):
     assert messages[3].content == "Assistant response"
 
 
+def test_chat_history_restores_missing_tool_results():
+    """Ensure chat history synthesizes tool results when they are absent in storage."""
+    runs = [
+        RunOutput(
+            run_id="run1",
+            status=RunStatus.completed,
+            messages=[
+                Message(role="user", content="Need the latest status"),
+                Message(
+                    role="assistant",
+                    content="Calling the status tool",
+                    tool_calls=[
+                        {
+                            "id": "status-tool-1",
+                            "type": "function",
+                            "function": {"name": "get_status", "arguments": '{"ticket_id": "42"}'},
+                        }
+                    ],
+                ),
+                Message(role="assistant", content="All good now!"),
+            ],
+        )
+    ]
+
+    agent_session = AgentSession(session_id="session-with-missing-tool", runs=runs)
+
+    history = agent_session.get_chat_history()
+    assert len(history) == 4
+    assert history[2].role == "tool"
+    assert history[2].tool_call_id == "status-tool-1"
+    assert history[3].content == "All good now!"
+
+
 def test_get_messages_skip_history_messages(shared_db):
     """Test that messages tagged as from_history are skipped"""
     session_id = f"test_session_{uuid.uuid4()}"

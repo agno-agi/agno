@@ -10,6 +10,7 @@ from agno.run.agent import RunOutput, RunStatus
 from agno.run.team import TeamRunOutput
 from agno.session.summary import SessionSummary
 from agno.utils.log import log_debug, log_warning
+from agno.utils.session_loader import ensure_message_continuity
 
 
 @dataclass
@@ -225,6 +226,9 @@ class TeamSession:
                     else:
                         messages_from_history.append(message)
 
+        # Validate and fix tool messages before returning
+        messages_from_history = ensure_message_continuity(messages_from_history)
+        
         log_debug(f"Getting messages from previous runs: {len(messages_from_history)}")
         return messages_from_history
 
@@ -337,3 +341,34 @@ class TeamSession:
             return None
 
         return self.summary  # type: ignore
+
+    # Chat History functions
+    def get_chat_history(
+        self, skip_history_messages: bool = True, skip_roles: Optional[List[str]] = None
+    ) -> List[Message]:
+        """
+        Get the chat history for the session.
+        This is all messages across all runs for the team leader.
+        """
+
+        messages: List[Message] = []
+        if self.runs is None:
+            return []
+
+        for run in self.runs or []:
+            if run.parent_run_id is not None:
+                continue
+
+            if run.messages is not None:
+                filtered_messages = []
+                for msg in run.messages or []:
+                    if skip_history_messages and msg.from_history:
+                        continue
+                    if skip_roles and msg.role in skip_roles:
+                        continue
+                    filtered_messages.append(msg)
+
+                if filtered_messages:
+                    messages.extend(ensure_message_continuity(filtered_messages))
+
+        return messages
