@@ -432,7 +432,7 @@ class AgentStorageTrait(AgentTraitBase):
             config["store_media"] = self.store_media
         if not self.store_tool_messages:
             config["store_tool_messages"] = self.store_tool_messages
-        if not self.store_history_messages:
+        if self.store_history_messages:
             config["store_history_messages"] = self.store_history_messages
 
         # --- System message settings ---
@@ -750,7 +750,7 @@ class AgentStorageTrait(AgentTraitBase):
             send_media_to_model=config.get("send_media_to_model", True),
             store_media=config.get("store_media", True),
             store_tool_messages=config.get("store_tool_messages", True),
-            store_history_messages=config.get("store_history_messages", True),
+            store_history_messages=config.get("store_history_messages", False),
             # --- System message settings ---
             system_message=config.get("system_message"),
             system_message_role=config.get("system_message_role", "system"),

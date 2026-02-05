@@ -160,6 +160,16 @@ class TestAgentToDict:
         assert "retries" not in config  # defaults to 0
         assert "add_history_to_context" not in config  # defaults to False
 
+    def test_to_dict_store_history_messages_included_only_when_true(self):
+        """Test to_dict stores store_history_messages only when set to True."""
+        default_agent = Agent(id="default-store-history")
+        default_config = default_agent.to_dict()
+        assert "store_history_messages" not in default_config
+
+        enabled_agent = Agent(id="enabled-store-history", store_history_messages=True)
+        enabled_config = enabled_agent.to_dict()
+        assert enabled_config["store_history_messages"] is True
+
     def test_to_dict_with_db(self, basic_agent, mock_db):
         """Test to_dict includes database configuration."""
         basic_agent.db = mock_db
@@ -272,6 +282,11 @@ class TestAgentFromDict:
         assert agent.num_history_runs == 5
         assert agent.add_history_to_context is True
         assert agent.add_datetime_to_context is True
+
+    def test_from_dict_defaults_store_history_messages_to_false(self):
+        """Test from_dict uses False as the default for store_history_messages."""
+        agent = Agent.from_dict({"id": "default-store-history-agent"})
+        assert agent.store_history_messages is False
 
     def test_from_dict_with_db_postgres(self):
         """Test from_dict reconstructs PostgresDb."""

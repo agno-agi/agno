@@ -23,11 +23,9 @@ from typing import (
 from uuid import uuid4
 
 from agno.agent.trait.base import AgentTraitBase
-
 from agno.exceptions import InputCheckError, OutputCheckError, RunCancelledException
 from agno.models.base import Model
 from agno.models.metrics import Metrics
-
 from agno.run import RunContext, RunStatus
 from agno.run.agent import (
     RunInput,
@@ -42,7 +40,6 @@ from agno.run.cancel import (
     raise_if_cancelled,
     register_run,
 )
-
 from agno.utils.agent import (
     await_for_open_threads,
     await_for_thread_tasks_stream,
@@ -971,6 +968,20 @@ class AgentRunTrait(AgentTraitBase):
         # output_schema parameter takes priority, even if run_context was provided
         run_context.output_schema = output_schema
 
+        # Merge caller-provided metadata into run_context metadata
+        if metadata is not None:
+            if run_context.metadata is None:
+                run_context.metadata = metadata
+            else:
+                merge_dictionaries(run_context.metadata, metadata)
+
+        # Merge agent metadata with run metadata
+        if self.metadata is not None:
+            if run_context.metadata is None:
+                run_context.metadata = self.metadata
+            else:
+                merge_dictionaries(run_context.metadata, self.metadata)
+
         # Resolve dependencies
         if run_context.dependencies is not None:
             self._resolve_run_dependencies(run_context=run_context)
@@ -1003,10 +1014,6 @@ class AgentRunTrait(AgentTraitBase):
         # Prepare arguments for the model
         response_format = self._get_response_format(run_context=run_context) if self.parser_model is None else None
         self.model = cast(Model, self.model)
-
-        # Merge agent metadata with run metadata
-        if self.metadata is not None and metadata is not None:
-            merge_dictionaries(metadata, self.metadata)
 
         # Create a new run_response for this attempt
         run_response = RunOutput(
@@ -2052,13 +2059,6 @@ class AgentRunTrait(AgentTraitBase):
         if self.knowledge_filters or knowledge_filters:
             knowledge_filters = self._get_effective_filters(knowledge_filters)
 
-        # Merge agent metadata with run metadata
-        if self.metadata is not None:
-            if metadata is None:
-                metadata = self.metadata
-            else:
-                merge_dictionaries(metadata, self.metadata)
-
         # Resolve output_schema parameter takes precedence, then fall back to self.output_schema
         if output_schema is None:
             output_schema = self.output_schema
@@ -2071,11 +2071,24 @@ class AgentRunTrait(AgentTraitBase):
             session_state=session_state,
             dependencies=dependencies,
             knowledge_filters=knowledge_filters,
-            metadata=metadata,
             output_schema=output_schema,
         )
         # output_schema parameter takes priority, even if run_context was provided
         run_context.output_schema = output_schema
+
+        # Merge caller-provided metadata into run_context metadata
+        if metadata is not None:
+            if run_context.metadata is None:
+                run_context.metadata = metadata
+            else:
+                merge_dictionaries(run_context.metadata, metadata)
+
+        # Merge agent metadata with run metadata
+        if self.metadata is not None:
+            if run_context.metadata is None:
+                run_context.metadata = self.metadata
+            else:
+                merge_dictionaries(run_context.metadata, self.metadata)
 
         # Prepare arguments for the model (must be after run_context is fully initialized)
         response_format = self._get_response_format(run_context=run_context) if self.parser_model is None else None
@@ -2249,6 +2262,20 @@ class AgentRunTrait(AgentTraitBase):
             dependencies=dependencies,
         )
 
+        # Merge caller-provided metadata into run_context metadata
+        if metadata is not None:
+            if run_context.metadata is None:
+                run_context.metadata = metadata
+            else:
+                merge_dictionaries(run_context.metadata, metadata)
+
+        # Merge agent metadata with run metadata
+        if self.metadata is not None:
+            if run_context.metadata is None:
+                run_context.metadata = self.metadata
+            else:
+                merge_dictionaries(run_context.metadata, self.metadata)
+
         # Resolve dependencies
         if run_context.dependencies is not None:
             self._resolve_run_dependencies(run_context=run_context)
@@ -2256,14 +2283,6 @@ class AgentRunTrait(AgentTraitBase):
         # When filters are passed manually
         if self.knowledge_filters or run_context.knowledge_filters or knowledge_filters:
             run_context.knowledge_filters = self._get_effective_filters(knowledge_filters)
-
-        # Merge agent metadata with run metadata
-        run_context.metadata = metadata
-        if self.metadata is not None:
-            if run_context.metadata is None:
-                run_context.metadata = self.metadata
-            else:
-                merge_dictionaries(run_context.metadata, self.metadata)
 
         # Use stream override value when necessary
         if stream is None:
@@ -2934,13 +2953,6 @@ class AgentRunTrait(AgentTraitBase):
         if self.knowledge_filters or knowledge_filters:
             knowledge_filters = self._get_effective_filters(knowledge_filters)
 
-        # Merge agent metadata with run metadata
-        if self.metadata is not None:
-            if metadata is None:
-                metadata = self.metadata
-            else:
-                merge_dictionaries(metadata, self.metadata)
-
         # Prepare arguments for the model
         response_format = self._get_response_format(run_context=run_context)
         self.model = cast(Model, self.model)
@@ -2953,8 +2965,21 @@ class AgentRunTrait(AgentTraitBase):
             session_state={},
             dependencies=dependencies,
             knowledge_filters=knowledge_filters,
-            metadata=metadata,
         )
+
+        # Merge caller-provided metadata into run_context metadata
+        if metadata is not None:
+            if run_context.metadata is None:
+                run_context.metadata = metadata
+            else:
+                merge_dictionaries(run_context.metadata, metadata)
+
+        # Merge agent metadata with run metadata
+        if self.metadata is not None:
+            if run_context.metadata is None:
+                run_context.metadata = self.metadata
+            else:
+                merge_dictionaries(run_context.metadata, self.metadata)
 
         if stream:
             return self._acontinue_run_stream(
@@ -3005,8 +3030,8 @@ class AgentRunTrait(AgentTraitBase):
 
         Steps:
         1. Read existing session from db
-        2. Resolve dependencies
-        3. Update metadata and session state
+        2. Update metadata and session state
+        3. Resolve dependencies
         4. Prepare run response
         5. Determine tools for model
         6. Prepare run messages
@@ -3032,11 +3057,7 @@ class AgentRunTrait(AgentTraitBase):
                     # 1. Read existing session from db
                     agent_session = await self._aread_or_create_session(session_id=session_id, user_id=user_id)
 
-                    # 2. Resolve dependencies
-                    if run_context.dependencies is not None:
-                        await self._aresolve_run_dependencies(run_context=run_context)
-
-                    # 3. Update metadata and session state
+                    # 2. Update metadata and session state
                     self._update_metadata(session=agent_session)
 
                     # Initialize session state. Get it from DB if relevant.
@@ -3044,6 +3065,10 @@ class AgentRunTrait(AgentTraitBase):
                         session=agent_session,
                         session_state=run_context.session_state if run_context.session_state is not None else {},
                     )
+
+                    # 3. Resolve dependencies (including callable dependency values)
+                    if run_context.dependencies is not None:
+                        await self._aresolve_run_dependencies(run_context=run_context)
 
                     # 4. Prepare run response
                     if run_response is not None:
