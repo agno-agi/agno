@@ -10,6 +10,7 @@ import re
 import time
 from inspect import isawaitable
 from typing import TYPE_CHECKING, Optional, Union
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 from agno.db.schemas.scheduler import Schedule, ScheduleRun
@@ -174,7 +175,8 @@ class ScheduleExecutor:
 
         # Determine if we should stream based on the endpoint
         # Agent/team/workflow run endpoints support streaming.
-        should_stream = bool(_STREAMING_RUN_ENDPOINT_RE.match(schedule.endpoint))
+        endpoint_path = urlsplit(schedule.endpoint).path
+        should_stream = bool(_STREAMING_RUN_ENDPOINT_RE.match(endpoint_path))
 
         async with httpx.AsyncClient(timeout=timeout) as client:
             if should_stream and schedule.method.upper() == "POST":

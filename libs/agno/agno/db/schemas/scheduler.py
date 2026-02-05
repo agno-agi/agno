@@ -15,7 +15,7 @@ class Schedule:
 
     # What to call (HTTP request)
     method: str = "POST"
-    endpoint: str = ""  # e.g., '/v1/agents/daily-reporter/runs'
+    endpoint: str = ""  # e.g., '/agents/daily-reporter/runs'
     payload: Optional[Dict[str, Any]] = None
 
     # When to run
@@ -42,7 +42,9 @@ class Schedule:
     def __post_init__(self) -> None:
         """Automatically set/normalize created_at and updated_at."""
         self.created_at = now_epoch_s() if self.created_at is None else to_epoch_s(self.created_at)
-        if self.updated_at is not None:
+        if self.updated_at is None:
+            self.updated_at = self.created_at
+        else:
             self.updated_at = to_epoch_s(self.updated_at)
         if self.next_run_at is not None:
             self.next_run_at = to_epoch_s(self.next_run_at)

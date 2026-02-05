@@ -12,13 +12,13 @@ class TestSchedule:
             id="test-id",
             name="test-schedule",
             cron_expr="0 3 * * *",
-            endpoint="/v1/agents/my-agent/runs",
+            endpoint="/agents/my-agent/runs",
         )
 
         assert schedule.id == "test-id"
         assert schedule.name == "test-schedule"
         assert schedule.cron_expr == "0 3 * * *"
-        assert schedule.endpoint == "/v1/agents/my-agent/runs"
+        assert schedule.endpoint == "/agents/my-agent/runs"
         assert schedule.method == "POST"  # Default
         assert schedule.timezone == "UTC"  # Default
         assert schedule.enabled is True  # Default
@@ -33,7 +33,7 @@ class TestSchedule:
             name="test-schedule",
             description="A test schedule",
             method="POST",
-            endpoint="/v1/agents/my-agent/runs",
+            endpoint="/agents/my-agent/runs",
             payload={"message": "Hello"},
             cron_expr="0 3 * * *",
             timezone="America/New_York",
@@ -65,7 +65,7 @@ class TestSchedule:
             id="test-id",
             name="test-schedule",
             cron_expr="0 3 * * *",
-            endpoint="/v1/agents/my-agent/runs",
+            endpoint="/agents/my-agent/runs",
         )
 
         data = schedule.to_dict()
@@ -73,7 +73,7 @@ class TestSchedule:
         assert data["id"] == "test-id"
         assert data["name"] == "test-schedule"
         assert data["cron_expr"] == "0 3 * * *"
-        assert data["endpoint"] == "/v1/agents/my-agent/runs"
+        assert data["endpoint"] == "/agents/my-agent/runs"
         assert "created_at" in data
         # None values should be excluded
         assert "description" not in data or data.get("description") is None
@@ -86,7 +86,7 @@ class TestSchedule:
             "id": "test-id",
             "name": "test-schedule",
             "cron_expr": "0 3 * * *",
-            "endpoint": "/v1/agents/my-agent/runs",
+            "endpoint": "/agents/my-agent/runs",
             "method": "POST",
             "timezone": "UTC",
             "timeout_seconds": 3600,
@@ -129,7 +129,7 @@ class TestSchedule:
             name="test-schedule",
             description="Test description",
             method="POST",
-            endpoint="/v1/agents/my-agent/runs",
+            endpoint="/agents/my-agent/runs",
             payload={"key": "value"},
             cron_expr="0 3 * * *",
             timezone="America/New_York",

@@ -32,7 +32,7 @@ def sample_schedule():
         name="test-schedule",
         description="A test schedule",
         method="POST",
-        endpoint="/v1/agents/test-agent/runs",
+        endpoint="/agents/test-agent/runs",
         payload={"message": "Hello from scheduler"},
         cron_expr="0 3 * * *",
         timezone="UTC",

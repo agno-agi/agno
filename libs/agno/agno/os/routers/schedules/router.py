@@ -36,6 +36,27 @@ if TYPE_CHECKING:
 
 T = TypeVar("T")
 
+_ALLOWED_HTTP_METHODS = {"GET", "POST", "PUT", "DELETE"}
+
+
+def _normalize_http_method(method: str) -> str:
+    normalized = method.strip().upper()
+    if normalized not in _ALLOWED_HTTP_METHODS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported method '{method}'. Supported methods: {', '.join(sorted(_ALLOWED_HTTP_METHODS))}",
+        )
+    return normalized
+
+
+def _validate_endpoint_path(endpoint: str) -> str:
+    endpoint = endpoint.strip()
+    if not endpoint.startswith("/"):
+        raise HTTPException(status_code=400, detail="Endpoint must start with '/' (e.g., '/agents/my-agent/runs')")
+    if "://" in endpoint:
+        raise HTTPException(status_code=400, detail="Endpoint must be a relative path (not a full URL)")
+    return endpoint
+
 
 async def _maybe_await(value: Union[T, Awaitable[T]]) -> T:
     if isawaitable(value):
@@ -199,6 +220,9 @@ def get_schedule_router(
         if db is None:
             raise HTTPException(status_code=500, detail="No database available")
 
+        endpoint = _validate_endpoint_path(request.endpoint)
+        method = _normalize_http_method(request.method)
+
         # Validate cron expression
         try:
             if not validate_cron_expr(request.cron_expr):
@@ -223,8 +247,8 @@ def get_schedule_router(
             id=str(uuid4()),
             name=request.name,
             description=request.description,
-            endpoint=request.endpoint,
-            method=request.method,
+            endpoint=endpoint,
+            method=method,
             payload=request.payload,
             cron_expr=request.cron_expr,
             timezone=request.timezone,
@@ -288,9 +312,9 @@ def get_schedule_router(
         if request.description is not None:
             schedule.description = request.description
         if request.endpoint is not None:
-            schedule.endpoint = request.endpoint
+            schedule.endpoint = _validate_endpoint_path(request.endpoint)
         if request.method is not None:
-            schedule.method = request.method
+            schedule.method = _normalize_http_method(request.method)
         if request.payload is not None:
             schedule.payload = request.payload
         if request.timeout_seconds is not None:
