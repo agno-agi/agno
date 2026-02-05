@@ -112,3 +112,10 @@ This installs the `croniter` package required for cron expression parsing.
 2. **External Scheduler**: For high-availability, consider using external schedulers (Kubernetes CronJobs, AWS EventBridge) that call the AgentOS trigger endpoint.
 
 3. **Authentication**: The scheduler uses an internal service token for scheduled HTTP calls. This token is accepted by OS security-key auth, and (when JWT middleware/RBAC is enabled) is treated as an internal admin token so schedules keep working. Keep this token secret.
+
+4. **RBAC scopes (JWT auth)**: When JWT authorization is enabled, the default scope mappings require:
+   - `schedules:read` for listing schedules + run history
+   - `schedules:write` for create/update/enable/disable/trigger
+   - `schedules:delete` for deleting schedules
+
+5. **Multi-replica note**: `internal_service_token` is generated per-process by default. For multi-replica deployments behind a load balancer, set a shared `internal_service_token` across replicas and/or set `scheduler_base_url` to a per-container localhost URL so scheduler calls stay within the same container.
