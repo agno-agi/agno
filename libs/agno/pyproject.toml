@@ -134,6 +134,7 @@ redshift = ["redshift-connector"]
 reportlab = ["reportlab"]
 scrapegraph = ["scrapegraph-py"]
 todoist = ["todoist-api-python"]
+tzafon = ["tzafon", "playwright"]
 valyu = ["valyu"]
 webex = ["webexpythonsdk"]
 yfinance = ["yfinance"]
@@ -268,6 +269,7 @@ tools = [
   "agno[redshift]",
   "agno[reportlab]",
   "agno[trafilatura]",
+  "agno[tzafon]",
   "agno[neo4j]",
 ]
 
@@ -536,6 +538,7 @@ module = [
   "todoist_api_python.*",
   "tweepy.*",
   "twilio.*",
+  "tzafon.*",
   "tzlocal.*",
   "upstash_vector.*",
   "urllib3.*",
