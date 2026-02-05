@@ -217,6 +217,16 @@ def test_get_system_prompt_includes_scripts(mock_loader: MockSkillLoader) -> Non
     assert "helper.py" in snippet
 
 
+def test_get_system_prompt_shows_none_when_no_scripts(minimal_skill: Skill) -> None:
+    """Test that system prompt shows <scripts>none</scripts> when skill has no scripts."""
+    loader = MockSkillLoader([minimal_skill])
+    skills = Skills(loaders=[loader])
+    snippet = skills.get_system_prompt_snippet()
+
+    # Should explicitly show "none" instead of omitting the tag
+    assert "<scripts>none</scripts>" in snippet
+
+
 def test_get_system_prompt_includes_references(mock_loader: MockSkillLoader) -> None:
     """Test that system prompt includes references list."""
     skills = Skills(loaders=[mock_loader])
