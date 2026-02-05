@@ -1,4 +1,4 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
@@ -7,6 +7,7 @@ from agno.agent.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.run import RunContext
 from agno.run.agent import RunOutput
+from agno.session import AgentSession
 from agno.utils.string import is_valid_uuid
 
 
@@ -210,3 +211,33 @@ async def test_acontinue_run_merges_metadata_into_existing_run_context_when_meta
     called_run_context = continue_run_mock.call_args.kwargs["run_context"]
     assert called_run_context.metadata == {"ctx": "v", "k": "v"}
     assert run_context.metadata == {"ctx": "v", "k": "v"}
+
+
+@pytest.mark.asyncio
+async def test_acontinue_run_loads_db_session_state_before_resolving_async_dependencies():
+    agent = Agent(model=OpenAIChat(id="gpt-4o-mini"))
+    run_context = RunContext(
+        run_id=str(uuid4()),
+        session_id="test-session",
+        session_state={},
+        dependencies={"resolve_from_session_state": lambda run_context: run_context.session_state["k"]},
+    )
+    run_response = RunOutput(run_id=str(uuid4()), session_id="test-session", messages=[])
+    agent_session = AgentSession(
+        session_id="test-session",
+        session_data={"session_state": {"k": "loaded-from-db"}},
+    )
+
+    with (
+        patch.object(agent, "_aread_or_create_session", new=AsyncMock(return_value=agent_session)),
+        patch.object(agent, "aget_tools", new=AsyncMock(side_effect=RuntimeError("stop-after-deps"))),
+        patch.object(agent, "_acleanup_and_store", new=AsyncMock(return_value=None)),
+        patch.object(agent, "_disconnect_mcp_tools", new=AsyncMock(return_value=None)),
+    ):
+        await agent._acontinue_run(
+            session_id="test-session",
+            run_context=run_context,
+            run_response=run_response,
+        )
+
+    assert run_context.dependencies["resolve_from_session_state"] == "loaded-from-db"

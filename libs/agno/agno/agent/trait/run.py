@@ -3042,8 +3042,8 @@ class AgentRunTrait(AgentTraitBase):
 
         Steps:
         1. Read existing session from db
-        2. Resolve dependencies
-        3. Update metadata and session state
+        2. Update metadata and session state
+        3. Resolve dependencies
         4. Prepare run response
         5. Determine tools for model
         6. Prepare run messages
@@ -3069,11 +3069,7 @@ class AgentRunTrait(AgentTraitBase):
                     # 1. Read existing session from db
                     agent_session = await self._aread_or_create_session(session_id=session_id, user_id=user_id)
 
-                    # 2. Resolve dependencies
-                    if run_context.dependencies is not None:
-                        await self._aresolve_run_dependencies(run_context=run_context)
-
-                    # 3. Update metadata and session state
+                    # 2. Update metadata and session state
                     self._update_metadata(session=agent_session)
 
                     # Initialize session state. Get it from DB if relevant.
@@ -3081,6 +3077,10 @@ class AgentRunTrait(AgentTraitBase):
                         session=agent_session,
                         session_state=run_context.session_state if run_context.session_state is not None else {},
                     )
+
+                    # 3. Resolve dependencies (including callable dependency values)
+                    if run_context.dependencies is not None:
+                        await self._aresolve_run_dependencies(run_context=run_context)
 
                     # Resolve callable tools and knowledge after session state & dependencies are resolved.
                     await self._aresolve_callables(run_context=run_context, session_state=run_context.session_state)
