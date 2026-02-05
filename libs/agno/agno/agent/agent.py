@@ -11941,7 +11941,7 @@ class Agent:
 
         return get_tool_call_history
 
-    def _update_session_state_tool(self, session_state, session_state_updates: dict) -> str:
+    def _update_session_state_tool(self, run_context: RunContext, session_state_updates: dict) -> str:
         """
         Update the shared session state.  Provide any updates as a dictionary of key-value pairs.
         Example:
@@ -11950,6 +11950,10 @@ class Agent:
         Args:
             session_state_updates (dict): The updates to apply to the shared session state. Should be a dictionary of key-value pairs.
         """
+
+        if run_context.session_state is None:
+            run_context.session_state = {}
+        session_state = run_context.session_state
         for key, value in session_state_updates.items():
             session_state[key] = value
 
