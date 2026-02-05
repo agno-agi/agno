@@ -407,6 +407,7 @@ class AgentOS:
                     poller=self._scheduler_poller,
                     scheduler_base_url=self.scheduler_base_url,
                     internal_token=self._internal_service_token,
+                    db_id=self.db.id if self.db is not None else None,
                 )
             )
 
@@ -732,6 +733,7 @@ class AgentOS:
                     poller=self._scheduler_poller,
                     scheduler_base_url=self.scheduler_base_url,
                     internal_token=self._internal_service_token,
+                    db_id=self.db.id if self.db is not None else None,
                 )
             )
         # Add component and registry routers only if a sync db (BaseDb) is available

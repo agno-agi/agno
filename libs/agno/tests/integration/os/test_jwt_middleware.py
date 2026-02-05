@@ -1,6 +1,6 @@
 """Integration tests for JWT middleware functionality."""
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch
 
 import jwt
@@ -16,6 +16,9 @@ from agno.os.middleware import JWTMiddleware, TokenSource
 # Test JWT secret
 JWT_SECRET = "test-secret-key-for-integration-tests"
 
+# Python 3.9 compatibility: datetime.UTC exists only on newer versions.
+UTC = timezone.utc
+
 
 @pytest.fixture
 def jwt_token():
@@ -23,8 +26,8 @@ def jwt_token():
     payload = {
         "sub": "test_user_123",  # Will be extracted as user_id
         "session_id": "test_session_456",  # Will be extracted as session_id
-        "exp": datetime.now(UTC) + timedelta(hours=1),
-        "iat": datetime.now(UTC),
+        "exp": datetime.now(timezone.utc) + timedelta(hours=1),
+        "iat": datetime.now(timezone.utc),
         # Dependency claims
         "name": "John Doe",
         "email": "john@example.com",

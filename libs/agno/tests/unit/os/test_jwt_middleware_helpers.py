@@ -279,6 +279,30 @@ def test_returns_scopes_for_trace_session_stats(middleware_with_auth):
     assert "traces:read" in scopes
 
 
+def test_returns_scopes_for_schedules_list(middleware_with_auth):
+    """Test scopes for listing schedules."""
+    scopes = middleware_with_auth._get_required_scopes("GET", "/schedules")
+    assert "schedules:read" in scopes
+
+
+def test_returns_scopes_for_schedule_create(middleware_with_auth):
+    """Test scopes for creating schedules."""
+    scopes = middleware_with_auth._get_required_scopes("POST", "/schedules")
+    assert "schedules:write" in scopes
+
+
+def test_returns_scopes_for_schedule_delete(middleware_with_auth):
+    """Test scopes for deleting schedules."""
+    scopes = middleware_with_auth._get_required_scopes("DELETE", "/schedules/schedule-123")
+    assert "schedules:delete" in scopes
+
+
+def test_returns_scopes_for_schedule_runs(middleware_with_auth):
+    """Test scopes for schedule run history endpoints."""
+    scopes = middleware_with_auth._get_required_scopes("GET", "/schedules/schedule-123/runs")
+    assert "schedules:read" in scopes
+
+
 def test_returns_empty_for_unknown_route(middleware_with_auth):
     """Test that unknown routes return empty scopes."""
     scopes = middleware_with_auth._get_required_scopes("GET", "/unknown/route")

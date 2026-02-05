@@ -152,6 +152,7 @@ def get_schedule_router(
     poller: Optional["SchedulePoller"] = None,
     scheduler_base_url: str = "http://localhost:7777",
     internal_token: Optional[str] = None,
+    db_id: Optional[str] = None,
 ) -> APIRouter:
     """Create the schedule management router.
 
@@ -161,6 +162,8 @@ def get_schedule_router(
         poller: Optional schedule poller for manual triggers.
         scheduler_base_url: Base URL used for internal schedule execution.
         internal_token: Internal service token used for scheduled HTTP calls.
+        db_id: Optional database ID to use for schedule storage. When provided,
+            schedule CRUD + run history will consistently use the matching DB.
 
     Returns:
         FastAPI router with schedule endpoints.
@@ -194,7 +197,7 @@ def get_schedule_router(
         limit: int = Query(20, ge=1, le=100, description="Maximum number of schedules to return"),
         offset: int = Query(0, ge=0, description="Number of schedules to skip"),
     ) -> ScheduleListResponse:
-        db = await get_db(dbs)
+        db = await get_db(dbs, db_id=db_id)
         if db is None:
             raise HTTPException(status_code=500, detail="No database available")
 
@@ -216,7 +219,7 @@ def get_schedule_router(
         status_code=201,
     )
     async def create_schedule(request: ScheduleCreateRequest) -> ScheduleResponse:
-        db = await get_db(dbs)
+        db = await get_db(dbs, db_id=db_id)
         if db is None:
             raise HTTPException(status_code=500, detail="No database available")
 
@@ -274,7 +277,7 @@ def get_schedule_router(
         response_model=ScheduleResponse,
     )
     async def get_schedule_endpoint(schedule_id: str) -> ScheduleResponse:
-        db = await get_db(dbs)
+        db = await get_db(dbs, db_id=db_id)
         if db is None:
             raise HTTPException(status_code=500, detail="No database available")
 
@@ -292,7 +295,7 @@ def get_schedule_router(
         response_model=ScheduleResponse,
     )
     async def update_schedule_endpoint(schedule_id: str, request: ScheduleUpdateRequest) -> ScheduleResponse:
-        db = await get_db(dbs)
+        db = await get_db(dbs, db_id=db_id)
         if db is None:
             raise HTTPException(status_code=500, detail="No database available")
 
@@ -364,7 +367,7 @@ def get_schedule_router(
         status_code=204,
     )
     async def delete_schedule_endpoint(schedule_id: str) -> None:
-        db = await get_db(dbs)
+        db = await get_db(dbs, db_id=db_id)
         if db is None:
             raise HTTPException(status_code=500, detail="No database available")
 
@@ -380,7 +383,7 @@ def get_schedule_router(
         response_model=ScheduleResponse,
     )
     async def enable_schedule(schedule_id: str) -> ScheduleResponse:
-        db = await get_db(dbs)
+        db = await get_db(dbs, db_id=db_id)
         if db is None:
             raise HTTPException(status_code=500, detail="No database available")
 
@@ -408,7 +411,7 @@ def get_schedule_router(
         response_model=ScheduleResponse,
     )
     async def disable_schedule(schedule_id: str) -> ScheduleResponse:
-        db = await get_db(dbs)
+        db = await get_db(dbs, db_id=db_id)
         if db is None:
             raise HTTPException(status_code=500, detail="No database available")
 
@@ -428,7 +431,7 @@ def get_schedule_router(
         response_model=TriggerResponse,
     )
     async def trigger_schedule(schedule_id: str) -> TriggerResponse:
-        db = await get_db(dbs)
+        db = await get_db(dbs, db_id=db_id)
         if db is None:
             raise HTTPException(status_code=500, detail="No database available")
 
@@ -483,7 +486,7 @@ def get_schedule_router(
         limit: int = Query(20, ge=1, le=100, description="Maximum number of runs to return"),
         offset: int = Query(0, ge=0, description="Number of runs to skip"),
     ) -> ScheduleRunListResponse:
-        db = await get_db(dbs)
+        db = await get_db(dbs, db_id=db_id)
         if db is None:
             raise HTTPException(status_code=500, detail="No database available")
 
@@ -509,7 +512,7 @@ def get_schedule_router(
         response_model=ScheduleRunResponse,
     )
     async def get_schedule_run_endpoint(schedule_id: str, run_id: str) -> ScheduleRunResponse:
-        db = await get_db(dbs)
+        db = await get_db(dbs, db_id=db_id)
         if db is None:
             raise HTTPException(status_code=500, detail="No database available")
 

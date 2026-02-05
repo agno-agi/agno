@@ -52,6 +52,9 @@ class AgentOSScope(str, Enum):
     - evals:write - Create and update evaluation runs
     - evals:delete - Delete evaluation runs
     - traces:read - View traces and trace statistics
+    - schedules:read - View schedules and run history
+    - schedules:write - Create/update/trigger schedules
+    - schedules:delete - Delete schedules
 
     Per-Resource Scopes (with resource ID):
     - agents:<agent-id>:read - Read specific agent
@@ -434,6 +437,17 @@ def get_default_scope_mappings() -> Dict[str, List[str]]:
         "GET /traces": ["traces:read"],
         "GET /traces/*": ["traces:read"],
         "GET /trace_session_stats": ["traces:read"],
+        # Schedule endpoints (admin-ish surface; schedule execution can call arbitrary endpoints)
+        "GET /schedules": ["schedules:read"],
+        "GET /schedules/*": ["schedules:read"],
+        "POST /schedules": ["schedules:write"],
+        "PATCH /schedules/*": ["schedules:write"],
+        "DELETE /schedules/*": ["schedules:delete"],
+        "POST /schedules/*/enable": ["schedules:write"],
+        "POST /schedules/*/disable": ["schedules:write"],
+        "POST /schedules/*/trigger": ["schedules:write"],
+        "GET /schedules/*/runs": ["schedules:read"],
+        "GET /schedules/*/runs/*": ["schedules:read"],
     }
 
 
