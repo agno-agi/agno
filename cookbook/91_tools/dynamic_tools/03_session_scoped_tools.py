@@ -14,7 +14,7 @@ Key concepts:
 - run_context.session_id: Unique identifier for the current session
 - Ephemeral data: Data exists only for the duration of the session
 - Clean slate: Each new session starts fresh
-- callable_cache_key: Cache by session_id instead of default user_id
+- callable_tools_cache_key: Cache tools by session_id instead of default user_id
 """
 
 import tempfile
@@ -77,7 +77,7 @@ agent = Agent(
     # Cache by session_id instead of user_id for session-scoped tools.
     # This ensures each session gets its own cached tools while still
     # benefiting from caching within the same session.
-    callable_cache_key=lambda ctx: ctx.session_id,
+    callable_tools_cache_key=lambda ctx: ctx.session_id,
     instructions="""\
 You are a workspace assistant with a session-scoped database.
 

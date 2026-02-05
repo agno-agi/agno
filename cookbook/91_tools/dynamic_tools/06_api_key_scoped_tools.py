@@ -12,7 +12,7 @@ Key concepts:
 - run_context.dependencies: Contains API keys and credentials
 - Tools created with user-specific credentials
 - Each user's API calls are isolated to their account
-- callable_cache_key: Cache tools per credential set (avoid stale/leaked credentials)
+- callable_tools_cache_key: Cache tools per credential set (avoid stale/leaked credentials)
 """
 
 import hashlib
@@ -143,7 +143,7 @@ agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
     tools=get_api_tools,
     # Cache tools per credential set so different users/tiers don't share clients.
-    callable_cache_key=get_api_cache_key,
+    callable_tools_cache_key=get_api_cache_key,
     instructions="""\
 You are a weather assistant that provides weather information.
 

@@ -14,7 +14,7 @@ Key concepts:
 - run_context.dependencies: Contains tenant_id from your auth layer
 - run_context.session_state: Alternative source for tenant context
 - Complete data isolation at the tool level
-- callable_cache_key: Cache tools per tenant_id (avoid cross-tenant reuse)
+- callable_tools_cache_key: Cache tools per tenant_id (avoid cross-tenant reuse)
 """
 
 import tempfile
@@ -114,7 +114,7 @@ agent = Agent(
     # Pass the callable - tools are created per-run with tenant context
     tools=get_tenant_tools,
     # Cache per tenant_id to avoid cross-tenant reuse when cache_callables=True.
-    callable_cache_key=get_tenant_cache_key,
+    callable_tools_cache_key=get_tenant_cache_key,
     instructions="""\
 You are a database assistant for a multi-tenant SaaS application.
 Each tenant has their own isolated database.

@@ -119,7 +119,7 @@ agent = Agent(
     # Callable knowledge - resolved per-run based on tenant context
     knowledge=get_tenant_knowledge,
     # Cache per tenant_id instead of per user_id.
-    callable_cache_key=get_tenant_cache_key,
+    callable_knowledge_cache_key=get_tenant_cache_key,
     search_knowledge=True,
     instructions="""\
 You are an enterprise knowledge assistant serving multiple organizations.
