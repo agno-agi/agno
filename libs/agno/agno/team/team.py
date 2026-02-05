@@ -7094,7 +7094,7 @@ class Team:
             get_chat_history_func = get_chat_history  # type: ignore
         return Function.from_callable(get_chat_history_func, name="get_chat_history")
 
-    def _update_session_state_tool(self, session_state, session_state_updates: dict) -> str:
+    def _update_session_state_tool(self, run_context: RunContext, session_state_updates: dict) -> str:
         """
         Update the shared session state.  Provide any updates as a dictionary of key-value pairs.
         Example:
@@ -7103,6 +7103,9 @@ class Team:
         Args:
             session_state_updates (dict): The updates to apply to the shared session state. Should be a dictionary of key-value pairs.
         """
+        if run_context.session_state is None:
+            run_context.session_state = {}
+        session_state = run_context.session_state
         for key, value in session_state_updates.items():
             session_state[key] = value
 
