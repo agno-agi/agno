@@ -14,7 +14,7 @@ from typing import (
 
 from pydantic import BaseModel
 
-from agno.agent._agent_facet_base import AgentFacetBase
+from agno.agent.trait.base import AgentTraitBase
 from agno.models.base import Model
 from agno.run import RunContext
 from agno.run.agent import (
@@ -41,7 +41,7 @@ from agno.utils.log import (
 )
 
 
-class AgentToolsFacet(AgentFacetBase):
+class AgentToolsTrait(AgentTraitBase):
     def get_tools(
         self,
         run_response: RunOutput,

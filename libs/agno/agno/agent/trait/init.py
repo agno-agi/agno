@@ -12,7 +12,7 @@ from typing import (
     cast,
 )
 
-from agno.agent._agent_facet_base import AgentFacetBase
+from agno.agent.trait.base import AgentTraitBase
 from agno.compression.manager import CompressionManager
 from agno.culture.manager import CultureManager
 from agno.db.base import AsyncBaseDb
@@ -35,7 +35,7 @@ from agno.utils.safe_formatter import SafeFormatter
 from agno.utils.string import generate_id_from_name
 
 
-class AgentInitFacet(AgentFacetBase):
+class AgentInitTrait(AgentTraitBase):
     @property
     def background_executor(self) -> Any:
         """Lazy initialization of shared thread pool executor for background tasks.

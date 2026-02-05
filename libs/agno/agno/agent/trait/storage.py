@@ -13,7 +13,7 @@ from uuid import uuid4
 from pydantic import BaseModel
 from typing_extensions import Self
 
-from agno.agent._agent_facet_base import AgentFacetBase
+from agno.agent.trait.base import AgentTraitBase
 from agno.db.base import BaseDb, ComponentType, SessionType, UserMemory
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.utils import db_from_dict
@@ -54,7 +54,7 @@ from agno.utils.merge_dict import merge_dictionaries
 from agno.utils.string import generate_id_from_name
 
 
-class AgentStorageFacet(AgentFacetBase):
+class AgentStorageTrait(AgentTraitBase):
     def _read_session(
         self, session_id: str, session_type: SessionType = SessionType.AGENT
     ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession]]:

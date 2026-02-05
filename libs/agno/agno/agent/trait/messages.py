@@ -15,7 +15,7 @@ from typing import (
 from pydantic import BaseModel
 from typing_extensions import Self
 
-from agno.agent._agent_facet_base import AgentFacetBase
+from agno.agent.trait.base import AgentTraitBase
 from agno.filters import FilterExpr
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Message, MessageReferences
@@ -44,7 +44,7 @@ from agno.utils.prompts import get_json_output_prompt, get_response_model_format
 from agno.utils.timer import Timer
 
 
-class AgentMessagesFacet(AgentFacetBase):
+class AgentMessagesTrait(AgentTraitBase):
     # -*- System & User Message Functions
     def _format_message_with_state_variables(
         self,

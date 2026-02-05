@@ -13,7 +13,7 @@ from typing import (
 
 from pydantic import BaseModel
 
-from agno.agent._agent_facet_base import AgentFacetBase
+from agno.agent.trait.base import AgentTraitBase
 from agno.filters import FilterExpr
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Message
@@ -43,7 +43,7 @@ from agno.utils.reasoning import (
 )
 
 
-class AgentApiFacet(AgentFacetBase):
+class AgentApiTrait(AgentTraitBase):
     ###########################################################################
     # Print Response
     ###########################################################################

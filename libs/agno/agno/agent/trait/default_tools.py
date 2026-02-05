@@ -10,7 +10,7 @@ from typing import (
     cast,
 )
 
-from agno.agent._agent_facet_base import AgentFacetBase
+from agno.agent.trait.base import AgentTraitBase
 from agno.culture.manager import CultureManager
 from agno.db.base import BaseDb, SessionType
 from agno.filters import FilterExpr
@@ -32,7 +32,7 @@ from agno.utils.log import (
 from agno.utils.timer import Timer
 
 
-class AgentDefaultToolsFacet(AgentFacetBase):
+class AgentDefaultToolsTrait(AgentTraitBase):
     ###########################################################################
     # Default Tools
     ###########################################################################

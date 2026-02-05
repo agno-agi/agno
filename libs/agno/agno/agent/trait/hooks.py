@@ -21,7 +21,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel
 
-from agno.agent._agent_facet_base import AgentFacetBase
+from agno.agent.trait.base import AgentTraitBase
 from agno.exceptions import (
     InputCheckError,
     OutputCheckError,
@@ -85,7 +85,7 @@ from agno.utils.response import (
 from agno.utils.string import parse_response_dict_str, parse_response_model_str
 
 
-class AgentHooksFacet(AgentFacetBase):
+class AgentHooksTrait(AgentTraitBase):
     def _execute_pre_hooks(
         self,
         hooks: Optional[List[Callable[..., Any]]],

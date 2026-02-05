@@ -23,7 +23,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel
 
-from agno.agent._agent_facet_base import AgentFacetBase
+from agno.agent.trait.base import AgentTraitBase
 from agno.exceptions import (
     InputCheckError,
     OutputCheckError,
@@ -87,7 +87,7 @@ from agno.utils.log import (
 from agno.utils.merge_dict import merge_dictionaries
 
 
-class AgentRunFacet(AgentFacetBase):
+class AgentRunTrait(AgentTraitBase):
     def _initialize_session(
         self,
         session_id: Optional[str] = None,

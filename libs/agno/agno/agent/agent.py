@@ -1,7 +1,7 @@
 """Public Agent entrypoint.
 
-`Agent`'s implementation is intentionally split across internal facet modules in
-`agno.agent._agent_*` to keep this file readable while preserving the public API.
+`Agent`'s implementation is intentionally split across internal trait modules in
+`agno.agent.trait.*` to keep this file readable while preserving the public API.
 """
 
 from __future__ import annotations
@@ -21,16 +21,16 @@ from typing import (
 
 from pydantic import BaseModel
 
-from agno.agent._agent_api import AgentApiFacet
-from agno.agent._agent_default_tools import AgentDefaultToolsFacet
-from agno.agent._agent_hooks import AgentHooksFacet
-from agno.agent._agent_init import AgentInitFacet
-from agno.agent._agent_messages import AgentMessagesFacet
-from agno.agent._agent_response import AgentResponseFacet
-from agno.agent._agent_run import AgentRunFacet
-from agno.agent._agent_storage import AgentStorageFacet
-from agno.agent._agent_telemetry import AgentTelemetryFacet
-from agno.agent._agent_tools import AgentToolsFacet
+from agno.agent.trait.api import AgentApiTrait
+from agno.agent.trait.default_tools import AgentDefaultToolsTrait
+from agno.agent.trait.hooks import AgentHooksTrait
+from agno.agent.trait.init import AgentInitTrait
+from agno.agent.trait.messages import AgentMessagesTrait
+from agno.agent.trait.response import AgentResponseTrait
+from agno.agent.trait.run import AgentRunTrait
+from agno.agent.trait.storage import AgentStorageTrait
+from agno.agent.trait.telemetry import AgentTelemetryTrait
+from agno.agent.trait.tools import AgentToolsTrait
 from agno.compression.manager import CompressionManager
 from agno.culture.manager import CultureManager
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType
@@ -57,17 +57,32 @@ from agno.utils.safe_formatter import SafeFormatter
 
 @dataclass(init=False)
 class Agent(
-    AgentInitFacet,
-    AgentRunFacet,
-    AgentHooksFacet,
-    AgentToolsFacet,
-    AgentStorageFacet,
-    AgentMessagesFacet,
-    AgentResponseFacet,
-    AgentDefaultToolsFacet,
-    AgentApiFacet,
-    AgentTelemetryFacet,
+    AgentInitTrait,
+    AgentRunTrait,
+    AgentHooksTrait,
+    AgentToolsTrait,
+    AgentStorageTrait,
+    AgentMessagesTrait,
+    AgentResponseTrait,
+    AgentDefaultToolsTrait,
+    AgentApiTrait,
+    AgentTelemetryTrait,
 ):
+    """Agent: The core AI agent class.
+
+    Composed from modular traits that each handle a specific concern:
+        - AgentInitTrait: Initialization, configuration, and model setup.
+        - AgentRunTrait: Agent execution, streaming, and run lifecycle.
+        - AgentHooksTrait: Pre/post-run hooks and lifecycle callbacks.
+        - AgentToolsTrait: Tool registration, resolution, and invocation.
+        - AgentStorageTrait: Session and state persistence.
+        - AgentMessagesTrait: Message history and conversation management.
+        - AgentResponseTrait: Response formatting and structured output.
+        - AgentDefaultToolsTrait: Built-in tools (memory, knowledge, etc.).
+        - AgentApiTrait: API endpoint generation and serving.
+        - AgentTelemetryTrait: Logging, metrics, and observability.
+    """
+
     # --- Agent settings ---
     # Model for this Agent
     model: Optional[Model] = None

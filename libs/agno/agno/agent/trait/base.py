@@ -3,11 +3,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 
-class AgentFacetBase:
-    """Type-only base class for Agent facets.
+class AgentTraitBase:
+    """Type-only base class for Agent traits.
 
-    The Agent implementation is split across multiple facet modules. This base
-    defines the shared attributes as `Any` so mypy can type-check the facets
+    The Agent implementation is split across multiple trait modules. This base
+    defines the shared attributes as `Any` so mypy can type-check the traits
     without inferring incompatible instance-variable types.
     """
 

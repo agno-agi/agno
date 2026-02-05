@@ -6,13 +6,13 @@ from typing import (
     Optional,
 )
 
-from agno.agent._agent_facet_base import AgentFacetBase
+from agno.agent.trait.base import AgentTraitBase
 from agno.utils.log import (
     log_debug,
 )
 
 
-class AgentTelemetryFacet(AgentFacetBase):
+class AgentTelemetryTrait(AgentTraitBase):
     ###########################################################################
     # Api functions
     ###########################################################################

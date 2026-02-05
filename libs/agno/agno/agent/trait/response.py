@@ -11,7 +11,7 @@ from typing import (
     Union,
 )
 
-from agno.agent._agent_facet_base import AgentFacetBase
+from agno.agent.trait.base import AgentTraitBase
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.metrics import Metrics
@@ -41,7 +41,7 @@ from agno.utils.reasoning import (
 )
 
 
-class AgentResponseFacet(AgentFacetBase):
+class AgentResponseTrait(AgentTraitBase):
     def save_run_response_to_file(
         self,
         run_response: RunOutput,
