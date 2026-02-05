@@ -593,7 +593,7 @@ def get_agent_router(
                     agents.append(agent_response)
 
         if os.db and isinstance(os.db, BaseDb):
-            from agno.agent.agent import get_agents
+            from agno.agent.registry import get_agents
 
             db_agents = get_agents(db=os.db, registry=registry)
             if db_agents:

@@ -2,7 +2,8 @@
 This cookbook demonstrates how to use a registry to configure non-serializable components.
 """
 
-from agno.agent.agent import Agent, get_agent_by_id  # noqa: F401
+from agno.agent.agent import Agent  # noqa: F401
+from agno.agent.registry import get_agent_by_id  # noqa: F401
 from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIChat
 from agno.registry import Registry

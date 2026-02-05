@@ -371,8 +371,8 @@ class TestTeamFromDict:
             "members": [{"type": "agent", "agent_id": "agent-1"}],
         }
 
-        # get_agent_by_id is imported inside from_dict from agno.agent
-        with patch("agno.agent.get_agent_by_id") as mock_get_agent:
+        # get_agent_by_id is imported inside from_dict from agno.agent.registry
+        with patch("agno.agent.registry.get_agent_by_id") as mock_get_agent:
             mock_agent = MagicMock()
             mock_get_agent.return_value = mock_agent
 
