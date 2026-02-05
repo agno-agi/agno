@@ -939,12 +939,6 @@ class PgVector(VectorDb):
             List[Document]: List of matching documents.
         """
         try:
-            # Build the text search vector and rank
-            ts_vector = func.to_tsvector(self.content_language, self.table.c.content)
-            processed_query = self.enable_prefix_matching(query) if self.prefix_match else query
-            ts_query = func.websearch_to_tsquery(self.content_language, bindparam("query", value=processed_query))
-            text_rank = func.ts_rank_cd(ts_vector, ts_query)
-
             # Define the columns to select
             columns = [
                 self.table.c.id,
@@ -953,11 +947,18 @@ class PgVector(VectorDb):
                 self.table.c.content,
                 self.table.c.embedding,
                 self.table.c.usage,
-                text_rank.label("text_rank"),
             ]
 
             # Build the base statement
             stmt = select(*columns)
+
+            # Build the text search vector
+            ts_vector = func.to_tsvector(self.content_language, self.table.c.content)
+            # Create the ts_query using websearch_to_tsquery with parameter binding
+            processed_query = self.enable_prefix_matching(query) if self.prefix_match else query
+            ts_query = func.websearch_to_tsquery(self.content_language, bindparam("query", value=processed_query))
+            # Compute the text rank
+            text_rank = func.ts_rank_cd(ts_vector, ts_query)
 
             # Apply filters if provided
             if filters is not None:
@@ -995,14 +996,11 @@ class PgVector(VectorDb):
             # Process the results and convert to Document objects
             search_results: List[Document] = []
             for result in results:
-                meta_data = dict(result.meta_data) if result.meta_data else {}
-                meta_data["similarity_score"] = float(result.text_rank)
-
                 search_results.append(
                     Document(
                         id=result.id,
                         name=result.name,
-                        meta_data=meta_data,
+                        meta_data=result.meta_data,
                         content=result.content,
                         embedder=self.embedder,
                         embedding=result.embedding,
