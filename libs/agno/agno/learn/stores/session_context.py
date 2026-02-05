@@ -543,10 +543,7 @@ class SessionContextStore(LearningStore):
         messages_for_model = [
             system_message,
             # For models that require a non-system message
-            Message(
-                role="user",
-                content="Please analyze the conversation and update the session context using the available tools.",
-            ),
+            Message(role="user", content="Please analyze the conversation and update the session context using the available tools."),
         ]
 
         model_copy = deepcopy(self.model)
@@ -606,10 +603,7 @@ class SessionContextStore(LearningStore):
         messages_for_model = [
             system_message,
             # For models that require a non-system message
-            Message(
-                role="user",
-                content="Please analyze the conversation and update the session context using the available tools.",
-            ),
+            Message(role="user", content="Please analyze the conversation and update the session context using the available tools."),
         ]
 
         model_copy = deepcopy(self.model)
