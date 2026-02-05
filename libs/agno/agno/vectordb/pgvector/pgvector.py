@@ -848,13 +848,14 @@ class PgVector(VectorDb):
                     ]
                     stmt = stmt.where(and_(*sqlalchemy_conditions))
 
+            # Apply similarity threshold filter
             if self.similarity_threshold is not None:
                 distance_threshold = score_to_distance_threshold(self.similarity_threshold, self.distance)
                 if self.distance == Distance.max_inner_product:
-                    # pgvector returns negative IP, so negate the threshold
+                    # For inner product, negate threshold since pgvector returns negative values
                     stmt = stmt.where(distance_expr <= -distance_threshold)
                 else:
-                    # cosine and l2 lower the distance they are more similar
+                    # For cosine and L2, smaller distances mean higher similarity
                     stmt = stmt.where(distance_expr <= distance_threshold)
 
             stmt = stmt.order_by(distance_expr)
@@ -882,7 +883,7 @@ class PgVector(VectorDb):
 
             search_results: List[Document] = []
             for result in results:
-                # pgvector returns negative inner product, negate to get actual inner product
+                # For inner product, negate since pgvector returns negative values
                 raw_distance = -result.distance if self.distance == Distance.max_inner_product else result.distance
                 similarity_score = normalize_score(raw_distance, self.distance)
                 meta_data = dict(result.meta_data) if result.meta_data else {}
@@ -1053,7 +1054,7 @@ class PgVector(VectorDb):
             # Create the ts_query using websearch_to_tsquery with parameter binding
             processed_query = self.enable_prefix_matching(query) if self.prefix_match else query
             ts_query = func.websearch_to_tsquery(self.content_language, bindparam("query", value=processed_query))
-            # Compute the text rank (max 1.0 since ts_rank_cd can return unbounded values)
+            # Compute the text rank, capped at 1.0 for consistent scoring
             text_rank = func.least(func.ts_rank_cd(ts_vector, ts_query), 1.0)
 
             # Compute the vector similarity score
@@ -1065,13 +1066,15 @@ class PgVector(VectorDb):
             elif self.distance == Distance.cosine:
                 # For cosine distance, smaller distances are better
                 vector_distance = self.table.c.embedding.cosine_distance(query_embedding)
-                vector_score = 1 / (1 + vector_distance)
+                # Convert distance to similarity (cosine_distance = 1 - cosine_similarity)
+                vector_score = func.greatest(0.0, 1 - vector_distance)
             elif self.distance == Distance.max_inner_product:
                 # For inner product, higher values are better
-                # Assume embeddings are normalized, so inner product ranges from -1 to 1
-                raw_vector_score = self.table.c.embedding.max_inner_product(query_embedding)
+                # pgvector returns negative inner product, so negate to get actual value
+                negative_ip = self.table.c.embedding.max_inner_product(query_embedding)
+                inner_product = -negative_ip
                 # Normalize to range [0, 1]
-                vector_score = (raw_vector_score + 1) / 2
+                vector_score = func.greatest(0.0, func.least(1.0, (inner_product + 1) / 2))
             else:
                 log_error(f"Unknown distance metric: {self.distance}")
                 return []
