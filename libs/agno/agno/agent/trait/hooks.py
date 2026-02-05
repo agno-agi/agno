@@ -21,7 +21,6 @@ from typing import (
 from uuid import uuid4
 
 from agno.agent.trait.base import AgentTraitBase
-
 from agno.exceptions import (
     InputCheckError,
     OutputCheckError,
@@ -32,7 +31,6 @@ from agno.models.message import Message
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
 from agno.reasoning.step import ReasoningStep, ReasoningSteps
-
 from agno.run import RunContext, RunStatus
 from agno.run.agent import (
     RunEvent,
@@ -43,11 +41,9 @@ from agno.run.agent import (
 from agno.run.messages import RunMessages
 from agno.run.requirement import RunRequirement
 from agno.run.team import TeamRunOutputEvent
-
 from agno.session import AgentSession
 from agno.tools import Toolkit
 from agno.tools.function import Function
-
 from agno.utils.events import (
     create_compression_completed_event,
     create_compression_started_event,
