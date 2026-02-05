@@ -208,6 +208,7 @@ def _format_file_for_message(file: File) -> Optional[Dict[str, Any]]:
 
                 media_type = mimetypes.guess_type(file.filepath)[0] or "application/pdf"
 
+            # Map media type to source type, default to "base64" if no mapping exists
             source_type = mime_mapping.get(media_type, "base64")
 
             if source_type == "text":
@@ -236,6 +237,7 @@ def _format_file_for_message(file: File) -> Optional[Dict[str, Any]]:
     # Case 3: Document is bytes content
     elif file.content is not None:
         media_type = file.mime_type or "application/pdf"
+        # Map media type to source type, default to "base64" if no mapping exists
         source_type = mime_mapping.get(media_type, "base64")
 
         if source_type == "text":
