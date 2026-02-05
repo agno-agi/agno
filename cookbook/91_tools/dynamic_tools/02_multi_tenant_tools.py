@@ -14,6 +14,7 @@ Key concepts:
 - run_context.dependencies: Contains tenant_id from your auth layer
 - run_context.session_state: Alternative source for tenant context
 - Complete data isolation at the tool level
+- callable_cache_key: Cache tools per tenant_id (avoid cross-tenant reuse)
 """
 
 import tempfile
@@ -29,6 +30,25 @@ from agno.tools.toolkit import Toolkit
 
 # Create a temp directory for tenant databases
 TENANT_DATA_DIR = Path(tempfile.mkdtemp(prefix="tenant_dbs_"))
+
+def _safe_tenant_id(tenant_id: str) -> str:
+    """Sanitize tenant_id for safe directory/file names."""
+    return (
+        tenant_id.strip()
+        .lower()
+        .replace(" ", "_")
+        .replace("/", "_")
+        .replace("\\", "_")
+        .replace("..", "_")
+    )
+
+
+def get_tenant_cache_key(run_context: RunContext) -> str:
+    """Cache tools per tenant_id so different tenants never share tool instances."""
+    dependencies = run_context.dependencies or {}
+    session_state = run_context.session_state or {}
+    tenant_id = dependencies.get("tenant_id") or session_state.get("tenant_id")
+    return _safe_tenant_id(str(tenant_id)) if tenant_id else run_context.session_id
 
 
 # ============================================================================
@@ -67,8 +87,10 @@ def get_tenant_tools(
 
     print(f"Initializing tools for tenant: {tenant_id}")
 
+    safe_tenant_id = _safe_tenant_id(str(tenant_id))
+
     # Create tenant-specific directory
-    tenant_dir = TENANT_DATA_DIR / tenant_id
+    tenant_dir = TENANT_DATA_DIR / safe_tenant_id
     tenant_dir.mkdir(parents=True, exist_ok=True)
 
     # Each tenant gets their own database
@@ -91,6 +113,8 @@ agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
     # Pass the callable - tools are created per-run with tenant context
     tools=get_tenant_tools,
+    # Cache per tenant_id to avoid cross-tenant reuse when cache_callables=True.
+    callable_cache_key=get_tenant_cache_key,
     instructions="""\
 You are a database assistant for a multi-tenant SaaS application.
 Each tenant has their own isolated database.

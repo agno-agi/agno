@@ -103,11 +103,23 @@ def get_tenant_knowledge(
 # ============================================================================
 # Create the Multi-Tenant Agent
 # ============================================================================
+
+
+def get_tenant_cache_key(run_context: RunContext) -> str:
+    """Cache knowledge per tenant_id so users in the same tenant share it."""
+    dependencies = run_context.dependencies or {}
+    session_state = run_context.session_state or {}
+    tenant_id = dependencies.get("tenant_id") or session_state.get("tenant_id") or "public"
+    return str(tenant_id)
+
+
 agent = Agent(
     name="Enterprise Knowledge Assistant",
     model=OpenAIChat(id="gpt-4o-mini"),
     # Callable knowledge - resolved per-run based on tenant context
     knowledge=get_tenant_knowledge,
+    # Cache per tenant_id instead of per user_id.
+    callable_cache_key=get_tenant_cache_key,
     search_knowledge=True,
     instructions="""\
 You are an enterprise knowledge assistant serving multiple organizations.

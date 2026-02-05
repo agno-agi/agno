@@ -75,15 +75,22 @@ Create knowledge bases dynamically at runtime for per-user or per-tenant isolati
 
 ```python
 from agno.agent import Agent
+from agno.knowledge.embedder.openai import OpenAIEmbedder
+from agno.knowledge.knowledge import Knowledge
 from agno.run import RunContext
+from agno.vectordb.chroma import ChromaDb
 
 def get_user_knowledge(run_context: RunContext) -> Knowledge:
     """Create user-specific knowledge at runtime."""
-    user_id = run_context.user_id
+    user_id = run_context.user_id or "anonymous"
+    safe_user_id = user_id.replace("@", "_").replace(".", "_")
     return Knowledge(
         vector_db=ChromaDb(
-            collection=f"user_{user_id}_docs",
-            path=f"tmp/chromadb/users/{user_id}",
+            name=f"user_{safe_user_id}",
+            collection=f"user_{safe_user_id}_docs",
+            path=f"tmp/chromadb/users/{safe_user_id}",
+            persistent_client=True,
+            embedder=OpenAIEmbedder(id="text-embedding-3-small"),
         )
     )
 

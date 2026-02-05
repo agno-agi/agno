@@ -88,7 +88,7 @@ agent.run("Create a table", user_id="bob")
 
 ## Caching
 
-By default, callable tools and knowledge are cached per `user_id` (`cache_callables=True`). This avoids creating new database connections or expensive resources on every `run()`.
+By default, callable tools and knowledge are cached per `user_id` (`cache_callables=True`). If `user_id` is not provided, caching falls back to `session_id`. This avoids creating new database connections or expensive resources on every `run()`.
 
 ```python
 # First run for alice - calls get_user_tools()

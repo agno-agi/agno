@@ -310,7 +310,8 @@ class Agent:
     # Recommended when using callable tools/knowledge for per-user isolation.
     cache_callables: bool = True
     # Custom cache key function for callable tools/knowledge. Receives RunContext
-    # and returns a string key. Default uses user_id. Use this to cache by
+    # and returns a string key. Default uses user_id (falls back to session_id).
+    # Use this to cache by
     # session_id, tenant_id, or any combination:
     #   cache_key=lambda ctx: ctx.session_id  # Cache per session
     #   cache_key=lambda ctx: f"{ctx.user_id}:{ctx.dependencies.get('tenant_id')}"
@@ -536,7 +537,7 @@ class Agent:
         store_media: bool = True,
         store_tool_messages: bool = True,
         store_history_messages: bool = True,
-        knowledge: Optional[KnowledgeProtocol] = None,
+        knowledge: Optional[Union[KnowledgeProtocol, Callable[..., KnowledgeProtocol]]] = None,
         knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         enable_agentic_knowledge_filters: Optional[bool] = None,
         add_knowledge_to_context: bool = False,
@@ -786,7 +787,7 @@ class Agent:
         self._mcp_tools_initialized_on_run: List[Any] = []
         self._connectable_tools_initialized_on_run: List[Any] = []
 
-        # Caches for callable tools and knowledge, keyed by user_id to reuse instances
+        # Caches for callable tools and knowledge, keyed by the callable cache key to reuse instances
         self._tool_cache: Dict[str, List[Any]] = {}
         self._knowledge_cache: Dict[str, Any] = {}
 
@@ -1124,7 +1125,8 @@ class Agent:
     def _get_cache_key(self, run_context: RunContext) -> str:
         """Generate a cache key for callable resources based on run context.
 
-        Uses callable_cache_key if provided, otherwise defaults to user_id.
+        Uses callable_cache_key if provided, otherwise defaults to user_id,
+        falling back to session_id when user_id is not available.
         This enables per-user, per-session, or custom caching strategies.
 
         Args:
@@ -1135,8 +1137,9 @@ class Agent:
         """
         if self.callable_cache_key is not None:
             return self.callable_cache_key(run_context)
-        user_id = run_context.user_id or "_default_"
-        return user_id
+        if run_context.user_id:
+            return run_context.user_id
+        return run_context.session_id
 
     def clear_callable_cache(self, key: Optional[str] = None, user_id: Optional[str] = None) -> None:
         """Clear the callable tools and knowledge cache.
@@ -1167,7 +1170,7 @@ class Agent:
         """Resolve callable tools and knowledge, storing results in run_context.
 
         This method handles the resolution of callable tools and knowledge factories,
-        with caching support based on user_id. It should be called early in run/arun
+        with caching support based on the callable cache key. It should be called early in run/arun
         before tools or knowledge are accessed.
 
         Args:
@@ -1192,7 +1195,8 @@ class Agent:
                     )
                 except Exception as e:
                     raise RuntimeError(
-                        f"Failed to resolve callable knowledge for user_id={run_context.user_id}: {e}"
+                        "Failed to resolve callable knowledge "
+                        f"(cache_key={cache_key}, user_id={run_context.user_id}, session_id={run_context.session_id}): {e}"
                     ) from e
                 if self.cache_callables:
                     self._knowledge_cache[cache_key] = run_context.knowledge
@@ -1216,7 +1220,8 @@ class Agent:
                     )
                 except Exception as e:
                     raise RuntimeError(
-                        f"Failed to resolve callable tools for user_id={run_context.user_id}: {e}"
+                        "Failed to resolve callable tools "
+                        f"(cache_key={cache_key}, user_id={run_context.user_id}, session_id={run_context.session_id}): {e}"
                     ) from e
                 if self.cache_callables:
                     self._tool_cache[cache_key] = run_context.tools
@@ -1231,7 +1236,7 @@ class Agent:
         """Async version of _resolve_callables.
 
         Resolves callable tools and knowledge, supporting both sync and async factories.
-        Results are stored in run_context with caching based on user_id.
+        Results are stored in run_context with caching based on the callable cache key.
 
         Args:
             run_context: The run context to populate with resolved resources.
@@ -1255,7 +1260,8 @@ class Agent:
                     )
                 except Exception as e:
                     raise RuntimeError(
-                        f"Failed to resolve callable knowledge for user_id={run_context.user_id}: {e}"
+                        "Failed to resolve callable knowledge "
+                        f"(cache_key={cache_key}, user_id={run_context.user_id}, session_id={run_context.session_id}): {e}"
                     ) from e
                 if self.cache_callables:
                     self._knowledge_cache[cache_key] = run_context.knowledge
@@ -1279,7 +1285,8 @@ class Agent:
                     )
                 except Exception as e:
                     raise RuntimeError(
-                        f"Failed to resolve callable tools for user_id={run_context.user_id}: {e}"
+                        "Failed to resolve callable tools "
+                        f"(cache_key={cache_key}, user_id={run_context.user_id}, session_id={run_context.session_id}): {e}"
                     ) from e
                 if self.cache_callables:
                     self._tool_cache[cache_key] = run_context.tools
@@ -2336,6 +2343,9 @@ class Agent:
                     if run_context.dependencies is not None:
                         await self._aresolve_run_dependencies(run_context=run_context)
 
+                    # Resolve callable tools and knowledge after session state & dependencies are resolved.
+                    await self._aresolve_callables(run_context=run_context, session_state=run_context.session_state)
+
                     # 4. Execute pre-hooks
                     run_input = cast(RunInput, run_response.input)
                     self.model = cast(Model, self.model)
@@ -2698,6 +2708,9 @@ class Agent:
                     # 3. Resolve dependencies
                     if run_context.dependencies is not None:
                         await self._aresolve_run_dependencies(run_context=run_context)
+
+                    # Resolve callable tools and knowledge after session state & dependencies are resolved.
+                    await self._aresolve_callables(run_context=run_context, session_state=run_context.session_state)
 
                     # 4. Execute pre-hooks
                     run_input = cast(RunInput, run_response.input)
@@ -3286,11 +3299,6 @@ class Agent:
         )
         # output_schema parameter takes priority, even if run_context was provided
         run_context.output_schema = output_schema
-
-        # Resolve callable tools and knowledge
-        # Note: Using sync resolution since arun setup phase is synchronous
-        # (the async work happens in the returned iterator)
-        self._resolve_callables(run_context=run_context, session_state=session_state)
 
         # Prepare arguments for the model (must be after run_context is fully initialized)
         response_format = self._get_response_format(run_context=run_context) if self.parser_model is None else None
@@ -4174,10 +4182,6 @@ class Agent:
             metadata=metadata,
         )
 
-        # Resolve callable tools and knowledge
-        # Note: Using sync resolution since acontinue_run setup phase is synchronous
-        self._resolve_callables(run_context=run_context, session_state=run_context.session_state)
-
         if stream:
             return self._acontinue_run_stream(
                 run_response=run_response,
@@ -4307,6 +4311,9 @@ class Agent:
 
                     run_response = cast(RunOutput, run_response)
                     run_response.status = RunStatus.running
+
+                    # Resolve callable tools and knowledge after session state & dependencies are resolved.
+                    await self._aresolve_callables(run_context=run_context, session_state=run_context.session_state)
 
                     # 5. Determine tools for model
                     self.model = cast(Model, self.model)
@@ -4614,6 +4621,9 @@ class Agent:
 
                     run_response = cast(RunOutput, run_response)
                     run_response.status = RunStatus.running
+
+                    # Resolve callable tools and knowledge after session state & dependencies are resolved.
+                    await self._aresolve_callables(run_context=run_context, session_state=run_context.session_state)
 
                     # 5. Determine tools for model
                     self.model = cast(Model, self.model)
@@ -10861,6 +10871,9 @@ class Agent:
 
         # For tools, share MCP tools but copy others
         if field_name == "tools" and field_value is not None:
+            # Callable tools are factory functions resolved at runtime; keep reference as-is.
+            if self._is_tools_callable():
+                return field_value
             try:
                 copied_tools = []
                 for tool in field_value:
