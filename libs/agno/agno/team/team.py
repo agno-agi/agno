@@ -1982,7 +1982,20 @@ class Team:
                     # Handle run cancellation during streaming
                     log_info(f"Team run {run_response.run_id} was cancelled during streaming")
                     run_response.status = RunStatus.cancelled
-                    run_response.content = str(e)
+                    # Don't overwrite content - preserve any partial content that was streamed
+                    # Only set content if it's empty
+                    if not run_response.content:
+                        run_response.content = str(e)
+
+                    # Preserve partial messages if available
+                    if run_response.messages is None and run_messages is not None:
+                        messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
+                        if messages_for_run_response:
+                            run_response.messages = messages_for_run_response
+
+                    # Cleanup and store BEFORE yielding the cancellation event
+                    # This ensures the session is saved even if the consumer stops iterating
+                    self._cleanup_and_store(run_response=run_response, session=session)
 
                     # Yield the cancellation event
                     yield handle_event(
@@ -1991,7 +2004,6 @@ class Team:
                         events_to_skip=self.events_to_skip,
                         store_events=self.store_events,
                     )
-                    self._cleanup_and_store(run_response=run_response, session=session)
                     break
                 except (InputCheckError, OutputCheckError) as e:
                     run_response.status = RunStatus.error
@@ -2935,7 +2947,20 @@ class Team:
                     # Handle run cancellation during async streaming
                     log_info(f"Team run {run_response.run_id} was cancelled during async streaming")
                     run_response.status = RunStatus.cancelled
-                    run_response.content = str(e)
+                    # Don't overwrite content - preserve any partial content that was streamed
+                    # Only set content if it's empty
+                    if not run_response.content:
+                        run_response.content = str(e)
+
+                    # Preserve partial messages if available
+                    if run_response.messages is None and run_messages is not None:
+                        messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
+                        if messages_for_run_response:
+                            run_response.messages = messages_for_run_response
+
+                    # Cleanup and store BEFORE yielding the cancellation event
+                    # This ensures the session is saved even if the consumer stops iterating
+                    await self._acleanup_and_store(run_response=run_response, session=team_session)
 
                     # Yield the cancellation event
                     yield handle_event(  # type: ignore
@@ -2944,9 +2969,7 @@ class Team:
                         events_to_skip=self.events_to_skip,
                         store_events=self.store_events,
                     )
-
-                    # Cleanup and store the run response and session
-                    await self._acleanup_and_store(run_response=run_response, session=team_session)
+                    break
 
                 except (InputCheckError, OutputCheckError) as e:
                     run_response.status = RunStatus.error
@@ -4043,7 +4066,10 @@ class Team:
         self._update_session_metrics(session=session, run_response=run_response)
 
         # Save session to memory
+        log_info(f"_cleanup_and_store: About to save session {session.session_id} with {len(session.runs) if session.runs else 0} runs")
+        log_info(f"_cleanup_and_store: db={self.db}, parent_team_id={self.parent_team_id}, workflow_id={self.workflow_id}")
         self.save_session(session=session)
+        log_info(f"_cleanup_and_store: save_session completed")
 
     async def _acleanup_and_store(self, run_response: TeamRunOutput, session: TeamSession) -> None:
         #  Scrub the stored run based on storage flags
