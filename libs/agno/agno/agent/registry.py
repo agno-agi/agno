@@ -1,3 +1,9 @@
+"""Agent registry helpers.
+
+DB-backed helpers for loading/listing Agents from persisted config/component
+registries (e.g., database-backed config stores).
+"""
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, List, Optional
@@ -17,8 +23,7 @@ def get_agent_by_id(
     label: Optional[str] = None,
     registry: Optional[Registry] = None,
 ) -> Optional["Agent"]:
-    """
-    Get an Agent by id from the database (new entities/configs schema).
+    """Get an Agent by id from the database.
 
     Resolution order:
     - if label is provided: load that labeled version
@@ -58,9 +63,7 @@ def get_agents(
     db: BaseDb,
     registry: Optional[Registry] = None,
 ) -> List["Agent"]:
-    """
-    Get all agents from the database.
-    """
+    """Get all agents from the database."""
     from agno.agent.agent import Agent
 
     agents: List[Agent] = []
@@ -84,3 +87,10 @@ def get_agents(
     except Exception as e:
         log_error(f"Error loading Agents from database: {e}")
         return []
+
+
+__all__ = [
+    "get_agent_by_id",
+    "get_agents",
+]
+
