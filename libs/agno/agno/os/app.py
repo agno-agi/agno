@@ -434,7 +434,7 @@ class AgentOS:
             if self.db is not None and agent.db is None:
                 agent.db = self.db
             # Track all MCP tools to later handle their connection
-            if agent.tools:
+            if agent.tools and not callable(agent.tools):
                 for tool in agent.tools:
                     # Checking if the tool is an instance of MCPTools, MultiMCPTools, or a subclass of those
                     if hasattr(type(tool), "__mro__"):

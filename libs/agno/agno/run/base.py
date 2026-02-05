@@ -1,6 +1,6 @@
 from dataclasses import asdict, dataclass
 from enum import Enum
-from typing import Any, Dict, List, Optional, Type, Union
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Type, Union
 
 from pydantic import BaseModel
 
@@ -10,6 +10,11 @@ from agno.models.message import Citations, Message, MessageReferences
 from agno.models.metrics import Metrics
 from agno.reasoning.step import ReasoningStep
 from agno.utils.log import log_error
+
+if TYPE_CHECKING:
+    from agno.knowledge.protocol import KnowledgeProtocol
+    from agno.tools import Toolkit
+    from agno.tools.function import Function
 
 
 @dataclass
@@ -26,6 +31,8 @@ class RunContext:
     metadata: Optional[Dict[str, Any]] = None
     session_state: Optional[Dict[str, Any]] = None
     output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None
+    tools: Optional[List[Union["Toolkit", Callable, "Function", Dict[str, Any]]]] = None
+    knowledge: Optional["KnowledgeProtocol"] = None
 
 
 @dataclass

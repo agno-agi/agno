@@ -282,13 +282,14 @@ class AgentResponseTrait(AgentTraitBase):
             reasoning_model = deepcopy(self.model)
 
         # Create reasoning manager with config
+        runtime_tools = self._get_runtime_tools(run_context=run_context)
         manager = ReasoningManager(
             ReasoningConfig(
                 reasoning_model=reasoning_model,
                 reasoning_agent=self.reasoning_agent,
                 min_steps=self.reasoning_min_steps,
                 max_steps=self.reasoning_max_steps,
-                tools=self.tools,
+                tools=runtime_tools,
                 tool_call_limit=self.tool_call_limit,
                 use_json_mode=self.use_json_mode,
                 telemetry=self.telemetry,
@@ -325,13 +326,14 @@ class AgentResponseTrait(AgentTraitBase):
             reasoning_model = deepcopy(self.model)
 
         # Create reasoning manager with config
+        runtime_tools = self._get_runtime_tools(run_context=run_context)
         manager = ReasoningManager(
             ReasoningConfig(
                 reasoning_model=reasoning_model,
                 reasoning_agent=self.reasoning_agent,
                 min_steps=self.reasoning_min_steps,
                 max_steps=self.reasoning_max_steps,
-                tools=self.tools,
+                tools=runtime_tools,
                 tool_call_limit=self.tool_call_limit,
                 use_json_mode=self.use_json_mode,
                 telemetry=self.telemetry,

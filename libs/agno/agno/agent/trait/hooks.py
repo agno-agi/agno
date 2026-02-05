@@ -2052,14 +2052,20 @@ class AgentHooksTrait(AgentTraitBase):
 
         return None
 
-    def _raise_if_async_tools(self) -> None:
+    def _raise_if_async_tools(self, tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]] = None) -> None:
         """Raise an exception if any tools contain async functions"""
-        if self.tools is None:
+        tools_to_check = tools
+        if tools_to_check is None:
+            if self.tools is None or callable(self.tools):
+                return
+            tools_to_check = list(self.tools)
+
+        if tools_to_check is None:
             return
 
         from inspect import iscoroutinefunction
 
-        for tool in self.tools:
+        for tool in tools_to_check:
             if isinstance(tool, Toolkit):
                 for func in tool.functions:
                     if iscoroutinefunction(tool.functions[func].entrypoint):

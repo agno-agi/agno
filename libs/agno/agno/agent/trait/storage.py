@@ -373,16 +373,17 @@ class AgentStorageTrait(AgentTraitBase):
         if self.add_search_knowledge_instructions:
             config["add_search_knowledge_instructions"] = self.add_search_knowledge_instructions
         # Skip knowledge_retriever as it's a callable
+        # Skip callable knowledge factories/cache-key functions (not serializable by design)
         if self.references_format != "json":
             config["references_format"] = self.references_format
 
         # --- Tools ---
-        # Serialize tools to their dictionary representations
+        # Serialize static tools only. Callable top-level tools factories are intentionally not persisted.
         _tools: List[Union[Function, dict]] = []
-        if self.model is not None:
+        if self.model is not None and self.tools is not None and not callable(self.tools):
             _tools = self._parse_tools(
                 model=self.model,
-                tools=self.tools or [],
+                tools=list(self.tools),
             )
         if _tools:
             serialized_tools = []
@@ -399,6 +400,9 @@ class AgentStorageTrait(AgentTraitBase):
                     log_warning(f"Could not serialize tool {tool}: {e}")
             if serialized_tools:
                 config["tools"] = serialized_tools
+
+        if not self.cache_callables:
+            config["cache_callables"] = self.cache_callables
 
         if self.tool_call_limit is not None:
             config["tool_call_limit"] = self.tool_call_limit
@@ -734,6 +738,7 @@ class AgentStorageTrait(AgentTraitBase):
             references_format=config.get("references_format", "json"),
             # --- Tools ---
             tools=config.get("tools"),
+            cache_callables=config.get("cache_callables", True),
             tool_call_limit=config.get("tool_call_limit"),
             tool_choice=config.get("tool_choice"),
             # --- Reasoning settings ---

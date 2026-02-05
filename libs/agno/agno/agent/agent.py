@@ -42,6 +42,7 @@ from agno.learn.machine import LearningMachine
 from agno.memory import MemoryManager
 from agno.models.base import Model
 from agno.models.message import Message
+from agno.run import RunContext
 from agno.run.agent import RunEvent, RunInput, RunOutput, RunOutputEvent  # noqa: F401
 from agno.session import AgentSession, SessionSummaryManager
 from agno.skills import Skills
@@ -153,7 +154,7 @@ class Agent(
     max_tool_calls_from_history: Optional[int] = None
 
     # --- Knowledge ---
-    knowledge: Optional[KnowledgeProtocol] = None
+    knowledge: Optional[Union[KnowledgeProtocol, Callable[..., KnowledgeProtocol]]] = None
     # Enable RAG by adding references from Knowledge to the user prompt.
     # Add knowledge_filters to the Agent class attributes
     knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
@@ -175,7 +176,18 @@ class Agent(
     # --- Agent Tools ---
     # A list of tools provided to the Model.
     # Tools are functions the model may generate JSON inputs for.
-    tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]] = None
+    tools: Optional[
+        Union[
+            Sequence[Union[Toolkit, Callable, Function, Dict]],
+            Callable[..., List[Union[Toolkit, Callable, Function, Dict]]],
+        ]
+    ] = None
+    # If True, cache runtime-resolved callable tools and knowledge between runs.
+    cache_callables: bool = True
+    # Optional override for tools callable cache key computation.
+    callable_tools_cache_key: Optional[Callable[["RunContext"], str]] = None
+    # Optional override for knowledge callable cache key computation.
+    callable_knowledge_cache_key: Optional[Callable[["RunContext"], str]] = None
 
     # Maximum number of tool calls allowed.
     tool_call_limit: Optional[int] = None
@@ -397,7 +409,7 @@ class Agent(
         store_media: bool = True,
         store_tool_messages: bool = True,
         store_history_messages: bool = False,
-        knowledge: Optional[KnowledgeProtocol] = None,
+        knowledge: Optional[Union[KnowledgeProtocol, Callable[..., KnowledgeProtocol]]] = None,
         knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         enable_agentic_knowledge_filters: Optional[bool] = None,
         add_knowledge_to_context: bool = False,
@@ -405,7 +417,15 @@ class Agent(
         references_format: Literal["json", "yaml"] = "json",
         skills: Optional[Skills] = None,
         metadata: Optional[Dict[str, Any]] = None,
-        tools: Optional[Sequence[Union[Toolkit, Callable, Function, Dict]]] = None,
+        tools: Optional[
+            Union[
+                Sequence[Union[Toolkit, Callable, Function, Dict]],
+                Callable[..., List[Union[Toolkit, Callable, Function, Dict]]],
+            ]
+        ] = None,
+        cache_callables: bool = True,
+        callable_tools_cache_key: Optional[Callable[["RunContext"], str]] = None,
+        callable_knowledge_cache_key: Optional[Callable[["RunContext"], str]] = None,
         tool_call_limit: Optional[int] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_hooks: Optional[List[Callable]] = None,
@@ -540,7 +560,15 @@ class Agent(
 
         self.metadata = metadata
 
-        self.tools = list(tools) if tools else []
+        if tools is None:
+            self.tools = []
+        elif callable(tools):
+            self.tools = tools
+        else:
+            self.tools = list(tools)
+        self.cache_callables = cache_callables
+        self.callable_tools_cache_key = callable_tools_cache_key
+        self.callable_knowledge_cache_key = callable_knowledge_cache_key
         self.tool_call_limit = tool_call_limit
         self.tool_choice = tool_choice
         self.tool_hooks = tool_hooks
@@ -633,6 +661,8 @@ class Agent(
 
         self._mcp_tools_initialized_on_run: List[Any] = []
         self._connectable_tools_initialized_on_run: List[Any] = []
+        self._callable_tools_cache: Dict[str, List[Union[Toolkit, Callable, Function, Dict]]] = {}
+        self._callable_knowledge_cache: Dict[str, KnowledgeProtocol] = {}
 
         # Lazy-initialized shared thread pool executor for background tasks (memory, cultural knowledge, etc.)
         self._background_executor: Optional[Any] = None

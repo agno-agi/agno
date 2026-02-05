@@ -462,22 +462,24 @@ class AgentDefaultToolsTrait(AgentTraitBase):
             name="search_knowledge_base",
         )
 
-    def add_to_knowledge(self, query: str, result: str) -> str:
+    def add_to_knowledge(self, query: str, result: str, run_context: Optional[RunContext] = None) -> str:
         """Use this function to add information to the knowledge base for future use.
 
         Args:
             query (str): The query or topic to add.
             result (str): The actual content or information to store.
+            run_context (Optional[RunContext]): Runtime context for resolved knowledge resources.
         Returns:
             str: A string indicating the status of the addition.
         """
         import json
 
-        if self.knowledge is None:
+        runtime_knowledge = self._get_runtime_knowledge(run_context=run_context)
+        if runtime_knowledge is None:
             return "Knowledge not available"
 
         # Check if knowledge supports insert
-        insert_fn = getattr(self.knowledge, "insert", None)
+        insert_fn = getattr(runtime_knowledge, "insert", None)
         if not callable(insert_fn):
             return "Knowledge does not support insert"
 

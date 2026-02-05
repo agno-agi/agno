@@ -1000,6 +1000,9 @@ class AgentRunTrait(AgentTraitBase):
         if self.knowledge_filters or knowledge_filters:
             run_context.knowledge_filters = self._get_effective_filters(knowledge_filters)
 
+        # Resolve runtime resources (tools/knowledge), including callable factories
+        self._resolve_runtime_resources(run_context=run_context)
+
         # Use stream override value when necessary
         if stream is None:
             stream = False if self.stream is None else self.stream
@@ -1132,6 +1135,9 @@ class AgentRunTrait(AgentTraitBase):
                     # 3. Resolve dependencies
                     if run_context.dependencies is not None:
                         await self._aresolve_run_dependencies(run_context=run_context)
+
+                    # Resolve runtime resources (tools/knowledge), including callable factories
+                    await self._aresolve_runtime_resources(run_context=run_context)
 
                     # 4. Execute pre-hooks
                     run_input = cast(RunInput, run_response.input)
@@ -1495,6 +1501,9 @@ class AgentRunTrait(AgentTraitBase):
                     # 3. Resolve dependencies
                     if run_context.dependencies is not None:
                         await self._aresolve_run_dependencies(run_context=run_context)
+
+                    # Resolve runtime resources (tools/knowledge), including callable factories
+                    await self._aresolve_runtime_resources(run_context=run_context)
 
                     # 4. Execute pre-hooks
                     run_input = cast(RunInput, run_response.input)
@@ -2284,6 +2293,9 @@ class AgentRunTrait(AgentTraitBase):
         if self.knowledge_filters or run_context.knowledge_filters or knowledge_filters:
             run_context.knowledge_filters = self._get_effective_filters(knowledge_filters)
 
+        # Resolve runtime resources (tools/knowledge), including callable factories
+        self._resolve_runtime_resources(run_context=run_context)
+
         # Use stream override value when necessary
         if stream is None:
             stream = False if self.stream is None else self.stream
@@ -3070,6 +3082,9 @@ class AgentRunTrait(AgentTraitBase):
                     if run_context.dependencies is not None:
                         await self._aresolve_run_dependencies(run_context=run_context)
 
+                    # Resolve runtime resources (tools/knowledge), including callable factories
+                    await self._aresolve_runtime_resources(run_context=run_context)
+
                     # 4. Prepare run response
                     if run_response is not None:
                         # The run is continued from a provided run_response. This contains the updated tools.
@@ -3375,6 +3390,9 @@ class AgentRunTrait(AgentTraitBase):
                     # 3. Resolve dependencies
                     if run_context.dependencies is not None:
                         await self._aresolve_run_dependencies(run_context=run_context)
+
+                    # Resolve runtime resources (tools/knowledge), including callable factories
+                    await self._aresolve_runtime_resources(run_context=run_context)
 
                     # 4. Prepare run response
                     if run_response is not None:

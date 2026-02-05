@@ -1,12 +1,14 @@
 from __future__ import annotations
 
-from inspect import iscoroutinefunction
+from inspect import isawaitable, iscoroutinefunction
 from typing import (
     Any,
     Callable,
     Dict,
     List,
+    Literal,
     Optional,
+    Sequence,
     Type,
     Union,
     cast,
@@ -15,6 +17,7 @@ from typing import (
 from pydantic import BaseModel
 
 from agno.agent.trait.base import AgentTraitBase
+from agno.knowledge.protocol import KnowledgeProtocol
 from agno.models.base import Model
 from agno.run import RunContext
 from agno.run.agent import (
@@ -42,6 +45,382 @@ from agno.utils.log import (
 
 
 class AgentToolsTrait(AgentTraitBase):
+    def _get_runtime_tools(
+        self, run_context: Optional[RunContext] = None
+    ) -> Optional[List[Union[Toolkit, Callable, Function, Dict]]]:
+        if run_context is not None and run_context.tools is not None:
+            return run_context.tools
+        if self.tools is None or callable(self.tools):
+            return None
+        return list(self.tools)
+
+    def _get_runtime_knowledge(self, run_context: Optional[RunContext] = None) -> Optional[KnowledgeProtocol]:
+        if run_context is not None and run_context.knowledge is not None:
+            return run_context.knowledge
+        if self.knowledge is None:
+            return None
+        if callable(self.knowledge) and not isinstance(self.knowledge, KnowledgeProtocol):
+            return None
+        return cast(KnowledgeProtocol, self.knowledge)
+
+    def _invoke_callable_resource_factory(self, factory: Callable[..., Any], run_context: RunContext) -> Any:
+        from inspect import signature
+
+        kwargs: Dict[str, Any] = {}
+        try:
+            sig = signature(factory)
+            if "run_context" in sig.parameters:
+                kwargs["run_context"] = run_context
+            if "agent" in sig.parameters:
+                kwargs["agent"] = self
+            if "session_state" in sig.parameters:
+                kwargs["session_state"] = run_context.session_state
+        except Exception:
+            kwargs = {}
+
+        if kwargs:
+            return factory(**kwargs)
+        return factory()
+
+    def _get_default_callable_cache_key(self, run_context: RunContext) -> Optional[str]:
+        if run_context.user_id:
+            return str(run_context.user_id)
+        if run_context.session_id:
+            return str(run_context.session_id)
+        return None
+
+    def _get_callable_cache_key(self, run_context: RunContext, kind: Literal["tools", "knowledge"]) -> Optional[str]:
+        key_fn = self.callable_tools_cache_key if kind == "tools" else self.callable_knowledge_cache_key
+        if key_fn is not None:
+            if iscoroutinefunction(key_fn):
+                raise RuntimeError(
+                    f"Async callable {kind} cache key functions are not supported in sync runs. "
+                    "Use async run APIs instead."
+                )
+            key_result = key_fn(run_context)
+            if isawaitable(key_result):
+                raise RuntimeError(
+                    f"Async callable {kind} cache key functions are not supported in sync runs. "
+                    "Use async run APIs instead."
+                )
+            if key_result is not None:
+                return str(key_result)
+        return self._get_default_callable_cache_key(run_context)
+
+    async def _aget_callable_cache_key(
+        self, run_context: RunContext, kind: Literal["tools", "knowledge"]
+    ) -> Optional[str]:
+        key_fn = self.callable_tools_cache_key if kind == "tools" else self.callable_knowledge_cache_key
+        if key_fn is not None:
+            key_result = key_fn(run_context)
+            if isawaitable(key_result):
+                key_result = await key_result
+            if key_result is not None:
+                return str(key_result)
+        return self._get_default_callable_cache_key(run_context)
+
+    def _resolve_runtime_tools_for_run(
+        self, run_context: RunContext
+    ) -> Optional[List[Union[Toolkit, Callable, Function, Dict]]]:
+        # Use tools explicitly set on the run context when no agent-level tools are configured.
+        if self.tools is None:
+            return run_context.tools
+
+        if not callable(self.tools):
+            return list(self.tools)
+
+        tools_factory = cast(Callable[..., List[Union[Toolkit, Callable, Function, Dict]]], self.tools)
+        if iscoroutinefunction(tools_factory):
+            raise RuntimeError(
+                "Async tools factory is not supported in sync runs. "
+                "Use `agent.arun()` / `agent.acontinue_run()` instead."
+            )
+
+        cache_key: Optional[str] = None
+        if self.cache_callables:
+            cache_key = self._get_callable_cache_key(run_context, kind="tools")
+            if cache_key is not None and cache_key in self._callable_tools_cache:
+                return self._callable_tools_cache[cache_key]
+
+        tools_result = self._invoke_callable_resource_factory(tools_factory, run_context=run_context)
+        if isawaitable(tools_result):
+            raise RuntimeError(
+                "Tools factory returned an awaitable in sync mode. "
+                "Use `agent.arun()` / `agent.acontinue_run()` instead."
+            )
+
+        if tools_result is None:
+            resolved_tools: List[Union[Toolkit, Callable, Function, Dict]] = []
+        elif isinstance(tools_result, list):
+            resolved_tools = tools_result
+        elif isinstance(tools_result, tuple):
+            resolved_tools = list(tools_result)
+        else:
+            raise TypeError(
+                f"Callable tools factory must return a list (or tuple) of tools, got {type(tools_result).__name__}."
+            )
+
+        if self.cache_callables and cache_key is not None:
+            self._callable_tools_cache[cache_key] = resolved_tools
+        return resolved_tools
+
+    async def _aresolve_runtime_tools_for_run(
+        self, run_context: RunContext
+    ) -> Optional[List[Union[Toolkit, Callable, Function, Dict]]]:
+        # Use tools explicitly set on the run context when no agent-level tools are configured.
+        if self.tools is None:
+            return run_context.tools
+
+        if not callable(self.tools):
+            return list(self.tools)
+
+        tools_factory = cast(Callable[..., List[Union[Toolkit, Callable, Function, Dict]]], self.tools)
+
+        cache_key: Optional[str] = None
+        if self.cache_callables:
+            cache_key = await self._aget_callable_cache_key(run_context, kind="tools")
+            if cache_key is not None and cache_key in self._callable_tools_cache:
+                return self._callable_tools_cache[cache_key]
+
+        tools_result = self._invoke_callable_resource_factory(tools_factory, run_context=run_context)
+        if isawaitable(tools_result):
+            tools_result = await tools_result
+
+        if tools_result is None:
+            resolved_tools: List[Union[Toolkit, Callable, Function, Dict]] = []
+        elif isinstance(tools_result, list):
+            resolved_tools = tools_result
+        elif isinstance(tools_result, tuple):
+            resolved_tools = list(tools_result)
+        else:
+            raise TypeError(
+                f"Callable tools factory must return a list (or tuple) of tools, got {type(tools_result).__name__}."
+            )
+
+        if self.cache_callables and cache_key is not None:
+            self._callable_tools_cache[cache_key] = resolved_tools
+        return resolved_tools
+
+    def _resolve_runtime_knowledge_for_run(self, run_context: RunContext) -> Optional[KnowledgeProtocol]:
+        # Use knowledge explicitly set on the run context when no agent-level knowledge is configured.
+        if self.knowledge is None:
+            return run_context.knowledge
+
+        if not callable(self.knowledge) or isinstance(self.knowledge, KnowledgeProtocol):
+            return cast(KnowledgeProtocol, self.knowledge)
+
+        knowledge_factory = cast(Callable[..., KnowledgeProtocol], self.knowledge)
+        if iscoroutinefunction(knowledge_factory):
+            raise RuntimeError(
+                "Async knowledge factory is not supported in sync runs. "
+                "Use `agent.arun()` / `agent.acontinue_run()` instead."
+            )
+
+        cache_key: Optional[str] = None
+        if self.cache_callables:
+            cache_key = self._get_callable_cache_key(run_context, kind="knowledge")
+            if cache_key is not None and cache_key in self._callable_knowledge_cache:
+                return self._callable_knowledge_cache[cache_key]
+
+        knowledge_result = self._invoke_callable_resource_factory(knowledge_factory, run_context=run_context)
+        if isawaitable(knowledge_result):
+            raise RuntimeError(
+                "Knowledge factory returned an awaitable in sync mode. "
+                "Use `agent.arun()` / `agent.acontinue_run()` instead."
+            )
+        if knowledge_result is not None and not isinstance(knowledge_result, KnowledgeProtocol):
+            raise TypeError(
+                "Callable knowledge factory must return a KnowledgeProtocol instance or None, "
+                f"got {type(knowledge_result).__name__}."
+            )
+
+        if self.cache_callables and cache_key is not None and knowledge_result is not None:
+            self._callable_knowledge_cache[cache_key] = knowledge_result
+        return cast(Optional[KnowledgeProtocol], knowledge_result)
+
+    async def _aresolve_runtime_knowledge_for_run(self, run_context: RunContext) -> Optional[KnowledgeProtocol]:
+        # Use knowledge explicitly set on the run context when no agent-level knowledge is configured.
+        if self.knowledge is None:
+            return run_context.knowledge
+
+        if not callable(self.knowledge) or isinstance(self.knowledge, KnowledgeProtocol):
+            return cast(KnowledgeProtocol, self.knowledge)
+
+        knowledge_factory = cast(Callable[..., KnowledgeProtocol], self.knowledge)
+
+        cache_key: Optional[str] = None
+        if self.cache_callables:
+            cache_key = await self._aget_callable_cache_key(run_context, kind="knowledge")
+            if cache_key is not None and cache_key in self._callable_knowledge_cache:
+                return self._callable_knowledge_cache[cache_key]
+
+        knowledge_result = self._invoke_callable_resource_factory(knowledge_factory, run_context=run_context)
+        if isawaitable(knowledge_result):
+            knowledge_result = await knowledge_result
+        if knowledge_result is not None and not isinstance(knowledge_result, KnowledgeProtocol):
+            raise TypeError(
+                "Callable knowledge factory must return a KnowledgeProtocol instance or None, "
+                f"got {type(knowledge_result).__name__}."
+            )
+
+        if self.cache_callables and cache_key is not None and knowledge_result is not None:
+            self._callable_knowledge_cache[cache_key] = knowledge_result
+        return cast(Optional[KnowledgeProtocol], knowledge_result)
+
+    def _resolve_runtime_resources(self, run_context: RunContext) -> None:
+        run_context.tools = self._resolve_runtime_tools_for_run(run_context=run_context)
+        run_context.knowledge = self._resolve_runtime_knowledge_for_run(run_context=run_context)
+
+    async def _aresolve_runtime_resources(self, run_context: RunContext) -> None:
+        run_context.tools = await self._aresolve_runtime_tools_for_run(run_context=run_context)
+        run_context.knowledge = await self._aresolve_runtime_knowledge_for_run(run_context=run_context)
+
+    @staticmethod
+    def _dedupe_tools(tools: Sequence[Any]) -> List[Any]:
+        deduped_tools: List[Any] = []
+        seen_ids = set()
+        for tool in tools:
+            tool_id = id(tool)
+            if tool_id in seen_ids:
+                continue
+            seen_ids.add(tool_id)
+            deduped_tools.append(tool)
+        return deduped_tools
+
+    @staticmethod
+    def _close_resource_sync(resource: Any) -> None:
+        close_fn = getattr(resource, "close", None)
+        if callable(close_fn):
+            result = close_fn()
+            if isawaitable(result):
+                log_warning("close() returned an awaitable in sync cache clear; call aclear_callable_cache() instead.")
+
+    @staticmethod
+    async def _close_resource_async(resource: Any) -> None:
+        aclose_fn = getattr(resource, "aclose", None)
+        close_fn = getattr(resource, "close", None)
+
+        if callable(aclose_fn):
+            result = aclose_fn()
+            if isawaitable(result):
+                await result
+            return
+
+        if callable(close_fn):
+            result = close_fn()
+            if isawaitable(result):
+                await result
+
+    def clear_callable_cache(
+        self,
+        key: Optional[str] = None,
+        user_id: Optional[str] = None,
+        kind: Optional[Literal["tools", "knowledge"]] = None,
+        close: bool = False,
+    ) -> None:
+        if kind not in (None, "tools", "knowledge"):
+            raise ValueError("kind must be one of None, 'tools', or 'knowledge'")
+
+        target_key = key if key is not None else user_id
+        clear_tools = kind in (None, "tools")
+        clear_knowledge = kind in (None, "knowledge")
+
+        if clear_tools:
+            selected_tools: List[Any] = []
+            keys_to_clear = [target_key] if target_key is not None else list(self._callable_tools_cache.keys())
+            for cache_key in keys_to_clear:
+                cached_tools = self._callable_tools_cache.get(cache_key) if cache_key is not None else None
+                if cached_tools is not None:
+                    selected_tools.extend(cached_tools)
+            if close and selected_tools:
+                for tool in self._dedupe_tools(selected_tools):
+                    try:
+                        self._close_resource_sync(tool)
+                    except Exception as e:
+                        log_warning(f"Failed closing cached tool: {e}")
+            if target_key is not None:
+                self._callable_tools_cache.pop(target_key, None)
+            else:
+                self._callable_tools_cache.clear()
+
+        if clear_knowledge:
+            selected_knowledge: List[Any] = []
+            keys_to_clear = [target_key] if target_key is not None else list(self._callable_knowledge_cache.keys())
+            for cache_key in keys_to_clear:
+                cached_knowledge = self._callable_knowledge_cache.get(cache_key) if cache_key is not None else None
+                if cached_knowledge is not None:
+                    selected_knowledge.append(cached_knowledge)
+            if close and selected_knowledge:
+                seen_ids = set()
+                for knowledge in selected_knowledge:
+                    knowledge_id = id(knowledge)
+                    if knowledge_id in seen_ids:
+                        continue
+                    seen_ids.add(knowledge_id)
+                    try:
+                        self._close_resource_sync(knowledge)
+                    except Exception as e:
+                        log_warning(f"Failed closing cached knowledge: {e}")
+            if target_key is not None:
+                self._callable_knowledge_cache.pop(target_key, None)
+            else:
+                self._callable_knowledge_cache.clear()
+
+    async def aclear_callable_cache(
+        self,
+        key: Optional[str] = None,
+        user_id: Optional[str] = None,
+        kind: Optional[Literal["tools", "knowledge"]] = None,
+        close: bool = False,
+    ) -> None:
+        if kind not in (None, "tools", "knowledge"):
+            raise ValueError("kind must be one of None, 'tools', or 'knowledge'")
+
+        target_key = key if key is not None else user_id
+        clear_tools = kind in (None, "tools")
+        clear_knowledge = kind in (None, "knowledge")
+
+        if clear_tools:
+            selected_tools: List[Any] = []
+            keys_to_clear = [target_key] if target_key is not None else list(self._callable_tools_cache.keys())
+            for cache_key in keys_to_clear:
+                cached_tools = self._callable_tools_cache.get(cache_key) if cache_key is not None else None
+                if cached_tools is not None:
+                    selected_tools.extend(cached_tools)
+            if close and selected_tools:
+                for tool in self._dedupe_tools(selected_tools):
+                    try:
+                        await self._close_resource_async(tool)
+                    except Exception as e:
+                        log_warning(f"Failed closing cached tool: {e}")
+            if target_key is not None:
+                self._callable_tools_cache.pop(target_key, None)
+            else:
+                self._callable_tools_cache.clear()
+
+        if clear_knowledge:
+            selected_knowledge: List[Any] = []
+            keys_to_clear = [target_key] if target_key is not None else list(self._callable_knowledge_cache.keys())
+            for cache_key in keys_to_clear:
+                cached_knowledge = self._callable_knowledge_cache.get(cache_key) if cache_key is not None else None
+                if cached_knowledge is not None:
+                    selected_knowledge.append(cached_knowledge)
+            if close and selected_knowledge:
+                seen_ids = set()
+                for knowledge in selected_knowledge:
+                    knowledge_id = id(knowledge)
+                    if knowledge_id in seen_ids:
+                        continue
+                    seen_ids.add(knowledge_id)
+                    try:
+                        await self._close_resource_async(knowledge)
+                    except Exception as e:
+                        log_warning(f"Failed closing cached knowledge: {e}")
+            if target_key is not None:
+                self._callable_knowledge_cache.pop(target_key, None)
+            else:
+                self._callable_knowledge_cache.clear()
+
     def get_tools(
         self,
         run_response: RunOutput,
@@ -50,15 +429,17 @@ class AgentToolsTrait(AgentTraitBase):
         user_id: Optional[str] = None,
     ) -> List[Union[Toolkit, Callable, Function, Dict]]:
         agent_tools: List[Union[Toolkit, Callable, Function, Dict]] = []
+        runtime_tools = self._get_runtime_tools(run_context=run_context)
+        runtime_knowledge = self._get_runtime_knowledge(run_context=run_context)
 
         # Connect tools that require connection management
-        self._connect_connectable_tools()
+        self._connect_connectable_tools(tools=runtime_tools)
 
         # Add provided tools
-        if self.tools is not None:
+        if runtime_tools is not None:
             # If not running in async mode, raise if any tool is async
-            self._raise_if_async_tools()
-            agent_tools.extend(self.tools)
+            self._raise_if_async_tools(tools=runtime_tools)
+            agent_tools.extend(runtime_tools)
 
         # Add tools for accessing memory
         if self.read_chat_history:
@@ -91,9 +472,9 @@ class AgentToolsTrait(AgentTraitBase):
             agent_tools.append(Function(name="update_session_state", entrypoint=self._update_session_state_tool))
 
         # Add tools for accessing knowledge
-        if self.knowledge is not None and self.search_knowledge:
+        if runtime_knowledge is not None and self.search_knowledge:
             # Use knowledge protocol's get_tools method
-            get_tools_fn = getattr(self.knowledge, "get_tools", None)
+            get_tools_fn = getattr(runtime_knowledge, "get_tools", None)
             if callable(get_tools_fn):
                 knowledge_tools = get_tools_fn(
                     run_response=run_response,
@@ -114,7 +495,7 @@ class AgentToolsTrait(AgentTraitBase):
                 )
             )
 
-        if self.knowledge is not None and self.update_knowledge:
+        if runtime_knowledge is not None and self.update_knowledge:
             agent_tools.append(self.add_to_knowledge)
 
         # Add tools for accessing skills
@@ -132,16 +513,18 @@ class AgentToolsTrait(AgentTraitBase):
         check_mcp_tools: bool = True,
     ) -> List[Union[Toolkit, Callable, Function, Dict]]:
         agent_tools: List[Union[Toolkit, Callable, Function, Dict]] = []
+        runtime_tools = self._get_runtime_tools(run_context=run_context)
+        runtime_knowledge = self._get_runtime_knowledge(run_context=run_context)
 
         # Connect tools that require connection management
-        self._connect_connectable_tools()
+        self._connect_connectable_tools(tools=runtime_tools)
 
         # Connect MCP tools
-        await self._connect_mcp_tools()
+        await self._connect_mcp_tools(tools=runtime_tools)
 
         # Add provided tools
-        if self.tools is not None:
-            for tool in self.tools:
+        if runtime_tools is not None:
+            for tool in runtime_tools:
                 # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
                 is_mcp_tool = hasattr(type(tool), "__mro__") and any(
                     c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
@@ -201,10 +584,10 @@ class AgentToolsTrait(AgentTraitBase):
             agent_tools.append(Function(name="update_session_state", entrypoint=self._update_session_state_tool))
 
         # Add tools for accessing knowledge
-        if self.knowledge is not None and self.search_knowledge:
+        if runtime_knowledge is not None and self.search_knowledge:
             # Use knowledge protocol's get_tools method
-            aget_tools_fn = getattr(self.knowledge, "aget_tools", None)
-            get_tools_fn = getattr(self.knowledge, "get_tools", None)
+            aget_tools_fn = getattr(runtime_knowledge, "aget_tools", None)
+            get_tools_fn = getattr(runtime_knowledge, "get_tools", None)
 
             if callable(aget_tools_fn):
                 knowledge_tools = await aget_tools_fn(
@@ -236,7 +619,7 @@ class AgentToolsTrait(AgentTraitBase):
                 )
             )
 
-        if self.knowledge is not None and self.update_knowledge:
+        if runtime_knowledge is not None and self.update_knowledge:
             agent_tools.append(self.add_to_knowledge)
 
         # Add tools for accessing skills

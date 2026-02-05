@@ -238,29 +238,36 @@ class AgentInitTrait(AgentTraitBase):
             self._formatter = SafeFormatter()
 
     def add_tool(self, tool: Union[Toolkit, Callable, Function, Dict]):
-        if not self.tools:
+        if self.tools is None or callable(self.tools):
             self.tools = []
         self.tools.append(tool)
 
     def set_tools(self, tools: Sequence[Union[Toolkit, Callable, Function, Dict]]):
         self.tools = list(tools) if tools else []
 
-    async def _connect_mcp_tools(self) -> None:
+    async def _connect_mcp_tools(
+        self, tools: Optional[Sequence[Union[Toolkit, Callable, Function, Dict]]] = None
+    ) -> None:
         """Connect the MCP tools to the agent."""
-        if self.tools:
-            for tool in self.tools:
-                # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
-                if (
-                    hasattr(type(tool), "__mro__")
-                    and any(c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__)
-                    and not tool.initialized  # type: ignore
-                ):
-                    try:
-                        # Connect the MCP server
-                        await tool.connect()  # type: ignore
-                        self._mcp_tools_initialized_on_run.append(tool)  # type: ignore
-                    except Exception as e:
-                        log_warning(f"Error connecting tool: {str(e)}")
+        tools_to_connect = tools
+        if tools_to_connect is None:
+            if self.tools is None or callable(self.tools):
+                return
+            tools_to_connect = self.tools
+
+        for tool in tools_to_connect:
+            # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
+            if (
+                hasattr(type(tool), "__mro__")
+                and any(c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__)
+                and not tool.initialized  # type: ignore
+            ):
+                try:
+                    # Connect the MCP server
+                    await tool.connect()  # type: ignore
+                    self._mcp_tools_initialized_on_run.append(tool)  # type: ignore
+                except Exception as e:
+                    log_warning(f"Error connecting tool: {str(e)}")
 
     async def _disconnect_mcp_tools(self) -> None:
         """Disconnect the MCP tools from the agent."""
@@ -271,21 +278,28 @@ class AgentInitTrait(AgentTraitBase):
                 log_warning(f"Error disconnecting tool: {str(e)}")
         self._mcp_tools_initialized_on_run = []
 
-    def _connect_connectable_tools(self) -> None:
+    def _connect_connectable_tools(
+        self, tools: Optional[Sequence[Union[Toolkit, Callable, Function, Dict]]] = None
+    ) -> None:
         """Connect tools that require connection management (e.g., database connections)."""
-        if self.tools:
-            for tool in self.tools:
-                if (
-                    hasattr(tool, "requires_connect")
-                    and tool.requires_connect  # type: ignore
-                    and hasattr(tool, "connect")
-                    and tool not in self._connectable_tools_initialized_on_run
-                ):
-                    try:
-                        tool.connect()  # type: ignore
-                        self._connectable_tools_initialized_on_run.append(tool)
-                    except Exception as e:
-                        log_warning(f"Error connecting tool: {str(e)}")
+        tools_to_connect = tools
+        if tools_to_connect is None:
+            if self.tools is None or callable(self.tools):
+                return
+            tools_to_connect = self.tools
+
+        for tool in tools_to_connect:
+            if (
+                hasattr(tool, "requires_connect")
+                and tool.requires_connect  # type: ignore
+                and hasattr(tool, "connect")
+                and tool not in self._connectable_tools_initialized_on_run
+            ):
+                try:
+                    tool.connect()  # type: ignore
+                    self._connectable_tools_initialized_on_run.append(tool)
+                except Exception as e:
+                    log_warning(f"Error connecting tool: {str(e)}")
 
     def _disconnect_connectable_tools(self) -> None:
         """Disconnect tools that require connection management."""
