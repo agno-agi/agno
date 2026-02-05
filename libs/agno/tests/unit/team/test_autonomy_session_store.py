@@ -46,4 +46,3 @@ def test_put_job_snapshot_requires_job_id():
     session_state = {}
     with pytest.raises(ValueError):
         put_job_snapshot_in_session_state(session_state, {"goal": "missing job_id"})
-

@@ -44,4 +44,3 @@ def put_job_snapshot_in_session_state(session_state: Dict[str, Any], snapshot: D
     jobs = get_jobs_from_session_state(session_state)
     jobs[job_id] = snapshot
     session_state[SESSION_STATE_LATEST_JOB_ID_KEY] = job_id
-

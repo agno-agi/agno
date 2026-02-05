@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 
 from agno.models.base import Model
 from agno.models.message import Message
@@ -238,4 +238,3 @@ def test_autonomous_job_pauses_on_tool_confirmation_and_resumes_to_completion():
     )
     assert resp2.status == RunStatus.completed
     assert resp2.content == "FINAL"
-

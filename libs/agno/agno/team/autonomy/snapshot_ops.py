@@ -40,4 +40,3 @@ def resume_job_snapshot(
     snapshot["status"] = "running"
     snapshot["updated_at"] = now if now is not None else int(time())
     return snapshot
-

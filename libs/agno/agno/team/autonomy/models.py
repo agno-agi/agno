@@ -127,4 +127,3 @@ class JobSnapshot:
             created_at=int(data.get("created_at", int(time()))),
             updated_at=data.get("updated_at"),
         )
-

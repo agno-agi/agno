@@ -50,7 +50,7 @@ from agno.memory import MemoryManager
 from agno.models.base import Model
 from agno.models.message import Message, MessageReferences
 from agno.models.metrics import Metrics
-from agno.models.response import ModelResponse, ModelResponseEvent
+from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
 from agno.models.utils import get_model
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
 from agno.registry.registry import Registry
@@ -71,6 +71,7 @@ from agno.run.cancel import (
     cancel_run as cancel_run_global,
 )
 from agno.run.messages import RunMessages
+from agno.run.requirement import RunRequirement
 from agno.run.team import (
     TeamRunEvent,
     TeamRunInput,
@@ -2410,7 +2411,7 @@ class Team:
         *,
         run_id: Optional[str] = None,
         updated_tools: Optional[List["ToolExecution"]] = None,
-        requirements: Optional[List[Union["RunRequirement", Dict[str, Any]]]] = None,
+        requirements: Optional[Sequence[Union["RunRequirement", Dict[str, Any]]]] = None,
         stream: Optional[bool] = None,
         stream_events: Optional[bool] = None,
         user_id: Optional[str] = None,
@@ -2525,13 +2526,22 @@ class Team:
 
         # Apply updated tools / requirements to the stored run
         if updated_tools is not None:
-            run_response.tools = [t if isinstance(t, ToolExecution) else ToolExecution.from_dict(t) for t in updated_tools]  # type: ignore[list-item]
+            run_response.tools = [
+                t if isinstance(t, ToolExecution) else ToolExecution.from_dict(t) for t in updated_tools
+            ]  # type: ignore[list-item]
         elif normalized_requirements is not None:
             run_response.requirements = normalized_requirements
-            updated_tools_from_reqs = [req.tool_execution for req in normalized_requirements if req.tool_execution is not None]
+            updated_tools_from_reqs = [
+                req.tool_execution for req in normalized_requirements if req.tool_execution is not None
+            ]
             if updated_tools_from_reqs and run_response.tools:
-                updated_tools_map = {tool.tool_call_id: tool for tool in updated_tools_from_reqs if tool.tool_call_id is not None}
-                run_response.tools = [updated_tools_map.get(tool.tool_call_id, tool) for tool in run_response.tools]
+                updated_tools_map = {
+                    tool.tool_call_id: tool for tool in updated_tools_from_reqs if tool.tool_call_id is not None
+                }
+                run_response.tools = [
+                    updated_tools_map.get(tool.tool_call_id, tool) if tool.tool_call_id is not None else tool
+                    for tool in run_response.tools
+                ]
             else:
                 run_response.tools = updated_tools_from_reqs
 
@@ -2643,7 +2653,7 @@ class Team:
         *,
         run_id: Optional[str] = None,
         updated_tools: Optional[List["ToolExecution"]] = None,
-        requirements: Optional[List[Union["RunRequirement", Dict[str, Any]]]] = None,
+        requirements: Optional[Sequence[Union["RunRequirement", Dict[str, Any]]]] = None,
         stream: Optional[bool] = None,
         stream_events: Optional[bool] = None,
         user_id: Optional[str] = None,
@@ -2753,13 +2763,22 @@ class Team:
                     normalized_requirements.append(RunRequirement.from_dict(item))
 
         if updated_tools is not None:
-            run_response.tools = [t if isinstance(t, ToolExecution) else ToolExecution.from_dict(t) for t in updated_tools]  # type: ignore[list-item]
+            run_response.tools = [
+                t if isinstance(t, ToolExecution) else ToolExecution.from_dict(t) for t in updated_tools
+            ]  # type: ignore[list-item]
         elif normalized_requirements is not None:
             run_response.requirements = normalized_requirements
-            updated_tools_from_reqs = [req.tool_execution for req in normalized_requirements if req.tool_execution is not None]
+            updated_tools_from_reqs = [
+                req.tool_execution for req in normalized_requirements if req.tool_execution is not None
+            ]
             if updated_tools_from_reqs and run_response.tools:
-                updated_tools_map = {tool.tool_call_id: tool for tool in updated_tools_from_reqs if tool.tool_call_id is not None}
-                run_response.tools = [updated_tools_map.get(tool.tool_call_id, tool) for tool in run_response.tools]
+                updated_tools_map = {
+                    tool.tool_call_id: tool for tool in updated_tools_from_reqs if tool.tool_call_id is not None
+                }
+                run_response.tools = [
+                    updated_tools_map.get(tool.tool_call_id, tool) if tool.tool_call_id is not None else tool
+                    for tool in run_response.tools
+                ]
             else:
                 run_response.tools = updated_tools_from_reqs
 
@@ -2816,7 +2835,7 @@ class Team:
                 compression_manager=self.compression_manager if self.compress_tool_results else None,
             )
 
-            await self._aparse_response_with_output_model(model_response, run_messages)
+            self._parse_response_with_output_model(model_response, run_messages)
             await self._aparse_response_with_parser_model(model_response, run_messages, run_context=run_context)
 
             self._update_run_response(
@@ -3618,7 +3637,9 @@ class Team:
                 run_id=run_response.run_id,
             )
             if run_context.session_state is not None:
-                run_context.session_state = self._load_session_state(session=team_session, session_state=run_context.session_state)
+                run_context.session_state = self._load_session_state(
+                    session=team_session, session_state=run_context.session_state
+                )
                 run_response.session_state = run_context.session_state
 
             from agno.team.autonomy.runner import run_autonomy_async
@@ -3888,7 +3909,7 @@ class Team:
         if effective_mode in {TeamExecutionMode.AUTONOMOUS, TeamExecutionMode.SUPERVISED}:
             if stream:
                 raise NotImplementedError("Autonomous Team.arun() does not support stream=True yet.")
-            return self._arun_autonomy(
+            return self._arun_autonomy(  # type: ignore[return-value]
                 run_response=run_response,
                 run_context=run_context,
                 session_id=session_id,
@@ -4801,7 +4822,8 @@ class Team:
         if not hasattr(tool, "user_input_schema") or not tool.user_input_schema:
             return
         user_input_result = [
-            {"name": user_input_field.name, "value": user_input_field.value} for user_input_field in tool.user_input_schema
+            {"name": user_input_field.name, "value": user_input_field.value}
+            for user_input_field in tool.user_input_schema
         ]
         run_messages.messages.append(
             Message(
@@ -4956,7 +4978,11 @@ class Team:
             elif _t.external_execution_required is not None and _t.external_execution_required is True:
                 self._handle_external_execution_update(run_messages=run_messages, tool=_t)
 
-            elif _t.tool_name == "get_user_input" and _t.requires_user_input is not None and _t.requires_user_input is True:
+            elif (
+                _t.tool_name == "get_user_input"
+                and _t.requires_user_input is not None
+                and _t.requires_user_input is True
+            ):
                 self._handle_get_user_input_tool_update(run_messages=run_messages, tool=_t)
                 _t.requires_user_input = False
                 _t.answered = True
@@ -4995,7 +5021,11 @@ class Team:
             elif _t.external_execution_required is not None and _t.external_execution_required is True:
                 self._handle_external_execution_update(run_messages=run_messages, tool=_t)
 
-            elif _t.tool_name == "get_user_input" and _t.requires_user_input is not None and _t.requires_user_input is True:
+            elif (
+                _t.tool_name == "get_user_input"
+                and _t.requires_user_input is not None
+                and _t.requires_user_input is True
+            ):
                 self._handle_get_user_input_tool_update(run_messages=run_messages, tool=_t)
                 _t.requires_user_input = False
                 _t.answered = True

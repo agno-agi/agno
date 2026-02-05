@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from time import time
-from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 from uuid import uuid4
 
 from agno.models.message import Message
@@ -370,12 +370,18 @@ def run_autonomy_sync(
                 return run_response
 
             if resumed.status in {RunStatus.error, RunStatus.cancelled}:
-                if isinstance(cursor, int) and isinstance(snapshot.get("steps"), list) and 0 <= cursor < len(snapshot["steps"]):
+                if (
+                    isinstance(cursor, int)
+                    and isinstance(snapshot.get("steps"), list)
+                    and 0 <= cursor < len(snapshot["steps"])
+                ):
                     step = snapshot["steps"][cursor]
                     if isinstance(step, dict):
                         step["status"] = "failed"
                         step["run_id"] = resumed.run_id
-                        step["result_summary"] = str(resumed.content) if resumed.content is not None else resumed.status.value
+                        step["result_summary"] = (
+                            str(resumed.content) if resumed.content is not None else resumed.status.value
+                        )
                 snapshot["status"] = JobStatus.ERROR.value
                 snapshot["phase"] = JobPhase.DONE.value
                 snapshot["pause"] = None
@@ -386,7 +392,11 @@ def run_autonomy_sync(
                 return run_response
 
             # Tool call resumed successfully; finalize the step and continue the job loop.
-            if isinstance(cursor, int) and isinstance(snapshot.get("steps"), list) and 0 <= cursor < len(snapshot["steps"]):
+            if (
+                isinstance(cursor, int)
+                and isinstance(snapshot.get("steps"), list)
+                and 0 <= cursor < len(snapshot["steps"])
+            ):
                 step = snapshot["steps"][cursor]
                 if isinstance(step, dict):
                     step["status"] = "completed"
@@ -434,8 +444,7 @@ def run_autonomy_sync(
                 snapshot,
                 reason="hitl",
                 gate_type="plan_approval",
-                message=_render_plan_for_user(snapshot)
-                + "\n\nTo continue, re-run with resume=True and approval=True.",
+                message=_render_plan_for_user(snapshot) + "\n\nTo continue, re-run with resume=True and approval=True.",
                 payload={"steps": steps},
             )
             _checkpoint(session_state, snapshot)
@@ -511,7 +520,9 @@ def run_autonomy_sync(
                     snapshot,
                     reason="hitl",
                     gate_type="tool_confirmation",
-                    message=str(step_run.content) if step_run.content is not None else "Step paused waiting for tool confirmation.",
+                    message=str(step_run.content)
+                    if step_run.content is not None
+                    else "Step paused waiting for tool confirmation.",
                     payload={
                         "run_id": step_run.run_id,
                         "cursor": cursor,
@@ -527,7 +538,9 @@ def run_autonomy_sync(
 
             if step_run.status in {RunStatus.error, RunStatus.cancelled}:
                 step["status"] = "failed"
-                step["result_summary"] = str(step_run.content) if step_run.content is not None else step_run.status.value
+                step["result_summary"] = (
+                    str(step_run.content) if step_run.content is not None else step_run.status.value
+                )
                 _checkpoint(session_state, snapshot)
                 team.save_session(session=session)
                 snapshot["status"] = JobStatus.ERROR.value
@@ -554,7 +567,9 @@ def run_autonomy_sync(
                 continue
             summaries.append(f"{idx}. {step.get('title')}\n{step.get('result_summary') or ''}".strip())
 
-        system = Message(role="system", content="Synthesize a final answer for the user from the completed step results.")
+        system = Message(
+            role="system", content="Synthesize a final answer for the user from the completed step results."
+        )
         user = Message(
             role="user",
             content=f"GOAL:\n{snapshot.get('goal')}\n\nSTEP RESULTS:\n" + "\n\n".join(summaries),
@@ -731,7 +746,9 @@ async def run_autonomy_async(
                     if isinstance(step, dict):
                         step["status"] = "failed"
                         step["run_id"] = resumed.run_id
-                        step["result_summary"] = str(resumed.content) if resumed.content is not None else resumed.status.value
+                        step["result_summary"] = (
+                            str(resumed.content) if resumed.content is not None else resumed.status.value
+                        )
                 snapshot["status"] = JobStatus.ERROR.value
                 snapshot["phase"] = JobPhase.DONE.value
                 snapshot["pause"] = None
@@ -793,8 +810,7 @@ async def run_autonomy_async(
                 snapshot,
                 reason="hitl",
                 gate_type="plan_approval",
-                message=_render_plan_for_user(snapshot)
-                + "\n\nTo continue, re-run with resume=True and approval=True.",
+                message=_render_plan_for_user(snapshot) + "\n\nTo continue, re-run with resume=True and approval=True.",
                 payload={"steps": steps},
             )
             _checkpoint(session_state, snapshot)
@@ -870,7 +886,9 @@ async def run_autonomy_async(
                     snapshot,
                     reason="hitl",
                     gate_type="tool_confirmation",
-                    message=str(step_run.content) if step_run.content is not None else "Step paused waiting for tool confirmation.",
+                    message=str(step_run.content)
+                    if step_run.content is not None
+                    else "Step paused waiting for tool confirmation.",
                     payload={
                         "run_id": step_run.run_id,
                         "cursor": cursor,
@@ -886,7 +904,9 @@ async def run_autonomy_async(
 
             if step_run.status in {RunStatus.error, RunStatus.cancelled}:
                 step["status"] = "failed"
-                step["result_summary"] = str(step_run.content) if step_run.content is not None else step_run.status.value
+                step["result_summary"] = (
+                    str(step_run.content) if step_run.content is not None else step_run.status.value
+                )
                 _checkpoint(session_state, snapshot)
                 await team.asave_session(session=session)
                 snapshot["status"] = JobStatus.ERROR.value
@@ -913,7 +933,9 @@ async def run_autonomy_async(
                 continue
             summaries.append(f"{idx}. {step.get('title')}\n{step.get('result_summary') or ''}".strip())
 
-        system = Message(role="system", content="Synthesize a final answer for the user from the completed step results.")
+        system = Message(
+            role="system", content="Synthesize a final answer for the user from the completed step results."
+        )
         user = Message(
             role="user",
             content=f"GOAL:\n{snapshot.get('goal')}\n\nSTEP RESULTS:\n" + "\n\n".join(summaries),

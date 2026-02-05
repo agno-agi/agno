@@ -23,4 +23,3 @@ def test_pause_and_resume_job_snapshot_resets_running_steps():
     assert snapshot["pause"] is None
     assert snapshot["steps"][1]["status"] == "pending"
     assert snapshot["updated_at"] == 456
-
