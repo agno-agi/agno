@@ -1,4 +1,4 @@
-from typing import Dict
+from typing import Dict, Optional
 
 from httpx import AsyncClient as HttpxAsyncClient
 from httpx import Client as HttpxClient
@@ -14,19 +14,19 @@ class Api:
             "Content-Type": "application/json",
         }
 
-    def Client(self) -> HttpxClient:
+    def Client(self, timeout: Optional[int] = None) -> HttpxClient:
         return HttpxClient(
             base_url=agno_api_settings.api_url,
             headers=self.headers,
-            timeout=60,
+            timeout=timeout if timeout is not None else 60,
             http2=True,
         )
 
-    def AsyncClient(self) -> HttpxAsyncClient:
+    def AsyncClient(self, timeout: Optional[int] = None) -> HttpxAsyncClient:
         return HttpxAsyncClient(
             base_url=agno_api_settings.api_url,
             headers=self.headers,
-            timeout=60,
+            timeout=timeout if timeout is not None else 60,
             http2=True,
         )
 
