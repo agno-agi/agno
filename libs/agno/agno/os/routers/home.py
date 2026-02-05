@@ -29,6 +29,7 @@ def get_home_router(os: "AgentOS") -> APIRouter:
                                 "summary": "Example home response",
                                 "value": {
                                     "name": "AgentOS API",
+                                    "description": "AI Agent Operating System API",
                                     "id": "demo-os",
                                     "version": "1.0.0",
                                 },
@@ -43,6 +44,7 @@ def get_home_router(os: "AgentOS") -> APIRouter:
         """Get basic API information and available capabilities"""
         return {
             "name": "AgentOS API",
+            "description": os.description or "AI Agent Operating System API",
             "id": os.id or "agno-agentos",
             "version": os.version or "1.0.0",
         }
