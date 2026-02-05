@@ -226,7 +226,7 @@ def test_slack_dm_message_triggers_reply(monkeypatch):
             sent.append({"channel": channel, "text": text, "thread_ts": thread_ts})
             return json.dumps({"ok": True})
 
-        def download_file(self, file_id: str, **kwargs) -> bytes:
+        def download_file_bytes(self, file_id: str) -> bytes:
             return b"test file content"
 
     monkeypatch.setattr("agno.os.interfaces.slack.router.BackgroundTasks.add_task", _capture_task)
@@ -283,7 +283,7 @@ def test_slack_non_dm_message_ignored_when_reply_to_mentions_only(monkeypatch):
             sent.append({"channel": channel, "text": text, "thread_ts": thread_ts})
             return json.dumps({"ok": True})
 
-        def download_file(self, file_id: str, **kwargs) -> bytes:
+        def download_file_bytes(self, file_id: str) -> bytes:
             return b"test file content"
 
     monkeypatch.setattr("agno.os.interfaces.slack.router.BackgroundTasks.add_task", _capture_task)
@@ -335,7 +335,7 @@ def test_slack_app_mention_triggers_reply(monkeypatch):
             sent.append({"channel": channel, "text": text, "thread_ts": thread_ts})
             return json.dumps({"ok": True})
 
-        def download_file(self, file_id: str, **kwargs) -> bytes:
+        def download_file_bytes(self, file_id: str) -> bytes:
             return b"test file content"
 
     monkeypatch.setattr("agno.os.interfaces.slack.router.BackgroundTasks.add_task", _capture_task)
@@ -394,7 +394,7 @@ def test_slack_auto_uploads_files_from_response(monkeypatch):
             uploads.append({"channel": channel, "content": content, "filename": filename, "thread_ts": thread_ts})
             return json.dumps({"ok": True})
 
-        def download_file(self, file_id: str, **kwargs) -> bytes:
+        def download_file_bytes(self, file_id: str) -> bytes:
             return b"test file content"
 
     monkeypatch.setattr("agno.os.interfaces.slack.router.BackgroundTasks.add_task", _capture_task)
@@ -455,7 +455,7 @@ def test_slack_auto_uploads_images_from_response(monkeypatch):
             uploads.append({"channel": channel, "content": content, "filename": filename, "thread_ts": thread_ts})
             return json.dumps({"ok": True})
 
-        def download_file(self, file_id: str, **kwargs) -> bytes:
+        def download_file_bytes(self, file_id: str) -> bytes:
             return b"test file content"
 
     monkeypatch.setattr("agno.os.interfaces.slack.router.BackgroundTasks.add_task", _capture_task)
@@ -510,7 +510,7 @@ def test_slack_auto_downloads_files_from_event(monkeypatch):
             sent.append({"channel": channel, "text": text, "thread_ts": thread_ts})
             return json.dumps({"ok": True})
 
-        def download_file(self, file_id: str, **kwargs) -> bytes:
+        def download_file_bytes(self, file_id: str) -> bytes:
             downloaded_files.append(file_id)
             return b"name,email\nAlice,alice@example.com"
 
@@ -576,7 +576,7 @@ def test_slack_auto_downloads_images_from_event(monkeypatch):
             sent.append({"channel": channel, "text": text, "thread_ts": thread_ts})
             return json.dumps({"ok": True})
 
-        def download_file(self, file_id: str, **kwargs) -> bytes:
+        def download_file_bytes(self, file_id: str) -> bytes:
             downloaded_files.append(file_id)
             return b"\x89PNG\r\n\x1a\n..."
 

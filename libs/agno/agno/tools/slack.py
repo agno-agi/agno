@@ -216,6 +216,25 @@ class SlackTools(Toolkit):
             logger.error(f"Error downloading file content: {e}")
             return json.dumps({"error": f"HTTP error: {str(e)}"})
 
+    def download_file_bytes(self, file_id: str) -> Optional[bytes]:
+        """Download file content as raw bytes. For internal use by interfaces."""
+        try:
+            response = self.client.files_info(file=file_id)
+            file_info = response["file"]
+
+            url_private = file_info.get("url_private")
+            if not url_private:
+                return None
+
+            headers = {"Authorization": f"Bearer {self.token}"}
+            download_response = requests.get(url_private, headers=headers, timeout=30)
+            download_response.raise_for_status()
+            return download_response.content
+
+        except (SlackApiError, requests.RequestException) as e:
+            logger.error(f"Error downloading file bytes: {e}")
+            return None
+
     def search_messages(self, query: str, limit: int = 20) -> str:
         """Search messages. Modifiers: from:@user, in:#channel, has:link, before:/after:date."""
         try:

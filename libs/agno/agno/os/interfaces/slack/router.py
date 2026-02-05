@@ -158,8 +158,8 @@ def attach_routes(
             mimetype = file_info.get("mimetype", "application/octet-stream")
 
             try:
-                file_content = slack_tools.download_file(file_id)
-                if file_content:
+                file_content = slack_tools.download_file_bytes(file_id)
+                if file_content is not None:
                     if mimetype.startswith("image/"):
                         images.append(Image(content=file_content, id=file_id))
                     else:
