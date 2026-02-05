@@ -666,6 +666,7 @@ class TeamRunOutput:
                 "metrics",
                 "status",
                 "tools",
+                "requirements",
                 "metadata",
                 "images",
                 "videos",
@@ -742,6 +743,9 @@ class TeamRunOutput:
                 else:
                     _dict["tools"].append(tool)
 
+        if self.requirements is not None:
+            _dict["requirements"] = [req.to_dict() if hasattr(req, "to_dict") else req for req in self.requirements]
+
         if self.input is not None:
             _dict["input"] = self.input.to_dict()
 
@@ -812,6 +816,18 @@ class TeamRunOutput:
         tools = data.pop("tools", [])
         tools = [ToolExecution.from_dict(tool) for tool in tools] if tools else None
 
+        # Handle requirements
+        requirements_data = data.pop("requirements", None)
+        requirements: Optional[List[RunRequirement]] = None
+        if requirements_data is not None:
+            requirements_list: List[RunRequirement] = []
+            for item in requirements_data:
+                if isinstance(item, RunRequirement):
+                    requirements_list.append(item)
+                elif isinstance(item, dict):
+                    requirements_list.append(RunRequirement.from_dict(item))
+            requirements = requirements_list if requirements_list else None
+
         response_audio = reconstruct_response_audio(data.pop("response_audio", None))
 
         input_data = data.pop("input", None)
@@ -849,6 +865,7 @@ class TeamRunOutput:
             citations=citations,
             tools=tools,
             events=events,
+            requirements=requirements,
             **filtered_data,
         )
 

@@ -383,3 +383,43 @@ def test_autonomous_job_pauses_on_user_input_and_resumes_with_requirements():
     )
     assert resp2.status == RunStatus.completed
     assert resp2.content == "FINAL"
+
+
+def test_autonomous_job_returns_cancelled_for_terminal_cancelled_snapshot():
+    team = Team(
+        members=[],
+        model=AutonomyToolPauseModel(),
+        cache_session=True,
+        telemetry=False,
+    )
+
+    paused = team.run(
+        "Goal",
+        mode=TeamExecutionMode.AUTONOMOUS,
+        session_id="session_1",
+        pause=True,
+        stream=False,
+    )
+    assert paused.status == RunStatus.paused
+    assert paused.metadata is not None and "job_id" in paused.metadata
+    job_id = paused.metadata["job_id"]
+
+    cancelled = team.run(
+        "cancel",
+        mode=TeamExecutionMode.AUTONOMOUS,
+        session_id="session_1",
+        job_id=job_id,
+        resume=True,
+        approval=False,
+        stream=False,
+    )
+    assert cancelled.status == RunStatus.cancelled
+
+    terminal = team.run(
+        "check",
+        mode=TeamExecutionMode.AUTONOMOUS,
+        session_id="session_1",
+        job_id=job_id,
+        stream=False,
+    )
+    assert terminal.status == RunStatus.cancelled

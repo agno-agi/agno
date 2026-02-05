@@ -458,8 +458,14 @@ def run_autonomy_sync(
             team.save_session(session=session)
 
     if snapshot.get("status") in {JobStatus.COMPLETED.value, JobStatus.CANCELLED.value, JobStatus.ERROR.value}:
-        run_response.status = RunStatus.completed
-        run_response.content = snapshot.get("final_output") or f"Job already {snapshot.get('status')}."
+        job_status = snapshot.get("status")
+        if job_status == JobStatus.CANCELLED.value:
+            run_response.status = RunStatus.cancelled
+        elif job_status == JobStatus.ERROR.value:
+            run_response.status = RunStatus.error
+        else:
+            run_response.status = RunStatus.completed
+        run_response.content = snapshot.get("final_output") or f"Job already {job_status}."
         return run_response
 
     snapshot["status"] = JobStatus.RUNNING.value
@@ -505,6 +511,7 @@ def run_autonomy_sync(
         team.save_session(session=session)
 
     original_cache_session = team.cache_session
+    original_cached_session = getattr(team, "_cached_session", None)
     team.cache_session = True
     setattr(team, "_cached_session", session)
 
@@ -639,6 +646,8 @@ def run_autonomy_sync(
         return run_response
     finally:
         team.cache_session = original_cache_session
+        if not original_cache_session:
+            setattr(team, "_cached_session", original_cached_session)
 
 
 async def run_autonomy_async(
@@ -871,8 +880,14 @@ async def run_autonomy_async(
             await team.asave_session(session=session)
 
     if snapshot.get("status") in {JobStatus.COMPLETED.value, JobStatus.CANCELLED.value, JobStatus.ERROR.value}:
-        run_response.status = RunStatus.completed
-        run_response.content = snapshot.get("final_output") or f"Job already {snapshot.get('status')}."
+        job_status = snapshot.get("status")
+        if job_status == JobStatus.CANCELLED.value:
+            run_response.status = RunStatus.cancelled
+        elif job_status == JobStatus.ERROR.value:
+            run_response.status = RunStatus.error
+        else:
+            run_response.status = RunStatus.completed
+        run_response.content = snapshot.get("final_output") or f"Job already {job_status}."
         return run_response
 
     snapshot["status"] = JobStatus.RUNNING.value
@@ -918,6 +933,7 @@ async def run_autonomy_async(
         await team.asave_session(session=session)
 
     original_cache_session = team.cache_session
+    original_cached_session = getattr(team, "_cached_session", None)
     team.cache_session = True
     setattr(team, "_cached_session", session)
 
@@ -1052,3 +1068,5 @@ async def run_autonomy_async(
         return run_response
     finally:
         team.cache_session = original_cache_session
+        if not original_cache_session:
+            setattr(team, "_cached_session", original_cached_session)

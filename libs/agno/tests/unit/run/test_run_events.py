@@ -432,3 +432,39 @@ def test_requirements_in_run_paused_event():
     assert reconstructed.requirements[0].tool_execution.tool_name == "get_the_weather"
     assert reconstructed.requirements[0].tool_execution.requires_confirmation is True
     assert reconstructed.requirements[0].needs_confirmation is True
+
+
+def test_requirements_roundtrip_in_team_run_output():
+    """Test that TeamRunOutput requirements serialize/deserialise properly and remain JSON serializable."""
+    from agno.models.response import ToolExecution
+    from agno.run.requirement import RunRequirement
+    from agno.run.team import TeamRunOutput
+
+    tool_execution = ToolExecution(
+        tool_call_id="call_123",
+        tool_name="get_the_weather",
+        tool_args={"city": "Tokyo"},
+        requires_confirmation=True,
+    )
+    requirement = RunRequirement(tool_execution=tool_execution)
+
+    team_output = TeamRunOutput(
+        run_id="team_run_123",
+        team_id="team_456",
+        tools=[tool_execution],
+        requirements=[requirement],
+    )
+
+    output_dict = team_output.to_dict()
+    assert "requirements" in output_dict
+    assert len(output_dict["requirements"]) == 1
+    assert output_dict["requirements"][0]["tool_execution"]["tool_name"] == "get_the_weather"
+
+    reconstructed = TeamRunOutput.from_dict(output_dict)
+    assert reconstructed.requirements is not None
+    assert len(reconstructed.requirements) == 1
+    assert reconstructed.requirements[0].id == requirement.id
+    assert reconstructed.requirements[0].tool_execution.tool_name == "get_the_weather"
+    assert reconstructed.requirements[0].needs_confirmation is True
+
+    json.loads(team_output.to_json(indent=None))
