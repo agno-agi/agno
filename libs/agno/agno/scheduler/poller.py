@@ -63,11 +63,11 @@ class SchedulePoller:
     async def _claim_due_schedule(self) -> Optional[Schedule]:
         """Claim a due schedule (async-aware)."""
         if self._is_async_db:
-            return await self.db.aclaim_due_schedule(  # type: ignore
+            return await self.db.aclaim_due_schedule(  # type: ignore[union-attr]
                 self.container_id,
                 lock_grace_seconds=self.lock_grace_seconds,
             )
-        return self.db.claim_due_schedule(
+        return self.db.claim_due_schedule(  # type: ignore[union-attr]
             self.container_id,
             lock_grace_seconds=self.lock_grace_seconds,
         )
@@ -75,8 +75,8 @@ class SchedulePoller:
     async def _get_schedule(self, schedule_id: str) -> Optional[Schedule]:
         """Get a schedule by ID (async-aware)."""
         if self._is_async_db:
-            return await self.db.aget_schedule(schedule_id)  # type: ignore
-        return self.db.get_schedule(schedule_id)
+            return await self.db.aget_schedule(schedule_id)  # type: ignore[union-attr]
+        return self.db.get_schedule(schedule_id)  # type: ignore[union-attr]
 
     @property
     def is_running(self) -> bool:

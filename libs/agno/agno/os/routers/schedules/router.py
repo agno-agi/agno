@@ -28,11 +28,12 @@ from agno.scheduler.cron import calculate_next_run, validate_cron_expr
 from agno.utils.log import log_error
 
 if TYPE_CHECKING:
+    from agno.remote.base import RemoteDb
     from agno.scheduler.poller import SchedulePoller
 
 
 async def get_db(
-    dbs: Dict[str, List[Union[BaseDb, AsyncBaseDb, "RemoteDb"]]],  # noqa: F821
+    dbs: Dict[str, List[Union[BaseDb, AsyncBaseDb, "RemoteDb"]]],
     db_id: Optional[str] = None,
 ) -> Optional[Union[BaseDb, AsyncBaseDb]]:
     """Get a database instance from the dbs dictionary.
@@ -127,7 +128,7 @@ async def _get_schedule_run(db: Union[BaseDb, AsyncBaseDb], run_id: str) -> Opti
 
 
 def get_schedule_router(
-    dbs: Dict[str, List[Union[BaseDb, AsyncBaseDb]]],
+    dbs: Dict[str, List[Union[BaseDb, AsyncBaseDb, "RemoteDb"]]],
     settings: AgnoAPISettings = AgnoAPISettings(),
     poller: Optional["SchedulePoller"] = None,
 ) -> APIRouter:
