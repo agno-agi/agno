@@ -1,0 +1,130 @@
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
+
+
+class TeamTraitBase:
+    """Type-only base class for Team traits."""
+
+    _background_executor: Any
+    _cached_session: Any
+    _connectable_tools_initialized_on_run: Any
+    _formatter: Any
+    _hooks_normalised: Any
+    _mcp_tools_initialized_on_run: Any
+    _member_response_model: Any
+    _run_hooks_in_background: Any
+    _tool_instructions: Any
+    add_datetime_to_context: Any
+    add_dependencies_to_context: Any
+    add_history_to_context: Any
+    add_knowledge_to_context: Any
+    add_location_to_context: Any
+    add_member_tools_to_context: Any
+    add_memories_to_context: Any
+    add_name_to_context: Any
+    add_search_knowledge_instructions: Any
+    add_session_state_to_context: Any
+    add_session_summary_to_context: Any
+    add_team_history_to_members: Any
+    additional_context: Any
+    additional_input: Any
+    audio: Any
+    cache_session: Any
+    compress_tool_results: Any
+    compression_manager: Any
+    db: Any
+    debug_level: Any
+    debug_mode: Any
+    delay_between_retries: Any
+    delegate_to_all_members: Any
+    dependencies: Any
+    description: Any
+    determine_input_for_members: Any
+    enable_agentic_knowledge_filters: Any
+    enable_agentic_memory: Any
+    enable_agentic_state: Any
+    enable_session_summaries: Any
+    enable_user_memories: Any
+    events_to_skip: Any
+    expected_output: Any
+    exponential_backoff: Any
+    get_member_information_tool: Any
+    id: Any
+    images: Any
+    input_schema: Any
+    instructions: Any
+    introduction: Any
+    knowledge: Any
+    knowledge_filters: Any
+    knowledge_retriever: Any
+    markdown: Any
+    max_tool_calls_from_history: Any
+    members: Any
+    memory_manager: Any
+    metadata: Any
+    model: Any
+    name: Any
+    num_history_messages: Any
+    num_history_runs: Any
+    num_history_sessions: Any
+    num_team_history_runs: Any
+    output_model: Any
+    output_model_prompt: Any
+    output_schema: Any
+    overwrite_db_session_state: Any
+    parent_team_id: Any
+    parse_response: Any
+    parser_model: Any
+    parser_model_prompt: Any
+    post_hooks: Any
+    pre_hooks: Any
+    read_chat_history: Any
+    reasoning: Any
+    reasoning_agent: Any
+    reasoning_max_steps: Any
+    reasoning_min_steps: Any
+    reasoning_model: Any
+    references_format: Any
+    resolve_in_context: Any
+    respond_directly: Any
+    retries: Any
+    role: Any
+    search_knowledge: Any
+    search_session_history: Any
+    send_media_to_model: Any
+    session_id: Any
+    session_state: Any
+    session_summary_manager: Any
+    share_member_interactions: Any
+    show_members_responses: Any
+    store_events: Any
+    store_history_messages: Any
+    store_media: Any
+    store_member_responses: Any
+    store_tool_messages: Any
+    stream: Any
+    stream_events: Any
+    stream_member_events: Any
+    system_message: Any
+    system_message_role: Any
+    telemetry: Any
+    timezone_identifier: Any
+    tool_call_limit: Any
+    tool_choice: Any
+    tool_hooks: Any
+    tools: Any
+    update_knowledge: Any
+    update_memory_on_run: Any
+    use_instruction_tags: Any
+    use_json_mode: Any
+    user_id: Any
+    version: Any
+    videos: Any
+    workflow_id: Any
+
+    if TYPE_CHECKING:
+
+        def __init__(self, *args: Any, **kwargs: Any) -> None: ...
+
+        def __getattr__(self, name: str) -> Any: ...
