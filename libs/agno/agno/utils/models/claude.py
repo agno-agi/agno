@@ -154,23 +154,20 @@ def _format_file_for_message(file: File) -> Optional[Dict[str, Any]]:
 
     mime_mapping: dict[str, str] = {
         "application/pdf": "base64",
+        # All text/* MIME types use the "text" source type
+        "text/plain": "text",
+        "text/csv": "text",
+        "text/html": "text",
+        "text/css": "text",
+        "text/md": "text",
+        "text/xml": "text",
+        "text/rtf": "text",
+        "text/javascript": "text",
+        "text/x-python": "text",
+        "application/json": "text",
+        "application/x-javascript": "text",
+        "application/x-python": "text",
     }
-    # All text/* MIME types use the "text" source type
-    for _mt in (
-        "text/plain",
-        "text/csv",
-        "text/html",
-        "text/css",
-        "text/md",
-        "text/xml",
-        "text/rtf",
-        "text/javascript",
-        "text/x-python",
-        "application/json",
-        "application/x-javascript",
-        "application/x-python",
-    ):
-        mime_mapping[_mt] = "text"
 
     # Case 0: File is an Anthropic uploaded file
     if file.external is not None and hasattr(file.external, "id"):
