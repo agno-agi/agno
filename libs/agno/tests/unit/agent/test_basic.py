@@ -1,6 +1,8 @@
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
+import pytest
+
 from agno.agent.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.run import RunContext
@@ -126,3 +128,85 @@ def test_continue_run_preserves_existing_run_context_metadata_when_metadata_is_n
     called_run_context = continue_run_mock.call_args.kwargs["run_context"]
     assert called_run_context.metadata == {"ctx": "v"}
     assert run_context.metadata == {"ctx": "v"}
+
+
+def test_run_resolves_dependencies_with_metadata_before_callable_execution():
+    agent = Agent(model=OpenAIChat(id="gpt-4o-mini"))
+    run_context = RunContext(
+        run_id=str(uuid4()),
+        session_id="test-session",
+        dependencies={"resolve_from_metadata": lambda run_context: run_context.metadata["k"]},
+    )
+
+    with patch.object(agent, "_run", side_effect=lambda **kwargs: kwargs["run_response"]):
+        agent.run(
+            "hi",
+            session_id="test-session",
+            run_context=run_context,
+            metadata={"k": "v"},
+        )
+
+    assert run_context.dependencies["resolve_from_metadata"] == "v"
+
+
+def test_continue_run_resolves_dependencies_with_metadata_before_callable_execution():
+    agent = Agent(model=OpenAIChat(id="gpt-4o-mini"))
+    run_context = RunContext(
+        run_id=str(uuid4()),
+        session_id="test-session",
+        dependencies={"resolve_from_metadata": lambda run_context: run_context.metadata["k"]},
+    )
+    run_response = RunOutput(run_id=str(uuid4()), session_id="test-session", messages=[])
+
+    with (
+        patch.object(agent, "get_tools", return_value=[]),
+        patch.object(agent, "_determine_tools_for_model", return_value=[]),
+        patch.object(agent, "_get_continue_run_messages", return_value=MagicMock(messages=[])),
+        patch.object(agent, "_continue_run", side_effect=lambda **kwargs: kwargs["run_response"]),
+    ):
+        agent.continue_run(
+            run_response=run_response,
+            session_id="test-session",
+            run_context=run_context,
+            metadata={"k": "v"},
+        )
+
+    assert run_context.dependencies["resolve_from_metadata"] == "v"
+
+
+@pytest.mark.asyncio
+async def test_arun_merges_metadata_into_existing_run_context_when_metadata_is_passed():
+    agent = Agent(model=OpenAIChat(id="gpt-4o-mini"))
+    run_context = RunContext(run_id=str(uuid4()), session_id="test-session", metadata={"ctx": "v"})
+
+    with patch.object(agent, "_arun", side_effect=lambda **kwargs: kwargs["run_response"]):
+        run_output = await agent.arun(
+            "hi",
+            session_id="test-session",
+            run_context=run_context,
+            metadata={"k": "v"},
+        )
+
+    assert run_output.metadata == {"ctx": "v", "k": "v"}
+    assert run_context.metadata == {"ctx": "v", "k": "v"}
+
+
+@pytest.mark.asyncio
+async def test_acontinue_run_merges_metadata_into_existing_run_context_when_metadata_is_passed():
+    agent = Agent(model=OpenAIChat(id="gpt-4o-mini"))
+    run_context = RunContext(run_id=str(uuid4()), session_id="test-session", metadata={"ctx": "v"})
+    run_response = RunOutput(run_id=str(uuid4()), session_id="test-session", messages=[])
+
+    with patch.object(
+        agent, "_acontinue_run", side_effect=lambda **kwargs: kwargs["run_response"]
+    ) as continue_run_mock:
+        await agent.acontinue_run(
+            run_response=run_response,
+            session_id="test-session",
+            run_context=run_context,
+            metadata={"k": "v"},
+        )
+
+    called_run_context = continue_run_mock.call_args.kwargs["run_context"]
+    assert called_run_context.metadata == {"ctx": "v", "k": "v"}
+    assert run_context.metadata == {"ctx": "v", "k": "v"}
