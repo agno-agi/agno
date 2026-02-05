@@ -349,6 +349,43 @@ def test_workflow_custom_event_subclass_serialization():
     assert restored.data["key"] == "value"
 
 
+def test_custom_event_dynamic_fields_roundtrip():
+    """Test that CustomEvent preserves dynamically-attached fields through to_dict/from_dict."""
+    from agno.run.agent import CustomEvent as AgentCustomEvent
+    from agno.run.agent import run_output_event_from_dict
+    from agno.run.team import CustomEvent as TeamCustomEvent
+    from agno.run.team import team_run_output_event_from_dict
+    from agno.run.workflow import CustomEvent as WorkflowCustomEvent
+    from agno.run.workflow import workflow_run_output_event_from_dict
+
+    agent_evt = AgentCustomEvent(foo="bar")
+    agent_dict = agent_evt.to_dict()
+    assert agent_dict["event"] == "CustomEvent"
+    assert "created_at" in agent_dict
+    assert agent_dict["foo"] == "bar"
+    agent_restored = run_output_event_from_dict(agent_dict)
+    assert hasattr(agent_restored, "foo")
+    assert agent_restored.foo == "bar"
+
+    team_evt = TeamCustomEvent(team_id="team_1", foo="bar")
+    team_dict = team_evt.to_dict()
+    assert team_dict["event"] == "CustomEvent"
+    assert "created_at" in team_dict
+    assert team_dict["foo"] == "bar"
+    team_restored = team_run_output_event_from_dict(team_dict)
+    assert hasattr(team_restored, "foo")
+    assert team_restored.foo == "bar"
+
+    workflow_evt = WorkflowCustomEvent(workflow_id="wf_1", foo="bar")
+    workflow_dict = workflow_evt.to_dict()
+    assert workflow_dict["event"] == "CustomEvent"
+    assert "created_at" in workflow_dict
+    assert workflow_dict["foo"] == "bar"
+    workflow_restored = workflow_run_output_event_from_dict(workflow_dict)
+    assert hasattr(workflow_restored, "foo")
+    assert workflow_restored.foo == "bar"
+
+
 def test_requirements_in_run_paused_event():
     """Test that RunPausedEvent includes requirements field and serializes/deserializes properly."""
     from agno.models.response import ToolExecution

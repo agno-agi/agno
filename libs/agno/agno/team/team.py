@@ -261,6 +261,8 @@ class Team:
     num_team_history_runs: int = 3
     # If True, send all member interactions (request/response) during the current run to members that have been delegated a task to
     share_member_interactions: bool = False
+    # Maximum number of recent member interactions to include in the context (when share_member_interactions=True)
+    max_member_interactions_in_context: Optional[int] = None
 
     # If True, adds a tool to allow searching through previous sessions
     search_session_history: Optional[bool] = False
@@ -535,6 +537,7 @@ class Team:
         knowledge_retriever: Optional[Callable[..., Optional[List[Union[Dict, str]]]]] = None,
         references_format: Literal["json", "yaml"] = "json",
         share_member_interactions: bool = False,
+        max_member_interactions_in_context: Optional[int] = None,
         get_member_information_tool: bool = False,
         search_knowledge: bool = True,
         add_search_knowledge_instructions: bool = True,
@@ -667,6 +670,7 @@ class Team:
         self.references_format = references_format
 
         self.share_member_interactions = share_member_interactions
+        self.max_member_interactions_in_context = max_member_interactions_in_context
         self.get_member_information_tool = get_member_information_tool
         self.search_knowledge = search_knowledge
         self.add_search_knowledge_instructions = add_search_knowledge_instructions
@@ -2097,6 +2101,7 @@ class Team:
         resume: bool = False,
         pause: bool = False,
         approval: Optional[bool] = None,
+        requirements: Optional[Sequence[Union[RunRequirement, Dict[str, Any]]]] = None,
         stream: Literal[False] = False,
         stream_events: Optional[bool] = None,
         session_id: Optional[str] = None,
@@ -2128,6 +2133,7 @@ class Team:
         resume: bool = False,
         pause: bool = False,
         approval: Optional[bool] = None,
+        requirements: Optional[Sequence[Union[RunRequirement, Dict[str, Any]]]] = None,
         stream: Literal[True] = True,
         stream_events: Optional[bool] = None,
         session_id: Optional[str] = None,
@@ -2160,6 +2166,7 @@ class Team:
         resume: bool = False,
         pause: bool = False,
         approval: Optional[bool] = None,
+        requirements: Optional[Sequence[Union[RunRequirement, Dict[str, Any]]]] = None,
         stream: Optional[bool] = None,
         stream_events: Optional[bool] = None,
         session_id: Optional[str] = None,
@@ -2359,6 +2366,7 @@ class Team:
                     resume=resume,
                     pause=pause,
                     approval=approval,
+                    requirements=requirements,
                 )
             except Exception as e:
                 run_response.status = RunStatus.error
@@ -3615,6 +3623,7 @@ class Team:
         resume: bool,
         pause: bool,
         approval: Optional[bool],
+        requirements: Optional[Sequence[Union[RunRequirement, Dict[str, Any]]]] = None,
         debug_mode: Optional[bool] = None,
     ) -> TeamRunOutput:
         """Autonomous/SUPERVISED execution path for Team.arun() (non-streaming v1)."""
@@ -3655,6 +3664,7 @@ class Team:
                 resume=resume,
                 pause=pause,
                 approval=approval,
+                requirements=requirements,
             )
         except Exception as e:
             run_response.status = RunStatus.error
@@ -3684,6 +3694,7 @@ class Team:
         resume: bool = False,
         pause: bool = False,
         approval: Optional[bool] = None,
+        requirements: Optional[Sequence[Union[RunRequirement, Dict[str, Any]]]] = None,
         stream: Literal[False] = False,
         stream_events: Optional[bool] = None,
         session_id: Optional[str] = None,
@@ -3716,6 +3727,7 @@ class Team:
         resume: bool = False,
         pause: bool = False,
         approval: Optional[bool] = None,
+        requirements: Optional[Sequence[Union[RunRequirement, Dict[str, Any]]]] = None,
         stream: Literal[True] = True,
         stream_events: Optional[bool] = None,
         session_id: Optional[str] = None,
@@ -3748,6 +3760,7 @@ class Team:
         resume: bool = False,
         pause: bool = False,
         approval: Optional[bool] = None,
+        requirements: Optional[Sequence[Union[RunRequirement, Dict[str, Any]]]] = None,
         stream: Optional[bool] = None,
         stream_events: Optional[bool] = None,
         session_id: Optional[str] = None,
@@ -3919,6 +3932,7 @@ class Team:
                 resume=resume,
                 pause=pause,
                 approval=approval,
+                requirements=requirements,
                 debug_mode=debug_mode,
             )
 
@@ -8388,14 +8402,25 @@ class Team:
     ) -> Optional[str]:
         team_member_interactions_str = None
         if self.share_member_interactions:
-            team_member_interactions_str = get_team_member_interactions_str(team_run_context=team_run_context)  # type: ignore
-            if context_images := get_team_run_context_images(team_run_context=team_run_context):  # type: ignore
+            max_interactions = self.max_member_interactions_in_context
+            team_member_interactions_str = get_team_member_interactions_str(
+                team_run_context=team_run_context, max_interactions=max_interactions
+            )  # type: ignore
+            if context_images := get_team_run_context_images(
+                team_run_context=team_run_context, max_interactions=max_interactions
+            ):  # type: ignore
                 images.extend(context_images)
-            if context_videos := get_team_run_context_videos(team_run_context=team_run_context):  # type: ignore
+            if context_videos := get_team_run_context_videos(
+                team_run_context=team_run_context, max_interactions=max_interactions
+            ):  # type: ignore
                 videos.extend(context_videos)
-            if context_audio := get_team_run_context_audio(team_run_context=team_run_context):  # type: ignore
+            if context_audio := get_team_run_context_audio(
+                team_run_context=team_run_context, max_interactions=max_interactions
+            ):  # type: ignore
                 audio.extend(context_audio)
-            if context_files := get_team_run_context_files(team_run_context=team_run_context):  # type: ignore
+            if context_files := get_team_run_context_files(
+                team_run_context=team_run_context, max_interactions=max_interactions
+            ):  # type: ignore
                 files.extend(context_files)
         return team_member_interactions_str
 
@@ -9408,6 +9433,8 @@ class Team:
             config["num_team_history_runs"] = self.num_team_history_runs
         if self.share_member_interactions:
             config["share_member_interactions"] = self.share_member_interactions
+        if self.max_member_interactions_in_context is not None:
+            config["max_member_interactions_in_context"] = self.max_member_interactions_in_context
         if self.search_session_history:
             config["search_session_history"] = self.search_session_history
         if self.num_history_sessions is not None:
@@ -9801,6 +9828,7 @@ class Team:
             add_team_history_to_members=config.get("add_team_history_to_members", False),
             num_team_history_runs=config.get("num_team_history_runs", 3),
             share_member_interactions=config.get("share_member_interactions", False),
+            max_member_interactions_in_context=config.get("max_member_interactions_in_context"),
             search_session_history=config.get("search_session_history", False),
             num_history_sessions=config.get("num_history_sessions"),
             read_chat_history=config.get("read_chat_history", False),

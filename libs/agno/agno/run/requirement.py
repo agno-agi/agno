@@ -42,34 +42,39 @@ class RunRequirement:
 
     @property
     def needs_confirmation(self) -> bool:
+        """True if the user still needs to confirm/reject a tool call."""
         if self.confirmation is not None:
             return False
         if not self.tool_execution:
             return False
-        if self.tool_execution.confirmed is True:
-            return True
-
-        return self.tool_execution.requires_confirmation or False
+        if not (self.tool_execution.requires_confirmation or False):
+            return False
+        # Consider confirmation resolved once an explicit decision has been made.
+        return self.tool_execution.confirmed is None
 
     @property
     def needs_user_input(self) -> bool:
+        """True if the user still needs to provide required tool inputs."""
         if not self.tool_execution:
             return False
         if self.tool_execution.answered is True:
             return False
-        if self.user_input_schema and not all(field.value is not None for field in self.user_input_schema):
-            return True
 
+        if self.user_input_schema:
+            return not all(field.value is not None for field in self.user_input_schema)
+
+        # If we don't have an explicit schema, fall back to the tool flag.
         return self.tool_execution.requires_user_input or False
 
     @property
     def needs_external_execution(self) -> bool:
+        """True if an external action is still required and no result has been provided."""
         if not self.tool_execution:
             return False
-        if self.external_execution_result is not None:
-            return True
-
-        return self.tool_execution.external_execution_required or False
+        if not (self.tool_execution.external_execution_required or False):
+            return False
+        # Consider external execution resolved once a result is present.
+        return self.external_execution_result is None and self.tool_execution.result is None
 
     def confirm(self):
         if not self.needs_confirmation:

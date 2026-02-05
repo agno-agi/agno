@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from time import time
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple
 from uuid import uuid4
 
 from agno.models.message import Message
@@ -236,6 +236,7 @@ def run_autonomy_sync(
     resume: bool,
     pause: bool,
     approval: Optional[bool],
+    requirements: Optional[Sequence[object]] = None,
 ) -> TeamRunOutput:
     session_state = run_context.session_state or {}
     run_context.session_state = session_state
@@ -265,18 +266,14 @@ def run_autonomy_sync(
         return run_response
 
     if snapshot.get("status") == JobStatus.PAUSED.value:
+        pause_state = snapshot.get("pause") or {}
+        pause_message = pause_state.get("message") if isinstance(pause_state, dict) else None
+        gate_type = pause_state.get("gate_type") if isinstance(pause_state, dict) else None
+        payload = pause_state.get("payload") if isinstance(pause_state, dict) else None
+
         if not resume:
             run_response.status = RunStatus.paused
-            pause_state = snapshot.get("pause") or {}
-            run_response.content = pause_state.get("message") if isinstance(pause_state, dict) else None
-            run_response.content = run_response.content or "Job is paused."
-            return run_response
-
-        if approval is None:
-            run_response.status = RunStatus.paused
-            pause_state = snapshot.get("pause") or {}
-            run_response.content = pause_state.get("message") if isinstance(pause_state, dict) else None
-            run_response.content = run_response.content or "Job is paused and needs approval."
+            run_response.content = pause_message or "Job is paused."
             return run_response
 
         if approval is False:
@@ -288,17 +285,28 @@ def run_autonomy_sync(
             run_response.content = "Job cancelled."
             return run_response
 
-        gate = snapshot.get("pause") or {}
-        gate_type = gate.get("gate_type") if isinstance(gate, dict) else None
-        payload = gate.get("payload") if isinstance(gate, dict) else None
+        if gate_type == "manual":
+            resume_job_snapshot(snapshot)
+            _checkpoint(session_state, snapshot)
+            team.save_session(session=session)
 
-        if gate_type == "plan_approval":
+        elif gate_type == "plan_approval":
+            if approval is None:
+                run_response.status = RunStatus.paused
+                run_response.content = pause_message or "Job is paused and needs approval."
+                return run_response
+
             snapshot["plan_approved"] = True
             resume_job_snapshot(snapshot)
             _checkpoint(session_state, snapshot)
             team.save_session(session=session)
 
         elif gate_type == "step_approval":
+            if approval is None:
+                run_response.status = RunStatus.paused
+                run_response.content = pause_message or "Job is paused and needs approval."
+                return run_response
+
             cursor = payload.get("cursor") if isinstance(payload, dict) else None
             if (
                 isinstance(cursor, int)
@@ -317,34 +325,63 @@ def run_autonomy_sync(
 
             paused_run_id = payload.get("run_id") if isinstance(payload, dict) else None
             cursor = payload.get("cursor") if isinstance(payload, dict) else None
-            requirements_raw = payload.get("requirements") if isinstance(payload, dict) else None
-            requirements: List[RunRequirement] = []
+
+            normalized: List[RunRequirement] = []
+            requirements_raw = (
+                requirements
+                if requirements is not None
+                else payload.get("requirements")
+                if isinstance(payload, dict)
+                else None
+            )
             for item in requirements_raw or []:
                 if isinstance(item, RunRequirement):
-                    requirements.append(item)
+                    normalized.append(item)
                 elif isinstance(item, dict):
-                    requirements.append(RunRequirement.from_dict(item))
+                    normalized.append(RunRequirement.from_dict(item))
 
-            # Auto-confirm confirmation requirements when the user approves the gate.
-            for req in requirements:
-                if req.needs_confirmation:
-                    req.confirm()
+            # Convenience: auto-confirm remaining confirmations when approval=True.
+            if approval is True:
+                for req in normalized:
+                    if req.needs_confirmation:
+                        req.confirm()
 
-            # If we still need user input or external execution, stay paused.
-            if any(req.needs_user_input or req.needs_external_execution for req in requirements):
+            # If we still need user input/external execution/confirmation, stay paused and checkpoint the updated requirements.
+            if any(
+                req.needs_confirmation or req.needs_user_input or req.needs_external_execution for req in normalized
+            ):
+                message = (
+                    "Job is paused and needs user input or external execution to continue."
+                    if any(req.needs_user_input or req.needs_external_execution for req in normalized)
+                    else "Job is paused and needs confirmation to continue."
+                )
+                pause_job_snapshot(
+                    snapshot,
+                    reason="hitl",
+                    gate_type="tool_confirmation",
+                    message=message,
+                    payload={
+                        "run_id": paused_run_id,
+                        "cursor": cursor,
+                        "requirements": [req.to_dict() for req in normalized],
+                    },
+                )
+                _checkpoint(session_state, snapshot)
+                team.save_session(session=session)
                 run_response.status = RunStatus.paused
-                run_response.requirements = requirements
-                run_response.content = "Job is paused and needs user input or external execution to continue."
+                run_response.content = message
+                run_response.requirements = normalized
                 return run_response
 
             if not isinstance(paused_run_id, str) or not paused_run_id:
                 run_response.status = RunStatus.paused
                 run_response.content = "Job is paused, but missing paused run_id to continue."
+                run_response.requirements = normalized or None
                 return run_response
 
             resumed = team.continue_run(
                 run_id=paused_run_id,
-                requirements=requirements,
+                requirements=normalized,
                 session_id=session.session_id,
                 user_id=user_id,
                 stream=False,
@@ -404,6 +441,17 @@ def run_autonomy_sync(
                     result_str = str(resumed.content) if resumed.content is not None else ""
                     step["result_summary"] = result_str[:4000] if len(result_str) > 4000 else result_str
                 snapshot["cursor"] = cursor + 1
+
+            resume_job_snapshot(snapshot)
+            _checkpoint(session_state, snapshot)
+            team.save_session(session=session)
+
+        else:
+            # Unknown gate type; require explicit approval to avoid unintended continuation.
+            if approval is None:
+                run_response.status = RunStatus.paused
+                run_response.content = pause_message or "Job is paused and needs approval."
+                return run_response
 
             resume_job_snapshot(snapshot)
             _checkpoint(session_state, snapshot)
@@ -605,6 +653,7 @@ async def run_autonomy_async(
     resume: bool,
     pause: bool,
     approval: Optional[bool],
+    requirements: Optional[Sequence[object]] = None,
 ) -> TeamRunOutput:
     session_state = run_context.session_state or {}
     run_context.session_state = session_state
@@ -634,18 +683,14 @@ async def run_autonomy_async(
         return run_response
 
     if snapshot.get("status") == JobStatus.PAUSED.value:
+        pause_state = snapshot.get("pause") or {}
+        pause_message = pause_state.get("message") if isinstance(pause_state, dict) else None
+        gate_type = pause_state.get("gate_type") if isinstance(pause_state, dict) else None
+        payload = pause_state.get("payload") if isinstance(pause_state, dict) else None
+
         if not resume:
             run_response.status = RunStatus.paused
-            pause_state = snapshot.get("pause") or {}
-            run_response.content = pause_state.get("message") if isinstance(pause_state, dict) else None
-            run_response.content = run_response.content or "Job is paused."
-            return run_response
-
-        if approval is None:
-            run_response.status = RunStatus.paused
-            pause_state = snapshot.get("pause") or {}
-            run_response.content = pause_state.get("message") if isinstance(pause_state, dict) else None
-            run_response.content = run_response.content or "Job is paused and needs approval."
+            run_response.content = pause_message or "Job is paused."
             return run_response
 
         if approval is False:
@@ -657,17 +702,28 @@ async def run_autonomy_async(
             run_response.content = "Job cancelled."
             return run_response
 
-        gate = snapshot.get("pause") or {}
-        gate_type = gate.get("gate_type") if isinstance(gate, dict) else None
-        payload = gate.get("payload") if isinstance(gate, dict) else None
+        if gate_type == "manual":
+            resume_job_snapshot(snapshot)
+            _checkpoint(session_state, snapshot)
+            await team.asave_session(session=session)
 
-        if gate_type == "plan_approval":
+        elif gate_type == "plan_approval":
+            if approval is None:
+                run_response.status = RunStatus.paused
+                run_response.content = pause_message or "Job is paused and needs approval."
+                return run_response
+
             snapshot["plan_approved"] = True
             resume_job_snapshot(snapshot)
             _checkpoint(session_state, snapshot)
             await team.asave_session(session=session)
 
         elif gate_type == "step_approval":
+            if approval is None:
+                run_response.status = RunStatus.paused
+                run_response.content = pause_message or "Job is paused and needs approval."
+                return run_response
+
             cursor = payload.get("cursor") if isinstance(payload, dict) else None
             if (
                 isinstance(cursor, int)
@@ -686,32 +742,61 @@ async def run_autonomy_async(
 
             paused_run_id = payload.get("run_id") if isinstance(payload, dict) else None
             cursor = payload.get("cursor") if isinstance(payload, dict) else None
-            requirements_raw = payload.get("requirements") if isinstance(payload, dict) else None
-            requirements: List[RunRequirement] = []
+
+            normalized: List[RunRequirement] = []
+            requirements_raw = (
+                requirements
+                if requirements is not None
+                else payload.get("requirements")
+                if isinstance(payload, dict)
+                else None
+            )
             for item in requirements_raw or []:
                 if isinstance(item, RunRequirement):
-                    requirements.append(item)
+                    normalized.append(item)
                 elif isinstance(item, dict):
-                    requirements.append(RunRequirement.from_dict(item))
+                    normalized.append(RunRequirement.from_dict(item))
 
-            for req in requirements:
-                if req.needs_confirmation:
-                    req.confirm()
+            if approval is True:
+                for req in normalized:
+                    if req.needs_confirmation:
+                        req.confirm()
 
-            if any(req.needs_user_input or req.needs_external_execution for req in requirements):
+            if any(
+                req.needs_confirmation or req.needs_user_input or req.needs_external_execution for req in normalized
+            ):
+                message = (
+                    "Job is paused and needs user input or external execution to continue."
+                    if any(req.needs_user_input or req.needs_external_execution for req in normalized)
+                    else "Job is paused and needs confirmation to continue."
+                )
+                pause_job_snapshot(
+                    snapshot,
+                    reason="hitl",
+                    gate_type="tool_confirmation",
+                    message=message,
+                    payload={
+                        "run_id": paused_run_id,
+                        "cursor": cursor,
+                        "requirements": [req.to_dict() for req in normalized],
+                    },
+                )
+                _checkpoint(session_state, snapshot)
+                await team.asave_session(session=session)
                 run_response.status = RunStatus.paused
-                run_response.requirements = requirements
-                run_response.content = "Job is paused and needs user input or external execution to continue."
+                run_response.content = message
+                run_response.requirements = normalized
                 return run_response
 
             if not isinstance(paused_run_id, str) or not paused_run_id:
                 run_response.status = RunStatus.paused
                 run_response.content = "Job is paused, but missing paused run_id to continue."
+                run_response.requirements = normalized or None
                 return run_response
 
             resumed = await team.acontinue_run(
                 run_id=paused_run_id,
-                requirements=requirements,
+                requirements=normalized,
                 session_id=session.session_id,
                 user_id=user_id,
                 stream=False,
@@ -770,6 +855,16 @@ async def run_autonomy_async(
                     result_str = str(resumed.content) if resumed.content is not None else ""
                     step["result_summary"] = result_str[:4000] if len(result_str) > 4000 else result_str
                 snapshot["cursor"] = cursor + 1
+
+            resume_job_snapshot(snapshot)
+            _checkpoint(session_state, snapshot)
+            await team.asave_session(session=session)
+
+        else:
+            if approval is None:
+                run_response.status = RunStatus.paused
+                run_response.content = pause_message or "Job is paused and needs approval."
+                return run_response
 
             resume_job_snapshot(snapshot)
             _checkpoint(session_state, snapshot)

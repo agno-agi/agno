@@ -9,7 +9,7 @@ from agno.run import RunStatus
 from agno.run.requirement import RunRequirement
 from agno.team import Team
 from agno.team.autonomy.models import TeamExecutionMode
-from agno.tools.function import Function
+from agno.tools.function import Function, UserInputField
 
 
 class ConfirmToolModel(Model):
@@ -177,6 +177,111 @@ class AutonomyToolPauseModel(ConfirmToolModel):
         )
 
 
+class UserInputToolModel(ConfirmToolModel):
+    """A minimal model that pauses once on a tool call that requires user input."""
+
+    def response(  # type: ignore[override]
+        self,
+        messages: List[Message],
+        response_format: Optional[Any] = None,
+        tools: Optional[Any] = None,
+        tool_choice: Optional[Any] = None,
+        tool_call_limit: Optional[int] = None,
+        run_response: Optional[Any] = None,
+        send_media_to_model: bool = True,
+        compression_manager: Optional[Any] = None,
+    ) -> ModelResponse:
+        # If a tool result message exists, return final content.
+        if any(m.role == self.tool_message_role for m in messages):
+            messages.append(Message(role=self.assistant_message_role, content=self._final_content))
+            return ModelResponse(
+                role=self.assistant_message_role,
+                content=self._final_content,
+                tool_calls=[],
+                tool_executions=None,
+                event=ModelResponseEvent.assistant_response.value,
+            )
+
+        tool_call_id = "call_1"
+        tool_calls = [
+            {
+                "id": tool_call_id,
+                "type": "function",
+                "function": {"name": "do_thing", "arguments": "{}"},
+            }
+        ]
+        messages.append(Message(role=self.assistant_message_role, content="", tool_calls=tool_calls))
+
+        tool_execution = ToolExecution(
+            tool_call_id=tool_call_id,
+            tool_name="do_thing",
+            tool_args={},
+            requires_user_input=True,
+            user_input_schema=[UserInputField(name="city", field_type=str, value=None)],
+        )
+        if run_response is not None:
+            if getattr(run_response, "requirements", None) is None:
+                run_response.requirements = []
+            run_response.requirements.append(RunRequirement(tool_execution=tool_execution))
+
+        return ModelResponse(
+            role=self.assistant_message_role,
+            content="",
+            tool_calls=tool_calls,
+            tool_executions=[tool_execution],
+            event=ModelResponseEvent.tool_call_paused.value,
+        )
+
+
+class AutonomyUserInputPauseModel(UserInputToolModel):
+    def __init__(self):
+        super().__init__(final_content="STEP DONE")
+
+    def response(  # type: ignore[override]
+        self,
+        messages: List[Message],
+        response_format: Optional[Any] = None,
+        tools: Optional[Any] = None,
+        tool_choice: Optional[Any] = None,
+        tool_call_limit: Optional[int] = None,
+        run_response: Optional[Any] = None,
+        send_media_to_model: bool = True,
+        compression_manager: Optional[Any] = None,
+    ) -> ModelResponse:
+        # Planning + synthesis calls use tools=None in the autonomy runner.
+        if tools is None:
+            system = next((m for m in messages if m.role == "system"), None)
+            system_content = str(system.content) if system and system.content is not None else ""
+            if "project planner" in system_content:
+                plan_json = '{"steps":[{"title":"Step 1","instructions":"Do it","requires_approval":false}]}'
+                return ModelResponse(
+                    role=self.assistant_message_role,
+                    content=plan_json,
+                    tool_calls=[],
+                    tool_executions=None,
+                    event=ModelResponseEvent.assistant_response.value,
+                )
+            if "Synthesize a final answer" in system_content:
+                return ModelResponse(
+                    role=self.assistant_message_role,
+                    content="FINAL",
+                    tool_calls=[],
+                    tool_executions=None,
+                    event=ModelResponseEvent.assistant_response.value,
+                )
+
+        return super().response(
+            messages=messages,
+            response_format=response_format,
+            tools=tools,
+            tool_choice=tool_choice,
+            tool_call_limit=tool_call_limit,
+            run_response=run_response,
+            send_media_to_model=send_media_to_model,
+            compression_manager=compression_manager,
+        )
+
+
 def test_team_run_pauses_and_continue_run_completes_for_confirmed_tool():
     def do_thing() -> str:
         return "TOOL_OK"
@@ -234,6 +339,46 @@ def test_autonomous_job_pauses_on_tool_confirmation_and_resumes_to_completion():
         job_id=job_id,
         resume=True,
         approval=True,
+        stream=False,
+    )
+    assert resp2.status == RunStatus.completed
+    assert resp2.content == "FINAL"
+
+
+def test_autonomous_job_pauses_on_user_input_and_resumes_with_requirements():
+    def do_thing(city: str) -> str:
+        return f"TOOL_OK {city}"
+
+    tool = Function.from_callable(do_thing, name="do_thing")
+    tool.requires_user_input = True
+    tool.user_input_fields = ["city"]
+
+    team = Team(
+        members=[],
+        model=AutonomyUserInputPauseModel(),
+        tools=[tool],
+        cache_session=True,
+        telemetry=False,
+    )
+
+    resp1 = team.run("Goal", mode=TeamExecutionMode.AUTONOMOUS, session_id="session_1", stream=False)
+    assert resp1.status == RunStatus.paused
+    assert resp1.metadata is not None and "job_id" in resp1.metadata
+    job_id = resp1.metadata["job_id"]
+    assert resp1.requirements is not None and len(resp1.requirements) == 1
+
+    req = resp1.requirements[0]
+    assert req.needs_user_input is True
+    assert req.user_input_schema is not None and len(req.user_input_schema) == 1
+    req.user_input_schema[0].value = "Tokyo"
+
+    resp2 = team.run(
+        "resume",
+        mode=TeamExecutionMode.AUTONOMOUS,
+        session_id="session_1",
+        job_id=job_id,
+        resume=True,
+        requirements=[req],
         stream=False,
     )
     assert resp2.status == RunStatus.completed

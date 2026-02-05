@@ -416,9 +416,20 @@ class CustomEvent(BaseWorkflowRunOutputEvent):
     event: str = WorkflowRunEvent.custom_event.value
 
     def __init__(self, **kwargs):
-        # Store arbitrary attributes directly on the instance
+        # Initialize dataclass defaults (e.g. created_at) then attach arbitrary attributes.
+        super().__init__()
+        self.event = WorkflowRunEvent.custom_event.value
         for key, value in kwargs.items():
             setattr(self, key, value)
+
+    def to_dict(self) -> Dict[str, Any]:
+        # Merge dataclass fields with arbitrary attributes stored on the instance.
+        d = super().to_dict()
+        for key, value in self.__dict__.items():
+            if value is None or key in d:
+                continue
+            d[key] = value
+        return d
 
 
 # Union type for all workflow run response events
