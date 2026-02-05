@@ -1,4 +1,7 @@
+from unittest.mock import patch
+
 from agno.agent.agent import Agent
+from agno.models.openai import OpenAIChat
 from agno.utils.string import is_valid_uuid
 
 
@@ -54,3 +57,12 @@ def test_deep_copy():
     # Test deep_copy with update
     updated = original.deep_copy(update={"name": "updated-agent"})
     assert updated.name == "updated-agent"
+
+
+def test_run_preserves_metadata_when_run_is_mocked():
+    agent = Agent(model=OpenAIChat(id="gpt-4o-mini"))
+
+    with patch.object(agent, "_run", side_effect=lambda **kwargs: kwargs["run_response"]):
+        run_output = agent.run("hi", metadata={"k": "v"})
+
+    assert run_output.metadata == {"k": "v"}

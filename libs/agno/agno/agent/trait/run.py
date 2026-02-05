@@ -23,11 +23,9 @@ from typing import (
 from uuid import uuid4
 
 from agno.agent.trait.base import AgentTraitBase
-
 from agno.exceptions import InputCheckError, OutputCheckError, RunCancelledException
 from agno.models.base import Model
 from agno.models.metrics import Metrics
-
 from agno.run import RunContext, RunStatus
 from agno.run.agent import (
     RunInput,
@@ -42,7 +40,6 @@ from agno.run.cancel import (
     raise_if_cancelled,
     register_run,
 )
-
 from agno.utils.agent import (
     await_for_open_threads,
     await_for_thread_tasks_stream,
@@ -1005,8 +1002,12 @@ class AgentRunTrait(AgentTraitBase):
         self.model = cast(Model, self.model)
 
         # Merge agent metadata with run metadata
-        if self.metadata is not None and metadata is not None:
-            merge_dictionaries(metadata, self.metadata)
+        run_context.metadata = metadata
+        if self.metadata is not None:
+            if run_context.metadata is None:
+                run_context.metadata = self.metadata
+            else:
+                merge_dictionaries(run_context.metadata, self.metadata)
 
         # Create a new run_response for this attempt
         run_response = RunOutput(
