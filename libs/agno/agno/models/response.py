@@ -15,6 +15,7 @@ class ModelResponseEvent(str, Enum):
     tool_call_paused = "ToolCallPaused"
     tool_call_started = "ToolCallStarted"
     tool_call_completed = "ToolCallCompleted"
+    tool_call_args_delta = "ToolCallArgsDelta"
     assistant_response = "AssistantResponse"
     compression_started = "CompressionStarted"
     compression_completed = "CompressionCompleted"
@@ -114,6 +115,11 @@ class ModelResponse:
 
     # Actual tool executions
     tool_executions: Optional[List[ToolExecution]] = field(default_factory=list)
+
+    # Streaming tool call argument deltas
+    tool_call_id: Optional[str] = None
+    tool_name: Optional[str] = None
+    tool_args_delta: Optional[str] = None
 
     event: str = ModelResponseEvent.assistant_response.value
 

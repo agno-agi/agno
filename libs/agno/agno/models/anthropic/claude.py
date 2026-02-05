@@ -1,6 +1,6 @@
 import json
 from collections.abc import AsyncIterator
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from os import getenv
 from typing import Any, Dict, List, Optional, Type, Union
 
@@ -11,7 +11,7 @@ from agno.exceptions import ModelProviderError, ModelRateLimitError
 from agno.models.base import Model
 from agno.models.message import Citations, DocumentCitation, Message, UrlCitation
 from agno.models.metrics import Metrics
-from agno.models.response import ModelResponse
+from agno.models.response import ModelResponse, ModelResponseEvent
 from agno.run.agent import RunOutput
 from agno.tools.function import Function
 from agno.utils.http import get_default_async_client, get_default_sync_client
@@ -81,6 +81,8 @@ class Claude(Model):
         "claude-3-5-haiku-20241022",
         "claude-3-5-haiku-latest",
     }
+
+    _stream_tool_use_map: Optional[Dict[int, Dict[str, str]]] = field(default=None, init=False, repr=False)
 
     # Models that DO NOT support native structured outputs
     # All future models are assumed to support structured outputs
@@ -598,6 +600,7 @@ class Claude(Model):
 
             chat_messages, system_message = format_messages(messages, compress_tool_results=compress_tool_results)
             request_kwargs = self._prepare_request_kwargs(system_message, tools=tools, response_format=response_format)
+            self._stream_tool_use_map = {}
 
             if self._has_beta_features(response_format=response_format, tools=tools):
                 assistant_message.metrics.start_timer()
@@ -662,6 +665,7 @@ class Claude(Model):
         """
         chat_messages, system_message = format_messages(messages, compress_tool_results=compress_tool_results)
         request_kwargs = self._prepare_request_kwargs(system_message, tools=tools, response_format=response_format)
+        self._stream_tool_use_map = {}
 
         try:
             if run_response and run_response.metrics:
@@ -990,6 +994,13 @@ class Claude(Model):
         if isinstance(response, (ContentBlockStartEvent, BetaRawContentBlockStartEvent)):
             if response.content_block.type == "redacted_reasoning_content":
                 model_response.redacted_reasoning_content = response.content_block.data
+            if response.content_block.type == "tool_use":  # type: ignore
+                tool_index = getattr(response, "index", None)
+                tool_use = response.content_block  # type: ignore
+                if tool_index is not None and hasattr(tool_use, "id") and hasattr(tool_use, "name"):
+                    if not hasattr(self, "_stream_tool_use_map") or self._stream_tool_use_map is None:
+                        self._stream_tool_use_map = {}
+                    self._stream_tool_use_map[tool_index] = {"id": tool_use.id, "name": tool_use.name}  # type: ignore
 
         if isinstance(response, (ContentBlockDeltaEvent, BetaRawContentBlockDeltaEvent)):
             # Handle text content
@@ -1002,6 +1013,22 @@ class Claude(Model):
                 model_response.provider_data = {
                     "signature": response.delta.signature,
                 }
+            elif response.delta.type == "input_json_delta":
+                tool_index = getattr(response, "index", None)
+                tool_info = None
+                if hasattr(self, "_stream_tool_use_map") and self._stream_tool_use_map is not None:
+                    tool_info = self._stream_tool_use_map.get(tool_index) if tool_index is not None else None
+
+                partial_json = getattr(response.delta, "partial_json", None)
+                if partial_json is None:
+                    partial_json = getattr(response.delta, "input_json", None)
+
+                if partial_json is not None:
+                    model_response.event = ModelResponseEvent.tool_call_args_delta.value
+                    model_response.tool_call_id = tool_info.get("id") if tool_info else None
+                    model_response.tool_name = tool_info.get("name") if tool_info else None
+                    model_response.tool_args_delta = partial_json
+                    return model_response
 
         elif isinstance(response, (ContentBlockStopEvent, ParsedBetaContentBlockStopEvent)):
             if response.content_block.type == "tool_use":  # type: ignore
@@ -1014,6 +1041,9 @@ class Claude(Model):
                     function_def["arguments"] = json.dumps(tool_input)
 
                 model_response.extra = model_response.extra or {}
+                # Claude streams tool input via `input_json_delta`; avoid duplicating deltas when the full tool call
+                # object is emitted at block stop.
+                model_response.extra["skip_tool_call_args_delta"] = True
 
                 model_response.tool_calls = [
                     {

@@ -37,6 +37,7 @@ from agno.run.agent import (
     RunStartedEvent,
     SessionSummaryCompletedEvent,
     SessionSummaryStartedEvent,
+    ToolCallArgsDeltaEvent,
     ToolCallCompletedEvent,
     ToolCallErrorEvent,
     ToolCallStartedEvent,
@@ -69,6 +70,7 @@ from agno.run.team import RunStartedEvent as TeamRunStartedEvent
 from agno.run.team import SessionSummaryCompletedEvent as TeamSessionSummaryCompletedEvent
 from agno.run.team import SessionSummaryStartedEvent as TeamSessionSummaryStartedEvent
 from agno.run.team import TeamRunEvent, TeamRunInput, TeamRunOutput, TeamRunOutputEvent
+from agno.run.team import ToolCallArgsDeltaEvent as TeamToolCallArgsDeltaEvent
 from agno.run.team import ToolCallCompletedEvent as TeamToolCallCompletedEvent
 from agno.run.team import ToolCallErrorEvent as TeamToolCallErrorEvent
 from agno.run.team import ToolCallStartedEvent as TeamToolCallStartedEvent
@@ -533,6 +535,20 @@ def create_tool_call_started_event(from_run_response: RunOutput, tool: ToolExecu
     )
 
 
+def create_tool_call_args_delta_event(
+    from_run_response: RunOutput, tool_call_id: Optional[str], tool_name: Optional[str], delta: Optional[str]
+) -> ToolCallArgsDeltaEvent:
+    return ToolCallArgsDeltaEvent(
+        session_id=from_run_response.session_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
+        agent_name=from_run_response.agent_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        tool_call_id=tool_call_id,
+        tool_name=tool_name,
+        delta=delta,
+    )
+
+
 def create_team_tool_call_started_event(
     from_run_response: TeamRunOutput, tool: ToolExecution
 ) -> TeamToolCallStartedEvent:
@@ -542,6 +558,20 @@ def create_team_tool_call_started_event(
         team_name=from_run_response.team_name,  # type: ignore
         run_id=from_run_response.run_id,
         tool=tool,
+    )
+
+
+def create_team_tool_call_args_delta_event(
+    from_run_response: TeamRunOutput, tool_call_id: Optional[str], tool_name: Optional[str], delta: Optional[str]
+) -> TeamToolCallArgsDeltaEvent:
+    return TeamToolCallArgsDeltaEvent(
+        session_id=from_run_response.session_id,
+        team_id=from_run_response.team_id,  # type: ignore
+        team_name=from_run_response.team_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        tool_call_id=tool_call_id,
+        tool_name=tool_name,
+        delta=delta,
     )
 
 

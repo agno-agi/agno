@@ -109,6 +109,9 @@ class Gemini(Model):
     thinking_budget: Optional[int] = None  # Thinking budget for Gemini 2.5 models
     include_thoughts: Optional[bool] = None  # Include thought summaries in response
     thinking_level: Optional[str] = None  # "low", "high"
+    # Vertex AI preview feature: stream a single tool call's args as incremental partial_args.
+    # Not supported in Gemini API (AI Studio).
+    stream_function_call_arguments: Optional[bool] = None
     request_params: Optional[Dict[str, Any]] = None
 
     # Client parameters
@@ -121,6 +124,9 @@ class Gemini(Model):
 
     # Gemini client
     client: Optional[GeminiClient] = None
+
+    # Streaming state for Vertex AI partial function call arguments (keyed by tool_call_id)
+    _stream_function_call_args_state: Optional[Dict[str, Dict[str, Any]]] = None
 
     # The role to map the Gemini response
     role_map = {
@@ -203,6 +209,7 @@ class Gemini(Model):
                 "thinking_budget": self.thinking_budget,
                 "include_thoughts": self.include_thoughts,
                 "thinking_level": self.thinking_level,
+                "stream_function_call_arguments": self.stream_function_call_arguments,
                 "vertexai": self.vertexai,
                 "project_id": self.project_id,
                 "location": self.location,
@@ -210,6 +217,205 @@ class Gemini(Model):
         )
         cleaned_dict = {k: v for k, v in model_dict.items() if v is not None}
         return cleaned_dict
+
+    def _using_vertexai(self) -> bool:
+        # Keep consistent with get_client(): env var can enable Vertex AI even if self.vertexai is False.
+        return self.vertexai or getenv("GOOGLE_GENAI_USE_VERTEXAI", "false").lower() == "true"
+
+    def _should_stream_function_call_arguments(self) -> bool:
+        return bool(self._using_vertexai() and self.stream_function_call_arguments)
+
+    def _reset_stream_function_call_args_state(self) -> None:
+        self._stream_function_call_args_state = {}
+
+    def _extract_top_level_key(self, json_path: Optional[str]) -> Optional[str]:
+        """Extract a top-level key from a JSONPath (best-effort).
+
+        Expected common forms:
+        - $.key
+        - $['key'] / $[\"key\"]
+        """
+        if not json_path:
+            return None
+        if json_path.startswith("$."):
+            rest = json_path[2:]
+            if not rest:
+                return None
+            # Stop at the next nesting marker.
+            for sep in (".", "["):
+                idx = rest.find(sep)
+                if idx != -1:
+                    rest = rest[:idx]
+                    break
+            return rest or None
+        if json_path.startswith("$["):
+            rest = json_path[2:]
+            # Handle ['key'] and ["key"]
+            if rest.startswith("'"):
+                end = rest.find("']")
+                if end != -1:
+                    return rest[1:end] or None
+            if rest.startswith('"'):
+                end = rest.find('"]')
+                if end != -1:
+                    return rest[1:end] or None
+        return None
+
+    def _escape_json_string_fragment(self, s: str) -> str:
+        # json.dumps() returns a quoted JSON string; strip the surrounding quotes to embed as a fragment.
+        dumped = json.dumps(s, ensure_ascii=False)
+        if len(dumped) >= 2 and dumped[0] == '"' and dumped[-1] == '"':
+            return dumped[1:-1]
+        return dumped
+
+    def _iter_function_call_partial_args_json_fragments(
+        self,
+        *,
+        tool_call_id: str,
+        partial_args: list[Any],
+        function_will_continue: Optional[bool],
+    ) -> List[str]:
+        """Convert Vertex AI FunctionCall.partial_args into JSON string fragments for our ToolCallArgsDelta stream.
+
+        This implementation is intentionally conservative:
+        - Supports top-level keys only (e.g. $.article).
+        - Streams string values by emitting JSON syntax once and then escaped string fragments.
+        - Closes the JSON object when function_will_continue is explicitly False.
+        """
+        if self._stream_function_call_args_state is None:
+            self._stream_function_call_args_state = {}
+        state = self._stream_function_call_args_state.setdefault(
+            tool_call_id,
+            {
+                "started": False,
+                "has_any_field": False,
+                "current_key": None,
+                "current_key_is_string": False,
+            },
+        )
+
+        out: List[str] = []
+
+        def emit(fragment: str) -> None:
+            if fragment:
+                out.append(fragment)
+
+        for pa in partial_args:
+            key = self._extract_top_level_key(getattr(pa, "json_path", None))
+            if not key:
+                continue
+
+            # Determine value type. For streaming strings, we expect string_value to be set.
+            string_value = getattr(pa, "string_value", None)
+            number_value = getattr(pa, "number_value", None)
+            bool_value = getattr(pa, "bool_value", None)
+            null_value = getattr(pa, "null_value", None)
+
+            if not state["started"]:
+                emit("{")
+                state["started"] = True
+
+            # Start a new field if we switched keys or if no field is open.
+            if state["current_key"] != key:
+                # Close the previous string field if it was left open.
+                if state["current_key"] is not None and state["current_key_is_string"]:
+                    emit('"')
+                state["current_key"] = None
+                state["current_key_is_string"] = False
+
+                if state["has_any_field"]:
+                    emit(",")
+                emit(json.dumps(key, ensure_ascii=False))
+                emit(":")
+
+                # Open a streaming string value.
+                if string_value is not None:
+                    emit('"')
+                    state["current_key"] = key
+                    state["current_key_is_string"] = True
+                    emit(self._escape_json_string_fragment(str(string_value)))
+                    continue
+
+                # Non-string values are emitted as full JSON scalars (no incremental streaming).
+                if number_value is not None:
+                    emit(json.dumps(number_value))
+                elif bool_value is not None:
+                    emit("true" if bool_value else "false")
+                elif null_value is not None:
+                    emit("null")
+                else:
+                    # Unknown/empty partial arg - skip.
+                    continue
+                state["has_any_field"] = True
+                continue
+
+            # Continuing the current string field.
+            if state["current_key"] == key and state["current_key_is_string"] and string_value is not None:
+                emit(self._escape_json_string_fragment(str(string_value)))
+
+        # Mark that at least one field has been seen if we started emitting.
+        if out and state["started"]:
+            # We only set has_any_field once we've started a field; good enough for our conservative support.
+            state["has_any_field"] = True
+
+        # Close the JSON object when the function call explicitly indicates it is done.
+        if function_will_continue is False:
+            if state["current_key"] is not None and state["current_key_is_string"]:
+                emit('"')
+            if state["started"]:
+                emit("}")
+            self._stream_function_call_args_state.pop(tool_call_id, None)
+
+        return out
+
+    def parse_tool_calls(self, tool_calls_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        # Only merge streaming tool_call argument fragments when the Vertex AI preview feature is enabled.
+        if not self._should_stream_function_call_arguments():
+            return tool_calls_data
+
+        merged: List[Dict[str, Any]] = []
+        by_id: Dict[str, Dict[str, Any]] = {}
+
+        for tool_call in tool_calls_data:
+            if not isinstance(tool_call, dict):
+                continue
+
+            tool_call_id = tool_call.get("id") or tool_call.get("call_id")
+            if not tool_call_id:
+                merged.append(tool_call)
+                continue
+
+            if tool_call_id not in by_id:
+                # Preserve insertion order.
+                base: Dict[str, Any] = {"id": tool_call_id}
+                if tool_call.get("type") is not None:
+                    base["type"] = tool_call.get("type")
+                base["function"] = {"name": "", "arguments": ""}
+                merged.append(base)
+                by_id[tool_call_id] = base
+
+            dest = by_id[tool_call_id]
+            if dest.get("type") is None and tool_call.get("type") is not None:
+                dest["type"] = tool_call.get("type")
+
+            src_fn = tool_call.get("function") or {}
+            dest_fn = dest.setdefault("function", {})
+
+            src_name = src_fn.get("name")
+            if src_name:
+                existing_name = dest_fn.get("name") or ""
+                if not existing_name or len(str(src_name)) > len(str(existing_name)):
+                    dest_fn["name"] = src_name
+
+            src_args = src_fn.get("arguments")
+            if src_args is not None and src_args != "":
+                dest_fn["arguments"] = (dest_fn.get("arguments") or "") + str(src_args)
+
+            # Preserve thought_signature if present.
+            if "thought_signature" in tool_call and tool_call["thought_signature"]:
+                dest["thought_signature"] = tool_call["thought_signature"]
+
+        return merged
 
     def _append_file_search_tool(self, builtin_tools: List[Tool]) -> None:
         """Append Gemini File Search tool to builtin_tools if file search is enabled.
@@ -342,6 +548,14 @@ class Gemini(Model):
                 config["tool_config"] = {"function_calling_config": {"mode": FunctionCallingConfigMode.ANY}}
             else:
                 config["tool_config"] = {"function_calling_config": {"mode": tool_choice}}
+
+        # Vertex AI preview: stream function call args as partial_args (not supported in Gemini API).
+        if self._should_stream_function_call_arguments():
+            tool_config = config.get("tool_config") or {}
+            function_calling_config = tool_config.get("function_calling_config") or {}
+            function_calling_config["stream_function_call_arguments"] = True
+            tool_config["function_calling_config"] = function_calling_config
+            config["tool_config"] = tool_config
 
         config = {k: v for k, v in config.items() if v is not None}
 
@@ -539,6 +753,9 @@ class Gemini(Model):
         """
         formatted_messages, system_message = self._format_messages(messages, compress_tool_results)
 
+        # Clear per-request streaming state to avoid leakage across runs.
+        self._reset_stream_function_call_args_state()
+
         request_kwargs = self.get_request_params(
             system_message, response_format=response_format, tools=tools, tool_choice=tool_choice
         )
@@ -657,6 +874,9 @@ class Gemini(Model):
         Invokes the model with a list of messages and returns the response as a stream.
         """
         formatted_messages, system_message = self._format_messages(messages, compress_tool_results)
+
+        # Clear per-request streaming state to avoid leakage across runs.
+        self._reset_stream_function_call_args_state()
 
         request_kwargs = self.get_request_params(
             system_message, response_format=response_format, tools=tools, tool_choice=tool_choice
@@ -1328,23 +1548,47 @@ class Gemini(Model):
 
                     # Extract function call if present
                     if hasattr(part, "function_call") and part.function_call is not None:
-                        call_id = part.function_call.id if part.function_call.id else str(uuid4())
-                        tool_call = {
-                            "id": call_id,
-                            "type": "function",
-                            "function": {
-                                "name": part.function_call.name,
-                                "arguments": json.dumps(part.function_call.args)
-                                if part.function_call.args is not None
-                                else "",
-                            },
-                        }
+                        function_call = part.function_call
+                        call_id = function_call.id if function_call.id else str(uuid4())
 
-                        # Capture thought signature for function calls
-                        if hasattr(part, "thought_signature") and part.thought_signature:
-                            tool_call["thought_signature"] = base64.b64encode(part.thought_signature).decode("ascii")
+                        # Vertex AI preview: stream partial args as JSON fragments.
+                        if (
+                            self._should_stream_function_call_arguments()
+                            and getattr(function_call, "partial_args", None)
+                            and isinstance(function_call.partial_args, list)  # type: ignore[attr-defined]
+                        ):
+                            fragments = self._iter_function_call_partial_args_json_fragments(
+                                tool_call_id=call_id,
+                                partial_args=function_call.partial_args,  # type: ignore[arg-type]
+                                function_will_continue=getattr(function_call, "will_continue", None),
+                            )
+                            for frag in fragments:
+                                tc: Dict[str, Any] = {
+                                    "id": call_id,
+                                    "type": "function",
+                                    "function": {
+                                        "name": function_call.name,
+                                        "arguments": frag,
+                                    },
+                                }
+                                if hasattr(part, "thought_signature") and part.thought_signature:
+                                    tc["thought_signature"] = base64.b64encode(part.thought_signature).decode("ascii")
+                                model_response.tool_calls.append(tc)
+                        else:
+                            tool_call = {
+                                "id": call_id,
+                                "type": "function",
+                                "function": {
+                                    "name": function_call.name,
+                                    "arguments": json.dumps(function_call.args) if function_call.args is not None else "",
+                                },
+                            }
 
-                        model_response.tool_calls.append(tool_call)
+                            # Capture thought signature for function calls
+                            if hasattr(part, "thought_signature") and part.thought_signature:
+                                tool_call["thought_signature"] = base64.b64encode(part.thought_signature).decode("ascii")
+
+                            model_response.tool_calls.append(tool_call)
 
             citations = Citations()
             citations.raw = {}
