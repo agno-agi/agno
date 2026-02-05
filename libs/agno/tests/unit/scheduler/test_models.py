@@ -1,8 +1,6 @@
 """Unit tests for scheduler domain models."""
 
 
-
-
 class TestSchedule:
     """Tests for Schedule dataclass."""
 

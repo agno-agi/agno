@@ -955,7 +955,9 @@ class BaseDb(ABC):
         raise NotImplementedError
 
     # --- Schedules ---
-    @abstractmethod
+    # Note: These methods are not abstract to allow databases that don't support
+    # scheduling to still work. Databases that support scheduling should override
+    # these methods with proper implementations.
     def get_schedule(self, schedule_id: str) -> Optional[Schedule]:
         """Get a schedule by ID.
 
@@ -965,9 +967,8 @@ class BaseDb(ABC):
         Returns:
             Schedule or None if not found.
         """
-        raise NotImplementedError
+        raise NotImplementedError("Scheduler not supported by this database")
 
-    @abstractmethod
     def get_schedule_by_name(self, name: str) -> Optional[Schedule]:
         """Get a schedule by name.
 
@@ -977,9 +978,8 @@ class BaseDb(ABC):
         Returns:
             Schedule or None if not found.
         """
-        raise NotImplementedError
+        raise NotImplementedError("Scheduler not supported by this database")
 
-    @abstractmethod
     def get_schedules(
         self,
         enabled: Optional[bool] = None,
@@ -996,9 +996,8 @@ class BaseDb(ABC):
         Returns:
             Tuple of (list of schedules, total count).
         """
-        raise NotImplementedError
+        raise NotImplementedError("Scheduler not supported by this database")
 
-    @abstractmethod
     def create_schedule(self, schedule: Schedule) -> Schedule:
         """Create a new schedule.
 
@@ -1008,9 +1007,8 @@ class BaseDb(ABC):
         Returns:
             The created schedule.
         """
-        raise NotImplementedError
+        raise NotImplementedError("Scheduler not supported by this database")
 
-    @abstractmethod
     def update_schedule(self, schedule: Schedule) -> Schedule:
         """Update an existing schedule.
 
@@ -1020,9 +1018,8 @@ class BaseDb(ABC):
         Returns:
             The updated schedule.
         """
-        raise NotImplementedError
+        raise NotImplementedError("Scheduler not supported by this database")
 
-    @abstractmethod
     def delete_schedule(self, schedule_id: str) -> bool:
         """Delete a schedule.
 
@@ -1032,9 +1029,8 @@ class BaseDb(ABC):
         Returns:
             True if deleted, False if not found.
         """
-        raise NotImplementedError
+        raise NotImplementedError("Scheduler not supported by this database")
 
-    @abstractmethod
     def claim_due_schedule(
         self,
         container_id: str,
@@ -1054,9 +1050,8 @@ class BaseDb(ABC):
         Returns:
             The claimed schedule, or None if no schedules are due.
         """
-        raise NotImplementedError
+        raise NotImplementedError("Scheduler not supported by this database")
 
-    @abstractmethod
     def release_schedule(
         self,
         schedule_id: str,
@@ -1068,10 +1063,9 @@ class BaseDb(ABC):
             schedule_id: The schedule ID.
             next_run_at: Epoch seconds for the next run.
         """
-        raise NotImplementedError
+        raise NotImplementedError("Scheduler not supported by this database")
 
     # --- Schedule Runs ---
-    @abstractmethod
     def create_schedule_run(self, run: ScheduleRun) -> ScheduleRun:
         """Create a schedule run record.
 
@@ -1081,9 +1075,8 @@ class BaseDb(ABC):
         Returns:
             The created schedule run.
         """
-        raise NotImplementedError
+        raise NotImplementedError("Scheduler not supported by this database")
 
-    @abstractmethod
     def update_schedule_run(self, run: ScheduleRun) -> ScheduleRun:
         """Update a schedule run record.
 
@@ -1093,9 +1086,8 @@ class BaseDb(ABC):
         Returns:
             The updated schedule run.
         """
-        raise NotImplementedError
+        raise NotImplementedError("Scheduler not supported by this database")
 
-    @abstractmethod
     def get_schedule_runs(
         self,
         schedule_id: str,
@@ -1112,9 +1104,8 @@ class BaseDb(ABC):
         Returns:
             Tuple of (list of schedule runs, total count).
         """
-        raise NotImplementedError
+        raise NotImplementedError("Scheduler not supported by this database")
 
-    @abstractmethod
     def get_schedule_run(self, run_id: str) -> Optional[ScheduleRun]:
         """Get a specific schedule run.
 
@@ -1706,7 +1697,9 @@ class AsyncBaseDb(ABC):
         raise NotImplementedError
 
     # --- Schedules ---
-    @abstractmethod
+    # Note: These methods are not abstract to allow databases that don't support
+    # scheduling to still work. Databases that support scheduling should override
+    # these methods with proper implementations.
     async def get_schedule(self, schedule_id: str) -> Optional[Schedule]:
         """Get a schedule by ID.
 
@@ -1716,9 +1709,8 @@ class AsyncBaseDb(ABC):
         Returns:
             Schedule or None if not found.
         """
-        raise NotImplementedError
+        raise NotImplementedError("Scheduler not supported by this database")
 
-    @abstractmethod
     async def get_schedule_by_name(self, name: str) -> Optional[Schedule]:
         """Get a schedule by name.
 
@@ -1728,9 +1720,8 @@ class AsyncBaseDb(ABC):
         Returns:
             Schedule or None if not found.
         """
-        raise NotImplementedError
+        raise NotImplementedError("Scheduler not supported by this database")
 
-    @abstractmethod
     async def get_schedules(
         self,
         enabled: Optional[bool] = None,
@@ -1747,9 +1738,8 @@ class AsyncBaseDb(ABC):
         Returns:
             Tuple of (list of schedules, total count).
         """
-        raise NotImplementedError
+        raise NotImplementedError("Scheduler not supported by this database")
 
-    @abstractmethod
     async def create_schedule(self, schedule: Schedule) -> Schedule:
         """Create a new schedule.
 
@@ -1759,9 +1749,8 @@ class AsyncBaseDb(ABC):
         Returns:
             The created schedule.
         """
-        raise NotImplementedError
+        raise NotImplementedError("Scheduler not supported by this database")
 
-    @abstractmethod
     async def update_schedule(self, schedule: Schedule) -> Schedule:
         """Update an existing schedule.
 
@@ -1771,9 +1760,8 @@ class AsyncBaseDb(ABC):
         Returns:
             The updated schedule.
         """
-        raise NotImplementedError
+        raise NotImplementedError("Scheduler not supported by this database")
 
-    @abstractmethod
     async def delete_schedule(self, schedule_id: str) -> bool:
         """Delete a schedule.
 
@@ -1783,9 +1771,8 @@ class AsyncBaseDb(ABC):
         Returns:
             True if deleted, False if not found.
         """
-        raise NotImplementedError
+        raise NotImplementedError("Scheduler not supported by this database")
 
-    @abstractmethod
     async def claim_due_schedule(
         self,
         container_id: str,
@@ -1805,9 +1792,8 @@ class AsyncBaseDb(ABC):
         Returns:
             The claimed schedule, or None if no schedules are due.
         """
-        raise NotImplementedError
+        raise NotImplementedError("Scheduler not supported by this database")
 
-    @abstractmethod
     async def release_schedule(
         self,
         schedule_id: str,
@@ -1819,10 +1805,9 @@ class AsyncBaseDb(ABC):
             schedule_id: The schedule ID.
             next_run_at: Epoch seconds for the next run.
         """
-        raise NotImplementedError
+        raise NotImplementedError("Scheduler not supported by this database")
 
     # --- Schedule Runs ---
-    @abstractmethod
     async def create_schedule_run(self, run: ScheduleRun) -> ScheduleRun:
         """Create a schedule run record.
 
@@ -1832,9 +1817,8 @@ class AsyncBaseDb(ABC):
         Returns:
             The created schedule run.
         """
-        raise NotImplementedError
+        raise NotImplementedError("Scheduler not supported by this database")
 
-    @abstractmethod
     async def update_schedule_run(self, run: ScheduleRun) -> ScheduleRun:
         """Update a schedule run record.
 
@@ -1844,9 +1828,8 @@ class AsyncBaseDb(ABC):
         Returns:
             The updated schedule run.
         """
-        raise NotImplementedError
+        raise NotImplementedError("Scheduler not supported by this database")
 
-    @abstractmethod
     async def get_schedule_runs(
         self,
         schedule_id: str,
@@ -1863,9 +1846,8 @@ class AsyncBaseDb(ABC):
         Returns:
             Tuple of (list of schedule runs, total count).
         """
-        raise NotImplementedError
+        raise NotImplementedError("Scheduler not supported by this database")
 
-    @abstractmethod
     async def get_schedule_run(self, run_id: str) -> Optional[ScheduleRun]:
         """Get a specific schedule run.
 
@@ -1875,4 +1857,4 @@ class AsyncBaseDb(ABC):
         Returns:
             ScheduleRun or None if not found.
         """
-        raise NotImplementedError
+        raise NotImplementedError("Scheduler not supported by this database")

@@ -141,7 +141,7 @@ def get_schedule_router(
     Returns:
         FastAPI router with schedule endpoints.
     """
-    from agno.os.utils import get_authentication_dependency
+    from agno.os.auth import get_authentication_dependency
 
     router = APIRouter(
         prefix="/v1/schedules",

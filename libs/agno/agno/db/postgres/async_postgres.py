@@ -3053,11 +3053,11 @@ class AsyncPostgresDb(AsyncBaseDb):
     # --- Scheduler Methods ---
     async def _get_schedule_table(self) -> Optional[Table]:
         """Get or create the schedules table."""
-        return await self._aget_table(table_type="schedules", create_table_if_not_found=True)
+        return await self._get_table(table_type="schedules", create_table_if_not_found=True)
 
     async def _get_schedule_runs_table(self) -> Optional[Table]:
         """Get or create the schedule runs table."""
-        return await self._aget_table(table_type="schedule_runs", create_table_if_not_found=True)
+        return await self._get_table(table_type="schedule_runs", create_table_if_not_found=True)
 
     async def get_schedule(self, schedule_id: str) -> Optional[Schedule]:
         """Get a schedule by ID."""

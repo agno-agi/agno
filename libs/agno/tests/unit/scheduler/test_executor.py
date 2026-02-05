@@ -103,7 +103,8 @@ class TestScheduleExecutorAsyncMethods:
         from agno.scheduler.executor import ScheduleExecutor
 
         mock_db = MagicMock()
-        del mock_db.aupdate_schedule_run
+        # Remove async method to simulate sync database
+        del mock_db.acreate_schedule_run
         mock_db.update_schedule_run.return_value = ScheduleRun(id="run-1", schedule_id="schedule-1", status="success")
 
         executor = ScheduleExecutor(mock_db, "http://localhost", "token")
@@ -137,7 +138,8 @@ class TestScheduleExecutorAsyncMethods:
         from agno.scheduler.executor import ScheduleExecutor
 
         mock_db = MagicMock()
-        del mock_db.arelease_schedule
+        # Remove async method to simulate sync database
+        del mock_db.acreate_schedule_run
 
         executor = ScheduleExecutor(mock_db, "http://localhost", "token")
 

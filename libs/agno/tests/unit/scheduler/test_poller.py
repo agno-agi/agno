@@ -200,7 +200,8 @@ class TestSchedulePollerAsyncMethods:
         from agno.scheduler.poller import SchedulePoller
 
         mock_db = MagicMock()
-        del mock_db.aget_schedule
+        # Remove async method to simulate sync database
+        del mock_db.aclaim_due_schedule
         mock_db.get_schedule.return_value = Schedule(
             id="schedule-1",
             name="test",
@@ -246,7 +247,8 @@ class TestSchedulePollerTrigger:
         from agno.scheduler.poller import SchedulePoller
 
         mock_db = MagicMock()
-        del mock_db.aget_schedule
+        # Remove async method to simulate sync database
+        del mock_db.aclaim_due_schedule
         mock_db.get_schedule.return_value = None
 
         poller = SchedulePoller(mock_db, "http://localhost", "token")
@@ -261,7 +263,8 @@ class TestSchedulePollerTrigger:
         from agno.scheduler.poller import SchedulePoller
 
         mock_db = MagicMock()
-        del mock_db.aget_schedule
+        # Remove async method to simulate sync database
+        del mock_db.aclaim_due_schedule
         mock_db.get_schedule.return_value = Schedule(
             id="schedule-1",
             name="test",
