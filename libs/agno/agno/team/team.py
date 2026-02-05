@@ -79,6 +79,7 @@ from agno.run.team import (
 )
 from agno.session import SessionSummaryManager, TeamSession, WorkflowSession
 from agno.session.summary import SessionSummary
+from agno.team.autonomy.models import TeamExecutionMode
 from agno.tools import Toolkit
 from agno.tools.function import Function
 from agno.utils.agent import (
@@ -224,6 +225,9 @@ class Team:
     workflow_id: Optional[str] = None
 
     # --- Team execution settings ---
+    # Optional higher-level execution mode (opt-in).
+    # If set to AUTONOMOUS/SUPERVISED, Team.run/arun will execute a step loop with checkpointing.
+    mode: Optional[TeamExecutionMode] = None
     # If True, the team leader won't process responses from the members and instead will return them directly
     # Should not be used in combination with delegate_to_all_members
     respond_directly: bool = False
@@ -586,6 +590,7 @@ class Team:
         delay_between_retries: int = 1,
         exponential_backoff: bool = False,
         telemetry: bool = True,
+        mode: Optional[Union[TeamExecutionMode, str]] = None,
     ):
         self.members = members
 
@@ -598,6 +603,13 @@ class Team:
         self.respond_directly = respond_directly
         self.determine_input_for_members = determine_input_for_members
         self.delegate_to_all_members = delegate_to_all_members
+        if isinstance(mode, TeamExecutionMode):
+            self.mode = mode
+        elif isinstance(mode, str):
+            try:
+                self.mode = TeamExecutionMode(mode)
+            except ValueError:
+                self.mode = None
 
         self.user_id = user_id
         self.session_id = session_id
@@ -1590,6 +1602,11 @@ class Team:
                         run_context=run_context,
                     )
 
+                    # We should break out of the run function (HITL flow)
+                    if any(tool_call.is_paused for tool_call in run_response.tools or []):
+                        wait_for_open_threads(memory_future=memory_future)  # type: ignore
+                        return self._handle_team_run_paused(run_response=run_response, session=session)
+
                     # 8. Store media if enabled
                     if self.store_media:
                         store_media_util(run_response, model_response)
@@ -1889,6 +1906,20 @@ class Team:
                         session=session, run_response=run_response, stream_events=stream_events, run_context=run_context
                     )
 
+                    # We should break out of the run function (HITL flow)
+                    if any(tool_call.is_paused for tool_call in run_response.tools or []):
+                        yield from wait_for_thread_tasks_stream(
+                            run_response=run_response,
+                            memory_future=memory_future,  # type: ignore
+                            stream_events=stream_events,
+                            events_to_skip=self.events_to_skip,  # type: ignore
+                            store_events=self.store_events,
+                            get_memories_callback=lambda: self.get_user_memories(user_id=user_id),
+                        )
+
+                        yield from self._handle_team_run_paused_stream(run_response=run_response, session=session)
+                        return
+
                     # Yield RunContentCompletedEvent
                     if stream_events:
                         yield handle_event(  # type: ignore
@@ -2060,6 +2091,11 @@ class Team:
         self,
         input: Union[str, List, Dict, Message, BaseModel, List[Message]],
         *,
+        mode: Optional[Union[TeamExecutionMode, str]] = None,
+        job_id: Optional[str] = None,
+        resume: bool = False,
+        pause: bool = False,
+        approval: Optional[bool] = None,
         stream: Literal[False] = False,
         stream_events: Optional[bool] = None,
         session_id: Optional[str] = None,
@@ -2086,6 +2122,11 @@ class Team:
         self,
         input: Union[str, List, Dict, Message, BaseModel, List[Message]],
         *,
+        mode: Optional[Union[TeamExecutionMode, str]] = None,
+        job_id: Optional[str] = None,
+        resume: bool = False,
+        pause: bool = False,
+        approval: Optional[bool] = None,
         stream: Literal[True] = True,
         stream_events: Optional[bool] = None,
         session_id: Optional[str] = None,
@@ -2113,6 +2154,11 @@ class Team:
         self,
         input: Union[str, List, Dict, Message, BaseModel, List[Message]],
         *,
+        mode: Optional[Union[TeamExecutionMode, str]] = None,
+        job_id: Optional[str] = None,
+        resume: bool = False,
+        pause: bool = False,
+        approval: Optional[bool] = None,
         stream: Optional[bool] = None,
         stream_events: Optional[bool] = None,
         session_id: Optional[str] = None,
@@ -2283,6 +2329,49 @@ class Team:
         run_response.metrics = Metrics()
         run_response.metrics.start_timer()
 
+        effective_mode: Optional[TeamExecutionMode] = None
+        if isinstance(mode, TeamExecutionMode):
+            effective_mode = mode
+        elif isinstance(mode, str):
+            try:
+                effective_mode = TeamExecutionMode(mode)
+            except ValueError:
+                effective_mode = None
+        else:
+            effective_mode = self.mode
+
+        if effective_mode in {TeamExecutionMode.AUTONOMOUS, TeamExecutionMode.SUPERVISED}:
+            if stream:
+                raise NotImplementedError("Autonomous Team.run() does not support stream=True yet.")
+
+            try:
+                from agno.team.autonomy.runner import run_autonomy_sync
+
+                run_response = run_autonomy_sync(
+                    team=self,
+                    mode=effective_mode,
+                    run_response=run_response,
+                    run_context=run_context,
+                    session=team_session,
+                    user_id=user_id,
+                    job_id=job_id,
+                    resume=resume,
+                    pause=pause,
+                    approval=approval,
+                )
+            except Exception as e:
+                run_response.status = RunStatus.error
+                if run_response.content is None:
+                    run_response.content = str(e)
+                log_error(f"Error in Team autonomous run: {str(e)}")
+            finally:
+                self._cleanup_and_store(run_response=run_response, session=team_session)
+                self._log_team_telemetry(session_id=team_session.session_id, run_id=run_response.run_id)
+                self._disconnect_connectable_tools()
+                cleanup_run(run_response.run_id)  # type: ignore
+
+            return run_response
+
         if stream:
             return self._run_stream(
                 run_response=run_response,
@@ -2314,6 +2403,468 @@ class Team:
                 background_tasks=background_tasks,
                 **kwargs,
             )
+
+    def continue_run(
+        self,
+        run_response: Optional[TeamRunOutput] = None,
+        *,
+        run_id: Optional[str] = None,
+        updated_tools: Optional[List["ToolExecution"]] = None,
+        requirements: Optional[List[Union["RunRequirement", Dict[str, Any]]]] = None,
+        stream: Optional[bool] = None,
+        stream_events: Optional[bool] = None,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        debug_mode: Optional[bool] = None,
+        run_context: Optional[RunContext] = None,
+        **kwargs: Any,
+    ) -> TeamRunOutput:
+        """Continue a previous Team run (HITL flow).
+
+        Note: streaming is not supported yet for Team.continue_run().
+        """
+        from agno.models.response import ToolExecution
+        from agno.run.requirement import RunRequirement
+
+        if stream:
+            raise NotImplementedError("Team.continue_run() does not support stream=True yet.")
+
+        if run_response is None and run_id is None:
+            raise ValueError("Either run_response or run_id must be provided.")
+
+        if run_response is None and (run_id is not None and (session_id is None and self.session_id is None)):
+            raise ValueError("Session ID is required to continue a run from a run_id.")
+
+        if self._has_async_db():
+            raise Exception("continue_run() is not supported with an async DB. Please use acontinue_run() instead.")
+
+        if updated_tools is not None:
+            import warnings
+
+            warnings.warn(
+                "The 'updated_tools' parameter is deprecated and will be removed in future versions. Use 'requirements' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
+        background_tasks = kwargs.pop("background_tasks", None)
+        if background_tasks is not None:
+            from fastapi import BackgroundTasks
+
+            background_tasks: BackgroundTasks = background_tasks  # type: ignore
+
+        session_id = run_response.session_id if run_response else session_id
+        run_id = run_response.run_id if run_response else run_id
+
+        session_id, user_id = self._initialize_session(session_id=session_id, user_id=user_id)
+        self.initialize_team(debug_mode=debug_mode)
+
+        register_run(run_id)  # type: ignore[arg-type]
+
+        team_session = self._read_or_create_session(session_id=session_id, user_id=user_id)
+        self._update_metadata(session=team_session)
+
+        # Initialize session state and load from DB
+        session_state = self._initialize_session_state(
+            session_state={},
+            user_id=user_id,
+            session_id=session_id,
+            run_id=run_id,
+        )
+        session_state = self._load_session_state(session=team_session, session_state=session_state)
+
+        dependencies = dependencies if dependencies is not None else self.dependencies
+        run_context = run_context or RunContext(
+            run_id=run_id,  # type: ignore[arg-type]
+            session_id=session_id,
+            user_id=user_id,
+            session_state=session_state,
+            dependencies=dependencies,
+        )
+
+        if run_context.dependencies is not None:
+            self._resolve_run_dependencies(run_context=run_context)
+
+        # Merge Team metadata with run metadata
+        run_context.metadata = metadata
+        if self.metadata is not None:
+            if run_context.metadata is None:
+                run_context.metadata = self.metadata
+            else:
+                merge_dictionaries(run_context.metadata, self.metadata)
+
+        # Can't stream events if streaming is disabled
+        if stream_events is None:
+            stream_events = False if self.stream_events is None else self.stream_events
+
+        # Resolve the run we are continuing from
+        if run_response is None and run_id is not None:
+            if updated_tools is None and requirements is None:
+                raise ValueError("To continue a run from a given run_id, the requirements parameter must be provided.")
+
+            stored = team_session.get_run(run_id)
+            if stored is None or not isinstance(stored, TeamRunOutput):
+                raise RuntimeError(f"No Team runs found for run ID {run_id}")
+            run_response = stored
+
+        run_response = cast(TeamRunOutput, run_response)
+        run_response.session_state = run_context.session_state
+        run_response.metadata = run_context.metadata
+
+        # Normalize requirements input (RunRequirement | dict)
+        normalized_requirements: Optional[List[RunRequirement]] = None
+        if requirements is not None:
+            normalized_requirements = []
+            for item in requirements:
+                if isinstance(item, RunRequirement):
+                    normalized_requirements.append(item)
+                elif isinstance(item, dict):
+                    normalized_requirements.append(RunRequirement.from_dict(item))
+
+        # Apply updated tools / requirements to the stored run
+        if updated_tools is not None:
+            run_response.tools = [t if isinstance(t, ToolExecution) else ToolExecution.from_dict(t) for t in updated_tools]  # type: ignore[list-item]
+        elif normalized_requirements is not None:
+            run_response.requirements = normalized_requirements
+            updated_tools_from_reqs = [req.tool_execution for req in normalized_requirements if req.tool_execution is not None]
+            if updated_tools_from_reqs and run_response.tools:
+                updated_tools_map = {tool.tool_call_id: tool for tool in updated_tools_from_reqs if tool.tool_call_id is not None}
+                run_response.tools = [updated_tools_map.get(tool.tool_call_id, tool) for tool in run_response.tools]
+            else:
+                run_response.tools = updated_tools_from_reqs
+
+        # Prepare arguments for the model
+        self._set_default_model()
+        self.model = cast(Model, self.model)
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = (
+            self._get_response_format(run_context=run_context) if self.parser_model is None else None
+        )
+
+        team_run_context: Dict[str, Any] = {}
+        _tools = self._determine_tools_for_model(
+            model=self.model,
+            run_response=run_response,
+            run_context=run_context,
+            team_run_context=team_run_context,
+            session=team_session,
+            user_id=user_id,
+            async_mode=False,
+            input_message=run_response.input.input_content if run_response.input is not None else None,
+            images=run_response.input.images if run_response.input is not None else None,  # type: ignore[arg-type]
+            videos=run_response.input.videos if run_response.input is not None else None,  # type: ignore[arg-type]
+            audio=run_response.input.audios if run_response.input is not None else None,  # type: ignore[arg-type]
+            files=run_response.input.files if run_response.input is not None else None,  # type: ignore[arg-type]
+            debug_mode=debug_mode,
+            add_history_to_context=False,
+            add_dependencies_to_context=False,
+            add_session_state_to_context=False,
+            stream=False,
+            stream_events=False,
+        )
+
+        log_debug(f"Team Continue Run Start: {run_response.run_id}", center=True)
+
+        run_messages = self._get_continue_run_messages(input=run_response.messages or [])
+
+        # Clear paused content so continuation output doesn't get appended to it.
+        if run_response.status == RunStatus.paused and isinstance(run_response.content, str):
+            run_response.content = None
+
+        run_response.status = RunStatus.running
+
+        try:
+            self._handle_tool_call_updates(run_response=run_response, run_messages=run_messages, tools=_tools)
+
+            model_response: ModelResponse = self.model.response(
+                messages=run_messages.messages,
+                response_format=response_format,
+                tools=_tools,
+                tool_choice=self.tool_choice,
+                tool_call_limit=self.tool_call_limit,
+                run_response=run_response,
+                send_media_to_model=self.send_media_to_model,
+                compression_manager=self.compression_manager if self.compress_tool_results else None,
+            )
+
+            self._parse_response_with_output_model(model_response, run_messages)
+            self._parse_response_with_parser_model(model_response, run_messages, run_context=run_context)
+
+            self._update_run_response(
+                model_response=model_response,
+                run_response=run_response,
+                run_messages=run_messages,
+                run_context=run_context,
+            )
+
+            if any(tool_call.is_paused for tool_call in run_response.tools or []):
+                return self._handle_team_run_paused(run_response=run_response, session=team_session)
+
+            if self.store_media:
+                store_media_util(run_response, model_response)
+
+            self._convert_response_to_structured_format(run_response=run_response, run_context=run_context)
+
+            if self.post_hooks is not None:
+                iterator = self._execute_post_hooks(
+                    hooks=self.post_hooks,  # type: ignore
+                    run_output=run_response,
+                    run_context=run_context,
+                    session=team_session,
+                    user_id=user_id,
+                    debug_mode=debug_mode,
+                    background_tasks=background_tasks,
+                    **kwargs,
+                )
+                deque(iterator, maxlen=0)
+
+            if self.session_summary_manager is not None:
+                team_session.upsert_run(run_response=run_response)
+                try:
+                    self.session_summary_manager.create_session_summary(session=team_session)
+                except Exception as e:
+                    log_warning(f"Error in session summary creation: {str(e)}")
+
+            run_response.status = RunStatus.completed
+            self._cleanup_and_store(run_response=run_response, session=team_session)
+            self._log_team_telemetry(session_id=team_session.session_id, run_id=run_response.run_id)
+
+            log_debug(f"Team Continue Run End: {run_response.run_id}", center=True, symbol="*")
+
+            return run_response
+        finally:
+            self._disconnect_connectable_tools()
+            cleanup_run(run_response.run_id)  # type: ignore
+
+    async def acontinue_run(
+        self,
+        run_response: Optional[TeamRunOutput] = None,
+        *,
+        run_id: Optional[str] = None,
+        updated_tools: Optional[List["ToolExecution"]] = None,
+        requirements: Optional[List[Union["RunRequirement", Dict[str, Any]]]] = None,
+        stream: Optional[bool] = None,
+        stream_events: Optional[bool] = None,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        debug_mode: Optional[bool] = None,
+        run_context: Optional[RunContext] = None,
+        **kwargs: Any,
+    ) -> TeamRunOutput:
+        """Async continue for a previous Team run (HITL flow).
+
+        Note: streaming is not supported yet for Team.acontinue_run().
+        """
+        from agno.models.response import ToolExecution
+        from agno.run.requirement import RunRequirement
+
+        if stream:
+            raise NotImplementedError("Team.acontinue_run() does not support stream=True yet.")
+
+        if run_response is None and run_id is None:
+            raise ValueError("Either run_response or run_id must be provided.")
+
+        if run_response is None and (run_id is not None and (session_id is None and self.session_id is None)):
+            raise ValueError("Session ID is required to continue a run from a run_id.")
+
+        if updated_tools is not None:
+            import warnings
+
+            warnings.warn(
+                "The 'updated_tools' parameter is deprecated and will be removed in future versions. Use 'requirements' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
+        background_tasks = kwargs.pop("background_tasks", None)
+        if background_tasks is not None:
+            from fastapi import BackgroundTasks
+
+            background_tasks: BackgroundTasks = background_tasks  # type: ignore
+
+        session_id = run_response.session_id if run_response else session_id
+        run_id = run_response.run_id if run_response else run_id
+
+        session_id, user_id = self._initialize_session(session_id=session_id, user_id=user_id)
+        self.initialize_team(debug_mode=debug_mode)
+
+        await aregister_run(run_id)  # type: ignore[arg-type]
+
+        if self._has_async_db():
+            team_session = await self._aread_or_create_session(session_id=session_id, user_id=user_id)
+        else:
+            team_session = self._read_or_create_session(session_id=session_id, user_id=user_id)
+
+        self._update_metadata(session=team_session)
+
+        session_state = self._initialize_session_state(
+            session_state={},
+            user_id=user_id,
+            session_id=session_id,
+            run_id=run_id,
+        )
+        session_state = self._load_session_state(session=team_session, session_state=session_state)
+
+        dependencies = dependencies if dependencies is not None else self.dependencies
+        run_context = run_context or RunContext(
+            run_id=run_id,  # type: ignore[arg-type]
+            session_id=session_id,
+            user_id=user_id,
+            session_state=session_state,
+            dependencies=dependencies,
+        )
+
+        if run_context.dependencies is not None:
+            await self._aresolve_run_dependencies(run_context=run_context)
+
+        run_context.metadata = metadata
+        if self.metadata is not None:
+            if run_context.metadata is None:
+                run_context.metadata = self.metadata
+            else:
+                merge_dictionaries(run_context.metadata, self.metadata)
+
+        if stream_events is None:
+            stream_events = False if self.stream_events is None else self.stream_events
+
+        if run_response is None and run_id is not None:
+            if updated_tools is None and requirements is None:
+                raise ValueError("To continue a run from a given run_id, the requirements parameter must be provided.")
+
+            stored = team_session.get_run(run_id)
+            if stored is None or not isinstance(stored, TeamRunOutput):
+                raise RuntimeError(f"No Team runs found for run ID {run_id}")
+            run_response = stored
+
+        run_response = cast(TeamRunOutput, run_response)
+        run_response.session_state = run_context.session_state
+        run_response.metadata = run_context.metadata
+
+        normalized_requirements: Optional[List[RunRequirement]] = None
+        if requirements is not None:
+            normalized_requirements = []
+            for item in requirements:
+                if isinstance(item, RunRequirement):
+                    normalized_requirements.append(item)
+                elif isinstance(item, dict):
+                    normalized_requirements.append(RunRequirement.from_dict(item))
+
+        if updated_tools is not None:
+            run_response.tools = [t if isinstance(t, ToolExecution) else ToolExecution.from_dict(t) for t in updated_tools]  # type: ignore[list-item]
+        elif normalized_requirements is not None:
+            run_response.requirements = normalized_requirements
+            updated_tools_from_reqs = [req.tool_execution for req in normalized_requirements if req.tool_execution is not None]
+            if updated_tools_from_reqs and run_response.tools:
+                updated_tools_map = {tool.tool_call_id: tool for tool in updated_tools_from_reqs if tool.tool_call_id is not None}
+                run_response.tools = [updated_tools_map.get(tool.tool_call_id, tool) for tool in run_response.tools]
+            else:
+                run_response.tools = updated_tools_from_reqs
+
+        self._set_default_model()
+        self.model = cast(Model, self.model)
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = (
+            self._get_response_format(run_context=run_context) if self.parser_model is None else None
+        )
+
+        team_run_context: Dict[str, Any] = {}
+        await self._check_and_refresh_mcp_tools()
+        _tools = self._determine_tools_for_model(
+            model=self.model,
+            run_response=run_response,
+            run_context=run_context,
+            team_run_context=team_run_context,
+            session=team_session,
+            user_id=user_id,
+            async_mode=True,
+            input_message=run_response.input.input_content if run_response.input is not None else None,
+            images=run_response.input.images if run_response.input is not None else None,  # type: ignore[arg-type]
+            videos=run_response.input.videos if run_response.input is not None else None,  # type: ignore[arg-type]
+            audio=run_response.input.audios if run_response.input is not None else None,  # type: ignore[arg-type]
+            files=run_response.input.files if run_response.input is not None else None,  # type: ignore[arg-type]
+            debug_mode=debug_mode,
+            add_history_to_context=False,
+            add_dependencies_to_context=False,
+            add_session_state_to_context=False,
+            stream=False,
+            stream_events=False,
+        )
+
+        log_debug(f"Team Continue Run Start: {run_response.run_id}", center=True)
+
+        run_messages = self._get_continue_run_messages(input=run_response.messages or [])
+
+        # Clear paused content so continuation output doesn't get appended to it.
+        if run_response.status == RunStatus.paused and isinstance(run_response.content, str):
+            run_response.content = None
+
+        run_response.status = RunStatus.running
+
+        try:
+            await self._ahandle_tool_call_updates(run_response=run_response, run_messages=run_messages, tools=_tools)
+
+            model_response: ModelResponse = await self.model.aresponse(
+                messages=run_messages.messages,
+                response_format=response_format,
+                tools=_tools,
+                tool_choice=self.tool_choice,
+                tool_call_limit=self.tool_call_limit,
+                run_response=run_response,
+                send_media_to_model=self.send_media_to_model,
+                compression_manager=self.compression_manager if self.compress_tool_results else None,
+            )
+
+            await self._aparse_response_with_output_model(model_response, run_messages)
+            await self._aparse_response_with_parser_model(model_response, run_messages, run_context=run_context)
+
+            self._update_run_response(
+                model_response=model_response,
+                run_response=run_response,
+                run_messages=run_messages,
+                run_context=run_context,
+            )
+
+            if any(tool_call.is_paused for tool_call in run_response.tools or []):
+                return await self._ahandle_team_run_paused(run_response=run_response, session=team_session)
+
+            if self.store_media:
+                store_media_util(run_response, model_response)
+
+            self._convert_response_to_structured_format(run_response=run_response, run_context=run_context)
+
+            if self.post_hooks is not None:
+                async for _ in self._aexecute_post_hooks(
+                    hooks=self.post_hooks,  # type: ignore
+                    run_output=run_response,
+                    run_context=run_context,
+                    session=team_session,
+                    user_id=user_id,
+                    debug_mode=debug_mode,
+                    background_tasks=background_tasks,
+                    **kwargs,
+                ):
+                    pass
+
+            if self.session_summary_manager is not None:
+                team_session.upsert_run(run_response=run_response)
+                try:
+                    await self.session_summary_manager.acreate_session_summary(session=team_session)
+                except Exception as e:
+                    log_warning(f"Error in session summary creation: {str(e)}")
+
+            run_response.status = RunStatus.completed
+            await self._acleanup_and_store(run_response=run_response, session=team_session)
+            await self._alog_team_telemetry(session_id=team_session.session_id, run_id=run_response.run_id)
+
+            log_debug(f"Team Continue Run End: {run_response.run_id}", center=True, symbol="*")
+
+            return run_response
+        finally:
+            self._disconnect_connectable_tools()
+            await self._disconnect_mcp_tools()
+            await acleanup_run(run_response.run_id)  # type: ignore
 
     async def _arun(
         self,
@@ -2497,6 +3048,11 @@ class Team:
                         run_messages=run_messages,
                         run_context=run_context,
                     )
+
+                    # We should break out of the run function (HITL flow)
+                    if any(tool_call.is_paused for tool_call in run_response.tools or []):
+                        await await_for_open_threads(memory_task=memory_task)
+                        return await self._ahandle_team_run_paused(run_response=run_response, session=team_session)
 
                     # 10. Store media if enabled
                     if self.store_media:
@@ -2840,6 +3396,24 @@ class Team:
                     ):
                         yield event
 
+                    # We should break out of the run function (HITL flow)
+                    if any(tool_call.is_paused for tool_call in run_response.tools or []):
+                        async for event in await_for_thread_tasks_stream(
+                            run_response=run_response,
+                            memory_task=memory_task,
+                            stream_events=stream_events,
+                            events_to_skip=self.events_to_skip,  # type: ignore
+                            store_events=self.store_events,
+                            get_memories_callback=lambda: self.aget_user_memories(user_id=user_id),
+                        ):
+                            yield event
+
+                        async for event in self._ahandle_team_run_paused_stream(
+                            run_response=run_response, session=team_session
+                        ):
+                            yield event
+                        return
+
                     # Yield RunContentCompletedEvent
                     if stream_events:
                         yield handle_event(  # type: ignore
@@ -3010,11 +3584,85 @@ class Team:
             # Always clean up the run tracking
             await acleanup_run(run_response.run_id)  # type: ignore
 
+    async def _arun_autonomy(
+        self,
+        *,
+        run_response: TeamRunOutput,
+        run_context: RunContext,
+        session_id: str,
+        user_id: Optional[str],
+        mode: TeamExecutionMode,
+        job_id: Optional[str],
+        resume: bool,
+        pause: bool,
+        approval: Optional[bool],
+        debug_mode: Optional[bool] = None,
+    ) -> TeamRunOutput:
+        """Autonomous/SUPERVISED execution path for Team.arun() (non-streaming v1)."""
+
+        await aregister_run(run_response.run_id)  # type: ignore
+
+        team_session: Optional[TeamSession] = None
+        try:
+            if self._has_async_db():
+                team_session = await self._aread_or_create_session(session_id=session_id, user_id=user_id)
+            else:
+                team_session = self._read_or_create_session(session_id=session_id, user_id=user_id)
+
+            self._update_metadata(session=team_session)
+
+            run_context.session_state = self._initialize_session_state(
+                session_state=run_context.session_state if run_context.session_state is not None else {},
+                user_id=user_id,
+                session_id=session_id,
+                run_id=run_response.run_id,
+            )
+            if run_context.session_state is not None:
+                run_context.session_state = self._load_session_state(session=team_session, session_state=run_context.session_state)
+                run_response.session_state = run_context.session_state
+
+            from agno.team.autonomy.runner import run_autonomy_async
+
+            run_response = await run_autonomy_async(
+                team=self,
+                mode=mode,
+                run_response=run_response,
+                run_context=run_context,
+                session=team_session,
+                user_id=user_id,
+                job_id=job_id,
+                resume=resume,
+                pause=pause,
+                approval=approval,
+            )
+        except Exception as e:
+            run_response.status = RunStatus.error
+            if run_response.content is None:
+                run_response.content = str(e)
+            log_error(f"Error in Team autonomous arun: {str(e)}")
+        finally:
+            if team_session is None:
+                team_session = self._read_or_create_session(session_id=session_id, user_id=user_id)
+
+            await self._acleanup_and_store(run_response=run_response, session=team_session)
+            await self._alog_team_telemetry(session_id=team_session.session_id, run_id=run_response.run_id)
+
+            self._disconnect_connectable_tools()
+            await self._disconnect_mcp_tools()
+            await acleanup_run(run_response.run_id)  # type: ignore
+
+        return run_response
+
     @overload
     async def arun(
         self,
         input: Union[str, List, Dict, Message, BaseModel],
         *,
+        mode: Optional[Union[TeamExecutionMode, str]] = None,
+        job_id: Optional[str] = None,
+        resume: bool = False,
+        pause: bool = False,
+        approval: Optional[bool] = None,
         stream: Literal[False] = False,
         stream_events: Optional[bool] = None,
         session_id: Optional[str] = None,
@@ -3042,6 +3690,11 @@ class Team:
         self,
         input: Union[str, List, Dict, Message, BaseModel],
         *,
+        mode: Optional[Union[TeamExecutionMode, str]] = None,
+        job_id: Optional[str] = None,
+        resume: bool = False,
+        pause: bool = False,
+        approval: Optional[bool] = None,
         stream: Literal[True] = True,
         stream_events: Optional[bool] = None,
         session_id: Optional[str] = None,
@@ -3069,6 +3722,11 @@ class Team:
         self,
         input: Union[str, List, Dict, Message, BaseModel],
         *,
+        mode: Optional[Union[TeamExecutionMode, str]] = None,
+        job_id: Optional[str] = None,
+        resume: bool = False,
+        pause: bool = False,
+        approval: Optional[bool] = None,
         stream: Optional[bool] = None,
         stream_events: Optional[bool] = None,
         session_id: Optional[str] = None,
@@ -3215,6 +3873,33 @@ class Team:
         run_response.metrics.start_timer()
 
         yield_run_output = yield_run_output
+
+        effective_mode: Optional[TeamExecutionMode] = None
+        if isinstance(mode, TeamExecutionMode):
+            effective_mode = mode
+        elif isinstance(mode, str):
+            try:
+                effective_mode = TeamExecutionMode(mode)
+            except ValueError:
+                effective_mode = None
+        else:
+            effective_mode = self.mode
+
+        if effective_mode in {TeamExecutionMode.AUTONOMOUS, TeamExecutionMode.SUPERVISED}:
+            if stream:
+                raise NotImplementedError("Autonomous Team.arun() does not support stream=True yet.")
+            return self._arun_autonomy(
+                run_response=run_response,
+                run_context=run_context,
+                session_id=session_id,
+                user_id=user_id,
+                mode=effective_mode,
+                job_id=job_id,
+                resume=resume,
+                pause=pause,
+                approval=approval,
+                debug_mode=debug_mode,
+            )
 
         if stream:
             return self._arun_stream(  # type: ignore
@@ -3815,6 +4500,21 @@ class Team:
                             store_events=self.store_events,
                         )
 
+            # Handle tool interruption events (HITL flow)
+            elif model_response_event.event == ModelResponseEvent.tool_call_paused.value:
+                from agno.run.requirement import RunRequirement
+
+                tool_executions_list = model_response_event.tool_executions
+                if tool_executions_list is not None:
+                    if run_response.tools is None:
+                        run_response.tools = tool_executions_list
+                    else:
+                        run_response.tools.extend(tool_executions_list)
+
+                    if run_response.requirements is None:
+                        run_response.requirements = []
+                    run_response.requirements.append(RunRequirement(tool_execution=tool_executions_list[-1]))
+
             # If the model response is a tool_call_started, add the tool call to the run_response
             elif model_response_event.event == ModelResponseEvent.tool_call_started.value:
                 # Add tool calls to the run_response
@@ -4027,6 +4727,377 @@ class Team:
                         log_warning(f"Failed to convert response to output model: {e}")
                 else:
                     log_warning("Something went wrong. Member run response content is not a string")
+
+    def _get_continue_run_messages(self, input: List[Message]) -> RunMessages:
+        """Continue from a previous run and complete tool calls that were paused."""
+        run_messages = RunMessages()
+
+        user_message = None
+        for msg in reversed(input):
+            if msg.role == "user":
+                user_message = msg
+                break
+
+        system_message = None
+        for msg in input:
+            if msg.role == self.system_message_role:
+                system_message = msg
+                break
+
+        run_messages.system_message = system_message
+        run_messages.user_message = user_message
+        run_messages.messages = input
+
+        return run_messages
+
+    def _reject_tool_call(
+        self,
+        run_messages: RunMessages,
+        tool: "ToolExecution",
+        functions: Optional[Dict[str, Function]] = None,
+    ):
+        self.model = cast(Model, self.model)
+        function_call = self.model.get_function_call_to_run_from_tool_execution(tool, functions)
+        function_call.error = tool.confirmation_note or "Function call was rejected by the user"
+        function_call_result = self.model.create_function_call_result(
+            function_call=function_call,
+            success=False,
+        )
+        run_messages.messages.append(function_call_result)
+
+    def _handle_external_execution_update(self, run_messages: RunMessages, tool: "ToolExecution"):
+        self.model = cast(Model, self.model)
+
+        if tool.result is not None:
+            for msg in run_messages.messages:
+                if msg.tool_call_id == tool.tool_call_id:
+                    break
+
+            run_messages.messages.append(
+                Message(
+                    role=self.model.tool_message_role,
+                    content=tool.result,
+                    tool_call_id=tool.tool_call_id,
+                    tool_name=tool.tool_name,
+                    tool_args=tool.tool_args,
+                    tool_call_error=tool.tool_call_error,
+                    stop_after_tool_call=tool.stop_after_tool_call,
+                )
+            )
+            tool.external_execution_required = False
+        else:
+            raise ValueError(f"Tool {tool.tool_name} requires external execution, cannot continue run")
+
+    def _handle_user_input_update(self, tool: "ToolExecution"):
+        for field in tool.user_input_schema or []:
+            if not tool.tool_args:
+                tool.tool_args = {}
+            tool.tool_args[field.name] = field.value
+
+    def _handle_get_user_input_tool_update(self, run_messages: RunMessages, tool: "ToolExecution"):
+        import json
+
+        self.model = cast(Model, self.model)
+        if not hasattr(tool, "user_input_schema") or not tool.user_input_schema:
+            return
+        user_input_result = [
+            {"name": user_input_field.name, "value": user_input_field.value} for user_input_field in tool.user_input_schema
+        ]
+        run_messages.messages.append(
+            Message(
+                role=self.model.tool_message_role,
+                content=f"User inputs retrieved: {json.dumps(user_input_result)}",
+                tool_call_id=tool.tool_call_id,
+                tool_name=tool.tool_name,
+                tool_args=tool.tool_args,
+                metrics=Metrics(duration=0),
+            )
+        )
+
+    def _run_tool(
+        self,
+        run_response: TeamRunOutput,
+        run_messages: RunMessages,
+        tool: "ToolExecution",
+        functions: Optional[Dict[str, Function]] = None,
+        stream_events: bool = False,
+    ) -> Iterator[TeamRunOutputEvent]:
+        from agno.run.agent import CustomEvent
+
+        self.model = cast(Model, self.model)
+        function_call = self.model.get_function_call_to_run_from_tool_execution(tool, functions)
+        function_call_results: List[Message] = []
+
+        for call_result in self.model.run_function_call(
+            function_call=function_call,
+            function_call_results=function_call_results,
+        ):
+            if isinstance(call_result, ModelResponse):
+                if call_result.event == ModelResponseEvent.tool_call_started.value:
+                    if stream_events:
+                        yield handle_event(  # type: ignore
+                            create_team_tool_call_started_event(from_run_response=run_response, tool=tool),
+                            run_response,
+                            events_to_skip=self.events_to_skip,
+                            store_events=self.store_events,
+                        )
+
+                if call_result.event == ModelResponseEvent.tool_call_completed.value and call_result.tool_executions:
+                    tool_execution = call_result.tool_executions[0]
+                    tool.result = tool_execution.result
+                    tool.tool_call_error = tool_execution.tool_call_error
+                    if stream_events:
+                        yield handle_event(  # type: ignore
+                            create_team_tool_call_completed_event(
+                                from_run_response=run_response, tool=tool, content=call_result.content
+                            ),
+                            run_response,
+                            events_to_skip=self.events_to_skip,
+                            store_events=self.store_events,
+                        )
+                        if tool.tool_call_error:
+                            yield handle_event(  # type: ignore
+                                create_team_tool_call_error_event(
+                                    from_run_response=run_response, tool=tool, error=str(tool.result)
+                                ),
+                                run_response,
+                                events_to_skip=self.events_to_skip,
+                                store_events=self.store_events,
+                            )
+            elif isinstance(call_result, CustomEvent):
+                if stream_events:
+                    yield call_result  # type: ignore
+
+        if len(function_call_results) > 0:
+            run_messages.messages.extend(function_call_results)
+
+    async def _arun_tool(
+        self,
+        run_response: TeamRunOutput,
+        run_messages: RunMessages,
+        tool: "ToolExecution",
+        functions: Optional[Dict[str, Function]] = None,
+        stream_events: bool = False,
+    ) -> AsyncIterator[TeamRunOutputEvent]:
+        from agno.run.agent import CustomEvent
+
+        self.model = cast(Model, self.model)
+
+        function_call = self.model.get_function_call_to_run_from_tool_execution(tool, functions)
+        function_call_results: List[Message] = []
+
+        async for call_result in self.model.arun_function_calls(
+            function_calls=[function_call],
+            function_call_results=function_call_results,
+            skip_pause_check=True,
+        ):
+            if isinstance(call_result, ModelResponse):
+                if call_result.event == ModelResponseEvent.tool_call_started.value:
+                    if stream_events:
+                        yield handle_event(  # type: ignore
+                            create_team_tool_call_started_event(from_run_response=run_response, tool=tool),
+                            run_response,
+                            events_to_skip=self.events_to_skip,
+                            store_events=self.store_events,
+                        )
+                if call_result.event == ModelResponseEvent.tool_call_completed.value and call_result.tool_executions:
+                    tool_execution = call_result.tool_executions[0]
+                    tool.result = tool_execution.result
+                    tool.tool_call_error = tool_execution.tool_call_error
+                    if stream_events:
+                        yield handle_event(  # type: ignore
+                            create_team_tool_call_completed_event(
+                                from_run_response=run_response, tool=tool, content=call_result.content
+                            ),
+                            run_response,
+                            events_to_skip=self.events_to_skip,
+                            store_events=self.store_events,
+                        )
+                        if tool.tool_call_error:
+                            yield handle_event(  # type: ignore
+                                create_team_tool_call_error_event(
+                                    from_run_response=run_response, tool=tool, error=str(tool.result)
+                                ),
+                                run_response,
+                                events_to_skip=self.events_to_skip,
+                                store_events=self.store_events,
+                            )
+            elif isinstance(call_result, CustomEvent):
+                if stream_events:
+                    yield call_result  # type: ignore
+
+        if len(function_call_results) > 0:
+            run_messages.messages.extend(function_call_results)
+
+    def _handle_tool_call_updates(
+        self,
+        run_response: TeamRunOutput,
+        run_messages: RunMessages,
+        tools: List[Union[Function, dict]],
+    ):
+        from agno.models.response import ToolExecution
+
+        self.model = cast(Model, self.model)
+        _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)}
+
+        for _t in run_response.tools or []:
+            _t = cast(ToolExecution, _t)
+
+            if _t.requires_confirmation is not None and _t.requires_confirmation is True and _functions:
+                if _t.confirmed is not None and _t.confirmed is True and _t.result is None:
+                    deque(self._run_tool(run_response, run_messages, _t, functions=_functions), maxlen=0)
+                else:
+                    self._reject_tool_call(run_messages, _t, functions=_functions)
+                    _t.confirmed = False
+                    _t.confirmation_note = _t.confirmation_note or "Tool call was rejected"
+                    _t.tool_call_error = True
+                _t.requires_confirmation = False
+
+            elif _t.external_execution_required is not None and _t.external_execution_required is True:
+                self._handle_external_execution_update(run_messages=run_messages, tool=_t)
+
+            elif _t.tool_name == "get_user_input" and _t.requires_user_input is not None and _t.requires_user_input is True:
+                self._handle_get_user_input_tool_update(run_messages=run_messages, tool=_t)
+                _t.requires_user_input = False
+                _t.answered = True
+
+            elif _t.requires_user_input is not None and _t.requires_user_input is True:
+                self._handle_user_input_update(tool=_t)
+                _t.requires_user_input = False
+                _t.answered = True
+                deque(self._run_tool(run_response, run_messages, _t, functions=_functions), maxlen=0)
+
+    async def _ahandle_tool_call_updates(
+        self,
+        run_response: TeamRunOutput,
+        run_messages: RunMessages,
+        tools: List[Union[Function, dict]],
+    ):
+        from agno.models.response import ToolExecution
+
+        self.model = cast(Model, self.model)
+        _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)}
+
+        for _t in run_response.tools or []:
+            _t = cast(ToolExecution, _t)
+
+            if _t.requires_confirmation is not None and _t.requires_confirmation is True and _functions:
+                if _t.confirmed is not None and _t.confirmed is True and _t.result is None:
+                    async for _ in self._arun_tool(run_response, run_messages, _t, functions=_functions):
+                        pass
+                else:
+                    self._reject_tool_call(run_messages, _t, functions=_functions)
+                    _t.confirmed = False
+                    _t.confirmation_note = _t.confirmation_note or "Tool call was rejected"
+                    _t.tool_call_error = True
+                _t.requires_confirmation = False
+
+            elif _t.external_execution_required is not None and _t.external_execution_required is True:
+                self._handle_external_execution_update(run_messages=run_messages, tool=_t)
+
+            elif _t.tool_name == "get_user_input" and _t.requires_user_input is not None and _t.requires_user_input is True:
+                self._handle_get_user_input_tool_update(run_messages=run_messages, tool=_t)
+                _t.requires_user_input = False
+                _t.answered = True
+
+            elif _t.requires_user_input is not None and _t.requires_user_input is True:
+                self._handle_user_input_update(tool=_t)
+                async for _ in self._arun_tool(run_response, run_messages, _t, functions=_functions):
+                    pass
+                _t.requires_user_input = False
+                _t.answered = True
+
+    def _handle_team_run_paused(
+        self,
+        run_response: TeamRunOutput,
+        session: TeamSession,
+    ) -> TeamRunOutput:
+        from agno.utils.response import get_paused_content
+
+        run_response.status = RunStatus.paused
+        if not run_response.content:
+            run_response.content = get_paused_content(run_response)  # type: ignore[arg-type]
+
+        self._cleanup_and_store(run_response=run_response, session=session)
+
+        log_debug(f"Team Run Paused: {run_response.run_id}", center=True, symbol="*")
+
+        return run_response
+
+    def _handle_team_run_paused_stream(
+        self,
+        run_response: TeamRunOutput,
+        session: TeamSession,
+    ) -> Iterator[TeamRunOutputEvent]:
+        from agno.utils.events import create_team_run_paused_event
+        from agno.utils.response import get_paused_content
+
+        run_response.status = RunStatus.paused
+        if not run_response.content:
+            run_response.content = get_paused_content(run_response)  # type: ignore[arg-type]
+
+        pause_event = handle_event(  # type: ignore
+            create_team_run_paused_event(
+                from_run_response=run_response,
+                tools=run_response.tools,
+                requirements=run_response.requirements,
+            ),
+            run_response,
+            events_to_skip=self.events_to_skip,
+            store_events=self.store_events,
+        )
+
+        self._cleanup_and_store(run_response=run_response, session=session)
+
+        yield pause_event  # type: ignore
+
+        log_debug(f"Team Run Paused: {run_response.run_id}", center=True, symbol="*")
+
+    async def _ahandle_team_run_paused(
+        self,
+        run_response: TeamRunOutput,
+        session: TeamSession,
+    ) -> TeamRunOutput:
+        from agno.utils.response import get_paused_content
+
+        run_response.status = RunStatus.paused
+        if not run_response.content:
+            run_response.content = get_paused_content(run_response)  # type: ignore[arg-type]
+
+        await self._acleanup_and_store(run_response=run_response, session=session)
+
+        log_debug(f"Team Run Paused: {run_response.run_id}", center=True, symbol="*")
+
+        return run_response
+
+    async def _ahandle_team_run_paused_stream(
+        self,
+        run_response: TeamRunOutput,
+        session: TeamSession,
+    ) -> AsyncIterator[TeamRunOutputEvent]:
+        from agno.utils.events import create_team_run_paused_event
+        from agno.utils.response import get_paused_content
+
+        run_response.status = RunStatus.paused
+        if not run_response.content:
+            run_response.content = get_paused_content(run_response)  # type: ignore[arg-type]
+
+        pause_event = handle_event(  # type: ignore
+            create_team_run_paused_event(
+                from_run_response=run_response,
+                tools=run_response.tools,
+                requirements=run_response.requirements,
+            ),
+            run_response,
+            events_to_skip=self.events_to_skip,
+            store_events=self.store_events,
+        )
+
+        await self._acleanup_and_store(run_response=run_response, session=session)
+
+        yield pause_event  # type: ignore
+
+        log_debug(f"Team Run Paused: {run_response.run_id}", center=True, symbol="*")
 
     def _cleanup_and_store(self, run_response: TeamRunOutput, session: TeamSession) -> None:
         #  Scrub the stored run based on storage flags
@@ -8273,6 +9344,8 @@ class Team:
                 config["members"] = serialized_members
 
         # --- Execution settings (only if non-default) ---
+        if self.mode is not None:
+            config["mode"] = self.mode.value if isinstance(self.mode, TeamExecutionMode) else str(self.mode)
         if self.respond_directly:
             config["respond_directly"] = self.respond_directly
         if self.delegate_to_all_members:
@@ -8685,6 +9758,7 @@ class Team:
             respond_directly=config.get("respond_directly", False),
             delegate_to_all_members=config.get("delegate_to_all_members", False),
             determine_input_for_members=config.get("determine_input_for_members", True),
+            mode=config.get("mode"),
             # --- User settings ---
             user_id=config.get("user_id"),
             # --- Session settings ---

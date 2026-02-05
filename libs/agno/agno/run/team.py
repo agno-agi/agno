@@ -137,6 +137,8 @@ class TeamRunEvent(str, Enum):
     run_completed = "TeamRunCompleted"
     run_error = "TeamRunError"
     run_cancelled = "TeamRunCancelled"
+    run_paused = "TeamRunPaused"
+    run_continued = "TeamRunContinued"
 
     pre_hook_started = "TeamPreHookStarted"
     pre_hook_completed = "TeamPreHookCompleted"
@@ -271,6 +273,28 @@ class RunCompletedEvent(BaseTeamRunEvent):
     metadata: Optional[Dict[str, Any]] = None
     metrics: Optional[Metrics] = None
     session_state: Optional[Dict[str, Any]] = None
+
+
+@dataclass
+class RunPausedEvent(BaseTeamRunEvent):
+    event: str = TeamRunEvent.run_paused.value
+    tools: Optional[List[ToolExecution]] = None
+    requirements: Optional[List[RunRequirement]] = None
+
+    @property
+    def is_paused(self):
+        return True
+
+    @property
+    def active_requirements(self) -> List[RunRequirement]:
+        if not self.requirements:
+            return []
+        return [requirement for requirement in self.requirements if not requirement.is_resolved()]
+
+
+@dataclass
+class RunContinuedEvent(BaseTeamRunEvent):
+    event: str = TeamRunEvent.run_continued.value
 
 
 @dataclass
@@ -471,6 +495,8 @@ TeamRunOutputEvent = Union[
     IntermediateRunContentEvent,
     RunContentCompletedEvent,
     RunCompletedEvent,
+    RunPausedEvent,
+    RunContinuedEvent,
     RunErrorEvent,
     RunCancelledEvent,
     PreHookStartedEvent,
@@ -504,6 +530,8 @@ TEAM_RUN_EVENT_TYPE_REGISTRY = {
     TeamRunEvent.run_intermediate_content.value: IntermediateRunContentEvent,
     TeamRunEvent.run_content_completed.value: RunContentCompletedEvent,
     TeamRunEvent.run_completed.value: RunCompletedEvent,
+    TeamRunEvent.run_paused.value: RunPausedEvent,
+    TeamRunEvent.run_continued.value: RunContinuedEvent,
     TeamRunEvent.run_error.value: RunErrorEvent,
     TeamRunEvent.run_cancelled.value: RunCancelledEvent,
     TeamRunEvent.pre_hook_started.value: PreHookStartedEvent,
