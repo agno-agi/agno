@@ -8,7 +8,7 @@ vector_db = PgVector(
     table_name="vectors_hybrid",
     db_url=db_url,
     search_type=SearchType.hybrid,
-    similarity_threshold=0.3,
+    similarity_threshold=0.2,
 )
 
 knowledge = Knowledge(
@@ -33,7 +33,7 @@ knowledge.insert(
     skip_if_exists=True,
 )
 
-query = "What is the weather in Tokyo?"
+query = "What is the weather today?"
 
 results = vector_db.search(query, limit=5)
 print(f"Query: '{query}'")

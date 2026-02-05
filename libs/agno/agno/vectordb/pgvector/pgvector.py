@@ -1054,8 +1054,10 @@ class PgVector(VectorDb):
             # Create the ts_query using websearch_to_tsquery with parameter binding
             processed_query = self.enable_prefix_matching(query) if self.prefix_match else query
             ts_query = func.websearch_to_tsquery(self.content_language, bindparam("query", value=processed_query))
-            # Compute the text rank, capped at 1.0 for consistent scoring
-            text_rank = func.least(func.ts_rank_cd(ts_vector, ts_query), 1.0)
+            # Compute the text rank, normalized to [0, 1] range
+            # ts_rank_cd returns small values (0.0-0.1), so we normalize using x/(x+k)
+            raw_text_rank = func.ts_rank_cd(ts_vector, ts_query)
+            text_rank = raw_text_rank / (raw_text_rank + 0.1)
 
             # Compute the vector similarity score
             if self.distance == Distance.l2:
