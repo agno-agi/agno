@@ -332,8 +332,12 @@ class Agent:
     store_media: bool = True
     # If True, store tool results in run output
     store_tool_messages: bool = True
-    # If True, store history messages in run output
-    store_history_messages: bool = True
+    # If True, store history messages in run output.
+    # When False (default): Each run stores only its own messages. History is reconstructed
+    # on-the-fly by traversing previous runs. This results in linear storage growth.
+    # When True: Each run stores all messages including history from previous runs.
+    # This allows inspecting full context in stored runs but causes quadratic storage growth.
+    store_history_messages: bool = False
 
     # --- System message settings ---
     # Provide the system message as a string or function
@@ -504,7 +508,7 @@ class Agent:
         max_tool_calls_from_history: Optional[int] = None,
         store_media: bool = True,
         store_tool_messages: bool = True,
-        store_history_messages: bool = True,
+        store_history_messages: bool = False,
         knowledge: Optional[KnowledgeProtocol] = None,
         knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         enable_agentic_knowledge_filters: Optional[bool] = None,
@@ -7819,7 +7823,7 @@ class Agent:
             send_media_to_model=config.get("send_media_to_model", True),
             store_media=config.get("store_media", True),
             store_tool_messages=config.get("store_tool_messages", True),
-            store_history_messages=config.get("store_history_messages", True),
+            store_history_messages=config.get("store_history_messages", False),
             # --- System message settings ---
             system_message=config.get("system_message"),
             system_message_role=config.get("system_message_role", "system"),
