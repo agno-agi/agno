@@ -5543,7 +5543,13 @@ class Team:
                     system_message_content += f"{indent * ' '}   - Name: {member.name}\n"
                 if member.role is not None:
                     system_message_content += f"{indent * ' '}   - Role: {member.role}\n"
-                if member.tools is not None and member.tools != [] and self.add_member_tools_to_context:
+                # Only show member tools if they're a list (not a callable factory)
+                if (
+                    member.tools is not None
+                    and member.tools != []
+                    and self.add_member_tools_to_context
+                    and isinstance(member.tools, list)
+                ):
                     system_message_content += f"{indent * ' '}   - Member tools:\n"
                     for _tool in member.tools:
                         if isinstance(_tool, Toolkit):

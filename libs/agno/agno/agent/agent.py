@@ -544,7 +544,14 @@ class Agent:
         references_format: Literal["json", "yaml"] = "json",
         skills: Optional[Skills] = None,
         metadata: Optional[Dict[str, Any]] = None,
-        tools: Optional[Sequence[Union[Toolkit, Callable, Function, Dict]]] = None,
+        tools: Optional[
+            Union[
+                Sequence[Union[Toolkit, Callable, Function, Dict]],
+                Callable[..., List[Union[Toolkit, Callable, Function, Dict]]],
+            ]
+        ] = None,
+        cache_callables: bool = True,
+        callable_cache_key: Optional[Callable[[RunContext], str]] = None,
         tool_call_limit: Optional[int] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_hooks: Optional[List[Callable]] = None,
@@ -684,6 +691,8 @@ class Agent:
             self.tools = tools  # Keep as callable for runtime resolution
         else:
             self.tools = list(tools) if tools else []
+        self.cache_callables = cache_callables
+        self.callable_cache_key = callable_cache_key
         self.tool_call_limit = tool_call_limit
         self.tool_choice = tool_choice
         self.tool_hooks = tool_hooks
@@ -990,12 +999,12 @@ class Agent:
     def add_tool(self, tool: Union[Toolkit, Callable, Function, Dict]):
         # If tools is a callable factory, we can't add to it
         if self._is_tools_callable():
-            raise ValueError(
-                "Cannot add tool when tools is a callable. Callable tools are added at runtime"
-            )
+            raise ValueError("Cannot add tool when tools is a callable. Callable tools are added at runtime")
         if not self.tools:
             self.tools = []
-        self.tools.append(tool)
+        # Cast for type checker - we've verified tools is not callable above
+        tools_list = cast(List[Union[Toolkit, Callable, Function, Dict]], self.tools)
+        tools_list.append(tool)
 
     def set_tools(self, tools: Sequence[Union[Toolkit, Callable, Function, Dict]]):
         self.tools = list(tools) if tools else []
@@ -1110,11 +1119,7 @@ class Agent:
         Returns:
             True if self.tools is a callable factory function, False otherwise.
         """
-        return (
-            self.tools is not None
-            and callable(self.tools)
-            and not isinstance(self.tools, (Toolkit, Function))
-        )
+        return self.tools is not None and callable(self.tools) and not isinstance(self.tools, (Toolkit, Function))
 
     def _get_cache_key(self, run_context: RunContext) -> str:
         """Generate a cache key for callable resources based on run context.
@@ -1201,8 +1206,10 @@ class Agent:
                 run_context.tools = self._tool_cache[cache_key]
             else:
                 try:
+                    # Cast for type checker - we've verified tools is callable above
+                    tools_callable = cast(Callable[..., Any], self.tools)
                     run_context.tools = resolve_tools(
-                        tools=self.tools,
+                        tools=tools_callable,
                         agent=self,
                         session_state=session_state,
                         run_context=run_context,
@@ -1262,8 +1269,10 @@ class Agent:
                 run_context.tools = self._tool_cache[cache_key]
             else:
                 try:
+                    # Cast for type checker - we've verified tools is callable above
+                    tools_callable = cast(Callable[..., Any], self.tools)
                     run_context.tools = await aresolve_tools(
-                        tools=self.tools,
+                        tools=tools_callable,
                         agent=self,
                         session_state=session_state,
                         run_context=run_context,
@@ -7738,11 +7747,13 @@ class Agent:
 
         # --- Tools ---
         # Serialize tools to their dictionary representations
+        # Skip if tools is a callable (can't be serialized)
         _tools: List[Union[Function, dict]] = []
-        if self.model is not None:
+        if self.model is not None and not self._is_tools_callable():
+            tools_list = cast(List[Union[Toolkit, Callable, Function, Dict]], self.tools or [])
             _tools = self._parse_tools(
                 model=self.model,
-                tools=self.tools or [],
+                tools=tools_list,
             )
         if _tools:
             serialized_tools = []

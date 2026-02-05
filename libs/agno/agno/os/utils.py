@@ -701,7 +701,8 @@ def collect_mcp_tools_from_team(team: Team, mcp_tools: List[Any]) -> None:
     if team.members:
         for member in team.members:
             if isinstance(member, Agent):
-                if member.tools:
+                # Skip if tools is a callable factory (not iterable)
+                if member.tools and isinstance(member.tools, list):
                     for tool in member.tools:
                         # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
                         if hasattr(type(tool), "__mro__") and any(
@@ -748,7 +749,8 @@ def collect_mcp_tools_from_workflow_step(step: Any, mcp_tools: List[Any]) -> Non
     if isinstance(step, Step):
         # Check step's agent
         if step.agent:
-            if step.agent.tools:
+            # Skip if tools is a callable factory (not iterable)
+            if step.agent.tools and isinstance(step.agent.tools, list):
                 for tool in step.agent.tools:
                     # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
                     if hasattr(type(tool), "__mro__") and any(
@@ -773,7 +775,8 @@ def collect_mcp_tools_from_workflow_step(step: Any, mcp_tools: List[Any]) -> Non
 
     elif isinstance(step, Agent):
         # Direct agent in workflow steps
-        if step.tools:
+        # Skip if tools is a callable factory (not iterable)
+        if step.tools and isinstance(step.tools, list):
             for tool in step.tools:
                 # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
                 if hasattr(type(tool), "__mro__") and any(
