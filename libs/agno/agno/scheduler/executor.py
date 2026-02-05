@@ -6,6 +6,7 @@ to AgentOS endpoints and tracking the results.
 
 import asyncio
 import json
+import re
 import time
 from inspect import isawaitable
 from typing import TYPE_CHECKING, Optional, Union
@@ -24,6 +25,9 @@ except ImportError:
     httpx = None  # type: ignore
 
 
+_STREAMING_RUN_ENDPOINT_RE = re.compile(r"^/(agents|teams|workflows)/[^/]+/runs/?$")
+
+
 class ScheduleExecutor:
     """Executes scheduled tasks by making HTTP calls to AgentOS endpoints.
 
@@ -32,9 +36,9 @@ class ScheduleExecutor:
     a sync adapter (BaseDb), database calls will briefly block the event loop.
 
     The executor uses an internal service token for authentication. This token
-    is not validated by JWT middleware, so the scheduler is not compatible with
-    JWT authorization mode. Use security key authentication instead, or disable
-    authentication for internal endpoints.
+    is accepted by AgentOS security-key auth, and is also recognized by AgentOS's
+    JWT middleware (when enabled) as an internal admin token. Keep this token
+    secret: it grants full access to the AgentOS API.
     """
 
     def __init__(
@@ -169,8 +173,8 @@ class ScheduleExecutor:
         }
 
         # Determine if we should stream based on the endpoint
-        # Agent/team/workflow runs typically support streaming
-        should_stream = any(x in schedule.endpoint for x in ["/runs", "/agents/", "/teams/", "/workflows/"])
+        # Agent/team/workflow run endpoints support streaming.
+        should_stream = bool(_STREAMING_RUN_ENDPOINT_RE.match(schedule.endpoint))
 
         async with httpx.AsyncClient(timeout=timeout) as client:
             if should_stream and schedule.method.upper() == "POST":

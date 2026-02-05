@@ -116,6 +116,46 @@ def test_extracts_claims_correctly(jwt_test_client, jwt_token, jwt_test_agent):
         }
 
 
+def test_internal_service_token_bypasses_jwt_validation(jwt_test_agent):
+    """Test that the internal service token bypasses JWT validation and RBAC."""
+
+    agent_os = AgentOS(agents=[jwt_test_agent])
+    app = agent_os.get_app()
+    internal_token = app.state.internal_service_token
+
+    # Add JWT middleware (with RBAC enabled); internal token should still work.
+    app.add_middleware(
+        JWTMiddleware,
+        verification_keys=[JWT_SECRET],
+        algorithm="HS256",
+        validate=True,
+        authorization=True,
+    )
+
+    client = TestClient(app)
+
+    mock_run_output = type(
+        "MockRunOutput",
+        (),
+        {"to_dict": lambda self: {"content": "Internal token auth successful", "run_id": "test_run_123"}},
+    )()
+
+    with patch.object(jwt_test_agent, "arun", new_callable=AsyncMock) as mock_arun:
+        mock_arun.return_value = mock_run_output
+
+        response = client.post(
+            "/agents/jwt-test-agent/runs",
+            headers={"Authorization": f"Bearer {internal_token}"},
+            data={
+                "message": "Hello",
+                "stream": "false",
+            },
+        )
+
+        assert response.status_code == 200
+        mock_arun.assert_called_once()
+
+
 def test_without_token_fails_validation(jwt_test_client):
     """Test that requests without JWT token are rejected when validation is enabled."""
 

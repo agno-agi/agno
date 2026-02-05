@@ -10,6 +10,7 @@ from rich.text import Text
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Message
 from agno.run.workflow import (
+    BaseWorkflowRunOutputEvent,
     ConditionExecutionCompletedEvent,
     ConditionExecutionStartedEvent,
     LoopExecutionCompletedEvent,
@@ -741,7 +742,7 @@ def print_response_stream(
                                 current_step_executor_type = step.executor_type
 
                         # Check if this is a streaming content event from agent or team
-                        if isinstance(response, (TeamRunContentEvent, WorkflowRunOutputEvent)):  # type: ignore
+                        if isinstance(response, (TeamRunContentEvent, BaseWorkflowRunOutputEvent)):
                             # Check if this is a team's final structured output
                             is_structured_output = (
                                 isinstance(response, TeamRunContentEvent)

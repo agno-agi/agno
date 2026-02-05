@@ -684,6 +684,21 @@ class JWTMiddleware(BaseHTTPMiddleware):
             error_msg = self._get_missing_token_error_message()
             return self._create_error_response(401, error_msg, origin, cors_allowed_origins)
 
+        # Allow internal service token (used by scheduler and other internal calls).
+        # This bypasses JWT validation and (when enabled) RBAC checks.
+        internal_service_token = getattr(request.app.state, "internal_service_token", None)
+        if internal_service_token and token == internal_service_token:
+            request.state.authenticated = True
+            request.state.user_id = None
+            request.state.session_id = None
+            # Treat internal token as admin when RBAC is enabled.
+            request.state.scopes = [self.admin_scope] if self.authorization else []
+            request.state.audience = agent_os_id
+            request.state.authorization_enabled = self.authorization or False
+            request.state.token = token
+            log_debug("Authenticated request using internal service token")
+            return await call_next(request)
+
         try:
             # Validate token and extract claims (with audience verification if configured)
             expected_audience = None

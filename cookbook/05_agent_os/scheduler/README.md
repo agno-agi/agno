@@ -111,4 +111,4 @@ This installs the `croniter` package required for cron expression parsing.
 
 2. **External Scheduler**: For high-availability, consider using external schedulers (Kubernetes CronJobs, AWS EventBridge) that call the AgentOS trigger endpoint.
 
-3. **Authentication**: The scheduler uses an internal service token. For production, use security key authentication (not JWT mode).
+3. **Authentication**: The scheduler uses an internal service token for scheduled HTTP calls. This token is accepted by OS security-key auth, and (when JWT middleware/RBAC is enabled) is treated as an internal admin token so schedules keep working. Keep this token secret.
