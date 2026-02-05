@@ -1,19 +1,39 @@
 # AGENTS.md — Agno
 
-Instructions for coding agents working on this codebase.
+Instructions for AI coding agents working on this codebase.
 
 ---
 
 ## Repository Structure
 
 ```
-agno/
+.
 ├── libs/agno/agno/          # Core framework code
 ├── cookbook/                # Examples, patterns and test cases (organized by topic)
 ├── scripts/                 # Development and build scripts
 ├── specs/                   # Design documents (symlinked, private)
+├── docs/                    # Documentation (symlinked, private)
 └── .cursorrules             # Coding patterns and conventions
 ```
+
+---
+
+## Conductor Notes
+
+When working in Conductor, you can use the `.context/` directory for scratch notes or agent-to-agent handoff artifacts. This directory is gitignored.
+
+---
+
+## Setting Up Symlinks
+
+The `specs/` and `docs/` directories are symlinked from external locations. For a fresh clone or new workspace, create these symlinks:
+
+```bash
+ln -s ~/code/specs specs
+ln -s ~/code/docs docs
+```
+
+These contain private design documents and documentation that are not checked into the repository.
 
 ---
 
@@ -23,20 +43,24 @@ This project uses two virtual environments:
 
 | Environment | Purpose | Setup |
 |-------------|---------|-------|
-| `.venv/` | Development: tests, formatting, validation | `uv sync` or standard setup |
+| `.venv/` | Development: tests, formatting, validation | `./scripts/dev_setup.sh` |
 | `.venvs/demo/` | Cookbooks: has all demo dependencies | `./scripts/demo_setup.sh` |
 
-Use `.venv` for development tasks (`pytest`, formatting, validation).
+**Use `.venv`** for development tasks (`pytest`, `./scripts/format.sh`, `./scripts/validate.sh`).
 
-Use `.venvs/demo` for running cookbook examples.
+**Use `.venvs/demo`** for running cookbook examples.
 
 ---
 
 ## Testing Cookbooks
 
-Cookbooks live in `cookbook/` and should keep working.
+Apart from implementing features, your most important task will be to test and maintain the cookbooks in `cookbook/` directory.
 
-**Test environment:**
+> See `cookbook/08_learning/` for the golden standard.
+
+### Quick Reference
+
+**Test Environment:**
 
 ```bash
 # Virtual environment with all dependencies
@@ -50,43 +74,74 @@ Cookbooks live in `cookbook/` and should keep working.
 ```
 
 **Run a cookbook:**
-
 ```bash
 .venvs/demo/bin/python cookbook/<folder>/<file>.py
 ```
 
 ### Expected Cookbook Structure
 
-Each cookbook folder should have:
-- `README.md` — The README for the cookbook
-- `CLAUDE.md` — project-specific instructions (optional, but preferred for complex cookbooks)
-- `TEST_LOG.md` — test results log
+Each cookbook folder should have the following files:
+- `README.md` — The README for the cookbook.
+- `TEST_LOG.md` — Test results log.
 
-When testing a cookbook folder, first check for `cookbook/<folder>/CLAUDE.md`. If it doesn't exist, ask the user if they'd like it created. Use `cookbook/08_learning/CLAUDE.md` as a reference.
+### Testing Workflow
+
+**1. Before Testing**
+- Ensure the virtual environment exists (run `./scripts/demo_setup.sh` if needed)
+- Start any required services (e.g., `./cookbook/scripts/run_pgvector.sh`)
+
+**2. Running Tests**
+```bash
+# Run individual cookbook
+.venvs/demo/bin/python cookbook/<folder>/<file>.py
+
+# Tail output for long tests
+.venvs/demo/bin/python cookbook/<folder>/<file>.py 2>&1 | tail -100
+```
+
+**3. Updating TEST_LOG.md**
+
+After each test, update the cookbook's `TEST_LOG.md` with:
+- Test name and path
+- Status: PASS or FAIL
+- Brief description of what was tested
+- Any notable observations or issues
+
+Format:
+```markdown
+### filename.py
+
+**Status:** PASS/FAIL
+
+**Description:** What the test does and what was observed.
+
+**Result:** Summary of success/failure.
+
+---
+```
 
 ---
 
 ## Design Documents
 
-The `specs/` folder contains design documents for ongoing initiatives (it may be a symlink).
+The `specs/` folder contains design documents for ongoing initiatives.
 
-Each spec typically follows:
+**Always read the design document first**.
 
+Each spec follows this structure:
 ```
-specs/<spec-name>/
-├── CLAUDE.md           # Spec-specific instructions (read this first)
+specs/agno/<spec-name>/
 ├── design.md           # The specification
 ├── implementation.md   # Current status and what's done
-├── decisions.md        # Why decisions were made
-└── future-work.md      # What's deferred
+├── prompts.md          # Prompts used for testing
+└── notes.md            # Notes on the design and implementation
 ```
 
-Workflow:
-1. Read the spec’s `CLAUDE.md` (if present)
-2. Read `design.md`
-3. Check `implementation.md`
-4. Implement in `libs/agno`
-5. Add/update cookbooks or tests as appropriate
+**Workflow:**
+1. Read `design.md` to understand what we're building
+2. Check `implementation.md` for current status
+3. Find the relevant code in `libs/agno`
+4. Create/update cookbooks to test patterns
 
 ---
 
@@ -112,58 +167,61 @@ Workflow:
 
 See `.cursorrules` for detailed patterns. Key rules:
 
-- Never create agents in loops — reuse them for performance
-- Use `output_schema` for structured responses
-- PostgreSQL in production, SQLite for dev only
-- Start with a single agent, scale up only when needed
-- Maintain both sync and async variants for public APIs
+- **Never create agents in loops** — reuse them for performance
+- **Use output_schema** for structured responses
+- **PostgreSQL in production**, SQLite for dev only
+- **Start with single agent**, scale up only when needed
+- **Both sync and async** — all public methods need both variants
 
 ---
 
 ## Running Code
 
 **Running cookbooks:**
-
 ```bash
 .venvs/demo/bin/python cookbook/<folder>/<file>.py
 ```
 
 **Running tests:**
-
 ```bash
 source .venv/bin/activate
 pytest libs/agno/tests/
 
 # Run a specific test file
-pytest libs/agno/tests/unit/agent/test_basic.py
+pytest libs/agno/tests/unit/test_agent.py
 ```
 
 ---
 
 ## When Implementing Features
 
-1. Check for a relevant design doc in `specs/` (follow it if present)
-2. Look for existing patterns in `libs/agno/agno/` and match style/conventions
-3. Add a cookbook example when introducing a new pattern
-4. Update the spec’s `implementation.md` when working under an active spec
+1. **Check for design doc** in `specs/` — if it exists, follow it
+2. **Look at existing patterns** — find similar code and follow conventions
+3. **Create a cookbook** — every pattern should have an example
+4. **Update implementation.md** — mark what's done
 
 ---
 
 ## Before Submitting Code
 
-Run formatting and validation:
+**Always run these scripts before pushing code or creating a PR:**
 
 ```bash
+# Activate the virtual environment first
 source .venv/bin/activate
+
+# Format all code (ruff format)
 ./scripts/format.sh
+
+# Validate all code (ruff check, mypy)
 ./scripts/validate.sh
 ```
 
-Both scripts should pass with no errors.
+Both scripts must pass with no errors before code review.
 
 **PR Title Format:**
 
-PR titles must follow one of:
+PR titles must follow one of these formats:
 - `[type] description` — e.g., `[feat] add workflow serialization`
 - `type: description` — e.g., `feat: add workflow serialization`
 - `type-kebab-case` — e.g., `feat-workflow-serialization`
@@ -172,7 +230,7 @@ Valid types: `feat`, `fix`, `cookbook`, `test`, `refactor`, `build`, `ci`, `chor
 
 **PR Description:**
 
-Follow the PR template in `.github/pull_request_template.md`. Include:
+Always follow the PR template in `.github/pull_request_template.md`. Include:
 - Summary of changes
 - Type of change (bug fix, new feature, etc.)
 - Completed checklist items
@@ -182,7 +240,9 @@ Follow the PR template in `.github/pull_request_template.md`. Include:
 
 ## GitHub Operations
 
-If `gh pr edit` fails with GraphQL errors related to classic projects, use the API directly:
+**Updating PR descriptions:**
+
+The `gh pr edit` command may fail with GraphQL errors related to classic projects. Use the API directly instead:
 
 ```bash
 # Update PR body
@@ -194,11 +254,11 @@ gh api repos/agno-agi/agno/pulls/<PR_NUMBER> -X PATCH -f body="$(cat /path/to/bo
 
 ---
 
-## Don’t
+## Don't
 
-- Don’t implement features without checking `specs/` for a relevant design doc
-- Don’t use f-strings for print lines when there are no variables to format
-- Don’t use emojis in examples or print lines
-- Don’t skip async variants of public methods
-- Don’t push code without running formatting and validation scripts
-- Don’t submit a PR without a detailed description (use the PR template)
+- Don't implement features without checking for a design doc first
+- Don't use f-strings for print lines where there are no variables
+- Don't use emojis in examples and print lines
+- Don't skip async variants of public methods
+- Don't push code without running `./scripts/format.sh` and `./scripts/validate.sh`
+- Don't submit a PR without a detailed PR description. Always follow the PR template provided in `.github/pull_request_template.md`.
