@@ -27,6 +27,7 @@ class OpenAITools(Toolkit):
         api_key (str, optional): OpenAI API key. Retrieved from OPENAI_API_KEY env variable if not provided.
         enable_transcription (bool): Enable audio transcription functionality. Default is True.
         enable_image_generation (bool): Enable image generation functionality. Default is True.
+        enable_image_edit (bool): Enable image editing functionality. Default is False.
         enable_speech_generation (bool): Enable speech generation functionality. Default is True.
         all (bool): Enable all tools. Overrides individual flags when True. Default is False.
         transcription_model (str): Model to use for transcription. Default is "whisper-1".
@@ -37,6 +38,13 @@ class OpenAITools(Toolkit):
         image_quality (str, optional): Quality setting for image generation.
         image_size (str, optional): Size setting for image generation.
         image_style (str, optional): Style setting for image generation.
+        image_background (str, optional): Background setting for image edits.
+        image_input_fidelity (str, optional): Input fidelity setting for image edits.
+        image_output_format (str, optional): Output format for edited images.
+        image_output_compression (int, optional): Output compression for edited images.
+        image_bytes (bytes, optional): Image bytes used for editing.
+        image_mime_type (str, optional): MIME type of the image bytes.
+        mask_bytes (bytes, optional): Optional mask bytes used for editing.
     """
 
     def __init__(
@@ -44,6 +52,7 @@ class OpenAITools(Toolkit):
         api_key: Optional[str] = None,
         enable_transcription: bool = True,
         enable_image_generation: bool = True,
+        enable_image_edit: bool = False,
         enable_speech_generation: bool = True,
         all: bool = False,
         transcription_model: str = "whisper-1",
@@ -54,6 +63,13 @@ class OpenAITools(Toolkit):
         image_quality: Optional[str] = None,
         image_size: Optional[Literal["256x256", "512x512", "1024x1024", "1792x1024", "1024x1792"]] = None,
         image_style: Optional[Literal["vivid", "natural"]] = None,
+        image_background: Optional[str] = None,
+        image_input_fidelity: Optional[str] = None,
+        image_output_format: Optional[str] = None,
+        image_output_compression: Optional[int] = None,
+        image_bytes: Optional[bytes] = None,
+        image_mime_type: Optional[str] = None,
+        mask_bytes: Optional[bytes] = None,
         **kwargs,
     ):
         self.api_key = api_key or getenv("OPENAI_API_KEY")
@@ -69,12 +85,21 @@ class OpenAITools(Toolkit):
         self.image_quality = image_quality
         self.image_style = image_style
         self.image_size = image_size
+        self.image_background = image_background
+        self.image_input_fidelity = image_input_fidelity
+        self.image_output_format = image_output_format
+        self.image_output_compression = image_output_compression
+        self.image_bytes = image_bytes
+        self.image_mime_type = image_mime_type
+        self.mask_bytes = mask_bytes
 
         tools: List[Any] = []
         if all or enable_transcription:
             tools.append(self.transcribe_audio)
         if all or enable_image_generation:
             tools.append(self.generate_image)
+        if all or enable_image_edit:
+            tools.append(self.edit_image)
         if all or enable_speech_generation:
             tools.append(self.generate_speech)
 
@@ -165,6 +190,117 @@ class OpenAITools(Toolkit):
         except Exception as e:
             log_error(f"Failed to generate image using {self.image_model}: {e}")
             return ToolResult(content=f"Failed to generate image: {e}")
+
+    def edit_image(self, prompt: str) -> ToolResult:
+        """Edit the pre-loaded input image using a text prompt. The image to edit has already been provided during tool initialization - do NOT pass any image, image_url, or image_bytes parameters. Only provide the text prompt describing the edits.
+        Args:
+            prompt (str): The text prompt describing how to edit the image (e.g., "increase brightness", "add a red border").
+        """
+        import base64
+
+        if not self.image_bytes:
+            return ToolResult(content="Failed to edit image: No input image bytes provided.")
+
+        # Dall-E 3 does not support image editing
+        if self.image_model and self.image_model == "dall-e-3":
+            return ToolResult(
+                content="Failed to edit image: Dall-E 3 does not support image editing. Please use Dall-E 2 or gpt-image-1/gpt-image-1-mini/gpt-image-1.5 instead."
+            )
+
+        # Get proper filename based on mime type
+        image_mime_type = self.image_mime_type or "image/png"
+        mime_lower = image_mime_type.lower()
+        if "jpeg" in mime_lower or "jpg" in mime_lower:
+            filename = "input.jpg"
+        elif "webp" in mime_lower:
+            filename = "input.webp"
+        else:
+            filename = "input.png"
+
+        image_payload = (filename, self.image_bytes, image_mime_type)
+        mask_payload = ("mask.png", self.mask_bytes, "image/png") if self.mask_bytes else None
+
+        try:
+            extra_params = {
+                "size": self.image_size,
+                "quality": self.image_quality,
+                "background": self.image_background,
+                "input_fidelity": self.image_input_fidelity,
+                "output_format": self.image_output_format,
+                "output_compression": self.image_output_compression,
+            }
+            extra_params = {k: v for k, v in extra_params.items() if v is not None}
+
+            request_params = {
+                "model": self.image_model,
+                "image": image_payload,
+                "prompt": prompt,
+                **extra_params,
+            }
+            if mask_payload:
+                request_params["mask"] = mask_payload
+            if self.image_model and not self.image_model.startswith("gpt-image"):
+                request_params["response_format"] = "b64_json"
+
+            response = OpenAIClient(api_key=self.api_key).images.edit(**request_params)  # type: ignore
+
+            data = None
+            if hasattr(response, "data") and response.data:
+                data = response.data[0]
+            if data is None:
+                log_warning("OpenAI API did not return any data.")
+                return ToolResult(content="Failed to edit image: No data received from API.")
+
+            if hasattr(data, "b64_json") and data.b64_json:
+                # Decode base64 directly
+                image_bytes = base64.b64decode(data.b64_json)
+
+                # Determine output mime type
+                output_format = (self.image_output_format or "png").lower()
+                if output_format == "jpg":
+                    output_format = "jpeg"
+                output_mime_type = f"image/{output_format}"
+
+                image_artifact = Image(
+                    id=str(uuid4()),
+                    content=image_bytes,
+                    mime_type=output_mime_type,
+                    original_prompt=prompt,
+                )
+
+                return ToolResult(
+                    content="Image edited successfully.",
+                    images=[image_artifact],
+                )
+
+            if hasattr(data, "url") and data.url:
+                import httpx
+
+                image_response = httpx.get(data.url)
+                if image_response.status_code == 200:
+                    image_bytes = image_response.content
+                    # Determine output mime type
+                    output_format = (self.image_output_format or "png").lower()
+                    if output_format == "jpg":
+                        output_format = "jpeg"
+                    output_mime_type = f"image/{output_format}"
+
+                    image_artifact = Image(
+                        id=str(uuid4()),
+                        content=image_bytes,
+                        mime_type=output_mime_type,
+                        original_prompt=prompt,
+                    )
+
+                    return ToolResult(
+                        content="Image edited successfully.",
+                        images=[image_artifact],
+                    )
+
+            return ToolResult(content="Failed to edit image: No content received from API.")
+        except Exception as e:
+            log_error(f"Failed to edit image using {self.image_model}: {e}")
+            return ToolResult(content=f"Failed to edit image: {e}")
 
     def generate_speech(
         self,
