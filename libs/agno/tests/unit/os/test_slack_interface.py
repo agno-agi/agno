@@ -90,10 +90,26 @@ def test_verify_slack_signature_missing_secret(monkeypatch):
 
 
 @dataclass
+class _FakeFile:
+    content: bytes
+    filename: str
+
+
+@dataclass
+class _FakeImage:
+    content: bytes
+    filename: str
+
+
+@dataclass
 class _FakeRunResponse:
     status: str
     content: Optional[str] = None
     reasoning_content: Optional[str] = None
+    files: Optional[List[_FakeFile]] = None
+    images: Optional[List[_FakeImage]] = None
+    videos: Optional[List[Any]] = None
+    audio: Optional[List[Any]] = None
 
 
 class _FakeAgent:
@@ -332,3 +348,116 @@ def test_slack_app_mention_triggers_reply(monkeypatch):
     assert "Reasoning" in sent[0]["text"]
     assert "Because math" in sent[0]["text"]
     assert sent[1]["text"] == "42"
+
+
+def test_slack_auto_uploads_files_from_response(monkeypatch):
+    monkeypatch.setattr("agno.os.interfaces.slack.router.verify_slack_signature", lambda *args, **kwargs: True)
+
+    tasks: List[Tuple[Any, tuple, dict]] = []
+    sent: List[Dict[str, Any]] = []
+    uploads: List[Dict[str, Any]] = []
+
+    def _capture_task(self, func, *args, **kwargs):
+        tasks.append((func, args, kwargs))
+
+    class _FakeSlackTools:
+        def __init__(self):
+            pass
+
+        def send_message(self, channel: str, text: str, thread_ts: str = None) -> str:
+            sent.append({"channel": channel, "text": text, "thread_ts": thread_ts})
+            return json.dumps({"ok": True})
+
+        def upload_file(self, channel: str, content, filename: str, thread_ts: str = None, **kwargs) -> str:
+            uploads.append({"channel": channel, "content": content, "filename": filename, "thread_ts": thread_ts})
+            return json.dumps({"ok": True})
+
+    monkeypatch.setattr("agno.os.interfaces.slack.router.BackgroundTasks.add_task", _capture_task)
+    monkeypatch.setattr("agno.os.interfaces.slack.router.SlackTools", _FakeSlackTools)
+
+    test_file = _FakeFile(content=b"name,email\nAlice,alice@example.com", filename="users.csv")
+    agent = _FakeAgent(_FakeRunResponse(status="SUCCESS", content="Here is your CSV", files=[test_file]))
+    app = _make_app(agent=agent, reply_to_mentions_only=True)
+    client = TestClient(app)
+
+    response = client.post(
+        "/slack/events",
+        json={
+            "type": "event_callback",
+            "event": {
+                "type": "app_mention",
+                "text": "<@BOTID> Generate a CSV",
+                "user": "U123",
+                "channel": "C123",
+                "ts": "1.0",
+            },
+        },
+        headers={"X-Slack-Request-Timestamp": "1", "X-Slack-Signature": "v0=ok"},
+    )
+    assert response.status_code == 200
+
+    func, args, kwargs = tasks[0]
+    asyncio.run(func(*args, **kwargs))
+
+    assert len(sent) == 1
+    assert "Here is your CSV" in sent[0]["text"]
+    assert len(uploads) == 1
+    assert uploads[0]["filename"] == "users.csv"
+    assert uploads[0]["content"] == b"name,email\nAlice,alice@example.com"
+    assert uploads[0]["channel"] == "C123"
+    assert uploads[0]["thread_ts"] == "1.0"
+
+
+def test_slack_auto_uploads_images_from_response(monkeypatch):
+    monkeypatch.setattr("agno.os.interfaces.slack.router.verify_slack_signature", lambda *args, **kwargs: True)
+
+    tasks: List[Tuple[Any, tuple, dict]] = []
+    sent: List[Dict[str, Any]] = []
+    uploads: List[Dict[str, Any]] = []
+
+    def _capture_task(self, func, *args, **kwargs):
+        tasks.append((func, args, kwargs))
+
+    class _FakeSlackTools:
+        def __init__(self):
+            pass
+
+        def send_message(self, channel: str, text: str, thread_ts: str = None) -> str:
+            sent.append({"channel": channel, "text": text, "thread_ts": thread_ts})
+            return json.dumps({"ok": True})
+
+        def upload_file(self, channel: str, content, filename: str, thread_ts: str = None, **kwargs) -> str:
+            uploads.append({"channel": channel, "content": content, "filename": filename, "thread_ts": thread_ts})
+            return json.dumps({"ok": True})
+
+    monkeypatch.setattr("agno.os.interfaces.slack.router.BackgroundTasks.add_task", _capture_task)
+    monkeypatch.setattr("agno.os.interfaces.slack.router.SlackTools", _FakeSlackTools)
+
+    test_image = _FakeImage(content=b"\x89PNG\r\n\x1a\n...", filename="chart.png")
+    agent = _FakeAgent(_FakeRunResponse(status="SUCCESS", content="Here is the chart", images=[test_image]))
+    app = _make_app(agent=agent, reply_to_mentions_only=True)
+    client = TestClient(app)
+
+    response = client.post(
+        "/slack/events",
+        json={
+            "type": "event_callback",
+            "event": {
+                "type": "app_mention",
+                "text": "<@BOTID> Generate a chart",
+                "user": "U123",
+                "channel": "C456",
+                "ts": "2.0",
+            },
+        },
+        headers={"X-Slack-Request-Timestamp": "1", "X-Slack-Signature": "v0=ok"},
+    )
+    assert response.status_code == 200
+
+    func, args, kwargs = tasks[0]
+    asyncio.run(func(*args, **kwargs))
+
+    assert len(sent) == 1
+    assert len(uploads) == 1
+    assert uploads[0]["filename"] == "chart.png"
+    assert uploads[0]["channel"] == "C456"
