@@ -116,9 +116,22 @@ class _FakeAgent:
     def __init__(self, response: _FakeRunResponse):
         self._response = response
         self.calls: List[Tuple[str, Optional[str], Optional[str]]] = []
+        self.received_files: List[Any] = []
+        self.received_images: List[Any] = []
 
-    async def arun(self, message: str, user_id: Optional[str] = None, session_id: Optional[str] = None):
+    async def arun(
+        self,
+        message: str,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        files: Optional[List[Any]] = None,
+        images: Optional[List[Any]] = None,
+    ):
         self.calls.append((message, user_id, session_id))
+        if files:
+            self.received_files.extend(files)
+        if images:
+            self.received_images.extend(images)
         return self._response
 
 
@@ -213,6 +226,9 @@ def test_slack_dm_message_triggers_reply(monkeypatch):
             sent.append({"channel": channel, "text": text, "thread_ts": thread_ts})
             return json.dumps({"ok": True})
 
+        def download_file(self, file_id: str, **kwargs) -> bytes:
+            return b"test file content"
+
     monkeypatch.setattr("agno.os.interfaces.slack.router.BackgroundTasks.add_task", _capture_task)
     monkeypatch.setattr("agno.os.interfaces.slack.router.SlackTools", _FakeSlackTools)
 
@@ -267,6 +283,9 @@ def test_slack_non_dm_message_ignored_when_reply_to_mentions_only(monkeypatch):
             sent.append({"channel": channel, "text": text, "thread_ts": thread_ts})
             return json.dumps({"ok": True})
 
+        def download_file(self, file_id: str, **kwargs) -> bytes:
+            return b"test file content"
+
     monkeypatch.setattr("agno.os.interfaces.slack.router.BackgroundTasks.add_task", _capture_task)
     monkeypatch.setattr("agno.os.interfaces.slack.router.SlackTools", _FakeSlackTools)
 
@@ -315,6 +334,9 @@ def test_slack_app_mention_triggers_reply(monkeypatch):
         def send_message(self, channel: str, text: str, thread_ts: str = None) -> str:
             sent.append({"channel": channel, "text": text, "thread_ts": thread_ts})
             return json.dumps({"ok": True})
+
+        def download_file(self, file_id: str, **kwargs) -> bytes:
+            return b"test file content"
 
     monkeypatch.setattr("agno.os.interfaces.slack.router.BackgroundTasks.add_task", _capture_task)
     monkeypatch.setattr("agno.os.interfaces.slack.router.SlackTools", _FakeSlackTools)
@@ -371,6 +393,9 @@ def test_slack_auto_uploads_files_from_response(monkeypatch):
         def upload_file(self, channel: str, content, filename: str, thread_ts: str = None, **kwargs) -> str:
             uploads.append({"channel": channel, "content": content, "filename": filename, "thread_ts": thread_ts})
             return json.dumps({"ok": True})
+
+        def download_file(self, file_id: str, **kwargs) -> bytes:
+            return b"test file content"
 
     monkeypatch.setattr("agno.os.interfaces.slack.router.BackgroundTasks.add_task", _capture_task)
     monkeypatch.setattr("agno.os.interfaces.slack.router.SlackTools", _FakeSlackTools)
@@ -430,6 +455,9 @@ def test_slack_auto_uploads_images_from_response(monkeypatch):
             uploads.append({"channel": channel, "content": content, "filename": filename, "thread_ts": thread_ts})
             return json.dumps({"ok": True})
 
+        def download_file(self, file_id: str, **kwargs) -> bytes:
+            return b"test file content"
+
     monkeypatch.setattr("agno.os.interfaces.slack.router.BackgroundTasks.add_task", _capture_task)
     monkeypatch.setattr("agno.os.interfaces.slack.router.SlackTools", _FakeSlackTools)
 
@@ -461,3 +489,133 @@ def test_slack_auto_uploads_images_from_response(monkeypatch):
     assert len(uploads) == 1
     assert uploads[0]["filename"] == "chart.png"
     assert uploads[0]["channel"] == "C456"
+
+
+def test_slack_auto_downloads_files_from_event(monkeypatch):
+    """Test that files shared in the event are downloaded and passed to the agent."""
+    monkeypatch.setattr("agno.os.interfaces.slack.router.verify_slack_signature", lambda *args, **kwargs: True)
+
+    tasks: List[Tuple[Any, tuple, dict]] = []
+    sent: List[Dict[str, Any]] = []
+    downloaded_files: List[str] = []
+
+    def _capture_task(self, func, *args, **kwargs):
+        tasks.append((func, args, kwargs))
+
+    class _FakeSlackTools:
+        def __init__(self):
+            pass
+
+        def send_message(self, channel: str, text: str, thread_ts: str = None) -> str:
+            sent.append({"channel": channel, "text": text, "thread_ts": thread_ts})
+            return json.dumps({"ok": True})
+
+        def download_file(self, file_id: str, **kwargs) -> bytes:
+            downloaded_files.append(file_id)
+            return b"name,email\nAlice,alice@example.com"
+
+    monkeypatch.setattr("agno.os.interfaces.slack.router.BackgroundTasks.add_task", _capture_task)
+    monkeypatch.setattr("agno.os.interfaces.slack.router.SlackTools", _FakeSlackTools)
+
+    agent = _FakeAgent(_FakeRunResponse(status="SUCCESS", content="I see your CSV file"))
+    app = _make_app(agent=agent, reply_to_mentions_only=True)
+    client = TestClient(app)
+
+    response = client.post(
+        "/slack/events",
+        json={
+            "type": "event_callback",
+            "event": {
+                "type": "app_mention",
+                "text": "<@BOTID> Analyze this file",
+                "user": "U123",
+                "channel": "C123",
+                "ts": "1.0",
+                "files": [
+                    {
+                        "id": "F12345",
+                        "name": "data.csv",
+                        "mimetype": "text/csv",
+                    }
+                ],
+            },
+        },
+        headers={"X-Slack-Request-Timestamp": "1", "X-Slack-Signature": "v0=ok"},
+    )
+    assert response.status_code == 200
+
+    func, args, kwargs = tasks[0]
+    asyncio.run(func(*args, **kwargs))
+
+    # Verify file was downloaded
+    assert "F12345" in downloaded_files
+
+    # Verify file was passed to agent
+    assert len(agent.received_files) == 1
+    assert agent.received_files[0].content == b"name,email\nAlice,alice@example.com"
+    assert agent.received_files[0].filename == "data.csv"
+    assert agent.received_files[0].mime_type == "text/csv"
+
+
+def test_slack_auto_downloads_images_from_event(monkeypatch):
+    """Test that images shared in the event are downloaded and passed to the agent."""
+    monkeypatch.setattr("agno.os.interfaces.slack.router.verify_slack_signature", lambda *args, **kwargs: True)
+
+    tasks: List[Tuple[Any, tuple, dict]] = []
+    sent: List[Dict[str, Any]] = []
+    downloaded_files: List[str] = []
+
+    def _capture_task(self, func, *args, **kwargs):
+        tasks.append((func, args, kwargs))
+
+    class _FakeSlackTools:
+        def __init__(self):
+            pass
+
+        def send_message(self, channel: str, text: str, thread_ts: str = None) -> str:
+            sent.append({"channel": channel, "text": text, "thread_ts": thread_ts})
+            return json.dumps({"ok": True})
+
+        def download_file(self, file_id: str, **kwargs) -> bytes:
+            downloaded_files.append(file_id)
+            return b"\x89PNG\r\n\x1a\n..."
+
+    monkeypatch.setattr("agno.os.interfaces.slack.router.BackgroundTasks.add_task", _capture_task)
+    monkeypatch.setattr("agno.os.interfaces.slack.router.SlackTools", _FakeSlackTools)
+
+    agent = _FakeAgent(_FakeRunResponse(status="SUCCESS", content="I see your image"))
+    app = _make_app(agent=agent, reply_to_mentions_only=True)
+    client = TestClient(app)
+
+    response = client.post(
+        "/slack/events",
+        json={
+            "type": "event_callback",
+            "event": {
+                "type": "app_mention",
+                "text": "<@BOTID> What's in this image?",
+                "user": "U123",
+                "channel": "C123",
+                "ts": "1.0",
+                "files": [
+                    {
+                        "id": "F67890",
+                        "name": "photo.png",
+                        "mimetype": "image/png",
+                    }
+                ],
+            },
+        },
+        headers={"X-Slack-Request-Timestamp": "1", "X-Slack-Signature": "v0=ok"},
+    )
+    assert response.status_code == 200
+
+    func, args, kwargs = tasks[0]
+    asyncio.run(func(*args, **kwargs))
+
+    # Verify image was downloaded
+    assert "F67890" in downloaded_files
+
+    # Verify image was passed to agent (as Image, not File)
+    assert len(agent.received_images) == 1
+    assert agent.received_images[0].content == b"\x89PNG\r\n\x1a\n..."
