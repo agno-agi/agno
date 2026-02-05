@@ -1060,7 +1060,10 @@ class Qdrant(VectorDb):
 
                 # Merge existing metadata with new metadata
                 updated_payload = current_payload.copy()
-                updated_payload.update(metadata)
+                if "meta_data" in updated_payload and isinstance(updated_payload["meta_data"], dict):
+                    updated_payload["meta_data"].update(metadata)
+                else:
+                    updated_payload["meta_data"] = metadata
 
                 if "filters" not in updated_payload:
                     updated_payload["filters"] = {}
@@ -1069,14 +1072,9 @@ class Qdrant(VectorDb):
                 else:
                     updated_payload["filters"] = metadata
 
-                # Create set payload operation
-                update_operations.append(models.SetPayload(payload=updated_payload, points=[point_id]))
-
-            # Execute all updates
-            for operation in update_operations:
-                self.client.set_payload(
-                    collection_name=self.collection, payload=operation.payload, points=operation.points
-                )
+                # Execute update
+                self.client.set_payload(collection_name=self.collection, payload=updated_payload, points=[point_id])
+                update_operations.append(point_id)
 
             log_debug(f"Updated metadata for {len(update_operations)} documents with content_id: {content_id}")
 

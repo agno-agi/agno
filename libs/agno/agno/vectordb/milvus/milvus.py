@@ -1168,10 +1168,12 @@ class Milvus(VectorDb):
             metadata (Dict[str, Any]): The metadata to update
         """
         try:
-            # Search for documents with the given content_id
+            # Search for documents with the given content_id and include all fields for upsert
             search_expr = f'content_id == "{content_id}"'
             results = self.client.query(
-                collection_name=self.collection, filter=search_expr, output_fields=["id", "meta_data", "filters"]
+                collection_name=self.collection,
+                filter=search_expr,
+                output_fields=["id", "vector", "name", "content", "content_id", "content_hash", "meta_data", "filters"],
             )
 
             if not results:
@@ -1181,7 +1183,6 @@ class Milvus(VectorDb):
             # Update each document
             updated_count = 0
             for result in results:
-                doc_id = result["id"]
                 current_metadata = result.get("meta_data", {})
                 current_filters = result.get("filters", {})
 
@@ -1198,11 +1199,18 @@ class Milvus(VectorDb):
                 else:
                     updated_filters = metadata
 
-                # Update the document
-                self.client.upsert(
-                    collection_name=self.collection,
-                    data=[{"id": doc_id, "meta_data": updated_metadata, "filters": updated_filters}],
-                )
+                # Upsert with all required fields
+                upsert_data = {
+                    "id": result["id"],
+                    "vector": result["vector"],
+                    "name": result.get("name", ""),
+                    "content": result.get("content", ""),
+                    "content_id": result.get("content_id", ""),
+                    "content_hash": result.get("content_hash", ""),
+                    "meta_data": updated_metadata,
+                    "filters": updated_filters,
+                }
+                self.client.upsert(collection_name=self.collection, data=[upsert_data])
                 updated_count += 1
 
             log_debug(f"Updated metadata for {updated_count} documents with content_id: {content_id}")

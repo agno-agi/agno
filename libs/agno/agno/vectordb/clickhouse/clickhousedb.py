@@ -449,18 +449,44 @@ class Clickhouse(VectorDb):
             parameters=parameters,
         )
 
+    def _format_filters(self, filters: Optional[Dict[str, Any]]) -> str:
+        """Format filters for ClickHouse WHERE clause using native JSON dot notation.
+
+        Args:
+            filters: Dictionary of filter key-value pairs
+
+        Returns:
+            WHERE clause string for ClickHouse query
+        """
+        if not filters:
+            return ""
+
+        conditions = []
+        for key, value in filters.items():
+            # Use dot notation for native JSON type access
+            if isinstance(value, bool):
+                conditions.append(f"meta_data.{key} = {str(value).lower()}")
+            elif isinstance(value, (int, float)):
+                conditions.append(f"meta_data.{key} = {value}")
+            else:
+                conditions.append(f"meta_data.{key} = '{value}'")
+
+        return "WHERE " + " AND ".join(conditions) if conditions else ""
+
     def search(
         self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
     ) -> List[Document]:
-        if filters is not None:
-            log_warning("Filters are not yet supported in Clickhouse. No filters will be applied.")
+        if isinstance(filters, list):
+            log_warning("FilterExpr list is not supported in ClickHouse. No filters will be applied.")
+            filters = None
+
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
             logger.error(f"Error getting embedding for Query: {query}")
             return []
 
         parameters = self._get_base_parameters()
-        where_query = ""
+        where_query = self._format_filters(filters)  # type: ignore
 
         order_by_query = ""
         if self.distance == Distance.l2 or self.distance == Distance.max_inner_product:
@@ -512,8 +538,9 @@ class Clickhouse(VectorDb):
         """Search for documents asynchronously."""
         async_client = await self._ensure_async_client()
 
-        if filters is not None:
-            log_warning("Filters are not yet supported in Clickhouse. No filters will be applied.")
+        if isinstance(filters, list):
+            log_warning("FilterExpr list is not supported in ClickHouse. No filters will be applied.")
+            filters = None
 
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
@@ -521,7 +548,7 @@ class Clickhouse(VectorDb):
             return []
 
         parameters = self._get_base_parameters()
-        where_query = ""
+        where_query = self._format_filters(filters)  # type: ignore
 
         order_by_query = ""
         if self.distance == Distance.l2 or self.distance == Distance.max_inner_product:
