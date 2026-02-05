@@ -88,10 +88,7 @@ class PgVector(VectorDb):
             reranker (Optional[Reranker]): Reranker instance for reranking search results.
             create_schema (bool): Whether to automatically create the database schema if it doesn't exist.
                 Set to False if schema is managed externally (e.g., via migrations). Defaults to True.
-            similarity_threshold (Optional[float]): Minimum similarity score threshold (0.0 to 1.0) for filtering
-                search results. Only documents with similarity >= similarity_threshold will be returned.
-                If None (default), no filtering is applied. Does not apply to keyword search.
-
+            similarity_threshold (Optional[float]): Minimum similarity score (0.0-1.0) to filter results.
         """
         if not table_name:
             raise ValueError("Table name must be provided.")
@@ -99,17 +96,14 @@ class PgVector(VectorDb):
         if db_engine is None and db_url is None:
             raise ValueError("Either 'db_url' or 'db_engine' must be provided.")
 
-        if similarity_threshold is not None and (similarity_threshold < 0.0 or similarity_threshold > 1.0):
-            raise ValueError("similarity_threshold must be between 0.0 and 1.0")
-
         if id is None:
             base_seed = db_url or str(db_engine.url)  # type: ignore
             schema_suffix = table_name if table_name is not None else "ai"
             seed = f"{base_seed}#{schema_suffix}"
             id = generate_id(seed)
 
-        # Initialize base class with name and description
-        super().__init__(id=id, name=name, description=description)
+        # Initialize base class
+        super().__init__(id=id, name=name, description=description, similarity_threshold=similarity_threshold)
 
         if db_engine is None:
             if db_url is None:
@@ -162,9 +156,6 @@ class PgVector(VectorDb):
 
         # Schema creation flag
         self.create_schema: bool = create_schema
-
-        # Minimum similarity score threshold for filtering search results
-        self.similarity_threshold: Optional[float] = similarity_threshold
 
         # Database session
         self.Session: scoped_session = scoped_session(sessionmaker(bind=self.db_engine))
@@ -860,8 +851,10 @@ class PgVector(VectorDb):
             if self.similarity_threshold is not None:
                 distance_threshold = score_to_distance_threshold(self.similarity_threshold, self.distance)
                 if self.distance == Distance.max_inner_product:
+                    # pgvector returns negative IP, so negate the threshold
                     stmt = stmt.where(distance_expr <= -distance_threshold)
                 else:
+                    # cosine and l2 lower the distance they are more similar
                     stmt = stmt.where(distance_expr <= distance_threshold)
 
             stmt = stmt.order_by(distance_expr)
@@ -889,7 +882,9 @@ class PgVector(VectorDb):
 
             search_results: List[Document] = []
             for result in results:
-                similarity_score = normalize_score(result.distance, self.distance)
+                # pgvector returns negative inner product, negate to get actual inner product
+                raw_distance = -result.distance if self.distance == Distance.max_inner_product else result.distance
+                similarity_score = normalize_score(raw_distance, self.distance)
                 meta_data = dict(result.meta_data) if result.meta_data else {}
                 meta_data["similarity_score"] = similarity_score
 
@@ -944,14 +939,13 @@ class PgVector(VectorDb):
             List[Document]: List of matching documents.
         """
         try:
-            if self.similarity_threshold is not None:
-                log_debug("similarity_threshold filtering not applied to keyword search (ts_rank is relative)")
-
+            # Build the text search vector and rank
             ts_vector = func.to_tsvector(self.content_language, self.table.c.content)
             processed_query = self.enable_prefix_matching(query) if self.prefix_match else query
             ts_query = func.websearch_to_tsquery(self.content_language, bindparam("query", value=processed_query))
             text_rank = func.ts_rank_cd(ts_vector, ts_query)
 
+            # Define the columns to select
             columns = [
                 self.table.c.id,
                 self.table.c.name,
@@ -998,6 +992,7 @@ class PgVector(VectorDb):
                 self.create()
                 return []
 
+            # Process the results and convert to Document objects
             search_results: List[Document] = []
             for result in results:
                 meta_data = dict(result.meta_data) if result.meta_data else {}
@@ -1060,8 +1055,8 @@ class PgVector(VectorDb):
             # Create the ts_query using websearch_to_tsquery with parameter binding
             processed_query = self.enable_prefix_matching(query) if self.prefix_match else query
             ts_query = func.websearch_to_tsquery(self.content_language, bindparam("query", value=processed_query))
-            # Compute the text rank
-            text_rank = func.ts_rank_cd(ts_vector, ts_query)
+            # Compute the text rank (max 1.0 since ts_rank_cd can return unbounded values)
+            text_rank = func.least(func.ts_rank_cd(ts_vector, ts_query), 1.0)
 
             # Compute the vector similarity score
             if self.distance == Distance.l2:

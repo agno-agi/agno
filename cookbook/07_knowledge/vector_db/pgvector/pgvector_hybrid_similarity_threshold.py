@@ -1,12 +1,14 @@
 from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.pgvector import PgVector
+from agno.vectordb.search import SearchType
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
 vector_db = PgVector(
-    table_name="vectors",
+    table_name="vectors_hybrid",
     db_url=db_url,
-    similarity_threshold=0.2,
+    search_type=SearchType.hybrid,
+    similarity_threshold=0.3,
 )
 
 knowledge = Knowledge(
