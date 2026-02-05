@@ -54,6 +54,7 @@ from agno.run.cancel import (
 from agno.run.team import RunContentEvent as TeamRunContentEvent
 from agno.run.team import TeamRunEvent
 from agno.run.workflow import (
+    BaseWorkflowRunOutputEvent,
     StepOutputEvent,
     WorkflowCancelledEvent,
     WorkflowCompletedEvent,
@@ -1975,7 +1976,7 @@ class Workflow:
                             if getattr(step, "executor_type", None) == "function":
                                 yield step_output_event
 
-                        elif isinstance(event, WorkflowRunOutputEvent):  # type: ignore
+                        elif isinstance(event, BaseWorkflowRunOutputEvent):
                             # Enrich event with workflow context before yielding
                             enriched_event = self._enrich_event_with_workflow_context(
                                 event, workflow_run_response, step_index=i, step=step
@@ -2573,7 +2574,7 @@ class Workflow:
                             if getattr(step, "executor_type", None) == "function":
                                 yield step_output_event
 
-                        elif isinstance(event, WorkflowRunOutputEvent):  # type: ignore
+                        elif isinstance(event, BaseWorkflowRunOutputEvent):
                             # Enrich event with workflow context before yielding
                             enriched_event = self._enrich_event_with_workflow_context(
                                 event, workflow_run_response, step_index=i, step=step

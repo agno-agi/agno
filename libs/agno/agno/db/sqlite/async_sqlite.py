@@ -164,6 +164,8 @@ class AsyncSqliteDb(AsyncBaseDb):
             (self.knowledge_table_name, "knowledge"),
             (self.versions_table_name, "versions"),
             (self.learnings_table_name, "learnings"),
+            (self.schedule_table_name, "schedules"),
+            (self.schedule_runs_table_name, "schedule_runs"),
         ]
 
         for table_name, table_type in tables_to_create:
@@ -3297,6 +3299,60 @@ class AsyncSqliteDb(AsyncBaseDb):
         raise NotImplementedError("Component methods not yet supported for async databases")
 
     # --- Scheduler Methods ---
+    # NOTE: AsyncBaseDb defines scheduler methods without an "a" prefix. This
+    # class historically implemented "a*" variants, so we provide wrappers for
+    # compatibility and consistency with other async DB adapters.
+
+    async def get_schedule(self, schedule_id: str) -> Optional[Schedule]:
+        return await self.aget_schedule(schedule_id)
+
+    async def get_schedule_by_name(self, name: str) -> Optional[Schedule]:
+        return await self.aget_schedule_by_name(name)
+
+    async def get_schedules(
+        self,
+        enabled: Optional[bool] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+    ) -> Tuple[List[Schedule], int]:
+        return await self.aget_schedules(enabled=enabled, limit=limit, offset=offset)
+
+    async def create_schedule(self, schedule: Schedule) -> Schedule:
+        return await self.acreate_schedule(schedule)
+
+    async def update_schedule(self, schedule: Schedule) -> Schedule:
+        return await self.aupdate_schedule(schedule)
+
+    async def delete_schedule(self, schedule_id: str) -> bool:
+        return await self.adelete_schedule(schedule_id)
+
+    async def claim_due_schedule(
+        self,
+        container_id: str,
+        lock_grace_seconds: int = 60,
+    ) -> Optional[Schedule]:
+        return await self.aclaim_due_schedule(container_id=container_id, lock_grace_seconds=lock_grace_seconds)
+
+    async def release_schedule(self, schedule_id: str, next_run_at: int) -> None:
+        await self.arelease_schedule(schedule_id=schedule_id, next_run_at=next_run_at)
+
+    async def create_schedule_run(self, run: ScheduleRun) -> ScheduleRun:
+        return await self.acreate_schedule_run(run)
+
+    async def update_schedule_run(self, run: ScheduleRun) -> ScheduleRun:
+        return await self.aupdate_schedule_run(run)
+
+    async def get_schedule_runs(
+        self,
+        schedule_id: str,
+        limit: Optional[int] = 100,
+        offset: Optional[int] = None,
+    ) -> Tuple[List[ScheduleRun], int]:
+        return await self.aget_schedule_runs(schedule_id=schedule_id, limit=limit, offset=offset)
+
+    async def get_schedule_run(self, run_id: str) -> Optional[ScheduleRun]:
+        return await self.aget_schedule_run(run_id=run_id)
+
     async def aget_schedule(self, schedule_id: str) -> Optional[Schedule]:
         """Get a schedule by ID.
 
@@ -3504,6 +3560,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         """
         try:
             from sqlalchemy import delete
+            from sqlalchemy.engine import CursorResult
 
             table = await self._get_table(table_type="schedules")
             if table is None:
@@ -3512,7 +3569,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             async with self.async_session_factory() as sess:
                 async with sess.begin():
                     stmt = delete(table).where(table.c.id == schedule_id)
-                    result = await sess.execute(stmt)
+                    result = cast(CursorResult, await sess.execute(stmt))
                     return result.rowcount > 0
 
         except Exception as e:

@@ -4,9 +4,11 @@ This module handles the execution of scheduled tasks by making HTTP calls
 to AgentOS endpoints and tracking the results.
 """
 
+import asyncio
 import json
 import time
-from typing import TYPE_CHECKING, Union, cast
+from inspect import isawaitable
+from typing import TYPE_CHECKING, Optional, Union
 from uuid import uuid4
 
 from agno.db.schemas.scheduler import Schedule, ScheduleRun
@@ -51,51 +53,98 @@ class ScheduleExecutor:
         self.db = db
         self.base_url = base_url.rstrip("/")
         self.token = token
-        # Check if db has async methods
-        self._is_async_db = hasattr(db, "acreate_schedule_run")
 
     async def _create_schedule_run(self, run: ScheduleRun) -> ScheduleRun:
-        """Create a schedule run record (async-aware)."""
-        if self._is_async_db:
-            return await self.db.acreate_schedule_run(run)  # type: ignore[union-attr]
-        return cast(ScheduleRun, self.db.create_schedule_run(run))  # type: ignore[union-attr]
+        """Create a schedule run record (sync/async)."""
+        result = self.db.create_schedule_run(run)  # type: ignore[union-attr]
+        if isawaitable(result):
+            return await result  # type: ignore[misc]
+        return result  # type: ignore[return-value]
 
     async def _update_schedule_run(self, run: ScheduleRun) -> ScheduleRun:
-        """Update a schedule run record (async-aware)."""
-        if self._is_async_db:
-            return await self.db.aupdate_schedule_run(run)  # type: ignore[union-attr]
-        return cast(ScheduleRun, self.db.update_schedule_run(run))  # type: ignore[union-attr]
+        """Update a schedule run record (sync/async)."""
+        result = self.db.update_schedule_run(run)  # type: ignore[union-attr]
+        if isawaitable(result):
+            return await result  # type: ignore[misc]
+        return result  # type: ignore[return-value]
 
     async def _release_schedule(self, schedule_id: str, next_run_at: int) -> None:
-        """Release a schedule lock (async-aware)."""
-        if self._is_async_db:
-            await self.db.arelease_schedule(schedule_id, next_run_at)  # type: ignore
-        else:
-            self.db.release_schedule(schedule_id, next_run_at)
+        """Release a schedule lock (sync/async)."""
+        result = self.db.release_schedule(schedule_id, next_run_at)  # type: ignore[union-attr]
+        if isawaitable(result):
+            await result  # type: ignore[misc]
 
-    async def execute(self, schedule: Schedule) -> None:
+    async def _finalize_run(self, run: ScheduleRun, status: str, error: Optional[str] = None) -> None:
+        run.status = status
+        run.error = error
+        run.completed_at = int(time.time())
+        await self._update_schedule_run(run)
+
+    async def execute(self, schedule: Schedule, release_schedule: bool = True) -> None:
         """Execute a schedule and track the result.
 
         Args:
             schedule: The schedule to execute.
+            release_schedule: If True, update schedule.next_run_at and clear the lock
+                at the end of execution. Manual triggers typically set this to False.
         """
         if httpx is None:
             raise ImportError("httpx is required for scheduler execution")
 
-        # Create a run record
-        run = ScheduleRun(
-            id=str(uuid4()),
-            schedule_id=schedule.id,
-            attempt=1,
-            status="running",
-        )
+        max_attempts = max(1, schedule.max_retries + 1)
+        succeeded = False
+        last_error: Optional[str] = None
 
         try:
-            await self._create_schedule_run(run)
-            await self._execute_and_track(schedule, run)
-        except Exception as e:
-            log_error(f"Error executing schedule '{schedule.name}': {e}")
-            await self._mark_failed(schedule, run, str(e))
+            for attempt in range(1, max_attempts + 1):
+                run = ScheduleRun(
+                    id=str(uuid4()),
+                    schedule_id=schedule.id,
+                    attempt=attempt,
+                    status="running",
+                )
+
+                await self._create_schedule_run(run)
+
+                try:
+                    await self._execute_and_track(schedule, run)
+                except httpx.TimeoutException:
+                    last_error = "Request timed out"
+                    log_error(f"Schedule '{schedule.name}' attempt {attempt} timed out: {last_error}")
+                    await self._finalize_run(run, status="timeout", error=last_error)
+                except Exception as e:
+                    last_error = str(e)
+                    log_error(f"Schedule '{schedule.name}' attempt {attempt} failed: {last_error}")
+                    await self._finalize_run(run, status="failed", error=last_error)
+                else:
+                    await self._finalize_run(run, status="success")
+                    succeeded = True
+                    last_error = None
+                    break
+
+                if attempt <= schedule.max_retries:
+                    delay_seconds = max(0, int(schedule.retry_delay_seconds))
+                    log_debug(
+                        f"Scheduling retry {attempt + 1}/{max_attempts} for '{schedule.name}' in {delay_seconds}s"
+                    )
+                    if delay_seconds > 0:
+                        await asyncio.sleep(delay_seconds)
+        finally:
+            if release_schedule:
+                try:
+                    try:
+                        next_run_at = calculate_next_run(schedule.cron_expr, schedule.timezone)
+                    except Exception as e:
+                        log_error(f"Error calculating next run for schedule '{schedule.name}': {e}")
+                        next_run_at = schedule.next_run_at or int(time.time()) + 60
+                    await self._release_schedule(schedule.id, next_run_at)
+                except Exception as e:
+                    log_error(f"Error releasing schedule '{schedule.name}': {e}")
+
+        if succeeded:
+            log_info(f"Schedule '{schedule.name}' completed successfully")
+        else:
+            log_error(f"Schedule '{schedule.name}' failed: {last_error or 'Unknown error'}")
 
     async def _execute_and_track(self, schedule: Schedule, run: ScheduleRun) -> None:
         """Execute the schedule and consume SSE stream until completion.
@@ -105,7 +154,7 @@ class ScheduleExecutor:
             run: The run record to update.
         """
         url = f"{self.base_url}{schedule.endpoint}"
-        log_info(f"Executing schedule '{schedule.name}': {schedule.method} {url}")
+        log_info(f"Executing schedule '{schedule.name}' (attempt {run.attempt}): {schedule.method} {url}")
 
         timeout = httpx.Timeout(
             connect=10.0,
@@ -154,53 +203,47 @@ class ScheduleExecutor:
 
         headers["Content-Type"] = "application/x-www-form-urlencoded"
 
-        try:
-            async with client.stream(
-                method=schedule.method,
-                url=url,
-                data=payload,
-                headers=headers,
-            ) as response:
-                if response.status_code >= 400:
-                    error_text = await response.aread()
-                    await self._mark_failed(schedule, run, f"HTTP {response.status_code}: {error_text.decode()}")
+        async with client.stream(
+            method=schedule.method,
+            url=url,
+            data=payload,
+            headers=headers,
+        ) as response:
+            run.status_code = response.status_code
+
+            if response.status_code >= 400:
+                error_text = await response.aread()
+                error_body = error_text.decode(errors="replace")
+                raise RuntimeError(f"HTTP {response.status_code}: {error_body}")
+
+            success_events = {"RunCompleted", "TeamRunCompleted", "WorkflowCompleted"}
+            error_events = {"RunError", "TeamRunError", "WorkflowError"}
+            cancelled_events = {"RunCancelled", "TeamRunCancelled", "WorkflowCancelled"}
+
+            async for line in response.aiter_lines():
+                if not line.startswith("data:"):
+                    continue
+
+                try:
+                    data = json.loads(line[5:].strip())
+                except json.JSONDecodeError:
+                    continue
+
+                event = data.get("event", "")
+
+                if data.get("run_id") and not run.run_id:
+                    run.run_id = data.get("run_id")
+                    run.session_id = data.get("session_id")
+                    await self._update_schedule_run(run)
+
+                if event in success_events:
                     return
+                if event in error_events:
+                    raise RuntimeError(data.get("content") or data.get("error") or "Unknown error")
+                if event in cancelled_events:
+                    raise RuntimeError(data.get("reason") or "Cancelled")
 
-                # Update run with status code
-                run.status_code = response.status_code
-
-                async for line in response.aiter_lines():
-                    if not line.startswith("data:"):
-                        continue
-
-                    try:
-                        data = json.loads(line[5:].strip())
-                        event = data.get("event", "")
-
-                        # Capture run info from first event
-                        if data.get("run_id") and not run.run_id:
-                            run.run_id = data.get("run_id")
-                            run.session_id = data.get("session_id")
-                            await self._update_schedule_run(run)
-
-                        # Check for terminal events
-                        if event == "RunCompleted":
-                            await self._mark_success(schedule, run)
-                            return
-                        elif event == "RunError":
-                            await self._mark_failed(schedule, run, data.get("content", "Unknown error"))
-                            return
-
-                    except json.JSONDecodeError:
-                        continue
-
-            # Stream ended without completion event
-            await self._mark_failed(schedule, run, "Stream ended unexpectedly")
-
-        except httpx.TimeoutException:
-            await self._mark_failed(schedule, run, "Request timed out")
-        except Exception as e:
-            await self._mark_failed(schedule, run, str(e))
+        raise RuntimeError("Stream ended unexpectedly")
 
     async def _execute_simple(
         self,
@@ -219,90 +262,29 @@ class ScheduleExecutor:
             url: The URL to call.
             headers: Request headers.
         """
-        try:
-            if schedule.method.upper() == "GET":
-                response = await client.get(url, headers=headers)
-            elif schedule.method.upper() == "POST":
-                headers["Content-Type"] = "application/json"
-                response = await client.post(url, json=schedule.payload or {}, headers=headers)
-            elif schedule.method.upper() == "PUT":
-                headers["Content-Type"] = "application/json"
-                response = await client.put(url, json=schedule.payload or {}, headers=headers)
-            elif schedule.method.upper() == "DELETE":
-                response = await client.delete(url, headers=headers)
-            else:
-                await self._mark_failed(schedule, run, f"Unsupported method: {schedule.method}")
-                return
-
-            run.status_code = response.status_code
-
-            if response.status_code >= 400:
-                await self._mark_failed(schedule, run, f"HTTP {response.status_code}: {response.text}")
-            else:
-                # Try to extract run_id from response
-                try:
-                    data = response.json()
-                    if isinstance(data, dict):
-                        run.run_id = data.get("run_id")
-                        run.session_id = data.get("session_id")
-                except (json.JSONDecodeError, ValueError):
-                    pass
-
-                await self._mark_success(schedule, run)
-
-        except httpx.TimeoutException:
-            await self._mark_failed(schedule, run, "Request timed out")
-        except Exception as e:
-            await self._mark_failed(schedule, run, str(e))
-
-    async def _mark_success(self, schedule: Schedule, run: ScheduleRun) -> None:
-        """Mark a run as successful and release the schedule.
-
-        Args:
-            schedule: The schedule that was executed.
-            run: The run record to update.
-        """
-        run.status = "success"
-        run.completed_at = int(time.time())
-        await self._update_schedule_run(run)
-
-        # Calculate next run time and release the schedule
-        next_run_at = calculate_next_run(schedule.cron_expr, schedule.timezone)
-        await self._release_schedule(schedule.id, next_run_at)
-
-        log_info(f"Schedule '{schedule.name}' completed successfully")
-
-    async def _mark_failed(self, schedule: Schedule, run: ScheduleRun, error: str) -> None:
-        """Mark a run as failed and handle retry logic.
-
-        Args:
-            schedule: The schedule that was executed.
-            run: The run record to update.
-            error: The error message.
-        """
-        run.status = "failed"
-        run.error = error
-        run.completed_at = int(time.time())
-        await self._update_schedule_run(run)
-
-        log_error(f"Schedule '{schedule.name}' failed: {error}")
-
-        # Check if we should retry
-        if run.attempt < schedule.max_retries:
-            # Schedule a retry
-            retry_run = ScheduleRun(
-                id=str(uuid4()),
-                schedule_id=schedule.id,
-                attempt=run.attempt + 1,
-                status="pending",
-                triggered_at=int(time.time()) + schedule.retry_delay_seconds,
-            )
-            await self._create_schedule_run(retry_run)
-            log_debug(
-                f"Scheduling retry {run.attempt + 1}/{schedule.max_retries} "
-                f"for '{schedule.name}' in {schedule.retry_delay_seconds}s"
-            )
+        if schedule.method.upper() == "GET":
+            response = await client.get(url, headers=headers)
+        elif schedule.method.upper() == "POST":
+            headers["Content-Type"] = "application/json"
+            response = await client.post(url, json=schedule.payload or {}, headers=headers)
+        elif schedule.method.upper() == "PUT":
+            headers["Content-Type"] = "application/json"
+            response = await client.put(url, json=schedule.payload or {}, headers=headers)
+        elif schedule.method.upper() == "DELETE":
+            response = await client.delete(url, headers=headers)
         else:
-            # All retries exhausted, release the schedule
-            next_run_at = calculate_next_run(schedule.cron_expr, schedule.timezone)
-            await self._release_schedule(schedule.id, next_run_at)
+            raise ValueError(f"Unsupported method: {schedule.method}")
+
+        run.status_code = response.status_code
+
+        if response.status_code >= 400:
+            raise RuntimeError(f"HTTP {response.status_code}: {response.text}")
+
+        # Try to extract run_id from response
+        try:
+            data = response.json()
+            if isinstance(data, dict):
+                run.run_id = data.get("run_id")
+                run.session_id = data.get("session_id")
+        except (json.JSONDecodeError, ValueError):
+            pass

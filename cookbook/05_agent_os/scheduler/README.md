@@ -37,7 +37,8 @@ agent_os = AgentOS(
 )
 
 # Run the server
-agent_os.run(port=7777)
+app = agent_os.get_app()
+agent_os.serve(app, port=7777)
 ```
 
 ## Creating Schedules via API
@@ -46,11 +47,11 @@ Once the server is running, create schedules using the REST API:
 
 ```bash
 # Create a schedule that runs an agent daily at 3 AM
-curl -X POST http://localhost:7777/v1/schedules \
+curl -X POST http://localhost:7777/schedules \
   -H "Content-Type: application/json" \
   -d '{
     "name": "daily-report",
-    "endpoint": "/v1/agents/daily-reporter/runs",
+    "endpoint": "/agents/daily-reporter/runs",
     "method": "POST",
     "payload": {"message": "Generate the daily report"},
     "cron_expr": "0 3 * * *",
@@ -75,16 +76,16 @@ curl -X POST http://localhost:7777/v1/schedules \
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/v1/schedules` | List all schedules |
-| POST | `/v1/schedules` | Create a new schedule |
-| GET | `/v1/schedules/{id}` | Get a specific schedule |
-| PATCH | `/v1/schedules/{id}` | Update a schedule |
-| DELETE | `/v1/schedules/{id}` | Delete a schedule |
-| POST | `/v1/schedules/{id}/enable` | Enable a schedule |
-| POST | `/v1/schedules/{id}/disable` | Disable a schedule |
-| POST | `/v1/schedules/{id}/trigger` | Manually trigger a schedule |
-| GET | `/v1/schedules/{id}/runs` | Get run history |
-| GET | `/v1/schedules/{id}/runs/{run_id}` | Get a specific run |
+| GET | `/schedules` | List all schedules |
+| POST | `/schedules` | Create a new schedule |
+| GET | `/schedules/{id}` | Get a specific schedule |
+| PATCH | `/schedules/{id}` | Update a schedule |
+| DELETE | `/schedules/{id}` | Delete a schedule |
+| POST | `/schedules/{id}/enable` | Enable a schedule |
+| POST | `/schedules/{id}/disable` | Disable a schedule |
+| POST | `/schedules/{id}/trigger` | Manually trigger a schedule |
+| GET | `/schedules/{id}/runs` | Get run history |
+| GET | `/schedules/{id}/runs/{run_id}` | Get a specific run |
 
 ## Examples
 

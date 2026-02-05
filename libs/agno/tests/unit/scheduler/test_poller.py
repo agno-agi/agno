@@ -13,7 +13,6 @@ class TestSchedulePollerInit:
         from agno.scheduler.poller import SchedulePoller
 
         mock_db = MagicMock()
-        del mock_db.aclaim_due_schedule
 
         poller = SchedulePoller(
             db=mock_db,
@@ -28,30 +27,13 @@ class TestSchedulePollerInit:
         assert poller.poll_interval == 30
         assert poller.lock_grace_seconds == 60
         assert poller.container_id == "container-1"
-        assert poller._is_async_db is False
         assert poller._running is False
-
-    def test_init_with_async_db(self):
-        """Test poller initialization with async database."""
-        from agno.scheduler.poller import SchedulePoller
-
-        mock_db = MagicMock()
-        mock_db.aclaim_due_schedule = AsyncMock()
-
-        poller = SchedulePoller(
-            db=mock_db,
-            base_url="http://localhost:7777",
-            token="test-token",
-        )
-
-        assert poller._is_async_db is True
 
     def test_init_generates_container_id_if_not_provided(self):
         """Test that container_id is generated if not provided."""
         from agno.scheduler.poller import SchedulePoller
 
         mock_db = MagicMock()
-        del mock_db.aclaim_due_schedule
 
         poller = SchedulePoller(
             db=mock_db,
@@ -67,7 +49,6 @@ class TestSchedulePollerInit:
         from agno.scheduler.poller import SchedulePoller
 
         mock_db = MagicMock()
-        del mock_db.aclaim_due_schedule
 
         poller = SchedulePoller(
             db=mock_db,
@@ -82,7 +63,6 @@ class TestSchedulePollerInit:
         from agno.scheduler.poller import SchedulePoller
 
         mock_db = MagicMock()
-        del mock_db.aclaim_due_schedule
 
         poller = SchedulePoller(
             db=mock_db,
@@ -101,7 +81,6 @@ class TestSchedulePollerProperties:
         from agno.scheduler.poller import SchedulePoller
 
         mock_db = MagicMock()
-        del mock_db.aclaim_due_schedule
 
         poller = SchedulePoller(mock_db, "http://localhost", "token")
 
@@ -115,7 +94,6 @@ class TestSchedulePollerProperties:
         from agno.scheduler.poller import SchedulePoller
 
         mock_db = MagicMock()
-        del mock_db.aclaim_due_schedule
 
         poller = SchedulePoller(mock_db, "http://localhost", "token")
 
@@ -137,7 +115,6 @@ class TestSchedulePollerAsyncMethods:
         from agno.scheduler.poller import SchedulePoller
 
         mock_db = MagicMock()
-        del mock_db.aclaim_due_schedule
         mock_db.claim_due_schedule.return_value = Schedule(
             id="schedule-1",
             name="test",
@@ -161,7 +138,7 @@ class TestSchedulePollerAsyncMethods:
         from agno.scheduler.poller import SchedulePoller
 
         mock_db = MagicMock()
-        mock_db.aclaim_due_schedule = AsyncMock(
+        mock_db.claim_due_schedule = AsyncMock(
             return_value=Schedule(
                 id="schedule-1",
                 name="test",
@@ -173,7 +150,7 @@ class TestSchedulePollerAsyncMethods:
         poller = SchedulePoller(mock_db, "http://localhost", "token")
         result = await poller._claim_due_schedule()
 
-        mock_db.aclaim_due_schedule.assert_called_once_with(
+        mock_db.claim_due_schedule.assert_called_once_with(
             poller.container_id,
             lock_grace_seconds=60,
         )
@@ -185,7 +162,6 @@ class TestSchedulePollerAsyncMethods:
         from agno.scheduler.poller import SchedulePoller
 
         mock_db = MagicMock()
-        del mock_db.aclaim_due_schedule
         mock_db.claim_due_schedule.return_value = None
 
         poller = SchedulePoller(mock_db, "http://localhost", "token")
@@ -200,8 +176,6 @@ class TestSchedulePollerAsyncMethods:
         from agno.scheduler.poller import SchedulePoller
 
         mock_db = MagicMock()
-        # Remove async method to simulate sync database
-        del mock_db.aclaim_due_schedule
         mock_db.get_schedule.return_value = Schedule(
             id="schedule-1",
             name="test",
@@ -222,7 +196,7 @@ class TestSchedulePollerAsyncMethods:
         from agno.scheduler.poller import SchedulePoller
 
         mock_db = MagicMock()
-        mock_db.aget_schedule = AsyncMock(
+        mock_db.get_schedule = AsyncMock(
             return_value=Schedule(
                 id="schedule-1",
                 name="test",
@@ -234,7 +208,7 @@ class TestSchedulePollerAsyncMethods:
         poller = SchedulePoller(mock_db, "http://localhost", "token")
         result = await poller._get_schedule("schedule-1")
 
-        mock_db.aget_schedule.assert_called_once_with("schedule-1")
+        mock_db.get_schedule.assert_called_once_with("schedule-1")
         assert result.id == "schedule-1"
 
 
@@ -247,8 +221,6 @@ class TestSchedulePollerTrigger:
         from agno.scheduler.poller import SchedulePoller
 
         mock_db = MagicMock()
-        # Remove async method to simulate sync database
-        del mock_db.aclaim_due_schedule
         mock_db.get_schedule.return_value = None
 
         poller = SchedulePoller(mock_db, "http://localhost", "token")
@@ -263,8 +235,6 @@ class TestSchedulePollerTrigger:
         from agno.scheduler.poller import SchedulePoller
 
         mock_db = MagicMock()
-        # Remove async method to simulate sync database
-        del mock_db.aclaim_due_schedule
         mock_db.get_schedule.return_value = Schedule(
             id="schedule-1",
             name="test",
@@ -291,7 +261,6 @@ class TestSchedulePollerStop:
         from agno.scheduler.poller import SchedulePoller
 
         mock_db = MagicMock()
-        del mock_db.aclaim_due_schedule
 
         poller = SchedulePoller(mock_db, "http://localhost", "token")
         poller._running = False
@@ -305,7 +274,6 @@ class TestSchedulePollerStop:
         from agno.scheduler.poller import SchedulePoller
 
         mock_db = MagicMock()
-        del mock_db.aclaim_due_schedule
 
         poller = SchedulePoller(mock_db, "http://localhost", "token")
         poller._running = True

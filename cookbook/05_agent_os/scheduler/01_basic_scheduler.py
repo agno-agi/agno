@@ -11,11 +11,11 @@ Run:
     python cookbook/05_agent_os/scheduler/01_basic_scheduler.py
 
 Then create a schedule via API:
-    curl -X POST http://localhost:7777/v1/schedules \
+    curl -X POST http://localhost:7777/schedules \
       -H "Content-Type: application/json" \
       -d '{
         "name": "test-schedule",
-        "endpoint": "/v1/agents/hello-agent/runs",
+        "endpoint": "/agents/hello-agent/runs",
         "method": "POST",
         "payload": {"message": "Hello from scheduler!"},
         "cron_expr": "* * * * *"
@@ -47,6 +47,7 @@ agent_os = AgentOS(
 
 if __name__ == "__main__":
     print("Starting AgentOS with scheduler enabled...")
-    print("Create schedules via POST /v1/schedules")
-    print("List schedules via GET /v1/schedules")
-    agent_os.run(port=7777)
+    print("Create schedules via POST /schedules")
+    print("List schedules via GET /schedules")
+    app = agent_os.get_app()
+    agent_os.serve(app, port=7777)

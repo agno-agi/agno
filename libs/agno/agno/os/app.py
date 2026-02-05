@@ -216,6 +216,7 @@ class AgentOS:
         enable_scheduler: bool = False,
         scheduler_poll_interval: int = 30,
         scheduler_base_url: Optional[str] = None,
+        internal_service_token: Optional[str] = None,
     ):
         """Initialize AgentOS.
 
@@ -248,6 +249,7 @@ class AgentOS:
             enable_scheduler: Whether to enable the built-in scheduler (default: False, use external schedulers in production)
             scheduler_poll_interval: Seconds between schedule claim attempts (default: 30)
             scheduler_base_url: Base URL for scheduler HTTP calls (default: http://localhost:7777)
+            internal_service_token: Optional internal token for scheduled HTTP calls. If not provided, a token is generated.
 
         """
         if not agents and not workflows and not teams and not knowledge and not db:
@@ -313,7 +315,7 @@ class AgentOS:
         self.scheduler_poll_interval = scheduler_poll_interval
         self.scheduler_base_url = scheduler_base_url or "http://localhost:7777"
         self._scheduler_poller: Optional["SchedulePoller"] = None
-        self._internal_service_token: str = secrets.token_urlsafe(32)
+        self._internal_service_token: str = internal_service_token or secrets.token_urlsafe(32)
 
         self._initialize_agents()
         self._initialize_teams()
@@ -395,13 +397,16 @@ class AgentOS:
         if self.registry is not None:
             updated_routers.append(get_registry_router(registry=self.registry))
 
-        # Add schedule router if scheduler is enabled (supports both sync and async db)
-        if self.enable_scheduler and self.db is not None:
+        # Add schedule router when a database is available (supports both sync and async dbs).
+        # The poller is started only when enable_scheduler=True; the API can still be used by external schedulers.
+        if getattr(self, "dbs", None):
             updated_routers.append(
                 get_schedule_router(
                     dbs=self.dbs,
                     settings=self.settings,
                     poller=self._scheduler_poller,
+                    scheduler_base_url=self.scheduler_base_url,
+                    internal_token=self._internal_service_token,
                 )
             )
 
@@ -437,17 +442,6 @@ class AgentOS:
         self._add_router(app, get_team_router(self, settings=self.settings, registry=self.registry))
         self._add_router(app, get_workflow_router(self, settings=self.settings))
         self._add_router(app, get_websocket_router(self, settings=self.settings))
-
-        # Add schedule router if scheduler is enabled (supports both sync and async db)
-        if self.enable_scheduler and self.db is not None:
-            self._add_router(
-                app,
-                get_schedule_router(
-                    dbs=self.dbs,
-                    settings=self.settings,
-                    poller=self._scheduler_poller,
-                ),
-            )
 
         # Add A2A interface if relevant
         has_a2a_interface = False
@@ -730,6 +724,16 @@ class AgentOS:
             get_traces_router(dbs=self.dbs),
             get_database_router(self, settings=self.settings),
         ]
+        if self.dbs:
+            routers.append(
+                get_schedule_router(
+                    dbs=self.dbs,
+                    settings=self.settings,
+                    poller=self._scheduler_poller,
+                    scheduler_base_url=self.scheduler_base_url,
+                    internal_token=self._internal_service_token,
+                )
+            )
         # Add component and registry routers only if a sync db (BaseDb) is available
         # Component routes require sync database operations
         if self.db is not None and isinstance(self.db, BaseDb):
@@ -790,6 +794,7 @@ class AgentOS:
         # This allows middleware (like JWT) to access these values
         fastapi_app.state.agent_os_id = self.id
         fastapi_app.state.cors_allowed_origins = self.cors_allowed_origins
+        fastapi_app.state.internal_service_token = self._internal_service_token
 
         # Add JWT middleware if authorization is enabled
         if self.authorization:

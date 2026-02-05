@@ -82,7 +82,12 @@ def get_authentication_dependency(settings: AgnoAPISettings):
 
         token = credentials.credentials
 
-        # Verify the token
+        # Allow internal service token (used by scheduler and other internal calls)
+        internal_token = getattr(request.app.state, "internal_service_token", None)
+        if internal_token and token == internal_token:
+            return True
+
+        # Verify the token against the configured security key
         if token != settings.os_security_key:
             raise HTTPException(status_code=401, detail="Invalid authentication token")
 

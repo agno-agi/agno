@@ -62,7 +62,7 @@ def demo_manual_trigger():
     schedule_data = {
         "name": "daily-notification",
         "description": "Send daily notification",
-        "endpoint": "/v1/agents/notification-agent/runs",
+        "endpoint": "/agents/notification-agent/runs",
         "method": "POST",
         "payload": {"message": "Generate a notification for the team."},
         "cron_expr": "0 0 * * *",  # Midnight - won't run automatically soon
@@ -71,7 +71,7 @@ def demo_manual_trigger():
 
     try:
         response = httpx.post(
-            f"{base_url}/v1/schedules",
+            f"{base_url}/schedules",
             json=schedule_data,
             timeout=10.0,
         )
@@ -84,7 +84,7 @@ def demo_manual_trigger():
             # Step 2: Manually trigger the schedule
             print("\n2. Manually triggering the schedule...")
             trigger_response = httpx.post(
-                f"{base_url}/v1/schedules/{schedule_id}/trigger",
+                f"{base_url}/schedules/{schedule_id}/trigger",
                 timeout=30.0,
             )
             if trigger_response.status_code == 200:
@@ -97,7 +97,7 @@ def demo_manual_trigger():
             print("\n3. Checking run history...")
             time.sleep(5)  # Wait for execution
             runs_response = httpx.get(
-                f"{base_url}/v1/schedules/{schedule_id}/runs",
+                f"{base_url}/schedules/{schedule_id}/runs",
                 timeout=10.0,
             )
             if runs_response.status_code == 200:
@@ -109,7 +109,7 @@ def demo_manual_trigger():
         elif response.status_code == 400:
             print("   Schedule already exists, fetching it...")
             # Get existing schedule
-            list_response = httpx.get(f"{base_url}/v1/schedules", timeout=10.0)
+            list_response = httpx.get(f"{base_url}/schedules", timeout=10.0)
             if list_response.status_code == 200:
                 schedules = list_response.json()["schedules"]
                 for s in schedules:
@@ -120,7 +120,7 @@ def demo_manual_trigger():
                         # Trigger it
                         print("\n   Triggering existing schedule...")
                         trigger_response = httpx.post(
-                            f"{base_url}/v1/schedules/{schedule_id}/trigger",
+                            f"{base_url}/schedules/{schedule_id}/trigger",
                             timeout=30.0,
                         )
                         if trigger_response.status_code == 200:
@@ -137,23 +137,24 @@ if __name__ == "__main__":
     print("Starting AgentOS with manual trigger demo...")
     print("\nAPI Commands:")
     print("\n  Create schedule:")
-    print("""    curl -X POST http://localhost:7777/v1/schedules \\
+    print("""    curl -X POST http://localhost:7777/schedules \\
       -H "Content-Type: application/json" \\
       -d '{
         "name": "my-schedule",
-        "endpoint": "/v1/agents/notification-agent/runs",
+        "endpoint": "/agents/notification-agent/runs",
         "cron_expr": "0 0 * * *"
       }'""")
 
     print("\n  Trigger manually:")
-    print("    curl -X POST http://localhost:7777/v1/schedules/{id}/trigger")
+    print("    curl -X POST http://localhost:7777/schedules/{id}/trigger")
 
     print("\n  View runs:")
-    print("    curl http://localhost:7777/v1/schedules/{id}/runs")
+    print("    curl http://localhost:7777/schedules/{id}/runs")
 
     # Run the demo in background after server starts
     import threading
 
     threading.Timer(3.0, demo_manual_trigger).start()
 
-    agent_os.run(port=7777)
+    app = agent_os.get_app()
+    agent_os.serve(app, port=7777)

@@ -1,6 +1,8 @@
 """FastAPI router for Schedule management endpoints."""
 
-from typing import TYPE_CHECKING, Dict, List, Optional, Tuple, Union
+import asyncio
+from inspect import isawaitable
+from typing import TYPE_CHECKING, Any, Awaitable, Dict, List, Optional, Tuple, TypeVar, Union, cast
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -32,6 +34,15 @@ if TYPE_CHECKING:
     from agno.scheduler.poller import SchedulePoller
 
 
+T = TypeVar("T")
+
+
+async def _maybe_await(value: Union[T, Awaitable[T]]) -> T:
+    if isawaitable(value):
+        return await cast(Awaitable[T], value)
+    return cast(T, value)
+
+
 async def get_db(
     dbs: Dict[str, List[Union[BaseDb, AsyncBaseDb, "RemoteDb"]]],
     db_id: Optional[str] = None,
@@ -56,23 +67,16 @@ async def get_db(
     return None
 
 
-def _is_async_db(db: Union[BaseDb, AsyncBaseDb]) -> bool:
-    """Check if the database is async."""
-    return isinstance(db, AsyncBaseDb) or hasattr(db, "aget_schedule")
-
-
 async def _get_schedule(db: Union[BaseDb, AsyncBaseDb], schedule_id: str) -> Optional[Schedule]:
     """Get a schedule by ID (supports both sync and async db)."""
-    if _is_async_db(db):
-        return await db.aget_schedule(schedule_id)  # type: ignore
-    return db.get_schedule(schedule_id)  # type: ignore
+    result = cast(Any, db).get_schedule(schedule_id)
+    return await _maybe_await(result)
 
 
 async def _get_schedule_by_name(db: Union[BaseDb, AsyncBaseDb], name: str) -> Optional[Schedule]:
     """Get a schedule by name (supports both sync and async db)."""
-    if _is_async_db(db):
-        return await db.aget_schedule_by_name(name)  # type: ignore
-    return db.get_schedule_by_name(name)  # type: ignore
+    result = cast(Any, db).get_schedule_by_name(name)
+    return await _maybe_await(result)
 
 
 async def _get_schedules(
@@ -82,30 +86,26 @@ async def _get_schedules(
     offset: Optional[int],
 ) -> Tuple[List[Schedule], int]:
     """Get schedules (supports both sync and async db)."""
-    if _is_async_db(db):
-        return await db.aget_schedules(enabled=enabled, limit=limit, offset=offset)  # type: ignore
-    return db.get_schedules(enabled=enabled, limit=limit, offset=offset)  # type: ignore
+    result = cast(Any, db).get_schedules(enabled=enabled, limit=limit, offset=offset)
+    return await _maybe_await(result)
 
 
 async def _create_schedule(db: Union[BaseDb, AsyncBaseDb], schedule: Schedule) -> Schedule:
     """Create a schedule (supports both sync and async db)."""
-    if _is_async_db(db):
-        return await db.acreate_schedule(schedule)  # type: ignore
-    return db.create_schedule(schedule)  # type: ignore
+    result = cast(Any, db).create_schedule(schedule)
+    return await _maybe_await(result)
 
 
 async def _update_schedule(db: Union[BaseDb, AsyncBaseDb], schedule: Schedule) -> Schedule:
     """Update a schedule (supports both sync and async db)."""
-    if _is_async_db(db):
-        return await db.aupdate_schedule(schedule)  # type: ignore
-    return db.update_schedule(schedule)  # type: ignore
+    result = cast(Any, db).update_schedule(schedule)
+    return await _maybe_await(result)
 
 
 async def _delete_schedule(db: Union[BaseDb, AsyncBaseDb], schedule_id: str) -> bool:
     """Delete a schedule (supports both sync and async db)."""
-    if _is_async_db(db):
-        return await db.adelete_schedule(schedule_id)  # type: ignore
-    return db.delete_schedule(schedule_id)  # type: ignore
+    result = cast(Any, db).delete_schedule(schedule_id)
+    return await _maybe_await(result)
 
 
 async def _get_schedule_runs(
@@ -115,22 +115,22 @@ async def _get_schedule_runs(
     offset: Optional[int],
 ) -> Tuple[List[ScheduleRun], int]:
     """Get schedule runs (supports both sync and async db)."""
-    if _is_async_db(db):
-        return await db.aget_schedule_runs(schedule_id, limit=limit, offset=offset)  # type: ignore
-    return db.get_schedule_runs(schedule_id, limit=limit, offset=offset)  # type: ignore
+    result = cast(Any, db).get_schedule_runs(schedule_id, limit=limit, offset=offset)
+    return await _maybe_await(result)
 
 
 async def _get_schedule_run(db: Union[BaseDb, AsyncBaseDb], run_id: str) -> Optional[ScheduleRun]:
     """Get a schedule run (supports both sync and async db)."""
-    if _is_async_db(db):
-        return await db.aget_schedule_run(run_id)  # type: ignore
-    return db.get_schedule_run(run_id)  # type: ignore
+    result = cast(Any, db).get_schedule_run(run_id)
+    return await _maybe_await(result)
 
 
 def get_schedule_router(
     dbs: Dict[str, List[Union[BaseDb, AsyncBaseDb, "RemoteDb"]]],
     settings: AgnoAPISettings = AgnoAPISettings(),
     poller: Optional["SchedulePoller"] = None,
+    scheduler_base_url: str = "http://localhost:7777",
+    internal_token: Optional[str] = None,
 ) -> APIRouter:
     """Create the schedule management router.
 
@@ -138,14 +138,18 @@ def get_schedule_router(
         dbs: Dictionary of database instances (supports both sync and async).
         settings: API settings for authentication.
         poller: Optional schedule poller for manual triggers.
+        scheduler_base_url: Base URL used for internal schedule execution.
+        internal_token: Internal service token used for scheduled HTTP calls.
 
     Returns:
         FastAPI router with schedule endpoints.
     """
     from agno.os.auth import get_authentication_dependency
 
+    scheduler_base_url = scheduler_base_url.rstrip("/")
+
     router = APIRouter(
-        prefix="/v1/schedules",
+        prefix="/schedules",
         tags=["Schedules"],
         dependencies=[Depends(get_authentication_dependency(settings))],
         responses={
@@ -196,8 +200,11 @@ def get_schedule_router(
             raise HTTPException(status_code=500, detail="No database available")
 
         # Validate cron expression
-        if not validate_cron_expr(request.cron_expr):
-            raise HTTPException(status_code=400, detail=f"Invalid cron expression: {request.cron_expr}")
+        try:
+            if not validate_cron_expr(request.cron_expr):
+                raise HTTPException(status_code=400, detail=f"Invalid cron expression: {request.cron_expr}")
+        except ImportError as e:
+            raise HTTPException(status_code=503, detail=str(e))
 
         # Check for duplicate name
         existing = await _get_schedule_by_name(db, request.name)
@@ -207,6 +214,8 @@ def get_schedule_router(
         # Calculate next run time
         try:
             next_run_at = calculate_next_run(request.cron_expr, request.timezone)
+        except ImportError as e:
+            raise HTTPException(status_code=503, detail=str(e))
         except Exception as e:
             raise HTTPException(status_code=400, detail=str(e))
 
@@ -299,8 +308,11 @@ def get_schedule_router(
             cron_expr = request.cron_expr or schedule.cron_expr
             timezone = request.timezone or schedule.timezone
 
-            if not validate_cron_expr(cron_expr):
-                raise HTTPException(status_code=400, detail=f"Invalid cron expression: {cron_expr}")
+            try:
+                if not validate_cron_expr(cron_expr):
+                    raise HTTPException(status_code=400, detail=f"Invalid cron expression: {cron_expr}")
+            except ImportError as e:
+                raise HTTPException(status_code=503, detail=str(e))
 
             schedule.cron_expr = cron_expr
             schedule.timezone = timezone
@@ -308,6 +320,8 @@ def get_schedule_router(
             # Recalculate next run time
             try:
                 schedule.next_run_at = calculate_next_run(cron_expr, timezone)
+            except ImportError as e:
+                raise HTTPException(status_code=503, detail=str(e))
             except Exception as e:
                 raise HTTPException(status_code=400, detail=str(e))
 
@@ -352,7 +366,12 @@ def get_schedule_router(
 
         schedule.enabled = True
         # Recalculate next run time when enabling
-        schedule.next_run_at = calculate_next_run(schedule.cron_expr, schedule.timezone)
+        try:
+            schedule.next_run_at = calculate_next_run(schedule.cron_expr, schedule.timezone)
+        except ImportError as e:
+            raise HTTPException(status_code=503, detail=str(e))
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
 
         updated = await _update_schedule(db, schedule)
         return _schedule_to_response(updated)
@@ -393,15 +412,34 @@ def get_schedule_router(
         if schedule is None:
             raise HTTPException(status_code=404, detail=f"Schedule '{schedule_id}' not found")
 
-        if poller is None:
-            raise HTTPException(
-                status_code=503,
-                detail="Scheduler is not enabled. Enable it with enable_scheduler=True in AgentOS configuration.",
-            )
+        if poller is not None:
+            triggered = await poller.trigger_schedule(schedule_id)
+            if not triggered:
+                raise HTTPException(status_code=500, detail="Failed to trigger schedule")
+        else:
+            from agno.scheduler.executor import ScheduleExecutor
 
-        triggered = await poller.trigger_schedule(schedule_id)
-        if not triggered:
-            raise HTTPException(status_code=500, detail="Failed to trigger schedule")
+            def _task_done_callback(task: asyncio.Task) -> None:
+                if task.cancelled():
+                    return
+                try:
+                    exc = task.exception()
+                except asyncio.CancelledError:
+                    return
+                if exc:
+                    log_error(f"Schedule trigger task error: {exc}")
+
+            token = internal_token or settings.os_security_key or ""
+            executor = ScheduleExecutor(
+                db=db,
+                base_url=scheduler_base_url,
+                token=token,
+            )
+            task = asyncio.create_task(
+                executor.execute(schedule, release_schedule=False),
+                name=f"schedule-{schedule.name}-trigger",
+            )
+            task.add_done_callback(_task_done_callback)
 
         return TriggerResponse(
             message="Schedule triggered successfully",

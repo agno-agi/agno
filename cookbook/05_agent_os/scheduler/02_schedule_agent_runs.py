@@ -51,7 +51,7 @@ def create_schedules():
         {
             "name": "daily-morning-report",
             "description": "Generate a daily morning report",
-            "endpoint": "/v1/agents/daily-reporter/runs",
+            "endpoint": "/agents/daily-reporter/runs",
             "method": "POST",
             "payload": {"message": "Generate the morning report for today."},
             "cron_expr": "0 8 * * *",  # Every day at 8 AM
@@ -60,7 +60,7 @@ def create_schedules():
         {
             "name": "hourly-weather-check",
             "description": "Check weather every hour",
-            "endpoint": "/v1/agents/weather-checker/runs",
+            "endpoint": "/agents/weather-checker/runs",
             "method": "POST",
             "payload": {"message": "What's the weather forecast?"},
             "cron_expr": "0 * * * *",  # Every hour
@@ -72,7 +72,7 @@ def create_schedules():
     for schedule in schedules:
         try:
             response = httpx.post(
-                f"{base_url}/v1/schedules",
+                f"{base_url}/schedules",
                 json=schedule,
                 timeout=10.0,
             )
@@ -99,6 +99,7 @@ if __name__ == "__main__":
     # Note: In a real application, you would create schedules via API
     # after the server starts. This is shown for demonstration.
     print("\nServer starting on http://localhost:7777")
-    print("Create schedules via: POST /v1/schedules")
+    print("Create schedules via: POST /schedules")
 
-    agent_os.run(port=7777)
+    app = agent_os.get_app()
+    agent_os.serve(app, port=7777)

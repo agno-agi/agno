@@ -6,7 +6,7 @@ Async databases provide non-blocking database operations which is
 important for high-throughput scenarios.
 
 Requirements:
-    pip install agno[scheduler] aiosqlite
+    pip install agno[scheduler] aiosqlite greenlet
 
 Run:
     python cookbook/05_agent_os/scheduler/04_async_scheduler.py
@@ -40,6 +40,7 @@ if __name__ == "__main__":
     print("Starting AgentOS with async scheduler...")
     print("\nUsing AsyncSqliteDb for non-blocking database operations.")
     print("The scheduler poller and executor will use async methods.")
-    print("\nCreate schedules via POST /v1/schedules")
+    print("\nCreate schedules via POST /schedules")
 
-    agent_os.run(port=7777)
+    app = agent_os.get_app()
+    agent_os.serve(app, port=7777)

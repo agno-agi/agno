@@ -145,7 +145,7 @@ trafilatura = ["trafilatura"]
 neo4j = ["neo4j"]
 
 # Dependencies for Scheduler
-scheduler = ["croniter>=2.0.0"]
+scheduler = ["croniter>=2.0.0", "pytz"]
 
 # Dependencies for Storage
 sql = ["sqlalchemy"]
@@ -444,6 +444,7 @@ module = [
   "clip.*",
   "cohere.*",
   "crawl4ai.*",
+  "cryptography.*",
   "daytona.*",
   "daytona_api_client.*",
   "discord.*",

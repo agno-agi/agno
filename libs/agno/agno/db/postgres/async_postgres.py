@@ -175,6 +175,8 @@ class AsyncPostgresDb(AsyncBaseDb):
             (self.knowledge_table_name, "knowledge"),
             (self.versions_table_name, "versions"),
             (self.learnings_table_name, "learnings"),
+            (self.schedule_table_name, "schedules"),
+            (self.schedule_runs_table_name, "schedule_runs"),
         ]
 
         for table_name, table_type in tables_to_create:
@@ -373,6 +375,25 @@ class AsyncPostgresDb(AsyncBaseDb):
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.learnings_table
+
+        if table_type == "schedules":
+            self.schedule_table = await self._get_or_create_table(
+                table_name=self.schedule_table_name,
+                table_type="schedules",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.schedule_table
+
+        if table_type == "schedule_runs":
+            # Ensure schedules table exists first (runs has FK to schedules)
+            if create_table_if_not_found:
+                await self._get_table(table_type="schedules", create_table_if_not_found=True)
+            self.schedule_runs_table = await self._get_or_create_table(
+                table_name=self.schedule_runs_table_name,
+                table_type="schedule_runs",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.schedule_runs_table
 
         raise ValueError(f"Unknown table type: {table_type}")
 
@@ -3221,9 +3242,10 @@ class AsyncPostgresDb(AsyncBaseDb):
             async with self.async_session_factory() as sess:
                 async with sess.begin():
                     from sqlalchemy import delete
+                    from sqlalchemy.engine import CursorResult
 
                     stmt = delete(table).where(table.c.id == schedule_id)
-                    result = await sess.execute(stmt)
+                    result = cast(CursorResult, await sess.execute(stmt))
                     return result.rowcount > 0
         except Exception as e:
             log_error(f"Error deleting schedule: {e}")

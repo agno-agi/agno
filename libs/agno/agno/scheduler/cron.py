@@ -9,8 +9,6 @@ Requires the 'croniter' package: pip install croniter
 from datetime import datetime, timezone
 from typing import Optional
 
-from agno.utils.log import log_error
-
 
 def _get_croniter():
     """Lazily import croniter to avoid import errors if not installed."""
@@ -71,16 +69,22 @@ def calculate_next_run(
     if base_time is None:
         base_time = datetime.now(timezone.utc)
 
-    # Convert to the specified timezone if pytz is available
-    if pytz is not None and tz != "UTC":
+    tz = tz or "UTC"
+
+    # Convert to the specified timezone (cron expressions should be evaluated in
+    # the schedule's timezone, then converted back to UTC epoch seconds).
+    if tz.upper() == "UTC":
+        base_time = base_time.astimezone(timezone.utc)
+    else:
+        if pytz is None:
+            raise ImportError(
+                "pytz is required for timezone support. Install it with: pip install agno[scheduler]"
+            )
         try:
             target_tz = pytz.timezone(tz)
-            base_time = base_time.astimezone(target_tz)
         except Exception as e:
-            log_error(f"Invalid timezone '{tz}', using UTC: {e}")
-            base_time = base_time.astimezone(timezone.utc)
-    else:
-        base_time = base_time.astimezone(timezone.utc)
+            raise ValueError(f"Invalid timezone '{tz}': {e}")
+        base_time = base_time.astimezone(target_tz)
 
     try:
         cron = croniter(cron_expr, base_time)

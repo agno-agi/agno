@@ -5,7 +5,8 @@ due schedules and spawns execution tasks.
 """
 
 import asyncio
-from typing import TYPE_CHECKING, Optional, Set, Union, cast
+from inspect import isawaitable
+from typing import TYPE_CHECKING, Optional, Set, Union
 from uuid import uuid4
 
 from agno.db.schemas.scheduler import Schedule
@@ -57,29 +58,23 @@ class SchedulePoller:
         self._running = False
         self._active_tasks: Set[asyncio.Task] = set()
         self._poll_task: Optional[asyncio.Task] = None
-        # Check if db has async methods
-        self._is_async_db = hasattr(db, "aclaim_due_schedule")
 
     async def _claim_due_schedule(self) -> Optional[Schedule]:
         """Claim a due schedule (async-aware)."""
-        if self._is_async_db:
-            return await self.db.aclaim_due_schedule(  # type: ignore[union-attr]
-                self.container_id,
-                lock_grace_seconds=self.lock_grace_seconds,
-            )
-        return cast(
-            Optional[Schedule],
-            self.db.claim_due_schedule(  # type: ignore[union-attr]
-                self.container_id,
-                lock_grace_seconds=self.lock_grace_seconds,
-            ),
+        result = self.db.claim_due_schedule(  # type: ignore[union-attr]
+            self.container_id,
+            lock_grace_seconds=self.lock_grace_seconds,
         )
+        if isawaitable(result):
+            return await result  # type: ignore[misc]
+        return result  # type: ignore[return-value]
 
     async def _get_schedule(self, schedule_id: str) -> Optional[Schedule]:
         """Get a schedule by ID (async-aware)."""
-        if self._is_async_db:
-            return await self.db.aget_schedule(schedule_id)  # type: ignore[union-attr]
-        return cast(Optional[Schedule], self.db.get_schedule(schedule_id))  # type: ignore[union-attr]
+        result = self.db.get_schedule(schedule_id)  # type: ignore[union-attr]
+        if isawaitable(result):
+            return await result  # type: ignore[misc]
+        return result  # type: ignore[return-value]
 
     @property
     def is_running(self) -> bool:
@@ -106,12 +101,15 @@ class SchedulePoller:
 
         while self._running:
             try:
-                schedule = await self._claim_due_schedule()
+                # Drain all currently-due schedules each tick. In multi-container
+                # deployments, claiming remains safe because it's atomic.
+                while self._running:
+                    schedule = await self._claim_due_schedule()
+                    if not schedule:
+                        break
 
-                if schedule:
                     log_debug(f"Claimed schedule: {schedule.name}")
 
-                    # Spawn execution task
                     task = asyncio.create_task(
                         self.executor.execute(schedule),
                         name=f"schedule-{schedule.name}",
@@ -195,7 +193,7 @@ class SchedulePoller:
 
         # Spawn execution task
         task = asyncio.create_task(
-            self.executor.execute(schedule),
+            self.executor.execute(schedule, release_schedule=False),
             name=f"schedule-{schedule.name}-manual",
         )
         self._active_tasks.add(task)

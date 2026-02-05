@@ -13,7 +13,7 @@ class ScheduleCreateRequest(BaseModel):
             "example": {
                 "name": "daily-report",
                 "description": "Generate daily metrics report",
-                "endpoint": "/v1/agents/report-generator/runs",
+                "endpoint": "/agents/report-generator/runs",
                 "method": "POST",
                 "payload": {"message": "Generate the daily report"},
                 "cron_expr": "0 3 * * *",
@@ -26,7 +26,7 @@ class ScheduleCreateRequest(BaseModel):
 
     name: str = Field(..., description="Unique name for the schedule")
     description: Optional[str] = Field(None, description="Description of what this schedule does")
-    endpoint: str = Field(..., description="The AgentOS endpoint to call (e.g., '/v1/agents/my-agent/runs')")
+    endpoint: str = Field(..., description="The AgentOS endpoint to call (e.g., '/agents/my-agent/runs')")
     method: str = Field(default="POST", description="HTTP method to use (GET, POST, PUT, DELETE)")
     payload: Optional[Dict[str, Any]] = Field(None, description="Request body/payload to send")
     cron_expr: str = Field(..., description="Cron expression (e.g., '0 3 * * *' for 3 AM daily)")
@@ -72,7 +72,7 @@ class ScheduleResponse(BaseModel):
                 "id": "550e8400-e29b-41d4-a716-446655440000",
                 "name": "daily-report",
                 "description": "Generate daily metrics report",
-                "endpoint": "/v1/agents/report-generator/runs",
+                "endpoint": "/agents/report-generator/runs",
                 "method": "POST",
                 "payload": {"message": "Generate the daily report"},
                 "cron_expr": "0 3 * * *",
