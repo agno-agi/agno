@@ -1,5 +1,6 @@
 """Unit tests for OpenCVTools class."""
 
+from itertools import count
 from unittest.mock import Mock, patch
 
 import numpy as np
@@ -335,13 +336,15 @@ class TestVideoCapture:
             5: -1,  # Invalid FPS
         }[prop]
 
+        time_ticks = count(start=0.0, step=0.5)
+
         with (
             patch("tempfile.NamedTemporaryFile") as mock_tempfile,
             patch("os.path.exists", return_value=True),
             patch("os.path.getsize", return_value=1000),
             patch("os.unlink"),
             patch("builtins.open", create=True) as mock_open,
-            patch("time.time", side_effect=[0, 0, 0.5, 1, 1, 1, 1]),
+            patch("agno.tools.opencv.time.time", side_effect=lambda: next(time_ticks)),
             patch("agno.tools.opencv.getattr") as mock_getattr,
         ):
             # Mock temporary file
