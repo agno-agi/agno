@@ -41,7 +41,7 @@ from agno.run.team import (
     TeamRunEvent,
 )
 from agno.session import SessionSummaryManager, TeamSession
-from agno.team.trait.base import TeamTraitBase
+from agno.team.trait.base import TeamTraitBase, _team_type
 from agno.tools import Toolkit
 from agno.tools.function import Function
 from agno.utils.log import (
@@ -56,12 +56,6 @@ from agno.utils.log import (
 )
 from agno.utils.safe_formatter import SafeFormatter
 from agno.utils.string import generate_id_from_name
-
-
-def _team_type() -> type["Team"]:
-    from agno.team.team import Team
-
-    return Team
 
 
 class TeamInitTrait(TeamTraitBase):

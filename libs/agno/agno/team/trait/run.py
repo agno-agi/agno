@@ -847,26 +847,6 @@ class TeamRunTrait(TeamTraitBase):
         # Determine runtime dependencies
         dependencies = dependencies if dependencies is not None else self.dependencies
 
-        # Resolve output_schema parameter takes precedence, then fall back to self.output_schema
-        if output_schema is None:
-            output_schema = self.output_schema
-
-        # Initialize run context
-        run_context = run_context or RunContext(
-            run_id=run_id,
-            session_id=session_id,
-            user_id=user_id,
-            session_state=session_state,
-            dependencies=dependencies,
-            output_schema=output_schema,
-        )
-        # output_schema parameter takes priority, even if run_context was provided
-        run_context.output_schema = output_schema
-
-        # Resolve callable dependencies if present
-        if run_context.dependencies is not None:
-            self._resolve_run_dependencies(run_context=run_context)
-
         # Determine runtime context parameters
         add_dependencies = (
             add_dependencies_to_context if add_dependencies_to_context is not None else self.add_dependencies_to_context
@@ -877,10 +857,6 @@ class TeamRunTrait(TeamTraitBase):
             else self.add_session_state_to_context
         )
         add_history = add_history_to_context if add_history_to_context is not None else self.add_history_to_context
-
-        # When filters are passed manually
-        if self.knowledge_filters or knowledge_filters:
-            run_context.knowledge_filters = self._get_effective_filters(knowledge_filters)
 
         # Use stream override value when necessary
         if stream is None:
@@ -901,8 +877,32 @@ class TeamRunTrait(TeamTraitBase):
             else:
                 merge_dictionaries(metadata, self.metadata)
 
-        if metadata:
-            run_context.metadata = metadata
+        #  Get knowledge filters
+        effective_filters = knowledge_filters
+        if self.knowledge_filters or knowledge_filters:
+            effective_filters = self._get_effective_filters(knowledge_filters)
+
+        # Resolve output_schema parameter takes precedence, then fall back to self.output_schema
+        if output_schema is None:
+            output_schema = self.output_schema
+
+        # Initialize run context
+        run_context = run_context or RunContext(
+            run_id=run_id,
+            session_id=session_id,
+            user_id=user_id,
+            session_state=session_state,
+            dependencies=dependencies,
+            knowledge_filters=effective_filters,
+            metadata=metadata,
+            output_schema=output_schema,
+        )
+        # output_schema parameter takes priority, even if run_context was provided
+        run_context.output_schema = output_schema
+
+        # Resolve callable dependencies if present
+        if run_context.dependencies is not None:
+            self._resolve_run_dependencies(run_context=run_context)
 
         # Configure the model for runs
         response_format: Optional[Union[Dict, Type[BaseModel]]] = (
@@ -1755,6 +1755,9 @@ class TeamRunTrait(TeamTraitBase):
         # Validate input against input_schema if provided
         validated_input = validate_input(input, self.input_schema)
 
+        # Initialize Team
+        self.initialize_team(debug_mode=debug_mode)
+
         # Normalise hook & guardails
         if not self._hooks_normalised:
             if self.pre_hooks:
@@ -1764,9 +1767,6 @@ class TeamRunTrait(TeamTraitBase):
             self._hooks_normalised = True
 
         session_id, user_id = self._initialize_session(session_id=session_id, user_id=user_id)
-
-        # Initialize Team
-        self.initialize_team(debug_mode=debug_mode)
 
         image_artifacts, video_artifacts, audio_artifacts, file_artifacts = validate_media_object_id(
             images=images, videos=videos, audios=audio, files=files
@@ -1790,7 +1790,7 @@ class TeamRunTrait(TeamTraitBase):
             images=image_artifacts,
             videos=video_artifacts,
             audios=audio_artifacts,
-            files=files,
+            files=file_artifacts,
         )
 
         # Use stream override value when necessary

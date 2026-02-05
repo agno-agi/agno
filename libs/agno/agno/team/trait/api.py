@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from agno.team.team import Team
+    pass
 
 from typing import (
     Any,
@@ -29,7 +29,7 @@ from agno.run.team import (
     TeamRunOutput,
 )
 from agno.session import TeamSession
-from agno.team.trait.base import TeamTraitBase
+from agno.team.trait.base import TeamTraitBase, _team_type
 from agno.utils.agent import (
     scrub_history_messages_from_run_output,
     scrub_media_from_run_output,
@@ -45,12 +45,6 @@ from agno.utils.print_response.team import (
     print_response,
     print_response_stream,
 )
-
-
-def _team_type() -> type["Team"]:
-    from agno.team.team import Team
-
-    return Team
 
 
 class TeamApiTrait(TeamTraitBase):

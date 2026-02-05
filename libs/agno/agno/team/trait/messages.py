@@ -33,7 +33,7 @@ from agno.run.team import (
     TeamRunOutput,
 )
 from agno.session import TeamSession
-from agno.team.trait.base import TeamTraitBase
+from agno.team.trait.base import TeamTraitBase, _team_type
 from agno.tools import Toolkit
 from agno.tools.function import Function
 from agno.utils.agent import (
@@ -53,12 +53,6 @@ from agno.utils.team import (
     get_member_id,
 )
 from agno.utils.timer import Timer
-
-
-def _team_type() -> type["Team"]:
-    from agno.team.team import Team
-
-    return Team
 
 
 class TeamMessagesTrait(TeamTraitBase):
@@ -514,42 +508,42 @@ class TeamMessagesTrait(TeamTraitBase):
 
         # 2 Build the default system message for the Agent.
         system_message_content: str = ""
-        system_message_content += "You are the leader of a team and sub-teams of AI Agents.\n"
-        system_message_content += "Your task is to coordinate the team to complete the user's request.\n"
+        if self.members is not None and len(self.members) > 0:
+            system_message_content += "You are the leader of a team and sub-teams of AI Agents.\n"
+            system_message_content += "Your task is to coordinate the team to complete the user's request.\n"
 
-        system_message_content += "\nHere are the members in your team:\n"
-        system_message_content += "<team_members>\n"
-        system_message_content += self.get_members_system_message_content()
-        if self.get_member_information_tool:
-            system_message_content += "If you need to get information about your team members, you can use the `get_member_information` tool at any time.\n"
-        system_message_content += "</team_members>\n"
+            system_message_content += "\nHere are the members in your team:\n"
+            system_message_content += "<team_members>\n"
+            system_message_content += self.get_members_system_message_content()
+            if self.get_member_information_tool:
+                system_message_content += "If you need to get information about your team members, you can use the `get_member_information` tool at any time.\n"
+            system_message_content += "</team_members>\n"
 
-        system_message_content += "\n<how_to_respond>\n"
+            system_message_content += "\n<how_to_respond>\n"
 
-        if self.delegate_to_all_members:
-            system_message_content += (
-                "- Your role is to forward tasks to members in your team with the highest likelihood of completing the user's request.\n"
-                "- You can either respond directly or use the `delegate_task_to_members` tool to delegate a task to all members in your team to get a collaborative response.\n"
-                "- To delegate a task to all members in your team, call `delegate_task_to_members` ONLY once. This will delegate a task to all members in your team.\n"
-                "- Analyze the responses from all members and evaluate whether the task has been completed.\n"
-                "- If you feel the task has been completed, you can stop and respond to the user.\n"
-            )
-        else:
-            system_message_content += (
-                "- Your role is to delegate tasks to members in your team with the highest likelihood of completing the user's request.\n"
-                "- Carefully analyze the tools available to the members and their roles before delegating tasks.\n"
-                "- You cannot use a member tool directly. You can only delegate tasks to members.\n"
-                "- When you delegate a task to another member, make sure to include:\n"
-                "  - member_id (str): The ID of the member to delegate the task to. Use only the ID of the member, not the ID of the team followed by the ID of the member.\n"
-                "  - task (str): A clear description of the task.\n"
-                "- You can delegate tasks to multiple members at once.\n"
-                "- You must always analyze the responses from members before responding to the user.\n"
-                "- After analyzing the responses from the members, if you feel the task has been completed, you can stop and respond to the user.\n"
-                "- If you are not satisfied with the responses from the members, you should re-assign the task.\n"
-                "- For simple greetings, thanks, or questions about the team itself, you should respond directly.\n"
-                "- For all work requests, tasks, or questions requiring expertise, route to appropriate team members.\n"
-            )
-        system_message_content += "</how_to_respond>\n\n"
+            if self.delegate_to_all_members:
+                system_message_content += (
+                    "- You can either respond directly or use the `delegate_task_to_members` tool to delegate a task to all members in your team to get a collaborative response.\n"
+                    "- To delegate a task to all members in your team, call `delegate_task_to_members` ONLY once. This will delegate a task to all members in your team.\n"
+                    "- Analyze the responses from all members and evaluate whether the task has been completed.\n"
+                    "- If you feel the task has been completed, you can stop and respond to the user.\n"
+                )
+            else:
+                system_message_content += (
+                    "- Your role is to delegate tasks to members in your team with the highest likelihood of completing the user's request.\n"
+                    "- Carefully analyze the tools available to the members and their roles before delegating tasks.\n"
+                    "- You cannot use a member tool directly. You can only delegate tasks to members.\n"
+                    "- When you delegate a task to another member, make sure to include:\n"
+                    "  - member_id (str): The ID of the member to delegate the task to. Use only the ID of the member, not the ID of the team followed by the ID of the member.\n"
+                    "  - task (str): A clear description of the task. Determine the best way to describe the task to the member.\n"
+                    "- You can delegate tasks to multiple members at once.\n"
+                    "- You must always analyze the responses from members before responding to the user.\n"
+                    "- After analyzing the responses from the members, if you feel the task has been completed, you can stop and respond to the user.\n"
+                    "- If you are NOT satisfied with the responses from the members, you should re-assign the task to a different member.\n"
+                    "- For simple greetings, thanks, or questions about the team itself, you should respond directly.\n"
+                    "- For all work requests, tasks, or questions requiring expertise, route to appropriate team members.\n"
+                )
+            system_message_content += "</how_to_respond>\n\n"
 
         # Attached media
         if audio is not None or images is not None or videos is not None or files is not None:
@@ -925,7 +919,7 @@ class TeamMessagesTrait(TeamTraitBase):
                 last_n_runs=self.num_history_runs,
                 limit=self.num_history_messages,
                 skip_roles=[skip_role] if skip_role else None,
-                team_id=self.id,
+                team_id=self.id if self.parent_team_id is not None else None,
             )
 
             if len(history) > 0:

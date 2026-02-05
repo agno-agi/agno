@@ -48,7 +48,7 @@ from agno.run.team import (
     TeamRunOutputEvent,
 )
 from agno.session import TeamSession
-from agno.team.trait.base import TeamTraitBase
+from agno.team.trait.base import TeamTraitBase, _team_type
 from agno.tools import Toolkit
 from agno.tools.function import Function
 from agno.utils.agent import (
@@ -80,12 +80,6 @@ from agno.utils.team import (
     get_team_run_context_videos,
 )
 from agno.utils.timer import Timer
-
-
-def _team_type() -> type["Team"]:
-    from agno.team.team import Team
-
-    return Team
 
 
 class TeamToolsTrait(TeamTraitBase):

@@ -2,6 +2,15 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+if TYPE_CHECKING:
+    from agno.team.team import Team
+
+
+def _team_type() -> type["Team"]:
+    from agno.team.team import Team
+
+    return Team
+
 
 class TeamTraitBase:
     """Type-only base class for Team traits."""

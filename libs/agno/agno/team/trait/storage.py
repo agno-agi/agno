@@ -33,7 +33,7 @@ from agno.run.team import (
 )
 from agno.session import TeamSession, WorkflowSession
 from agno.session.summary import SessionSummary
-from agno.team.trait.base import TeamTraitBase
+from agno.team.trait.base import TeamTraitBase, _team_type
 from agno.tools import Toolkit
 from agno.tools.function import Function
 from agno.utils.agent import (
@@ -59,12 +59,6 @@ from agno.utils.log import (
 )
 from agno.utils.merge_dict import merge_dictionaries
 from agno.utils.string import generate_id_from_name
-
-
-def _team_type() -> type["Team"]:
-    from agno.team.team import Team
-
-    return Team
 
 
 class TeamStorageTrait(TeamTraitBase):
@@ -1109,7 +1103,7 @@ class TeamStorageTrait(TeamTraitBase):
 
             # Cache the session if relevant
             if loaded_session is not None and self.cache_session:
-                self._agent_session = loaded_session
+                self._cached_session = loaded_session
 
             return loaded_session
 
@@ -1205,11 +1199,16 @@ class TeamStorageTrait(TeamTraitBase):
                 session.session_data["session_state"].pop("current_user_id", None)  # type: ignore
                 session.session_data["session_state"].pop("current_run_id", None)  # type: ignore
 
-            # scrub the member responses if not storing them
-            if not self.store_member_responses and session.runs is not None:
+            # scrub the member responses based on storage settings
+            if session.runs is not None:
                 for run in session.runs:
                     if hasattr(run, "member_responses"):
-                        run.member_responses = []
+                        if not self.store_member_responses:
+                            # Remove all member responses
+                            run.member_responses = []
+                        else:
+                            # Scrub individual member responses based on their storage flags
+                            self._scrub_member_responses(run.member_responses)
 
             if self._has_async_db():
                 await self._aupsert_session(session=session)
