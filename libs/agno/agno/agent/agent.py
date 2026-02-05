@@ -5095,6 +5095,10 @@ class Agent:
         # Get output_schema from run_context
         output_schema = run_context.output_schema if run_context else None
 
+        # Skip conversion if there's no content to convert
+        if not run_response.content:
+            return
+
         # Convert the response to the structured format if needed
         if output_schema is not None:
             # If the output schema is a dict, do not convert it into a BaseModel
