@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 import time
 import warnings
 from asyncio import CancelledError, Task, create_task
@@ -12420,15 +12421,24 @@ class Agent:
         from agno.api.agent import AgentRunCreate, create_agent_run
 
         try:
-            create_agent_run(
-                run=AgentRunCreate(
-                    session_id=session_id,
-                    run_id=run_id,
-                    data=self._get_telemetry_data(),
-                ),
-            )
+            telemetry_data = self._get_telemetry_data()
         except Exception as e:
             log_debug(f"Could not create Agent run telemetry event: {e}")
+            return
+
+        def _log():
+            try:
+                create_agent_run(
+                    run=AgentRunCreate(
+                        session_id=session_id,
+                        run_id=run_id,
+                        data=telemetry_data,
+                    ),
+                )
+            except Exception as e:
+                log_debug(f"Could not create Agent run telemetry event: {e}")
+
+        threading.Thread(target=_log, daemon=True).start()
 
     async def _alog_agent_telemetry(self, session_id: str, run_id: Optional[str] = None) -> None:
         """Send a telemetry event to the API for a created Agent async run"""
@@ -12440,16 +12450,24 @@ class Agent:
         from agno.api.agent import AgentRunCreate, acreate_agent_run
 
         try:
-            await acreate_agent_run(
-                run=AgentRunCreate(
-                    session_id=session_id,
-                    run_id=run_id,
-                    data=self._get_telemetry_data(),
-                )
-            )
-
+            telemetry_data = self._get_telemetry_data()
         except Exception as e:
             log_debug(f"Could not create Agent run telemetry event: {e}")
+            return
+
+        async def _log():
+            try:
+                await acreate_agent_run(
+                    run=AgentRunCreate(
+                        session_id=session_id,
+                        run_id=run_id,
+                        data=telemetry_data,
+                    )
+                )
+            except Exception as e:
+                log_debug(f"Could not create Agent run telemetry event: {e}")
+
+        create_task(_log())
 
 
 def get_agent_by_id(
