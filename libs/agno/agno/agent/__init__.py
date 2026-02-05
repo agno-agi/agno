@@ -4,8 +4,6 @@ from agno.agent.agent import (
     Function,
     Message,
     Toolkit,
-    get_agent_by_id,
-    get_agents,
 )
 from agno.agent.remote import RemoteAgent
 from agno.run.agent import (
@@ -52,6 +50,4 @@ __all__ = [
     "ReasoningCompletedEvent",
     "ToolCallStartedEvent",
     "ToolCallCompletedEvent",
-    "get_agent_by_id",
-    "get_agents",
 ]

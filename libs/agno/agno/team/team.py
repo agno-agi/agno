@@ -8549,7 +8549,7 @@ class Team:
 
         # --- Handle Members reconstruction ---
         members: Optional[List[Union[Agent, "Team"]]] = None
-        from agno.agent import get_agent_by_id
+        from agno.agent.registry import get_agent_by_id
         from agno.team import get_team_by_id
 
         if "members" in config and config["members"]:

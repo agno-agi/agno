@@ -61,7 +61,7 @@ print(f"Saved agent as version {version}")
 ### Loading an Agent
 
 ```python
-from agno.agent import get_agent_by_id
+from agno.agent.registry import get_agent_by_id
 from agno.db.postgres import PostgresDb
 
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
@@ -76,7 +76,7 @@ agent.print_response("Hello!")
 ### Listing All Agents
 
 ```python
-from agno.agent import get_agents
+from agno.agent.registry import get_agents
 
 agents = get_agents(db=db)
 for agent in agents:
@@ -266,7 +266,7 @@ registry = Registry(
 ### Loading with a Registry
 
 ```python
-from agno.agent import get_agent_by_id
+from agno.agent.registry import get_agent_by_id
 
 # When loading an agent that uses tools or schemas,
 # pass the registry to restore non-serializable components
