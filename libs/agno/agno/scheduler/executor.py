@@ -58,13 +58,15 @@ class ScheduleExecutor:
         """Create a schedule run record (async-aware)."""
         if self._is_async_db:
             return await self.db.acreate_schedule_run(run)  # type: ignore[union-attr]
-        return self.db.create_schedule_run(run)  # type: ignore[union-attr]
+        result: ScheduleRun = self.db.create_schedule_run(run)  # type: ignore[union-attr]
+        return result
 
     async def _update_schedule_run(self, run: ScheduleRun) -> ScheduleRun:
         """Update a schedule run record (async-aware)."""
         if self._is_async_db:
             return await self.db.aupdate_schedule_run(run)  # type: ignore[union-attr]
-        return self.db.update_schedule_run(run)  # type: ignore[union-attr]
+        result: ScheduleRun = self.db.update_schedule_run(run)  # type: ignore[union-attr]
+        return result
 
     async def _release_schedule(self, schedule_id: str, next_run_at: int) -> None:
         """Release a schedule lock (async-aware)."""
