@@ -295,3 +295,4 @@ class AgentInitTrait(AgentTraitBase):
                     tool.close()  # type: ignore
                 except Exception as e:
                     log_warning(f"Error disconnecting tool: {str(e)}")
+        self._connectable_tools_initialized_on_run = []

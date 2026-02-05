@@ -1001,8 +1001,14 @@ class AgentRunTrait(AgentTraitBase):
         response_format = self._get_response_format(run_context=run_context) if self.parser_model is None else None
         self.model = cast(Model, self.model)
 
+        # Merge caller-provided metadata into run_context metadata
+        if metadata is not None:
+            if run_context.metadata is None:
+                run_context.metadata = metadata
+            else:
+                merge_dictionaries(run_context.metadata, metadata)
+
         # Merge agent metadata with run metadata
-        run_context.metadata = metadata
         if self.metadata is not None:
             if run_context.metadata is None:
                 run_context.metadata = self.metadata
@@ -2258,8 +2264,14 @@ class AgentRunTrait(AgentTraitBase):
         if self.knowledge_filters or run_context.knowledge_filters or knowledge_filters:
             run_context.knowledge_filters = self._get_effective_filters(knowledge_filters)
 
+        # Merge caller-provided metadata into run_context metadata
+        if metadata is not None:
+            if run_context.metadata is None:
+                run_context.metadata = metadata
+            else:
+                merge_dictionaries(run_context.metadata, metadata)
+
         # Merge agent metadata with run metadata
-        run_context.metadata = metadata
         if self.metadata is not None:
             if run_context.metadata is None:
                 run_context.metadata = self.metadata
