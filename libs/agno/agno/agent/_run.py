@@ -874,8 +874,6 @@ def run_dispatch(
             agent.post_hooks = normalize_post_hooks(agent.post_hooks)  # type: ignore
         agent._hooks_normalised = True
 
-    session_id, user_id = initialize_session(agent, session_id=session_id, user_id=user_id)
-
     # Initialize the Agent
     agent.initialize_agent(debug_mode=debug_mode)
 
@@ -1991,8 +1989,6 @@ def arun_dispatch(  # type: ignore
     # Start the run metrics timer, to calculate the run duration
     run_response.metrics = Metrics()
     run_response.metrics.start_timer()
-
-    yield_run_output = yield_run_output
 
     # Pass the new run_response to _arun
     if stream:
