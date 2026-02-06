@@ -2071,7 +2071,7 @@ def continue_run_dispatch(
         raise ValueError("Session ID is required to continue a run from a run_id.")
 
     if agent._has_async_db():
-        raise Exception("continue_run() is not supported with an async DB. Please use acontinue_arun() instead.")
+        raise Exception("continue_run() is not supported with an async DB. Please use acontinue_run() instead.")
 
     background_tasks = kwargs.pop("background_tasks", None)
     if background_tasks is not None:
