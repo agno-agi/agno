@@ -2248,6 +2248,12 @@ def continue_run_impl(
                 # Check for cancellation after model processing
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
+                # If an output model is provided, generate output using the output model
+                agent._generate_response_with_output_model(model_response, run_messages)
+
+                # If a parser model is provided, structure the response separately
+                agent._parse_response_with_parser_model(model_response, run_messages, run_context=run_context)
+
                 # 3. Update the RunOutput with the model response
                 agent._update_run_response(
                     model_response=model_response,
@@ -2438,7 +2444,7 @@ def continue_run_stream_impl(
 
                 # Parse response with parser model if provided
                 yield from agent._parse_response_with_parser_model_stream(  # type: ignore
-                    session=session, run_response=run_response, stream_events=stream_events
+                    session=session, run_response=run_response, stream_events=stream_events, run_context=run_context
                 )
 
                 # Yield RunContentCompletedEvent
@@ -2875,7 +2881,7 @@ async def acontinue_run_impl(
                 )
 
                 # Register run for cancellation tracking
-                register_run(run_response.run_id)  # type: ignore
+                await aregister_run(run_response.run_id)  # type: ignore
 
                 # 7. Handle the updated tools
                 await agent._ahandle_tool_call_updates(
@@ -3181,7 +3187,7 @@ async def acontinue_run_stream_impl(
                 )
 
                 # Register run for cancellation tracking
-                register_run(run_response.run_id)  # type: ignore
+                await aregister_run(run_response.run_id)  # type: ignore
 
                 # Start the Run by yielding a RunContinued event
                 if stream_events:
