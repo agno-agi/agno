@@ -16,6 +16,7 @@ def agent(shared_db):
         tools=[get_weather],
         db=shared_db,
         instructions="Route a single question to the travel agent. Don't make multiple requests.",
+        store_history_messages=True,
         add_history_to_context=True,
     )
 
