@@ -164,8 +164,18 @@ class ScheduleExecutor:
                     schedule.get("timezone", "UTC"),
                 )
             except Exception:
-                log_warning(f"Failed to compute next_run_at for schedule {schedule_id}; releasing without update")
+                log_warning(
+                    f"Failed to compute next_run_at for schedule {schedule_id}; "
+                    "disabling schedule to prevent it from becoming stuck"
+                )
                 next_run_at = None
+                try:
+                    if asyncio.iscoroutinefunction(getattr(db, "update_schedule", None)):
+                        await db.update_schedule(schedule_id, enabled=False)
+                    else:
+                        db.update_schedule(schedule_id, enabled=False)
+                except Exception as exc:
+                    log_error(f"Failed to disable schedule {schedule_id} after cron failure: {exc}")
 
             try:
                 if asyncio.iscoroutinefunction(getattr(db, "release_schedule", None)):
@@ -270,6 +280,7 @@ class ScheduleExecutor:
                     try:
                         data = json.loads(data_str)
                     except (json.JSONDecodeError, TypeError):
+                        log_warning(f"SSE: failed to parse data line: {data_str[:200]}")
                         continue
 
                     if isinstance(data, dict):
