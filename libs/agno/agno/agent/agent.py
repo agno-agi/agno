@@ -1208,7 +1208,9 @@ class Agent:
                         store_media_util(run_response, model_response)
 
                     # 9. Convert the response to the structured format if needed
-                    self._convert_response_to_structured_format(run_response, run_context=run_context)
+                    # Skip if stop_after_tool_call was triggered (no LLM response to convert)
+                    if not any(tool.stop_after_tool_call for tool in run_response.tools or []):
+                        self._convert_response_to_structured_format(run_response, run_context=run_context)
 
                     # 10. Execute post-hooks after output is generated but before response is returned
                     if self.post_hooks is not None:
@@ -2187,7 +2189,9 @@ class Agent:
                         )
 
                     # 11. Convert the response to the structured format if needed
-                    self._convert_response_to_structured_format(run_response, run_context=run_context)
+                    # Skip if stop_after_tool_call was triggered (no LLM response to convert)
+                    if not any(tool.stop_after_tool_call for tool in run_response.tools or []):
+                        self._convert_response_to_structured_format(run_response, run_context=run_context)
 
                     # 12. Store media if enabled
                     if self.store_media:
@@ -3370,7 +3374,9 @@ class Agent:
                         )
 
                     # 4. Convert the response to the structured format if needed
-                    self._convert_response_to_structured_format(run_response, run_context=run_context)
+                    # Skip if stop_after_tool_call was triggered (no LLM response to convert)
+                    if not any(tool.stop_after_tool_call for tool in run_response.tools or []):
+                        self._convert_response_to_structured_format(run_response, run_context=run_context)
 
                     # 5. Store media if enabled
                     if self.store_media:
@@ -4082,7 +4088,9 @@ class Agent:
                         )
 
                     # 10. Convert the response to the structured format if needed
-                    self._convert_response_to_structured_format(run_response, run_context=run_context)
+                    # Skip if stop_after_tool_call was triggered (no LLM response to convert)
+                    if not any(tool.stop_after_tool_call for tool in run_response.tools or []):
+                        self._convert_response_to_structured_format(run_response, run_context=run_context)
 
                     # 11. Store media if enabled
                     if self.store_media:
@@ -5913,7 +5921,11 @@ class Agent:
 
                 # Process content and thinking
                 if model_response_event.content is not None:
-                    if parse_structured_output:
+                    # Skip structured output conversion if stop_after_tool_call was triggered
+                    should_skip_structured_output = any(
+                        tool.stop_after_tool_call for tool in run_response.tools or []
+                    )
+                    if parse_structured_output and not should_skip_structured_output:
                         model_response.content = model_response_event.content
                         self._convert_response_to_structured_format(model_response, run_context=run_context)
 
