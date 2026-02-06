@@ -17,7 +17,6 @@ from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.workflow import Step, Workflow
 
-
 # Create database and AgentOS
 db = SqliteDb(db_file="scheduled_workflow.db")
 

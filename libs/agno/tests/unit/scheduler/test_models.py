@@ -75,8 +75,9 @@ class TestSchedule:
         assert data["cron_expr"] == "0 3 * * *"
         assert data["endpoint"] == "/agents/my-agent/runs"
         assert "created_at" in data
-        # None values should be excluded
-        assert "description" not in data or data.get("description") is None
+        # None values are preserved so fields can be explicitly set to null
+        assert "description" in data
+        assert data["description"] is None
 
     def test_schedule_from_dict(self):
         """Test Schedule.from_dict() method."""

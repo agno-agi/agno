@@ -192,6 +192,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             indexes: List[str] = []
             unique_constraints: List[str] = []
             schema_unique_constraints = table_schema.pop("_unique_constraints", [])
+            schema_composite_indexes = table_schema.pop("_indexes", [])
 
             # Get the columns, indexes, and unique constraints from the table schema
             for col_name, col_config in table_schema.items():
@@ -227,6 +228,12 @@ class AsyncSqliteDb(AsyncBaseDb):
             for idx_col in indexes:
                 idx_name = f"idx_{table_name}_{idx_col}"
                 table.append_constraint(Index(idx_name, idx_col))
+
+            # Composite indexes
+            for idx_config in schema_composite_indexes:
+                idx_name = f"{table_name}_{idx_config['name']}"
+                idx_columns = idx_config["columns"]
+                Index(idx_name, *[table.c[c] for c in idx_columns])
 
             # Create table
             table_created = False
@@ -3550,7 +3557,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             raise
 
     async def adelete_schedule(self, schedule_id: str) -> bool:
-        """Delete a schedule.
+        """Delete a schedule and its associated run history.
 
         Args:
             schedule_id: The schedule ID to delete.
@@ -3568,6 +3575,11 @@ class AsyncSqliteDb(AsyncBaseDb):
 
             async with self.async_session_factory() as sess:
                 async with sess.begin():
+                    # Delete associated run records first
+                    runs_table = await self._get_table(table_type="schedule_runs")
+                    if runs_table is not None:
+                        await sess.execute(delete(runs_table).where(runs_table.c.schedule_id == schedule_id))
+
                     stmt = delete(table).where(table.c.id == schedule_id)
                     result = cast(CursorResult, await sess.execute(stmt))
                     return result.rowcount > 0

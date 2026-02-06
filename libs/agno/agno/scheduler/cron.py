@@ -77,9 +77,7 @@ def calculate_next_run(
         base_time = base_time.astimezone(timezone.utc)
     else:
         if pytz is None:
-            raise ImportError(
-                "pytz is required for timezone support. Install it with: pip install agno[scheduler]"
-            )
+            raise ImportError("pytz is required for timezone support. Install it with: pip install agno[scheduler]")
         try:
             target_tz = pytz.timezone(tz)
         except Exception as e:

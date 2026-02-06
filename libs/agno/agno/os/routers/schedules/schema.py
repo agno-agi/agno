@@ -24,13 +24,23 @@ class ScheduleCreateRequest(BaseModel):
         }
     )
 
-    name: str = Field(..., description="Unique name for the schedule")
-    description: Optional[str] = Field(None, description="Description of what this schedule does")
-    endpoint: str = Field(..., description="The AgentOS endpoint to call (e.g., '/agents/my-agent/runs')")
+    name: str = Field(
+        ...,
+        min_length=1,
+        max_length=255,
+        pattern=r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$",
+        description="Unique name for the schedule (alphanumeric, dots, hyphens, underscores)",
+    )
+    description: Optional[str] = Field(None, max_length=1024, description="Description of what this schedule does")
+    endpoint: str = Field(
+        ..., min_length=1, max_length=512, description="The AgentOS endpoint to call (e.g., '/agents/my-agent/runs')"
+    )
     method: str = Field(default="POST", description="HTTP method to use (GET, POST, PUT, DELETE)")
     payload: Optional[Dict[str, Any]] = Field(None, description="Request body/payload to send")
-    cron_expr: str = Field(..., description="Cron expression (e.g., '0 3 * * *' for 3 AM daily)")
-    timezone: str = Field(default="UTC", description="Timezone for the cron expression")
+    cron_expr: str = Field(
+        ..., min_length=1, max_length=128, description="Cron expression (e.g., '0 3 * * *' for 3 AM daily)"
+    )
+    timezone: str = Field(default="UTC", max_length=64, description="Timezone for the cron expression")
     timeout_seconds: int = Field(default=3600, ge=1, le=86400, description="Max execution time in seconds")
     max_retries: int = Field(default=0, ge=0, le=10, description="Number of retry attempts on failure")
     retry_delay_seconds: int = Field(default=60, ge=1, le=3600, description="Delay between retries in seconds")
@@ -50,13 +60,19 @@ class ScheduleUpdateRequest(BaseModel):
         }
     )
 
-    name: Optional[str] = Field(None, description="Unique name for the schedule")
-    description: Optional[str] = Field(None, description="Description of what this schedule does")
-    endpoint: Optional[str] = Field(None, description="The AgentOS endpoint to call")
+    name: Optional[str] = Field(
+        None,
+        min_length=1,
+        max_length=255,
+        pattern=r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$",
+        description="Unique name for the schedule (alphanumeric, dots, hyphens, underscores)",
+    )
+    description: Optional[str] = Field(None, max_length=1024, description="Description of what this schedule does")
+    endpoint: Optional[str] = Field(None, min_length=1, max_length=512, description="The AgentOS endpoint to call")
     method: Optional[str] = Field(None, description="HTTP method to use")
     payload: Optional[Dict[str, Any]] = Field(None, description="Request body/payload to send")
-    cron_expr: Optional[str] = Field(None, description="Cron expression")
-    timezone: Optional[str] = Field(None, description="Timezone for the cron expression")
+    cron_expr: Optional[str] = Field(None, min_length=1, max_length=128, description="Cron expression")
+    timezone: Optional[str] = Field(None, max_length=64, description="Timezone for the cron expression")
     timeout_seconds: Optional[int] = Field(None, ge=1, le=86400, description="Max execution time in seconds")
     max_retries: Optional[int] = Field(None, ge=0, le=10, description="Number of retry attempts on failure")
     retry_delay_seconds: Optional[int] = Field(None, ge=1, le=3600, description="Delay between retries in seconds")

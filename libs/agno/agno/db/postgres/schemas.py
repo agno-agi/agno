@@ -261,6 +261,12 @@ SCHEDULE_TABLE_SCHEMA = {
             "columns": ["name"],
         },
     ],
+    "_indexes": [
+        {
+            "name": "idx_schedule_claim",
+            "columns": ["enabled", "next_run_at"],
+        },
+    ],
 }
 
 SCHEDULE_RUNS_TABLE_SCHEMA = {

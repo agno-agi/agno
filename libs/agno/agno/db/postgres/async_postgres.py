@@ -205,6 +205,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             indexes: List[str] = []
             unique_constraints: List[str] = []
             schema_unique_constraints = table_schema.pop("_unique_constraints", [])
+            schema_composite_indexes = table_schema.pop("_indexes", [])
 
             # Get the columns, indexes, and unique constraints from the table schema
             for col_name, col_config in table_schema.items():
@@ -239,6 +240,12 @@ class AsyncPostgresDb(AsyncBaseDb):
             for idx_col in indexes:
                 idx_name = f"idx_{table_name}_{idx_col}"
                 table.append_constraint(Index(idx_name, idx_col))
+
+            # Composite indexes
+            for idx_config in schema_composite_indexes:
+                idx_name = f"{table_name}_{idx_config['name']}"
+                idx_columns = idx_config["columns"]
+                Index(idx_name, *[table.c[c] for c in idx_columns])
 
             if self.create_schema:
                 async with self.async_session_factory() as sess, sess.begin():
@@ -3233,7 +3240,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             raise
 
     async def delete_schedule(self, schedule_id: str) -> bool:
-        """Delete a schedule by ID."""
+        """Delete a schedule and its associated run history."""
         try:
             table = await self._get_schedule_table()
             if table is None:
@@ -3243,6 +3250,11 @@ class AsyncPostgresDb(AsyncBaseDb):
                 async with sess.begin():
                     from sqlalchemy import delete
                     from sqlalchemy.engine import CursorResult
+
+                    # Delete associated run records first
+                    runs_table = await self._get_schedule_runs_table()
+                    if runs_table is not None:
+                        await sess.execute(delete(runs_table).where(runs_table.c.schedule_id == schedule_id))
 
                     stmt = delete(table).where(table.c.id == schedule_id)
                     result = cast(CursorResult, await sess.execute(stmt))

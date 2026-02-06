@@ -248,6 +248,7 @@ class SqliteDb(BaseDb):
             schema_unique_constraints = table_schema.pop("_unique_constraints", [])
             schema_primary_key = table_schema.pop("__primary_key__", None)
             schema_foreign_keys = table_schema.pop("__foreign_keys__", [])
+            schema_composite_indexes = table_schema.pop("_indexes", [])
 
             # Build columns
             for col_name, col_config in table_schema.items():
@@ -334,6 +335,15 @@ class SqliteDb(BaseDb):
                     raise ValueError(f"Index references missing column in {table_name}: {idx_col}")
                 idx_name = f"idx_{table_name}_{idx_col}"
                 Index(idx_name, table.c[idx_col])  # Correct way; do NOT append as constraint
+
+            # Composite indexes
+            for idx_config in schema_composite_indexes:
+                idx_name = f"{table_name}_{idx_config['name']}"
+                idx_columns = idx_config["columns"]
+                missing = [c for c in idx_columns if c not in table.c]
+                if missing:
+                    raise ValueError(f"Composite index references missing columns in {table_name}: {missing}")
+                Index(idx_name, *[table.c[c] for c in idx_columns])
 
             # Create table
             table_created = False
@@ -4545,7 +4555,7 @@ class SqliteDb(BaseDb):
             raise e
 
     def delete_schedule(self, schedule_id: str) -> bool:
-        """Delete a schedule.
+        """Delete a schedule and its associated run history.
 
         Args:
             schedule_id: The schedule ID to delete.
@@ -4558,7 +4568,14 @@ class SqliteDb(BaseDb):
             if table is None:
                 return False
 
+            # Get runs table outside the transaction to avoid nested table-creation issues
+            runs_table = self._get_table(table_type="schedule_runs")
+
             with self.Session() as sess, sess.begin():
+                # Delete associated run records first
+                if runs_table is not None:
+                    sess.execute(runs_table.delete().where(runs_table.c.schedule_id == schedule_id))
+
                 stmt = table.delete().where(table.c.id == schedule_id)
                 result = sess.execute(stmt)
                 return result.rowcount > 0

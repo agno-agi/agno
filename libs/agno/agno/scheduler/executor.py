@@ -142,6 +142,9 @@ class ScheduleExecutor:
                     except Exception as e:
                         log_error(f"Error calculating next run for schedule '{schedule.name}': {e}")
                         next_run_at = schedule.next_run_at or int(time.time()) + 60
+                    # Ensure next_run_at is strictly in the future to prevent
+                    # double-fire at DST boundaries or clock skew.
+                    next_run_at = max(next_run_at, int(time.time()) + 1)
                     await self._release_schedule(schedule.id, next_run_at)
                 except Exception as e:
                     log_error(f"Error releasing schedule '{schedule.name}': {e}")
@@ -207,12 +210,12 @@ class ScheduleExecutor:
         payload = dict(schedule.payload or {})
         payload["stream"] = True
 
-        headers["Content-Type"] = "application/x-www-form-urlencoded"
+        headers["Content-Type"] = "application/json"
 
         async with client.stream(
             method=schedule.method,
             url=url,
-            data=payload,
+            json=payload,
             headers=headers,
         ) as response:
             run.status_code = response.status_code

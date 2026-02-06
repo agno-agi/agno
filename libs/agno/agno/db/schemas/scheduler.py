@@ -71,7 +71,7 @@ class Schedule:
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
-        return {k: v for k, v in _dict.items() if v is not None}
+        return _dict
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Schedule":
@@ -160,7 +160,7 @@ class ScheduleRun:
             "error": self.error,
             "created_at": self.created_at,
         }
-        return {k: v for k, v in _dict.items() if v is not None}
+        return _dict
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ScheduleRun":
