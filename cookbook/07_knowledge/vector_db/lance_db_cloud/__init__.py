@@ -1,1 +1,0 @@
-# LanceDB Cloud cookbook
