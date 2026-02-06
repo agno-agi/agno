@@ -2,6 +2,7 @@ import hashlib
 import json
 import re
 import uuid
+from datetime import date, datetime
 from typing import Any, Optional, Type, Union
 from uuid import uuid4
 
@@ -303,12 +304,14 @@ def sanitize_postgres_strings(data: Union[dict, list, str, Any]) -> Union[dict, 
 
     This function traverses dictionaries, lists, and nested structures to find
     and sanitize all string values, removing null bytes that PostgreSQL cannot handle.
+    It also converts datetime objects to ISO format strings to ensure JSON serialization.
 
     Args:
         data: The data structure to sanitize (dict, list, str or any other type).
 
     Returns:
-        The sanitized data structure with all strings cleaned of null bytes.
+        The sanitized data structure with all strings cleaned of null bytes
+        and datetime objects converted to ISO format strings.
     """
     if isinstance(data, dict):
         return {key: sanitize_postgres_strings(value) for key, value in data.items()}
@@ -316,5 +319,9 @@ def sanitize_postgres_strings(data: Union[dict, list, str, Any]) -> Union[dict, 
         return [sanitize_postgres_strings(item) for item in data]
     elif isinstance(data, str):
         return sanitize_postgres_string(data)
+    elif isinstance(data, datetime):
+        return data.isoformat()
+    elif isinstance(data, date):
+        return data.isoformat()
     else:
         return data

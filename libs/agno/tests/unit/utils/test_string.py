@@ -1,8 +1,9 @@
+from datetime import date, datetime, timezone
 from typing import List, Optional
 
 from pydantic import BaseModel
 
-from agno.utils.string import parse_response_model_str, sanitize_postgres_string, url_safe_string
+from agno.utils.string import parse_response_model_str, sanitize_postgres_string, sanitize_postgres_strings, url_safe_string
 
 
 def test_url_safe_string_spaces():
@@ -390,3 +391,53 @@ def test_sanitize_postgres_string_other_illegal_chars():
     assert sanitize_postgres_string("hello\x0e\x1fworld") == "helloworld"
     # Unicode replacement characters
     assert sanitize_postgres_string("hello\ufffe\uffffworld") == "helloworld"
+
+
+def test_sanitize_postgres_strings_datetime():
+    """Test that sanitize_postgres_strings converts datetime objects to ISO format strings"""
+    dt = datetime(2025, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
+    result = sanitize_postgres_strings(dt)
+    assert result == "2025-01-15T10:30:00+00:00"
+
+
+def test_sanitize_postgres_strings_date():
+    """Test that sanitize_postgres_strings converts date objects to ISO format strings"""
+    d = date(2025, 1, 15)
+    result = sanitize_postgres_strings(d)
+    assert result == "2025-01-15"
+
+
+def test_sanitize_postgres_strings_datetime_in_dict():
+    """Test that sanitize_postgres_strings handles datetime objects nested in dicts"""
+    dt = datetime(2025, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
+    data = {"created_at": dt, "name": "test"}
+    result = sanitize_postgres_strings(data)
+    assert result["created_at"] == "2025-01-15T10:30:00+00:00"
+    assert result["name"] == "test"
+
+
+def test_sanitize_postgres_strings_datetime_in_list():
+    """Test that sanitize_postgres_strings handles datetime objects nested in lists"""
+    dt = datetime(2025, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
+    data = [dt, "test", 123]
+    result = sanitize_postgres_strings(data)
+    assert result[0] == "2025-01-15T10:30:00+00:00"
+    assert result[1] == "test"
+    assert result[2] == 123
+
+
+def test_sanitize_postgres_strings_datetime_deeply_nested():
+    """Test that sanitize_postgres_strings handles deeply nested datetime objects"""
+    dt = datetime(2025, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
+    data = {
+        "metadata": {
+            "timestamps": [
+                {"created_at": dt, "updated_at": dt}
+            ]
+        },
+        "name": "test\x00value"  # Also test null char removal
+    }
+    result = sanitize_postgres_strings(data)
+    assert result["metadata"]["timestamps"][0]["created_at"] == "2025-01-15T10:30:00+00:00"
+    assert result["metadata"]["timestamps"][0]["updated_at"] == "2025-01-15T10:30:00+00:00"
+    assert result["name"] == "testvalue"
