@@ -27,6 +27,7 @@ from agno.os.settings import AgnoAPISettings
 from agno.registry import Registry
 from agno.utils.log import log_error, log_warning
 from agno.utils.string import generate_id_from_name
+from agno.workflow.cel import validate_cel_expression
 
 logger = logging.getLogger(__name__)
 
@@ -473,5 +474,35 @@ def attach_routes(
         except Exception as e:
             log_error(f"Error setting current config: {e}")
             raise HTTPException(status_code=500, detail="Internal server error")
+
+    @router.post(
+        "/validate-cel",
+        response_model=Dict[str, Any],
+        status_code=200,
+        operation_id="validate_cel_expression",
+        summary="Validate CEL Expression",
+        description="Validate a CEL expression before saving it in a workflow config.",
+    )
+    async def validate_cel(
+        body: Dict[str, str] = Body(description="CEL expression to validate"),
+    ) -> Dict[str, Any]:
+        """
+        Validate a CEL expression.
+
+        Request body:
+            {"expression": "input.contains('urgent') ? 'Priority' : 'General'"}
+
+        Response:
+            {"valid": true} or {"valid": false, "error": "error message"}
+        """
+        expression = body.get("expression", "")
+        if not expression:
+            return {"valid": False, "error": "Expression is required"}
+
+        is_valid = validate_cel_expression(expression)
+        if is_valid:
+            return {"valid": True}
+        else:
+            return {"valid": False, "error": f"Invalid CEL expression: {expression}"}
 
     return router
