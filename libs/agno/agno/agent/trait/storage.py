@@ -531,6 +531,16 @@ class AgentStorageTrait(AgentTraitBase):
             config["stream"] = self.stream
         if self.stream_events is not None:
             config["stream_events"] = self.stream_events
+        if self.replay_mode != "off":
+            config["replay_mode"] = self.replay_mode
+        if self.replay_sample_rate != 0.1:
+            config["replay_sample_rate"] = self.replay_sample_rate
+        if self.replay_max_payload_bytes != 262144:
+            config["replay_max_payload_bytes"] = self.replay_max_payload_bytes
+        if self.replay_max_message_chars != 4000:
+            config["replay_max_message_chars"] = self.replay_max_message_chars
+        if self.replay_compress_payload:
+            config["replay_compress_payload"] = self.replay_compress_payload
         if self.store_events:
             config["store_events"] = self.store_events
         # Skip events_to_skip as it contains RunEvent enums
@@ -788,6 +798,11 @@ class AgentStorageTrait(AgentTraitBase):
             # --- Streaming settings ---
             stream=config.get("stream"),
             stream_events=config.get("stream_events"),
+            replay_mode=config.get("replay_mode", "off"),
+            replay_sample_rate=config.get("replay_sample_rate", 0.1),
+            replay_max_payload_bytes=config.get("replay_max_payload_bytes", 262144),
+            replay_max_message_chars=config.get("replay_max_message_chars", 4000),
+            replay_compress_payload=config.get("replay_compress_payload", False),
             store_events=config.get("store_events", False),
             role=config.get("role"),
             # --- Culture settings ---

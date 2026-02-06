@@ -14,6 +14,7 @@ class MigrationManager:
     available_versions: list[tuple[str, Version]] = [
         ("v2_0_0", packaging_version.parse("2.0.0")),
         ("v2_3_0", packaging_version.parse("2.3.0")),
+        ("v2_5_0", packaging_version.parse("2.5.0")),
     ]
 
     def __init__(self, db: Union[AsyncBaseDb, BaseDb]):
@@ -42,16 +43,23 @@ class MigrationManager:
 
         # Select tables to migrate
         if table_type:
-            if table_type not in ["memory", "session", "metrics", "eval", "knowledge", "culture"]:
+            if table_type not in ["memory", "session", "metrics", "eval", "knowledge", "culture", "replay", "replays"]:
                 log_warning(
-                    f"Invalid table type: {table_type}. Use one of: memory, session, metrics, eval, knowledge, culture"
+                    "Invalid table type: "
+                    f"{table_type}. Use one of: memory, session, metrics, eval, knowledge, culture, replay"
                 )
                 return
-            tables = [(table_type, getattr(self.db, f"{table_type}_table_name"))]
+            if table_type == "replays":
+                tables = [("replays", getattr(self.db, "replay_table_name"))]
+            elif table_type == "replay":
+                tables = [("replays", getattr(self.db, "replay_table_name"))]
+            else:
+                tables = [(table_type, getattr(self.db, f"{table_type}_table_name"))]
         else:
             tables = [
                 ("memories", self.db.memory_table_name),
                 ("sessions", self.db.session_table_name),
+                ("replays", self.db.replay_table_name),
                 ("metrics", self.db.metrics_table_name),
                 ("evals", self.db.eval_table_name),
                 ("knowledge", self.db.knowledge_table_name),
@@ -134,16 +142,23 @@ class MigrationManager:
 
         # Select tables to migrate
         if table_type:
-            if table_type not in ["memory", "session", "metrics", "eval", "knowledge", "culture"]:
+            if table_type not in ["memory", "session", "metrics", "eval", "knowledge", "culture", "replay", "replays"]:
                 log_warning(
-                    f"Invalid table type: {table_type}. Use one of: memory, session, metrics, eval, knowledge, culture"
+                    "Invalid table type: "
+                    f"{table_type}. Use one of: memory, session, metrics, eval, knowledge, culture, replay"
                 )
                 return
-            tables = [(table_type, getattr(self.db, f"{table_type}_table_name"))]
+            if table_type == "replays":
+                tables = [("replays", getattr(self.db, "replay_table_name"))]
+            elif table_type == "replay":
+                tables = [("replays", getattr(self.db, "replay_table_name"))]
+            else:
+                tables = [(table_type, getattr(self.db, f"{table_type}_table_name"))]
         else:
             tables = [
                 ("memories", self.db.memory_table_name),
                 ("sessions", self.db.session_table_name),
+                ("replays", self.db.replay_table_name),
                 ("metrics", self.db.metrics_table_name),
                 ("evals", self.db.eval_table_name),
                 ("knowledge", self.db.knowledge_table_name),

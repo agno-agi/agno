@@ -102,6 +102,11 @@ class AgentTraitBase:
     save_response_to_file: Any
     stream: Any
     stream_events: Any
+    replay_mode: Any
+    replay_sample_rate: Any
+    replay_max_payload_bytes: Any
+    replay_max_message_chars: Any
+    replay_compress_payload: Any
     store_events: Any
     events_to_skip: Any
     role: Any
@@ -126,6 +131,8 @@ class AgentTraitBase:
     _hooks_normalised: Any
     _mcp_tools_initialized_on_run: Any
     _connectable_tools_initialized_on_run: Any
+    _run_options_by_run_id: Any
+    _run_engines_by_run_id: Any
     _background_executor: Any
 
     if TYPE_CHECKING:

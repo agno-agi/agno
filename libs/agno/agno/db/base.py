@@ -42,6 +42,7 @@ class BaseDb(ABC):
         knowledge_table: Optional[str] = None,
         traces_table: Optional[str] = None,
         spans_table: Optional[str] = None,
+        replay_table: Optional[str] = None,
         versions_table: Optional[str] = None,
         components_table: Optional[str] = None,
         component_configs_table: Optional[str] = None,
@@ -58,6 +59,7 @@ class BaseDb(ABC):
         self.knowledge_table_name = knowledge_table or "agno_knowledge"
         self.trace_table_name = traces_table or "agno_traces"
         self.span_table_name = spans_table or "agno_spans"
+        self.replay_table_name = replay_table or "agno_replays"
         self.versions_table_name = versions_table or "agno_schema_versions"
         self.components_table_name = components_table or "agno_components"
         self.component_configs_table_name = component_configs_table or "agno_component_configs"
@@ -78,6 +80,7 @@ class BaseDb(ABC):
             "knowledge_table": self.knowledge_table_name,
             "traces_table": self.trace_table_name,
             "spans_table": self.span_table_name,
+            "replay_table": self.replay_table_name,
             "versions_table": self.versions_table_name,
             "components_table": self.components_table_name,
             "component_configs_table": self.component_configs_table_name,
@@ -98,6 +101,7 @@ class BaseDb(ABC):
             knowledge_table=data.get("knowledge_table"),
             traces_table=data.get("traces_table"),
             spans_table=data.get("spans_table"),
+            replay_table=data.get("replay_table"),
             versions_table=data.get("versions_table"),
             components_table=data.get("components_table"),
             component_configs_table=data.get("component_configs_table"),
@@ -192,6 +196,22 @@ class BaseDb(ABC):
     ) -> List[Union[Session, Dict[str, Any]]]:
         """Bulk upsert multiple sessions for improved performance on large datasets."""
         raise NotImplementedError
+
+    # --- Replays (Optional) ---
+    def upsert_replay(self, run_id: str, replay_record: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        raise NotImplementedError(
+            f"Run replay storage is not supported by {type(self).__name__}. Use PostgresDb or SqliteDb."
+        )
+
+    def get_replay(self, run_id: str) -> Optional[Dict[str, Any]]:
+        raise NotImplementedError(
+            f"Run replay retrieval is not supported by {type(self).__name__}. Use PostgresDb or SqliteDb."
+        )
+
+    def delete_replay(self, run_id: str) -> bool:
+        raise NotImplementedError(
+            f"Run replay deletion is not supported by {type(self).__name__}. Use PostgresDb or SqliteDb."
+        )
 
     # --- Memory ---
     @abstractmethod
@@ -959,6 +979,7 @@ class AsyncBaseDb(ABC):
         knowledge_table: Optional[str] = None,
         traces_table: Optional[str] = None,
         spans_table: Optional[str] = None,
+        replay_table: Optional[str] = None,
         culture_table: Optional[str] = None,
         versions_table: Optional[str] = None,
         learnings_table: Optional[str] = None,
@@ -971,6 +992,7 @@ class AsyncBaseDb(ABC):
         self.knowledge_table_name = knowledge_table or "agno_knowledge"
         self.trace_table_name = traces_table or "agno_traces"
         self.span_table_name = spans_table or "agno_spans"
+        self.replay_table_name = replay_table or "agno_replays"
         self.culture_table_name = culture_table or "agno_culture"
         self.versions_table_name = versions_table or "agno_schema_versions"
         self.learnings_table_name = learnings_table or "agno_learnings"
@@ -1062,6 +1084,22 @@ class AsyncBaseDb(ABC):
         self, session: Session, deserialize: Optional[bool] = True
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         raise NotImplementedError
+
+    # --- Replays (Optional) ---
+    async def upsert_replay(self, run_id: str, replay_record: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        raise NotImplementedError(
+            f"Run replay storage is not supported by {type(self).__name__}. Use AsyncPostgresDb or AsyncSqliteDb."
+        )
+
+    async def get_replay(self, run_id: str) -> Optional[Dict[str, Any]]:
+        raise NotImplementedError(
+            f"Run replay retrieval is not supported by {type(self).__name__}. Use AsyncPostgresDb or AsyncSqliteDb."
+        )
+
+    async def delete_replay(self, run_id: str) -> bool:
+        raise NotImplementedError(
+            f"Run replay deletion is not supported by {type(self).__name__}. Use AsyncPostgresDb or AsyncSqliteDb."
+        )
 
     # --- Memory ---
     @abstractmethod

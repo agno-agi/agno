@@ -54,6 +54,7 @@ class SqliteDb(BaseDb):
         knowledge_table: Optional[str] = None,
         traces_table: Optional[str] = None,
         spans_table: Optional[str] = None,
+        replay_table: Optional[str] = None,
         versions_table: Optional[str] = None,
         components_table: Optional[str] = None,
         component_configs_table: Optional[str] = None,
@@ -82,6 +83,7 @@ class SqliteDb(BaseDb):
             knowledge_table (Optional[str]): Name of the table to store knowledge documents data.
             traces_table (Optional[str]): Name of the table to store run traces.
             spans_table (Optional[str]): Name of the table to store span events.
+            replay_table (Optional[str]): Name of the table to store run replay payloads.
             versions_table (Optional[str]): Name of the table to store schema versions.
             components_table (Optional[str]): Name of the table to store components.
             component_configs_table (Optional[str]): Name of the table to store component configurations.
@@ -106,6 +108,7 @@ class SqliteDb(BaseDb):
             knowledge_table=knowledge_table,
             traces_table=traces_table,
             spans_table=spans_table,
+            replay_table=replay_table,
             versions_table=versions_table,
             components_table=components_table,
             component_configs_table=component_configs_table,
@@ -162,6 +165,7 @@ class SqliteDb(BaseDb):
             knowledge_table=data.get("knowledge_table"),
             traces_table=data.get("traces_table"),
             spans_table=data.get("spans_table"),
+            replay_table=data.get("replay_table"),
             versions_table=data.get("versions_table"),
             components_table=data.get("components_table"),
             component_configs_table=data.get("component_configs_table"),
@@ -195,6 +199,7 @@ class SqliteDb(BaseDb):
         """Create all tables for the database."""
         tables_to_create = [
             (self.session_table_name, "sessions"),
+            (self.replay_table_name, "replays"),
             (self.memory_table_name, "memories"),
             (self.metrics_table_name, "metrics"),
             (self.eval_table_name, "evals"),
@@ -392,6 +397,7 @@ class SqliteDb(BaseDb):
             "traces": self.trace_table_name,
             "spans": self.span_table_name,
             "sessions": self.session_table_name,
+            "replays": self.replay_table_name,
             "memories": self.memory_table_name,
             "metrics": self.metrics_table_name,
             "evals": self.eval_table_name,
@@ -409,6 +415,14 @@ class SqliteDb(BaseDb):
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.session_table
+
+        elif table_type == "replays":
+            self.replays_table = self._get_or_create_table(
+                table_name=self.replay_table_name,
+                table_type="replays",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.replays_table
 
         elif table_type == "memories":
             self.memory_table = self._get_or_create_table(
@@ -593,6 +607,49 @@ class SqliteDb(BaseDb):
                 set_=dict(version=version, updated_at=current_datetime),
             )
             sess.execute(stmt)
+
+    # -- Replay methods --
+    def upsert_replay(self, run_id: str, replay_record: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        table = self._get_table(table_type="replays", create_table_if_not_found=True)
+        if table is None:
+            return None
+
+        replay_data = dict(replay_record)
+        replay_data["run_id"] = run_id
+        created_at = replay_data.get("created_at") or int(time.time())
+        replay_data["created_at"] = created_at
+        replay_data["updated_at"] = int(time.time())
+
+        with self.Session() as sess, sess.begin():
+            stmt = sqlite.insert(table).values(**replay_data)
+            update_data = {key: value for key, value in replay_data.items() if key not in {"run_id", "created_at"}}
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["run_id"],
+                set_=update_data,
+            )
+            stmt = stmt.returning(*table.columns)  # type: ignore
+            row = sess.execute(stmt).fetchone()
+            return dict(row._mapping) if row else None
+
+    def get_replay(self, run_id: str) -> Optional[Dict[str, Any]]:
+        table = self._get_table(table_type="replays")
+        if table is None:
+            return None
+
+        with self.Session() as sess, sess.begin():
+            stmt = select(table).where(table.c.run_id == run_id)
+            row = sess.execute(stmt).fetchone()
+            return dict(row._mapping) if row else None
+
+    def delete_replay(self, run_id: str) -> bool:
+        table = self._get_table(table_type="replays")
+        if table is None:
+            return False
+
+        with self.Session() as sess, sess.begin():
+            delete_stmt = table.delete().where(table.c.run_id == run_id)
+            result = sess.execute(delete_stmt)
+            return bool(result.rowcount and result.rowcount > 0)
 
     # -- Session methods --
 

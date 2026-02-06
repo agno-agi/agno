@@ -53,6 +53,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         knowledge_table: Optional[str] = None,
         traces_table: Optional[str] = None,
         spans_table: Optional[str] = None,
+        replay_table: Optional[str] = None,
         versions_table: Optional[str] = None,
         learnings_table: Optional[str] = None,
         id: Optional[str] = None,
@@ -78,6 +79,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             knowledge_table (Optional[str]): Name of the table to store knowledge documents data.
             traces_table (Optional[str]): Name of the table to store run traces.
             spans_table (Optional[str]): Name of the table to store span events.
+            replay_table (Optional[str]): Name of the table to store run replay payloads.
             versions_table (Optional[str]): Name of the table to store schema versions.
             learnings_table (Optional[str]): Name of the table to store learning records.
             id (Optional[str]): ID of the database.
@@ -99,6 +101,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             knowledge_table=knowledge_table,
             traces_table=traces_table,
             spans_table=spans_table,
+            replay_table=replay_table,
             versions_table=versions_table,
             learnings_table=learnings_table,
         )
@@ -153,6 +156,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         """Create all tables for the database."""
         tables_to_create = [
             (self.session_table_name, "sessions"),
+            (self.replay_table_name, "replays"),
             (self.memory_table_name, "memories"),
             (self.metrics_table_name, "metrics"),
             (self.eval_table_name, "evals"),
@@ -269,6 +273,14 @@ class AsyncSqliteDb(AsyncBaseDb):
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.session_table
+
+        if table_type == "replays":
+            self.replays_table = await self._get_or_create_table(
+                table_name=self.replay_table_name,
+                table_type="replays",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.replays_table
 
         elif table_type == "memories":
             self.memory_table = await self._get_or_create_table(
@@ -425,6 +437,51 @@ class AsyncSqliteDb(AsyncBaseDb):
                 set_=dict(version=version, updated_at=current_datetime),
             )
             await sess.execute(stmt)
+
+    # -- Replay methods --
+    async def upsert_replay(self, run_id: str, replay_record: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        table = await self._get_table(table_type="replays", create_table_if_not_found=True)
+        if table is None:
+            return None
+
+        replay_data = dict(replay_record)
+        replay_data["run_id"] = run_id
+        replay_data["created_at"] = replay_data.get("created_at") or int(time.time())
+        replay_data["updated_at"] = int(time.time())
+
+        async with self.async_session_factory() as sess, sess.begin():
+            stmt = sqlite.insert(table).values(**replay_data)
+            update_data = {key: value for key, value in replay_data.items() if key not in {"run_id", "created_at"}}
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["run_id"],
+                set_=update_data,
+            )
+            stmt = stmt.returning(*table.columns)  # type: ignore
+            result = await sess.execute(stmt)
+            row = result.fetchone()
+            return dict(row._mapping) if row else None
+
+    async def get_replay(self, run_id: str) -> Optional[Dict[str, Any]]:
+        table = await self._get_table(table_type="replays")
+        if table is None:
+            return None
+
+        async with self.async_session_factory() as sess, sess.begin():
+            stmt = select(table).where(table.c.run_id == run_id)
+            result = await sess.execute(stmt)
+            row = result.fetchone()
+            return dict(row._mapping) if row else None
+
+    async def delete_replay(self, run_id: str) -> bool:
+        table = await self._get_table(table_type="replays")
+        if table is None:
+            return False
+
+        async with self.async_session_factory() as sess, sess.begin():
+            delete_stmt = table.delete().where(table.c.run_id == run_id)
+            result = await sess.execute(delete_stmt)
+            rowcount = getattr(result, "rowcount", None)
+            return bool(rowcount and rowcount > 0)
 
     # -- Session methods --
 

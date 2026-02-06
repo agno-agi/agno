@@ -318,6 +318,18 @@ class Agent(
     # Stream the intermediate steps from the Agent
     stream_events: Optional[bool] = None
 
+    # --- Run Replay ---
+    # Replay capture mode: off | errors_only | sampled | full
+    replay_mode: Literal["off", "errors_only", "sampled", "full"] = "off"
+    # Sampling rate used when replay_mode == "sampled"
+    replay_sample_rate: float = 0.1
+    # Maximum serialized replay payload size in bytes
+    replay_max_payload_bytes: int = 262144
+    # Maximum characters stored per replay text field
+    replay_max_message_chars: int = 4000
+    # Optional payload compression (gzip+json) before writing replay payloads
+    replay_compress_payload: bool = False
+
     # Persist the events on the run response
     store_events: bool = False
     events_to_skip: Optional[List[RunEvent]] = None
@@ -457,6 +469,11 @@ class Agent(
         save_response_to_file: Optional[str] = None,
         stream: Optional[bool] = None,
         stream_events: Optional[bool] = None,
+        replay_mode: Literal["off", "errors_only", "sampled", "full"] = "off",
+        replay_sample_rate: float = 0.1,
+        replay_max_payload_bytes: int = 262144,
+        replay_max_message_chars: int = 4000,
+        replay_compress_payload: bool = False,
         store_events: bool = False,
         events_to_skip: Optional[List[RunEvent]] = None,
         role: Optional[str] = None,
@@ -598,6 +615,11 @@ class Agent(
 
         self.stream = stream
         self.stream_events = stream_events
+        self.replay_mode = replay_mode
+        self.replay_sample_rate = replay_sample_rate
+        self.replay_max_payload_bytes = replay_max_payload_bytes
+        self.replay_max_message_chars = replay_max_message_chars
+        self.replay_compress_payload = replay_compress_payload
 
         self.store_events = store_events
         self.role = role
@@ -633,6 +655,8 @@ class Agent(
 
         self._mcp_tools_initialized_on_run: List[Any] = []
         self._connectable_tools_initialized_on_run: List[Any] = []
+        self._run_options_by_run_id: Dict[str, Any] = {}
+        self._run_engines_by_run_id: Dict[str, Any] = {}
 
         # Lazy-initialized shared thread pool executor for background tasks (memory, cultural knowledge, etc.)
         self._background_executor: Optional[Any] = None

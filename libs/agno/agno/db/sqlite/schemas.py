@@ -111,6 +111,24 @@ TRACE_TABLE_SCHEMA = {
     "created_at": {"type": String, "nullable": False, "index": True},  # ISO 8601 datetime string
 }
 
+REPLAY_TABLE_SCHEMA = {
+    "run_id": {"type": String, "primary_key": True, "nullable": False},
+    "session_id": {"type": String, "nullable": True, "index": True},
+    "agent_id": {"type": String, "nullable": True, "index": True},
+    "user_id": {"type": String, "nullable": True, "index": True},
+    "team_id": {"type": String, "nullable": True, "index": True},
+    "workflow_id": {"type": String, "nullable": True, "index": True},
+    "status": {"type": String, "nullable": False, "index": True},
+    "mode": {"type": String, "nullable": False, "index": True},
+    "schema_version": {"type": BigInteger, "nullable": False},
+    "payload_encoding": {"type": String, "nullable": False},
+    "payload_bytes": {"type": BigInteger, "nullable": False},
+    "truncated": {"type": Boolean, "nullable": False, "default": False},
+    "created_at": {"type": BigInteger, "nullable": False, "index": True},
+    "updated_at": {"type": BigInteger, "nullable": True},
+    "payload": {"type": JSON, "nullable": False},
+}
+
 
 def _get_span_table_schema(traces_table_name: str = "agno_traces") -> dict[str, Any]:
     """Get the span table schema with the correct foreign key reference.
@@ -245,6 +263,7 @@ def get_table_schema_definition(table_type: str, traces_table_name: str = "agno_
 
     schemas = {
         "sessions": SESSION_TABLE_SCHEMA,
+        "replays": REPLAY_TABLE_SCHEMA,
         "evals": EVAL_TABLE_SCHEMA,
         "metrics": METRICS_TABLE_SCHEMA,
         "memories": USER_MEMORY_TABLE_SCHEMA,
