@@ -123,6 +123,9 @@ def _run(
         # Set up retry logic
         num_attempts = team.retries + 1
         for attempt in range(num_attempts):
+            if num_attempts > 1:
+                log_debug(f"Retrying Team run {run_response.run_id}. Attempt {attempt + 1} of {num_attempts}...")
+
             try:
                 # 1. Execute pre-hooks
                 run_input = cast(TeamRunInput, run_response.input)
@@ -298,6 +301,16 @@ def _run(
             except (InputCheckError, OutputCheckError) as e:
                 run_response.status = RunStatus.error
 
+                # Add error event to list of events
+                run_error = create_team_run_error_event(
+                    run_response,
+                    error=str(e),
+                    error_id=e.error_id,
+                    error_type=e.type,
+                    additional_data=e.additional_data,
+                )
+                run_response.events = add_team_error_event(error=run_error, events=run_response.events)
+
                 if run_response.content is None:
                     run_response.content = str(e)
 
@@ -324,6 +337,8 @@ def _run(
                     continue
 
                 run_response.status = RunStatus.error
+                run_error = create_team_run_error_event(run_response, error=str(e))
+                run_response.events = add_team_error_event(error=run_error, events=run_response.events)
 
                 # If the content is None, set it to the error message
                 if run_response.content is None:
@@ -925,23 +940,22 @@ async def _arun(
 ) -> TeamRunOutput:
     """Run the Team and return the response.
 
-    Steps:
-    1. Read or create session
-    2. Update metadata and session state
-    3. Resolve callable dependencies
-    4. Execute pre-hooks
-    5. Determine tools for model
-    6. Prepare run messages
-    7. Start memory creation in background task
-    8. Reason about the task if reasoning is enabled
-    9. Get a response from the Model
-    10. Update TeamRunOutput with the model response
-    11. Store media if enabled
-    12. Convert response to structured format
-    13. Execute post-hooks
-    14. Wait for background memory creation
-    15. Create session summary
-    16. Cleanup and store (scrub, add to session, calculate metrics, save session)
+    Pre-loop setup: Read/create session, update metadata/session state, resolve dependencies.
+
+    Steps (inside retry loop):
+    1. Execute pre-hooks
+    2. Determine tools for model
+    3. Prepare run messages
+    4. Start memory creation in background task
+    5. Reason about the task if reasoning is enabled
+    6. Get a response from the Model
+    7. Update TeamRunOutput with the model response
+    8. Store media if enabled
+    9. Convert response to structured format
+    10. Execute post-hooks
+    11. Wait for background memory creation
+    12. Create session summary
+    13. Cleanup and store (scrub, add to session, calculate metrics, save session)
     """
     await aregister_run(run_context.run_id)
     log_debug(f"Team Run Start: {run_response.run_id}", center=True)
@@ -998,7 +1012,7 @@ async def _arun(
                     async for _ in pre_hook_iterator:
                         pass
 
-                # 4. Determine tools for model
+                # 2. Determine tools for model
                 team_run_context: Dict[str, Any] = {}
                 team.model = cast(Model, team.model)
                 await team._check_and_refresh_mcp_tools()
@@ -1023,7 +1037,7 @@ async def _arun(
                     stream_events=False,
                 )
 
-                # 5. Prepare run messages
+                # 3. Prepare run messages
                 run_messages = await team._aget_run_messages(
                     run_response=run_response,
                     run_context=run_context,
@@ -1043,7 +1057,7 @@ async def _arun(
 
                 team.model = cast(Model, team.model)
 
-                # 6. Start memory creation in background task
+                # 4. Start memory creation in background task
                 memory_task = await team._astart_memory_task(
                     run_messages=run_messages,
                     user_id=user_id,
@@ -1051,7 +1065,7 @@ async def _arun(
                 )
 
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
-                # 7. Reason about the task if reasoning is enabled
+                # 5. Reason about the task if reasoning is enabled
                 await team._ahandle_reasoning(
                     run_response=run_response, run_messages=run_messages, run_context=run_context
                 )
@@ -1059,7 +1073,7 @@ async def _arun(
                 # Check for cancellation before model call
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 
-                # 8. Get the model response for the team leader
+                # 6. Get the model response for the team leader
                 model_response = await team.model.aresponse(
                     messages=run_messages.messages,
                     tools=_tools,
@@ -1084,7 +1098,7 @@ async def _arun(
                     model_response=model_response, run_messages=run_messages, run_context=run_context
                 )
 
-                # 9. Update TeamRunOutput with the model response
+                # 7. Update TeamRunOutput with the model response
                 team._update_run_response(
                     model_response=model_response,
                     run_response=run_response,
@@ -1092,14 +1106,14 @@ async def _arun(
                     run_context=run_context,
                 )
 
-                # 10. Store media if enabled
+                # 8. Store media if enabled
                 if team.store_media:
                     store_media_util(run_response, model_response)
 
-                # 11. Convert response to structured format
+                # 9. Convert response to structured format
                 team._convert_response_to_structured_format(run_response=run_response, run_context=run_context)
 
-                # 12. Execute post-hooks after output is generated but before response is returned
+                # 10. Execute post-hooks after output is generated but before response is returned
                 if team.post_hooks is not None:
                     async for _ in team._aexecute_post_hooks(
                         hooks=team.post_hooks,  # type: ignore
@@ -1115,11 +1129,11 @@ async def _arun(
 
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 
-                # 13. Wait for background memory creation
+                # 11. Wait for background memory creation
                 await await_for_open_threads(memory_task=memory_task)
 
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
-                # 14. Create session summary
+                # 12. Create session summary
                 if team.session_summary_manager is not None:
                     # Upsert the RunOutput to Team Session before creating the session summary
                     team_session.upsert_run(run_response=run_response)
@@ -1131,7 +1145,7 @@ async def _arun(
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
                 run_response.status = RunStatus.completed
 
-                # 15. Cleanup and store the run response and session
+                # 13. Cleanup and store the run response and session
                 await team._acleanup_and_store(run_response=run_response, session=team_session)
 
                 # Log Team Telemetry
@@ -1169,6 +1183,12 @@ async def _arun(
 
                 await team._acleanup_and_store(run_response=run_response, session=team_session)
 
+                return run_response
+
+            except (KeyboardInterrupt, asyncio.CancelledError):
+                run_response = cast(TeamRunOutput, run_response)
+                run_response.status = RunStatus.cancelled
+                run_response.content = "Operation cancelled by user"
                 return run_response
 
             except Exception as e:
@@ -1233,20 +1253,19 @@ async def _arun_stream(
 ) -> AsyncIterator[Union[TeamRunOutputEvent, RunOutputEvent, TeamRunOutput]]:
     """Run the Team and return the response.
 
-    Steps:
-    1. Read or create session
-    2. Update metadata and session state
-    3. Resolve callable dependencies
-    4. Execute pre-hooks
-    5. Determine tools for model
-    6. Prepare run messages
-    7. Start memory creation in background task
-    8. Reason about the task if reasoning is enabled
-    9. Get a response from the model
-    10. Parse response with parser model if provided
-    11. Wait for background memory creation
-    12. Create session summary
-    13. Cleanup and store (scrub, add to session, calculate metrics, save session)
+    Pre-loop setup: Read/create session, update metadata/session state, resolve dependencies.
+
+    Steps (inside retry loop):
+    1. Execute pre-hooks
+    2. Determine tools for model
+    3. Prepare run messages
+    4. Start memory creation in background task
+    5. Reason about the task if reasoning is enabled
+    6. Get a response from the model
+    7. Parse response with parser model if provided
+    8. Wait for background memory creation
+    9. Create session summary
+    10. Cleanup and store (scrub, add to session, calculate metrics, save session)
     """
     log_debug(f"Team Run Start: {run_response.run_id}", center=True)
 
@@ -1304,7 +1323,7 @@ async def _arun_stream(
                     async for pre_hook_event in pre_hook_iterator:
                         yield pre_hook_event
 
-                # 5. Determine tools for model
+                # 2. Determine tools for model
                 team_run_context: Dict[str, Any] = {}
                 team.model = cast(Model, team.model)
                 await team._check_and_refresh_mcp_tools()
@@ -1329,7 +1348,7 @@ async def _arun_stream(
                     stream_events=stream_events,
                 )
 
-                # 6. Prepare run messages
+                # 3. Prepare run messages
                 run_messages = await team._aget_run_messages(
                     run_response=run_response,
                     run_context=run_context,
@@ -1347,7 +1366,7 @@ async def _arun_stream(
                     **kwargs,
                 )
 
-                # 7. Start memory creation in background task
+                # 4. Start memory creation in background task
                 memory_task = await team._astart_memory_task(
                     run_messages=run_messages,
                     user_id=user_id,
@@ -1363,7 +1382,7 @@ async def _arun_stream(
                         store_events=team.store_events,
                     )
 
-                # 8. Reason about the task if reasoning is enabled
+                # 5. Reason about the task if reasoning is enabled
                 async for item in team._ahandle_reasoning_stream(
                     run_response=run_response,
                     run_messages=run_messages,
@@ -1376,7 +1395,7 @@ async def _arun_stream(
                 # Check for cancellation before model processing
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 
-                # 9. Get a response from the model
+                # 6. Get a response from the model
                 if team.output_model is None:
                     async for event in team._ahandle_model_response_stream(
                         session=team_session,
@@ -1425,7 +1444,7 @@ async def _arun_stream(
                 # Check for cancellation after model processing
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 
-                # 10. Parse response with parser model if provided
+                # 7. Parse response with parser model if provided
                 async for event in team._aparse_response_with_parser_model_stream(
                     session=team_session,
                     run_response=run_response,
@@ -1459,7 +1478,7 @@ async def _arun_stream(
                         yield event
 
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
-                # 11. Wait for background memory creation
+                # 8. Wait for background memory creation
                 async for event in await_for_thread_tasks_stream(
                     run_response=run_response,
                     memory_task=memory_task,
@@ -1472,7 +1491,7 @@ async def _arun_stream(
 
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 
-                # 12. Create session summary
+                # 9. Create session summary
                 if team.session_summary_manager is not None:
                     # Upsert the RunOutput to Team Session before creating the session summary
                     team_session.upsert_run(run_response=run_response)
@@ -1511,7 +1530,7 @@ async def _arun_stream(
                 # Set the run status to completed
                 run_response.status = RunStatus.completed
 
-                # 13. Cleanup and store the run response and session
+                # 10. Cleanup and store the run response and session
                 await team._acleanup_and_store(run_response=run_response, session=team_session)
 
                 if stream_events:
@@ -1562,6 +1581,18 @@ async def _arun_stream(
 
                 yield run_error
 
+                break
+
+            except (KeyboardInterrupt, asyncio.CancelledError):
+                run_response = cast(TeamRunOutput, run_response)
+                yield handle_event(  # type: ignore
+                    create_team_run_cancelled_event(
+                        from_run_response=run_response, reason="Operation cancelled by user"
+                    ),
+                    run_response,
+                    events_to_skip=team.events_to_skip,  # type: ignore
+                    store_events=team.store_events,
+                )
                 break
 
             except Exception as e:

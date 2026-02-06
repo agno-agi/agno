@@ -853,6 +853,7 @@ class Team:
         stream_events: Optional[bool] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
+        run_context: Optional[RunContext] = None,
         user_id: Optional[str] = None,
         run_id: Optional[str] = None,
         audio: Optional[Sequence[Audio]] = None,

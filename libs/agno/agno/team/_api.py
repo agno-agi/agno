@@ -9,21 +9,12 @@ if TYPE_CHECKING:
 
 from typing import (
     Any,
-    Dict,
     List,
     Optional,
-    Sequence,
-    Set,
     Union,
-    cast,
 )
 
-from pydantic import BaseModel
-
 from agno.agent import Agent
-from agno.filters import FilterExpr
-from agno.media import Audio, File, Image, Video
-from agno.models.message import Message
 from agno.run.agent import RunOutput
 from agno.run.team import (
     TeamRunOutput,
@@ -37,18 +28,6 @@ from agno.utils.agent import (
 from agno.utils.log import (
     log_debug,
     log_info,
-)
-from agno.utils.print_response.team import (
-    aprint_response as _util_aprint_response,
-)
-from agno.utils.print_response.team import (
-    aprint_response_stream as _util_aprint_response_stream,
-)
-from agno.utils.print_response.team import (
-    print_response as _util_print_response,
-)
-from agno.utils.print_response.team import (
-    print_response_stream as _util_print_response_stream,
 )
 
 
@@ -86,221 +65,6 @@ async def _acleanup_and_store(team: "Team", run_response: TeamRunOutput, session
 
     # Save session to memory
     await team.asave_session(session=session)
-
-
-def print_response(
-    team: "Team",
-    input: Union[List, Dict, str, Message, BaseModel, List[Message]],
-    *,
-    stream: Optional[bool] = None,
-    session_id: Optional[str] = None,
-    session_state: Optional[Dict[str, Any]] = None,
-    user_id: Optional[str] = None,
-    run_id: Optional[str] = None,
-    audio: Optional[Sequence[Audio]] = None,
-    images: Optional[Sequence[Image]] = None,
-    videos: Optional[Sequence[Video]] = None,
-    files: Optional[Sequence[File]] = None,
-    markdown: Optional[bool] = None,
-    knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
-    add_history_to_context: Optional[bool] = None,
-    add_dependencies_to_context: Optional[bool] = None,
-    add_session_state_to_context: Optional[bool] = None,
-    dependencies: Optional[Dict[str, Any]] = None,
-    metadata: Optional[Dict[str, Any]] = None,
-    debug_mode: Optional[bool] = None,
-    show_message: bool = True,
-    show_reasoning: bool = True,
-    show_full_reasoning: bool = False,
-    show_member_responses: Optional[bool] = None,
-    console: Optional[Any] = None,
-    tags_to_include_in_markdown: Optional[Set[str]] = None,
-    **kwargs: Any,
-) -> None:
-    if team._has_async_db():
-        raise Exception("This method is not supported with an async DB. Please use the async version of this method.")
-
-    if not tags_to_include_in_markdown:
-        tags_to_include_in_markdown = {"think", "thinking"}
-
-    if markdown is None:
-        markdown = team.markdown
-
-    if team.output_schema is not None:
-        markdown = False
-
-    if stream is None:
-        stream = team.stream or False
-
-    if "stream_events" in kwargs:
-        kwargs.pop("stream_events")
-
-    if show_member_responses is None:
-        show_member_responses = team.show_members_responses
-
-    if stream:
-        _util_print_response_stream(
-            team=cast(Any, team),
-            input=input,
-            console=console,
-            show_message=show_message,
-            show_reasoning=show_reasoning,
-            show_full_reasoning=show_full_reasoning,
-            show_member_responses=show_member_responses,
-            tags_to_include_in_markdown=tags_to_include_in_markdown,
-            session_id=session_id,
-            session_state=session_state,
-            user_id=user_id,
-            run_id=run_id,
-            audio=audio,
-            images=images,
-            videos=videos,
-            files=files,
-            markdown=markdown,
-            stream_events=True,
-            knowledge_filters=knowledge_filters,
-            add_history_to_context=add_history_to_context,
-            dependencies=dependencies,
-            add_dependencies_to_context=add_dependencies_to_context,
-            add_session_state_to_context=add_session_state_to_context,
-            metadata=metadata,
-            debug_mode=debug_mode,
-            **kwargs,
-        )
-    else:
-        _util_print_response(
-            team=cast(Any, team),
-            input=input,
-            console=console,
-            show_message=show_message,
-            show_reasoning=show_reasoning,
-            show_full_reasoning=show_full_reasoning,
-            show_member_responses=show_member_responses,
-            tags_to_include_in_markdown=tags_to_include_in_markdown,
-            session_id=session_id,
-            session_state=session_state,
-            user_id=user_id,
-            run_id=run_id,
-            audio=audio,
-            images=images,
-            videos=videos,
-            files=files,
-            markdown=markdown,
-            knowledge_filters=knowledge_filters,
-            add_history_to_context=add_history_to_context,
-            dependencies=dependencies,
-            add_dependencies_to_context=add_dependencies_to_context,
-            add_session_state_to_context=add_session_state_to_context,
-            metadata=metadata,
-            debug_mode=debug_mode,
-            **kwargs,
-        )
-
-
-async def aprint_response(
-    team: "Team",
-    input: Union[List, Dict, str, Message, BaseModel, List[Message]],
-    *,
-    stream: Optional[bool] = None,
-    session_id: Optional[str] = None,
-    session_state: Optional[Dict[str, Any]] = None,
-    user_id: Optional[str] = None,
-    run_id: Optional[str] = None,
-    audio: Optional[Sequence[Audio]] = None,
-    images: Optional[Sequence[Image]] = None,
-    videos: Optional[Sequence[Video]] = None,
-    files: Optional[Sequence[File]] = None,
-    markdown: Optional[bool] = None,
-    knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
-    add_history_to_context: Optional[bool] = None,
-    dependencies: Optional[Dict[str, Any]] = None,
-    add_dependencies_to_context: Optional[bool] = None,
-    add_session_state_to_context: Optional[bool] = None,
-    metadata: Optional[Dict[str, Any]] = None,
-    debug_mode: Optional[bool] = None,
-    show_message: bool = True,
-    show_reasoning: bool = True,
-    show_full_reasoning: bool = False,
-    show_member_responses: Optional[bool] = None,
-    console: Optional[Any] = None,
-    tags_to_include_in_markdown: Optional[Set[str]] = None,
-    **kwargs: Any,
-) -> None:
-    if not tags_to_include_in_markdown:
-        tags_to_include_in_markdown = {"think", "thinking"}
-
-    if markdown is None:
-        markdown = team.markdown
-
-    if team.output_schema is not None:
-        markdown = False
-
-    if stream is None:
-        stream = team.stream or False
-
-    if "stream_events" in kwargs:
-        kwargs.pop("stream_events")
-
-    if show_member_responses is None:
-        show_member_responses = team.show_members_responses
-
-    if stream:
-        await _util_aprint_response_stream(
-            team=cast(Any, team),
-            input=input,
-            console=console,
-            show_message=show_message,
-            show_reasoning=show_reasoning,
-            show_full_reasoning=show_full_reasoning,
-            show_member_responses=show_member_responses,
-            tags_to_include_in_markdown=tags_to_include_in_markdown,
-            session_id=session_id,
-            session_state=session_state,
-            user_id=user_id,
-            run_id=run_id,
-            audio=audio,
-            images=images,
-            videos=videos,
-            files=files,
-            markdown=markdown,
-            stream_events=True,
-            knowledge_filters=knowledge_filters,
-            add_history_to_context=add_history_to_context,
-            dependencies=dependencies,
-            add_dependencies_to_context=add_dependencies_to_context,
-            add_session_state_to_context=add_session_state_to_context,
-            metadata=metadata,
-            debug_mode=debug_mode,
-            **kwargs,
-        )
-    else:
-        await _util_aprint_response(
-            team=cast(Any, team),
-            input=input,
-            console=console,
-            show_message=show_message,
-            show_reasoning=show_reasoning,
-            show_full_reasoning=show_full_reasoning,
-            show_member_responses=show_member_responses,
-            tags_to_include_in_markdown=tags_to_include_in_markdown,
-            session_id=session_id,
-            session_state=session_state,
-            user_id=user_id,
-            run_id=run_id,
-            audio=audio,
-            images=images,
-            videos=videos,
-            files=files,
-            markdown=markdown,
-            knowledge_filters=knowledge_filters,
-            add_history_to_context=add_history_to_context,
-            dependencies=dependencies,
-            add_dependencies_to_context=add_dependencies_to_context,
-            add_session_state_to_context=add_session_state_to_context,
-            metadata=metadata,
-            debug_mode=debug_mode,
-            **kwargs,
-        )
 
 
 def _get_member_name(team: "Team", entity_id: str) -> str:
