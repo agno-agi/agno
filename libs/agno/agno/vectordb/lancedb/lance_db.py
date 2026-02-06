@@ -98,14 +98,17 @@ class LanceDb(VectorDb):
 
         # LanceDB connection details
         self.uri: lancedb.URI = uri
+        if str(uri).startswith("db://") and not (api_key or getenv("LANCEDB_API_KEY")):
+            raise ValueError("LanceDB Cloud URI (db://...) requires an API key. Pass api_key= or set LANCEDB_API_KEY.")
         self.connection: lancedb.DBConnection = connection or lancedb.connect(uri=self.uri, api_key=api_key)
         self.table: Optional[lancedb.db.LanceTable] = table
 
         self.async_connection: Optional[lancedb.AsyncConnection] = async_connection
         self.async_table: Optional[lancedb.db.AsyncTable] = async_table
 
-        if table_name and table_name in self._get_table_names(self.connection):
-            # Open the table if it exists
+        is_cloud = bool(api_key or getenv("LANCEDB_API_KEY") or str(uri).startswith("db://"))
+
+        if table_name and not is_cloud and table_name in self._get_table_names(self.connection):
             try:
                 self.table = self.connection.open_table(name=table_name)
                 self.table_name = self.table.name
@@ -115,6 +118,19 @@ class LanceDb(VectorDb):
                 # Table might have been dropped by async operations but sync connection hasn't updated
                 if "was not found" in str(e):
                     log_debug(f"Table {table_name} listed but not accessible, will create if needed")
+                    self.table = None
+                else:
+                    raise
+
+        if table_name and is_cloud and self.table is None:
+            try:
+                self.table = self.connection.open_table(name=table_name)
+                self.table_name = self.table.name
+                self._vector_col = self.table.schema.names[0]
+                self._id = self.table.schema.names[1]  # type: ignore
+            except ValueError as e:
+                if "was not found" in str(e) or "not found" in str(e).lower():
+                    log_debug(f"Table {table_name} not found on cloud, will create")
                     self.table = None
                 else:
                     raise
@@ -156,6 +172,10 @@ class LanceDb(VectorDb):
                 )
 
         log_debug(f"Initialized LanceDb with table: '{self.table_name}'")
+
+    def _is_cloud(self) -> bool:
+        """True if connected to LanceDB Cloud (db:// URI or api_key)."""
+        return bool(self.api_key or getenv("LANCEDB_API_KEY") or str(self.uri).startswith("db://"))
 
     def _get_table_names(self, conn: lancedb.DBConnection) -> List[str]:
         """Get table names with backward compatibility for older LanceDB versions."""
@@ -212,6 +232,8 @@ class LanceDb(VectorDb):
 
     def _refresh_sync_connection(self) -> None:
         """Refresh the sync connection to see changes made by async operations."""
+        if self._is_cloud():
+            return
         try:
             # Re-establish sync connection to see async changes
             if self.connection is not None and self.table_name in self._get_table_names(self.connection):
@@ -474,8 +496,9 @@ class LanceDb(VectorDb):
         Returns:
             List[Document]: List of matching documents
         """
-        if self.connection is not None:
-            self.table = self.connection.open_table(name=self.table_name)
+        if self.table is None:
+            logger.error("Table not initialized")
+            return []
 
         results = None
 
@@ -545,7 +568,7 @@ class LanceDb(VectorDb):
 
     def vector_search(
         self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
-    ) -> List[Document]:
+    ) -> Optional[List[Dict[str, Any]]]:
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
             logger.error(f"Error getting embedding for Query: {query}")
@@ -563,11 +586,11 @@ class LanceDb(VectorDb):
         if self.nprobes:
             results.nprobes(self.nprobes)
 
-        return results.to_pandas()
+        return results.to_list()
 
     def hybrid_search(
         self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
-    ) -> List[Document]:
+    ) -> List[Dict[str, Any]]:
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
             logger.error(f"Error getting embedding for Query: {query}")
@@ -594,11 +617,11 @@ class LanceDb(VectorDb):
         if self.nprobes:
             results.nprobes(self.nprobes)
 
-        return results.to_pandas()
+        return results.to_list()
 
     def keyword_search(
         self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
-    ) -> List[Document]:
+    ) -> List[Dict[str, Any]]:
         if self.table is None:
             logger.error("Table not initialized. Please create the table first")
             return []
@@ -612,12 +635,12 @@ class LanceDb(VectorDb):
             query_type="fts",
         ).limit(limit)
 
-        return results.to_pandas()
+        return results.to_list()
 
-    def _build_search_results(self, results) -> List[Document]:  # TODO: typehint pandas?
+    def _build_search_results(self, results: List[Dict[str, Any]]) -> List[Document]:
         search_results: List[Document] = []
         try:
-            for _, item in results.iterrows():
+            for item in results:
                 payload = json.loads(item["payload"])
                 search_results.append(
                     Document(
@@ -656,6 +679,8 @@ class LanceDb(VectorDb):
         # If we have an async table that was created, the table exists
         if self.async_table is not None:
             return True
+        if self._is_cloud():
+            return self.table is not None
         if self.connection is not None:
             return self.table_name in self._get_table_names(self.connection)
         return False
@@ -714,12 +739,12 @@ class LanceDb(VectorDb):
             return False
 
         try:
-            result = self.table.search().select(["payload"]).to_pandas()
-            # Convert the JSON strings in payload column to dictionaries
-            payloads = result["payload"].apply(json.loads)
-
-            # Check if the name exists in any of the payloads
-            return any(payload.get("name") == name for payload in payloads)
+            result = self.table.search().select(["payload"]).to_list()
+            for row in result:
+                payload = json.loads(row["payload"])
+                if payload.get("name") == name:
+                    return True
+            return False
         except Exception as e:
             logger.error(f"Error checking name existence: {e}")
             return False
@@ -734,8 +759,7 @@ class LanceDb(VectorDb):
             return False
 
         try:
-            # Search for the document with the specific ID
-            result = self.table.search().where(f"{self._id} = '{id}'").to_pandas()
+            result = self.table.search().where(f"{self._id} = '{id}'").to_list()
             return len(result) > 0
         except Exception as e:
             logger.error(f"Error checking id existence: {e}")
@@ -764,16 +788,14 @@ class LanceDb(VectorDb):
 
         try:
             total_count = self.table.count_rows()
-            result = self.table.search().select(["id", "payload"]).limit(total_count).to_pandas()
+            result = self.table.search().select(["id", "payload"]).limit(total_count).to_list()
 
-            # Find matching IDs
             ids_to_delete = []
-            for _, row in result.iterrows():
+            for row in result:
                 payload = json.loads(row["payload"])
                 if payload.get("name") == name:
                     ids_to_delete.append(row["id"])
 
-            # Delete matching records
             if ids_to_delete:
                 for doc_id in ids_to_delete:
                     self.table.delete(f"{self._id} = '{doc_id}'")
@@ -795,15 +817,13 @@ class LanceDb(VectorDb):
 
         try:
             total_count = self.table.count_rows()
-            result = self.table.search().select(["id", "payload"]).limit(total_count).to_pandas()
+            result = self.table.search().select(["id", "payload"]).limit(total_count).to_list()
 
-            # Find matching IDs
             ids_to_delete = []
-            for _, row in result.iterrows():
+            for row in result:
                 payload = json.loads(row["payload"])
                 doc_metadata = payload.get("meta_data", {})
 
-                # Check if all metadata key-value pairs match
                 match = True
                 for key, value in metadata.items():
                     if key not in doc_metadata or doc_metadata[key] != value:
@@ -813,7 +833,6 @@ class LanceDb(VectorDb):
                 if match:
                     ids_to_delete.append(row["id"])
 
-            # Delete matching records
             if ids_to_delete:
                 for doc_id in ids_to_delete:
                     self.table.delete(f"{self._id} = '{doc_id}'")
@@ -837,16 +856,14 @@ class LanceDb(VectorDb):
 
         try:
             total_count = self.table.count_rows()
-            result = self.table.search().select(["id", "payload"]).limit(total_count).to_pandas()
+            result = self.table.search().select(["id", "payload"]).limit(total_count).to_list()
 
-            # Find matching IDs
             ids_to_delete = []
-            for _, row in result.iterrows():
+            for row in result:
                 payload = json.loads(row["payload"])
                 if payload.get("content_id") == content_id:
                     ids_to_delete.append(row["id"])
 
-            # Delete matching records
             if ids_to_delete:
                 for doc_id in ids_to_delete:
                     self.table.delete(f"{self._id} = '{doc_id}'")
@@ -870,16 +887,14 @@ class LanceDb(VectorDb):
 
         try:
             total_count = self.table.count_rows()
-            result = self.table.search().select(["id", "payload"]).limit(total_count).to_pandas()
+            result = self.table.search().select(["id", "payload"]).limit(total_count).to_list()
 
-            # Find matching IDs
             ids_to_delete = []
-            for _, row in result.iterrows():
+            for row in result:
                 payload = json.loads(row["payload"])
                 if payload.get("content_hash") == content_hash:
                     ids_to_delete.append(row["id"])
 
-            # Delete matching records
             if ids_to_delete:
                 for doc_id in ids_to_delete:
                     self.table.delete(f"{self._id} = '{doc_id}'")
@@ -903,10 +918,9 @@ class LanceDb(VectorDb):
 
         try:
             total_count = self.table.count_rows()
-            result = self.table.search().select(["id", "payload"]).limit(total_count).to_pandas()
+            result = self.table.search().select(["id", "payload"]).limit(total_count).to_list()
 
-            # Check if any records match the content_hash
-            for _, row in result.iterrows():
+            for row in result:
                 payload = json.loads(row["payload"])
                 if payload.get("content_hash") == content_hash:
                     return True
@@ -932,17 +946,15 @@ class LanceDb(VectorDb):
                 logger.error("Table not initialized")
                 return
 
-            # Get all documents and filter in Python (LanceDB doesn't support JSON operators)
             total_count = self.table.count_rows()
-            results = self.table.search().select(["id", "payload", "vector"]).limit(total_count).to_pandas()
+            results = self.table.search().select(["id", "payload", "vector"]).limit(total_count).to_list()
 
-            if results.empty:
+            if not results:
                 logger.debug("No documents found")
                 return
 
-            # Find matching documents with the given content_id
             matching_rows = []
-            for _, row in results.iterrows():
+            for row in results:
                 payload = json.loads(row["payload"])
                 if payload.get("content_id") == content_id:
                     matching_rows.append(row)
