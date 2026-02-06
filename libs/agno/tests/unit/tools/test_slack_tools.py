@@ -121,7 +121,7 @@ def test_download_file_base64(slack_tools):
     slack_tools.client.files_info.return_value = {
         "file": {"id": "F1", "name": "f.txt", "size": 10, "url_private": "https://files.slack.com/f.txt"}
     }
-    with patch("agno.tools.slack.requests.get") as mock_get:
+    with patch("agno.tools.slack.httpx.get") as mock_get:
         mock_get.return_value.content = b"data"
         mock_get.return_value.raise_for_status = Mock()
         result = slack_tools.download_file("F1")

@@ -104,6 +104,20 @@ def attach_routes(
         # Use the timestamp as the session id, so that each thread is a separate session
         session_id = ts
 
+        # app_mention events don't include file attachments.
+        # Fetch the full message to get files.
+        if event_type == "app_mention" and not event.get("files"):
+            try:
+                slack_tools = SlackTools()
+                result = slack_tools.client.conversations_history(
+                    channel=channel_id, latest=ts, inclusive=True, limit=1
+                )
+                messages = result.get("messages", [])
+                if messages and messages[0].get("files"):
+                    event = {**event, "files": messages[0]["files"]}
+            except Exception as e:
+                log_error(f"Failed to fetch files for app_mention: {e}")
+
         files, images = _download_event_files(event)
 
         if agent:
@@ -172,11 +186,12 @@ def attach_routes(
 
         if hasattr(response, "images") and response.images:
             for image in response.images:
-                if image.content:
+                content_bytes = image.get_content_bytes()
+                if content_bytes:
                     try:
                         slack_tools.upload_file(
                             channel=channel_id,
-                            content=image.content,
+                            content=content_bytes,
                             filename=getattr(image, "filename", None) or "image.png",
                             thread_ts=thread_ts,
                         )
@@ -185,11 +200,12 @@ def attach_routes(
 
         if hasattr(response, "files") and response.files:
             for file in response.files:
-                if file.content:
+                content_bytes = file.get_content_bytes()
+                if content_bytes:
                     try:
                         slack_tools.upload_file(
                             channel=channel_id,
-                            content=file.content,
+                            content=content_bytes,
                             filename=getattr(file, "filename", None) or "file",
                             thread_ts=thread_ts,
                         )
@@ -198,11 +214,12 @@ def attach_routes(
 
         if hasattr(response, "videos") and response.videos:
             for video in response.videos:
-                if video.content:
+                content_bytes = video.get_content_bytes()
+                if content_bytes:
                     try:
                         slack_tools.upload_file(
                             channel=channel_id,
-                            content=video.content,
+                            content=content_bytes,
                             filename=getattr(video, "filename", None) or "video.mp4",
                             thread_ts=thread_ts,
                         )
@@ -211,11 +228,12 @@ def attach_routes(
 
         if hasattr(response, "audio") and response.audio:
             for audio in response.audio:
-                if audio.content:
+                content_bytes = audio.get_content_bytes()
+                if content_bytes:
                     try:
                         slack_tools.upload_file(
                             channel=channel_id,
-                            content=audio.content,
+                            content=content_bytes,
                             filename=getattr(audio, "filename", None) or "audio.mp3",
                             thread_ts=thread_ts,
                         )

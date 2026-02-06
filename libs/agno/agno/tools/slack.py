@@ -4,7 +4,7 @@ from os import getenv
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
-import requests
+import httpx
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, logger
@@ -176,7 +176,7 @@ class SlackTools(Toolkit):
 
             # Download file content
             headers = {"Authorization": f"Bearer {self.token}"}
-            download_response = requests.get(url_private, headers=headers, timeout=30)
+            download_response = httpx.get(url_private, headers=headers, timeout=30)
             download_response.raise_for_status()
             content = download_response.content
 
@@ -212,7 +212,7 @@ class SlackTools(Toolkit):
         except SlackApiError as e:
             logger.error(f"Error downloading file: {e}")
             return json.dumps({"error": str(e)})
-        except requests.RequestException as e:
+        except httpx.HTTPError as e:
             logger.error(f"Error downloading file content: {e}")
             return json.dumps({"error": f"HTTP error: {str(e)}"})
 
@@ -227,11 +227,11 @@ class SlackTools(Toolkit):
                 return None
 
             headers = {"Authorization": f"Bearer {self.token}"}
-            download_response = requests.get(url_private, headers=headers, timeout=30)
+            download_response = httpx.get(url_private, headers=headers, timeout=30)
             download_response.raise_for_status()
             return download_response.content
 
-        except (SlackApiError, requests.RequestException) as e:
+        except (SlackApiError, httpx.HTTPError) as e:
             logger.error(f"Error downloading file bytes: {e}")
             return None
 
