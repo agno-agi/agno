@@ -35,7 +35,8 @@ class SlackTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
-        """Initialize the SlackTools class.
+        """
+        Initialize the SlackTools class.
 
         Args:
             token (str): The Slack API token. Defaults to the SLACK_TOKEN environment variable.
