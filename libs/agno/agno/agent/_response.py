@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import deque
 from typing import (
     TYPE_CHECKING,
+    Any,
     AsyncIterator,
     Dict,
     Iterator,
