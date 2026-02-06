@@ -1,3 +1,4 @@
+import hmac
 from os import getenv
 from typing import List, Optional, Set
 
@@ -82,7 +83,14 @@ def get_authentication_dependency(settings: AgnoAPISettings):
 
         token = credentials.credentials
 
-        # Verify the token
+        # Check internal service token (used by scheduler executor)
+        internal_token = getattr(request.app.state, "internal_service_token", None)
+        if internal_token and hmac.compare_digest(token, internal_token):
+            request.state.authenticated = True
+            request.state.scopes = ["agent_os:admin"]
+            return True
+
+        # Verify the token against security key
         if token != settings.os_security_key:
             raise HTTPException(status_code=401, detail="Invalid authentication token")
 
