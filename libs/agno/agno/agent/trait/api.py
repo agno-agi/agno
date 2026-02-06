@@ -430,6 +430,18 @@ class AgentApiTrait(AgentTraitBase):
         if self.db is None:
             return
 
+        # Check DB support early (before building the replay record)
+        if self._has_async_db():
+            if not self._async_db_supports_replay():
+                raise RuntimeError(
+                    f"Run replay is enabled but {type(self.db).__name__} does not support replay storage."
+                )
+        else:
+            if not self._sync_db_supports_replay():
+                raise RuntimeError(
+                    f"Run replay is enabled but {type(self.db).__name__} does not support replay storage."
+                )
+
         run_engine = self._get_run_engine(run_response.run_id)
         replay_record = prepare_replay_record(
             run_response=run_response,
@@ -441,16 +453,8 @@ class AgentApiTrait(AgentTraitBase):
             return
 
         if self._has_async_db():
-            if not self._async_db_supports_replay():
-                raise RuntimeError(
-                    f"Run replay is enabled but {type(self.db).__name__} does not support replay storage."
-                )
             await self.db.upsert_replay(run_response.run_id, replay_record)  # type: ignore
         else:
-            if not self._sync_db_supports_replay():
-                raise RuntimeError(
-                    f"Run replay is enabled but {type(self.db).__name__} does not support replay storage."
-                )
             self.db.upsert_replay(run_response.run_id, replay_record)  # type: ignore
 
     def _cleanup_and_store(

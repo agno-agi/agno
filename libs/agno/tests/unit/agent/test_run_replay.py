@@ -110,6 +110,18 @@ def test_replay_written_on_error_in_errors_only_mode(tmp_path):
     assert replay["mode"] == ReplayMode.ERRORS_ONLY.value
 
 
+def test_replay_not_written_on_success_in_errors_only_mode(tmp_path):
+    db, _ = _persist_run(
+        tmp_path=tmp_path,
+        replay_mode=ReplayMode.ERRORS_ONLY,
+        status=RunStatus.completed,
+        content="ok",
+        run_id="run-ok",
+        db_name="run-ok",
+    )
+    assert db.get_replay("run-ok") is None
+
+
 def test_replay_truncation_limits_payload_size():
     run_response = _build_run_output(
         run_id="run-truncate",

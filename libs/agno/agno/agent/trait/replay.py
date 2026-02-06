@@ -33,6 +33,9 @@ def parse_replay_mode(mode: Optional[Union[str, ReplayMode]]) -> ReplayMode:
         for replay_mode in ReplayMode:
             if replay_mode.value == normalised:
                 return replay_mode
+        from agno.utils.log import log_warning
+
+        log_warning(f"Unknown replay_mode '{mode}', falling back to 'off'. Expected one of: {[m.value for m in ReplayMode]}")
     return ReplayMode.OFF
 
 
