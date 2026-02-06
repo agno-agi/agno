@@ -106,6 +106,33 @@ async def db_lifespan(app: FastAPI, agent_os: "AgentOS"):
     await agent_os._close_databases()
 
 
+def _db_supports_scheduler(db: Union[BaseDb, AsyncBaseDb]) -> bool:
+    """Return True when a DB implementation overrides required scheduler methods."""
+    base_cls: Any
+    if isinstance(db, AsyncBaseDb):
+        base_cls = AsyncBaseDb
+    elif isinstance(db, BaseDb):
+        base_cls = BaseDb
+    else:
+        return False
+
+    required_methods = (
+        "claim_due_schedule",
+        "release_schedule",
+        "create_schedule_run",
+        "update_schedule_run",
+        "get_schedule",
+    )
+
+    for method_name in required_methods:
+        db_method = getattr(type(db), method_name, None)
+        base_method = getattr(base_cls, method_name, None)
+        if db_method is None or db_method is base_method:
+            return False
+
+    return True
+
+
 @asynccontextmanager
 async def scheduler_lifespan(app: FastAPI, agent_os: "AgentOS"):
     """Manage scheduler lifecycle - start polling on startup, stop on shutdown.
@@ -128,10 +155,17 @@ async def scheduler_lifespan(app: FastAPI, agent_os: "AgentOS"):
         yield
         return
 
-    # Verify the db has scheduler methods
+    # Verify the DB supports scheduler methods
     if not (isinstance(db, BaseDb) or isinstance(db, AsyncBaseDb)):
         log_warning(
             "Scheduler enabled but database does not support scheduler operations. Use BaseDb or AsyncBaseDb instance."
+        )
+        yield
+        return
+    if not _db_supports_scheduler(db):
+        log_warning(
+            "Scheduler enabled but database does not implement scheduler operations. "
+            "Use SqliteDb/AsyncSqliteDb/PostgresDb/AsyncPostgresDb."
         )
         yield
         return
@@ -143,6 +177,7 @@ async def scheduler_lifespan(app: FastAPI, agent_os: "AgentOS"):
         poll_interval=agent_os.scheduler_poll_interval,
     )
     agent_os._scheduler_poller = poller
+    app.state.scheduler_poller = poller
 
     # Start polling in background
     poll_task = asyncio.create_task(poller.start(), name="scheduler-poller")
@@ -158,6 +193,8 @@ async def scheduler_lifespan(app: FastAPI, agent_os: "AgentOS"):
             await poll_task
         except asyncio.CancelledError:
             pass
+        agent_os._scheduler_poller = None
+        app.state.scheduler_poller = None
         log_info("Scheduler stopped")
 
 

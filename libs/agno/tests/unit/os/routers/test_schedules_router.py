@@ -1,5 +1,7 @@
 """Unit tests for schedule router endpoints."""
 
+from unittest.mock import AsyncMock
+
 import pytest
 from fastapi import HTTPException
 
@@ -292,3 +294,15 @@ class TestScheduleEndpoints:
         data = resp.json()
         assert data["total"] == 0
         assert data["runs"] == []
+
+    def test_trigger_uses_runtime_poller(self, client, schedule_app):
+        resp = client.post("/schedules", json=_VALID_CREATE)
+        schedule_id = resp.json()["id"]
+
+        fake_poller = type("FakePoller", (), {})()
+        fake_poller.trigger_schedule = AsyncMock(return_value=True)
+        schedule_app.state.scheduler_poller = fake_poller
+
+        resp = client.post(f"/schedules/{schedule_id}/trigger")
+        assert resp.status_code == 200
+        fake_poller.trigger_schedule.assert_awaited_once_with(schedule_id)

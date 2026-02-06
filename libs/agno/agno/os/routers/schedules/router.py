@@ -5,7 +5,7 @@ from inspect import isawaitable
 from typing import TYPE_CHECKING, Any, Awaitable, Dict, List, Optional, Tuple, TypeVar, Union, cast
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.schemas.scheduler import Schedule, ScheduleRun
@@ -430,7 +430,7 @@ def get_schedule_router(
         description="Manually trigger a schedule to run immediately, bypassing the cron timing.",
         response_model=TriggerResponse,
     )
-    async def trigger_schedule(schedule_id: str) -> TriggerResponse:
+    async def trigger_schedule(schedule_id: str, request: Request) -> TriggerResponse:
         db = await get_db(dbs, db_id=db_id)
         if db is None:
             raise HTTPException(status_code=500, detail="No database available")
@@ -439,8 +439,10 @@ def get_schedule_router(
         if schedule is None:
             raise HTTPException(status_code=404, detail=f"Schedule '{schedule_id}' not found")
 
-        if poller is not None:
-            triggered = await poller.trigger_schedule(schedule_id)
+        runtime_poller = poller or getattr(request.app.state, "scheduler_poller", None)
+
+        if runtime_poller is not None:
+            triggered = await runtime_poller.trigger_schedule(schedule_id)
             if not triggered:
                 raise HTTPException(status_code=500, detail="Failed to trigger schedule")
         else:
