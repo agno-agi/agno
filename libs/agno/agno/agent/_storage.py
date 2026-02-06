@@ -1306,13 +1306,15 @@ async def aset_session_name(
     )
 
 
-def generate_session_name(agent: Agent, session: AgentSession) -> str:
+def generate_session_name(agent: Agent, session: AgentSession, max_retries: int = 3, _attempt: int = 0) -> str:
     """
     Generate a name for the session using the first 6 messages from the memory
 
     Args:
         agent: The Agent instance.
         session (AgentSession): The session to generate a name for.
+        max_retries: Maximum number of retries if generation fails.
+        _attempt: Current attempt number (used internally for recursion).
     Returns:
         str: The generated session name.
     """
@@ -1341,12 +1343,16 @@ def generate_session_name(agent: Agent, session: AgentSession) -> str:
     generated_name = agent.model.response(messages=generate_name_messages)
     content = generated_name.content
     if content is None:
+        if _attempt >= max_retries:
+            return "New Session"
         log_error("Generated name is None. Trying again.")
-        return generate_session_name(agent, session=session)
+        return generate_session_name(agent, session=session, max_retries=max_retries, _attempt=_attempt + 1)
 
     if len(content.split()) > 5:
+        if _attempt >= max_retries:
+            return " ".join(content.split()[:5])
         log_error("Generated name is too long. It should be less than 5 words. Trying again.")
-        return generate_session_name(agent, session=session)
+        return generate_session_name(agent, session=session, max_retries=max_retries, _attempt=_attempt + 1)
     return content.replace('"', "").strip()
 
 
