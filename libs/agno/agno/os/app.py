@@ -1035,12 +1035,14 @@ class AgentOS:
 
         if duplicates:
             unique_duplicates = list(set(duplicates))
-            raise ValueError(
+            error_msg = (
                 f"Duplicate knowledge instance names detected: {unique_duplicates}. "
                 "Each knowledge instance must have a unique name for proper content isolation. "
                 "Content is filtered by the 'linked_to' field which uses the knowledge instance name. "
                 "Duplicate names will cause content from different instances to be mixed together."
             )
+            log_error(error_msg)
+            raise ValueError(error_msg)
 
     def _get_session_config(self) -> SessionConfig:
         session_config = self.config.session if self.config and self.config.session else SessionConfig()
@@ -1094,25 +1096,13 @@ class AgentOS:
         if knowledge_config.knowledge_instances is None:
             knowledge_config.knowledge_instances = []
 
-        # Track seen knowledge names to detect duplicates
-        seen_names: set = set()
-
         # Build knowledge_instances list
+        # Note: Duplicate names are caught by _validate_knowledge_instance_names() at startup
         for knowledge in self.knowledge_instances:
             contents_db = getattr(knowledge, "contents_db", None)
             if contents_db:
                 # Use knowledge name or generate a fallback name from db_id
                 knowledge_name = getattr(knowledge, "name", None) or f"knowledge_{contents_db.id}"
-
-                # Warn if duplicate name is detected (should be caught by startup validation)
-                if knowledge_name in seen_names:
-                    log_warning(
-                        f"Duplicate knowledge base name '{knowledge_name}' detected. "
-                        "This will cause content isolation issues - content from different instances "
-                        "with the same name will be mixed together. Each knowledge instance must have a unique name."
-                    )
-                    continue
-                seen_names.add(knowledge_name)
 
                 # Generate a deterministic ID based on name and db_id
                 knowledge_id = _generate_knowledge_id(knowledge_name, contents_db.id)
