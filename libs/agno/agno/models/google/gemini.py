@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import json
+import mimetypes
 import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
@@ -966,26 +967,30 @@ class Gemini(Model):
 
     def _format_file_for_message(self, file: File) -> Optional[Part]:
         # Case 1: File is a bytes object
-        if file.content and isinstance(file.content, bytes) and file.mime_type:
-            return Part.from_bytes(mime_type=file.mime_type, data=file.content)
+        if file.content and isinstance(file.content, bytes):
+            _mime = file.mime_type or mimetypes.guess_type(file.filename or "")[0] or "application/pdf"
+            return Part.from_bytes(mime_type=_mime, data=file.content)
 
         # Case 2: File is a URL
         elif file.url is not None:
             # Case 2a: GCS URI (gs://) - pass directly to Gemini (supports up to 2GB)
-            if file.url.startswith("gs://") and file.mime_type:
-                return Part.from_uri(file_uri=file.url, mime_type=file.mime_type)
+            if file.url.startswith("gs://"):
+                _mime = file.mime_type or mimetypes.guess_type(file.url)[0] or "application/pdf"
+                return Part.from_uri(file_uri=file.url, mime_type=_mime)
 
-            # Case 2b: HTTPS URL with mime_type - pass directly to Gemini (supports up to 100MB)
-            # This enables pre-signed URLs from S3/Azure and public URLs without downloading
+            # Case 2b: HTTPS URL with known mime_type - pass directly to Gemini (supports up to 100MB)
+            # URLs without mime_type fall through to Case 2c (download + detect) because
+            # Gemini servers may not be able to access private/auth URLs directly.
             if file.url.startswith("https://") and file.mime_type:
                 return Part.from_uri(file_uri=file.url, mime_type=file.mime_type)
 
-            # Case 2c: URL without mime_type - download and detect (existing behavior)
+            # Case 2c: Other URL schemes - download and detect
             url_content = file.file_url_content
             if url_content is not None:
                 content, mime_type = url_content
-                if mime_type and content:
-                    return Part.from_bytes(mime_type=mime_type, data=content)
+                if content:
+                    _mime = mime_type or mimetypes.guess_type(file.url)[0] or "application/pdf"
+                    return Part.from_bytes(mime_type=_mime, data=content)
             log_warning(f"Failed to download file from {file.url}")
             return None
 
@@ -994,19 +999,10 @@ class Gemini(Model):
             file_path = file.filepath if isinstance(file.filepath, Path) else Path(file.filepath)
             if file_path.exists() and file_path.is_file():
                 if file_path.stat().st_size < 20 * 1024 * 1024:  # 20MB in bytes
-                    if file.mime_type:
-                        file_content = file_path.read_bytes()
-                        if file_content:
-                            return Part.from_bytes(mime_type=file.mime_type, data=file_content)
-                    else:
-                        import mimetypes
-
-                        mime_type_guess = mimetypes.guess_type(file_path)[0]
-                        if mime_type_guess is not None:
-                            file_content = file_path.read_bytes()
-                            if file_content:
-                                mime_type_str: str = str(mime_type_guess)
-                                return Part.from_bytes(mime_type=mime_type_str, data=file_content)
+                    file_content = file_path.read_bytes()
+                    if file_content:
+                        _mime = file.mime_type or mimetypes.guess_type(str(file_path))[0] or "application/pdf"
+                        return Part.from_bytes(mime_type=_mime, data=file_content)
                     return None
                 else:
                     clean_file_name = f"files/{file_path.stem.lower().replace('_', '')}"
