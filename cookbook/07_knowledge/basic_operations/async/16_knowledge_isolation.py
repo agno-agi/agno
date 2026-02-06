@@ -72,8 +72,8 @@ async def main():
     )
 
     # Each agent only searches its own knowledge base
-    await company_agent.aprint_response("What skills are listed?", markdown=True)
-    await personal_agent.aprint_response("What skills are listed?", markdown=True)
+    await company_agent.aprint_response("What skills are listed for the candidates in your knowledge base?", markdown=True)
+    await personal_agent.aprint_response("What skills are listed for the candidates in your knowledge base?", markdown=True)
 
 
 if __name__ == "__main__":

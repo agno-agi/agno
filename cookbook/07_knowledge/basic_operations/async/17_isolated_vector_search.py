@@ -81,8 +81,8 @@ async def main():
     )
 
     # Each agent only retrieves from its own knowledge
-    await engineering_agent.aprint_response("What skills are listed?", markdown=True)
-    await sales_agent.aprint_response("What skills are listed?", markdown=True)
+    await engineering_agent.aprint_response("What skills are listed for the candidates in your knowledge base?", markdown=True)
+    await sales_agent.aprint_response("What skills are listed for the candidates in your knowledge base?", markdown=True)
 
 
 if __name__ == "__main__":
