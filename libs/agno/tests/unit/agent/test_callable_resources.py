@@ -112,6 +112,46 @@ def test_callable_resource_cache_can_be_disabled():
     assert knowledge_factory_calls == 2
 
 
+def test_set_tools_accepts_callable_factory_and_replaces_cached_factory_result():
+    old_factory_calls = 0
+    new_factory_calls = 0
+
+    def old_tool() -> str:
+        return "old"
+
+    def new_tool() -> str:
+        return "new"
+
+    def old_factory(**kwargs):
+        nonlocal old_factory_calls
+        old_factory_calls += 1
+        return [old_tool]
+
+    def new_factory(**kwargs):
+        nonlocal new_factory_calls
+        new_factory_calls += 1
+        return [new_tool]
+
+    agent = Agent(model=OpenAIChat(id="gpt-4o-mini"), tools=old_factory, cache_callables=True)
+
+    # Seed cache for user-1 using old factory.
+    ctx_old = RunContext(run_id=str(uuid4()), session_id="session-1", user_id="user-1")
+    agent._resolve_runtime_resources(ctx_old)
+    assert old_factory_calls == 1
+    assert new_factory_calls == 0
+    assert callable(agent.tools)
+
+    # Replace callable factory and ensure stale cache is not reused.
+    agent.set_tools(new_factory)
+    assert callable(agent.tools)
+    ctx_new = RunContext(run_id=str(uuid4()), session_id="session-2", user_id="user-1")
+    agent._resolve_runtime_resources(ctx_new)
+
+    assert old_factory_calls == 1
+    assert new_factory_calls == 1
+    assert ctx_new.tools == [new_tool]
+
+
 def test_callable_resource_cache_keys_can_be_overridden_per_kind():
     tool_factory_calls = 0
     knowledge_factory_calls = 0

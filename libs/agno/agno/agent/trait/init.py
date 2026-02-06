@@ -5,6 +5,7 @@ from typing import (
     Any,
     Callable,
     Dict,
+    List,
     Literal,
     Optional,
     Sequence,
@@ -246,9 +247,18 @@ class AgentInitTrait(AgentTraitBase):
             self.tools = []
         self.tools.append(tool)
 
-    def set_tools(self, tools: Sequence[Union[Toolkit, Callable, Function, Dict]]):
+    def set_tools(
+        self,
+        tools: Union[
+            Sequence[Union[Toolkit, Callable, Function, Dict]],
+            Callable[..., List[Union[Toolkit, Callable, Function, Dict]]],
+        ],
+    ):
         self._callable_tools_cache.clear()
-        self.tools = list(tools) if tools else []
+        if callable(tools):
+            self.tools = tools
+        else:
+            self.tools = list(tools) if tools else []
 
     async def _connect_mcp_tools(
         self, tools: Optional[Sequence[Union[Toolkit, Callable, Function, Dict]]] = None
