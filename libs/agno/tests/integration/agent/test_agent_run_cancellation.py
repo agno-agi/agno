@@ -523,7 +523,7 @@ def redis_cancellation_manager(fakeredis_clients):
     set_cancellation_manager(original_manager)
 
 
-@patch("agno.agent.agent.cleanup_run", return_value=None)
+@patch("agno.agent._run.cleanup_run", return_value=None)
 def test_cancel_agent_with_redis_sync_streaming(
     cleanup_run_mock, shared_db, redis_cancellation_manager: BaseRunCancellationManager
 ):
@@ -576,7 +576,7 @@ def test_cancel_agent_with_redis_sync_streaming(
 
 
 @pytest.mark.asyncio
-@patch("agno.agent.agent.acleanup_run", return_value=None)
+@patch("agno.agent._run.acleanup_run", return_value=None)
 async def test_cancel_agent_with_redis_async_streaming(
     cleanup_run_mock, shared_db, redis_cancellation_manager: BaseRunCancellationManager
 ):
@@ -638,7 +638,7 @@ async def test_cancel_agent_with_redis_async_streaming(
 
 
 @pytest.mark.asyncio
-@patch("agno.agent.agent.acleanup_run", return_value=None)
+@patch("agno.agent._run.acleanup_run", return_value=None)
 async def test_cancel_agent_with_redis_async_non_streaming(
     cleanup_run_mock, shared_db, redis_cancellation_manager: BaseRunCancellationManager
 ):
