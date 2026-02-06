@@ -1,214 +1,166 @@
-# Agno Demo
+# Agno v2.5 Demo
 
-This demo cookbook showcases a range of examples built using Agno.
+6 self-learning agents, 2 teams, and 2 workflows served via AgentOS. Each agent learns from interactions using LearningMachine with all three subsystems (user profile, user memory, learned knowledge) in agentic mode.
 
-## What's Inside
+## Architecture
 
-### Agents
+All agents share a common foundation:
 
-| Agent | Description |
-|-------|-------------|
-| **PaL Agent** | Plan and Learn - stateful planning with session state and learning capture |
-| **Research Agent** | Professional research with rigorous methodology and source verification |
-| **Finance Agent** | Financial data retrieval and analysis with YFinance |
-| **Deep Knowledge Agent** | RAG with iterative reasoning and knowledge base search |
-| **Web Intelligence Agent** | Website analysis and competitive intelligence |
-| **Report Writer Agent** | Professional report generation and synthesis |
-| **Knowledge Agent** | General RAG agent with knowledge base (uses docs.agno.com as example) |
-| **MCP Agent** | General MCP integration (uses docs.agno.com/mcp as example) |
+- **Model**: `OpenAIResponses(id="gpt-5.2")`
+- **Storage**: PostgreSQL + PgVector for knowledge, learnings, and chat history
+- **Knowledge**: Dual knowledge system -- static curated knowledge + dynamic learnings discovered at runtime
+- **Search**: Hybrid search (semantic + keyword) with OpenAI embeddings (`text-embedding-3-small`)
+- **Learning**: `LearningMachine` in `AGENTIC` mode -- agents decide when to save learnings
+- **Research**: Exa MCP tools for web search, company research, people search, and crawling
 
-### Teams (2 total)
+Three agents (Dash, Scout, Seek) have reasoning variants that add `ReasoningTools` for multi-step reasoning on complex queries. This brings the total to 9 agents registered in AgentOS.
 
-| Team | Members | Use Case |
-|------|---------|----------|
-| **Investment Team** | Finance + Research + Report Writer | Wall Street quality investment research |
-| **Due Diligence Team** | Research + Web Intel + Finance + Devil's Advocate + Report Writer | Rigorous due diligence with debate |
-
-### Workflows (2 total)
-
-| Workflow | Phases | Use Case |
-|----------|--------|----------|
-| **Deep Research Workflow** | Decomposition -> Parallel Research -> Verification -> Synthesis | Professional research reports |
-| **Startup Analyst Workflow** | Snapshot -> Deep Analysis -> Critical Review -> Report | VC-style due diligence |
-
----
-
-## Getting Started
-
-### 1. Clone the repository
-
-```shell
-git clone https://github.com/agno-agi/agno.git
-cd agno
+```
+cookbook/demo/
+├── agents/
+│   ├── dash/          # Data agent (F1 dataset, SQL, dual knowledge)
+│   ├── scout/         # Knowledge navigator (mock S3, grep-like search)
+│   ├── pal/           # Second brain (DuckDB + web research)
+│   ├── seek/          # Deep researcher (multi-source, structured reports)
+│   ├── dex/           # Relationship intelligence (DuckDB people profiles)
+│   └── ace/           # Response agent (tone adaptation, style learning)
+├── teams/
+│   ├── research/      # Seek + Scout + Dex (coordinate mode)
+│   └── support/       # Ace + Scout + Dash (route mode)
+├── workflows/
+│   ├── daily_brief/   # Calendar + Email + News (parallel) -> Synthesize
+│   └── meeting_prep/  # Parse -> Research (parallel) -> Synthesize
+├── evals/             # 16 test cases across all components
+├── config.yaml        # Quick prompts for AgentOS UI
+├── db.py              # Shared database configuration
+├── registry.py        # Shared tools, models, and database for AgentOS
+└── run.py             # AgentOS entrypoint (localhost:7777)
 ```
 
-### 2. Create a virtual environment
+## Agents
 
-```shell
-uv venv .venvs/demo --python 3.12
-source .venvs/demo/bin/activate
-```
+### Dash - Self-Learning Data Agent
 
-### 3. Install dependencies
+Analyzes an F1 racing dataset via SQL. Provides insights and context, not just raw query results. Remembers column quirks, date formats, and successful queries across sessions.
 
-```shell
-uv pip install -r cookbook/demo/requirements.in
-```
+- **Tools**: SQLTools, introspect_schema, save_validated_query, Exa MCP
+- **Knowledge**: Table schemas, validated queries, business rules + dynamic learnings
+- **Showcases**: Dual knowledge (curated + learned), LearningMachine, context injection
 
-### 4. Run Postgres with PgVector
+### Scout - Enterprise Knowledge Navigator
 
-We use PostgreSQL for storing sessions, memories, metrics, evals, and knowledge. Install [Docker Desktop](https://docs.docker.com/desktop/install/mac-install/) and run:
+Finds information across company S3 storage using grep-like search and full document reads. Knows what sources exist and routes queries to the right bucket.
 
-```shell
+- **Tools**: S3 connector (mock), list_sources, get_metadata, save_intent_discovery, Exa MCP
+- **Knowledge**: Source registry, intent routing, known patterns + dynamic learnings
+- **Showcases**: Custom connectors, intent routing, transparent "not found" responses
+
+### Pal - Personal AI Second Brain
+
+Captures and retrieves personal knowledge: notes, bookmarks, people, meetings, projects. Uses DuckDB for structured content and the learning system for schema and research findings.
+
+- **Tools**: DuckDbTools, Exa MCP (web_search, company_research, people_search, crawling, code_context)
+- **Storage**: DuckDB (`pal.db`) for user content, PgVector for learnings
+- **Showcases**: Dual storage (DuckDB + PgVector), data separation (user content vs. learnings)
+
+### Seek - Deep Research Agent
+
+Conducts exhaustive multi-source research and produces structured, well-sourced reports. Follows a 4-phase methodology: scope, gather, analyze, synthesize.
+
+- **Tools**: Exa MCP, DuckDuckGoTools
+- **Knowledge**: Best sources, methodologies + dynamic learnings on source reliability
+- **Showcases**: Multi-tool research, structured report output, source confidence tracking
+
+### Dex - Relationship Intelligence Agent
+
+Builds living profiles of people you interact with. Tracks interactions, maps connections, and prepares meeting briefs with full context.
+
+- **Tools**: DuckDbTools, Exa MCP (people_search, company_research, crawling)
+- **Storage**: DuckDB (`dex.db`) with people, interactions, and connections tables
+- **Showcases**: Relationship mapping, meeting prep, interaction logging
+
+### Ace - Response Agent
+
+Drafts replies to emails, messages, and questions. Learns your tone, communication style, and preferences for different contexts (client vs. team vs. exec).
+
+- **Tools**: Exa MCP (web_search, company_research, crawling)
+- **Knowledge**: Communication guidelines + dynamic learnings on style preferences
+- **Showcases**: Context-aware tone adaptation, style learning from feedback
+
+## Teams
+
+| Team | Members | Mode | Purpose |
+|------|---------|------|---------|
+| **Research Team** | Seek + Scout + Dex | Coordinate | Breaks research into dimensions (external, internal, people) and delegates to specialists. Synthesizes findings into a comprehensive report. |
+| **Support Team** | Ace + Scout + Dash | Route | Routes questions to the right specialist: data/metrics to Dash, internal docs to Scout, drafting to Ace. |
+
+## Workflows
+
+| Workflow | Steps | Purpose |
+|----------|-------|---------|
+| **Daily Brief** | 3 parallel gatherers (calendar, email, news) then 1 synthesizer | Morning briefing with priorities, schedule highlights, inbox summary, and industry news. Uses mock calendar/email data and live DuckDuckGo for news. |
+| **Meeting Prep** | Parse meeting, then 3 parallel researchers (attendees, internal docs, external context), then 1 synthesizer | Deep preparation with attendee context, key data points, talking points, and anticipated questions. Uses mock meeting data and live DuckDuckGo. |
+
+## Setup
+
+```bash
+# 1. Set up the demo virtual environment
+./scripts/demo_setup.sh
+
+# 2. Start PostgreSQL with pgvector
 ./cookbook/scripts/run_pgvector.sh
+
+# 3. Load data for Dash (F1 dataset)
+.venvs/demo/bin/python -m cookbook.demo.agents.dash.scripts.load_data
+.venvs/demo/bin/python -m cookbook.demo.agents.dash.scripts.load_knowledge
+
+# 4. Load knowledge for Scout (enterprise docs)
+.venvs/demo/bin/python -m cookbook.demo.agents.scout.scripts.load_knowledge
 ```
 
-### 5. Export API Keys
+## Environment Variables
 
-```shell
-export OPENAI_API_KEY=***
-export PARALLEL_API_KEY=***
+```bash
+export OPENAI_API_KEY="..."      # Required for all agents
+export EXA_API_KEY="..."         # Required for Exa MCP tools
+export DATABASE_URL="..."        # Optional (defaults to postgresql+psycopg://ai:ai@localhost:5532/ai)
 ```
 
-### 6. Run the demo
+## Running
 
-```shell
-python cookbook/demo/run.py
+### Via AgentOS
+
+```bash
+cd cookbook/demo && ../../.venvs/demo/bin/python run.py
 ```
 
-### 7. Connect to the AgentOS UI
+Then connect via [os.agno.com](https://os.agno.com) pointing to `http://localhost:7777`.
 
-- Open [os.agno.com](https://os.agno.com/)
-- Connect to `http://localhost:7777`
+### Individual Agents
 
----
-
-## Running Individual Agents
-
-Every agent can be run directly with demo tests:
-
-```shell
-# Run PaL Agent with demo tests
-python cookbook/demo/agents/pal_agent.py
-
-# Run with a specific query
-python cookbook/demo/agents/pal_agent.py "Help me compare cloud providers"
-
-# Run other agents
-python cookbook/demo/agents/research_agent.py
-python cookbook/demo/agents/finance_agent.py
-python cookbook/demo/agents/web_intelligence_agent.py
-python cookbook/demo/agents/report_writer_agent.py
-python cookbook/demo/agents/deep_knowledge_agent.py
-python cookbook/demo/agents/knowledge_agent.py
-python cookbook/demo/agents/mcp_agent.py
+```bash
+.venvs/demo/bin/python cookbook/demo/agents/dash/agent.py
+.venvs/demo/bin/python cookbook/demo/agents/scout/agent.py
+.venvs/demo/bin/python cookbook/demo/agents/pal/agent.py
+.venvs/demo/bin/python cookbook/demo/agents/seek/agent.py
+.venvs/demo/bin/python cookbook/demo/agents/dex/agent.py
+.venvs/demo/bin/python cookbook/demo/agents/ace/agent.py
 ```
 
----
+### Evals
 
-## Showcase Demos
+16 test cases covering all agents, both teams, and both workflows. Uses string-matching validation with `all` or `any` match modes.
 
-### PaL Agent (Plan and Learn)
+```bash
+# Run all evals
+cd cookbook/demo && ../../.venvs/demo/bin/python -m evals.run_evals
 
-Ask it to build something complex and watch it plan, execute, and learn:
+# Filter by agent
+cd cookbook/demo && ../../.venvs/demo/bin/python -m evals.run_evals --agent dash
 
+# Filter by category
+cd cookbook/demo && ../../.venvs/demo/bin/python -m evals.run_evals --category dash_basic
+
+# Verbose mode (show full responses on failure)
+cd cookbook/demo && ../../.venvs/demo/bin/python -m evals.run_evals --verbose
 ```
-"Help me decide between Supabase, Firebase, and PlanetScale for my startup"
-```
-
-The agent will:
-1. Create a structured plan with success criteria
-2. Research each option
-3. Compare and analyze
-4. Save learnings for future tasks
-
-### Investment Team
-
-Get Wall Street quality research:
-
-```
-"Complete investment analysis of NVIDIA"
-```
-
-The team coordinates:
-- Finance Agent gets quantitative data
-- Research Agent gets qualitative insights
-- Report Writer synthesizes into a professional report
-
-### Due Diligence Team
-
-Rigorous analysis with debate:
-
-```
-"Due diligence on Anthropic - should we invest?"
-```
-
-The team includes:
-- Research, Web Intel, and Finance gather evidence
-- Devil's Advocate challenges findings
-- Report Writer synthesizes with disagreements noted
-
-### Deep Research Workflow
-
-Professional-grade research:
-
-```
-"Deep research: What's the future of AI agents in enterprise?"
-```
-
-4-phase process:
-1. Topic decomposition
-2. Parallel research from multiple sources
-3. Fact verification
-4. Report synthesis
-
-### Startup Analyst Workflow
-
-VC-style due diligence:
-
-```
-"Analyze this startup: Anthropic"
-```
-
-4-phase process:
-1. Quick snapshot (profile, market, news)
-2. Deep strategic analysis
-3. Critical review (challenge findings)
-4. Final report with verdict
-
----
-
-## Loading Knowledge Bases
-
-### Knowledge Agent
-
-Load the knowledge base (runs automatically on first use):
-
-```shell
-python cookbook/demo/agents/knowledge_agent.py
-```
-
-### Deep Knowledge Agent
-
-Load knowledge for deep reasoning:
-
-```shell
-python cookbook/demo/agents/deep_knowledge_agent.py
-```
-
----
-
-## Technical Details
-
-- **Model**: All agents use GPT-5.2
-- **Database**: PostgreSQL with PgVector on localhost:5532
-- **Persistence**: All agents have database integration for session persistence
-
----
-
-## Additional Resources
-
-- [Read the Agno Docs](https://docs.agno.com)
-- [Chat with us on Discord](https://agno.link/discord)
-- [Ask on Discourse](https://agno.link/community)
-- [Report an Issue](https://github.com/agno-agi/agno/issues)
