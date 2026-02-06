@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from agno.team.mode import TeamMode
     from agno.team.team import Team
 
 from typing import (
@@ -58,6 +59,15 @@ from agno.utils.log import (
 )
 from agno.utils.merge_dict import merge_dictionaries
 from agno.utils.string import generate_id_from_name
+
+
+def _parse_team_mode(value: Optional[str]) -> Optional["TeamMode"]:
+    """Parse a TeamMode from a string value, or return None."""
+    if value is None:
+        return None
+    from agno.team.mode import TeamMode
+
+    return TeamMode(value)
 
 
 def _read_session(
@@ -321,12 +331,16 @@ def to_dict(team: "Team") -> Dict[str, Any]:
             config["members"] = serialized_members
 
     # --- Execution settings (only if non-default) ---
+    if team.mode is not None:
+        config["mode"] = team.mode.value
     if team.respond_directly:
         config["respond_directly"] = team.respond_directly
     if team.delegate_to_all_members:
         config["delegate_to_all_members"] = team.delegate_to_all_members
     if not team.determine_input_for_members:  # default is True
         config["determine_input_for_members"] = team.determine_input_for_members
+    if team.max_iterations != 10:
+        config["max_iterations"] = team.max_iterations
 
     # --- User settings ---
     if team.user_id is not None:
@@ -736,9 +750,11 @@ def from_dict(
             # --- Members ---
             members=members or [],
             # --- Execution settings ---
+            mode=_parse_team_mode(config.get("mode")),
             respond_directly=config.get("respond_directly", False),
             delegate_to_all_members=config.get("delegate_to_all_members", False),
             determine_input_for_members=config.get("determine_input_for_members", True),
+            max_iterations=config.get("max_iterations", 10),
             # --- User settings ---
             user_id=config.get("user_id"),
             # --- Session settings ---
