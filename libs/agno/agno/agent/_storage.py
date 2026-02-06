@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from asyncio import CancelledError, Task, create_task
+from concurrent.futures import Future
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -25,8 +27,9 @@ from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.metrics import Metrics
 from agno.registry.registry import Registry
-from agno.run import RunStatus
+from agno.run import RunContext, RunStatus
 from agno.run.agent import RunOutput
+from agno.run.messages import RunMessages
 from agno.session import AgentSession, TeamSession, WorkflowSession
 from agno.session.summary import SessionSummary
 from agno.tools.function import Function
@@ -43,6 +46,9 @@ from agno.utils.agent import (
     get_session_metrics_util,
     get_session_name_util,
     get_session_state_util,
+    scrub_history_messages_from_run_output,
+    scrub_media_from_run_output,
+    scrub_tool_results_from_run_output,
     set_session_name_util,
     update_session_state_util,
 )
@@ -293,6 +299,17 @@ async def aread_or_create_session(
 # ---------------------------------------------------------------------------
 # Serialization
 # ---------------------------------------------------------------------------
+
+
+def get_agent_data(agent: Agent) -> Dict[str, Any]:
+    agent_data: Dict[str, Any] = {}
+    if agent.name is not None:
+        agent_data["name"] = agent.name
+    if agent.id is not None:
+        agent_data["agent_id"] = agent.id
+    if agent.model is not None:
+        agent_data["model"] = agent.model.to_dict()
+    return agent_data
 
 
 def to_dict(agent: Agent) -> Dict[str, Any]:
@@ -1744,3 +1761,536 @@ async def aget_culture_knowledge(agent: Agent) -> Optional[List[CulturalKnowledg
         return None
 
     return await agent.culture_manager.aget_all_knowledge()
+
+
+# ---------------------------------------------------------------------------
+# Post-run cleanup
+# ---------------------------------------------------------------------------
+
+
+def save_run_response_to_file(
+    agent: Agent,
+    run_response: RunOutput,
+    input: Optional[Union[str, List, Dict, Message, List[Message]]] = None,
+    session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+) -> None:
+    if agent.save_response_to_file is not None and run_response is not None:
+        message_str = None
+        if input is not None:
+            if isinstance(input, str):
+                message_str = input
+            else:
+                log_warning("Did not use input in output file name: input is not a string")
+        try:
+            from pathlib import Path
+
+            fn = agent.save_response_to_file.format(
+                name=agent.name,
+                session_id=session_id,
+                user_id=user_id,
+                message=message_str,
+                run_id=run_response.run_id,
+            )
+            fn_path = Path(fn)
+            if not fn_path.parent.exists():
+                fn_path.parent.mkdir(parents=True, exist_ok=True)
+            if isinstance(run_response.content, str):
+                fn_path.write_text(run_response.content)
+            else:
+                import json
+
+                fn_path.write_text(json.dumps(run_response.content, indent=2))
+        except Exception as e:
+            log_warning(f"Failed to save output to file: {e}")
+
+
+def scrub_run_output_for_storage(agent: Agent, run_response: RunOutput) -> None:
+    """Scrub run output based on storage flags before persisting to database."""
+    if not agent.store_media:
+        scrub_media_from_run_output(run_response)
+
+    if not agent.store_tool_messages:
+        scrub_tool_results_from_run_output(run_response)
+
+    if not agent.store_history_messages:
+        scrub_history_messages_from_run_output(run_response)
+
+
+def update_session_metrics(agent: Agent, session: AgentSession, run_response: RunOutput):
+    """Calculate session metrics and write them to session_data."""
+    session_metrics = agent._get_session_metrics(session=session)
+    # Add the metrics for the current run to the session metrics
+    if session_metrics is None:
+        return
+    if run_response.metrics is not None:
+        session_metrics += run_response.metrics
+    session_metrics.time_to_first_token = None
+    if session.session_data is not None:
+        session.session_data["session_metrics"] = session_metrics
+
+
+def cleanup_and_store(
+    agent: Agent,
+    run_response: RunOutput,
+    session: AgentSession,
+    run_context: Optional[RunContext] = None,
+    user_id: Optional[str] = None,
+) -> None:
+    # Scrub the stored run based on storage flags
+    scrub_run_output_for_storage(agent, run_response)
+
+    # Stop the timer for the Run duration
+    if run_response.metrics:
+        run_response.metrics.stop_timer()
+
+    # Update run_response.session_state before saving
+    # This ensures RunOutput reflects all tool modifications
+    if session.session_data is not None and run_context is not None and run_context.session_state is not None:
+        run_response.session_state = run_context.session_state
+
+    # Optional: Save output to file if save_response_to_file is set
+    save_run_response_to_file(
+        agent,
+        run_response=run_response,
+        input=run_response.input.input_content_string() if run_response.input else "",
+        session_id=session.session_id,
+        user_id=user_id,
+    )
+
+    # Add RunOutput to Agent Session
+    session.upsert_run(run=run_response)
+
+    # Calculate session metrics
+    update_session_metrics(agent, session=session, run_response=run_response)
+
+    # Update session state before saving the session
+    if run_context is not None and run_context.session_state is not None:
+        if session.session_data is not None:
+            session.session_data["session_state"] = run_context.session_state
+        else:
+            session.session_data = {"session_state": run_context.session_state}
+
+    # Save session to memory
+    save_session(agent, session=session)
+
+
+async def acleanup_and_store(
+    agent: Agent,
+    run_response: RunOutput,
+    session: AgentSession,
+    run_context: Optional[RunContext] = None,
+    user_id: Optional[str] = None,
+) -> None:
+    # Scrub the stored run based on storage flags
+    scrub_run_output_for_storage(agent, run_response)
+
+    # Stop the timer for the Run duration
+    if run_response.metrics:
+        run_response.metrics.stop_timer()
+
+    # Update run_response.session_state from session before saving
+    # This ensures RunOutput reflects all tool modifications
+    if session.session_data is not None and run_context is not None and run_context.session_state is not None:
+        run_response.session_state = run_context.session_state
+
+    # Optional: Save output to file if save_response_to_file is set
+    save_run_response_to_file(
+        agent,
+        run_response=run_response,
+        input=run_response.input.input_content_string() if run_response.input else "",
+        session_id=session.session_id,
+        user_id=user_id,
+    )
+
+    # Add RunOutput to Agent Session
+    session.upsert_run(run=run_response)
+
+    # Calculate session metrics
+    update_session_metrics(agent, session=session, run_response=run_response)
+
+    # Update session state before saving the session
+    if run_context is not None and run_context.session_state is not None:
+        if session.session_data is not None:
+            session.session_data["session_state"] = run_context.session_state
+        else:
+            session.session_data = {"session_state": run_context.session_state}
+
+    # Save session to memory
+    await asave_session(agent, session=session)
+
+
+# ---------------------------------------------------------------------------
+# Memory / Culture / Learning persistence
+# ---------------------------------------------------------------------------
+
+
+def make_cultural_knowledge(
+    agent: Agent,
+    run_messages: RunMessages,
+):
+    if run_messages.user_message is not None and agent.culture_manager is not None and agent.update_cultural_knowledge:
+        log_debug("Creating cultural knowledge.")
+        agent.culture_manager.create_cultural_knowledge(message=run_messages.user_message.get_content_string())
+
+
+async def acreate_cultural_knowledge(
+    agent: Agent,
+    run_messages: RunMessages,
+):
+    if run_messages.user_message is not None and agent.culture_manager is not None and agent.update_cultural_knowledge:
+        log_debug("Creating cultural knowledge.")
+        await agent.culture_manager.acreate_cultural_knowledge(message=run_messages.user_message.get_content_string())
+
+
+def make_memories(
+    agent: Agent,
+    run_messages: RunMessages,
+    user_id: Optional[str] = None,
+):
+    user_message_str = run_messages.user_message.get_content_string() if run_messages.user_message is not None else None
+    if (
+        user_message_str is not None
+        and user_message_str.strip() != ""
+        and agent.memory_manager is not None
+        and agent.update_memory_on_run
+    ):
+        log_debug("Managing user memories")
+        agent.memory_manager.create_user_memories(  # type: ignore
+            message=user_message_str,
+            user_id=user_id,
+            agent_id=agent.id,
+        )
+
+    if run_messages.extra_messages is not None and len(run_messages.extra_messages) > 0:
+        parsed_messages = []
+        for _im in run_messages.extra_messages:
+            if isinstance(_im, Message):
+                parsed_messages.append(_im)
+            elif isinstance(_im, dict):
+                try:
+                    parsed_messages.append(Message(**_im))
+                except Exception as e:
+                    log_warning(f"Failed to validate message during memory update: {e}")
+            else:
+                log_warning(f"Unsupported message type: {type(_im)}")
+                continue
+
+        # Filter out messages with empty content before passing to memory manager
+        non_empty_messages = [
+            msg
+            for msg in parsed_messages
+            if msg.content and (not isinstance(msg.content, str) or msg.content.strip() != "")
+        ]
+        if len(non_empty_messages) > 0 and agent.memory_manager is not None and agent.update_memory_on_run:
+            agent.memory_manager.create_user_memories(messages=non_empty_messages, user_id=user_id, agent_id=agent.id)  # type: ignore
+        else:
+            log_warning("Unable to add messages to memory")
+
+
+async def amake_memories(
+    agent: Agent,
+    run_messages: RunMessages,
+    user_id: Optional[str] = None,
+):
+    user_message_str = run_messages.user_message.get_content_string() if run_messages.user_message is not None else None
+    if (
+        user_message_str is not None
+        and user_message_str.strip() != ""
+        and agent.memory_manager is not None
+        and agent.update_memory_on_run
+    ):
+        log_debug("Managing user memories")
+        await agent.memory_manager.acreate_user_memories(  # type: ignore
+            message=user_message_str,
+            user_id=user_id,
+            agent_id=agent.id,
+        )
+
+    if run_messages.extra_messages is not None and len(run_messages.extra_messages) > 0:
+        parsed_messages = []
+        for _im in run_messages.extra_messages:
+            if isinstance(_im, Message):
+                parsed_messages.append(_im)
+            elif isinstance(_im, dict):
+                try:
+                    parsed_messages.append(Message(**_im))
+                except Exception as e:
+                    log_warning(f"Failed to validate message during memory update: {e}")
+            else:
+                log_warning(f"Unsupported message type: {type(_im)}")
+                continue
+
+        # Filter out messages with empty content before passing to memory manager
+        non_empty_messages = [
+            msg
+            for msg in parsed_messages
+            if msg.content and (not isinstance(msg.content, str) or msg.content.strip() != "")
+        ]
+        if len(non_empty_messages) > 0 and agent.memory_manager is not None and agent.update_memory_on_run:
+            await agent.memory_manager.acreate_user_memories(  # type: ignore
+                messages=non_empty_messages, user_id=user_id, agent_id=agent.id
+            )
+        else:
+            log_warning("Unable to add messages to memory")
+
+
+async def astart_memory_task(
+    agent: Agent,
+    run_messages: RunMessages,
+    user_id: Optional[str],
+    existing_task: Optional[Task[None]],
+) -> Optional[Task[None]]:
+    """Cancel any existing memory task and start a new one if conditions are met.
+
+    Args:
+        agent: The Agent instance.
+        run_messages: The run messages containing the user message.
+        user_id: The user ID for memory creation.
+        existing_task: An existing memory task to cancel before starting a new one.
+
+    Returns:
+        A new memory task if conditions are met, None otherwise.
+    """
+    # Cancel any existing task from a previous retry attempt
+    if existing_task is not None and not existing_task.done():
+        existing_task.cancel()
+        try:
+            await existing_task
+        except CancelledError:
+            pass
+
+    # Create new task if conditions are met
+    if (
+        run_messages.user_message is not None
+        and agent.memory_manager is not None
+        and agent.update_memory_on_run
+        and not agent.enable_agentic_memory
+    ):
+        log_debug("Starting memory creation in background task.")
+        return create_task(amake_memories(agent, run_messages=run_messages, user_id=user_id))
+
+    return None
+
+
+async def astart_cultural_knowledge_task(
+    agent: Agent,
+    run_messages: RunMessages,
+    existing_task: Optional[Task[None]],
+) -> Optional[Task[None]]:
+    """Cancel any existing cultural knowledge task and start a new one if conditions are met.
+
+    Args:
+        agent: The Agent instance.
+        run_messages: The run messages containing the user message.
+        existing_task: An existing cultural knowledge task to cancel before starting a new one.
+
+    Returns:
+        A new cultural knowledge task if conditions are met, None otherwise.
+    """
+    # Cancel any existing task from a previous retry attempt
+    if existing_task is not None and not existing_task.done():
+        existing_task.cancel()
+        try:
+            await existing_task
+        except CancelledError:
+            pass
+
+    # Create new task if conditions are met
+    if run_messages.user_message is not None and agent.culture_manager is not None and agent.update_cultural_knowledge:
+        log_debug("Starting cultural knowledge creation in background task.")
+        return create_task(acreate_cultural_knowledge(agent, run_messages=run_messages))
+
+    return None
+
+
+def process_learnings(
+    agent: Agent,
+    run_messages: RunMessages,
+    session: AgentSession,
+    user_id: Optional[str],
+) -> None:
+    """Process learnings from conversation (runs in background thread)."""
+    if agent._learning is None:
+        return
+
+    try:
+        # Convert run messages to list format expected by LearningMachine
+        messages = run_messages.messages if run_messages else []
+
+        agent._learning.process(
+            messages=messages,
+            user_id=user_id,
+            session_id=session.session_id if session else None,
+            agent_id=agent.id,
+            team_id=agent.team_id,
+        )
+        log_debug("Learning extraction completed.")
+    except Exception as e:
+        log_warning(f"Error processing learnings: {e}")
+
+
+async def astart_learning_task(
+    agent: Agent,
+    run_messages: RunMessages,
+    session: AgentSession,
+    user_id: Optional[str],
+    existing_task: Optional[Task] = None,
+) -> Optional[Task]:
+    """Start learning extraction as async task.
+
+    Args:
+        agent: The Agent instance.
+        run_messages: The run messages containing conversation.
+        session: The agent session.
+        user_id: The user ID for learning extraction.
+        existing_task: An existing task to cancel before starting a new one.
+
+    Returns:
+        A new learning task if conditions are met, None otherwise.
+    """
+    # Cancel any existing task from a previous retry attempt
+    if existing_task is not None and not existing_task.done():
+        existing_task.cancel()
+        try:
+            await existing_task
+        except CancelledError:
+            pass
+
+    # Create new task if learning is enabled
+    if agent._learning is not None:
+        log_debug("Starting learning extraction as async task.")
+        return create_task(
+            aprocess_learnings(
+                agent,
+                run_messages=run_messages,
+                session=session,
+                user_id=user_id,
+            )
+        )
+
+    return None
+
+
+async def aprocess_learnings(
+    agent: Agent,
+    run_messages: RunMessages,
+    session: AgentSession,
+    user_id: Optional[str],
+) -> None:
+    """Async process learnings from conversation."""
+    if agent._learning is None:
+        return
+
+    try:
+        messages = run_messages.messages if run_messages else []
+        await agent._learning.aprocess(
+            messages=messages,
+            user_id=user_id,
+            session_id=session.session_id if session else None,
+            agent_id=agent.id,
+            team_id=agent.team_id,
+        )
+        log_debug("Learning extraction completed.")
+    except Exception as e:
+        log_warning(f"Error processing learnings: {e}")
+
+
+def start_memory_future(
+    agent: Agent,
+    run_messages: RunMessages,
+    user_id: Optional[str],
+    existing_future: Optional[Future] = None,
+) -> Optional[Future]:
+    """Cancel any existing memory future and start a new one if conditions are met.
+
+    Args:
+        agent: The Agent instance.
+        run_messages: The run messages containing the user message.
+        user_id: The user ID for memory creation.
+        existing_future: An existing memory future to cancel before starting a new one.
+
+    Returns:
+        A new memory future if conditions are met, None otherwise.
+    """
+    # Cancel any existing future from a previous retry attempt
+    # Note: cancel() only works if the future hasn't started yet
+    if existing_future is not None and not existing_future.done():
+        existing_future.cancel()
+
+    # Create new future if conditions are met
+    if (
+        run_messages.user_message is not None
+        and agent.memory_manager is not None
+        and agent.update_memory_on_run
+        and not agent.enable_agentic_memory
+    ):
+        log_debug("Starting memory creation in background thread.")
+        return agent.background_executor.submit(make_memories, agent, run_messages=run_messages, user_id=user_id)
+
+    return None
+
+
+def start_learning_future(
+    agent: Agent,
+    run_messages: RunMessages,
+    session: AgentSession,
+    user_id: Optional[str],
+    existing_future: Optional[Future] = None,
+) -> Optional[Future]:
+    """Start learning extraction in background thread.
+
+    Args:
+        agent: The Agent instance.
+        run_messages: The run messages containing conversation.
+        session: The agent session.
+        user_id: The user ID for learning extraction.
+        existing_future: An existing future to cancel before starting a new one.
+
+    Returns:
+        A new learning future if conditions are met, None otherwise.
+    """
+    # Cancel any existing future from a previous retry attempt
+    if existing_future is not None and not existing_future.done():
+        existing_future.cancel()
+
+    # Create new future if learning is enabled
+    if agent._learning is not None:
+        log_debug("Starting learning extraction in background thread.")
+        return agent.background_executor.submit(
+            process_learnings,
+            agent,
+            run_messages=run_messages,
+            session=session,
+            user_id=user_id,
+        )
+
+    return None
+
+
+def start_cultural_knowledge_future(
+    agent: Agent,
+    run_messages: RunMessages,
+    existing_future: Optional[Future] = None,
+) -> Optional[Future]:
+    """Cancel any existing cultural knowledge future and start a new one if conditions are met.
+
+    Args:
+        agent: The Agent instance.
+        run_messages: The run messages containing the user message.
+        existing_future: An existing cultural knowledge future to cancel before starting a new one.
+
+    Returns:
+        A new cultural knowledge future if conditions are met, None otherwise.
+    """
+    # Cancel any existing future from a previous retry attempt
+    # Note: cancel() only works if the future hasn't started yet
+    if existing_future is not None and not existing_future.done():
+        existing_future.cancel()
+
+    # Create new future if conditions are met
+    if run_messages.user_message is not None and agent.culture_manager is not None and agent.update_cultural_knowledge:
+        log_debug("Starting cultural knowledge creation in background thread.")
+        return agent.background_executor.submit(make_cultural_knowledge, agent, run_messages=run_messages)
+
+    return None

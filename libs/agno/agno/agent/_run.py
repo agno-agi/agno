@@ -45,12 +45,18 @@ from agno.run.agent import (
     RunOutputEvent,
 )
 from agno.run.cancel import (
+    acancel_run as acancel_run_global,
+)
+from agno.run.cancel import (
     acleanup_run,
     araise_if_cancelled,
     aregister_run,
     cleanup_run,
     raise_if_cancelled,
     register_run,
+)
+from agno.run.cancel import (
+    cancel_run as cancel_run_global,
 )
 from agno.run.messages import RunMessages
 from agno.run.requirement import RunRequirement
@@ -3282,7 +3288,7 @@ async def acontinue_run_stream_impl(
                         stream_events=stream_events,
                         run_context=run_context,
                     ):
-                        raise_if_cancelled(run_response.run_id)  # type: ignore
+                        await araise_if_cancelled(run_response.run_id)  # type: ignore
                         if isinstance(event, RunContentEvent):
                             if stream_events:
                                 yield IntermediateRunContentEvent(
@@ -3520,3 +3526,11 @@ async def acontinue_run_stream_impl(
 
         # Always clean up the run tracking
         await acleanup_run(run_response.run_id)  # type: ignore
+
+
+# ---------------------------------------------------------------------------
+# Run cancellation — re-export from agno.run.cancel
+# ---------------------------------------------------------------------------
+
+cancel_run = cancel_run_global
+acancel_run = acancel_run_global

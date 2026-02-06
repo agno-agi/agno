@@ -22,7 +22,7 @@ from typing import (
 from pydantic import BaseModel
 
 from agno.agent import (
-    _api,
+    _cli,
     _default_tools,
     _hooks,
     _init,
@@ -797,15 +797,15 @@ class Agent:
         return await _tools.aresolve_run_dependencies(self, run_context=run_context)
 
     def _get_agent_data(self) -> Dict[str, Any]:
-        return _tools.get_agent_data(self)
+        return _storage.get_agent_data(self)
 
     @staticmethod
     def cancel_run(run_id: str) -> bool:
-        return _tools.cancel_run(run_id)
+        return _run.cancel_run(run_id)
 
     @staticmethod
     async def acancel_run(run_id: str) -> bool:
-        return await _tools.acancel_run(run_id)
+        return await _run.acancel_run(run_id)
 
     # ---------------------------------------------------------------
     # _messages module delegates
@@ -1057,10 +1057,10 @@ class Agent:
         return _messages.convert_dependencies_to_string(self, context=context)
 
     def deep_copy(self, *, update: Optional[Dict[str, Any]] = None) -> Agent:
-        return _messages.deep_copy(self, update=update)
+        return _init.deep_copy(self, update=update)
 
     def _deep_copy_field(self, field_name: str, field_value: Any) -> Any:
-        return _messages.deep_copy_field(self, field_name=field_name, field_value=field_value)
+        return _init.deep_copy_field(self, field_name=field_name, field_value=field_value)
 
     # ---------------------------------------------------------------
     # _storage module delegates
@@ -1319,7 +1319,7 @@ class Agent:
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
     ) -> None:
-        return _response.save_run_response_to_file(
+        return _storage.save_run_response_to_file(
             self, run_response=run_response, input=input, session_id=session_id, user_id=user_id
         )
 
@@ -1819,7 +1819,7 @@ class Agent:
         )
 
     def _update_session_metrics(self, session: AgentSession, run_response: RunOutput) -> None:
-        return _hooks.update_session_metrics(self, session=session, run_response=run_response)
+        return _storage.update_session_metrics(self, session=session, run_response=run_response)
 
     def _handle_model_response_stream(
         self,
@@ -1893,16 +1893,16 @@ class Agent:
         )
 
     def _make_cultural_knowledge(self, run_messages: RunMessages) -> None:
-        return _hooks.make_cultural_knowledge(self, run_messages=run_messages)
+        return _storage.make_cultural_knowledge(self, run_messages=run_messages)
 
     async def _acreate_cultural_knowledge(self, run_messages: RunMessages) -> None:
-        return await _hooks.acreate_cultural_knowledge(self, run_messages=run_messages)
+        return await _storage.acreate_cultural_knowledge(self, run_messages=run_messages)
 
     def _make_memories(self, run_messages: RunMessages, user_id: Optional[str] = None) -> None:
-        return _hooks.make_memories(self, run_messages=run_messages, user_id=user_id)
+        return _storage.make_memories(self, run_messages=run_messages, user_id=user_id)
 
     async def _amake_memories(self, run_messages: RunMessages, user_id: Optional[str] = None) -> None:
-        return await _hooks.amake_memories(self, run_messages=run_messages, user_id=user_id)
+        return await _storage.amake_memories(self, run_messages=run_messages, user_id=user_id)
 
     async def _astart_memory_task(
         self,
@@ -1910,7 +1910,7 @@ class Agent:
         user_id: Optional[str],
         existing_task: Optional[Task[None]],
     ) -> Optional[Task[None]]:
-        return await _hooks.astart_memory_task(
+        return await _storage.astart_memory_task(
             self, run_messages=run_messages, user_id=user_id, existing_task=existing_task
         )
 
@@ -1919,7 +1919,9 @@ class Agent:
         run_messages: RunMessages,
         existing_task: Optional[Task[None]],
     ) -> Optional[Task[None]]:
-        return await _hooks.astart_cultural_knowledge_task(self, run_messages=run_messages, existing_task=existing_task)
+        return await _storage.astart_cultural_knowledge_task(
+            self, run_messages=run_messages, existing_task=existing_task
+        )
 
     def _process_learnings(
         self,
@@ -1927,7 +1929,7 @@ class Agent:
         session: AgentSession,
         user_id: Optional[str],
     ) -> None:
-        return _hooks.process_learnings(self, run_messages=run_messages, session=session, user_id=user_id)
+        return _storage.process_learnings(self, run_messages=run_messages, session=session, user_id=user_id)
 
     async def _astart_learning_task(
         self,
@@ -1936,7 +1938,7 @@ class Agent:
         user_id: Optional[str],
         existing_task: Optional[Task] = None,
     ) -> Optional[Task]:
-        return await _hooks.astart_learning_task(
+        return await _storage.astart_learning_task(
             self, run_messages=run_messages, session=session, user_id=user_id, existing_task=existing_task
         )
 
@@ -1946,7 +1948,7 @@ class Agent:
         session: AgentSession,
         user_id: Optional[str],
     ) -> None:
-        return await _hooks.aprocess_learnings(self, run_messages=run_messages, session=session, user_id=user_id)
+        return await _storage.aprocess_learnings(self, run_messages=run_messages, session=session, user_id=user_id)
 
     def _start_memory_future(
         self,
@@ -1954,7 +1956,7 @@ class Agent:
         user_id: Optional[str],
         existing_future: Optional[Future] = None,
     ) -> Optional[Future]:
-        return _hooks.start_memory_future(
+        return _storage.start_memory_future(
             self, run_messages=run_messages, user_id=user_id, existing_future=existing_future
         )
 
@@ -1965,7 +1967,7 @@ class Agent:
         user_id: Optional[str],
         existing_future: Optional[Future] = None,
     ) -> Optional[Future]:
-        return _hooks.start_learning_future(
+        return _storage.start_learning_future(
             self, run_messages=run_messages, session=session, user_id=user_id, existing_future=existing_future
         )
 
@@ -1974,10 +1976,12 @@ class Agent:
         run_messages: RunMessages,
         existing_future: Optional[Future] = None,
     ) -> Optional[Future]:
-        return _hooks.start_cultural_knowledge_future(self, run_messages=run_messages, existing_future=existing_future)
+        return _storage.start_cultural_knowledge_future(
+            self, run_messages=run_messages, existing_future=existing_future
+        )
 
     # ---------------------------------------------------------------
-    # _api module delegates
+    # _cli module delegates
     # ---------------------------------------------------------------
 
     def print_response(
@@ -2008,7 +2012,7 @@ class Agent:
         tags_to_include_in_markdown: Optional[Set[str]] = None,
         **kwargs: Any,
     ) -> None:
-        return _api.agent_print_response(
+        return _cli.agent_print_response(
             self,
             input=input,
             session_id=session_id,
@@ -2064,7 +2068,7 @@ class Agent:
         tags_to_include_in_markdown: Optional[Set[str]] = None,
         **kwargs: Any,
     ) -> None:
-        return await _api.agent_aprint_response(
+        return await _cli.agent_aprint_response(
             self,
             input=input,
             session_id=session_id,
@@ -2095,14 +2099,14 @@ class Agent:
     def _update_reasoning_content_from_tool_call(
         self, run_response: RunOutput, tool_name: str, tool_args: Dict[str, Any]
     ) -> Optional[ReasoningStep]:
-        return _api.update_reasoning_content_from_tool_call(
+        return _response.update_reasoning_content_from_tool_call(
             self, run_response=run_response, tool_name=tool_name, tool_args=tool_args
         )
 
     def _get_effective_filters(
         self, knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
     ) -> Optional[Any]:
-        return _api.get_effective_filters(self, knowledge_filters=knowledge_filters)
+        return _messages.get_effective_filters(self, knowledge_filters=knowledge_filters)
 
     def _cleanup_and_store(
         self,
@@ -2111,7 +2115,7 @@ class Agent:
         run_context: Optional[RunContext] = None,
         user_id: Optional[str] = None,
     ) -> None:
-        return _api.cleanup_and_store(
+        return _storage.cleanup_and_store(
             self, run_response=run_response, session=session, run_context=run_context, user_id=user_id
         )
 
@@ -2122,12 +2126,12 @@ class Agent:
         run_context: Optional[RunContext] = None,
         user_id: Optional[str] = None,
     ) -> None:
-        return await _api.acleanup_and_store(
+        return await _storage.acleanup_and_store(
             self, run_response=run_response, session=session, run_context=run_context, user_id=user_id
         )
 
     def _scrub_run_output_for_storage(self, run_response: RunOutput) -> None:
-        return _api.scrub_run_output_for_storage(self, run_response=run_response)
+        return _storage.scrub_run_output_for_storage(self, run_response=run_response)
 
     def cli_app(
         self,
@@ -2141,7 +2145,7 @@ class Agent:
         exit_on: Optional[List[str]] = None,
         **kwargs: Any,
     ) -> None:
-        return _api.cli_app(
+        return _cli.cli_app(
             self,
             input=input,
             session_id=session_id,
@@ -2166,7 +2170,7 @@ class Agent:
         exit_on: Optional[List[str]] = None,
         **kwargs: Any,
     ) -> None:
-        return await _api.acli_app(
+        return await _cli.acli_app(
             self,
             input=input,
             session_id=session_id,
