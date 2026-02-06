@@ -611,7 +611,9 @@ def generate_response_with_output_model_stream(
     run_response.metrics = calculate_run_metrics(agent, messages_for_run_response)
 
 
-async def agenerate_response_with_output_model(agent: Agent, model_response: ModelResponse, run_messages: RunMessages):
+async def agenerate_response_with_output_model(
+    agent: Agent, model_response: ModelResponse, run_messages: RunMessages
+) -> None:
     """Parse the model response using the output model."""
     if agent.output_model is None:
         return
