@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections import deque
 from typing import (
     TYPE_CHECKING,
-    Any,
     AsyncIterator,
     Dict,
     Iterator,
@@ -330,7 +329,7 @@ async def areason(
     run_messages: RunMessages,
     run_context: Optional[RunContext] = None,
     stream_events: Optional[bool] = None,
-) -> Any:
+) -> AsyncIterator[RunOutputEvent]:
     """
     Run reasoning asynchronously using the ReasoningManager.
 
