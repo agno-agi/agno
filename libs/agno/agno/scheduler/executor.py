@@ -147,6 +147,15 @@ class ScheduleExecutor:
                 log_info(f"Schedule {schedule_id}: retrying in {retry_delay}s (attempt {attempt}/{max_attempts})")
                 await asyncio.sleep(retry_delay)
 
+        # Build final snapshot for the caller (don't mutate the DB-stored run_dict)
+        final_run = dict(run_dict)
+        final_run["status"] = last_status
+        final_run["status_code"] = last_status_code
+        final_run["error"] = last_error
+        final_run["run_id"] = run_id_value
+        final_run["session_id"] = session_id_value
+        final_run["completed_at"] = int(time.time())
+
         # Release schedule lock and compute next run
         if release_schedule:
             try:
@@ -166,7 +175,7 @@ class ScheduleExecutor:
             except Exception as exc:
                 log_error(f"Failed to release schedule {schedule_id}: {exc}")
 
-        return run_dict
+        return final_run
 
     # ------------------------------------------------------------------
     async def _call_endpoint(self, schedule: Dict[str, Any]) -> Dict[str, Any]:

@@ -69,8 +69,8 @@ class ScheduleUpdate(BaseModel):
     def validate_method(cls, v: Optional[str]) -> Optional[str]:
         if v is not None:
             v = v.upper()
-            if v not in ("GET", "POST", "PUT", "DELETE"):
-                raise ValueError("Method must be GET, POST, PUT, or DELETE")
+            if v not in ("GET", "POST", "PUT", "PATCH", "DELETE"):
+                raise ValueError("Method must be GET, POST, PUT, PATCH, or DELETE")
         return v
 
     @field_validator("endpoint")
