@@ -417,6 +417,13 @@ def cleanup_and_store(
     # Calculate session metrics
     _hooks.update_session_metrics(agent, session=session, run_response=run_response)
 
+    # Update session state before saving the session
+    if run_context is not None and run_context.session_state is not None:
+        if session.session_data is not None:
+            session.session_data["session_state"] = run_context.session_state
+        else:
+            session.session_data = {"session_state": run_context.session_state}
+
     # Save session to memory
     _storage.save_session(agent, session=session)
 
