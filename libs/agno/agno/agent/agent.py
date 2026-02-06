@@ -5166,11 +5166,21 @@ class Agent:
             {"name": user_input_field.name, "value": user_input_field.value}
             for user_input_field in tool.user_input_schema or []
         ]
-        # Add the tool call result to the run_messages
+        new_content = f"User inputs retrieved: {json.dumps(user_input_result)}"
+
+        # Check if there's already a tool result message for this tool_call_id
+        # (e.g., from reasoning models that execute the tool before pausing).
+        # If so, REPLACE it instead of appending to avoid duplicate tool_call_ids.
+        for msg in run_messages.messages:
+            if msg.tool_call_id == tool.tool_call_id and msg.role == self.model.tool_message_role:
+                msg.content = new_content
+                return
+
+        # No existing message found, append as normal
         run_messages.messages.append(
             Message(
                 role=self.model.tool_message_role,
-                content=f"User inputs retrieved: {json.dumps(user_input_result)}",
+                content=new_content,
                 tool_call_id=tool.tool_call_id,
                 tool_name=tool.tool_name,
                 tool_args=tool.tool_args,
