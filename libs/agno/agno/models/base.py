@@ -445,11 +445,19 @@ class Model(ABC):
         # Include tools parameter in cache key
         has_tools = bool(kwargs.get("tools"))
 
+        response_format = kwargs.get("response_format")
+        if isinstance(response_format, type) and issubclass(response_format, BaseModel):
+            response_format = {
+                "type": "json_schema",
+                "name": response_format.__name__,
+                "schema": response_format.model_json_schema(),
+            }
+
         cache_data = {
             "model_id": self.id,
             "messages": message_data,
             "has_tools": has_tools,
-            "response_format": kwargs.get("response_format"),
+            "response_format": response_format,
             "stream": stream,
         }
 
