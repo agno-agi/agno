@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from typing import Any, Dict, List, Mapping, Optional, Union
 
+from agno.compression.context import CompressedContext
 from agno.models.message import Message
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
@@ -258,3 +259,17 @@ class AgentSession:
         if self.summary is None:
             return None
         return self.summary
+
+    def get_compression_context(self) -> Optional[CompressedContext]:
+        """Get compressed context from session_data."""
+        if self.session_data and "compression_context" in self.session_data:
+            ctx_data = self.session_data["compression_context"]
+            if isinstance(ctx_data, dict):
+                return CompressedContext.from_dict(ctx_data)
+        return None
+
+    def set_compression_context(self, ctx: CompressedContext) -> None:
+        """Store compressed context in session_data."""
+        if self.session_data is None:
+            self.session_data = {}
+        self.session_data["compression_context"] = ctx.to_dict()

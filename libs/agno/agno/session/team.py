@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Mapping, Optional, Tuple, Union
 
 from pydantic import BaseModel
 
+from agno.compression.context import CompressedContext
 from agno.models.message import Message
 from agno.run.agent import RunOutput, RunStatus
 from agno.run.team import TeamRunOutput
@@ -337,3 +338,17 @@ class TeamSession:
             return None
 
         return self.summary  # type: ignore
+
+    def get_compression_context(self) -> Optional[CompressedContext]:
+        """Get compressed context from session_data."""
+        if self.session_data and "compression_context" in self.session_data:
+            ctx_data = self.session_data["compression_context"]
+            if isinstance(ctx_data, dict):
+                return CompressedContext.from_dict(ctx_data)
+        return None
+
+    def set_compression_context(self, ctx: CompressedContext) -> None:
+        """Store compressed context in session_data."""
+        if self.session_data is None:
+            self.session_data = {}
+        self.session_data["compression_context"] = ctx.to_dict()

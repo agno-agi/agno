@@ -98,16 +98,23 @@ def test_should_compress_disabled():
 
 
 def test_should_compress_default_count_limit():
-    """Test that compress_tool_results_limit defaults to 3 when nothing is set."""
+    """Test that compress_tool_results_limit defaults to 3 when compress_tool_results is enabled."""
     from agno.compression.manager import CompressionManager
 
-    cm = CompressionManager()
+    # Default of 3 only applies when compress_tool_results=True
+    cm = CompressionManager(compress_tool_results=True)
     assert cm.compress_tool_results_limit == 3
 
-    cm_with_token = CompressionManager(compress_token_limit=1000)
+    # No default when compress_tool_results is disabled
+    cm_disabled = CompressionManager()
+    assert cm_disabled.compress_tool_results_limit is None
+
+    # Token limit takes precedence, no count limit needed
+    cm_with_token = CompressionManager(compress_tool_results=True, compress_token_limit=1000)
     assert cm_with_token.compress_tool_results_limit is None
 
-    cm_with_count = CompressionManager(compress_tool_results_limit=5)
+    # Explicit count limit is preserved
+    cm_with_count = CompressionManager(compress_tool_results=True, compress_tool_results_limit=5)
     assert cm_with_count.compress_tool_results_limit == 5
 
 
