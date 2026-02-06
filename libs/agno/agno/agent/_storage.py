@@ -1,4 +1,4 @@
-"""Session persistence and serialization helpers for Agent."""
+"""Session persistence, serialization, and post-run cleanup helpers for Agent."""
 
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.metrics import Metrics
 from agno.registry.registry import Registry
-from agno.run import RunStatus
+from agno.run import RunContext, RunStatus
 from agno.run.agent import RunOutput
 from agno.session import AgentSession, TeamSession, WorkflowSession
 from agno.session.summary import SessionSummary
@@ -43,6 +43,9 @@ from agno.utils.agent import (
     get_session_metrics_util,
     get_session_name_util,
     get_session_state_util,
+    scrub_history_messages_from_run_output,
+    scrub_media_from_run_output,
+    scrub_tool_results_from_run_output,
     set_session_name_util,
     update_session_state_util,
 )
@@ -1744,3 +1747,114 @@ async def aget_culture_knowledge(agent: Agent) -> Optional[List[CulturalKnowledg
         return None
 
     return await agent.culture_manager.aget_all_knowledge()
+
+
+# ---------------------------------------------------------------------------
+# Post-run cleanup
+# ---------------------------------------------------------------------------
+
+
+def scrub_run_output_for_storage(agent: Agent, run_response: RunOutput) -> None:
+    """Scrub run output based on storage flags before persisting to database."""
+    if not agent.store_media:
+        scrub_media_from_run_output(run_response)
+
+    if not agent.store_tool_messages:
+        scrub_tool_results_from_run_output(run_response)
+
+    if not agent.store_history_messages:
+        scrub_history_messages_from_run_output(run_response)
+
+
+def cleanup_and_store(
+    agent: Agent,
+    run_response: RunOutput,
+    session: AgentSession,
+    run_context: Optional[RunContext] = None,
+    user_id: Optional[str] = None,
+) -> None:
+    from agno.agent import _hooks, _response
+
+    # Scrub the stored run based on storage flags
+    scrub_run_output_for_storage(agent, run_response)
+
+    # Stop the timer for the Run duration
+    if run_response.metrics:
+        run_response.metrics.stop_timer()
+
+    # Update run_response.session_state before saving
+    # This ensures RunOutput reflects all tool modifications
+    if session.session_data is not None and run_context is not None and run_context.session_state is not None:
+        run_response.session_state = run_context.session_state
+
+    # Optional: Save output to file if save_response_to_file is set
+    _response.save_run_response_to_file(
+        agent,
+        run_response=run_response,
+        input=run_response.input.input_content_string() if run_response.input else "",
+        session_id=session.session_id,
+        user_id=user_id,
+    )
+
+    # Add RunOutput to Agent Session
+    session.upsert_run(run=run_response)
+
+    # Calculate session metrics
+    _hooks.update_session_metrics(agent, session=session, run_response=run_response)
+
+    # Update session state before saving the session
+    if run_context is not None and run_context.session_state is not None:
+        if session.session_data is not None:
+            session.session_data["session_state"] = run_context.session_state
+        else:
+            session.session_data = {"session_state": run_context.session_state}
+
+    # Save session to memory
+    save_session(agent, session=session)
+
+
+async def acleanup_and_store(
+    agent: Agent,
+    run_response: RunOutput,
+    session: AgentSession,
+    run_context: Optional[RunContext] = None,
+    user_id: Optional[str] = None,
+) -> None:
+    from agno.agent import _hooks, _response
+
+    # Scrub the stored run based on storage flags
+    scrub_run_output_for_storage(agent, run_response)
+
+    # Stop the timer for the Run duration
+    if run_response.metrics:
+        run_response.metrics.stop_timer()
+
+    # Update run_response.session_state from session before saving
+    # This ensures RunOutput reflects all tool modifications
+    if session.session_data is not None and run_context is not None and run_context.session_state is not None:
+        run_response.session_state = run_context.session_state
+
+    # Optional: Save output to file if save_response_to_file is set
+    _response.save_run_response_to_file(
+        agent,
+        run_response=run_response,
+        input=run_response.input.input_content_string() if run_response.input else "",
+        session_id=session.session_id,
+        user_id=user_id,
+    )
+
+    # Add RunOutput to Agent Session
+    session.upsert_run(run=run_response)
+
+    # Calculate session metrics
+    _hooks.update_session_metrics(agent, session=session, run_response=run_response)
+
+    # Update session state before saving the session
+    if run_context is not None and run_context.session_state is not None:
+        if session.session_data is not None:
+            session.session_data["session_state"] = run_context.session_state
+        else:
+            session.session_data = {"session_state": run_context.session_state}
+
+    # Save session to memory
+    await asave_session(agent, session=session)

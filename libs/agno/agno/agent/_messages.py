@@ -2028,3 +2028,46 @@ def deep_copy_field(agent: Agent, field_name: str, field_value: Any) -> Any:
     except Exception:
         # If copy fails, return as is
         return field_value
+
+
+# ---------------------------------------------------------------------------
+# Knowledge filter resolution
+# ---------------------------------------------------------------------------
+
+
+def get_effective_filters(
+    agent: Agent, knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+) -> Optional[Any]:
+    """
+    Determine which knowledge filters to use, with priority to run-level filters.
+
+    Args:
+        agent: The Agent instance.
+        knowledge_filters: Filters passed at run time.
+
+    Returns:
+        The effective filters to use, with run-level filters taking priority.
+    """
+    effective_filters = None
+
+    # If agent has filters, use those as a base
+    if agent.knowledge_filters:
+        effective_filters = agent.knowledge_filters.copy()
+
+    # If run has filters, they override agent filters
+    if knowledge_filters:
+        if effective_filters:
+            if isinstance(knowledge_filters, dict):
+                if isinstance(effective_filters, dict):
+                    effective_filters.update(knowledge_filters)
+                else:
+                    effective_filters = knowledge_filters
+            elif isinstance(knowledge_filters, list):
+                effective_filters = [*effective_filters, *knowledge_filters]
+        else:
+            effective_filters = knowledge_filters
+
+    if effective_filters:
+        log_debug(f"Using knowledge filters: {effective_filters}")
+
+    return effective_filters

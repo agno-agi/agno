@@ -457,7 +457,7 @@ def handle_agent_run_paused(
     session: AgentSession,
     user_id: Optional[str] = None,
 ) -> RunOutput:
-    from agno.agent import _api
+    from agno.agent import _storage
 
     # Set the run response to paused
 
@@ -465,7 +465,7 @@ def handle_agent_run_paused(
     if not run_response.content:
         run_response.content = get_paused_content(run_response)
 
-    _api.cleanup_and_store(agent, run_response=run_response, session=session, user_id=user_id)
+    _storage.cleanup_and_store(agent, run_response=run_response, session=session, user_id=user_id)
 
     log_debug(f"Agent Run Paused: {run_response.run_id}", center=True, symbol="*")
 
@@ -479,7 +479,7 @@ def handle_agent_run_paused_stream(
     session: AgentSession,
     user_id: Optional[str] = None,
 ) -> Iterator[RunOutputEvent]:
-    from agno.agent import _api
+    from agno.agent import _storage
 
     # Set the run response to paused
 
@@ -499,7 +499,7 @@ def handle_agent_run_paused_stream(
         store_events=agent.store_events,
     )
 
-    _api.cleanup_and_store(agent, run_response=run_response, session=session, user_id=user_id)
+    _storage.cleanup_and_store(agent, run_response=run_response, session=session, user_id=user_id)
 
     yield pause_event  # type: ignore
 
@@ -512,7 +512,7 @@ async def ahandle_agent_run_paused(
     session: AgentSession,
     user_id: Optional[str] = None,
 ) -> RunOutput:
-    from agno.agent import _api
+    from agno.agent import _storage
 
     # Set the run response to paused
 
@@ -520,7 +520,7 @@ async def ahandle_agent_run_paused(
     if not run_response.content:
         run_response.content = get_paused_content(run_response)
 
-    await _api.acleanup_and_store(agent, run_response=run_response, session=session, user_id=user_id)
+    await _storage.acleanup_and_store(agent, run_response=run_response, session=session, user_id=user_id)
 
     log_debug(f"Agent Run Paused: {run_response.run_id}", center=True, symbol="*")
 
@@ -534,7 +534,7 @@ async def ahandle_agent_run_paused_stream(
     session: AgentSession,
     user_id: Optional[str] = None,
 ) -> AsyncIterator[RunOutputEvent]:
-    from agno.agent import _api
+    from agno.agent import _storage
 
     # Set the run response to paused
 
@@ -554,7 +554,7 @@ async def ahandle_agent_run_paused_stream(
         store_events=agent.store_events,
     )
 
-    await _api.acleanup_and_store(agent, run_response=run_response, session=session, user_id=user_id)
+    await _storage.acleanup_and_store(agent, run_response=run_response, session=session, user_id=user_id)
 
     yield pause_event  # type: ignore
 

@@ -2095,14 +2095,14 @@ class Agent:
     def _update_reasoning_content_from_tool_call(
         self, run_response: RunOutput, tool_name: str, tool_args: Dict[str, Any]
     ) -> Optional[ReasoningStep]:
-        return _api.update_reasoning_content_from_tool_call(
+        return _response.update_reasoning_content_from_tool_call(
             self, run_response=run_response, tool_name=tool_name, tool_args=tool_args
         )
 
     def _get_effective_filters(
         self, knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
     ) -> Optional[Any]:
-        return _api.get_effective_filters(self, knowledge_filters=knowledge_filters)
+        return _messages.get_effective_filters(self, knowledge_filters=knowledge_filters)
 
     def _cleanup_and_store(
         self,
@@ -2111,7 +2111,7 @@ class Agent:
         run_context: Optional[RunContext] = None,
         user_id: Optional[str] = None,
     ) -> None:
-        return _api.cleanup_and_store(
+        return _storage.cleanup_and_store(
             self, run_response=run_response, session=session, run_context=run_context, user_id=user_id
         )
 
@@ -2122,12 +2122,12 @@ class Agent:
         run_context: Optional[RunContext] = None,
         user_id: Optional[str] = None,
     ) -> None:
-        return await _api.acleanup_and_store(
+        return await _storage.acleanup_and_store(
             self, run_response=run_response, session=session, run_context=run_context, user_id=user_id
         )
 
     def _scrub_run_output_for_storage(self, run_response: RunOutput) -> None:
-        return _api.scrub_run_output_for_storage(self, run_response=run_response)
+        return _storage.scrub_run_output_for_storage(self, run_response=run_response)
 
     def cli_app(
         self,
