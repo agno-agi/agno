@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from agno.team.mode import TeamMode
     from agno.team.team import Team
 
 from os import getenv
@@ -57,15 +58,17 @@ from agno.utils.string import generate_id_from_name
 
 
 def __init__(
-    team,
+    team: "Team",
     members: List[Union[Agent, "Team"]],
     id: Optional[str] = None,
     model: Optional[Union[Model, str]] = None,
     name: Optional[str] = None,
     role: Optional[str] = None,
+    mode: Optional["TeamMode"] = None,
     respond_directly: bool = False,
     determine_input_for_members: bool = True,
     delegate_to_all_members: bool = False,
+    max_iterations: int = 10,
     user_id: Optional[str] = None,
     session_id: Optional[str] = None,
     session_state: Optional[Dict[str, Any]] = None,
@@ -171,6 +174,25 @@ def __init__(
     team.respond_directly = respond_directly
     team.determine_input_for_members = determine_input_for_members
     team.delegate_to_all_members = delegate_to_all_members
+    team.max_iterations = max_iterations
+
+    # Resolve TeamMode: explicit mode wins, otherwise infer from booleans
+    from agno.team.mode import TeamMode
+
+    if mode is not None:
+        team.mode = mode
+        # Sync booleans for internal code that checks them
+        if mode == TeamMode.route:
+            team.respond_directly = True
+        elif mode == TeamMode.broadcast:
+            team.delegate_to_all_members = True
+    else:
+        if team.respond_directly:
+            team.mode = TeamMode.route
+        elif team.delegate_to_all_members:
+            team.mode = TeamMode.broadcast
+        else:
+            team.mode = TeamMode.coordinate
 
     team.user_id = user_id
     team.session_id = session_id
@@ -497,7 +519,7 @@ def _set_compression_manager(team: "Team") -> None:
 
 
 def _initialize_session(
-    team,
+    team: "Team",
     session_id: Optional[str] = None,
     user_id: Optional[str] = None,
 ) -> Tuple[str, Optional[str]]:
@@ -521,7 +543,7 @@ def _initialize_session(
 
 
 def _initialize_session_state(
-    team,
+    team: "Team",
     session_state: Dict[str, Any],
     user_id: Optional[str] = None,
     session_id: Optional[str] = None,
@@ -590,13 +612,13 @@ def initialize_team(team: "Team", debug_mode: Optional[bool] = None) -> None:
         team._initialize_member(member, debug_mode=team.debug_mode)
 
 
-def add_tool(team: "Team", tool: Union[Toolkit, Callable, Function, Dict]):
+def add_tool(team: "Team", tool: Union[Toolkit, Callable, Function, Dict]) -> None:
     if not team.tools:
         team.tools = []
     team.tools.append(tool)
 
 
-def set_tools(team: "Team", tools: List[Union[Toolkit, Callable, Function, Dict]]):
+def set_tools(team: "Team", tools: List[Union[Toolkit, Callable, Function, Dict]]) -> None:
     team.tools = tools
 
 

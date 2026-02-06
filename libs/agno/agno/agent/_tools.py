@@ -22,12 +22,6 @@ if TYPE_CHECKING:
 from agno.models.base import Model
 from agno.run import RunContext
 from agno.run.agent import RunOutput
-from agno.run.cancel import (
-    acancel_run as acancel_run_global,
-)
-from agno.run.cancel import (
-    cancel_run as cancel_run_global,
-)
 from agno.session import AgentSession
 from agno.tools import Toolkit
 from agno.tools.function import Function
@@ -555,38 +549,3 @@ async def aresolve_run_dependencies(agent: Agent, run_context: RunContext) -> No
             run_context.dependencies[key] = result
         except Exception as e:
             log_warning(f"Failed to resolve context for '{key}': {e}")
-
-
-def get_agent_data(agent: Agent) -> Dict[str, Any]:
-    agent_data: Dict[str, Any] = {}
-    if agent.name is not None:
-        agent_data["name"] = agent.name
-    if agent.id is not None:
-        agent_data["agent_id"] = agent.id
-    if agent.model is not None:
-        agent_data["model"] = agent.model.to_dict()
-    return agent_data
-
-
-def cancel_run(run_id: str) -> bool:
-    """Cancel a running agent execution.
-
-    Args:
-        run_id: The run_id to cancel.
-
-    Returns:
-        True if the run was found and marked for cancellation, False otherwise.
-    """
-    return cancel_run_global(run_id)
-
-
-async def acancel_run(run_id: str) -> bool:
-    """Cancel a running agent execution (async version).
-
-    Args:
-        run_id: The run_id to cancel.
-
-    Returns:
-        True if the run was found and marked for cancellation, False otherwise.
-    """
-    return await acancel_run_global(run_id)

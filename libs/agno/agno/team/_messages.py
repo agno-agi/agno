@@ -226,7 +226,25 @@ def get_system_message(
 
         system_message_content += "\n<how_to_respond>\n"
 
-        if team.delegate_to_all_members:
+        from agno.team.mode import TeamMode
+
+        if team.mode == TeamMode.tasks:
+            system_message_content += (
+                "You are operating in autonomous task mode. Your job is to:\n"
+                "1. Analyze the user's goal and decompose it into discrete tasks using `create_task`\n"
+                "2. Execute tasks by delegating to team members using `execute_task`\n"
+                "3. You can handle small tasks yourself by calling `update_task_status` to mark them completed\n"
+                "4. Monitor progress using `list_tasks`\n"
+                "5. Use `add_task_note` to record observations or communicate about tasks\n"
+                "6. When all tasks are complete, call `mark_all_complete` with a summary\n\n"
+                "Guidelines:\n"
+                "- Create tasks with clear, actionable titles and descriptions\n"
+                "- Set dependencies (depends_on) when tasks must be done in order\n"
+                "- Assign tasks to the most capable member based on their role and tools\n"
+                "- Review task results before marking the overall goal as complete\n"
+                "- If a task fails, decide whether to retry, reassign, or take a different approach\n"
+            )
+        elif team.delegate_to_all_members:
             system_message_content += (
                 "- You can either respond directly or use the `delegate_task_to_members` tool to delegate a task to all members in your team to get a collaborative response.\n"
                 "- To delegate a task to all members in your team, call `delegate_task_to_members` ONLY once. This will delegate a task to all members in your team.\n"
@@ -526,7 +544,25 @@ async def aget_system_message(
 
         system_message_content += "\n<how_to_respond>\n"
 
-        if team.delegate_to_all_members:
+        from agno.team.mode import TeamMode
+
+        if team.mode == TeamMode.tasks:
+            system_message_content += (
+                "You are operating in autonomous task mode. Your job is to:\n"
+                "1. Analyze the user's goal and decompose it into discrete tasks using `create_task`\n"
+                "2. Execute tasks by delegating to team members using `execute_task`\n"
+                "3. You can handle small tasks yourself by calling `update_task_status` to mark them completed\n"
+                "4. Monitor progress using `list_tasks`\n"
+                "5. Use `add_task_note` to record observations or communicate about tasks\n"
+                "6. When all tasks are complete, call `mark_all_complete` with a summary\n\n"
+                "Guidelines:\n"
+                "- Create tasks with clear, actionable titles and descriptions\n"
+                "- Set dependencies (depends_on) when tasks must be done in order\n"
+                "- Assign tasks to the most capable member based on their role and tools\n"
+                "- Review task results before marking the overall goal as complete\n"
+                "- If a task fails, decide whether to retry, reassign, or take a different approach\n"
+            )
+        elif team.delegate_to_all_members:
             system_message_content += (
                 "- You can either respond directly or use the `delegate_task_to_members` tool to delegate a task to all members in your team to get a collaborative response.\n"
                 "- To delegate a task to all members in your team, call `delegate_task_to_members` ONLY once. This will delegate a task to all members in your team.\n"
@@ -1279,9 +1315,9 @@ def _get_messages_for_parser_model(
     response_format: Optional[Union[Dict, Type[BaseModel]]],
     run_context: Optional[RunContext] = None,
 ) -> List[Message]:
+    """Get the messages for the parser model."""
     from agno.utils.prompts import get_json_output_prompt
 
-    """Get the messages for the parser model."""
     # Get output_schema from run_context
     output_schema = run_context.output_schema if run_context else None
 
@@ -1329,19 +1365,26 @@ def _get_messages_for_parser_model_stream(
 
 def _get_messages_for_output_model(team: "Team", messages: List[Message]) -> List[Message]:
     """Get the messages for the output model."""
+    from copy import copy
+
+    # Work on a copy to avoid mutating the caller's list
+    messages = list(messages)
 
     if team.output_model_prompt is not None:
         system_message_exists = False
-        for message in messages:
+        for i, message in enumerate(messages):
             if message.role == "system":
                 system_message_exists = True
-                message.content = team.output_model_prompt
+                msg_copy = copy(message)
+                msg_copy.content = team.output_model_prompt
+                messages[i] = msg_copy
                 break
         if not system_message_exists:
             messages.insert(0, Message(role="system", content=team.output_model_prompt))
 
     # Remove the last assistant message from the messages list
-    messages.pop(-1)
+    if messages and messages[-1].role == "assistant":
+        messages.pop(-1)
 
     return messages
 

@@ -5,12 +5,12 @@ from __future__ import annotations
 from collections import deque
 from typing import (
     TYPE_CHECKING,
+    Any,
     AsyncIterator,
     Dict,
     Iterator,
     List,
     Optional,
-    Union,
 )
 
 if TYPE_CHECKING:
@@ -20,7 +20,7 @@ from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
-from agno.reasoning.step import ReasoningStep, ReasoningSteps
+from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
 from agno.run import RunContext
 from agno.run.agent import RunOutput, RunOutputEvent
 from agno.run.messages import RunMessages
@@ -35,44 +35,11 @@ from agno.utils.events import (
     handle_event,
 )
 from agno.utils.log import log_warning
-from agno.utils.reasoning import update_run_output_with_reasoning
-
-
-def save_run_response_to_file(
-    agent: Agent,
-    run_response: RunOutput,
-    input: Optional[Union[str, List, Dict, Message, List[Message]]] = None,
-    session_id: Optional[str] = None,
-    user_id: Optional[str] = None,
-) -> None:
-    if agent.save_response_to_file is not None and run_response is not None:
-        message_str = None
-        if input is not None:
-            if isinstance(input, str):
-                message_str = input
-            else:
-                log_warning("Did not use input in output file name: input is not a string")
-        try:
-            from pathlib import Path
-
-            fn = agent.save_response_to_file.format(
-                name=agent.name,
-                session_id=session_id,
-                user_id=user_id,
-                message=message_str,
-                run_id=run_response.run_id,
-            )
-            fn_path = Path(fn)
-            if not fn_path.parent.exists():
-                fn_path.parent.mkdir(parents=True, exist_ok=True)
-            if isinstance(run_response.content, str):
-                fn_path.write_text(run_response.content)
-            else:
-                import json
-
-                fn_path.write_text(json.dumps(run_response.content, indent=2))
-        except Exception as e:
-            log_warning(f"Failed to save output to file: {e}")
+from agno.utils.reasoning import (
+    add_reasoning_step_to_metadata,
+    append_to_reasoning_content,
+    update_run_output_with_reasoning,
+)
 
 
 def calculate_run_metrics(
@@ -644,7 +611,9 @@ def generate_response_with_output_model_stream(
     run_response.metrics = calculate_run_metrics(agent, messages_for_run_response)
 
 
-async def agenerate_response_with_output_model(agent: Agent, model_response: ModelResponse, run_messages: RunMessages):
+async def agenerate_response_with_output_model(
+    agent: Agent, model_response: ModelResponse, run_messages: RunMessages
+) -> None:
     """Parse the model response using the output model."""
     if agent.output_model is None:
         return
@@ -708,3 +677,96 @@ async def agenerate_response_with_output_model_stream(
     run_response.messages = messages_for_run_response
     # Update the RunResponse metrics
     run_response.metrics = calculate_run_metrics(agent, messages_for_run_response)
+
+
+# ---------------------------------------------------------------------------
+# Reasoning tool-call helpers
+# ---------------------------------------------------------------------------
+
+
+def update_reasoning_content_from_tool_call(
+    agent: Agent, run_response: RunOutput, tool_name: str, tool_args: Dict[str, Any]
+) -> Optional[ReasoningStep]:
+    """Update reasoning_content based on tool calls that look like thinking or reasoning tools."""
+
+    # Case 1: ReasoningTools.think (has title, thought, optional action and confidence)
+    if tool_name.lower() == "think" and "title" in tool_args and "thought" in tool_args:
+        title = tool_args["title"]
+        thought = tool_args["thought"]
+        action = tool_args.get("action", "")
+        confidence = tool_args.get("confidence", None)
+
+        reasoning_step = ReasoningStep(
+            title=title,
+            reasoning=thought,
+            action=action,
+            next_action=NextAction.CONTINUE,
+            confidence=confidence,
+            result=None,
+        )
+
+        add_reasoning_step_to_metadata(run_response=run_response, reasoning_step=reasoning_step)
+
+        formatted_content = f"## {title}\n{thought}\n"
+        if action:
+            formatted_content += f"Action: {action}\n"
+        if confidence is not None:
+            formatted_content += f"Confidence: {confidence}\n"
+        formatted_content += "\n"
+
+        append_to_reasoning_content(run_response=run_response, content=formatted_content)
+        return reasoning_step
+
+    # Case 2: ReasoningTools.analyze (has title, result, analysis, optional next_action and confidence)
+    elif tool_name.lower() == "analyze" and "title" in tool_args:
+        title = tool_args["title"]
+        result = tool_args.get("result", "")
+        analysis = tool_args.get("analysis", "")
+        next_action = tool_args.get("next_action", "")
+        confidence = tool_args.get("confidence", None)
+
+        next_action_enum = NextAction.CONTINUE
+        if next_action.lower() == "validate":
+            next_action_enum = NextAction.VALIDATE
+        elif next_action.lower() in ["final", "final_answer", "finalize"]:
+            next_action_enum = NextAction.FINAL_ANSWER
+
+        reasoning_step = ReasoningStep(
+            title=title,
+            result=result,
+            reasoning=analysis,
+            next_action=next_action_enum,
+            confidence=confidence,
+            action=None,
+        )
+
+        add_reasoning_step_to_metadata(run_response=run_response, reasoning_step=reasoning_step)
+
+        formatted_content = f"## {title}\n"
+        if result:
+            formatted_content += f"Result: {result}\n"
+        if analysis:
+            formatted_content += f"{analysis}\n"
+        if next_action and next_action.lower() != "continue":
+            formatted_content += f"Next Action: {next_action}\n"
+        if confidence is not None:
+            formatted_content += f"Confidence: {confidence}\n"
+        formatted_content += "\n"
+
+        append_to_reasoning_content(run_response=run_response, content=formatted_content)
+        return reasoning_step
+
+    # Case 3: ReasoningTool.think (simple format, just has 'thought')
+    elif tool_name.lower() == "think" and "thought" in tool_args:
+        thought = tool_args["thought"]
+        reasoning_step = ReasoningStep(  # type: ignore
+            title="Thinking",
+            reasoning=thought,
+            confidence=None,
+        )
+        formatted_content = f"## Thinking\n{thought}\n\n"
+        add_reasoning_step_to_metadata(run_response=run_response, reasoning_step=reasoning_step)
+        append_to_reasoning_content(run_response=run_response, content=formatted_content)
+        return reasoning_step
+
+    return None

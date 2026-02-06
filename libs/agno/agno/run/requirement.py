@@ -26,6 +26,11 @@ class RunRequirement:
     # External execution
     external_execution_result: Optional[str] = None
 
+    # Member context (set when requirement originates from a team member)
+    member_agent_id: Optional[str] = None
+    member_agent_name: Optional[str] = None
+    member_run_id: Optional[str] = None
+
     def __init__(
         self,
         tool_execution: ToolExecution,
@@ -39,6 +44,9 @@ class RunRequirement:
         self.confirmation = None
         self.confirmation_note = None
         self.external_execution_result = None
+        self.member_agent_id = None
+        self.member_agent_name = None
+        self.member_run_id = None
 
     @property
     def needs_confirmation(self) -> bool:
@@ -47,7 +55,7 @@ class RunRequirement:
         if not self.tool_execution:
             return False
         if self.tool_execution.confirmed is True:
-            return True
+            return False
 
         return self.tool_execution.requires_confirmation or False
 
@@ -57,8 +65,10 @@ class RunRequirement:
             return False
         if self.tool_execution.answered is True:
             return False
-        if self.user_input_schema and not all(field.value is not None for field in self.user_input_schema):
-            return True
+        if self.user_input_schema:
+            if not all(field.value is not None for field in self.user_input_schema):
+                return True
+            return False
 
         return self.tool_execution.requires_user_input or False
 
@@ -67,7 +77,7 @@ class RunRequirement:
         if not self.tool_execution:
             return False
         if self.external_execution_result is not None:
-            return True
+            return False
 
         return self.tool_execution.external_execution_required or False
 
@@ -78,12 +88,30 @@ class RunRequirement:
         if self.tool_execution:
             self.tool_execution.confirmed = True
 
-    def reject(self):
+    def reject(self, note: Optional[str] = None):
         if not self.needs_confirmation:
             raise ValueError("This requirement does not require confirmation")
         self.confirmation = False
+        self.confirmation_note = note
         if self.tool_execution:
             self.tool_execution.confirmed = False
+            self.tool_execution.confirmation_note = note
+
+    def provide_user_input(self, values: Dict[str, Any]) -> None:
+        """Provide user input values for a user-input requirement.
+
+        Args:
+            values: A dictionary mapping field names to their values.
+        """
+        if not self.needs_user_input:
+            raise ValueError("This requirement does not require user input")
+        if self.user_input_schema:
+            for input_field in self.user_input_schema:
+                if input_field.name in values:
+                    input_field.value = values[input_field.name]
+            # Only mark as answered when all fields have values
+            if all(f.value is not None for f in self.user_input_schema) and self.tool_execution:
+                self.tool_execution.answered = True
 
     def set_external_execution_result(self, result: str):
         if not self.needs_external_execution:
@@ -114,6 +142,9 @@ class RunRequirement:
             "confirmation": self.confirmation,
             "confirmation_note": self.confirmation_note,
             "external_execution_result": self.external_execution_result,
+            "member_agent_id": self.member_agent_id,
+            "member_agent_name": self.member_agent_name,
+            "member_run_id": self.member_run_id,
         }
 
         if self.tool_execution is not None:
@@ -166,6 +197,9 @@ class RunRequirement:
         requirement.confirmation = data.get("confirmation")
         requirement.confirmation_note = data.get("confirmation_note")
         requirement.external_execution_result = data.get("external_execution_result")
+        requirement.member_agent_id = data.get("member_agent_id")
+        requirement.member_agent_name = data.get("member_agent_name")
+        requirement.member_run_id = data.get("member_run_id")
 
         # Handle user_input_schema
         schema_raw = data.get("user_input_schema")

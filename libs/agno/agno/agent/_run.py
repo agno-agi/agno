@@ -46,12 +46,18 @@ from agno.run.agent import (
     RunOutputEvent,
 )
 from agno.run.cancel import (
+    acancel_run as acancel_run_global,
+)
+from agno.run.cancel import (
     acleanup_run,
     araise_if_cancelled,
     aregister_run,
     cleanup_run,
     raise_if_cancelled,
     register_run,
+)
+from agno.run.cancel import (
+    cancel_run as cancel_run_global,
 )
 from agno.run.messages import RunMessages
 from agno.run.requirement import RunRequirement
@@ -88,6 +94,7 @@ from agno.utils.log import (
     log_info,
     log_warning,
 )
+
 
 def initialize_session(
     agent: Agent,
@@ -268,7 +275,10 @@ def run_impl(
 
                 # 7. Update the RunOutput with the model response
                 agent._update_run_response(
-                    model_response=model_response, run_response=run_response, run_messages=run_messages
+                    model_response=model_response,
+                    run_response=run_response,
+                    run_messages=run_messages,
+                    run_context=run_context,
                 )
 
                 # We should break out of the run function
@@ -919,6 +929,8 @@ def run_dispatch(
         user_id=user_id,
         session_state=session_state,
         dependencies=opts.dependencies,
+        knowledge_filters=opts.knowledge_filters,
+        metadata=opts.metadata,
         output_schema=opts.output_schema,
     )
     # output_schema parameter takes priority, even if run_context was provided
@@ -927,12 +939,6 @@ def run_dispatch(
     # Resolve dependencies
     if run_context.dependencies is not None:
         agent._resolve_run_dependencies(run_context=run_context)
-
-    # Populate RunContext with resolved filters and metadata
-    if opts.knowledge_filters is not None:
-        run_context.knowledge_filters = opts.knowledge_filters
-    if opts.metadata is not None:
-        run_context.metadata = opts.metadata
 
     # Prepare arguments for the model
     response_format = agent._get_response_format(run_context=run_context) if agent.parser_model is None else None
@@ -2075,16 +2081,13 @@ def continue_run_dispatch(
         user_id=user_id,
         session_state=session_state,
         dependencies=opts.dependencies,
+        knowledge_filters=opts.knowledge_filters,
+        metadata=opts.metadata,
     )
 
     # Resolve dependencies
     if run_context.dependencies is not None:
         agent._resolve_run_dependencies(run_context=run_context)
-
-    # Populate RunContext with resolved filters and metadata
-    if opts.knowledge_filters is not None or run_context.knowledge_filters is not None:
-        run_context.knowledge_filters = opts.knowledge_filters or run_context.knowledge_filters
-    run_context.metadata = opts.metadata
 
     # Run can be continued from previous run response or from passed run_response context
     if run_response is not None:
@@ -2247,7 +2250,10 @@ def continue_run_impl(
 
                 # 3. Update the RunOutput with the model response
                 agent._update_run_response(
-                    model_response=model_response, run_response=run_response, run_messages=run_messages
+                    model_response=model_response,
+                    run_response=run_response,
+                    run_messages=run_messages,
+                    run_context=run_context,
                 )
 
                 # We should break out of the run function
@@ -2676,12 +2682,14 @@ def acontinue_run_dispatch(  # type: ignore
 
         background_tasks: BackgroundTasks = background_tasks  # type: ignore
 
+    session_id = run_response.session_id if run_response else session_id
+    run_id: str = run_response.run_id if run_response else run_id  # type: ignore
+
     session_id, user_id = initialize_session(
         agent,
         session_id=session_id,
         user_id=user_id,
     )
-    run_id: str = run_id or run_response.run_id if run_response else run_id  # type: ignore
 
     # Initialize the Agent
     agent.initialize_agent(debug_mode=debug_mode)
@@ -2995,7 +3003,7 @@ async def acontinue_run_impl(
 
                 log_error(f"Validation failed: {str(e)} | Check trigger: {e.check_trigger}")
 
-                agent._cleanup_and_store(
+                await agent._acleanup_and_store(
                     run_response=run_response, session=agent_session, run_context=run_context, user_id=user_id
                 )
 
@@ -3051,7 +3059,7 @@ async def acontinue_run_impl(
         await agent._disconnect_mcp_tools()
 
         # Always clean up the run tracking
-        cleanup_run(run_response.run_id)  # type: ignore
+        await acleanup_run(run_response.run_id)  # type: ignore
     return run_response  # type: ignore
 
 
@@ -3219,7 +3227,7 @@ async def acontinue_run_stream_impl(
                         stream_events=stream_events,
                         run_context=run_context,
                     ):
-                        raise_if_cancelled(run_response.run_id)  # type: ignore
+                        await araise_if_cancelled(run_response.run_id)  # type: ignore
                         if isinstance(event, RunContentEvent):
                             if stream_events:
                                 yield IntermediateRunContentEvent(
@@ -3457,3 +3465,11 @@ async def acontinue_run_stream_impl(
 
         # Always clean up the run tracking
         await acleanup_run(run_response.run_id)  # type: ignore
+
+
+# ---------------------------------------------------------------------------
+# Run cancellation — re-export from agno.run.cancel
+# ---------------------------------------------------------------------------
+
+cancel_run = cancel_run_global
+acancel_run = acancel_run_global

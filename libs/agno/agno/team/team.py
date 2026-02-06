@@ -44,6 +44,7 @@ from agno.registry.registry import Registry
 from agno.run import RunContext, RunStatus
 from agno.run.agent import RunEvent, RunOutput, RunOutputEvent
 from agno.run.messages import RunMessages
+from agno.run.requirement import RunRequirement
 from agno.run.team import (
     TeamRunEvent,
     TeamRunInput,
@@ -53,6 +54,7 @@ from agno.run.team import (
 from agno.session import SessionSummaryManager, TeamSession, WorkflowSession
 from agno.session.summary import SessionSummary
 from agno.team import _api, _hooks, _init, _messages, _response, _run, _storage, _telemetry, _tools
+from agno.team.mode import TeamMode
 from agno.tools import Toolkit
 from agno.tools.function import Function
 from agno.utils.log import (
@@ -94,6 +96,8 @@ class Team:
     workflow_id: Optional[str] = None
 
     # --- Team execution settings ---
+    # Team execution mode. When set, overrides the boolean flags below.
+    mode: Optional["TeamMode"] = None
     # If True, the team leader won't process responses from the members and instead will return them directly
     # Should not be used in combination with delegate_to_all_members
     respond_directly: bool = False
@@ -101,6 +105,8 @@ class Team:
     delegate_to_all_members: bool = False
     # Set to false if you want to send the run input directly to the member agents
     determine_input_for_members: bool = True
+    # Maximum number of iterations for autonomous task loop (mode=tasks)
+    max_iterations: int = 10
 
     # --- User settings ---
     # Default user ID for this team
@@ -382,9 +388,11 @@ class Team:
         model: Optional[Union[Model, str]] = None,
         name: Optional[str] = None,
         role: Optional[str] = None,
+        mode: Optional[TeamMode] = None,
         respond_directly: bool = False,
         determine_input_for_members: bool = True,
         delegate_to_all_members: bool = False,
+        max_iterations: int = 10,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
@@ -486,9 +494,11 @@ class Team:
             model=model,
             name=name,
             role=role,
+            mode=mode,
             respond_directly=respond_directly,
             determine_input_for_members=determine_input_for_members,
             delegate_to_all_members=delegate_to_all_members,
+            max_iterations=max_iterations,
             user_id=user_id,
             session_id=session_id,
             session_state=session_state,
@@ -853,6 +863,7 @@ class Team:
         stream_events: Optional[bool] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
+        run_context: Optional[RunContext] = None,
         user_id: Optional[str] = None,
         run_id: Optional[str] = None,
         audio: Optional[Sequence[Audio]] = None,
@@ -1117,6 +1128,127 @@ class Team:
             debug_mode=debug_mode,
             yield_run_output=yield_run_output,
             output_schema=output_schema,
+            **kwargs,
+        )
+
+    # ---------------------------------------------------------------------------
+    # continue_run / acontinue_run
+    # ---------------------------------------------------------------------------
+
+    @overload
+    def continue_run(
+        self,
+        run_response: Optional[TeamRunOutput] = None,
+        *,
+        run_id: Optional[str] = None,
+        requirements: Optional[List[RunRequirement]] = None,
+        stream: Literal[False] = False,
+        stream_events: Optional[bool] = None,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        debug_mode: Optional[bool] = None,
+        yield_run_output: bool = False,
+    ) -> TeamRunOutput: ...
+
+    @overload
+    def continue_run(
+        self,
+        run_response: Optional[TeamRunOutput] = None,
+        *,
+        run_id: Optional[str] = None,
+        requirements: Optional[List[RunRequirement]] = None,
+        stream: Literal[True] = True,
+        stream_events: Optional[bool] = None,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        debug_mode: Optional[bool] = None,
+        yield_run_output: bool = False,
+    ) -> Iterator[Union[RunOutputEvent, TeamRunOutputEvent]]: ...
+
+    def continue_run(
+        self,
+        run_response: Optional[TeamRunOutput] = None,
+        *,
+        run_id: Optional[str] = None,
+        requirements: Optional[List[RunRequirement]] = None,
+        stream: Optional[bool] = None,
+        stream_events: Optional[bool] = None,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        debug_mode: Optional[bool] = None,
+        yield_run_output: bool = False,
+        **kwargs: Any,
+    ) -> Union[TeamRunOutput, Iterator[Union[RunOutputEvent, TeamRunOutputEvent]]]:
+        return _run.continue_run_dispatch(
+            self,
+            run_response=run_response,
+            run_id=run_id,
+            requirements=requirements,
+            stream=stream,
+            stream_events=stream_events,
+            user_id=user_id,
+            session_id=session_id,
+            debug_mode=debug_mode,
+            yield_run_output=yield_run_output,
+            **kwargs,
+        )
+
+    @overload
+    async def acontinue_run(
+        self,
+        run_response: Optional[TeamRunOutput] = None,
+        *,
+        run_id: Optional[str] = None,
+        requirements: Optional[List[RunRequirement]] = None,
+        stream: Literal[False] = False,
+        stream_events: Optional[bool] = None,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        debug_mode: Optional[bool] = None,
+        **kwargs: Any,
+    ) -> TeamRunOutput: ...
+
+    @overload
+    def acontinue_run(
+        self,
+        run_response: Optional[TeamRunOutput] = None,
+        *,
+        run_id: Optional[str] = None,
+        requirements: Optional[List[RunRequirement]] = None,
+        stream: Literal[True] = True,
+        stream_events: Optional[bool] = None,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        debug_mode: Optional[bool] = None,
+        yield_run_output: bool = False,
+        **kwargs: Any,
+    ) -> AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent]]: ...
+
+    def acontinue_run(  # type: ignore
+        self,
+        run_response: Optional[TeamRunOutput] = None,
+        *,
+        run_id: Optional[str] = None,
+        requirements: Optional[List[RunRequirement]] = None,
+        stream: Optional[bool] = None,
+        stream_events: Optional[bool] = None,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        debug_mode: Optional[bool] = None,
+        yield_run_output: bool = False,
+        **kwargs: Any,
+    ) -> Union[TeamRunOutput, AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent]]]:
+        return _run.acontinue_run_dispatch(
+            self,
+            run_response=run_response,
+            run_id=run_id,
+            requirements=requirements,
+            stream=stream,
+            stream_events=stream_events,
+            user_id=user_id,
+            session_id=session_id,
+            debug_mode=debug_mode,
+            yield_run_output=yield_run_output,
             **kwargs,
         )
 

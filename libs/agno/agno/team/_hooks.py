@@ -30,7 +30,7 @@ from agno.media import Audio
 from agno.models.base import Model
 from agno.models.response import ModelResponse, ModelResponseEvent
 from agno.reasoning.step import ReasoningStep, ReasoningSteps
-from agno.run import RunContext
+from agno.run import RunContext, RunStatus
 from agno.run.agent import RunOutput, RunOutputEvent
 from agno.run.messages import RunMessages
 from agno.run.team import (
@@ -54,6 +54,7 @@ from agno.utils.events import (
     create_team_reasoning_started_event,
     create_team_reasoning_step_event,
     create_team_run_output_content_event,
+    create_team_run_paused_event,
     create_team_tool_call_completed_event,
     create_team_tool_call_error_event,
     create_team_tool_call_started_event,
@@ -80,6 +81,149 @@ if TYPE_CHECKING:
     from agno.team.team import Team
 
 
+# ---------------------------------------------------------------------------
+# HITL pause handlers
+# ---------------------------------------------------------------------------
+
+
+def _get_team_paused_content(run_response: TeamRunOutput) -> str:
+    """Generate human-readable content for a paused team run."""
+    if not run_response.requirements:
+        return "Team run paused."
+    active = [req for req in run_response.requirements if not req.is_resolved()]
+    if not active:
+        return "Team run paused."
+    parts: list[str] = []
+    for req in active:
+        member = req.member_agent_name or "unknown member"
+        tool_name = req.tool_execution.tool_name if req.tool_execution else "unknown"
+        if req.needs_confirmation:
+            parts.append(f"- {member}: {tool_name} requires confirmation")
+        elif req.needs_user_input:
+            parts.append(f"- {member}: {tool_name} requires user input")
+        elif req.needs_external_execution:
+            parts.append(f"- {member}: {tool_name} requires external execution")
+    return "Team run paused. The following members require input:\n" + "\n".join(parts)
+
+
+def handle_team_run_paused(
+    team: "Team",
+    run_response: TeamRunOutput,
+    session: TeamSession,
+) -> TeamRunOutput:
+    from agno.team import _api
+
+    run_response.status = RunStatus.paused
+    if not run_response.content:
+        run_response.content = _get_team_paused_content(run_response)
+
+    # Store the pause event for event history parity with streaming handlers
+    handle_event(
+        create_team_run_paused_event(
+            from_run_response=run_response,
+            tools=run_response.tools,
+            requirements=run_response.requirements,
+        ),
+        run_response,
+        events_to_skip=team.events_to_skip,  # type: ignore
+        store_events=team.store_events,
+    )
+
+    _api._cleanup_and_store(team, run_response=run_response, session=session)
+
+    log_debug(f"Team Run Paused: {run_response.run_id}", center=True, symbol="*")
+    return run_response
+
+
+def handle_team_run_paused_stream(
+    team: "Team",
+    run_response: TeamRunOutput,
+    session: TeamSession,
+) -> Iterator[Union[TeamRunOutputEvent, RunOutputEvent]]:
+    from agno.team import _api
+
+    run_response.status = RunStatus.paused
+    if not run_response.content:
+        run_response.content = _get_team_paused_content(run_response)
+
+    pause_event = handle_event(
+        create_team_run_paused_event(
+            from_run_response=run_response,
+            tools=run_response.tools,
+            requirements=run_response.requirements,
+        ),
+        run_response,
+        events_to_skip=team.events_to_skip,  # type: ignore
+        store_events=team.store_events,
+    )
+
+    _api._cleanup_and_store(team, run_response=run_response, session=session)
+
+    if pause_event is not None:
+        yield pause_event
+
+    log_debug(f"Team Run Paused: {run_response.run_id}", center=True, symbol="*")
+
+
+async def ahandle_team_run_paused(
+    team: "Team",
+    run_response: TeamRunOutput,
+    session: TeamSession,
+) -> TeamRunOutput:
+    from agno.team import _api
+
+    run_response.status = RunStatus.paused
+    if not run_response.content:
+        run_response.content = _get_team_paused_content(run_response)
+
+    # Store the pause event for event history parity with streaming handlers
+    handle_event(
+        create_team_run_paused_event(
+            from_run_response=run_response,
+            tools=run_response.tools,
+            requirements=run_response.requirements,
+        ),
+        run_response,
+        events_to_skip=team.events_to_skip,  # type: ignore
+        store_events=team.store_events,
+    )
+
+    await _api._acleanup_and_store(team, run_response=run_response, session=session)
+
+    log_debug(f"Team Run Paused: {run_response.run_id}", center=True, symbol="*")
+    return run_response
+
+
+async def ahandle_team_run_paused_stream(
+    team: "Team",
+    run_response: TeamRunOutput,
+    session: TeamSession,
+) -> AsyncIterator[Union[TeamRunOutputEvent, RunOutputEvent]]:
+    from agno.team import _api
+
+    run_response.status = RunStatus.paused
+    if not run_response.content:
+        run_response.content = _get_team_paused_content(run_response)
+
+    pause_event = handle_event(
+        create_team_run_paused_event(
+            from_run_response=run_response,
+            tools=run_response.tools,
+            requirements=run_response.requirements,
+        ),
+        run_response,
+        events_to_skip=team.events_to_skip,  # type: ignore
+        store_events=team.store_events,
+    )
+
+    await _api._acleanup_and_store(team, run_response=run_response, session=session)
+
+    if pause_event is not None:
+        yield pause_event
+
+    log_debug(f"Team Run Paused: {run_response.run_id}", center=True, symbol="*")
+
+
 def _execute_pre_hooks(
     team: "Team",
     hooks: Optional[List[Callable[..., Any]]],
@@ -98,13 +242,14 @@ def _execute_pre_hooks(
         return
 
     # Prepare arguments for hooks
+    effective_debug_mode = debug_mode if debug_mode is not None else team.debug_mode
     all_args = {
         "run_input": run_input,
         "run_context": run_context,
         "team": team,
         "session": session,
         "user_id": user_id,
-        "debug_mode": debug_mode or team.debug_mode,
+        "debug_mode": effective_debug_mode,
     }
 
     # Check if background_tasks is available and ALL hooks should run in background
@@ -188,13 +333,14 @@ async def _aexecute_pre_hooks(
         return
 
     # Prepare arguments for hooks
+    effective_debug_mode = debug_mode if debug_mode is not None else team.debug_mode
     all_args = {
         "run_input": run_input,
         "run_context": run_context,
         "team": team,
         "session": session,
         "user_id": user_id,
-        "debug_mode": debug_mode or team.debug_mode,
+        "debug_mode": effective_debug_mode,
     }
 
     # Check if background_tasks is available and ALL hooks should run in background
@@ -283,13 +429,14 @@ def _execute_post_hooks(
         return
 
     # Prepare arguments for hooks
+    effective_debug_mode = debug_mode if debug_mode is not None else team.debug_mode
     all_args = {
         "run_output": run_output,
         "run_context": run_context,
         "team": team,
         "session": session,
         "user_id": user_id,
-        "debug_mode": debug_mode or team.debug_mode,
+        "debug_mode": effective_debug_mode,
     }
 
     # Check if background_tasks is available and ALL hooks should run in background
@@ -370,13 +517,14 @@ async def _aexecute_post_hooks(
         return
 
     # Prepare arguments for hooks
+    effective_debug_mode = debug_mode if debug_mode is not None else team.debug_mode
     all_args = {
         "run_output": run_output,
         "run_context": run_context,
         "team": team,
         "session": session,
         "user_id": user_id,
-        "debug_mode": debug_mode or team.debug_mode,
+        "debug_mode": effective_debug_mode,
     }
 
     # Check if background_tasks is available and ALL hooks should run in background

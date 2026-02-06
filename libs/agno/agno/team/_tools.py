@@ -10,7 +10,7 @@ if TYPE_CHECKING:
 import asyncio
 import contextlib
 import json
-from copy import copy
+from copy import copy, deepcopy
 from typing import (
     Any,
     AsyncIterator,
@@ -274,43 +274,75 @@ def _determine_tools_for_model(
         _tools.append(team.add_to_knowledge)
 
     if team.members:
-        # Get the user message if we are using the input directly
-        user_message_content = None
-        if team.determine_input_for_members is False:
-            user_message = team._get_user_message(
+        from agno.team.mode import TeamMode
+
+        if team.mode == TeamMode.tasks:
+            # Tasks mode: provide task management tools instead of delegation tools
+            from agno.team._task_tools import _get_task_management_tools
+            from agno.team.task import load_task_list
+
+            _task_list = load_task_list(run_context.session_state)
+            task_tools = _get_task_management_tools(
+                team=team,
+                task_list=_task_list,
                 run_response=run_response,
                 run_context=run_context,
-                input_message=input_message,
+                session=session,
+                team_run_context=team_run_context,
                 user_id=user_id,
-                audio=audio,
-                images=images,
-                videos=videos,
-                files=files,
+                stream=stream or False,
+                stream_events=stream_events or False,
+                async_mode=async_mode,
+                images=images,  # type: ignore
+                videos=videos,  # type: ignore
+                audio=audio,  # type: ignore
+                files=files,  # type: ignore
+                add_history_to_context=add_history_to_context,
                 add_dependencies_to_context=add_dependencies_to_context,
+                add_session_state_to_context=add_session_state_to_context,
+                debug_mode=debug_mode,
             )
-            user_message_content = user_message.content if user_message is not None else None
+            _tools.extend(task_tools)
+        else:
+            # Standard modes: provide delegation tools
+            # Get the user message if we are using the input directly
+            user_message_content = None
+            if team.determine_input_for_members is False:
+                user_message = team._get_user_message(
+                    run_response=run_response,
+                    run_context=run_context,
+                    input_message=input_message,
+                    user_id=user_id,
+                    audio=audio,
+                    images=images,
+                    videos=videos,
+                    files=files,
+                    add_dependencies_to_context=add_dependencies_to_context,
+                )
+                user_message_content = user_message.content if user_message is not None else None
 
-        delegate_task_func = team._get_delegate_task_function(
-            run_response=run_response,
-            run_context=run_context,
-            session=session,
-            team_run_context=team_run_context,
-            input=user_message_content,
-            user_id=user_id,
-            stream=stream or False,
-            stream_events=stream_events or False,
-            async_mode=async_mode,
-            images=images,  # type: ignore
-            videos=videos,  # type: ignore
-            audio=audio,  # type: ignore
-            files=files,  # type: ignore
-            add_history_to_context=add_history_to_context,
-            add_dependencies_to_context=add_dependencies_to_context,
-            add_session_state_to_context=add_session_state_to_context,
-            debug_mode=debug_mode,
-        )
+            delegate_task_func = team._get_delegate_task_function(
+                run_response=run_response,
+                run_context=run_context,
+                session=session,
+                team_run_context=team_run_context,
+                input=user_message_content,
+                user_id=user_id,
+                stream=stream or False,
+                stream_events=stream_events or False,
+                async_mode=async_mode,
+                images=images,  # type: ignore
+                videos=videos,  # type: ignore
+                audio=audio,  # type: ignore
+                files=files,  # type: ignore
+                add_history_to_context=add_history_to_context,
+                add_dependencies_to_context=add_dependencies_to_context,
+                add_session_state_to_context=add_session_state_to_context,
+                debug_mode=debug_mode,
+            )
 
-        _tools.append(delegate_task_func)
+            _tools.append(delegate_task_func)
+
         if team.get_member_information_tool:
             _tools.append(team.get_member_information)
 
@@ -790,6 +822,25 @@ def _find_member_by_id(team: "Team", member_id: str) -> Optional[Tuple[int, Unio
     return None
 
 
+def _propagate_member_pause(
+    run_response: TeamRunOutput,
+    member_agent: Union[Agent, "Team"],
+    member_run_response: Union[RunOutput, TeamRunOutput],
+) -> None:
+    """Copy HITL requirements from a paused member run to the team run response."""
+    if not member_run_response.requirements:
+        return
+    if run_response.requirements is None:
+        run_response.requirements = []
+    member_id = get_member_id(member_agent)
+    for req in member_run_response.requirements:
+        req_copy = deepcopy(req)
+        req_copy.member_agent_id = member_id
+        req_copy.member_agent_name = member_agent.name
+        req_copy.member_run_id = member_run_response.run_id
+        run_response.requirements.append(req_copy)
+
+
 def _get_delegate_task_function(
     team: "Team",
     run_response: TeamRunOutput,
@@ -1018,6 +1069,20 @@ def _get_delegate_task_function(
 
             check_if_run_cancelled(member_agent_run_response)  # type: ignore
 
+        # Check if the member run is paused (HITL)
+        if member_agent_run_response is not None and member_agent_run_response.is_paused:
+            _propagate_member_pause(run_response, member_agent, member_agent_run_response)
+            use_team_logger()
+            _process_delegate_task_to_member(
+                member_agent_run_response,
+                member_agent,
+                member_agent_task,  # type: ignore
+                member_session_state_copy,  # type: ignore
+            )
+            yield f"Member '{member_agent.name}' requires human input before continuing."
+            return
+
+        if not stream:
             try:
                 if member_agent_run_response.content is None and (  # type: ignore
                     member_agent_run_response.tools is None or len(member_agent_run_response.tools) == 0  # type: ignore
@@ -1143,6 +1208,20 @@ def _get_delegate_task_function(
             )
             check_if_run_cancelled(member_agent_run_response)  # type: ignore
 
+        # Check if the member run is paused (HITL)
+        if member_agent_run_response is not None and member_agent_run_response.is_paused:
+            _propagate_member_pause(run_response, member_agent, member_agent_run_response)
+            use_team_logger()
+            _process_delegate_task_to_member(
+                member_agent_run_response,
+                member_agent,
+                member_agent_task,  # type: ignore
+                member_session_state_copy,  # type: ignore
+            )
+            yield f"Member '{member_agent.name}' requires human input before continuing."
+            return
+
+        if not stream:
             try:
                 if member_agent_run_response.content is None and (  # type: ignore
                     member_agent_run_response.tools is None or len(member_agent_run_response.tools) == 0  # type: ignore
@@ -1257,6 +1336,20 @@ def _get_delegate_task_function(
 
                 check_if_run_cancelled(member_agent_run_response)  # type: ignore
 
+            # Check if the member run is paused (HITL)
+            if member_agent_run_response is not None and member_agent_run_response.is_paused:
+                _propagate_member_pause(run_response, member_agent, member_agent_run_response)
+                use_team_logger()
+                _process_delegate_task_to_member(
+                    member_agent_run_response,
+                    member_agent,
+                    member_agent_task,  # type: ignore
+                    member_session_state_copy,  # type: ignore
+                )
+                yield f"Agent {member_agent.name}: Requires human input before continuing."
+                continue
+
+            if not stream:
                 try:
                     if member_agent_run_response.content is None and (  # type: ignore
                         member_agent_run_response.tools is None or len(member_agent_run_response.tools) == 0  # type: ignore
@@ -1300,7 +1393,11 @@ def _get_delegate_task_function(
         """
 
         if stream:
-            # Concurrent streaming: launch each member as a streaming worker and merge events
+            # Concurrent streaming: launch each member as a streaming worker and merge events.
+            # Safety note: _propagate_member_pause() and _process_delegate_task_to_member()
+            # mutate shared run_response but each task runs in the same event loop, and mutations
+            # only happen in the finally block after the stream is consumed, so there is no
+            # concurrent mutation risk with asyncio cooperative scheduling.
             done_marker = object()
             queue: "asyncio.Queue[Union[RunOutputEvent, TeamRunOutputEvent, str, object]]" = asyncio.Queue()
 
@@ -1308,48 +1405,63 @@ def _get_delegate_task_function(
                 member_agent_task, history = _setup_delegate_task_to_member(member_agent=agent, task=task)  # type: ignore
                 member_session_state_copy = copy(run_context.session_state)
 
-                member_stream = agent.arun(  # type: ignore
-                    input=member_agent_task if not history else history,
-                    user_id=user_id,
-                    session_id=session.session_id,
-                    session_state=member_session_state_copy,  # Send a copy to the agent
-                    images=images,
-                    videos=videos,
-                    audio=audio,
-                    files=files,
-                    stream=True,
-                    stream_events=stream_events or team.stream_member_events,
-                    debug_mode=debug_mode,
-                    knowledge_filters=run_context.knowledge_filters
-                    if not agent.knowledge_filters and agent.knowledge
-                    else None,
-                    dependencies=run_context.dependencies,
-                    add_dependencies_to_context=add_dependencies_to_context,
-                    add_session_state_to_context=add_session_state_to_context,
-                    metadata=run_context.metadata,
-                    yield_run_output=True,
-                )
-                member_agent_run_response = None
                 try:
-                    async for member_agent_run_output_event in member_stream:
-                        # Do NOT break out of the loop, AsyncIterator need to exit properly
-                        if isinstance(member_agent_run_output_event, (TeamRunOutput, RunOutput)):
-                            member_agent_run_response = member_agent_run_output_event  # type: ignore
-                            continue  # Don't yield TeamRunOutput or RunOutput, only yield events
-
-                        check_if_run_cancelled(member_agent_run_output_event)
-                        member_agent_run_output_event.parent_run_id = member_agent_run_output_event.parent_run_id or (
-                            run_response.run_id if run_response is not None else None
-                        )
-                        await queue.put(member_agent_run_output_event)
-                finally:
-                    _process_delegate_task_to_member(
-                        member_agent_run_response,
-                        agent,
-                        member_agent_task,  # type: ignore
-                        member_session_state_copy,  # type: ignore
+                    member_stream = agent.arun(  # type: ignore
+                        input=member_agent_task if not history else history,
+                        user_id=user_id,
+                        session_id=session.session_id,
+                        session_state=member_session_state_copy,  # Send a copy to the agent
+                        images=images,
+                        videos=videos,
+                        audio=audio,
+                        files=files,
+                        stream=True,
+                        stream_events=stream_events or team.stream_member_events,
+                        debug_mode=debug_mode,
+                        knowledge_filters=run_context.knowledge_filters
+                        if not agent.knowledge_filters and agent.knowledge
+                        else None,
+                        dependencies=run_context.dependencies,
+                        add_dependencies_to_context=add_dependencies_to_context,
+                        add_session_state_to_context=add_session_state_to_context,
+                        metadata=run_context.metadata,
+                        yield_run_output=True,
                     )
-                await queue.put(done_marker)
+                    member_agent_run_response = None
+                    try:
+                        async for member_agent_run_output_event in member_stream:
+                            # Do NOT break out of the loop, AsyncIterator need to exit properly
+                            if isinstance(member_agent_run_output_event, (TeamRunOutput, RunOutput)):
+                                member_agent_run_response = member_agent_run_output_event  # type: ignore
+                                continue  # Don't yield TeamRunOutput or RunOutput, only yield events
+
+                            check_if_run_cancelled(member_agent_run_output_event)
+                            member_agent_run_output_event.parent_run_id = (
+                                member_agent_run_output_event.parent_run_id
+                                or (run_response.run_id if run_response is not None else None)
+                            )
+                            await queue.put(member_agent_run_output_event)
+                    finally:
+                        # Check if the member run is paused (HITL)
+                        if member_agent_run_response is not None and member_agent_run_response.is_paused:
+                            _propagate_member_pause(run_response, agent, member_agent_run_response)
+                            _process_delegate_task_to_member(
+                                member_agent_run_response,
+                                agent,
+                                member_agent_task,  # type: ignore
+                                member_session_state_copy,  # type: ignore
+                            )
+                            await queue.put(f"Agent {agent.name}: Requires human input before continuing.")
+                        else:
+                            _process_delegate_task_to_member(
+                                member_agent_run_response,
+                                agent,
+                                member_agent_task,  # type: ignore
+                                member_session_state_copy,  # type: ignore
+                            )
+                finally:
+                    # Always signal completion so the queue drain loop never deadlocks
+                    await queue.put(done_marker)
 
             # Initialize and launch all members
             tasks: List[asyncio.Task[None]] = []
@@ -1372,10 +1484,15 @@ def _get_delegate_task_function(
                 for t in tasks:
                     if not t.done():
                         t.cancel()
-                # Await cancellation to suppress warnings
                 for t in tasks:
-                    with contextlib.suppress(Exception):
+                    with contextlib.suppress(asyncio.CancelledError):
                         await t
+
+            # After draining, check for task exceptions that were raised
+            # inside stream_member (after done_marker was sent)
+            for t in tasks:
+                if t.done() and not t.cancelled() and t.exception() is not None:
+                    raise t.exception()  # type: ignore[misc]
         else:
             # Non-streaming concurrent run of members; collect results when done
             tasks = []
@@ -1388,7 +1505,7 @@ def _get_delegate_task_function(
                     member_agent_task=member_agent_task,
                     history=history,
                     member_agent_index=member_agent_index,
-                ) -> str:
+                ) -> Tuple[str, Optional[Union[Agent, "Team"]], Optional[Union[RunOutput, TeamRunOutput]]]:
                     member_session_state_copy = copy(run_context.session_state)
 
                     member_agent_run_response = await member_agent.arun(
@@ -1414,6 +1531,22 @@ def _get_delegate_task_function(
                     )
                     check_if_run_cancelled(member_agent_run_response)
 
+                    member_name = member_agent.name if member_agent.name else f"agent_{member_agent_index}"
+
+                    # Check for pause BEFORE processing results so we don't lose pause state
+                    if member_agent_run_response is not None and member_agent_run_response.is_paused:
+                        _process_delegate_task_to_member(
+                            member_agent_run_response,
+                            member_agent,
+                            member_agent_task,  # type: ignore
+                            member_session_state_copy,  # type: ignore
+                        )
+                        return (
+                            f"Agent {member_name}: Requires human input before continuing.",
+                            member_agent,
+                            member_agent_run_response,
+                        )
+
                     _process_delegate_task_to_member(
                         member_agent_run_response,
                         member_agent,
@@ -1421,35 +1554,44 @@ def _get_delegate_task_function(
                         member_session_state_copy,  # type: ignore
                     )
 
-                    member_name = member_agent.name if member_agent.name else f"agent_{member_agent_index}"
+                    result_text: str
                     try:
                         if member_agent_run_response.content is None and (
                             member_agent_run_response.tools is None or len(member_agent_run_response.tools) == 0
                         ):
-                            return f"Agent {member_name}: No response from the member agent."
+                            result_text = f"Agent {member_name}: No response from the member agent."
                         elif isinstance(member_agent_run_response.content, str):
                             if len(member_agent_run_response.content.strip()) > 0:
-                                return f"Agent {member_name}: {member_agent_run_response.content}"
+                                result_text = f"Agent {member_name}: {member_agent_run_response.content}"
                             elif (
                                 member_agent_run_response.tools is not None and len(member_agent_run_response.tools) > 0
                             ):
-                                return f"Agent {member_name}: {','.join([tool.result for tool in member_agent_run_response.tools])}"
+                                result_text = f"Agent {member_name}: {','.join([tool.result for tool in member_agent_run_response.tools])}"
+                            else:
+                                result_text = f"Agent {member_name}: No Response"
                         elif issubclass(type(member_agent_run_response.content), BaseModel):
-                            return f"Agent {member_name}: {member_agent_run_response.content.model_dump_json(indent=2)}"  # type: ignore
+                            result_text = (
+                                f"Agent {member_name}: {member_agent_run_response.content.model_dump_json(indent=2)}"  # type: ignore
+                            )
                         else:
                             import json
 
-                            return f"Agent {member_name}: {json.dumps(member_agent_run_response.content, indent=2)}"
+                            result_text = (
+                                f"Agent {member_name}: {json.dumps(member_agent_run_response.content, indent=2)}"
+                            )
                     except Exception as e:
-                        return f"Agent {member_name}: Error - {str(e)}"
+                        result_text = f"Agent {member_name}: Error - {str(e)}"
 
-                    return f"Agent {member_name}: No Response"
+                    return (result_text, None, None)
 
                 tasks.append(run_member_agent)  # type: ignore
 
-            results = await asyncio.gather(*[task() for task in tasks])  # type: ignore
-            for result in results:
-                yield result
+            gathered = await asyncio.gather(*[task() for task in tasks])  # type: ignore
+            # Propagate HITL pauses sequentially after all coroutines complete
+            for result_text, paused_agent, paused_response in gathered:
+                if paused_agent is not None and paused_response is not None:
+                    _propagate_member_pause(run_response, paused_agent, paused_response)
+                yield result_text
 
         # After all the member runs, switch back to the team logger
         use_team_logger()
