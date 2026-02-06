@@ -19,6 +19,7 @@ import pytest
 from agno.agent.agent import Agent
 from agno.db.base import BaseDb, ComponentType
 from agno.registry import Registry
+from agno.session import TeamSession
 from agno.team.team import Team, get_team_by_id, get_teams
 
 # =============================================================================
@@ -200,6 +201,19 @@ class TestTeamToDict:
 
         assert team.store_history_messages is False
         assert "store_history_messages" not in team.to_dict()
+
+    def test_add_search_knowledge_instructions_default_omitted(self):
+        """Test add_search_knowledge_instructions default is omitted from config."""
+        team = Team(id="search-default-team", members=[])
+
+        assert "add_search_knowledge_instructions" not in team.to_dict()
+
+    def test_add_search_knowledge_instructions_false_is_serialized(self):
+        """Test add_search_knowledge_instructions=False is serialized in config."""
+        team = Team(id="search-false-team", members=[], add_search_knowledge_instructions=False)
+        config = team.to_dict()
+
+        assert config["add_search_knowledge_instructions"] is False
 
     def test_to_dict_with_db(self, basic_team, mock_db):
         """Test to_dict includes database configuration."""
@@ -676,6 +690,20 @@ class TestTeamDelete:
         result = basic_team.delete()
 
         assert result is False
+
+
+class TestTeamSessionNaming:
+    def test_generate_session_name_fallback_after_max_retries(self):
+        """Test generate_session_name falls back after repeated invalid model output."""
+        team = Team(id="session-name-team", members=[])
+        team.model = MagicMock()
+        team.model.response = MagicMock(return_value=MagicMock(content=None))
+
+        session = TeamSession(session_id="session-1", runs=[])
+        session_name = team.generate_session_name(session=session)
+
+        assert session_name == "Team Session"
+        assert team.model.response.call_count == 4
 
 
 # =============================================================================
