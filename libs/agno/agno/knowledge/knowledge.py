@@ -49,7 +49,7 @@ class Knowledge(RemoteKnowledge):
     max_results: int = 10
     readers: Optional[Dict[str, Reader]] = None
     content_sources: Optional[List[RemoteContentConfig]] = None
-    # Opt-in flag to enable vector search filtering by knowledge instance
+    # Opt-in flag to enable vector search filtering by knowledge instanceP:
     # When enabled, search results are filtered to only include documents from this knowledge instance
     # Requires re-indexing existing data to include linked_to in document metadata
     isolate_vector_search: bool = False
@@ -524,12 +524,22 @@ class Knowledge(RemoteKnowledge):
 
             # Inject linked_to filter if isolate_vector_search is enabled
             search_filters = filters
-            if self.isolate_vector_search and self.name:
-                if search_filters is None:
+            if self.isolate_vector_search:
+                if not self.name:
+                    log_warning(
+                        "isolate_vector_search is enabled but knowledge instance has no name. "
+                        "Vector search isolation requires a knowledge name to filter by."
+                    )
+                elif search_filters is None:
                     search_filters = {"linked_to": self.name}
                 elif isinstance(search_filters, dict):
                     search_filters = {**search_filters, "linked_to": self.name}
-                # For list-based filters, we cannot easily inject - leave as is
+                elif isinstance(search_filters, list):
+                    log_warning(
+                        "isolate_vector_search is enabled but filters are list-based. "
+                        "Cannot inject linked_to filter into list-based filters. "
+                        "Consider using dict-based filters or add linked_to filter manually."
+                    )
 
             _max_results = max_results or self.max_results
             log_debug(f"Getting {_max_results} relevant documents for query: {query}")
@@ -563,12 +573,22 @@ class Knowledge(RemoteKnowledge):
 
             # Inject linked_to filter if isolate_vector_search is enabled
             search_filters = filters
-            if self.isolate_vector_search and self.name:
-                if search_filters is None:
+            if self.isolate_vector_search:
+                if not self.name:
+                    log_warning(
+                        "isolate_vector_search is enabled but knowledge instance has no name. "
+                        "Vector search isolation requires a knowledge name to filter by."
+                    )
+                elif search_filters is None:
                     search_filters = {"linked_to": self.name}
                 elif isinstance(search_filters, dict):
                     search_filters = {**search_filters, "linked_to": self.name}
-                # For list-based filters, we cannot easily inject - leave as is
+                elif isinstance(search_filters, list):
+                    log_warning(
+                        "isolate_vector_search is enabled but filters are list-based. "
+                        "Cannot inject linked_to filter into list-based filters. "
+                        "Consider using dict-based filters or add linked_to filter manually."
+                    )
 
             _max_results = max_results or self.max_results
             log_debug(f"Getting {_max_results} relevant documents for query: {query}")

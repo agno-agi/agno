@@ -183,6 +183,54 @@ class TestIsolateVectorSearch:
         assert len(mock_db.search_calls) == 1
         assert mock_db.search_calls[0]["filters"] is None
 
+    def test_search_with_isolation_no_name_logs_warning(self):
+        """Test that isolation without name logs a warning and doesn't inject filter."""
+        from unittest.mock import patch
+
+        mock_db = MockVectorDb()
+        knowledge = Knowledge(
+            vector_db=mock_db,
+            isolate_vector_search=True,
+        )
+
+        with patch("agno.knowledge.knowledge.log_warning") as mock_warning:
+            knowledge.search("test query")
+
+        # Verify warning was called
+        mock_warning.assert_called_once()
+        assert "isolate_vector_search is enabled but knowledge instance has no name" in mock_warning.call_args[0][0]
+
+        # Verify no filter was injected
+        assert len(mock_db.search_calls) == 1
+        assert mock_db.search_calls[0]["filters"] is None
+
+    def test_search_with_isolation_list_filters_logs_warning(self):
+        """Test that isolation with list filters logs a warning."""
+        from unittest.mock import patch
+
+        from agno.filters import EQ
+
+        mock_db = MockVectorDb()
+        knowledge = Knowledge(
+            name="Test KB",
+            vector_db=mock_db,
+            isolate_vector_search=True,
+        )
+
+        # Use list-based filters (list of FilterExpr objects)
+        list_filters = [EQ("category", "docs")]
+
+        with patch("agno.knowledge.knowledge.log_warning") as mock_warning:
+            knowledge.search("test query", filters=list_filters)
+
+        # Verify warning was called
+        mock_warning.assert_called_once()
+        assert "isolate_vector_search is enabled but filters are list-based" in mock_warning.call_args[0][0]
+
+        # Verify original list filters were passed through unchanged
+        assert len(mock_db.search_calls) == 1
+        assert mock_db.search_calls[0]["filters"] == list_filters
+
 
 class TestLinkedToMetadata:
     """Tests for linked_to metadata being added to documents."""
