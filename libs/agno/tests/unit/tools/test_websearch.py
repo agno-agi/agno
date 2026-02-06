@@ -263,19 +263,52 @@ def test_web_search_with_modifier():
         )
 
 
-def test_web_search_with_backend():
-    """Test web search with specific backend."""
+def test_web_search_with_backend_param():
+    """Test web search with backend parameter passed to function."""
     with patch("agno.tools.websearch.DDGS") as mock_ddgs_cls:
         mock_instance = MagicMock()
         mock_ddgs_cls.return_value.__enter__ = MagicMock(return_value=mock_instance)
         mock_ddgs_cls.return_value.__exit__ = MagicMock(return_value=False)
         mock_instance.text.return_value = []
 
-        tools = WebSearchTools(backend="google")
-        tools.web_search("test query")
+        tools = WebSearchTools()
+        tools.web_search("test query", backend="google")
 
         mock_instance.text.assert_called_once_with(
             query="test query", max_results=5, timelimit=None, region="wt-wt", backend="google"
+        )
+
+
+def test_web_search_with_constructor_backend():
+    """Test web search with backend set in constructor."""
+    with patch("agno.tools.websearch.DDGS") as mock_ddgs_cls:
+        mock_instance = MagicMock()
+        mock_ddgs_cls.return_value.__enter__ = MagicMock(return_value=mock_instance)
+        mock_ddgs_cls.return_value.__exit__ = MagicMock(return_value=False)
+        mock_instance.text.return_value = []
+
+        tools = WebSearchTools(backend="bing")
+        tools.web_search("test query")
+
+        mock_instance.text.assert_called_once_with(
+            query="test query", max_results=5, timelimit=None, region="wt-wt", backend="bing"
+        )
+
+
+def test_web_search_constructor_backend_overrides_parameter():
+    """Test that constructor backend overrides function backend parameter."""
+    with patch("agno.tools.websearch.DDGS") as mock_ddgs_cls:
+        mock_instance = MagicMock()
+        mock_ddgs_cls.return_value.__enter__ = MagicMock(return_value=mock_instance)
+        mock_ddgs_cls.return_value.__exit__ = MagicMock(return_value=False)
+        mock_instance.text.return_value = []
+
+        tools = WebSearchTools(backend="duckduckgo")
+        tools.web_search("test query", backend="google")
+
+        # Constructor backend wins over function parameter
+        mock_instance.text.assert_called_once_with(
+            query="test query", max_results=5, timelimit=None, region="wt-wt", backend="duckduckgo"
         )
 
 
@@ -355,19 +388,52 @@ def test_search_news_with_fixed_max_results():
         )
 
 
-def test_search_news_with_backend():
-    """Test news search with specific backend."""
+def test_search_news_with_backend_param():
+    """Test news search with backend parameter passed to function."""
     with patch("agno.tools.websearch.DDGS") as mock_ddgs_cls:
         mock_instance = MagicMock()
         mock_ddgs_cls.return_value.__enter__ = MagicMock(return_value=mock_instance)
         mock_ddgs_cls.return_value.__exit__ = MagicMock(return_value=False)
         mock_instance.news.return_value = []
 
-        tools = WebSearchTools(backend="bing")
-        tools.search_news("test news")
+        tools = WebSearchTools()
+        tools.search_news("test news", backend="bing")
 
         mock_instance.news.assert_called_once_with(
             query="test news", max_results=5, timelimit=None, region="wt-wt", backend="bing"
+        )
+
+
+def test_search_news_with_constructor_backend():
+    """Test news search with backend set in constructor."""
+    with patch("agno.tools.websearch.DDGS") as mock_ddgs_cls:
+        mock_instance = MagicMock()
+        mock_ddgs_cls.return_value.__enter__ = MagicMock(return_value=mock_instance)
+        mock_ddgs_cls.return_value.__exit__ = MagicMock(return_value=False)
+        mock_instance.news.return_value = []
+
+        tools = WebSearchTools(backend="brave")
+        tools.search_news("test news")
+
+        mock_instance.news.assert_called_once_with(
+            query="test news", max_results=5, timelimit=None, region="wt-wt", backend="brave"
+        )
+
+
+def test_search_news_constructor_backend_overrides_parameter():
+    """Test that constructor backend overrides function backend parameter for news."""
+    with patch("agno.tools.websearch.DDGS") as mock_ddgs_cls:
+        mock_instance = MagicMock()
+        mock_ddgs_cls.return_value.__enter__ = MagicMock(return_value=mock_instance)
+        mock_ddgs_cls.return_value.__exit__ = MagicMock(return_value=False)
+        mock_instance.news.return_value = []
+
+        tools = WebSearchTools(backend="yahoo")
+        tools.search_news("test news", backend="google")
+
+        # Constructor backend wins over function parameter
+        mock_instance.news.assert_called_once_with(
+            query="test news", max_results=5, timelimit=None, region="wt-wt", backend="yahoo"
         )
 
 

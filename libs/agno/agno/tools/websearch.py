@@ -19,10 +19,12 @@ class WebSearchTools(Toolkit):
         enable_search (bool): Enable web search function.
         enable_news (bool): Enable news search function.
         backend (str): The backend to use for searching. Defaults to "auto" which
-            automatically selects available backends. Other options include:
-            "duckduckgo", "google", "bing", "brave", "yandex", "yahoo", etc.
+            automatically selects available backends. If set to a specific backend,
+            it will override any backend parameter passed to search functions.
+            Options: "auto", "duckduckgo", "google", "bing", "brave", "yandex", "yahoo", etc.
         modifier (Optional[str]): A modifier to be prepended to search queries.
-        fixed_max_results (Optional[int]): A fixed number of maximum results.
+        fixed_max_results (Optional[int]): A fixed number of maximum results. If set,
+            overrides the max_results parameter in search functions.
         fixed_timelimit (Optional[str]): A fixed timelimit for results. Options: "d" (day),
             "w" (week), "m" (month), "y" (year). If set, overrides the timelimit parameter
             in search functions.
@@ -52,9 +54,9 @@ class WebSearchTools(Toolkit):
         self.fixed_max_results: Optional[int] = fixed_max_results
         self.fixed_timelimit: Optional[str] = fixed_timelimit
         self.fixed_region: Optional[str] = fixed_region
+        self.backend: str = backend
         self.modifier: Optional[str] = modifier
         self.verify_ssl: bool = verify_ssl
-        self.backend: str = backend
 
         tools: List[Any] = []
         if enable_search:
@@ -70,6 +72,7 @@ class WebSearchTools(Toolkit):
         max_results: int = 5,
         timelimit: Optional[Literal["d", "w", "m", "y"]] = None,
         region: str = "wt-wt",
+        backend: str = "auto",
     ) -> str:
         """Use this function to search the web for a query.
 
@@ -84,6 +87,8 @@ class WebSearchTools(Toolkit):
                 - None: no time limit (default)
             region (str, optional): Region for search results. Defaults to "wt-wt" (worldwide).
                 Examples: "us-en" (US), "uk-en" (UK), "ko-kr" (Korea), "ja-jp" (Japan).
+            backend (str, optional): Search backend to use. Defaults to "auto".
+                Options: "auto", "duckduckgo", "google", "bing", "brave", "yandex", "yahoo".
 
         Returns:
             The search results from the web.
@@ -91,16 +96,17 @@ class WebSearchTools(Toolkit):
         actual_max_results = self.fixed_max_results or max_results
         actual_timelimit = self.fixed_timelimit or timelimit
         actual_region = self.fixed_region or region
+        actual_backend = self.backend if self.backend != "auto" else backend
         search_query = f"{self.modifier} {query}" if self.modifier else query
 
-        log_debug(f"Searching web for: {search_query} using backend: {self.backend}")
+        log_debug(f"Searching web for: {search_query} using backend: {actual_backend}")
         with DDGS(proxy=self.proxy, timeout=self.timeout, verify=self.verify_ssl) as ddgs:
             results = ddgs.text(
                 query=search_query,
                 max_results=actual_max_results,
                 timelimit=actual_timelimit,
                 region=actual_region,
-                backend=self.backend,
+                backend=actual_backend,
             )
 
         return json.dumps(results, indent=2)
@@ -111,6 +117,7 @@ class WebSearchTools(Toolkit):
         max_results: int = 5,
         timelimit: Optional[Literal["d", "w", "m", "y"]] = None,
         region: str = "wt-wt",
+        backend: str = "auto",
     ) -> str:
         """Use this function to get the latest news from the web.
 
@@ -125,6 +132,8 @@ class WebSearchTools(Toolkit):
                 - None: no time limit (default)
             region (str, optional): Region for search results. Defaults to "wt-wt" (worldwide).
                 Examples: "us-en" (US), "uk-en" (UK), "ko-kr" (Korea), "ja-jp" (Japan).
+            backend (str, optional): Search backend to use. Defaults to "auto".
+                Options: "auto", "duckduckgo", "google", "bing", "brave", "yandex", "yahoo".
 
         Returns:
             The latest news from the web.
@@ -132,15 +141,16 @@ class WebSearchTools(Toolkit):
         actual_max_results = self.fixed_max_results or max_results
         actual_timelimit = self.fixed_timelimit or timelimit
         actual_region = self.fixed_region or region
+        actual_backend = self.backend if self.backend != "auto" else backend
 
-        log_debug(f"Searching web news for: {query} using backend: {self.backend}")
+        log_debug(f"Searching web news for: {query} using backend: {actual_backend}")
         with DDGS(proxy=self.proxy, timeout=self.timeout, verify=self.verify_ssl) as ddgs:
             results = ddgs.news(
                 query=query,
                 max_results=actual_max_results,
                 timelimit=actual_timelimit,
                 region=actual_region,
-                backend=self.backend,
+                backend=actual_backend,
             )
 
         return json.dumps(results, indent=2)
