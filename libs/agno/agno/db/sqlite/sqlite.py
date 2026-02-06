@@ -170,6 +170,8 @@ class SqliteDb(BaseDb):
             components_table=data.get("components_table"),
             component_configs_table=data.get("component_configs_table"),
             component_links_table=data.get("component_links_table"),
+            schedule_table=data.get("schedule_table"),
+            schedule_runs_table=data.get("schedule_runs_table"),
             id=data.get("id"),
         )
 

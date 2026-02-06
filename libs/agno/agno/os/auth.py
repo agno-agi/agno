@@ -87,7 +87,7 @@ def get_authentication_dependency(settings: AgnoAPISettings):
         internal_token = getattr(request.app.state, "internal_service_token", None)
         if internal_token and hmac.compare_digest(token, internal_token):
             request.state.authenticated = True
-            request.state.scopes = ["agent_os:admin"]
+            request.state.scopes = ["agents:run", "teams:run", "workflows:run", "schedules:read", "schedules:write"]
             return True
 
         # Verify the token against security key
