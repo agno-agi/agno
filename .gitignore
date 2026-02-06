@@ -81,6 +81,8 @@ specs
 docs
 projects
 agno-os
+/dash
+/scout
 
 # Private Claude coding session preferences
 CLAUDE_PRIVATE.md
