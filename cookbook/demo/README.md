@@ -1,214 +1,82 @@
 # Agno Demo
 
-This demo cookbook showcases a range of examples built using Agno.
+6 self-learning agents, 2 teams, and 2 workflows showcasing Agno's capabilities.
 
-## What's Inside
+## Agents
 
-### Agents
+| Agent | What it does | Key features |
+|-------|-------------|--------------|
+| **Dash** | Self-learning data agent (F1 dataset) | SQL tools, 6-layer context, knowledge base, learning |
+| **Scout** | Enterprise knowledge navigator | Grep-like search, full doc reads, source registry, learning |
+| **Pal** | Personal AI second brain | DuckDB storage, web research, captures and retrieves knowledge |
+| **Seek** | Deep research agent | Multi-source research, structured reports, learns reliable sources |
+| **Dex** | Relationship intelligence | People profiles, meeting prep, interaction tracking |
+| **Ace** | Response agent that learns your voice | Email/message drafting, tone adaptation, style learning |
 
-| Agent | Description |
-|-------|-------------|
-| **PaL Agent** | Plan and Learn - stateful planning with session state and learning capture |
-| **Research Agent** | Professional research with rigorous methodology and source verification |
-| **Finance Agent** | Financial data retrieval and analysis with YFinance |
-| **Deep Knowledge Agent** | RAG with iterative reasoning and knowledge base search |
-| **Web Intelligence Agent** | Website analysis and competitive intelligence |
-| **Report Writer Agent** | Professional report generation and synthesis |
-| **Knowledge Agent** | General RAG agent with knowledge base (uses docs.agno.com as example) |
-| **MCP Agent** | General MCP integration (uses docs.agno.com/mcp as example) |
+## Teams
 
-### Teams (2 total)
+| Team | Members | Mode | Use case |
+|------|---------|------|----------|
+| **Research Team** | Seek + Scout + Dex | Coordinate | Deep research combining external, internal, and people intelligence |
+| **Support Team** | Ace + Scout + Dash | Route | Routes incoming questions to the right specialist |
 
-| Team | Members | Use Case |
-|------|---------|----------|
-| **Investment Team** | Finance + Research + Report Writer | Wall Street quality investment research |
-| **Due Diligence Team** | Research + Web Intel + Finance + Devil's Advocate + Report Writer | Rigorous due diligence with debate |
+## Workflows
 
-### Workflows (2 total)
+| Workflow | Steps | Use case |
+|----------|-------|----------|
+| **Daily Brief** | Calendar + Email + News (parallel) -> Synthesize | Morning briefing with priorities, schedule, and news |
+| **Meeting Prep** | Parse meeting -> Research attendees + Internal docs + External context (parallel) -> Prep brief | Deep preparation before any meeting |
 
-| Workflow | Phases | Use Case |
-|----------|--------|----------|
-| **Deep Research Workflow** | Decomposition -> Parallel Research -> Verification -> Synthesis | Professional research reports |
-| **Startup Analyst Workflow** | Snapshot -> Deep Analysis -> Critical Review -> Report | VC-style due diligence |
+## Setup
 
----
-
-## Getting Started
-
-### 1. Clone the repository
-
-```shell
-git clone https://github.com/agno-agi/agno.git
-cd agno
-```
-
-### 2. Create a virtual environment
-
-```shell
-uv venv .venvs/demo --python 3.12
-source .venvs/demo/bin/activate
-```
-
-### 3. Install dependencies
-
-```shell
-uv pip install -r cookbook/demo/requirements.in
-```
-
-### 4. Run Postgres with PgVector
-
-We use PostgreSQL for storing sessions, memories, metrics, evals, and knowledge. Install [Docker Desktop](https://docs.docker.com/desktop/install/mac-install/) and run:
-
-```shell
+```bash
+# 1. Start PostgreSQL with pgvector
 ./cookbook/scripts/run_pgvector.sh
+
+# 2. Load data for Dash (F1 dataset)
+.venvs/demo/bin/python -m cookbook.demo.agents.dash.scripts.load_data
+.venvs/demo/bin/python -m cookbook.demo.agents.dash.scripts.load_knowledge
+
+# 3. Load knowledge for Scout (enterprise docs)
+.venvs/demo/bin/python -m cookbook.demo.agents.scout.scripts.load_knowledge
 ```
 
-### 5. Export API Keys
+## Environment Variables
 
-```shell
-export OPENAI_API_KEY=***
-export PARALLEL_API_KEY=***
+```bash
+export OPENAI_API_KEY="..."      # Required
+export EXA_API_KEY="..."         # Required for Exa MCP tools
+export DATABASE_URL="..."        # Optional (defaults to localhost:5532)
 ```
 
-### 6. Run the demo
+## Running
 
-```shell
-python cookbook/demo/run.py
+### Individual Agents
+
+```bash
+.venvs/demo/bin/python cookbook/demo/agents/pal/agent.py
+.venvs/demo/bin/python cookbook/demo/agents/seek/agent.py
+.venvs/demo/bin/python cookbook/demo/agents/dex/agent.py
+.venvs/demo/bin/python cookbook/demo/agents/ace/agent.py
 ```
 
-### 7. Connect to the AgentOS UI
+### Via AgentOS
 
-- Open [os.agno.com](https://os.agno.com/)
-- Connect to `http://localhost:7777`
-
----
-
-## Running Individual Agents
-
-Every agent can be run directly with demo tests:
-
-```shell
-# Run PaL Agent with demo tests
-python cookbook/demo/agents/pal_agent.py
-
-# Run with a specific query
-python cookbook/demo/agents/pal_agent.py "Help me compare cloud providers"
-
-# Run other agents
-python cookbook/demo/agents/research_agent.py
-python cookbook/demo/agents/finance_agent.py
-python cookbook/demo/agents/web_intelligence_agent.py
-python cookbook/demo/agents/report_writer_agent.py
-python cookbook/demo/agents/deep_knowledge_agent.py
-python cookbook/demo/agents/knowledge_agent.py
-python cookbook/demo/agents/mcp_agent.py
+```bash
+cd cookbook/demo && ../../.venvs/demo/bin/python run.py
 ```
 
----
+Then connect via [os.agno.com](https://os.agno.com) pointing to `http://localhost:7777`.
 
-## Showcase Demos
+### Evals
 
-### PaL Agent (Plan and Learn)
+```bash
+# Run all evals
+cd cookbook/demo && ../../.venvs/demo/bin/python -m evals.run_evals
 
-Ask it to build something complex and watch it plan, execute, and learn:
+# Run evals for a specific agent
+cd cookbook/demo && ../../.venvs/demo/bin/python -m evals.run_evals --agent dash
 
+# Verbose mode (show full responses on failure)
+cd cookbook/demo && ../../.venvs/demo/bin/python -m evals.run_evals --verbose
 ```
-"Help me decide between Supabase, Firebase, and PlanetScale for my startup"
-```
-
-The agent will:
-1. Create a structured plan with success criteria
-2. Research each option
-3. Compare and analyze
-4. Save learnings for future tasks
-
-### Investment Team
-
-Get Wall Street quality research:
-
-```
-"Complete investment analysis of NVIDIA"
-```
-
-The team coordinates:
-- Finance Agent gets quantitative data
-- Research Agent gets qualitative insights
-- Report Writer synthesizes into a professional report
-
-### Due Diligence Team
-
-Rigorous analysis with debate:
-
-```
-"Due diligence on Anthropic - should we invest?"
-```
-
-The team includes:
-- Research, Web Intel, and Finance gather evidence
-- Devil's Advocate challenges findings
-- Report Writer synthesizes with disagreements noted
-
-### Deep Research Workflow
-
-Professional-grade research:
-
-```
-"Deep research: What's the future of AI agents in enterprise?"
-```
-
-4-phase process:
-1. Topic decomposition
-2. Parallel research from multiple sources
-3. Fact verification
-4. Report synthesis
-
-### Startup Analyst Workflow
-
-VC-style due diligence:
-
-```
-"Analyze this startup: Anthropic"
-```
-
-4-phase process:
-1. Quick snapshot (profile, market, news)
-2. Deep strategic analysis
-3. Critical review (challenge findings)
-4. Final report with verdict
-
----
-
-## Loading Knowledge Bases
-
-### Knowledge Agent
-
-Load the knowledge base (runs automatically on first use):
-
-```shell
-python cookbook/demo/agents/knowledge_agent.py
-```
-
-### Deep Knowledge Agent
-
-Load knowledge for deep reasoning:
-
-```shell
-python cookbook/demo/agents/deep_knowledge_agent.py
-```
-
----
-
-## Technical Details
-
-- **Model**: All agents use GPT-5.2
-- **Database**: PostgreSQL with PgVector on localhost:5532
-- **Persistence**: All agents have database integration for session persistence
-
----
-
-## Additional Resources
-
-- [Read the Agno Docs](https://docs.agno.com)
-- [Chat with us on Discord](https://agno.link/discord)
-- [Ask on Discourse](https://agno.link/community)
-- [Report an Issue](https://github.com/agno-agi/agno/issues)
