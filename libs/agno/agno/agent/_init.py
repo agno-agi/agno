@@ -5,7 +5,6 @@ from __future__ import annotations
 from os import getenv
 from typing import (
     TYPE_CHECKING,
-    Any,
     Callable,
     Dict,
     Literal,
