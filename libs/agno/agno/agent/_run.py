@@ -2017,7 +2017,6 @@ def arun_dispatch(  # type: ignore
             background_tasks=background_tasks,
             **kwargs,
         )
-
     # Pass the new run_response to _arun
     if opts.stream:
         return arun_stream_impl(  # type: ignore
