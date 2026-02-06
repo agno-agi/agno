@@ -933,7 +933,14 @@ def run_dispatch(
         metadata=opts.metadata,
         output_schema=opts.output_schema,
     )
-    # output_schema parameter takes priority, even if run_context was provided
+    # Apply explicit call-site overrides to existing run_context
+    if dependencies is not None:
+        run_context.dependencies = opts.dependencies
+    if knowledge_filters is not None:
+        run_context.knowledge_filters = opts.knowledge_filters
+    if metadata is not None:
+        run_context.metadata = opts.metadata
+    # output_schema always takes priority, even if run_context was provided
     run_context.output_schema = opts.output_schema
 
     # Resolve dependencies
@@ -1935,7 +1942,14 @@ def arun_dispatch(  # type: ignore
         metadata=opts.metadata,
         output_schema=opts.output_schema,
     )
-    # output_schema parameter takes priority, even if run_context was provided
+    # Apply explicit call-site overrides to existing run_context
+    if dependencies is not None:
+        run_context.dependencies = opts.dependencies
+    if knowledge_filters is not None:
+        run_context.knowledge_filters = opts.knowledge_filters
+    if metadata is not None:
+        run_context.metadata = opts.metadata
+    # output_schema always takes priority, even if run_context was provided
     run_context.output_schema = opts.output_schema
 
     # Prepare arguments for the model (must be after run_context is fully initialized)
@@ -2084,6 +2098,13 @@ def continue_run_dispatch(
         knowledge_filters=opts.knowledge_filters,
         metadata=opts.metadata,
     )
+    # Apply explicit call-site overrides to existing run_context
+    if dependencies is not None:
+        run_context.dependencies = opts.dependencies
+    if knowledge_filters is not None:
+        run_context.knowledge_filters = opts.knowledge_filters
+    if metadata is not None:
+        run_context.metadata = opts.metadata
 
     # Resolve dependencies
     if run_context.dependencies is not None:
@@ -2725,6 +2746,13 @@ def acontinue_run_dispatch(  # type: ignore
         knowledge_filters=opts.knowledge_filters,
         metadata=opts.metadata,
     )
+    # Apply explicit call-site overrides to existing run_context
+    if dependencies is not None:
+        run_context.dependencies = opts.dependencies
+    if knowledge_filters is not None:
+        run_context.knowledge_filters = opts.knowledge_filters
+    if metadata is not None:
+        run_context.metadata = opts.metadata
 
     if opts.stream:
         return acontinue_run_stream_impl(
