@@ -1404,7 +1404,7 @@ class Agent:
         run_messages: RunMessages,
         run_context: Optional[RunContext] = None,
         stream_events: Optional[bool] = None,
-    ) -> Any:
+    ) -> AsyncIterator[RunOutputEvent]:
         return _response.areason(
             self,
             run_response=run_response,
