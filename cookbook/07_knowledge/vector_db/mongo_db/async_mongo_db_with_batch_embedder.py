@@ -6,11 +6,11 @@ from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIChat
 from agno.vectordb.mongodb import MongoVectorDb
 
-mdb_connection_string = (
-    "mongodb+srv://mongoadmin:secret@cluster0.mongodb.net/?retryWrites=true&w=majority"
-)
-mdb_connection_string = "mongodb://mongoadmin:secret@localhost:27017/"
-mdb_connection_string = "mongodb+srv://willem_db_user:lpG81MnM8quLg3ZT@cluster0.8mthsqw.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
+# MongoDB connection string
+# Example connection strings:
+# "mongodb+srv://<username>:<password>@cluster0.mongodb.net/?retryWrites=true&w=majority"
+# "mongodb://localhost:27017/agno?authSource=admin"
+mdb_connection_string = "mongodb+srv://<username>:<password>@cluster0.mongodb.net/?retryWrites=true&w=majority"
 
 agent = Agent(
     model=OpenAIChat(
@@ -33,7 +33,7 @@ agent = Agent(
 if __name__ == "__main__":
     # Comment out after first run
     asyncio.run(
-        agent.knowledge.ainsert(path="cookbook/08_knowledge/testing_resources/cv_1.pdf")
+        agent.knowledge.ainsert(path="cookbook/07_knowledge/testing_resources/cv_1.pdf")
     )
 
     # Create and use the agent

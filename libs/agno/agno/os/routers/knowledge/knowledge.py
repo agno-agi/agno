@@ -215,7 +215,6 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
         description=(
             "Upload content from a remote source (S3, GCS, SharePoint, GitHub) to the knowledge base. "
             "Content is processed asynchronously in the background. "
-            "Use the /knowledge/config endpoint to see available remote content sources."
         ),
         responses={
             202: {
@@ -989,9 +988,11 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
                                 "text": ["web_search"],
                                 "topic": ["arxiv"],
                                 "file": ["csv", "gcs"],
-                                ".csv": ["csv"],
-                                ".xlsx": ["csv"],
-                                ".xls": ["csv"],
+                                ".csv": ["csv", "field_labeled_csv"],
+                                ".xlsx": ["excel"],
+                                ".xls": ["excel"],
+                                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ["excel"],
+                                "application/vnd.ms-excel": ["excel"],
                                 ".docx": ["docx"],
                                 ".doc": ["docx"],
                                 ".json": ["json"],

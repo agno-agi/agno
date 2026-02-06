@@ -19,6 +19,7 @@ from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.remote_content import (
+    AzureBlobConfig,
     GitHubConfig,
     SharePointConfig,
 )
@@ -27,7 +28,10 @@ from agno.os import AgentOS
 from agno.vectordb.pgvector import PgVector
 
 # Database connections
-contents_db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
+contents_db = PostgresDb(
+    db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
+    knowledge_table="knowledge_contents",
+)
 vector_db = PgVector(
     table_name="knowledge_vectors",
     db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
@@ -46,13 +50,22 @@ sharepoint = SharePointConfig(
 )
 
 github_docs = GitHubConfig(
-    id="dealer-sync",
-    name="Dealer Sync",
-    repo="willemcdejongh/dealer-sync",
-    token=getenv("GITHUB_TESTING_TOKEN"),  # Fine-grained PAT with Contents: read
+    id="my-repo",
+    name="My Repository",
+    repo="private/repo",
+    token=getenv("GITHUB_TOKEN"),  # Fine-grained PAT with Contents: read
     branch="main",
 )
 
+azure_blob = AzureBlobConfig(
+    id="azure-blob",
+    name="Azure Blob",
+    tenant_id=getenv("AZURE_TENANT_ID"),
+    client_id=getenv("AZURE_CLIENT_ID"),
+    client_secret=getenv("AZURE_CLIENT_SECRET"),
+    storage_account=getenv("AZURE_STORAGE_ACCOUNT_NAME"),
+    container=getenv("AZURE_CONTAINER_NAME"),
+)
 
 # Create Knowledge with content sources
 knowledge = Knowledge(
@@ -60,17 +73,8 @@ knowledge = Knowledge(
     description="Unified knowledge from multiple sources",
     contents_db=contents_db,
     vector_db=vector_db,
-    content_sources=[sharepoint, github_docs],
+    content_sources=[sharepoint, github_docs, azure_blob],
 )
-
-# Insert content using factory methods
-# The config knows the bucket/credentials, you just specify the file path
-
-# Insert from SharePoint
-knowledge.insert(remote_content=sharepoint.file("/test.pdf"))
-
-# Insert from GitHub
-knowledge.insert(remote_content=github_docs.file("main.py", branch="main"))
 
 agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
@@ -90,3 +94,33 @@ app = agent_os.get_app()
 if __name__ == "__main__":
     # Serves a FastAPI app exposed by AgentOS. Use reload=True for local dev.
     agent_os.serve(app="cloud_agentos:app", reload=True)
+
+
+# ============================================================================
+# Using the Knowledge API
+# ============================================================================
+"""
+Once AgentOS is running, use the Knowledge API to upload content from remote sources.
+
+## Step 1: Get available content sources
+
+    curl -s http://localhost:7777/v1/knowledge/company-knowledge-base/config | jq
+
+Response:
+    {
+      "remote_content_sources": [
+        {"id": "my-repo", "name": "My Repository", "type": "github"},
+        ...
+      ]
+    }
+
+## Step 2: Upload content
+
+    curl -X POST http://localhost:7777/v1/knowledge/company-knowledge-base/remote-content \\
+      -H "Content-Type: application/json" \\
+      -d '{
+        "name": "Documentation",
+        "config_id": "my-repo",
+        "path": "docs/README.md"
+      }'
+"""

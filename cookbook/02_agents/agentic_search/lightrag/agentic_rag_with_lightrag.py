@@ -11,8 +11,8 @@ vector_db = LightRag(
 )
 
 knowledge = Knowledge(
-    name="My Pinecone Knowledge Base",
-    description="This is a knowledge base that uses a Pinecone Vector DB",
+    name="My LightRag Knowledge Base",
+    description="This is a knowledge base that uses a LightRag Vector DB",
     vector_db=vector_db,
 )
 
@@ -20,7 +20,7 @@ knowledge = Knowledge(
 asyncio.run(
     knowledge.ainsert(
         name="Recipes",
-        path="cookbook/08_knowledge/testing_resources/cv_1.pdf",
+        path="cookbook/07_knowledge/testing_resources/cv_1.pdf",
         metadata={"doc_type": "recipe_book"},
     )
 )

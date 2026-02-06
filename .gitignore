@@ -78,7 +78,9 @@ agno_json_data/
 
 # Private design documents (symlinked)
 specs
+docs
 projects
+agno-os
 
 # Private Claude coding session preferences
 CLAUDE_PRIVATE.md
