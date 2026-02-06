@@ -7,9 +7,7 @@ TypeError: Object of type datetime is not JSON serializable when saving agent se
 
 import json
 from datetime import date, datetime, timezone
-from uuid import UUID, uuid4
-
-import pytest
+from uuid import uuid4
 
 from agno.db.utils import CustomJSONEncoder, json_serializer, serialize_session_json_fields
 from agno.session.agent import AgentSession
