@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from agno.team.team import Team
 
-from copy import deepcopy
+from copy import copy
 from typing import (
     Any,
     AsyncIterator,
@@ -202,11 +202,6 @@ def _get_task_management_tools(
             yield f"Task with ID '{task_id}' not found."
             return
 
-        # Guard: only pending or in_progress tasks can be executed
-        if task.status not in (TaskStatus.pending, TaskStatus.in_progress):
-            yield f"Task [{task_id}] is {task.status.value} and cannot be executed."
-            return
-
         # Find the member
         result = team._find_member_by_id(member_id)
         if result is None:
@@ -245,7 +240,7 @@ def _get_task_management_tools(
             )
 
         use_agent_logger()
-        member_session_state_copy = deepcopy(run_context.session_state)
+        member_session_state_copy = copy(run_context.session_state)
 
         member_run_response: Optional[Union[TeamRunOutput, RunOutput]] = None
 
@@ -324,18 +319,18 @@ def _get_task_management_tools(
         use_team_logger()
         _post_process_member_run(member_run_response, member_agent, member_agent_task, member_session_state_copy)
 
-        # Update task status based on result — check error/cancelled before content
-        if member_run_response is not None and member_run_response.status == RunStatus.error:
-            task.status = TaskStatus.failed
-            task.result = str(member_run_response.content) if member_run_response.content else "Task failed"
-            save_task_list(run_context.session_state, task_list)
-            yield f"Task [{task.id}] failed: {task.result}"
-        elif member_run_response is not None and member_run_response.content:
+        # Update task status based on result
+        if member_run_response is not None and member_run_response.content:
             content = str(member_run_response.content)
             task.status = TaskStatus.completed
             task.result = content
             save_task_list(run_context.session_state, task_list)
             yield f"Task [{task.id}] completed. Result: {content}"
+        elif member_run_response is not None and member_run_response.status == RunStatus.error:
+            task.status = TaskStatus.failed
+            task.result = str(member_run_response.content) if member_run_response.content else "Task failed"
+            save_task_list(run_context.session_state, task_list)
+            yield f"Task [{task.id}] failed: {task.result}"
         else:
             task.status = TaskStatus.completed
             task.result = "No content returned"
@@ -360,11 +355,6 @@ def _get_task_management_tools(
         task = task_list.get_task(task_id)
         if task is None:
             yield f"Task with ID '{task_id}' not found."
-            return
-
-        # Guard: only pending or in_progress tasks can be executed
-        if task.status not in (TaskStatus.pending, TaskStatus.in_progress):
-            yield f"Task [{task_id}] is {task.status.value} and cannot be executed."
             return
 
         result = team._find_member_by_id(member_id)
@@ -400,7 +390,7 @@ def _get_task_management_tools(
             )
 
         use_agent_logger()
-        member_session_state_copy = deepcopy(run_context.session_state)
+        member_session_state_copy = copy(run_context.session_state)
 
         member_run_response: Optional[Union[TeamRunOutput, RunOutput]] = None
 
@@ -477,18 +467,17 @@ def _get_task_management_tools(
         use_team_logger()
         _post_process_member_run(member_run_response, member_agent, member_agent_task, member_session_state_copy)
 
-        # Update task status based on result — check error/cancelled before content
-        if member_run_response is not None and member_run_response.status == RunStatus.error:
-            task.status = TaskStatus.failed
-            task.result = str(member_run_response.content) if member_run_response.content else "Task failed"
-            save_task_list(run_context.session_state, task_list)
-            yield f"Task [{task.id}] failed: {task.result}"
-        elif member_run_response is not None and member_run_response.content:
+        if member_run_response is not None and member_run_response.content:
             content = str(member_run_response.content)
             task.status = TaskStatus.completed
             task.result = content
             save_task_list(run_context.session_state, task_list)
             yield f"Task [{task.id}] completed. Result: {content}"
+        elif member_run_response is not None and member_run_response.status == RunStatus.error:
+            task.status = TaskStatus.failed
+            task.result = str(member_run_response.content) if member_run_response.content else "Task failed"
+            save_task_list(run_context.session_state, task_list)
+            yield f"Task [{task.id}] failed: {task.result}"
         else:
             task.status = TaskStatus.completed
             task.result = "No content returned"

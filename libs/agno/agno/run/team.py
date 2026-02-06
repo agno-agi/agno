@@ -740,6 +740,9 @@ class TeamRunOutput:
                 else:
                     _dict["tools"].append(tool)
 
+        if self.requirements is not None:
+            _dict["requirements"] = [req.to_dict() if hasattr(req, "to_dict") else req for req in self.requirements]
+
         if self.input is not None:
             _dict["input"] = self.input.to_dict()
 
@@ -865,6 +868,7 @@ class TeamRunOutput:
             tools=tools,
             requirements=requirements,
             events=events,
+            requirements=requirements,
             **filtered_data,
         )
 

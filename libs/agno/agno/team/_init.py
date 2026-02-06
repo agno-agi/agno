@@ -199,16 +199,11 @@ def __init__(
 
     if mode is not None:
         team.mode = mode
-        # Normalize booleans deterministically so conflicting flags can't leak through
+        # Sync booleans for internal code that checks them
         if mode == TeamMode.route:
             team.respond_directly = True
-            team.delegate_to_all_members = False
         elif mode == TeamMode.broadcast:
             team.delegate_to_all_members = True
-            team.respond_directly = False
-        elif mode in (TeamMode.coordinate, TeamMode.tasks):
-            team.respond_directly = False
-            team.delegate_to_all_members = False
     else:
         if team.respond_directly:
             team.mode = TeamMode.route

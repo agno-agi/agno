@@ -65,98 +65,6 @@ from agno.utils.merge_dict import merge_dictionaries
 from agno.utils.string import generate_id_from_name
 
 
-def _cleanup_and_store(team: "Team", run_response: TeamRunOutput, session: TeamSession) -> None:
-    #  Scrub the stored run based on storage flags
-    team._scrub_run_output_for_storage(run_response)
-
-    # Stop the timer for the Run duration
-    if run_response.metrics:
-        run_response.metrics.stop_timer()
-
-    # Add RunOutput to Agent Session
-    session.upsert_run(run_response=run_response)
-
-    # Calculate session metrics
-    team._update_session_metrics(session=session, run_response=run_response)
-
-    # Save session to memory
-    team.save_session(session=session)
-
-
-async def _acleanup_and_store(team: "Team", run_response: TeamRunOutput, session: TeamSession) -> None:
-    #  Scrub the stored run based on storage flags
-    team._scrub_run_output_for_storage(run_response)
-
-    # Stop the timer for the Run duration
-    if run_response.metrics:
-        run_response.metrics.stop_timer()
-
-    # Add RunOutput to Agent Session
-    session.upsert_run(run_response=run_response)
-
-    # Calculate session metrics
-    team._update_session_metrics(session=session, run_response=run_response)
-
-    # Save session to memory
-    await team.asave_session(session=session)
-
-
-def _scrub_run_output_for_storage(team: "Team", run_response: TeamRunOutput) -> bool:
-    """
-    Scrub run output based on storage flags before persisting to database.
-    Returns True if any scrubbing was done, False otherwise.
-    """
-    scrubbed = False
-
-    if not team.store_media:
-        scrub_media_from_run_output(run_response)
-        scrubbed = True
-
-    if not team.store_tool_messages:
-        scrub_tool_results_from_run_output(run_response)
-        scrubbed = True
-
-    if not team.store_history_messages:
-        scrub_history_messages_from_run_output(run_response)
-        scrubbed = True
-
-    return scrubbed
-
-
-def _scrub_member_responses(team: "Team", member_responses: List[Union[TeamRunOutput, RunOutput]]) -> None:
-    """
-    Scrub member responses based on each member's storage flags.
-    This is called when saving the team session to ensure member data is scrubbed per member settings.
-    Recursively handles nested team's member responses.
-    """
-    from agno.team.team import Team
-
-    for member_response in member_responses:
-        member_id = None
-        if isinstance(member_response, RunOutput):
-            member_id = member_response.agent_id
-        elif isinstance(member_response, TeamRunOutput):
-            member_id = member_response.team_id
-
-        if not member_id:
-            log_info("Skipping member response with no ID")
-            continue
-
-        member_result = team._find_member_by_id(member_id)
-        if not member_result:
-            log_debug(f"Could not find member with ID: {member_id}")
-            continue
-
-        _, member = member_result
-
-        if not member.store_media or not member.store_tool_messages or not member.store_history_messages:
-            member._scrub_run_output_for_storage(member_response)  # type: ignore
-
-        # If this is a nested team, recursively scrub its member responses
-        if isinstance(member, Team) and isinstance(member_response, TeamRunOutput) and member_response.member_responses:
-            member._scrub_member_responses(member_response.member_responses)  # type: ignore
-
-
 def _parse_team_mode(value: Optional[str]) -> Optional["TeamMode"]:
     """Parse a TeamMode from a string value, or return None."""
     if value is None:
@@ -433,11 +341,8 @@ def to_dict(team: "Team") -> Dict[str, Any]:
         config["respond_directly"] = team.respond_directly
     if team.delegate_to_all_members:
         config["delegate_to_all_members"] = team.delegate_to_all_members
-    effective_pass_user_input_to_members = team.effective_pass_user_input_to_members
-    if team.pass_user_input_to_members is not None or effective_pass_user_input_to_members:
-        config["pass_user_input_to_members"] = effective_pass_user_input_to_members
-        # Keep legacy key during transition for backwards compatibility.
-        config["determine_input_for_members"] = not effective_pass_user_input_to_members
+    if not team.determine_input_for_members:  # default is True
+        config["determine_input_for_members"] = team.determine_input_for_members
     if team.max_iterations != 10:
         config["max_iterations"] = team.max_iterations
 
@@ -863,8 +768,7 @@ def from_dict(
             mode=_parse_team_mode(config.get("mode")),
             respond_directly=config.get("respond_directly", False),
             delegate_to_all_members=config.get("delegate_to_all_members", False),
-            pass_user_input_to_members=pass_user_input_to_members,
-            determine_input_for_members=determine_input_for_members,
+            determine_input_for_members=config.get("determine_input_for_members", True),
             max_iterations=config.get("max_iterations", 10),
             # --- User settings ---
             user_id=config.get("user_id"),

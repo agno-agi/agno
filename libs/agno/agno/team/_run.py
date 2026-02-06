@@ -142,13 +142,12 @@ def _run_tasks(
     **kwargs: Any,
 ) -> TeamRunOutput:
     """Autonomous task loop for mode=tasks. Iterates model calls until all tasks are done."""
-    from agno.team.task import TaskStatus, load_task_list
+    from agno.team.task import load_task_list, save_task_list
 
     log_debug(f"Team Tasks Run Start: {run_response.run_id}", center=True)
 
     max_iterations = team.max_iterations
     memory_future = None
-    learning_future = None
     accumulated_messages: List[Message] = []
 
     try:
@@ -221,13 +220,7 @@ def _run_tasks(
                 memory_future = team._start_memory_future(
                     run_messages=run_messages,
                     user_id=user_id,
-                    existing_future=memory_future,
-                )
-                learning_future = team._start_learning_future(
-                    run_messages=run_messages,
-                    session=session,
-                    user_id=user_id,
-                    existing_future=learning_future,
+                    existing_future=None,
                 )
 
                 # Reasoning on first iteration
@@ -270,27 +263,26 @@ def _run_tasks(
                 run_context=run_context,
             )
 
+            # Persist task list to session state after model call (tools may have updated it)
+            task_list = load_task_list(run_context.session_state)
+            save_task_list(run_context.session_state, task_list)
+
             # Check HITL pause
             if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
                 from agno.team import _hooks
 
-                return _hooks.handle_team_run_paused(team, run_response=run_response, session=session)
+                return _hooks.handle_team_run_paused(team, run_response=run_response, session=session, user_id=user_id)
 
-            # Note: accumulated_messages is already up-to-date — model.response() mutates the list in-place.
+            # Accumulate model response messages for next iteration
+            accumulated_messages = list(model_response.messages) if model_response.messages else accumulated_messages  # type: ignore
 
             # Check termination: goal marked complete or all tasks in terminal state
-            task_list = load_task_list(run_context.session_state)
             if task_list.goal_complete:
                 log_debug("Tasks mode: goal marked complete by leader")
-                goal_reached = True
                 break
 
             if task_list.tasks and task_list.all_terminal():
-                if any(t.status == TaskStatus.failed for t in task_list.tasks) and not task_list.goal_complete:
-                    log_debug("Tasks mode: all tasks terminal but some failed — not marking as goal reached")
-                else:
-                    log_debug("Tasks mode: all tasks in terminal state")
-                    goal_reached = True
+                log_debug("Tasks mode: all tasks in terminal state")
                 break
 
             raise_if_cancelled(run_response.run_id)  # type: ignore
@@ -316,7 +308,7 @@ def _run_tasks(
 
         raise_if_cancelled(run_response.run_id)  # type: ignore
 
-        wait_for_open_threads(memory_future=memory_future, learning_future=learning_future)  # type: ignore
+        wait_for_open_threads(memory_future=memory_future)  # type: ignore
 
         raise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -376,8 +368,6 @@ def _run_tasks(
     finally:
         if memory_future is not None and not memory_future.done():
             memory_future.cancel()
-        if learning_future is not None and not learning_future.done():
-            learning_future.cancel()
         team._disconnect_connectable_tools()
         cleanup_run(run_response.run_id)  # type: ignore
 
@@ -1336,14 +1326,13 @@ async def _arun_tasks(
     **kwargs: Any,
 ) -> TeamRunOutput:
     """Async autonomous task loop for mode=tasks."""
-    from agno.team.task import TaskStatus, load_task_list
+    from agno.team.task import load_task_list, save_task_list
 
     await aregister_run(run_context.run_id)
     log_debug(f"Team Async Tasks Run Start: {run_response.run_id}", center=True)
 
     max_iterations = team.max_iterations
     memory_task = None
-    learning_task = None
     accumulated_messages: List[Message] = []
     team_session = None
 
@@ -1427,13 +1416,7 @@ async def _arun_tasks(
                 memory_task = await team._astart_memory_task(
                     run_messages=run_messages,
                     user_id=user_id,
-                    existing_task=memory_task,
-                )
-                learning_task = await team._astart_learning_task(
-                    run_messages=run_messages,
-                    session=team_session,
-                    user_id=user_id,
-                    existing_task=learning_task,
+                    existing_task=None,
                 )
 
                 await team._ahandle_reasoning(
@@ -1474,27 +1457,25 @@ async def _arun_tasks(
                 run_context=run_context,
             )
 
+            task_list = load_task_list(run_context.session_state)
+            save_task_list(run_context.session_state, task_list)
+
             # Check HITL pause
             if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
                 from agno.team import _hooks
 
-                return await _hooks.ahandle_team_run_paused(team, run_response=run_response, session=team_session)
+                return await _hooks.ahandle_team_run_paused(
+                    team, run_response=run_response, session=team_session, user_id=user_id
+                )
 
-            # Note: accumulated_messages is already up-to-date — model.aresponse() mutates the list in-place.
+            accumulated_messages = list(model_response.messages) if model_response.messages else accumulated_messages  # type: ignore
 
-            # Check termination: goal marked complete or all tasks in terminal state
-            task_list = load_task_list(run_context.session_state)
             if task_list.goal_complete:
                 log_debug("Async tasks mode: goal marked complete by leader")
-                goal_reached = True
                 break
 
             if task_list.tasks and task_list.all_terminal():
-                if any(t.status == TaskStatus.failed for t in task_list.tasks) and not task_list.goal_complete:
-                    log_debug("Async tasks mode: all tasks terminal but some failed — not marking as goal reached")
-                else:
-                    log_debug("Async tasks mode: all tasks in terminal state")
-                    goal_reached = True
+                log_debug("Async tasks mode: all tasks in terminal state")
                 break
 
             await araise_if_cancelled(run_response.run_id)  # type: ignore
@@ -1518,7 +1499,7 @@ async def _arun_tasks(
                 pass
 
         await araise_if_cancelled(run_response.run_id)  # type: ignore
-        await await_for_open_threads(memory_task=memory_task, learning_task=learning_task)  # type: ignore
+        await await_for_open_threads(memory_task=memory_task)  # type: ignore
         await araise_if_cancelled(run_response.run_id)  # type: ignore
 
         if team.session_summary_manager is not None:
@@ -1600,12 +1581,6 @@ async def _arun_tasks(
             memory_task.cancel()  # type: ignore
             try:
                 await memory_task  # type: ignore
-            except asyncio.CancelledError:
-                pass
-        if learning_task is not None and not learning_task.done():
-            learning_task.cancel()
-            try:
-                await learning_task
             except asyncio.CancelledError:
                 pass
 
