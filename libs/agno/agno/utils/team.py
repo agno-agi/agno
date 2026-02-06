@@ -29,7 +29,7 @@ def format_member_agent_task(
     return member_task_str
 
 
-def get_member_id(member: Union[Agent, "Team"]) -> str:
+def get_member_id(member: Union[Agent, "Team"]) -> Optional[str]:
     """
     Get the ID of a member
 
