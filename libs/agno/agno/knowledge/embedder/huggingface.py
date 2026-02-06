@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from os import getenv
 from typing import Any, Dict, List, Optional, Tuple
 
-from agno.knowledge.embedder.base import Embedder
+from agno.knowledge.embedder.base import Embedder, log_embedding_error
 from agno.utils.log import log_error, log_warning
 
 try:
@@ -66,7 +66,7 @@ class HuggingfaceCustomEmbedder(Embedder):
             else:
                 return list(response)
         except Exception as e:
-            log_warning(f"Failed to process embeddings: {e}")
+            log_embedding_error(e, "embedding")
             return []
 
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:
@@ -85,7 +85,7 @@ class HuggingfaceCustomEmbedder(Embedder):
             else:
                 return list(response)
         except Exception as e:
-            log_warning(f"Failed to process embeddings: {e}")
+            log_embedding_error(e, "async embedding")
             return []
 
     async def async_get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:

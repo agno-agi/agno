@@ -1,6 +1,22 @@
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
+from agno.utils.log import log_error, log_warning
+
+
+def _is_token_limit_error(error: Exception) -> bool:
+    """Check if an exception is related to token limits."""
+    error_str = str(error).lower()
+    return "maximum context length" in error_str or "token" in error_str
+
+
+def log_embedding_error(error: Exception, context: str = "embedding") -> None:
+    """Log an embedding error with appropriate severity based on error type."""
+    if _is_token_limit_error(error):
+        log_error(f"Token limit exceeded during {context}: {error}")
+    else:
+        log_warning(f"Error during {context}: {error}")
+
 
 @dataclass
 class Embedder:

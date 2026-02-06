@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
-from agno.knowledge.embedder.base import Embedder
+from agno.knowledge.embedder.base import Embedder, log_embedding_error
 from agno.utils.log import logger
 
 try:
@@ -74,7 +74,7 @@ class VoyageAIEmbedder(Embedder):
             embedding = response.embeddings[0]
             return [float(x) for x in embedding]  # Ensure all values are float
         except Exception as e:
-            logger.warning(e)
+            log_embedding_error(e, "embedding")
             return []
 
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:
@@ -101,7 +101,7 @@ class VoyageAIEmbedder(Embedder):
             embedding = response.embeddings[0]
             return [float(x) for x in embedding]  # Ensure all values are float
         except Exception as e:
-            logger.warning(f"Error getting embedding: {e}")
+            log_embedding_error(e, "async embedding")
             return []
 
     async def async_get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:
@@ -112,7 +112,7 @@ class VoyageAIEmbedder(Embedder):
             usage = {"total_tokens": response.total_tokens}
             return [float(x) for x in embedding], usage
         except Exception as e:
-            logger.warning(f"Error getting embedding and usage: {e}")
+            log_embedding_error(e, "async embedding and usage")
             return [], None
 
     async def async_get_embeddings_batch_and_usage(
@@ -150,7 +150,7 @@ class VoyageAIEmbedder(Embedder):
                 usage_dict = {"total_tokens": response.total_tokens}
                 all_usage.extend([usage_dict] * len(batch_embeddings))
             except Exception as e:
-                logger.warning(f"Error in async batch embedding: {e}")
+                log_embedding_error(e, "async batch embedding")
                 # Fallback to individual calls for this batch
                 for text in batch_texts:
                     try:
@@ -158,7 +158,7 @@ class VoyageAIEmbedder(Embedder):
                         all_embeddings.append(embedding)
                         all_usage.append(usage)
                     except Exception as e2:
-                        logger.warning(f"Error in individual async embedding fallback: {e2}")
+                        log_embedding_error(e2, "individual async embedding fallback")
                         all_embeddings.append([])
                         all_usage.append(None)
 
