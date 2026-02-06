@@ -72,7 +72,6 @@ from agno.utils.events import (
     create_run_content_completed_event,
     create_run_continued_event,
     create_run_error_event,
-    create_run_paused_event,
     create_run_started_event,
     create_session_summary_completed_event,
     create_session_summary_started_event,
