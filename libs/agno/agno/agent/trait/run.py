@@ -4,6 +4,7 @@ import asyncio
 import time
 import warnings
 from collections import deque
+from copy import deepcopy
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -23,6 +24,8 @@ from typing import (
 from uuid import uuid4
 
 from agno.agent.trait.base import AgentTraitBase
+from agno.agent.trait.run_engine import RunEngine, RunPhase
+from agno.agent.trait.run_options import ResolvedRunOptions
 from agno.exceptions import InputCheckError, OutputCheckError, RunCancelledException
 from agno.models.base import Model
 from agno.models.metrics import Metrics
@@ -101,6 +104,125 @@ class AgentRunTrait(AgentTraitBase):
             user_id = self.user_id
 
         return session_id, user_id
+
+    def _resolve_run_options(
+        self,
+        *,
+        run_context: Optional[RunContext] = None,
+        stream: Optional[bool] = None,
+        stream_events: Optional[bool] = None,
+        yield_run_output: Optional[bool] = None,
+        add_history_to_context: Optional[bool] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
+    ) -> ResolvedRunOptions:
+        resolved_stream = stream if stream is not None else (False if self.stream is None else self.stream)
+        resolved_stream_events = (
+            stream_events
+            if stream_events is not None
+            else (False if self.stream_events is None else self.stream_events)
+        )
+        if not resolved_stream:
+            resolved_stream_events = False
+
+        resolved_yield_run_output = bool(yield_run_output) if yield_run_output is not None else False
+
+        resolved_add_history = (
+            add_history_to_context if add_history_to_context is not None else self.add_history_to_context
+        )
+        resolved_add_dependencies = (
+            add_dependencies_to_context if add_dependencies_to_context is not None else self.add_dependencies_to_context
+        )
+        resolved_add_session_state = (
+            add_session_state_to_context
+            if add_session_state_to_context is not None
+            else self.add_session_state_to_context
+        )
+
+        if run_context is not None and run_context.dependencies is not None:
+            resolved_dependencies = run_context.dependencies
+        else:
+            resolved_dependencies = dependencies if dependencies is not None else self.dependencies
+
+        resolved_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+        if knowledge_filters is not None:
+            resolved_filters = self._get_effective_filters(knowledge_filters)
+        elif run_context is not None and run_context.knowledge_filters is not None:
+            resolved_filters = run_context.knowledge_filters
+        elif self.knowledge_filters is not None:
+            resolved_filters = self._get_effective_filters(None)
+
+        resolved_metadata: Optional[Dict[str, Any]] = None
+        if run_context is not None and run_context.metadata is not None:
+            resolved_metadata = deepcopy(run_context.metadata)
+        if metadata is not None:
+            if resolved_metadata is None:
+                resolved_metadata = deepcopy(metadata)
+            else:
+                merge_dictionaries(resolved_metadata, deepcopy(metadata))
+        if self.metadata is not None:
+            if resolved_metadata is None:
+                resolved_metadata = deepcopy(self.metadata)
+            else:
+                merge_dictionaries(resolved_metadata, deepcopy(self.metadata))
+
+        if output_schema is not None:
+            resolved_output_schema = output_schema
+        elif run_context is not None and run_context.output_schema is not None:
+            resolved_output_schema = run_context.output_schema
+        else:
+            resolved_output_schema = self.output_schema
+
+        return ResolvedRunOptions(
+            stream=bool(resolved_stream),
+            stream_events=bool(resolved_stream_events),
+            yield_run_output=resolved_yield_run_output,
+            add_history_to_context=bool(resolved_add_history),
+            add_dependencies_to_context=bool(resolved_add_dependencies),
+            add_session_state_to_context=bool(resolved_add_session_state),
+            dependencies=resolved_dependencies,
+            knowledge_filters=resolved_filters,
+            metadata=resolved_metadata,
+            output_schema=resolved_output_schema,
+        )
+
+    def _set_resolved_run_options(self, run_id: str, options: ResolvedRunOptions) -> None:
+        self._run_options_by_run_id[run_id] = options
+
+    def _get_resolved_run_options(self, run_id: Optional[str]) -> Optional[ResolvedRunOptions]:
+        if run_id is None:
+            return None
+        return self._run_options_by_run_id.get(run_id)
+
+    def _clear_resolved_run_options(self, run_id: Optional[str]) -> None:
+        if run_id is None:
+            return
+        self._run_options_by_run_id.pop(run_id, None)
+
+    def _create_run_engine(self, run_id: str) -> RunEngine:
+        run_engine = RunEngine(run_id=run_id)
+        self._run_engines_by_run_id[run_id] = run_engine
+        return run_engine
+
+    def _get_run_engine(self, run_id: Optional[str]) -> Optional[RunEngine]:
+        if run_id is None:
+            return None
+        return self._run_engines_by_run_id.get(run_id)
+
+    def _clear_run_engine(self, run_id: Optional[str]) -> None:
+        if run_id is None:
+            return
+        self._run_engines_by_run_id.pop(run_id, None)
+
+    def _set_run_phase(self, run_id: Optional[str], phase: RunPhase) -> None:
+        run_engine = self._get_run_engine(run_id)
+        if run_engine is None:
+            return
+        run_engine.set_phase(phase)
 
     def _run(
         self,
@@ -182,6 +304,7 @@ class AgentRunTrait(AgentTraitBase):
                     )
 
                     # 3. Prepare run messages
+                    self._set_run_phase(run_response.run_id, RunPhase.BUILD_MESSAGES)
                     run_messages: RunMessages = self._get_run_messages(
                         run_response=run_response,
                         run_context=run_context,
@@ -236,6 +359,7 @@ class AgentRunTrait(AgentTraitBase):
 
                     # 6. Generate a response from the Model (includes running function calls)
                     self.model = cast(Model, self.model)
+                    self._set_run_phase(run_response.run_id, RunPhase.MODEL_CALL)
 
                     model_response: ModelResponse = self.model.response(
                         messages=run_messages.messages,
@@ -250,6 +374,7 @@ class AgentRunTrait(AgentTraitBase):
 
                     # Check for cancellation after model call
                     raise_if_cancelled(run_response.run_id)  # type: ignore
+                    self._set_run_phase(run_response.run_id, RunPhase.TOOL_LOOP)
 
                     # If an output model is provided, generate output using the output model
                     self._generate_response_with_output_model(model_response, run_messages)
@@ -275,6 +400,7 @@ class AgentRunTrait(AgentTraitBase):
                         )
 
                     # 8. Store media if enabled
+                    self._set_run_phase(run_response.run_id, RunPhase.POSTPROCESS)
                     if self.store_media:
                         store_media_util(run_response, model_response)
 
@@ -397,6 +523,9 @@ class AgentRunTrait(AgentTraitBase):
             self._disconnect_connectable_tools()
             # Always clean up the run tracking
             cleanup_run(run_response.run_id)  # type: ignore
+            if run_response is not None:
+                self._clear_resolved_run_options(run_response.run_id)
+                self._clear_run_engine(run_response.run_id)
 
         return run_response
 
@@ -480,6 +609,7 @@ class AgentRunTrait(AgentTraitBase):
                     )
 
                     # 3. Prepare run messages
+                    self._set_run_phase(run_response.run_id, RunPhase.BUILD_MESSAGES)
                     run_messages: RunMessages = self._get_run_messages(
                         run_response=run_response,
                         input=run_input.input_content,
@@ -543,6 +673,7 @@ class AgentRunTrait(AgentTraitBase):
                     raise_if_cancelled(run_response.run_id)  # type: ignore
 
                     # 6. Process model response
+                    self._set_run_phase(run_response.run_id, RunPhase.MODEL_CALL)
                     if self.output_model is None:
                         for event in self._handle_model_response_stream(
                             session=session,
@@ -592,6 +723,8 @@ class AgentRunTrait(AgentTraitBase):
                             raise_if_cancelled(run_response.run_id)  # type: ignore
                             yield event  # type: ignore
 
+                    self._set_run_phase(run_response.run_id, RunPhase.TOOL_LOOP)
+
                     # Check for cancellation after model processing
                     raise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -629,6 +762,7 @@ class AgentRunTrait(AgentTraitBase):
                         )
 
                     # Execute post-hooks after output is generated but before response is returned
+                    self._set_run_phase(run_response.run_id, RunPhase.POSTPROCESS)
                     if self.post_hooks is not None:
                         yield from self._execute_post_hooks(
                             hooks=self.post_hooks,  # type: ignore
@@ -807,6 +941,9 @@ class AgentRunTrait(AgentTraitBase):
             self._disconnect_connectable_tools()
             # Always clean up the run tracking
             cleanup_run(run_response.run_id)  # type: ignore
+            if run_response is not None:
+                self._clear_resolved_run_options(run_response.run_id)
+                self._clear_run_engine(run_response.run_id)
 
     @overload
     def run(
@@ -901,11 +1038,6 @@ class AgentRunTrait(AgentTraitBase):
         run_id = run_id or str(uuid4())
         register_run(run_id)
 
-        if (add_history_to_context or self.add_history_to_context) and not self.db and not self.team_id:
-            log_warning(
-                "add_history_to_context is True, but no database has been assigned to the agent. History will not be added to the context."
-            )
-
         background_tasks = kwargs.pop("background_tasks", None)
         if background_tasks is not None:
             from fastapi import BackgroundTasks
@@ -949,12 +1081,24 @@ class AgentRunTrait(AgentTraitBase):
         session_state = session_state if session_state is not None else {}
         session_state = self._load_session_state(session=agent_session, session_state=session_state)
 
-        # Determine runtime dependencies
-        dependencies = dependencies if dependencies is not None else self.dependencies
+        resolved_options = self._resolve_run_options(
+            run_context=run_context,
+            stream=stream,
+            stream_events=stream_events,
+            yield_run_output=yield_run_output,
+            add_history_to_context=add_history_to_context,
+            add_dependencies_to_context=add_dependencies_to_context,
+            add_session_state_to_context=add_session_state_to_context,
+            dependencies=dependencies,
+            knowledge_filters=knowledge_filters,
+            metadata=metadata,
+            output_schema=output_schema,
+        )
 
-        # Resolve output_schema parameter takes precedence, then fall back to self.output_schema
-        if output_schema is None:
-            output_schema = self.output_schema
+        if resolved_options.add_history_to_context and not self.db and not self.team_id:
+            log_warning(
+                "add_history_to_context is True, but no database has been assigned to the agent. History will not be added to the context."
+            )
 
         # Initialize run context
         run_context = run_context or RunContext(
@@ -962,54 +1106,20 @@ class AgentRunTrait(AgentTraitBase):
             session_id=session_id,
             user_id=user_id,
             session_state=session_state,
-            dependencies=dependencies,
-            output_schema=output_schema,
+            dependencies=resolved_options.dependencies,
+            knowledge_filters=resolved_options.knowledge_filters,
+            metadata=resolved_options.metadata,
+            output_schema=resolved_options.output_schema,
         )
-        # output_schema parameter takes priority, even if run_context was provided
-        run_context.output_schema = output_schema
-
-        # Merge caller-provided metadata into run_context metadata
-        if metadata is not None:
-            if run_context.metadata is None:
-                run_context.metadata = metadata
-            else:
-                merge_dictionaries(run_context.metadata, metadata)
-
-        # Merge agent metadata with run metadata
-        if self.metadata is not None:
-            if run_context.metadata is None:
-                run_context.metadata = self.metadata
-            else:
-                merge_dictionaries(run_context.metadata, self.metadata)
+        run_context.session_state = session_state
+        run_context.dependencies = resolved_options.dependencies
+        run_context.knowledge_filters = resolved_options.knowledge_filters
+        run_context.metadata = resolved_options.metadata
+        run_context.output_schema = resolved_options.output_schema
 
         # Resolve dependencies
         if run_context.dependencies is not None:
             self._resolve_run_dependencies(run_context=run_context)
-
-        add_dependencies = (
-            add_dependencies_to_context if add_dependencies_to_context is not None else self.add_dependencies_to_context
-        )
-        add_session_state = (
-            add_session_state_to_context
-            if add_session_state_to_context is not None
-            else self.add_session_state_to_context
-        )
-        add_history = add_history_to_context if add_history_to_context is not None else self.add_history_to_context
-
-        # When filters are passed manually
-        if self.knowledge_filters or knowledge_filters:
-            run_context.knowledge_filters = self._get_effective_filters(knowledge_filters)
-
-        # Use stream override value when necessary
-        if stream is None:
-            stream = False if self.stream is None else self.stream
-
-        # Can't stream events if streaming is disabled
-        if stream is False:
-            stream_events = False
-
-        if stream_events is None:
-            stream_events = False if self.stream_events is None else self.stream_events
 
         # Prepare arguments for the model
         response_format = self._get_response_format(run_context=run_context) if self.parser_model is None else None
@@ -1034,38 +1144,47 @@ class AgentRunTrait(AgentTraitBase):
         run_response.metrics = Metrics()
         run_response.metrics.start_timer()
 
-        if stream:
-            response_iterator = self._run_stream(
-                run_response=run_response,
-                run_context=run_context,
-                session=agent_session,
-                user_id=user_id,
-                add_history_to_context=add_history,
-                add_dependencies_to_context=add_dependencies,
-                add_session_state_to_context=add_session_state,
-                response_format=response_format,
-                stream_events=stream_events,
-                yield_run_output=yield_run_output,
-                debug_mode=debug_mode,
-                background_tasks=background_tasks,
-                **kwargs,
-            )
-            return response_iterator
+        self._set_resolved_run_options(run_id, resolved_options)
+        run_engine = self._create_run_engine(run_id)
+
+        if resolved_options.stream:
+
+            def _execute_stream() -> Iterator[Union[RunOutputEvent, RunOutput]]:
+                return self._run_stream(
+                    run_response=run_response,
+                    run_context=run_context,  # type: ignore[arg-type]
+                    session=agent_session,
+                    user_id=user_id,
+                    add_history_to_context=resolved_options.add_history_to_context,
+                    add_dependencies_to_context=resolved_options.add_dependencies_to_context,
+                    add_session_state_to_context=resolved_options.add_session_state_to_context,
+                    response_format=response_format,
+                    stream_events=resolved_options.stream_events,
+                    yield_run_output=resolved_options.yield_run_output,
+                    debug_mode=debug_mode,
+                    background_tasks=background_tasks,
+                    **kwargs,
+                )
+
+            return run_engine.execute_sync_stream(_execute_stream)
         else:
-            response = self._run(
-                run_response=run_response,
-                run_context=run_context,
-                session=agent_session,
-                user_id=user_id,
-                add_history_to_context=add_history,
-                add_dependencies_to_context=add_dependencies,
-                add_session_state_to_context=add_session_state,
-                response_format=response_format,
-                debug_mode=debug_mode,
-                background_tasks=background_tasks,
-                **kwargs,
-            )
-            return response
+
+            def _execute() -> RunOutput:
+                return self._run(
+                    run_response=run_response,
+                    run_context=run_context,  # type: ignore[arg-type]
+                    session=agent_session,
+                    user_id=user_id,
+                    add_history_to_context=resolved_options.add_history_to_context,
+                    add_dependencies_to_context=resolved_options.add_dependencies_to_context,
+                    add_session_state_to_context=resolved_options.add_session_state_to_context,
+                    response_format=response_format,
+                    debug_mode=debug_mode,
+                    background_tasks=background_tasks,
+                    **kwargs,
+                )
+
+            return run_engine.execute_sync(_execute)
 
     async def _arun(
         self,
@@ -1172,6 +1291,7 @@ class AgentRunTrait(AgentTraitBase):
                     )
 
                     # 6. Prepare run messages
+                    self._set_run_phase(run_response.run_id, RunPhase.BUILD_MESSAGES)
                     run_messages: RunMessages = await self._aget_run_messages(
                         run_response=run_response,
                         run_context=run_context,
@@ -1224,6 +1344,7 @@ class AgentRunTrait(AgentTraitBase):
                     await araise_if_cancelled(run_response.run_id)  # type: ignore
 
                     # 9. Generate a response from the Model (includes running function calls)
+                    self._set_run_phase(run_response.run_id, RunPhase.MODEL_CALL)
                     model_response: ModelResponse = await self.model.aresponse(
                         messages=run_messages.messages,
                         tools=_tools,
@@ -1237,6 +1358,7 @@ class AgentRunTrait(AgentTraitBase):
 
                     # Check for cancellation after model call
                     await araise_if_cancelled(run_response.run_id)  # type: ignore
+                    self._set_run_phase(run_response.run_id, RunPhase.TOOL_LOOP)
 
                     # If an output model is provided, generate output using the output model
                     await self._agenerate_response_with_output_model(
@@ -1268,6 +1390,7 @@ class AgentRunTrait(AgentTraitBase):
                         )
 
                     # 11. Convert the response to the structured format if needed
+                    self._set_run_phase(run_response.run_id, RunPhase.POSTPROCESS)
                     self._convert_response_to_structured_format(run_response, run_context=run_context)
 
                     # 12. Store media if enabled
@@ -1420,6 +1543,9 @@ class AgentRunTrait(AgentTraitBase):
 
             # Always clean up the run tracking
             await acleanup_run(run_response.run_id)  # type: ignore
+            if run_response is not None:
+                self._clear_resolved_run_options(run_response.run_id)
+                self._clear_run_engine(run_response.run_id)
 
         return run_response
 
@@ -1535,6 +1661,7 @@ class AgentRunTrait(AgentTraitBase):
                     )
 
                     # 6. Prepare run messages
+                    self._set_run_phase(run_response.run_id, RunPhase.BUILD_MESSAGES)
                     run_messages: RunMessages = await self._aget_run_messages(
                         run_response=run_response,
                         run_context=run_context,
@@ -1588,6 +1715,7 @@ class AgentRunTrait(AgentTraitBase):
                     await araise_if_cancelled(run_response.run_id)  # type: ignore
 
                     # 9. Generate a response from the Model
+                    self._set_run_phase(run_response.run_id, RunPhase.MODEL_CALL)
                     if self.output_model is None:
                         async for event in self._ahandle_model_response_stream(
                             session=agent_session,
@@ -1637,6 +1765,8 @@ class AgentRunTrait(AgentTraitBase):
                             await araise_if_cancelled(run_response.run_id)  # type: ignore
                             yield event  # type: ignore
 
+                    self._set_run_phase(run_response.run_id, RunPhase.TOOL_LOOP)
+
                     # Check for cancellation after model processing
                     await araise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -1678,6 +1808,7 @@ class AgentRunTrait(AgentTraitBase):
                         return
 
                     # Execute post-hooks (after output is generated but before response is returned)
+                    self._set_run_phase(run_response.run_id, RunPhase.POSTPROCESS)
                     if self.post_hooks is not None:
                         async for event in self._aexecute_post_hooks(
                             hooks=self.post_hooks,  # type: ignore
@@ -1902,6 +2033,9 @@ class AgentRunTrait(AgentTraitBase):
 
             # Always clean up the run tracking
             await acleanup_run(run_response.run_id)  # type: ignore
+            if run_response is not None:
+                self._clear_resolved_run_options(run_response.run_id)
+                self._clear_run_engine(run_response.run_id)
 
     @overload
     async def arun(
@@ -1982,16 +2116,11 @@ class AgentRunTrait(AgentTraitBase):
         yield_run_output: Optional[bool] = None,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
-    ) -> Union[RunOutput, AsyncIterator[RunOutputEvent]]:
+    ) -> Union[RunOutput, AsyncIterator[Union[RunOutputEvent, RunOutput]]]:
         """Async Run the Agent and return the response."""
 
         # Set the id for the run and register it immediately for cancellation tracking
         run_id = run_id or str(uuid4())
-
-        if (add_history_to_context or self.add_history_to_context) and not self.db and not self.team_id:
-            log_warning(
-                "add_history_to_context is True, but no database has been assigned to the agent. History will not be added to the context."
-            )
 
         background_tasks = kwargs.pop("background_tasks", None)
         if background_tasks is not None:
@@ -2020,17 +2149,24 @@ class AgentRunTrait(AgentTraitBase):
             images=images, videos=videos, audios=audio, files=files
         )
 
-        # Resolve variables
-        dependencies = dependencies if dependencies is not None else self.dependencies
-        add_dependencies = (
-            add_dependencies_to_context if add_dependencies_to_context is not None else self.add_dependencies_to_context
+        resolved_options = self._resolve_run_options(
+            run_context=run_context,
+            stream=stream,
+            stream_events=stream_events,
+            yield_run_output=yield_run_output,
+            add_history_to_context=add_history_to_context,
+            add_dependencies_to_context=add_dependencies_to_context,
+            add_session_state_to_context=add_session_state_to_context,
+            dependencies=dependencies,
+            knowledge_filters=knowledge_filters,
+            metadata=metadata,
+            output_schema=output_schema,
         )
-        add_session_state = (
-            add_session_state_to_context
-            if add_session_state_to_context is not None
-            else self.add_session_state_to_context
-        )
-        add_history = add_history_to_context if add_history_to_context is not None else self.add_history_to_context
+
+        if resolved_options.add_history_to_context and not self.db and not self.team_id:
+            log_warning(
+                "add_history_to_context is True, but no database has been assigned to the agent. History will not be added to the context."
+            )
 
         # Create RunInput to capture the original user input
         run_input = RunInput(
@@ -2038,30 +2174,10 @@ class AgentRunTrait(AgentTraitBase):
             images=image_artifacts,
             videos=video_artifacts,
             audios=audio_artifacts,
-            files=files,
+            files=file_artifacts,
         )
 
-        # Use stream override value when necessary
-        if stream is None:
-            stream = False if self.stream is None else self.stream
-
-        # Can't stream events if streaming is disabled
-        if stream is False:
-            stream_events = False
-
-        if stream_events is None:
-            stream_events = False if self.stream_events is None else self.stream_events
-
         self.model = cast(Model, self.model)
-
-        # Get knowledge filters
-        knowledge_filters = knowledge_filters
-        if self.knowledge_filters or knowledge_filters:
-            knowledge_filters = self._get_effective_filters(knowledge_filters)
-
-        # Resolve output_schema parameter takes precedence, then fall back to self.output_schema
-        if output_schema is None:
-            output_schema = self.output_schema
 
         # Initialize run context
         run_context = run_context or RunContext(
@@ -2069,26 +2185,15 @@ class AgentRunTrait(AgentTraitBase):
             session_id=session_id,
             user_id=user_id,
             session_state=session_state,
-            dependencies=dependencies,
-            knowledge_filters=knowledge_filters,
-            output_schema=output_schema,
+            dependencies=resolved_options.dependencies,
+            knowledge_filters=resolved_options.knowledge_filters,
+            metadata=resolved_options.metadata,
+            output_schema=resolved_options.output_schema,
         )
-        # output_schema parameter takes priority, even if run_context was provided
-        run_context.output_schema = output_schema
-
-        # Merge caller-provided metadata into run_context metadata
-        if metadata is not None:
-            if run_context.metadata is None:
-                run_context.metadata = metadata
-            else:
-                merge_dictionaries(run_context.metadata, metadata)
-
-        # Merge agent metadata with run metadata
-        if self.metadata is not None:
-            if run_context.metadata is None:
-                run_context.metadata = self.metadata
-            else:
-                merge_dictionaries(run_context.metadata, self.metadata)
+        run_context.dependencies = resolved_options.dependencies
+        run_context.knowledge_filters = resolved_options.knowledge_filters
+        run_context.metadata = resolved_options.metadata
+        run_context.output_schema = resolved_options.output_schema
 
         # Prepare arguments for the model (must be after run_context is fully initialized)
         response_format = self._get_response_format(run_context=run_context) if self.parser_model is None else None
@@ -2112,39 +2217,47 @@ class AgentRunTrait(AgentTraitBase):
         run_response.metrics = Metrics()
         run_response.metrics.start_timer()
 
-        yield_run_output = yield_run_output
+        self._set_resolved_run_options(run_id, resolved_options)
+        run_engine = self._create_run_engine(run_id)
 
-        # Pass the new run_response to _arun
-        if stream:
-            return self._arun_stream(  # type: ignore
-                run_response=run_response,
-                run_context=run_context,
-                user_id=user_id,
-                response_format=response_format,
-                stream_events=stream_events,
-                yield_run_output=yield_run_output,
-                session_id=session_id,
-                add_history_to_context=add_history,
-                add_dependencies_to_context=add_dependencies,
-                add_session_state_to_context=add_session_state,
-                debug_mode=debug_mode,
-                background_tasks=background_tasks,
-                **kwargs,
-            )  # type: ignore[assignment]
+        if resolved_options.stream:
+
+            def _execute_stream() -> AsyncIterator[Union[RunOutputEvent, RunOutput]]:
+                return self._arun_stream(  # type: ignore
+                    run_response=run_response,
+                    run_context=run_context,
+                    user_id=user_id,
+                    response_format=response_format,
+                    stream_events=resolved_options.stream_events,
+                    yield_run_output=resolved_options.yield_run_output,
+                    session_id=session_id,
+                    add_history_to_context=resolved_options.add_history_to_context,
+                    add_dependencies_to_context=resolved_options.add_dependencies_to_context,
+                    add_session_state_to_context=resolved_options.add_session_state_to_context,
+                    debug_mode=debug_mode,
+                    background_tasks=background_tasks,
+                    **kwargs,
+                )
+
+            return run_engine.execute_async_stream(_execute_stream)
         else:
-            return self._arun(  # type: ignore
-                run_response=run_response,
-                run_context=run_context,
-                user_id=user_id,
-                response_format=response_format,
-                session_id=session_id,
-                add_history_to_context=add_history,
-                add_dependencies_to_context=add_dependencies,
-                add_session_state_to_context=add_session_state,
-                debug_mode=debug_mode,
-                background_tasks=background_tasks,
-                **kwargs,
-            )
+
+            async def _execute() -> RunOutput:
+                return await self._arun(  # type: ignore
+                    run_response=run_response,
+                    run_context=run_context,
+                    user_id=user_id,
+                    response_format=response_format,
+                    session_id=session_id,
+                    add_history_to_context=resolved_options.add_history_to_context,
+                    add_dependencies_to_context=resolved_options.add_dependencies_to_context,
+                    add_session_state_to_context=resolved_options.add_session_state_to_context,
+                    debug_mode=debug_mode,
+                    background_tasks=background_tasks,
+                    **kwargs,
+                )
+
+            return run_engine.execute_async(_execute)  # type: ignore[return-value]
 
     @overload
     def continue_run(
@@ -2251,7 +2364,15 @@ class AgentRunTrait(AgentTraitBase):
         # Initialize session state. Get it from DB if relevant.
         session_state = self._load_session_state(session=agent_session, session_state={})
 
-        dependencies = dependencies if dependencies is not None else self.dependencies
+        resolved_options = self._resolve_run_options(
+            run_context=run_context,
+            stream=stream,
+            stream_events=stream_events,
+            yield_run_output=yield_run_output,
+            dependencies=dependencies,
+            knowledge_filters=knowledge_filters,
+            metadata=metadata,
+        )
 
         # Initialize run context
         run_context = run_context or RunContext(
@@ -2259,42 +2380,21 @@ class AgentRunTrait(AgentTraitBase):
             session_id=session_id,
             user_id=user_id,
             session_state=session_state,
-            dependencies=dependencies,
+            dependencies=resolved_options.dependencies,
+            knowledge_filters=resolved_options.knowledge_filters,
+            metadata=resolved_options.metadata,
+            output_schema=resolved_options.output_schema,
         )
-
-        # Merge caller-provided metadata into run_context metadata
-        if metadata is not None:
-            if run_context.metadata is None:
-                run_context.metadata = metadata
-            else:
-                merge_dictionaries(run_context.metadata, metadata)
-
-        # Merge agent metadata with run metadata
-        if self.metadata is not None:
-            if run_context.metadata is None:
-                run_context.metadata = self.metadata
-            else:
-                merge_dictionaries(run_context.metadata, self.metadata)
+        run_context.session_state = session_state
+        run_context.dependencies = resolved_options.dependencies
+        run_context.knowledge_filters = resolved_options.knowledge_filters
+        run_context.metadata = resolved_options.metadata
+        if resolved_options.output_schema is not None:
+            run_context.output_schema = resolved_options.output_schema
 
         # Resolve dependencies
         if run_context.dependencies is not None:
             self._resolve_run_dependencies(run_context=run_context)
-
-        # When filters are passed manually
-        if self.knowledge_filters or run_context.knowledge_filters or knowledge_filters:
-            run_context.knowledge_filters = self._get_effective_filters(knowledge_filters)
-
-        # Use stream override value when necessary
-        if stream is None:
-            stream = False if self.stream is None else self.stream
-
-        # Can't stream events if streaming is disabled
-        if stream is False:
-            stream_events = False
-
-        if stream_events is None:
-            stream_events = False if self.stream_events is None else self.stream_events
-
         # Run can be continued from previous run response or from passed run_response context
         if run_response is not None:
             # The run is continued from a provided run_response. This contains the updated tools.
@@ -2356,7 +2456,12 @@ class AgentRunTrait(AgentTraitBase):
 
         log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
 
+        resolved_run_id = cast(str, run_id)
+        self._set_resolved_run_options(resolved_run_id, resolved_options)
+        run_engine = self._create_run_engine(resolved_run_id)
+
         # Prepare run messages
+        self._set_run_phase(run_response.run_id, RunPhase.BUILD_MESSAGES)
         run_messages = self._get_continue_run_messages(
             input=input,
         )
@@ -2364,36 +2469,42 @@ class AgentRunTrait(AgentTraitBase):
         # Reset the run state
         run_response.status = RunStatus.running
 
-        if stream:
-            response_iterator = self._continue_run_stream(
-                run_response=run_response,
-                run_messages=run_messages,
-                run_context=run_context,
-                tools=_tools,
-                user_id=user_id,
-                session=agent_session,
-                response_format=response_format,
-                stream_events=stream_events,
-                yield_run_output=yield_run_output,
-                debug_mode=debug_mode,
-                background_tasks=background_tasks,
-                **kwargs,
-            )
-            return response_iterator
+        if resolved_options.stream:
+
+            def _execute_stream() -> Iterator[Union[RunOutputEvent, RunOutput]]:
+                return self._continue_run_stream(
+                    run_response=run_response,
+                    run_messages=run_messages,
+                    run_context=run_context,  # type: ignore[arg-type]
+                    tools=_tools,
+                    user_id=user_id,
+                    session=agent_session,
+                    response_format=response_format,
+                    stream_events=resolved_options.stream_events,
+                    yield_run_output=resolved_options.yield_run_output,
+                    debug_mode=debug_mode,
+                    background_tasks=background_tasks,
+                    **kwargs,
+                )
+
+            return run_engine.execute_sync_stream(_execute_stream)
         else:
-            response = self._continue_run(
-                run_response=run_response,
-                run_messages=run_messages,
-                run_context=run_context,
-                tools=_tools,
-                user_id=user_id,
-                session=agent_session,
-                response_format=response_format,
-                debug_mode=debug_mode,
-                background_tasks=background_tasks,
-                **kwargs,
-            )
-            return response
+
+            def _execute() -> RunOutput:
+                return self._continue_run(
+                    run_response=run_response,
+                    run_messages=run_messages,
+                    run_context=run_context,  # type: ignore[arg-type]
+                    tools=_tools,
+                    user_id=user_id,
+                    session=agent_session,
+                    response_format=response_format,
+                    debug_mode=debug_mode,
+                    background_tasks=background_tasks,
+                    **kwargs,
+                )
+
+            return run_engine.execute_sync(_execute)
 
     def _continue_run(
         self,
@@ -2426,6 +2537,7 @@ class AgentRunTrait(AgentTraitBase):
         self.model = cast(Model, self.model)
 
         # 1. Handle the updated tools
+        self._set_run_phase(run_response.run_id, RunPhase.TOOL_LOOP)
         self._handle_tool_call_updates(run_response=run_response, run_messages=run_messages, tools=tools)
 
         try:
@@ -2437,6 +2549,7 @@ class AgentRunTrait(AgentTraitBase):
 
                     # 2. Generate a response from the Model (includes running function calls)
                     self.model = cast(Model, self.model)
+                    self._set_run_phase(run_response.run_id, RunPhase.MODEL_CALL)
                     model_response: ModelResponse = self.model.response(
                         messages=run_messages.messages,
                         response_format=response_format,
@@ -2450,6 +2563,7 @@ class AgentRunTrait(AgentTraitBase):
 
                     # Check for cancellation after model processing
                     raise_if_cancelled(run_response.run_id)  # type: ignore
+                    self._set_run_phase(run_response.run_id, RunPhase.TOOL_LOOP)
 
                     # 3. Update the RunOutput with the model response
                     self._update_run_response(
@@ -2463,6 +2577,7 @@ class AgentRunTrait(AgentTraitBase):
                         )
 
                     # 4. Convert the response to the structured format if needed
+                    self._set_run_phase(run_response.run_id, RunPhase.POSTPROCESS)
                     self._convert_response_to_structured_format(run_response, run_context=run_context)
 
                     # 5. Store media if enabled
@@ -2573,6 +2688,9 @@ class AgentRunTrait(AgentTraitBase):
             self._disconnect_connectable_tools()
             # Always clean up the run tracking
             cleanup_run(run_response.run_id)  # type: ignore
+            if run_response is not None:
+                self._clear_resolved_run_options(run_response.run_id)
+                self._clear_run_engine(run_response.run_id)
         return run_response
 
     def _continue_run_stream(
@@ -2620,11 +2738,13 @@ class AgentRunTrait(AgentTraitBase):
                         )
 
                     # 2. Handle the updated tools
+                    self._set_run_phase(run_response.run_id, RunPhase.TOOL_LOOP)
                     yield from self._handle_tool_call_updates_stream(
                         run_response=run_response, run_messages=run_messages, tools=tools, stream_events=stream_events
                     )
 
                     # 3. Process model response
+                    self._set_run_phase(run_response.run_id, RunPhase.MODEL_CALL)
                     for event in self._handle_model_response_stream(
                         session=session,
                         run_response=run_response,
@@ -2636,6 +2756,7 @@ class AgentRunTrait(AgentTraitBase):
                         run_context=run_context,
                     ):
                         yield event
+                    self._set_run_phase(run_response.run_id, RunPhase.TOOL_LOOP)
 
                     # Parse response with parser model if provided
                     yield from self._parse_response_with_parser_model_stream(  # type: ignore
@@ -2659,6 +2780,7 @@ class AgentRunTrait(AgentTraitBase):
                         return
 
                     # Execute post-hooks
+                    self._set_run_phase(run_response.run_id, RunPhase.POSTPROCESS)
                     if self.post_hooks is not None:
                         yield from self._execute_post_hooks(
                             hooks=self.post_hooks,  # type: ignore
@@ -2827,6 +2949,8 @@ class AgentRunTrait(AgentTraitBase):
             self._disconnect_connectable_tools()
             # Always clean up the run tracking
             cleanup_run(run_response.run_id)  # type: ignore
+            self._clear_resolved_run_options(run_response.run_id)
+            self._clear_run_engine(run_response.run_id)
 
     @overload
     async def acontinue_run(
@@ -2931,27 +3055,15 @@ class AgentRunTrait(AgentTraitBase):
         # Initialize the Agent
         self.initialize_agent(debug_mode=debug_mode)
 
-        dependencies = dependencies if dependencies is not None else self.dependencies
-
-        # Use stream override value when necessary
-        if stream is None:
-            stream = False if self.stream is None else self.stream
-
-        # Can't stream events if streaming is disabled
-        if stream is False:
-            stream_events = False
-
-        if stream_events is None:
-            stream_events = False if self.stream_events is None else self.stream_events
-
-        # Can't have stream_events if stream is False
-        if stream is False:
-            stream_events = False
-
-        # Get knowledge filters
-        knowledge_filters = knowledge_filters
-        if self.knowledge_filters or knowledge_filters:
-            knowledge_filters = self._get_effective_filters(knowledge_filters)
+        resolved_options = self._resolve_run_options(
+            run_context=run_context,
+            stream=stream,
+            stream_events=stream_events,
+            yield_run_output=yield_run_output,
+            dependencies=dependencies,
+            knowledge_filters=knowledge_filters,
+            metadata=metadata,
+        )
 
         # Prepare arguments for the model
         response_format = self._get_response_format(run_context=run_context)
@@ -2963,54 +3075,58 @@ class AgentRunTrait(AgentTraitBase):
             session_id=session_id,
             user_id=user_id,
             session_state={},
-            dependencies=dependencies,
-            knowledge_filters=knowledge_filters,
+            dependencies=resolved_options.dependencies,
+            knowledge_filters=resolved_options.knowledge_filters,
+            metadata=resolved_options.metadata,
+            output_schema=resolved_options.output_schema,
         )
+        run_context.dependencies = resolved_options.dependencies
+        run_context.knowledge_filters = resolved_options.knowledge_filters
+        run_context.metadata = resolved_options.metadata
+        if resolved_options.output_schema is not None:
+            run_context.output_schema = resolved_options.output_schema
 
-        # Merge caller-provided metadata into run_context metadata
-        if metadata is not None:
-            if run_context.metadata is None:
-                run_context.metadata = metadata
-            else:
-                merge_dictionaries(run_context.metadata, metadata)
+        self._set_resolved_run_options(run_id, resolved_options)  # type: ignore[arg-type]
+        run_engine = self._create_run_engine(run_id)  # type: ignore[arg-type]
 
-        # Merge agent metadata with run metadata
-        if self.metadata is not None:
-            if run_context.metadata is None:
-                run_context.metadata = self.metadata
-            else:
-                merge_dictionaries(run_context.metadata, self.metadata)
+        if resolved_options.stream:
 
-        if stream:
-            return self._acontinue_run_stream(
-                run_response=run_response,
-                run_context=run_context,
-                updated_tools=updated_tools,
-                requirements=requirements,
-                run_id=run_id,
-                user_id=user_id,
-                session_id=session_id,
-                response_format=response_format,
-                stream_events=stream_events,
-                yield_run_output=yield_run_output,
-                debug_mode=debug_mode,
-                background_tasks=background_tasks,
-                **kwargs,
-            )
+            def _execute_stream() -> AsyncIterator[Union[RunOutputEvent, RunOutput]]:
+                return self._acontinue_run_stream(
+                    run_response=run_response,
+                    run_context=run_context,
+                    updated_tools=updated_tools,
+                    requirements=requirements,
+                    run_id=run_id,
+                    user_id=user_id,
+                    session_id=session_id,
+                    response_format=response_format,
+                    stream_events=resolved_options.stream_events,
+                    yield_run_output=resolved_options.yield_run_output,
+                    debug_mode=debug_mode,
+                    background_tasks=background_tasks,
+                    **kwargs,
+                )
+
+            return run_engine.execute_async_stream(_execute_stream)
         else:
-            return self._acontinue_run(  # type: ignore
-                session_id=session_id,
-                run_response=run_response,
-                run_context=run_context,
-                updated_tools=updated_tools,
-                requirements=requirements,
-                run_id=run_id,
-                user_id=user_id,
-                response_format=response_format,
-                debug_mode=debug_mode,
-                background_tasks=background_tasks,
-                **kwargs,
-            )
+
+            async def _execute() -> RunOutput:
+                return await self._acontinue_run(  # type: ignore
+                    session_id=session_id,
+                    run_response=run_response,
+                    run_context=run_context,
+                    updated_tools=updated_tools,
+                    requirements=requirements,
+                    run_id=run_id,
+                    user_id=user_id,
+                    response_format=response_format,
+                    debug_mode=debug_mode,
+                    background_tasks=background_tasks,
+                    **kwargs,
+                )
+
+            return run_engine.execute_async(_execute)  # type: ignore[return-value]
 
     async def _acontinue_run(
         self,
@@ -3130,6 +3246,7 @@ class AgentRunTrait(AgentTraitBase):
                     )
 
                     # 6. Prepare run messages
+                    self._set_run_phase(run_response.run_id, RunPhase.BUILD_MESSAGES)
                     run_messages: RunMessages = self._get_continue_run_messages(
                         input=input,
                     )
@@ -3138,11 +3255,13 @@ class AgentRunTrait(AgentTraitBase):
                     register_run(run_response.run_id)  # type: ignore
 
                     # 7. Handle the updated tools
+                    self._set_run_phase(run_response.run_id, RunPhase.TOOL_LOOP)
                     await self._ahandle_tool_call_updates(
                         run_response=run_response, run_messages=run_messages, tools=_tools
                     )
 
                     # 8. Get model response
+                    self._set_run_phase(run_response.run_id, RunPhase.MODEL_CALL)
                     model_response: ModelResponse = await self.model.aresponse(
                         messages=run_messages.messages,
                         response_format=response_format,
@@ -3155,6 +3274,7 @@ class AgentRunTrait(AgentTraitBase):
                     )
                     # Check for cancellation after model call
                     await araise_if_cancelled(run_response.run_id)  # type: ignore
+                    self._set_run_phase(run_response.run_id, RunPhase.TOOL_LOOP)
 
                     # If an output model is provided, generate output using the output model
                     await self._agenerate_response_with_output_model(
@@ -3181,6 +3301,7 @@ class AgentRunTrait(AgentTraitBase):
                         )
 
                     # 10. Convert the response to the structured format if needed
+                    self._set_run_phase(run_response.run_id, RunPhase.POSTPROCESS)
                     self._convert_response_to_structured_format(run_response, run_context=run_context)
 
                     # 11. Store media if enabled
@@ -3320,6 +3441,9 @@ class AgentRunTrait(AgentTraitBase):
 
             # Always clean up the run tracking
             cleanup_run(run_response.run_id)  # type: ignore
+            if run_response is not None:
+                self._clear_resolved_run_options(run_response.run_id)
+                self._clear_run_engine(run_response.run_id)
         return run_response  # type: ignore
 
     async def _acontinue_run_stream(
@@ -3437,6 +3561,7 @@ class AgentRunTrait(AgentTraitBase):
                     )
 
                     # 6. Prepare run messages
+                    self._set_run_phase(run_response.run_id, RunPhase.BUILD_MESSAGES)
                     run_messages: RunMessages = self._get_continue_run_messages(
                         input=input,
                     )
@@ -3454,6 +3579,7 @@ class AgentRunTrait(AgentTraitBase):
                         )
 
                     # 7. Handle the updated tools
+                    self._set_run_phase(run_response.run_id, RunPhase.TOOL_LOOP)
                     async for event in self._ahandle_tool_call_updates_stream(
                         run_response=run_response, run_messages=run_messages, tools=_tools, stream_events=stream_events
                     ):
@@ -3461,6 +3587,7 @@ class AgentRunTrait(AgentTraitBase):
                         yield event
 
                     # 8. Process model response
+                    self._set_run_phase(run_response.run_id, RunPhase.MODEL_CALL)
                     if self.output_model is None:
                         async for event in self._ahandle_model_response_stream(
                             session=agent_session,
@@ -3508,6 +3635,8 @@ class AgentRunTrait(AgentTraitBase):
                             await araise_if_cancelled(run_response.run_id)  # type: ignore
                             yield event  # type: ignore
 
+                    self._set_run_phase(run_response.run_id, RunPhase.TOOL_LOOP)
+
                     # Check for cancellation after model processing
                     await araise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -3538,6 +3667,7 @@ class AgentRunTrait(AgentTraitBase):
                         return
 
                     # 8. Execute post-hooks
+                    self._set_run_phase(run_response.run_id, RunPhase.POSTPROCESS)
                     if self.post_hooks is not None:
                         async for event in self._aexecute_post_hooks(
                             hooks=self.post_hooks,  # type: ignore
@@ -3728,3 +3858,6 @@ class AgentRunTrait(AgentTraitBase):
 
             # Always clean up the run tracking
             await acleanup_run(run_response.run_id)  # type: ignore
+            if run_response is not None:
+                self._clear_resolved_run_options(run_response.run_id)
+                self._clear_run_engine(run_response.run_id)

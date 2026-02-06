@@ -14,6 +14,7 @@ from typing import (
 from pydantic import BaseModel
 
 from agno.agent.trait.base import AgentTraitBase
+from agno.agent.trait.run_engine import RunPhase
 from agno.filters import FilterExpr
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Message
@@ -390,33 +391,39 @@ class AgentApiTrait(AgentTraitBase):
         run_context: Optional[RunContext] = None,
         user_id: Optional[str] = None,
     ) -> None:  #  Scrub the stored run based on storage flags
-        self._scrub_run_output_for_storage(run_response)
+        try:
+            self._set_run_phase(run_response.run_id, RunPhase.PERSIST)
 
-        # Stop the timer for the Run duration
-        if run_response.metrics:
-            run_response.metrics.stop_timer()
+            # Stop the timer for the Run duration
+            if run_response.metrics:
+                run_response.metrics.stop_timer()
 
-        # Update run_response.session_state before saving
-        # This ensures RunOutput reflects all tool modifications
-        if session.session_data is not None and run_context is not None and run_context.session_state is not None:
-            run_response.session_state = run_context.session_state
+            # Update run_response.session_state before saving
+            # This ensures RunOutput reflects all tool modifications
+            if session.session_data is not None and run_context is not None and run_context.session_state is not None:
+                run_response.session_state = run_context.session_state
 
-        # Optional: Save output to file if save_response_to_file is set
-        self.save_run_response_to_file(
-            run_response=run_response,
-            input=run_response.input.input_content_string() if run_response.input else "",
-            session_id=session.session_id,
-            user_id=user_id,
-        )
+            self._scrub_run_output_for_storage(run_response)
 
-        # Add RunOutput to Agent Session
-        session.upsert_run(run=run_response)
+            # Optional: Save output to file if save_response_to_file is set
+            self.save_run_response_to_file(
+                run_response=run_response,
+                input=run_response.input.input_content_string() if run_response.input else "",
+                session_id=session.session_id,
+                user_id=user_id,
+            )
 
-        # Calculate session metrics
-        self._update_session_metrics(session=session, run_response=run_response)
+            # Add RunOutput to Agent Session
+            session.upsert_run(run=run_response)
 
-        # Save session to memory
-        self.save_session(session=session)
+            # Calculate session metrics
+            self._update_session_metrics(session=session, run_response=run_response)
+
+            # Save session to memory
+            self.save_session(session=session)
+        finally:
+            self._clear_resolved_run_options(run_response.run_id)
+            self._clear_run_engine(run_response.run_id)
 
     async def _acleanup_and_store(
         self,
@@ -425,41 +432,47 @@ class AgentApiTrait(AgentTraitBase):
         run_context: Optional[RunContext] = None,
         user_id: Optional[str] = None,
     ) -> None:
-        #  Scrub the stored run based on storage flags
-        self._scrub_run_output_for_storage(run_response)
+        try:
+            self._set_run_phase(run_response.run_id, RunPhase.PERSIST)
 
-        # Stop the timer for the Run duration
-        if run_response.metrics:
-            run_response.metrics.stop_timer()
+            # Stop the timer for the Run duration
+            if run_response.metrics:
+                run_response.metrics.stop_timer()
 
-        # Update run_response.session_state from session before saving
-        # This ensures RunOutput reflects all tool modifications
-        if session.session_data is not None and run_context is not None and run_context.session_state is not None:
-            run_response.session_state = run_context.session_state
+            # Update run_response.session_state from session before saving
+            # This ensures RunOutput reflects all tool modifications
+            if session.session_data is not None and run_context is not None and run_context.session_state is not None:
+                run_response.session_state = run_context.session_state
 
-        # Optional: Save output to file if save_response_to_file is set
-        self.save_run_response_to_file(
-            run_response=run_response,
-            input=run_response.input.input_content_string() if run_response.input else "",
-            session_id=session.session_id,
-            user_id=user_id,
-        )
+            #  Scrub the stored run based on storage flags
+            self._scrub_run_output_for_storage(run_response)
 
-        # Add RunOutput to Agent Session
-        session.upsert_run(run=run_response)
+            # Optional: Save output to file if save_response_to_file is set
+            self.save_run_response_to_file(
+                run_response=run_response,
+                input=run_response.input.input_content_string() if run_response.input else "",
+                session_id=session.session_id,
+                user_id=user_id,
+            )
 
-        # Calculate session metrics
-        self._update_session_metrics(session=session, run_response=run_response)
+            # Add RunOutput to Agent Session
+            session.upsert_run(run=run_response)
 
-        # Update session state before saving the session
-        if run_context is not None and run_context.session_state is not None:
-            if session.session_data is not None:
-                session.session_data["session_state"] = run_context.session_state
-            else:
-                session.session_data = {"session_state": run_context.session_state}
+            # Calculate session metrics
+            self._update_session_metrics(session=session, run_response=run_response)
 
-        # Save session to memory
-        await self.asave_session(session=session)
+            # Update session state before saving the session
+            if run_context is not None and run_context.session_state is not None:
+                if session.session_data is not None:
+                    session.session_data["session_state"] = run_context.session_state
+                else:
+                    session.session_data = {"session_state": run_context.session_state}
+
+            # Save session to memory
+            await self.asave_session(session=session)
+        finally:
+            self._clear_resolved_run_options(run_response.run_id)
+            self._clear_run_engine(run_response.run_id)
 
     def _scrub_run_output_for_storage(self, run_response: RunOutput) -> None:
         """

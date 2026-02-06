@@ -598,7 +598,6 @@ class Agent(
 
         self.stream = stream
         self.stream_events = stream_events
-
         self.store_events = store_events
         self.role = role
         # By default, we skip the run response content event
@@ -633,6 +632,8 @@ class Agent(
 
         self._mcp_tools_initialized_on_run: List[Any] = []
         self._connectable_tools_initialized_on_run: List[Any] = []
+        self._run_options_by_run_id: Dict[str, Any] = {}
+        self._run_engines_by_run_id: Dict[str, Any] = {}
 
         # Lazy-initialized shared thread pool executor for background tasks (memory, cultural knowledge, etc.)
         self._background_executor: Optional[Any] = None

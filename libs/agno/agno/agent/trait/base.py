@@ -126,6 +126,8 @@ class AgentTraitBase:
     _hooks_normalised: Any
     _mcp_tools_initialized_on_run: Any
     _connectable_tools_initialized_on_run: Any
+    _run_options_by_run_id: Any
+    _run_engines_by_run_id: Any
     _background_executor: Any
 
     if TYPE_CHECKING:
