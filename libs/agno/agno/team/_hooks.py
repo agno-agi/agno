@@ -98,13 +98,14 @@ def _execute_pre_hooks(
         return
 
     # Prepare arguments for hooks
+    effective_debug_mode = debug_mode if debug_mode is not None else team.debug_mode
     all_args = {
         "run_input": run_input,
         "run_context": run_context,
         "team": team,
         "session": session,
         "user_id": user_id,
-        "debug_mode": debug_mode or team.debug_mode,
+        "debug_mode": effective_debug_mode,
     }
 
     # Check if background_tasks is available and ALL hooks should run in background
@@ -188,13 +189,14 @@ async def _aexecute_pre_hooks(
         return
 
     # Prepare arguments for hooks
+    effective_debug_mode = debug_mode if debug_mode is not None else team.debug_mode
     all_args = {
         "run_input": run_input,
         "run_context": run_context,
         "team": team,
         "session": session,
         "user_id": user_id,
-        "debug_mode": debug_mode or team.debug_mode,
+        "debug_mode": effective_debug_mode,
     }
 
     # Check if background_tasks is available and ALL hooks should run in background
@@ -283,13 +285,14 @@ def _execute_post_hooks(
         return
 
     # Prepare arguments for hooks
+    effective_debug_mode = debug_mode if debug_mode is not None else team.debug_mode
     all_args = {
         "run_output": run_output,
         "run_context": run_context,
         "team": team,
         "session": session,
         "user_id": user_id,
-        "debug_mode": debug_mode or team.debug_mode,
+        "debug_mode": effective_debug_mode,
     }
 
     # Check if background_tasks is available and ALL hooks should run in background
@@ -370,13 +373,14 @@ async def _aexecute_post_hooks(
         return
 
     # Prepare arguments for hooks
+    effective_debug_mode = debug_mode if debug_mode is not None else team.debug_mode
     all_args = {
         "run_output": run_output,
         "run_context": run_context,
         "team": team,
         "session": session,
         "user_id": user_id,
-        "debug_mode": debug_mode or team.debug_mode,
+        "debug_mode": effective_debug_mode,
     }
 
     # Check if background_tasks is available and ALL hooks should run in background
