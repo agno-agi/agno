@@ -41,16 +41,14 @@ from agno.eval.base import BaseEval
 from agno.filters import FilterExpr
 from agno.guardrails import BaseGuardrail
 from agno.knowledge.protocol import KnowledgeProtocol
-from agno.knowledge.types import KnowledgeFilter
 from agno.learn.machine import LearningMachine
 from agno.media import Audio, File, Image, Video
 from agno.memory import MemoryManager
 from agno.models.base import Model
-from agno.models.message import Message, MessageReferences
+from agno.models.message import Message
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse, ToolExecution
-from agno.models.utils import get_model
-from agno.reasoning.step import ReasoningStep, ReasoningSteps
+from agno.reasoning.step import ReasoningStep
 from agno.registry.registry import Registry
 from agno.run import RunContext, RunStatus
 from agno.run.agent import (
@@ -67,9 +65,8 @@ from agno.session.summary import SessionSummary
 from agno.skills import Skills
 from agno.tools import Toolkit
 from agno.tools.function import Function
-from agno.utils.log import log_debug, log_warning
+from agno.utils.log import log_warning
 from agno.utils.safe_formatter import SafeFormatter
-from agno.utils.string import generate_id_from_name
 
 
 @dataclass(init=False)
