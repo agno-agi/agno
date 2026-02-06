@@ -1,3 +1,5 @@
+"""Agent setup helpers extracted for readability without mixin abstraction."""
+
 from __future__ import annotations
 
 from os import getenv
