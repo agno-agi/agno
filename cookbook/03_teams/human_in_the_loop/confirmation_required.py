@@ -52,33 +52,36 @@ team = Team(
     add_history_to_context=True,
 )
 
-# Run the team - this will pause when the member needs confirmation
-session_id = "team_weather_session"
-run_response = team.run("What is the weather in Tokyo?", session_id=session_id)
+if __name__ == "__main__":
+    # Run the team - this will pause when the member needs confirmation
+    session_id = "team_weather_session"
+    run_response = team.run("What is the weather in Tokyo?", session_id=session_id)
 
-if run_response.is_paused:
-    console.print("[bold yellow]Team is paused - member needs confirmation[/]")
+    if run_response.is_paused:
+        console.print("[bold yellow]Team is paused - member needs confirmation[/]")
 
-    for requirement in run_response.active_requirements:
-        if requirement.needs_confirmation:
-            console.print(
-                f"Member [bold cyan]{requirement.member_agent_name}[/] wants to call "
-                f"[bold blue]{requirement.tool_execution.tool_name}"
-                f"({requirement.tool_execution.tool_args})[/]"
-            )
+        for requirement in run_response.active_requirements:
+            if requirement.needs_confirmation:
+                console.print(
+                    f"Member [bold cyan]{requirement.member_agent_name}[/] wants to call "
+                    f"[bold blue]{requirement.tool_execution.tool_name}"
+                    f"({requirement.tool_execution.tool_args})[/]"
+                )
 
-            message = (
-                Prompt.ask("Do you want to approve?", choices=["y", "n"], default="y")
-                .strip()
-                .lower()
-            )
+                message = (
+                    Prompt.ask(
+                        "Do you want to approve?", choices=["y", "n"], default="y"
+                    )
+                    .strip()
+                    .lower()
+                )
 
-            if message == "n":
-                requirement.reject(note="User declined")
-            else:
-                requirement.confirm()
+                if message == "n":
+                    requirement.reject(note="User declined")
+                else:
+                    requirement.confirm()
 
-    # Continue the team run
-    run_response = team.continue_run(run_response)
+        # Continue the team run
+        run_response = team.continue_run(run_response)
 
-pprint.pprint_run_response(run_response)
+    pprint.pprint_run_response(run_response)

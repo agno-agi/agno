@@ -95,6 +95,7 @@ from agno.utils.log import (
     log_warning,
 )
 
+
 def initialize_session(
     agent: Agent,
     session_id: Optional[str] = None,
@@ -274,7 +275,10 @@ def run_impl(
 
                 # 7. Update the RunOutput with the model response
                 agent._update_run_response(
-                    model_response=model_response, run_response=run_response, run_messages=run_messages, run_context=run_context
+                    model_response=model_response,
+                    run_response=run_response,
+                    run_messages=run_messages,
+                    run_context=run_context,
                 )
 
                 # We should break out of the run function
@@ -2253,7 +2257,10 @@ def continue_run_impl(
 
                 # 3. Update the RunOutput with the model response
                 agent._update_run_response(
-                    model_response=model_response, run_response=run_response, run_messages=run_messages, run_context=run_context
+                    model_response=model_response,
+                    run_response=run_response,
+                    run_messages=run_messages,
+                    run_context=run_context,
                 )
 
                 # We should break out of the run function

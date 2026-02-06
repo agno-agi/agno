@@ -110,7 +110,6 @@ def handle_team_run_paused(
     team: "Team",
     run_response: TeamRunOutput,
     session: TeamSession,
-    user_id: Optional[str] = None,
 ) -> TeamRunOutput:
     from agno.team import _api
 
@@ -140,7 +139,6 @@ def handle_team_run_paused_stream(
     team: "Team",
     run_response: TeamRunOutput,
     session: TeamSession,
-    user_id: Optional[str] = None,
 ) -> Iterator[Union[TeamRunOutputEvent, RunOutputEvent]]:
     from agno.team import _api
 
@@ -161,7 +159,8 @@ def handle_team_run_paused_stream(
 
     _api._cleanup_and_store(team, run_response=run_response, session=session)
 
-    yield pause_event  # type: ignore
+    if pause_event is not None:
+        yield pause_event
 
     log_debug(f"Team Run Paused: {run_response.run_id}", center=True, symbol="*")
 
@@ -170,7 +169,6 @@ async def ahandle_team_run_paused(
     team: "Team",
     run_response: TeamRunOutput,
     session: TeamSession,
-    user_id: Optional[str] = None,
 ) -> TeamRunOutput:
     from agno.team import _api
 
@@ -200,7 +198,6 @@ async def ahandle_team_run_paused_stream(
     team: "Team",
     run_response: TeamRunOutput,
     session: TeamSession,
-    user_id: Optional[str] = None,
 ) -> AsyncIterator[Union[TeamRunOutputEvent, RunOutputEvent]]:
     from agno.team import _api
 
@@ -221,7 +218,8 @@ async def ahandle_team_run_paused_stream(
 
     await _api._acleanup_and_store(team, run_response=run_response, session=session)
 
-    yield pause_event  # type: ignore
+    if pause_event is not None:
+        yield pause_event
 
     log_debug(f"Team Run Paused: {run_response.run_id}", center=True, symbol="*")
 

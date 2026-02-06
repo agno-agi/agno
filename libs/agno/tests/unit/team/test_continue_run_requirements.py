@@ -427,3 +427,86 @@ def test_provide_user_input_partial_values():
     assert req.tool_execution.answered is True
     assert req.user_input_schema[0].value == "Tokyo"
     assert req.user_input_schema[1].value is None
+
+
+# ---------------------------------------------------------------------------
+# _build_continuation_message
+# ---------------------------------------------------------------------------
+
+
+def test_build_continuation_message():
+    """Verify _build_continuation_message assembles member results."""
+    result_a = RunOutput(run_id="run_a", content="Weather is sunny")
+    result_b = RunOutput(run_id="run_b", content="Email sent")
+    msg = _run._build_continuation_message({"AgentA": result_a, "AgentB": result_b})
+
+    assert "Previously delegated tasks have been completed." in msg
+    assert "AgentA" in msg
+    assert "Weather is sunny" in msg
+    assert "AgentB" in msg
+    assert "Email sent" in msg
+
+
+def test_build_continuation_message_none_content():
+    """Verify _build_continuation_message handles None content."""
+    result = RunOutput(run_id="run_none", content=None)
+    msg = _run._build_continuation_message({"AgentX": result})
+
+    assert "(no content)" in msg
+
+
+# ---------------------------------------------------------------------------
+# handle_team_run_paused_stream
+# ---------------------------------------------------------------------------
+
+
+def test_handle_team_run_paused_stream_yields_event():
+    """Verify handle_team_run_paused_stream yields a pause event."""
+    from unittest.mock import MagicMock
+
+    from agno.team import _hooks
+
+    team_mock = MagicMock()
+    team_mock.events_to_skip = None
+    team_mock.store_events = True
+
+    req = _make_requirement("tc_stream")
+    req.member_agent_name = "StreamAgent"
+    team_run = TeamRunOutput(
+        run_id="stream_run",
+        status=RunStatus.paused,
+        requirements=[req],
+    )
+
+    session_mock = MagicMock()
+
+    events = list(_hooks.handle_team_run_paused_stream(team_mock, run_response=team_run, session=session_mock))
+
+    # Should yield at least one event (the pause event)
+    assert len(events) >= 1
+    assert team_run.status == RunStatus.paused
+
+
+def test_handle_team_run_paused_stream_skips_none_event():
+    """Verify handle_team_run_paused_stream does not yield None when event is skipped."""
+    from unittest.mock import MagicMock, patch
+
+    from agno.team import _hooks
+
+    team_mock = MagicMock()
+    team_mock.events_to_skip = None
+    team_mock.store_events = True
+
+    team_run = TeamRunOutput(
+        run_id="skip_run",
+        status=RunStatus.paused,
+        content="paused",
+    )
+    session_mock = MagicMock()
+
+    # Patch handle_event to return None (simulating an event being skipped)
+    with patch("agno.team._hooks.handle_event", return_value=None):
+        events = list(_hooks.handle_team_run_paused_stream(team_mock, run_response=team_run, session=session_mock))
+
+    # No events should be yielded since the pause event was None
+    assert len(events) == 0

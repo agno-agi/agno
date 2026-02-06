@@ -49,35 +49,37 @@ team = Team(
     add_history_to_context=True,
 )
 
-# Run the team
-session_id = "team_email_session"
-run_response = team.run(
-    "Send an email to john@example.com with subject 'Meeting Tomorrow' and body 'Let's meet at 3pm.'",
-    session_id=session_id,
-)
+if __name__ == "__main__":
+    # Run the team
+    session_id = "team_email_session"
+    run_response = team.run(
+        "Send an email to john@example.com with subject 'Meeting Tomorrow' and body 'Let's meet at 3pm.'",
+        session_id=session_id,
+    )
 
-if run_response.is_paused:
-    console.print("[bold yellow]Team is paused - external execution needed[/]")
+    if run_response.is_paused:
+        console.print("[bold yellow]Team is paused - external execution needed[/]")
 
-    for requirement in run_response.active_requirements:
-        if requirement.needs_external_execution:
-            tool_args = requirement.tool_execution.tool_args
-            console.print(
-                f"Member [bold cyan]{requirement.member_agent_name}[/] needs external execution of "
-                f"[bold blue]{requirement.tool_execution.tool_name}[/]"
-            )
-            console.print(f"  To: {tool_args.get('to')}")
-            console.print(f"  Subject: {tool_args.get('subject')}")
-            console.print(f"  Body: {tool_args.get('body')}")
+        for requirement in run_response.active_requirements:
+            if requirement.needs_external_execution:
+                tool_args = requirement.tool_execution.tool_args
+                console.print(
+                    f"Member [bold cyan]{requirement.member_agent_name}[/] needs external execution of "
+                    f"[bold blue]{requirement.tool_execution.tool_name}[/]"
+                )
+                console.print(f"  To: {tool_args.get('to')}")
+                console.print(f"  Subject: {tool_args.get('subject')}")
+                console.print(f"  Body: {tool_args.get('body')}")
 
-            # In a real application, you would actually send the email here
-            # For this example, we simulate it
-            result = Prompt.ask(
-                "Enter the result of the email send", default="Email sent successfully"
-            )
-            requirement.set_external_execution_result(result)
+                # In a real application, you would actually send the email here
+                # For this example, we simulate it
+                result = Prompt.ask(
+                    "Enter the result of the email send",
+                    default="Email sent successfully",
+                )
+                requirement.set_external_execution_result(result)
 
-    # Continue the team run with the external result
-    run_response = team.continue_run(run_response)
+        # Continue the team run with the external result
+        run_response = team.continue_run(run_response)
 
-pprint.pprint_run_response(run_response)
+    pprint.pprint_run_response(run_response)

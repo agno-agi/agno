@@ -49,26 +49,30 @@ team = Team(
     add_history_to_context=True,
 )
 
-# Run the team
-session_id = "team_travel_session"
-run_response = team.run("Help me plan a vacation", session_id=session_id)
+if __name__ == "__main__":
+    # Run the team
+    session_id = "team_travel_session"
+    run_response = team.run("Help me plan a vacation", session_id=session_id)
 
-if run_response.is_paused:
-    console.print("[bold yellow]Team is paused - user input needed[/]")
+    if run_response.is_paused:
+        console.print("[bold yellow]Team is paused - user input needed[/]")
 
-    for requirement in run_response.active_requirements:
-        if requirement.needs_user_input:
-            console.print(
-                f"Member [bold cyan]{requirement.member_agent_name}[/] needs input for "
-                f"[bold blue]{requirement.tool_execution.tool_name}[/]"
-            )
+        for requirement in run_response.active_requirements:
+            if requirement.needs_user_input:
+                console.print(
+                    f"Member [bold cyan]{requirement.member_agent_name}[/] needs input for "
+                    f"[bold blue]{requirement.tool_execution.tool_name}[/]"
+                )
 
-            # Present input fields to the user
-            for field in requirement.user_input_schema or []:
-                value = Prompt.ask(f"  {field.name}", default=field.value or "")
-                field.value = value
+                # Collect user input values
+                values = {}
+                for field in requirement.user_input_schema or []:
+                    values[field.name] = Prompt.ask(
+                        f"  {field.name}", default=field.value or ""
+                    )
+                requirement.provide_user_input(values)
 
-    # Continue the team run with the user input
-    run_response = team.continue_run(run_response)
+        # Continue the team run with the user input
+        run_response = team.continue_run(run_response)
 
-pprint.pprint_run_response(run_response)
+    pprint.pprint_run_response(run_response)
