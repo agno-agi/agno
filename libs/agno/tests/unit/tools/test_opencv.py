@@ -1,5 +1,6 @@
 """Unit tests for OpenCVTools class."""
 
+from itertools import chain, repeat
 from unittest.mock import Mock, patch
 
 import numpy as np
@@ -556,9 +557,12 @@ class TestEdgeCases:
             patch("os.path.getsize", return_value=1000),
             patch("os.unlink"),
             patch("builtins.open", create=True) as mock_open,
-            patch("time.time", side_effect=[0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 10, 10, 10]),
+            patch("agno.tools.opencv.time") as mock_time,
             patch("agno.tools.opencv.getattr") as mock_getattr,
+            patch("agno.tools.opencv.Path") as mock_path_class,
         ):
+            mock_time.time.side_effect = chain([0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10], repeat(10))
+
             # Mock temporary file
             mock_temp = Mock()
             mock_temp.name = "/tmp/test_video.mp4"
@@ -568,6 +572,14 @@ class TestEdgeCases:
             mock_file = Mock()
             mock_file.read.return_value = b"fake_video_data"
             mock_open.return_value.__enter__.return_value = mock_file
+
+            # Mock Path behavior
+            mock_path = Mock()
+            mock_path.exists.return_value = True
+            mock_stat = Mock()
+            mock_stat.st_size = 1000
+            mock_path.stat.return_value = mock_stat
+            mock_path_class.return_value = mock_path
 
             mock_getattr.return_value.return_value = 123456
             result = opencv_tools_no_preview.capture_video(mock_agent)
