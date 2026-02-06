@@ -691,7 +691,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
             request.state.authenticated = True
             request.state.user_id = "__scheduler__"
             request.state.session_id = None
-            request.state.scopes = ["agent_os:admin"]
+            request.state.scopes = ["agents:run", "teams:run", "workflows:run", "schedules:read", "schedules:write"]
             request.state.authorization_enabled = self.authorization or False
             return await call_next(request)
 
