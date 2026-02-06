@@ -8,7 +8,6 @@ from collections import ChainMap, deque
 from concurrent.futures import Future
 from dataclasses import dataclass
 from inspect import iscoroutinefunction
-from os import getenv
 from typing import (
     Any,
     AsyncIterator,
@@ -31,6 +30,20 @@ from uuid import uuid4
 
 from pydantic import BaseModel
 
+from agno.agent.setup import (
+    ensure_formatter,
+    get_models,
+    has_async_db,
+    log_agent_id,
+    set_compression_manager,
+    set_culture_manager,
+    set_debug,
+    set_default_model,
+    set_learning_machine,
+    set_memory_manager,
+    set_session_summary_manager,
+    set_telemetry,
+)
 from agno.compression.manager import CompressionManager
 from agno.culture.manager import CultureManager
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, SessionType, UserMemory
@@ -53,7 +66,6 @@ from agno.models.base import Model
 from agno.models.message import Message, MessageReferences
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
-from agno.models.utils import get_model
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
 from agno.registry.registry import Registry
 from agno.run import RunContext, RunStatus
@@ -165,8 +177,6 @@ from agno.utils.log import (
     log_exception,
     log_info,
     log_warning,
-    set_log_level_to_debug,
-    set_log_level_to_info,
 )
 from agno.utils.merge_dict import merge_dictionaries
 from agno.utils.message import filter_tool_calls, get_text_from_message
@@ -769,107 +779,22 @@ class Agent:
             self.id = generate_id_from_name(self.name)
 
     def _set_debug(self, debug_mode: Optional[bool] = None) -> None:
-        # Get the debug level from the environment variable or the default debug level
-        debug_level: Literal[1, 2] = (
-            cast(Literal[1, 2], int(env)) if (env := getenv("AGNO_DEBUG_LEVEL")) in ("1", "2") else self.debug_level
-        )
-        # If the default debug mode is set, or passed on run, or via environment variable, set the debug mode to True
-        if self.debug_mode or debug_mode or getenv("AGNO_DEBUG", "false").lower() == "true":
-            set_log_level_to_debug(level=debug_level)
-        else:
-            set_log_level_to_info()
+        set_debug(self, debug_mode=debug_mode)
 
     def _set_telemetry(self) -> None:
-        """Override telemetry settings based on environment variables."""
-
-        telemetry_env = getenv("AGNO_TELEMETRY")
-        if telemetry_env is not None:
-            self.telemetry = telemetry_env.lower() == "true"
+        set_telemetry(self)
 
     def _set_default_model(self) -> None:
-        # Use the default Model (OpenAIChat) if no model is provided
-        if self.model is None:
-            try:
-                from agno.models.openai import OpenAIChat
-            except ModuleNotFoundError as e:
-                log_exception(e)
-                log_error(
-                    "Agno agents use `openai` as the default model provider. "
-                    "Please provide a `model` or install `openai`."
-                )
-                exit(1)
-
-            log_info("Setting default model to OpenAI Chat")
-            self.model = OpenAIChat(id="gpt-4o")
+        set_default_model(self)
 
     def _set_culture_manager(self) -> None:
-        if self.db is None:
-            log_warning("Database not provided. Cultural knowledge will not be stored.")
-
-        if self.culture_manager is None:
-            self.culture_manager = CultureManager(model=self.model, db=self.db)
-        else:
-            if self.culture_manager.model is None:
-                self.culture_manager.model = self.model
-            if self.culture_manager.db is None:
-                self.culture_manager.db = self.db
-
-        if self.add_culture_to_context is None:
-            self.add_culture_to_context = (
-                self.enable_agentic_culture or self.update_cultural_knowledge or self.culture_manager is not None
-            )
+        set_culture_manager(self)
 
     def _set_memory_manager(self) -> None:
-        if self.db is None:
-            log_warning("Database not provided. Memories will not be stored.")
-
-        if self.memory_manager is None:
-            self.memory_manager = MemoryManager(model=self.model, db=self.db)
-        else:
-            if self.memory_manager.model is None:
-                self.memory_manager.model = self.model
-            if self.memory_manager.db is None:
-                self.memory_manager.db = self.db
-
-        if self.add_memories_to_context is None:
-            self.add_memories_to_context = (
-                self.update_memory_on_run or self.enable_agentic_memory or self.memory_manager is not None
-            )
+        set_memory_manager(self)
 
     def _set_learning_machine(self) -> None:
-        """Initialize LearningMachine with agent's db and model.
-
-        Sets the internal _learning field without modifying the public learning field.
-
-        Handles:
-        - learning=True: Create default LearningMachine
-        - learning=False/None: Disabled
-        - learning=LearningMachine(...): Use provided, inject db/model/knowledge
-        """
-        # Handle learning=False or learning=None
-        if self.learning is None or self.learning is False:
-            self._learning = None
-            return
-
-        # Check db requirement
-        if self.db is None:
-            log_warning("Database not provided. LearningMachine not initialized.")
-            self._learning = None
-            return
-
-        # Handle learning=True: create default LearningMachine
-        # Enables user_profile (structured fields) and user_memory (unstructured observations)
-        if self.learning is True:
-            self._learning = LearningMachine(db=self.db, model=self.model, user_profile=True, user_memory=True)
-            return
-
-        # Handle learning=LearningMachine(...): inject dependencies
-        if isinstance(self.learning, LearningMachine):
-            if self.learning.db is None:
-                self.learning.db = self.db
-            if self.learning.model is None:
-                self.learning.model = self.model
-            self._learning = self.learning
+        set_learning_machine(self)
 
     def get_learning_machine(self) -> Optional[LearningMachine]:
         """Get the resolved LearningMachine instance.
@@ -881,47 +806,16 @@ class Agent:
         return self._learning
 
     def _set_session_summary_manager(self) -> None:
-        if self.enable_session_summaries and self.session_summary_manager is None:
-            self.session_summary_manager = SessionSummaryManager(model=self.model)
-
-        if self.session_summary_manager is not None:
-            if self.session_summary_manager.model is None:
-                self.session_summary_manager.model = self.model
-
-        if self.add_session_summary_to_context is None:
-            self.add_session_summary_to_context = (
-                self.enable_session_summaries or self.session_summary_manager is not None
-            )
+        set_session_summary_manager(self)
 
     def _set_compression_manager(self) -> None:
-        if self.compress_tool_results and self.compression_manager is None:
-            self.compression_manager = CompressionManager(
-                model=self.model,
-            )
-
-        if self.compression_manager is not None and self.compression_manager.model is None:
-            self.compression_manager.model = self.model
-
-        # Check compression flag on the compression manager
-        if self.compression_manager is not None and self.compression_manager.compress_tool_results:
-            self.compress_tool_results = True
+        set_compression_manager(self)
 
     def _has_async_db(self) -> bool:
-        """Return True if the db the agent is equipped with is an Async implementation"""
-        return self.db is not None and isinstance(self.db, AsyncBaseDb)
+        return has_async_db(self)
 
     def _get_models(self) -> None:
-        if self.model is not None:
-            self.model = get_model(self.model)
-        if self.reasoning_model is not None:
-            self.reasoning_model = get_model(self.reasoning_model)
-        if self.parser_model is not None:
-            self.parser_model = get_model(self.parser_model)
-        if self.output_model is not None:
-            self.output_model = get_model(self.output_model)
-
-        if self.compression_manager is not None and self.compression_manager.model is None:
-            self.compression_manager.model = self.model
+        get_models(self)
 
     def initialize_agent(self, debug_mode: Optional[bool] = None) -> None:
         self._set_default_model()
@@ -943,10 +837,8 @@ class Agent:
         if self.learning is not None and self.learning is not False:
             self._set_learning_machine()
 
-        log_debug(f"Agent ID: {self.id}", center=True)
-
-        if self._formatter is None:
-            self._formatter = SafeFormatter()
+        log_agent_id(self)
+        ensure_formatter(self)
 
     def add_tool(self, tool: Union[Toolkit, Callable, Function, Dict]):
         if not self.tools:
