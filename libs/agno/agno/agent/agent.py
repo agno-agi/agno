@@ -4,7 +4,7 @@ import asyncio
 import time
 import warnings
 from asyncio import CancelledError, Task, create_task
-from collections import ChainMap, deque
+from collections import deque
 from concurrent.futures import Future
 from dataclasses import dataclass
 from inspect import iscoroutinefunction
@@ -31,11 +31,12 @@ from uuid import uuid4
 
 from pydantic import BaseModel
 
+from agno.agent import message_builder as _msg
+from agno.agent import serialization as _ser
 from agno.compression.manager import CompressionManager
 from agno.culture.manager import CultureManager
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, SessionType, UserMemory
 from agno.db.schemas.culture import CulturalKnowledge
-from agno.db.utils import db_from_dict
 from agno.eval.base import BaseEval
 from agno.exceptions import (
     InputCheckError,
@@ -86,8 +87,6 @@ from agno.skills import Skills
 from agno.tools import Toolkit
 from agno.tools.function import Function
 from agno.utils.agent import (
-    aexecute_instructions,
-    aexecute_system_message,
     aget_last_run_output_util,
     aget_run_output_util,
     aget_session_metrics_util,
@@ -101,8 +100,6 @@ from agno.utils.agent import (
     collect_joint_files,
     collect_joint_images,
     collect_joint_videos,
-    execute_instructions,
-    execute_system_message,
     get_last_run_output_util,
     get_run_output_util,
     get_session_metrics_util,
@@ -119,7 +116,6 @@ from agno.utils.agent import (
     wait_for_open_threads,
     wait_for_thread_tasks_stream,
 )
-from agno.utils.common import is_typed_dict
 from agno.utils.events import (
     add_error_event,
     create_compression_completed_event,
@@ -169,14 +165,12 @@ from agno.utils.log import (
     set_log_level_to_info,
 )
 from agno.utils.merge_dict import merge_dictionaries
-from agno.utils.message import filter_tool_calls, get_text_from_message
 from agno.utils.print_response.agent import (
     aprint_response,
     aprint_response_stream,
     print_response,
     print_response_stream,
 )
-from agno.utils.prompts import get_json_output_prompt, get_response_model_format_prompt
 from agno.utils.reasoning import (
     add_reasoning_metrics_to_metadata,
     add_reasoning_step_to_metadata,
@@ -7345,532 +7339,13 @@ class Agent:
 
         return agent_session
 
-    # -*- Serialization Functions
+    # -*- Serialization Functions (delegated to agno.agent.serialization)
     def to_dict(self) -> Dict[str, Any]:
-        """
-        Convert the Agent to a dictionary.
-
-        Returns:
-            Dict[str, Any]: Dictionary representation of the agent configuration
-        """
-        config: Dict[str, Any] = {}
-
-        # --- Agent Settings ---
-        if self.model is not None:
-            if isinstance(self.model, Model):
-                config["model"] = self.model.to_dict()
-            else:
-                config["model"] = str(self.model)
-        if self.name is not None:
-            config["name"] = self.name
-        if self.id is not None:
-            config["id"] = self.id
-
-        # --- User settings ---
-        if self.user_id is not None:
-            config["user_id"] = self.user_id
-
-        # --- Session settings ---
-        if self.session_id is not None:
-            config["session_id"] = self.session_id
-        if self.session_state is not None:
-            config["session_state"] = self.session_state
-        if self.add_session_state_to_context:
-            config["add_session_state_to_context"] = self.add_session_state_to_context
-        if self.enable_agentic_state:
-            config["enable_agentic_state"] = self.enable_agentic_state
-        if self.overwrite_db_session_state:
-            config["overwrite_db_session_state"] = self.overwrite_db_session_state
-        if self.cache_session:
-            config["cache_session"] = self.cache_session
-        if self.search_session_history:
-            config["search_session_history"] = self.search_session_history
-        if self.num_history_sessions is not None:
-            config["num_history_sessions"] = self.num_history_sessions
-        if self.enable_session_summaries:
-            config["enable_session_summaries"] = self.enable_session_summaries
-        if self.add_session_summary_to_context is not None:
-            config["add_session_summary_to_context"] = self.add_session_summary_to_context
-        # TODO: implement session summary manager serialization
-        # if self.session_summary_manager is not None:
-        #     config["session_summary_manager"] = self.session_summary_manager.to_dict()
-
-        # --- Dependencies ---
-        if self.dependencies is not None:
-            config["dependencies"] = self.dependencies
-        if self.add_dependencies_to_context:
-            config["add_dependencies_to_context"] = self.add_dependencies_to_context
-
-        # --- Agentic Memory settings ---
-        # TODO: implement agentic memory serialization
-        # if self.memory_manager is not None:
-        # config["memory_manager"] = self.memory_manager.to_dict()
-        if self.enable_agentic_memory:
-            config["enable_agentic_memory"] = self.enable_agentic_memory
-        if self.enable_user_memories:
-            config["enable_user_memories"] = self.enable_user_memories
-        if self.add_memories_to_context is not None:
-            config["add_memories_to_context"] = self.add_memories_to_context
-
-        # --- Database settings ---
-        if self.db is not None and hasattr(self.db, "to_dict"):
-            config["db"] = self.db.to_dict()
-
-        # --- History settings ---
-        if self.add_history_to_context:
-            config["add_history_to_context"] = self.add_history_to_context
-        if self.num_history_runs is not None:
-            config["num_history_runs"] = self.num_history_runs
-        if self.num_history_messages is not None:
-            config["num_history_messages"] = self.num_history_messages
-        if self.max_tool_calls_from_history is not None:
-            config["max_tool_calls_from_history"] = self.max_tool_calls_from_history
-
-        # --- Knowledge settings ---
-        # TODO: implement knowledge serialization
-        # if self.knowledge is not None:
-        # config["knowledge"] = self.knowledge.to_dict()
-        if self.knowledge_filters is not None:
-            config["knowledge_filters"] = self.knowledge_filters
-        if self.enable_agentic_knowledge_filters:
-            config["enable_agentic_knowledge_filters"] = self.enable_agentic_knowledge_filters
-        if self.add_knowledge_to_context:
-            config["add_knowledge_to_context"] = self.add_knowledge_to_context
-        if not self.search_knowledge:
-            config["search_knowledge"] = self.search_knowledge
-        if self.add_search_knowledge_instructions:
-            config["add_search_knowledge_instructions"] = self.add_search_knowledge_instructions
-        # Skip knowledge_retriever as it's a callable
-        if self.references_format != "json":
-            config["references_format"] = self.references_format
-
-        # --- Tools ---
-        # Serialize tools to their dictionary representations
-        _tools: List[Union[Function, dict]] = []
-        if self.model is not None:
-            _tools = self._parse_tools(
-                model=self.model,
-                tools=self.tools or [],
-            )
-        if _tools:
-            serialized_tools = []
-            for tool in _tools:
-                try:
-                    if isinstance(tool, Function):
-                        serialized_tools.append(tool.to_dict())
-                    else:
-                        serialized_tools.append(tool)
-                except Exception as e:
-                    # Skip tools that can't be serialized
-                    from agno.utils.log import log_warning
-
-                    log_warning(f"Could not serialize tool {tool}: {e}")
-            if serialized_tools:
-                config["tools"] = serialized_tools
-
-        if self.tool_call_limit is not None:
-            config["tool_call_limit"] = self.tool_call_limit
-        if self.tool_choice is not None:
-            config["tool_choice"] = self.tool_choice
-
-        # --- Reasoning settings ---
-        if self.reasoning:
-            config["reasoning"] = self.reasoning
-        if self.reasoning_model is not None:
-            if isinstance(self.reasoning_model, Model):
-                config["reasoning_model"] = self.reasoning_model.to_dict()
-            else:
-                config["reasoning_model"] = str(self.reasoning_model)
-        # Skip reasoning_agent to avoid circular serialization
-        if self.reasoning_min_steps != 1:
-            config["reasoning_min_steps"] = self.reasoning_min_steps
-        if self.reasoning_max_steps != 10:
-            config["reasoning_max_steps"] = self.reasoning_max_steps
-
-        # --- Default tools settings ---
-        if self.read_chat_history:
-            config["read_chat_history"] = self.read_chat_history
-        if self.update_knowledge:
-            config["update_knowledge"] = self.update_knowledge
-        if self.read_tool_call_history:
-            config["read_tool_call_history"] = self.read_tool_call_history
-        if not self.send_media_to_model:
-            config["send_media_to_model"] = self.send_media_to_model
-        if not self.store_media:
-            config["store_media"] = self.store_media
-        if not self.store_tool_messages:
-            config["store_tool_messages"] = self.store_tool_messages
-        if not self.store_history_messages:
-            config["store_history_messages"] = self.store_history_messages
-
-        # --- System message settings ---
-        # Skip system_message if it's a callable or Message object
-        # TODO: Support Message objects
-        if self.system_message is not None and isinstance(self.system_message, str):
-            config["system_message"] = self.system_message
-        if self.system_message_role != "system":
-            config["system_message_role"] = self.system_message_role
-        if not self.build_context:
-            config["build_context"] = self.build_context
-
-        # --- Context building settings ---
-        if self.description is not None:
-            config["description"] = self.description
-        # Handle instructions (can be str, list, or callable)
-        if self.instructions is not None:
-            if isinstance(self.instructions, str):
-                config["instructions"] = self.instructions
-            elif isinstance(self.instructions, list):
-                config["instructions"] = self.instructions
-            # Skip if callable
-        if self.expected_output is not None:
-            config["expected_output"] = self.expected_output
-        if self.additional_context is not None:
-            config["additional_context"] = self.additional_context
-        if self.markdown:
-            config["markdown"] = self.markdown
-        if self.add_name_to_context:
-            config["add_name_to_context"] = self.add_name_to_context
-        if self.add_datetime_to_context:
-            config["add_datetime_to_context"] = self.add_datetime_to_context
-        if self.add_location_to_context:
-            config["add_location_to_context"] = self.add_location_to_context
-        if self.timezone_identifier is not None:
-            config["timezone_identifier"] = self.timezone_identifier
-        if not self.resolve_in_context:
-            config["resolve_in_context"] = self.resolve_in_context
-
-        # --- Additional input ---
-        # Skip additional_input as it may contain complex Message objects
-        # TODO: Support Message objects
-
-        # --- User message settings ---
-        if self.user_message_role != "user":
-            config["user_message_role"] = self.user_message_role
-        if not self.build_user_context:
-            config["build_user_context"] = self.build_user_context
-
-        # --- Response settings ---
-        if self.retries > 0:
-            config["retries"] = self.retries
-        if self.delay_between_retries != 1:
-            config["delay_between_retries"] = self.delay_between_retries
-        if self.exponential_backoff:
-            config["exponential_backoff"] = self.exponential_backoff
-
-        # --- Schema settings ---
-        if self.input_schema is not None:
-            if isinstance(self.input_schema, type) and issubclass(self.input_schema, BaseModel):
-                config["input_schema"] = self.input_schema.__name__
-            elif isinstance(self.input_schema, dict):
-                config["input_schema"] = self.input_schema
-        if self.output_schema is not None:
-            if isinstance(self.output_schema, type) and issubclass(self.output_schema, BaseModel):
-                config["output_schema"] = self.output_schema.__name__
-            elif isinstance(self.output_schema, dict):
-                config["output_schema"] = self.output_schema
-
-        # --- Parser and output settings ---
-        if self.parser_model is not None:
-            if isinstance(self.parser_model, Model):
-                config["parser_model"] = self.parser_model.to_dict()
-            else:
-                config["parser_model"] = str(self.parser_model)
-        if self.parser_model_prompt is not None:
-            config["parser_model_prompt"] = self.parser_model_prompt
-        if self.output_model is not None:
-            if isinstance(self.output_model, Model):
-                config["output_model"] = self.output_model.to_dict()
-            else:
-                config["output_model"] = str(self.output_model)
-        if self.output_model_prompt is not None:
-            config["output_model_prompt"] = self.output_model_prompt
-        if not self.parse_response:
-            config["parse_response"] = self.parse_response
-        if self.structured_outputs is not None:
-            config["structured_outputs"] = self.structured_outputs
-        if self.use_json_mode:
-            config["use_json_mode"] = self.use_json_mode
-        if self.save_response_to_file is not None:
-            config["save_response_to_file"] = self.save_response_to_file
-
-        # --- Streaming settings ---
-        if self.stream is not None:
-            config["stream"] = self.stream
-        if self.stream_events is not None:
-            config["stream_events"] = self.stream_events
-        if self.store_events:
-            config["store_events"] = self.store_events
-        # Skip events_to_skip as it contains RunEvent enums
-
-        # --- Role and culture settings ---
-        if self.role is not None:
-            config["role"] = self.role
-        # --- Team and workflow settings ---
-        if self.team_id is not None:
-            config["team_id"] = self.team_id
-        if self.workflow_id is not None:
-            config["workflow_id"] = self.workflow_id
-
-        # --- Metadata ---
-        if self.metadata is not None:
-            config["metadata"] = self.metadata
-
-        # --- Context compression settings ---
-        if self.compress_tool_results:
-            config["compress_tool_results"] = self.compress_tool_results
-        # TODO: implement compression manager serialization
-        # if self.compression_manager is not None:
-        #     config["compression_manager"] = self.compression_manager.to_dict()
-
-        # --- Debug and telemetry settings ---
-        if self.debug_mode:
-            config["debug_mode"] = self.debug_mode
-        if self.debug_level != 1:
-            config["debug_level"] = self.debug_level
-        if not self.telemetry:
-            config["telemetry"] = self.telemetry
-
-        return config
+        return _ser.to_dict(self)
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any], registry: Optional[Registry] = None) -> "Agent":
-        """
-        Create an agent from a dictionary.
-
-        Args:
-            data: Dictionary containing agent configuration
-            registry: Optional registry for rehydrating tools and schemas
-
-        Returns:
-            Agent: Reconstructed agent instance
-        """
-        from agno.models.utils import get_model
-
-        config = data.copy()
-
-        # --- Handle Model reconstruction ---
-        if "model" in config:
-            model_data = config["model"]
-            if isinstance(model_data, dict) and "id" in model_data:
-                config["model"] = get_model(f"{model_data['provider']}:{model_data['id']}")
-            elif isinstance(model_data, str):
-                config["model"] = get_model(model_data)
-
-        # --- Handle reasoning_model reconstruction ---
-        # TODO: implement reasoning model deserialization
-        # if "reasoning_model" in config:
-        #     model_data = config["reasoning_model"]
-        #     if isinstance(model_data, dict) and "id" in model_data:
-        #         config["reasoning_model"] = get_model(f"{model_data['provider']}:{model_data['id']}")
-        #     elif isinstance(model_data, str):
-        #         config["reasoning_model"] = get_model(model_data)
-
-        # --- Handle parser_model reconstruction ---
-        # TODO: implement parser model deserialization
-        # if "parser_model" in config:
-        #     model_data = config["parser_model"]
-        #     if isinstance(model_data, dict) and "id" in model_data:
-        #         config["parser_model"] = get_model(f"{model_data['provider']}:{model_data['id']}")
-        #     elif isinstance(model_data, str):
-        #         config["parser_model"] = get_model(model_data)
-
-        # --- Handle output_model reconstruction ---
-        # TODO: implement output model deserialization
-        # if "output_model" in config:
-        #     model_data = config["output_model"]
-        #     if isinstance(model_data, dict) and "id" in model_data:
-        #         config["output_model"] = get_model(f"{model_data['provider']}:{model_data['id']}")
-        #     elif isinstance(model_data, str):
-        #         config["output_model"] = get_model(model_data)
-
-        # --- Handle tools reconstruction ---
-        if "tools" in config and config["tools"]:
-            if registry:
-                config["tools"] = [registry.rehydrate_function(t) for t in config["tools"]]
-            else:
-                log_warning("No registry provided, tools will not be rehydrated.")
-                del config["tools"]
-
-        # --- Handle DB reconstruction ---
-        if "db" in config and isinstance(config["db"], dict):
-            db_data = config["db"]
-            db_id = db_data.get("id")
-
-            # First try to get the db from the registry (preferred - reuses existing connection)
-            if registry and db_id:
-                registry_db = registry.get_db(db_id)
-                if registry_db is not None:
-                    config["db"] = registry_db
-                else:
-                    del config["db"]
-            else:
-                # No registry or no db_id, fall back to creating from dict
-                config["db"] = db_from_dict(db_data)
-                if config["db"] is None:
-                    del config["db"]
-
-        # --- Handle Schema reconstruction ---
-        if "input_schema" in config and isinstance(config["input_schema"], str):
-            schema_cls = registry.get_schema(config["input_schema"]) if registry else None
-            if schema_cls:
-                config["input_schema"] = schema_cls
-            else:
-                log_warning(f"Input schema {config['input_schema']} not found in registry, skipping.")
-                del config["input_schema"]
-
-        if "output_schema" in config and isinstance(config["output_schema"], str):
-            schema_cls = registry.get_schema(config["output_schema"]) if registry else None
-            if schema_cls:
-                config["output_schema"] = schema_cls
-            else:
-                log_warning(f"Output schema {config['output_schema']} not found in registry, skipping.")
-                del config["output_schema"]
-
-        # --- Handle MemoryManager reconstruction ---
-        # TODO: implement memory manager deserialization
-        # if "memory_manager" in config and isinstance(config["memory_manager"], dict):
-        #     from agno.memory import MemoryManager
-        #     config["memory_manager"] = MemoryManager.from_dict(config["memory_manager"])
-
-        # --- Handle SessionSummaryManager reconstruction ---
-        # TODO: implement session summary manager deserialization
-        # if "session_summary_manager" in config and isinstance(config["session_summary_manager"], dict):
-        #     from agno.session import SessionSummaryManager
-        #     config["session_summary_manager"] = SessionSummaryManager.from_dict(config["session_summary_manager"])
-
-        # --- Handle CultureManager reconstruction ---
-        # TODO: implement culture manager deserialization
-        # if "culture_manager" in config and isinstance(config["culture_manager"], dict):
-        #     from agno.culture import CultureManager
-        #     config["culture_manager"] = CultureManager.from_dict(config["culture_manager"])
-
-        # --- Handle Knowledge reconstruction ---
-        # TODO: implement knowledge deserialization
-        # if "knowledge" in config and isinstance(config["knowledge"], dict):
-        #     from agno.knowledge import Knowledge
-        #     config["knowledge"] = Knowledge.from_dict(config["knowledge"])
-
-        # --- Handle CompressionManager reconstruction ---
-        # TODO: implement compression manager deserialization
-        # if "compression_manager" in config and isinstance(config["compression_manager"], dict):
-        #     from agno.compression.manager import CompressionManager
-        #     config["compression_manager"] = CompressionManager.from_dict(config["compression_manager"])
-
-        # Remove keys that aren't constructor parameters
-        config.pop("team_id", None)
-        config.pop("workflow_id", None)
-
-        return cls(
-            # --- Agent settings ---
-            model=config.get("model"),
-            name=config.get("name"),
-            id=config.get("id"),
-            # --- User settings ---
-            user_id=config.get("user_id"),
-            # --- Session settings ---
-            session_id=config.get("session_id"),
-            session_state=config.get("session_state"),
-            add_session_state_to_context=config.get("add_session_state_to_context", False),
-            enable_agentic_state=config.get("enable_agentic_state", False),
-            overwrite_db_session_state=config.get("overwrite_db_session_state", False),
-            cache_session=config.get("cache_session", False),
-            search_session_history=config.get("search_session_history", False),
-            num_history_sessions=config.get("num_history_sessions"),
-            enable_session_summaries=config.get("enable_session_summaries", False),
-            add_session_summary_to_context=config.get("add_session_summary_to_context"),
-            # session_summary_manager=config.get("session_summary_manager"),  # TODO
-            # --- Dependencies ---
-            dependencies=config.get("dependencies"),
-            add_dependencies_to_context=config.get("add_dependencies_to_context", False),
-            # --- Agentic Memory settings ---
-            # memory_manager=config.get("memory_manager"),  # TODO
-            enable_agentic_memory=config.get("enable_agentic_memory", False),
-            enable_user_memories=config.get("enable_user_memories", False),
-            add_memories_to_context=config.get("add_memories_to_context"),
-            # --- Database settings ---
-            db=config.get("db"),
-            # --- History settings ---
-            add_history_to_context=config.get("add_history_to_context", False),
-            num_history_runs=config.get("num_history_runs"),
-            num_history_messages=config.get("num_history_messages"),
-            max_tool_calls_from_history=config.get("max_tool_calls_from_history"),
-            # --- Knowledge settings ---
-            # knowledge=config.get("knowledge"),  # TODO
-            knowledge_filters=config.get("knowledge_filters"),
-            enable_agentic_knowledge_filters=config.get("enable_agentic_knowledge_filters", False),
-            add_knowledge_to_context=config.get("add_knowledge_to_context", False),
-            references_format=config.get("references_format", "json"),
-            # --- Tools ---
-            tools=config.get("tools"),
-            tool_call_limit=config.get("tool_call_limit"),
-            tool_choice=config.get("tool_choice"),
-            # --- Reasoning settings ---
-            reasoning=config.get("reasoning", False),
-            # reasoning_model=config.get("reasoning_model"),  # TODO
-            reasoning_min_steps=config.get("reasoning_min_steps", 1),
-            reasoning_max_steps=config.get("reasoning_max_steps", 10),
-            # --- Default tools settings ---
-            read_chat_history=config.get("read_chat_history", False),
-            search_knowledge=config.get("search_knowledge", True),
-            add_search_knowledge_instructions=config.get("add_search_knowledge_instructions", True),
-            update_knowledge=config.get("update_knowledge", False),
-            read_tool_call_history=config.get("read_tool_call_history", False),
-            send_media_to_model=config.get("send_media_to_model", True),
-            store_media=config.get("store_media", True),
-            store_tool_messages=config.get("store_tool_messages", True),
-            store_history_messages=config.get("store_history_messages", True),
-            # --- System message settings ---
-            system_message=config.get("system_message"),
-            system_message_role=config.get("system_message_role", "system"),
-            build_context=config.get("build_context", True),
-            # --- Context building settings ---
-            description=config.get("description"),
-            instructions=config.get("instructions"),
-            expected_output=config.get("expected_output"),
-            additional_context=config.get("additional_context"),
-            markdown=config.get("markdown", False),
-            add_name_to_context=config.get("add_name_to_context", False),
-            add_datetime_to_context=config.get("add_datetime_to_context", False),
-            add_location_to_context=config.get("add_location_to_context", False),
-            timezone_identifier=config.get("timezone_identifier"),
-            resolve_in_context=config.get("resolve_in_context", True),
-            # --- User message settings ---
-            user_message_role=config.get("user_message_role", "user"),
-            build_user_context=config.get("build_user_context", True),
-            # --- Response settings ---
-            retries=config.get("retries", 0),
-            delay_between_retries=config.get("delay_between_retries", 1),
-            exponential_backoff=config.get("exponential_backoff", False),
-            # --- Schema settings ---
-            input_schema=config.get("input_schema"),
-            output_schema=config.get("output_schema"),
-            # --- Parser and output settings ---
-            # parser_model=config.get("parser_model"),  # TODO
-            parser_model_prompt=config.get("parser_model_prompt"),
-            # output_model=config.get("output_model"),  # TODO
-            output_model_prompt=config.get("output_model_prompt"),
-            parse_response=config.get("parse_response", True),
-            structured_outputs=config.get("structured_outputs"),
-            use_json_mode=config.get("use_json_mode", False),
-            save_response_to_file=config.get("save_response_to_file"),
-            # --- Streaming settings ---
-            stream=config.get("stream"),
-            stream_events=config.get("stream_events"),
-            store_events=config.get("store_events", False),
-            role=config.get("role"),
-            # --- Culture settings ---
-            # culture_manager=config.get("culture_manager"),  # TODO
-            # --- Metadata ---
-            metadata=config.get("metadata"),
-            # --- Compression settings ---
-            compress_tool_results=config.get("compress_tool_results", False),
-            # compression_manager=config.get("compression_manager"),  # TODO
-            # --- Debug and telemetry settings ---
-            debug_mode=config.get("debug_mode", False),
-            debug_level=config.get("debug_level", 1),
-            telemetry=config.get("telemetry", True),
-        )
+        return _ser.from_dict(data, registry=registry)
 
     # -*- Component and Config Functions
     def save(
@@ -7881,51 +7356,7 @@ class Agent:
         label: Optional[str] = None,
         notes: Optional[str] = None,
     ) -> Optional[int]:
-        """
-        Save the agent component and config.
-
-        Args:
-            db: The database to save the component and config to.
-            stage: The stage of the component. Defaults to "published".
-            label: The label of the component.
-            notes: The notes of the component.
-
-        Returns:
-            Optional[int]: The version number of the saved config.
-        """
-        db_ = db or self.db
-        if not db_:
-            raise ValueError("Db not initialized or provided")
-        if not isinstance(db_, BaseDb):
-            raise ValueError("Async databases not yet supported for save(). Use a sync database.")
-
-        if self.id is None:
-            self.id = generate_id_from_name(self.name)
-
-        try:
-            # Create or update component
-            db_.upsert_component(
-                component_id=self.id,
-                component_type=ComponentType.AGENT,
-                name=getattr(self, "name", self.id),
-                description=getattr(self, "description", None),
-                metadata=getattr(self, "metadata", None),
-            )
-
-            # Create or update config
-            config = db_.upsert_config(
-                component_id=self.id,
-                config=self.to_dict(),
-                label=label,
-                stage=stage,
-                notes=notes,
-            )
-
-            return config.get("version")
-
-        except Exception as e:
-            log_error(f"Error saving Agent to database: {e}")
-            raise
+        return _ser.save(self, db=db, stage=stage, label=label, notes=notes)
 
     @classmethod
     def load(
@@ -7937,57 +7368,10 @@ class Agent:
         label: Optional[str] = None,
         version: Optional[int] = None,
     ) -> Optional["Agent"]:
-        """
-        Load an agent by id.
+        return _ser.load(id, db=db, registry=registry, label=label, version=version)
 
-        Args:
-            id: The id of the agent to load.
-            db: The database to load the agent from.
-            label: The label of the agent to load.
-
-        Returns:
-            The agent loaded from the database or None if not found.
-        """
-
-        data = db.get_config(component_id=id, label=label, version=version)
-        if data is None:
-            return None
-
-        config = data.get("config")
-        if config is None:
-            return None
-
-        agent = cls.from_dict(config, registry=registry)
-        agent.id = id
-        agent.db = db
-
-        return agent
-
-    def delete(
-        self,
-        *,
-        db: Optional["BaseDb"] = None,
-        hard_delete: bool = False,
-    ) -> bool:
-        """
-        Delete the agent component.
-
-        Args:
-            db: The database to delete the component from.
-            hard_delete: Whether to hard delete the component.
-
-        Returns:
-            True if the component was deleted, False otherwise.
-        """
-        db_ = db or self.db
-        if not db_:
-            raise ValueError("Db not initialized or provided")
-        if not isinstance(db_, BaseDb):
-            raise ValueError("Async databases not yet supported for delete(). Use a sync database.")
-        if self.id is None:
-            raise ValueError("Cannot delete agent without an id")
-
-        return db_.delete_component(component_id=self.id, hard_delete=hard_delete)
+    def delete(self, *, db: Optional["BaseDb"] = None, hard_delete: bool = False) -> bool:
+        return _ser.delete(self, db=db, hard_delete=hard_delete)
 
     # -*- Public Convenience Functions
     def get_run_output(self, run_id: str, session_id: Optional[str] = None) -> Optional[RunOutput]:
@@ -8705,49 +8089,9 @@ class Agent:
 
         return await self.culture_manager.aget_all_knowledge()
 
-    # -*- System & User Message Functions
-    def _format_message_with_state_variables(
-        self,
-        message: Any,
-        run_context: Optional[RunContext] = None,
-    ) -> Any:
-        """Format a message with the session state variables from run_context."""
-        import re
-        import string
-        from copy import deepcopy
-
-        if not isinstance(message, str):
-            return message
-
-        # Extract values from run_context
-        session_state = run_context.session_state if run_context else None
-        dependencies = run_context.dependencies if run_context else None
-        metadata = run_context.metadata if run_context else None
-        user_id = run_context.user_id if run_context else None
-
-        # Should already be resolved and passed from run() method
-        format_variables = ChainMap(
-            session_state if session_state is not None else {},
-            dependencies or {},
-            metadata or {},
-            {"user_id": user_id} if user_id is not None else {},
-        )
-
-        converted_msg = deepcopy(message)
-        for var_name in format_variables.keys():
-            # Only convert standalone {var_name} patterns, not nested ones
-            pattern = r"\{" + re.escape(var_name) + r"\}"
-            replacement = "${" + var_name + "}"
-            converted_msg = re.sub(pattern, replacement, converted_msg)
-
-        # Use Template to safely substitute variables
-        template = string.Template(converted_msg)
-        try:
-            result = template.safe_substitute(format_variables)
-            return result
-        except Exception as e:
-            log_warning(f"Template substitution failed: {e}")
-            return message
+    # -*- System & User Message Functions (delegated to agno.agent.message_builder)
+    def _format_message_with_state_variables(self, message: Any, run_context: Optional[RunContext] = None) -> Any:
+        return _msg._format_message_with_state_variables(self, message, run_context=run_context)
 
     def get_system_message(
         self,
@@ -8756,333 +8100,12 @@ class Agent:
         tools: Optional[List[Union[Function, dict]]] = None,
         add_session_state_to_context: Optional[bool] = None,
     ) -> Optional[Message]:
-        """Return the system message for the Agent.
-
-        1. If the system_message is provided, use that.
-        2. If build_context is False, return None.
-        3. Build and return the default system message for the Agent.
-        """
-
-        # Extract values from run_context
-        session_state = run_context.session_state if run_context else None
-        user_id = run_context.user_id if run_context else None
-
-        # Get output_schema from run_context
-        output_schema = run_context.output_schema if run_context else None
-
-        # 1. If the system_message is provided, use that.
-        if self.system_message is not None:
-            if isinstance(self.system_message, Message):
-                return self.system_message
-
-            sys_message_content: str = ""
-            if isinstance(self.system_message, str):
-                sys_message_content = self.system_message
-            elif callable(self.system_message):
-                sys_message_content = execute_system_message(
-                    agent=self, system_message=self.system_message, session_state=session_state, run_context=run_context
-                )
-                if not isinstance(sys_message_content, str):
-                    raise Exception("system_message must return a string")
-
-            if self.resolve_in_context:
-                sys_message_content = self._format_message_with_state_variables(
-                    sys_message_content,
-                    run_context=run_context,
-                )
-
-            # type: ignore
-            return Message(role=self.system_message_role, content=sys_message_content)
-
-        # 2. If build_context is False, return None.
-        if not self.build_context:
-            return None
-
-        if self.model is None:
-            raise Exception("model not set")
-
-        # 3. Build and return the default system message for the Agent.
-        # 3.1 Build the list of instructions for the system message
-        instructions: List[str] = []
-        if self.instructions is not None:
-            _instructions = self.instructions
-            if callable(self.instructions):
-                _instructions = execute_instructions(
-                    agent=self, instructions=self.instructions, session_state=session_state, run_context=run_context
-                )
-
-            if isinstance(_instructions, str):
-                instructions.append(_instructions)
-            elif isinstance(_instructions, list):
-                instructions.extend(_instructions)
-
-        # 3.1.1 Add instructions from the Model
-        _model_instructions = self.model.get_instructions_for_model(tools)
-        if _model_instructions is not None:
-            instructions.extend(_model_instructions)
-
-        # 3.2 Build a list of additional information for the system message
-        additional_information: List[str] = []
-        # 3.2.1 Add instructions for using markdown
-        if self.markdown and output_schema is None:
-            additional_information.append("Use markdown to format your answers.")
-        # 3.2.2 Add the current datetime
-        if self.add_datetime_to_context:
-            from datetime import datetime
-
-            tz = None
-
-            if self.timezone_identifier:
-                try:
-                    from zoneinfo import ZoneInfo
-
-                    tz = ZoneInfo(self.timezone_identifier)
-                except Exception:
-                    log_warning("Invalid timezone identifier")
-
-            time = datetime.now(tz) if tz else datetime.now()
-
-            additional_information.append(f"The current time is {time}.")
-
-        # 3.2.3 Add the current location
-        if self.add_location_to_context:
-            from agno.utils.location import get_location
-
-            location = get_location()
-            if location:
-                location_str = ", ".join(
-                    filter(
-                        None,
-                        [
-                            location.get("city"),
-                            location.get("region"),
-                            location.get("country"),
-                        ],
-                    )
-                )
-                if location_str:
-                    additional_information.append(f"Your approximate location is: {location_str}.")
-
-        # 3.2.4 Add agent name if provided
-        if self.name is not None and self.add_name_to_context:
-            additional_information.append(f"Your name is: {self.name}.")
-
-        # 3.3 Build the default system message for the Agent.
-        system_message_content: str = ""
-        # 3.3.1 First add the Agent description if provided
-        if self.description is not None:
-            system_message_content += f"{self.description}\n"
-        # 3.3.2 Then add the Agent role if provided
-        if self.role is not None:
-            system_message_content += f"\n<your_role>\n{self.role}\n</your_role>\n\n"
-        # 3.3.3 Then add instructions for the Agent
-        if len(instructions) > 0:
-            if self.use_instruction_tags:
-                system_message_content += "<instructions>"
-                if len(instructions) > 1:
-                    for _upi in instructions:
-                        system_message_content += f"\n- {_upi}"
-                else:
-                    system_message_content += "\n" + instructions[0]
-                system_message_content += "\n</instructions>\n\n"
-            else:
-                if len(instructions) > 1:
-                    for _upi in instructions:
-                        system_message_content += f"- {_upi}\n"
-                else:
-                    system_message_content += instructions[0] + "\n\n"
-        # 3.3.4 Add additional information
-        if len(additional_information) > 0:
-            system_message_content += "<additional_information>"
-            for _ai in additional_information:
-                system_message_content += f"\n- {_ai}"
-            system_message_content += "\n</additional_information>\n\n"
-        # 3.3.5 Then add instructions for the tools
-        if self._tool_instructions is not None:
-            for _ti in self._tool_instructions:
-                system_message_content += f"{_ti}\n"
-
-        # Format the system message with the session state variables
-        if self.resolve_in_context:
-            system_message_content = self._format_message_with_state_variables(
-                system_message_content,
-                run_context=run_context,
-            )
-
-        # 3.3.7 Then add the expected output
-        if self.expected_output is not None:
-            system_message_content += f"<expected_output>\n{self.expected_output.strip()}\n</expected_output>\n\n"
-        # 3.3.8 Then add additional context
-        if self.additional_context is not None:
-            system_message_content += f"{self.additional_context}\n"
-        # 3.3.8.1 Then add skills to the system prompt
-        if self.skills is not None:
-            skills_snippet = self.skills.get_system_prompt_snippet()
-            if skills_snippet:
-                system_message_content += f"\n{skills_snippet}\n"
-        # 3.3.9 Then add memories to the system prompt
-        if self.add_memories_to_context:
-            _memory_manager_not_set = False
-            if not user_id:
-                user_id = "default"
-            if self.memory_manager is None:
-                self._set_memory_manager()
-                _memory_manager_not_set = True
-
-            user_memories = self.memory_manager.get_user_memories(user_id=user_id)  # type: ignore
-
-            if user_memories and len(user_memories) > 0:
-                system_message_content += "You have access to user info and preferences from previous interactions that you can use to personalize your response:\n\n"
-                system_message_content += "<memories_from_previous_interactions>"
-                for _memory in user_memories:  # type: ignore
-                    system_message_content += f"\n- {_memory.memory}"
-                system_message_content += "\n</memories_from_previous_interactions>\n\n"
-                system_message_content += (
-                    "Note: this information is from previous interactions and may be updated in this conversation. "
-                    "You should always prefer information from this conversation over the past memories.\n"
-                )
-            else:
-                system_message_content += (
-                    "You have the capability to retain memories from previous interactions with the user, "
-                    "but have not had any interactions with the user yet.\n"
-                )
-            if _memory_manager_not_set:
-                self.memory_manager = None
-
-            if self.enable_agentic_memory:
-                system_message_content += (
-                    "\n<updating_user_memories>\n"
-                    "- You have access to the `update_user_memory` tool that you can use to add new memories, update existing memories, delete memories, or clear all memories.\n"
-                    "- If the user's message includes information that should be captured as a memory, use the `update_user_memory` tool to update your memory database.\n"
-                    "- Memories should include details that could personalize ongoing interactions with the user.\n"
-                    "- Use this tool to add new memories or update existing memories that you identify in the conversation.\n"
-                    "- Use this tool if the user asks to update their memory, delete a memory, or clear all memories.\n"
-                    "- If you use the `update_user_memory` tool, remember to pass on the response to the user.\n"
-                    "</updating_user_memories>\n\n"
-                )
-
-        # 3.3.10 Then add cultural knowledge to the system prompt
-        if self.add_culture_to_context:
-            _culture_manager_not_set = None
-            if not self.culture_manager:
-                self._set_culture_manager()
-                _culture_manager_not_set = True
-
-            cultural_knowledge = self.culture_manager.get_all_knowledge()  # type: ignore
-
-            if cultural_knowledge and len(cultural_knowledge) > 0:
-                system_message_content += (
-                    "You have access to shared **Cultural Knowledge**, which provides context, norms, rules and guidance "
-                    "for your reasoning, communication, and decision-making. "
-                    "Cultural Knowledge represents the collective understanding, values, rules and practices that have "
-                    "emerged across agents and teams. It encodes collective experience — including preferred "
-                    "approaches, common patterns, lessons learned, and ethical guardrails.\n\n"
-                    "When performing any task:\n"
-                    "- **Reference Cultural Knowledge** to align with shared norms and best practices.\n"
-                    "- **Apply it contextually**, not mechanically — adapt principles to the current situation.\n"
-                    "- **Preserve consistency** with cultural values (tone, reasoning, and style) unless explicitly told otherwise.\n"
-                    "- **Extend it** when you discover new insights — your outputs may become future Cultural Knowledge.\n"
-                    "- **Clarify conflicts** if Cultural Knowledge appears to contradict explicit user instructions.\n\n"
-                    "Your goal is to act not only intelligently but also *culturally coherently* — reflecting the "
-                    "collective intelligence of the system.\n\n"
-                    "Below is the currently available Cultural Knowledge for this context:\n\n"
-                )
-                system_message_content += "<cultural_knowledge>"
-                for _knowledge in cultural_knowledge:  # type: ignore
-                    system_message_content += "\n---"
-                    system_message_content += f"\nName: {_knowledge.name}"
-                    system_message_content += f"\nSummary: {_knowledge.summary}"
-                    system_message_content += f"\nContent: {_knowledge.content}"
-                system_message_content += "\n</cultural_knowledge>\n"
-            else:
-                system_message_content += (
-                    "You have the capability to access shared **Cultural Knowledge**, which normally provides "
-                    "context, norms, and guidance for your behavior and reasoning. However, no cultural knowledge "
-                    "is currently available in this session.\n"
-                    "Proceed thoughtfully and document any useful insights you create — they may become future "
-                    "Cultural Knowledge for others.\n\n"
-                )
-
-            if _culture_manager_not_set:
-                self.culture_manager = None
-
-            if self.enable_agentic_culture:
-                system_message_content += (
-                    "\n<contributing_to_culture>\n"
-                    "When you discover an insight, pattern, rule, or best practice that will help future agents, use the `create_or_update_cultural_knowledge` tool to add or update entries in the shared cultural knowledge.\n"
-                    "\n"
-                    "When to contribute:\n"
-                    "- You discover a reusable insight, pattern, rule, or best practice that will help future agents.\n"
-                    "- You correct or clarify an existing cultural entry.\n"
-                    "- You capture a guardrail, decision rationale, postmortem lesson, or example template.\n"
-                    "- You identify missing context that should persist across sessions or teams.\n"
-                    "\n"
-                    "Cultural knowledge should capture reusable insights, best practices, or contextual knowledge that transcends individual conversations.\n"
-                    "Mention your contribution to the user only if it is relevant to their request or they asked to be notified.\n"
-                    "</contributing_to_culture>\n\n"
-                )
-
-        # 3.3.11 Then add a summary of the interaction to the system prompt
-        if self.add_session_summary_to_context and session.summary is not None:
-            system_message_content += "Here is a brief summary of your previous interactions:\n\n"
-            system_message_content += "<summary_of_previous_interactions>\n"
-            system_message_content += session.summary.summary
-            system_message_content += "\n</summary_of_previous_interactions>\n\n"
-            system_message_content += (
-                "Note: this information is from previous interactions and may be outdated. "
-                "You should ALWAYS prefer information from this conversation over the past summary.\n\n"
-            )
-
-        # 3.3.12 then add learnings to the system prompt
-        if self._learning is not None and self.add_learnings_to_context:
-            learning_context = self._learning.build_context(
-                user_id=user_id,
-                session_id=session.session_id if session else None,
-                agent_id=self.id,
-            )
-            if learning_context:
-                system_message_content += learning_context + "\n"
-
-        # 3.3.13 then add search_knowledge instructions to the system prompt
-        if self.knowledge is not None and self.search_knowledge and self.add_search_knowledge_instructions:
-            build_context_fn = getattr(self.knowledge, "build_context", None)
-            if callable(build_context_fn):
-                knowledge_context = build_context_fn(
-                    enable_agentic_filters=self.enable_agentic_knowledge_filters,
-                )
-                if knowledge_context is not None:
-                    system_message_content += knowledge_context + "\n"
-
-        # 3.3.14 Add the system message from the Model
-        system_message_from_model = self.model.get_system_message_for_model(tools)
-        if system_message_from_model is not None:
-            system_message_content += system_message_from_model
-
-        # 3.3.15 Add the JSON output prompt if output_schema is provided and the model does not support native structured outputs or JSON schema outputs
-        # or if use_json_mode is True
-        if (
-            output_schema is not None
-            and self.parser_model is None
-            and not (
-                (self.model.supports_native_structured_outputs or self.model.supports_json_schema_outputs)
-                and (not self.use_json_mode or self.structured_outputs is True)
-            )
-        ):
-            system_message_content += f"{get_json_output_prompt(output_schema)}"  # type: ignore
-
-        # 3.3.16 Add the response model format prompt if output_schema is provided (Pydantic only)
-        if output_schema is not None and self.parser_model is not None and not isinstance(output_schema, dict):
-            system_message_content += f"{get_response_model_format_prompt(output_schema)}"
-
-        # 3.3.17 Add the session state to the system message
-        if add_session_state_to_context and session_state is not None:
-            system_message_content += f"\n<session_state>\n{session_state}\n</session_state>\n\n"
-
-        # Return the system message
-        return (
-            Message(role=self.system_message_role, content=system_message_content.strip())  # type: ignore
-            if system_message_content
-            else None
+        return _msg.get_system_message(
+            self,
+            session,
+            run_context=run_context,
+            tools=tools,
+            add_session_state_to_context=add_session_state_to_context,
         )
 
     async def aget_system_message(
@@ -9092,349 +8115,16 @@ class Agent:
         tools: Optional[List[Union[Function, dict]]] = None,
         add_session_state_to_context: Optional[bool] = None,
     ) -> Optional[Message]:
-        """Return the system message for the Agent.
-
-        1. If the system_message is provided, use that.
-        2. If build_context is False, return None.
-        3. Build and return the default system message for the Agent.
-        """
-
-        # Extract values from run_context
-        session_state = run_context.session_state if run_context else None
-        user_id = run_context.user_id if run_context else None
-
-        # Get output_schema from run_context
-        output_schema = run_context.output_schema if run_context else None
-
-        # 1. If the system_message is provided, use that.
-        if self.system_message is not None:
-            if isinstance(self.system_message, Message):
-                return self.system_message
-
-            sys_message_content: str = ""
-            if isinstance(self.system_message, str):
-                sys_message_content = self.system_message
-            elif callable(self.system_message):
-                sys_message_content = await aexecute_system_message(
-                    agent=self, system_message=self.system_message, session_state=session_state, run_context=run_context
-                )
-                if not isinstance(sys_message_content, str):
-                    raise Exception("system_message must return a string")
-
-            # Format the system message with the session state variables
-            if self.resolve_in_context:
-                sys_message_content = self._format_message_with_state_variables(
-                    sys_message_content,
-                    run_context=run_context,
-                )
-
-            # type: ignore
-            return Message(role=self.system_message_role, content=sys_message_content)
-
-        # 2. If build_context is False, return None.
-        if not self.build_context:
-            return None
-
-        if self.model is None:
-            raise Exception("model not set")
-
-        # 3. Build and return the default system message for the Agent.
-        # 3.1 Build the list of instructions for the system message
-        instructions: List[str] = []
-        if self.instructions is not None:
-            _instructions = self.instructions
-            if callable(self.instructions):
-                _instructions = await aexecute_instructions(
-                    agent=self, instructions=self.instructions, session_state=session_state, run_context=run_context
-                )
-
-            if isinstance(_instructions, str):
-                instructions.append(_instructions)
-            elif isinstance(_instructions, list):
-                instructions.extend(_instructions)
-
-        # 3.1.1 Add instructions from the Model
-        _model_instructions = self.model.get_instructions_for_model(tools)
-        if _model_instructions is not None:
-            instructions.extend(_model_instructions)
-
-        # 3.2 Build a list of additional information for the system message
-        additional_information: List[str] = []
-        # 3.2.1 Add instructions for using markdown
-        if self.markdown and output_schema is None:
-            additional_information.append("Use markdown to format your answers.")
-        # 3.2.2 Add the current datetime
-        if self.add_datetime_to_context:
-            from datetime import datetime
-
-            tz = None
-
-            if self.timezone_identifier:
-                try:
-                    from zoneinfo import ZoneInfo
-
-                    tz = ZoneInfo(self.timezone_identifier)
-                except Exception:
-                    log_warning("Invalid timezone identifier")
-
-            time = datetime.now(tz) if tz else datetime.now()
-
-            additional_information.append(f"The current time is {time}.")
-
-        # 3.2.3 Add the current location
-        if self.add_location_to_context:
-            from agno.utils.location import get_location
-
-            location = get_location()
-            if location:
-                location_str = ", ".join(
-                    filter(
-                        None,
-                        [
-                            location.get("city"),
-                            location.get("region"),
-                            location.get("country"),
-                        ],
-                    )
-                )
-                if location_str:
-                    additional_information.append(f"Your approximate location is: {location_str}.")
-
-        # 3.2.4 Add agent name if provided
-        if self.name is not None and self.add_name_to_context:
-            additional_information.append(f"Your name is: {self.name}.")
-
-        # 3.3 Build the default system message for the Agent.
-        system_message_content: str = ""
-        # 3.3.1 First add the Agent description if provided
-        if self.description is not None:
-            system_message_content += f"{self.description}\n"
-        # 3.3.2 Then add the Agent role if provided
-        if self.role is not None:
-            system_message_content += f"\n<your_role>\n{self.role}\n</your_role>\n\n"
-        # 3.3.3 Then add instructions for the Agent
-        if len(instructions) > 0:
-            if self.use_instruction_tags:
-                system_message_content += "<instructions>"
-                if len(instructions) > 1:
-                    for _upi in instructions:
-                        system_message_content += f"\n- {_upi}"
-                else:
-                    system_message_content += "\n" + instructions[0]
-                system_message_content += "\n</instructions>\n\n"
-            else:
-                if len(instructions) > 1:
-                    for _upi in instructions:
-                        system_message_content += f"- {_upi}\n"
-                else:
-                    system_message_content += instructions[0] + "\n\n"
-        # 3.3.4 Add additional information
-        if len(additional_information) > 0:
-            system_message_content += "<additional_information>"
-            for _ai in additional_information:
-                system_message_content += f"\n- {_ai}"
-            system_message_content += "\n</additional_information>\n\n"
-        # 3.3.5 Then add instructions for the tools
-        if self._tool_instructions is not None:
-            for _ti in self._tool_instructions:
-                system_message_content += f"{_ti}\n"
-
-        # Format the system message with the session state variables
-        if self.resolve_in_context:
-            system_message_content = self._format_message_with_state_variables(
-                system_message_content,
-                run_context=run_context,
-            )
-
-        # 3.3.7 Then add the expected output
-        if self.expected_output is not None:
-            system_message_content += f"<expected_output>\n{self.expected_output.strip()}\n</expected_output>\n\n"
-        # 3.3.8 Then add additional context
-        if self.additional_context is not None:
-            system_message_content += f"{self.additional_context}\n"
-        # 3.3.8.1 Then add skills to the system prompt
-        if self.skills is not None:
-            skills_snippet = self.skills.get_system_prompt_snippet()
-            if skills_snippet:
-                system_message_content += f"\n{skills_snippet}\n"
-        # 3.3.9 Then add memories to the system prompt
-        if self.add_memories_to_context:
-            _memory_manager_not_set = False
-            if not user_id:
-                user_id = "default"
-            if self.memory_manager is None:
-                self._set_memory_manager()
-                _memory_manager_not_set = True
-
-            if self._has_async_db():
-                user_memories = await self.memory_manager.aget_user_memories(user_id=user_id)  # type: ignore
-            else:
-                user_memories = self.memory_manager.get_user_memories(user_id=user_id)  # type: ignore
-
-            if user_memories and len(user_memories) > 0:
-                system_message_content += "You have access to user info and preferences from previous interactions that you can use to personalize your response:\n\n"
-                system_message_content += "<memories_from_previous_interactions>"
-                for _memory in user_memories:  # type: ignore
-                    system_message_content += f"\n- {_memory.memory}"
-                system_message_content += "\n</memories_from_previous_interactions>\n\n"
-                system_message_content += (
-                    "Note: this information is from previous interactions and may be updated in this conversation. "
-                    "You should always prefer information from this conversation over the past memories.\n"
-                )
-            else:
-                system_message_content += (
-                    "You have the capability to retain memories from previous interactions with the user, "
-                    "but have not had any interactions with the user yet.\n"
-                )
-            if _memory_manager_not_set:
-                self.memory_manager = None
-
-            if self.enable_agentic_memory:
-                system_message_content += (
-                    "\n<updating_user_memories>\n"
-                    "- You have access to the `update_user_memory` tool that you can use to add new memories, update existing memories, delete memories, or clear all memories.\n"
-                    "- If the user's message includes information that should be captured as a memory, use the `update_user_memory` tool to update your memory database.\n"
-                    "- Memories should include details that could personalize ongoing interactions with the user.\n"
-                    "- Use this tool to add new memories or update existing memories that you identify in the conversation.\n"
-                    "- Use this tool if the user asks to update their memory, delete a memory, or clear all memories.\n"
-                    "- If you use the `update_user_memory` tool, remember to pass on the response to the user.\n"
-                    "</updating_user_memories>\n\n"
-                )
-
-        # 3.3.10 Then add cultural knowledge to the system prompt
-        if self.add_culture_to_context:
-            _culture_manager_not_set = None
-            if not self.culture_manager:
-                self._set_culture_manager()
-                _culture_manager_not_set = True
-
-            cultural_knowledge = await self.culture_manager.aget_all_knowledge()  # type: ignore
-
-            if cultural_knowledge and len(cultural_knowledge) > 0:
-                system_message_content += (
-                    "You have access to shared **Cultural Knowledge**, which provides context, norms, rules and guidance "
-                    "for your reasoning, communication, and decision-making.\n\n"
-                    "Cultural Knowledge represents the collective understanding, values, rules and practices that have "
-                    "emerged across agents and teams. It encodes collective experience — including preferred "
-                    "approaches, common patterns, lessons learned, and ethical guardrails.\n\n"
-                    "When performing any task:\n"
-                    "- **Reference Cultural Knowledge** to align with shared norms and best practices.\n"
-                    "- **Apply it contextually**, not mechanically — adapt principles to the current situation.\n"
-                    "- **Preserve consistency** with cultural values (tone, reasoning, and style) unless explicitly told otherwise.\n"
-                    "- **Extend it** when you discover new insights — your outputs may become future Cultural Knowledge.\n"
-                    "- **Clarify conflicts** if Cultural Knowledge appears to contradict explicit user instructions.\n\n"
-                    "Your goal is to act not only intelligently but also *culturally coherently* — reflecting the "
-                    "collective intelligence of the system.\n\n"
-                    "Below is the currently available Cultural Knowledge for this context:\n\n"
-                )
-                system_message_content += "<cultural_knowledge>"
-                for _knowledge in cultural_knowledge:  # type: ignore
-                    system_message_content += "\n---"
-                    system_message_content += f"\nName: {_knowledge.name}"
-                    system_message_content += f"\nSummary: {_knowledge.summary}"
-                    system_message_content += f"\nContent: {_knowledge.content}"
-                system_message_content += "\n</cultural_knowledge>\n"
-            else:
-                system_message_content += (
-                    "You have the capability to access shared **Cultural Knowledge**, which normally provides "
-                    "context, norms, and guidance for your behavior and reasoning. However, no cultural knowledge "
-                    "is currently available in this session.\n"
-                    "Proceed thoughtfully and document any useful insights you create — they may become future "
-                    "Cultural Knowledge for others.\n\n"
-                )
-
-            if _culture_manager_not_set:
-                self.culture_manager = None
-
-            if self.enable_agentic_culture:
-                system_message_content += (
-                    "\n<contributing_to_culture>\n"
-                    "When you discover an insight, pattern, rule, or best practice that will help future agents, use the `create_or_update_cultural_knowledge` tool to add or update entries in the shared cultural knowledge.\n"
-                    "\n"
-                    "When to contribute:\n"
-                    "- You discover a reusable insight, pattern, rule, or best practice that will help future agents.\n"
-                    "- You correct or clarify an existing cultural entry.\n"
-                    "- You capture a guardrail, decision rationale, postmortem lesson, or example template.\n"
-                    "- You identify missing context that should persist across sessions or teams.\n"
-                    "\n"
-                    "Cultural knowledge should capture reusable insights, best practices, or contextual knowledge that transcends individual conversations.\n"
-                    "Mention your contribution to the user only if it is relevant to their request or they asked to be notified.\n"
-                    "</contributing_to_culture>\n\n"
-                )
-
-        # 3.3.11 Then add a summary of the interaction to the system prompt
-        if self.add_session_summary_to_context and session.summary is not None:
-            system_message_content += "Here is a brief summary of your previous interactions:\n\n"
-            system_message_content += "<summary_of_previous_interactions>\n"
-            system_message_content += session.summary.summary
-            system_message_content += "\n</summary_of_previous_interactions>\n\n"
-            system_message_content += (
-                "Note: this information is from previous interactions and may be outdated. "
-                "You should ALWAYS prefer information from this conversation over the past summary.\n\n"
-            )
-
-        # 3.3.12 then add learnings to the system prompt
-        if self._learning is not None and self.add_learnings_to_context:
-            learning_context = await self._learning.abuild_context(
-                user_id=user_id,
-                session_id=session.session_id if session else None,
-                agent_id=self.id,
-            )
-            if learning_context:
-                system_message_content += learning_context + "\n"
-
-        # 3.3.13 then add search_knowledge instructions to the system prompt
-        if self.knowledge is not None and self.search_knowledge and self.add_search_knowledge_instructions:
-            # Prefer async version if available for async databases
-            abuild_context_fn = getattr(self.knowledge, "abuild_context", None)
-            build_context_fn = getattr(self.knowledge, "build_context", None)
-            if callable(abuild_context_fn):
-                knowledge_context = await abuild_context_fn(
-                    enable_agentic_filters=self.enable_agentic_knowledge_filters,
-                )
-                if knowledge_context is not None:
-                    system_message_content += knowledge_context + "\n"
-            elif callable(build_context_fn):
-                knowledge_context = build_context_fn(
-                    enable_agentic_filters=self.enable_agentic_knowledge_filters,
-                )
-                if knowledge_context is not None:
-                    system_message_content += knowledge_context + "\n"
-
-        # 3.3.14 Add the system message from the Model
-        system_message_from_model = self.model.get_system_message_for_model(tools)
-        if system_message_from_model is not None:
-            system_message_content += system_message_from_model
-
-        # 3.3.15 Add the JSON output prompt if output_schema is provided and the model does not support native structured outputs or JSON schema outputs
-        # or if use_json_mode is True
-        if (
-            output_schema is not None
-            and self.parser_model is None
-            and not (
-                (self.model.supports_native_structured_outputs or self.model.supports_json_schema_outputs)
-                and (not self.use_json_mode or self.structured_outputs is True)
-            )
-        ):
-            system_message_content += f"{get_json_output_prompt(output_schema)}"  # type: ignore
-
-        # 3.3.16 Add the response model format prompt if output_schema is provided (Pydantic only)
-        if output_schema is not None and self.parser_model is not None and not isinstance(output_schema, dict):
-            system_message_content += f"{get_response_model_format_prompt(output_schema)}"
-
-        # 3.3.17 Add the session state to the system message
-        if add_session_state_to_context and session_state is not None:
-            system_message_content += self._get_formatted_session_state_for_system_message(session_state)
-
-        # Return the system message
-        return (
-            Message(role=self.system_message_role, content=system_message_content.strip())  # type: ignore
-            if system_message_content
-            else None
+        return await _msg.aget_system_message(
+            self,
+            session,
+            run_context=run_context,
+            tools=tools,
+            add_session_state_to_context=add_session_state_to_context,
         )
 
     def _get_formatted_session_state_for_system_message(self, session_state: Dict[str, Any]) -> str:
-        return f"\n<session_state>\n{session_state}\n</session_state>\n\n"
+        return _msg._get_formatted_session_state_for_system_message(session_state)
 
     def _get_user_message(
         self,
@@ -9449,155 +8139,18 @@ class Agent:
         add_dependencies_to_context: Optional[bool] = None,
         **kwargs: Any,
     ) -> Optional[Message]:
-        """Return the user message for the Agent.
-
-        1. If the user_message is provided, use that.
-        2. If build_user_context is False or if the message is a list, return the message as is.
-        3. Build the default user message for the Agent
-        """
-        # Extract values from run_context
-        dependencies = run_context.dependencies if run_context else None
-        knowledge_filters = run_context.knowledge_filters if run_context else None
-        # Get references from the knowledge base to use in the user message
-        references = None
-
-        # 1. If build_user_context is False or message is a list, return the message as is.
-        if not self.build_user_context:
-            return Message(
-                role=self.user_message_role or "user",
-                content=input,  # type: ignore
-                images=None if not self.send_media_to_model else images,
-                audio=None if not self.send_media_to_model else audio,
-                videos=None if not self.send_media_to_model else videos,
-                files=None if not self.send_media_to_model else files,
-                **kwargs,
-            )
-        # 2. Build the user message for the Agent
-        elif input is None:
-            # If we have any media, return a message with empty content
-            if images is not None or audio is not None or videos is not None or files is not None:
-                return Message(
-                    role=self.user_message_role or "user",
-                    content="",
-                    images=None if not self.send_media_to_model else images,
-                    audio=None if not self.send_media_to_model else audio,
-                    videos=None if not self.send_media_to_model else videos,
-                    files=None if not self.send_media_to_model else files,
-                    **kwargs,
-                )
-            else:
-                # If the input is None, return None
-                return None
-
-        else:
-            # Handle list messages by converting to string
-            if isinstance(input, list):
-                # Convert list to string (join with newlines if all elements are strings)
-                if all(isinstance(item, str) for item in input):
-                    message_content = "\n".join(input)  # type: ignore
-                else:
-                    message_content = str(input)
-
-                return Message(
-                    role=self.user_message_role,
-                    content=message_content,
-                    images=None if not self.send_media_to_model else images,
-                    audio=None if not self.send_media_to_model else audio,
-                    videos=None if not self.send_media_to_model else videos,
-                    files=None if not self.send_media_to_model else files,
-                    **kwargs,
-                )
-
-            # If message is provided as a Message, use it directly
-            elif isinstance(input, Message):
-                return input
-            # If message is provided as a dict, try to validate it as a Message
-            elif isinstance(input, dict):
-                try:
-                    return Message.model_validate(input)
-                except Exception as e:
-                    log_warning(f"Failed to validate message: {e}")
-                    raise Exception(f"Failed to validate message: {e}")
-
-            # If message is provided as a BaseModel, convert it to a Message
-            elif isinstance(input, BaseModel):
-                try:
-                    # Create a user message with the BaseModel content
-                    content = input.model_dump_json(indent=2, exclude_none=True)
-                    return Message(role=self.user_message_role, content=content)
-                except Exception as e:
-                    log_warning(f"Failed to convert BaseModel to message: {e}")
-                    raise Exception(f"Failed to convert BaseModel to message: {e}")
-            else:
-                user_msg_content = input
-                if self.add_knowledge_to_context:
-                    if isinstance(input, str):
-                        user_msg_content = input
-                    elif callable(input):
-                        user_msg_content = input(agent=self)
-                    else:
-                        raise Exception("message must be a string or a callable when add_references is True")
-
-                    try:
-                        retrieval_timer = Timer()
-                        retrieval_timer.start()
-                        docs_from_knowledge = self.get_relevant_docs_from_knowledge(
-                            query=user_msg_content, filters=knowledge_filters, run_context=run_context, **kwargs
-                        )
-                        if docs_from_knowledge is not None:
-                            references = MessageReferences(
-                                query=user_msg_content,
-                                references=docs_from_knowledge,
-                                time=round(retrieval_timer.elapsed, 4),
-                            )
-                            # Add the references to the run_response
-                            if run_response.references is None:
-                                run_response.references = []
-                            run_response.references.append(references)
-                        retrieval_timer.stop()
-                        log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
-                    except Exception as e:
-                        log_warning(f"Failed to get references: {e}")
-
-                if self.resolve_in_context:
-                    user_msg_content = self._format_message_with_state_variables(
-                        user_msg_content,
-                        run_context=run_context,
-                    )
-
-                # Convert to string for concatenation operations
-                user_msg_content_str = get_text_from_message(user_msg_content) if user_msg_content is not None else ""
-
-                # 4.1 Add knowledge references to user message
-                if (
-                    self.add_knowledge_to_context
-                    and references is not None
-                    and references.references is not None
-                    and len(references.references) > 0
-                ):
-                    user_msg_content_str += "\n\nUse the following references from the knowledge base if it helps:\n"
-                    user_msg_content_str += "<references>\n"
-                    user_msg_content_str += self._convert_documents_to_string(references.references) + "\n"
-                    user_msg_content_str += "</references>"
-                # 4.2 Add context to user message
-                if add_dependencies_to_context and dependencies is not None:
-                    user_msg_content_str += "\n\n<additional context>\n"
-                    user_msg_content_str += self._convert_dependencies_to_string(dependencies) + "\n"
-                    user_msg_content_str += "</additional context>"
-
-                # Use the string version for the final content
-                user_msg_content = user_msg_content_str
-
-                # Return the user message
-                return Message(
-                    role=self.user_message_role,
-                    content=user_msg_content,
-                    audio=None if not self.send_media_to_model else audio,
-                    images=None if not self.send_media_to_model else images,
-                    videos=None if not self.send_media_to_model else videos,
-                    files=None if not self.send_media_to_model else files,
-                    **kwargs,
-                )
+        return _msg._get_user_message(
+            self,
+            run_response=run_response,
+            run_context=run_context,
+            input=input,
+            audio=audio,
+            images=images,
+            videos=videos,
+            files=files,
+            add_dependencies_to_context=add_dependencies_to_context,
+            **kwargs,
+        )
 
     async def _aget_user_message(
         self,
@@ -9612,155 +8165,18 @@ class Agent:
         add_dependencies_to_context: Optional[bool] = None,
         **kwargs: Any,
     ) -> Optional[Message]:
-        """Return the user message for the Agent (async version).
-
-        1. If the user_message is provided, use that.
-        2. If build_user_context is False or if the message is a list, return the message as is.
-        3. Build the default user message for the Agent
-        """
-        # Extract values from run_context
-        dependencies = run_context.dependencies if run_context else None
-        knowledge_filters = run_context.knowledge_filters if run_context else None
-        # Get references from the knowledge base to use in the user message
-        references = None
-
-        # 1. If build_user_context is False or message is a list, return the message as is.
-        if not self.build_user_context:
-            return Message(
-                role=self.user_message_role or "user",
-                content=input,  # type: ignore
-                images=None if not self.send_media_to_model else images,
-                audio=None if not self.send_media_to_model else audio,
-                videos=None if not self.send_media_to_model else videos,
-                files=None if not self.send_media_to_model else files,
-                **kwargs,
-            )
-        # 2. Build the user message for the Agent
-        elif input is None:
-            # If we have any media, return a message with empty content
-            if images is not None or audio is not None or videos is not None or files is not None:
-                return Message(
-                    role=self.user_message_role or "user",
-                    content="",
-                    images=None if not self.send_media_to_model else images,
-                    audio=None if not self.send_media_to_model else audio,
-                    videos=None if not self.send_media_to_model else videos,
-                    files=None if not self.send_media_to_model else files,
-                    **kwargs,
-                )
-            else:
-                # If the input is None, return None
-                return None
-
-        else:
-            # Handle list messages by converting to string
-            if isinstance(input, list):
-                # Convert list to string (join with newlines if all elements are strings)
-                if all(isinstance(item, str) for item in input):
-                    message_content = "\n".join(input)  # type: ignore
-                else:
-                    message_content = str(input)
-
-                return Message(
-                    role=self.user_message_role,
-                    content=message_content,
-                    images=None if not self.send_media_to_model else images,
-                    audio=None if not self.send_media_to_model else audio,
-                    videos=None if not self.send_media_to_model else videos,
-                    files=None if not self.send_media_to_model else files,
-                    **kwargs,
-                )
-
-            # If message is provided as a Message, use it directly
-            elif isinstance(input, Message):
-                return input
-            # If message is provided as a dict, try to validate it as a Message
-            elif isinstance(input, dict):
-                try:
-                    return Message.model_validate(input)
-                except Exception as e:
-                    log_warning(f"Failed to validate message: {e}")
-                    raise Exception(f"Failed to validate message: {e}")
-
-            # If message is provided as a BaseModel, convert it to a Message
-            elif isinstance(input, BaseModel):
-                try:
-                    # Create a user message with the BaseModel content
-                    content = input.model_dump_json(indent=2, exclude_none=True)
-                    return Message(role=self.user_message_role, content=content)
-                except Exception as e:
-                    log_warning(f"Failed to convert BaseModel to message: {e}")
-                    raise Exception(f"Failed to convert BaseModel to message: {e}")
-            else:
-                user_msg_content = input
-                if self.add_knowledge_to_context:
-                    if isinstance(input, str):
-                        user_msg_content = input
-                    elif callable(input):
-                        user_msg_content = input(agent=self)
-                    else:
-                        raise Exception("message must be a string or a callable when add_references is True")
-
-                    try:
-                        retrieval_timer = Timer()
-                        retrieval_timer.start()
-                        docs_from_knowledge = await self.aget_relevant_docs_from_knowledge(
-                            query=user_msg_content, filters=knowledge_filters, run_context=run_context, **kwargs
-                        )
-                        if docs_from_knowledge is not None:
-                            references = MessageReferences(
-                                query=user_msg_content,
-                                references=docs_from_knowledge,
-                                time=round(retrieval_timer.elapsed, 4),
-                            )
-                            # Add the references to the run_response
-                            if run_response.references is None:
-                                run_response.references = []
-                            run_response.references.append(references)
-                        retrieval_timer.stop()
-                        log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
-                    except Exception as e:
-                        log_warning(f"Failed to get references: {e}")
-
-                if self.resolve_in_context:
-                    user_msg_content = self._format_message_with_state_variables(
-                        user_msg_content,
-                        run_context=run_context,
-                    )
-
-                # Convert to string for concatenation operations
-                user_msg_content_str = get_text_from_message(user_msg_content) if user_msg_content is not None else ""
-
-                # 4.1 Add knowledge references to user message
-                if (
-                    self.add_knowledge_to_context
-                    and references is not None
-                    and references.references is not None
-                    and len(references.references) > 0
-                ):
-                    user_msg_content_str += "\n\nUse the following references from the knowledge base if it helps:\n"
-                    user_msg_content_str += "<references>\n"
-                    user_msg_content_str += self._convert_documents_to_string(references.references) + "\n"
-                    user_msg_content_str += "</references>"
-                # 4.2 Add context to user message
-                if add_dependencies_to_context and dependencies is not None:
-                    user_msg_content_str += "\n\n<additional context>\n"
-                    user_msg_content_str += self._convert_dependencies_to_string(dependencies) + "\n"
-                    user_msg_content_str += "</additional context>"
-
-                # Use the string version for the final content
-                user_msg_content = user_msg_content_str
-
-                # Return the user message
-                return Message(
-                    role=self.user_message_role,
-                    content=user_msg_content,
-                    audio=None if not self.send_media_to_model else audio,
-                    images=None if not self.send_media_to_model else images,
-                    videos=None if not self.send_media_to_model else videos,
-                    files=None if not self.send_media_to_model else files,
-                    **kwargs,
-                )
+        return await _msg._aget_user_message(
+            self,
+            run_response=run_response,
+            run_context=run_context,
+            input=input,
+            audio=audio,
+            images=images,
+            videos=videos,
+            files=files,
+            add_dependencies_to_context=add_dependencies_to_context,
+            **kwargs,
+        )
 
     def _get_run_messages(
         self,
@@ -9780,186 +8196,23 @@ class Agent:
         tools: Optional[List[Union[Function, dict]]] = None,
         **kwargs: Any,
     ) -> RunMessages:
-        """This function returns a RunMessages object with the following attributes:
-            - system_message: The system message for this run
-            - user_message: The user message for this run
-            - messages: List of messages to send to the model
-
-        To build the RunMessages object:
-        1. Add system message to run_messages
-        2. Add extra messages to run_messages if provided
-        3. Add history to run_messages
-        4. Add user message to run_messages (if input is single content)
-        5. Add input messages to run_messages if provided (if input is List[Message])
-
-        Returns:
-            RunMessages object with the following attributes:
-                - system_message: The system message for this run
-                - user_message: The user message for this run
-                - messages: List of all messages to send to the model
-
-        Typical usage:
-        run_messages = self._get_run_messages(
-            input=input, session_id=session_id, user_id=user_id, audio=audio, images=images, videos=videos, files=files, **kwargs
-        )
-        """
-
-        # Initialize the RunMessages object (no media here - that's in RunInput now)
-        run_messages = RunMessages()
-
-        # 1. Add system message to run_messages
-        system_message = self.get_system_message(
-            session=session,
+        return _msg._get_run_messages(
+            self,
+            run_response=run_response,
             run_context=run_context,
-            tools=tools,
+            input=input,
+            session=session,
+            user_id=user_id,
+            audio=audio,
+            images=images,
+            videos=videos,
+            files=files,
+            add_history_to_context=add_history_to_context,
+            add_dependencies_to_context=add_dependencies_to_context,
             add_session_state_to_context=add_session_state_to_context,
+            tools=tools,
+            **kwargs,
         )
-        if system_message is not None:
-            run_messages.system_message = system_message
-            run_messages.messages.append(system_message)
-
-        # 2. Add extra messages to run_messages if provided
-        if self.additional_input is not None:
-            messages_to_add_to_run_response: List[Message] = []
-            if run_messages.extra_messages is None:
-                run_messages.extra_messages = []
-
-            for _m in self.additional_input:
-                if isinstance(_m, Message):
-                    messages_to_add_to_run_response.append(_m)
-                    run_messages.messages.append(_m)
-                    run_messages.extra_messages.append(_m)
-                elif isinstance(_m, dict):
-                    try:
-                        _m_parsed = Message.model_validate(_m)
-                        messages_to_add_to_run_response.append(_m_parsed)
-                        run_messages.messages.append(_m_parsed)
-                        run_messages.extra_messages.append(_m_parsed)
-                    except Exception as e:
-                        log_warning(f"Failed to validate message: {e}")
-            # Add the extra messages to the run_response
-            if len(messages_to_add_to_run_response) > 0:
-                log_debug(f"Adding {len(messages_to_add_to_run_response)} extra messages")
-                if run_response.additional_input is None:
-                    run_response.additional_input = messages_to_add_to_run_response
-                else:
-                    run_response.additional_input.extend(messages_to_add_to_run_response)
-
-        # 3. Add history to run_messages
-        if add_history_to_context:
-            from copy import deepcopy
-
-            # Only skip messages from history when system_message_role is NOT a standard conversation role.
-            # Standard conversation roles ("user", "assistant", "tool") should never be filtered
-            # to preserve conversation continuity.
-            skip_role = (
-                self.system_message_role if self.system_message_role not in ["user", "assistant", "tool"] else None
-            )
-
-            history: List[Message] = session.get_messages(
-                last_n_runs=self.num_history_runs,
-                limit=self.num_history_messages,
-                skip_roles=[skip_role] if skip_role else None,
-                agent_id=self.id if self.team_id is not None else None,
-            )
-
-            if len(history) > 0:
-                # Create a deep copy of the history messages to avoid modifying the original messages
-                history_copy = [deepcopy(msg) for msg in history]
-
-                # Tag each message as coming from history
-                for _msg in history_copy:
-                    _msg.from_history = True
-
-                # Filter tool calls from history if limit is set (before adding to run_messages)
-                if self.max_tool_calls_from_history is not None:
-                    filter_tool_calls(history_copy, self.max_tool_calls_from_history)
-
-                log_debug(f"Adding {len(history_copy)} messages from history")
-
-                run_messages.messages += history_copy
-
-        # 4. Add user message to run_messages
-        user_message: Optional[Message] = None
-
-        # 4.1 Build user message if input is None, str or list and not a list of Message/dict objects
-        if (
-            input is None
-            or isinstance(input, str)
-            or (
-                isinstance(input, list)
-                and not (
-                    len(input) > 0
-                    and (isinstance(input[0], Message) or (isinstance(input[0], dict) and "role" in input[0]))
-                )
-            )
-        ):
-            user_message = self._get_user_message(
-                run_response=run_response,
-                run_context=run_context,
-                input=input,
-                audio=audio,
-                images=images,
-                videos=videos,
-                files=files,
-                add_dependencies_to_context=add_dependencies_to_context,
-                **kwargs,
-            )
-
-        # 4.2 If input is provided as a Message, use it directly
-        elif isinstance(input, Message):
-            user_message = input
-
-        # 4.3 If input is provided as a dict, try to validate it as a Message
-        elif isinstance(input, dict):
-            try:
-                if self.input_schema and is_typed_dict(self.input_schema):
-                    import json
-
-                    content = json.dumps(input, indent=2, ensure_ascii=False)
-                    user_message = Message(role=self.user_message_role, content=content)
-                else:
-                    user_message = Message.model_validate(input)
-            except Exception as e:
-                log_warning(f"Failed to validate message: {e}")
-
-        # 4.4 If input is provided as a BaseModel, convert it to a Message
-        elif isinstance(input, BaseModel):
-            try:
-                # Create a user message with the BaseModel content
-                content = input.model_dump_json(indent=2, exclude_none=True)
-                user_message = Message(role=self.user_message_role, content=content)
-            except Exception as e:
-                log_warning(f"Failed to convert BaseModel to message: {e}")
-
-        # 5. Add input messages to run_messages if provided (List[Message] or List[Dict])
-        if (
-            isinstance(input, list)
-            and len(input) > 0
-            and (isinstance(input[0], Message) or (isinstance(input[0], dict) and "role" in input[0]))
-        ):
-            for _m in input:
-                if isinstance(_m, Message):
-                    run_messages.messages.append(_m)
-                    if run_messages.extra_messages is None:
-                        run_messages.extra_messages = []
-                    run_messages.extra_messages.append(_m)
-                elif isinstance(_m, dict):
-                    try:
-                        msg = Message.model_validate(_m)
-                        run_messages.messages.append(msg)
-                        if run_messages.extra_messages is None:
-                            run_messages.extra_messages = []
-                        run_messages.extra_messages.append(msg)
-                    except Exception as e:
-                        log_warning(f"Failed to validate message: {e}")
-
-        # Add user message to run_messages
-        if user_message is not None:
-            run_messages.user_message = user_message
-            run_messages.messages.append(user_message)
-
-        return run_messages
 
     async def _aget_run_messages(
         self,
@@ -9983,215 +8236,30 @@ class Agent:
         tools: Optional[List[Union[Function, dict]]] = None,
         **kwargs: Any,
     ) -> RunMessages:
-        """This function returns a RunMessages object with the following attributes:
-            - system_message: The system message for this run
-            - user_message: The user message for this run
-            - messages: List of messages to send to the model
-
-        To build the RunMessages object:
-        1. Add system message to run_messages
-        2. Add extra messages to run_messages if provided
-        3. Add history to run_messages
-        4. Add user message to run_messages (if input is single content)
-        5. Add input messages to run_messages if provided (if input is List[Message])
-
-        Returns:
-            RunMessages object with the following attributes:
-                - system_message: The system message for this run
-                - user_message: The user message for this run
-                - messages: List of all messages to send to the model
-
-        Typical usage:
-        run_messages = self._get_run_messages(
-            input=input, session_id=session_id, user_id=user_id, audio=audio, images=images, videos=videos, files=files, **kwargs
-        )
-        """
-
-        # Initialize the RunMessages object (no media here - that's in RunInput now)
-        run_messages = RunMessages()
-
-        # 1. Add system message to run_messages
-        system_message = await self.aget_system_message(
+        return await _msg._aget_run_messages(
+            self,
+            run_response=run_response,
+            input=input,
             session=session,
             run_context=run_context,
-            tools=tools,
+            session_state=session_state,
+            user_id=user_id,
+            audio=audio,
+            images=images,
+            videos=videos,
+            files=files,
+            knowledge_filters=knowledge_filters,
+            add_history_to_context=add_history_to_context,
+            dependencies=dependencies,
+            add_dependencies_to_context=add_dependencies_to_context,
             add_session_state_to_context=add_session_state_to_context,
+            metadata=metadata,
+            tools=tools,
+            **kwargs,
         )
-        if system_message is not None:
-            run_messages.system_message = system_message
-            run_messages.messages.append(system_message)
 
-        # 2. Add extra messages to run_messages if provided
-        if self.additional_input is not None:
-            messages_to_add_to_run_response: List[Message] = []
-            if run_messages.extra_messages is None:
-                run_messages.extra_messages = []
-
-            for _m in self.additional_input:
-                if isinstance(_m, Message):
-                    messages_to_add_to_run_response.append(_m)
-                    run_messages.messages.append(_m)
-                    run_messages.extra_messages.append(_m)
-                elif isinstance(_m, dict):
-                    try:
-                        _m_parsed = Message.model_validate(_m)
-                        messages_to_add_to_run_response.append(_m_parsed)
-                        run_messages.messages.append(_m_parsed)
-                        run_messages.extra_messages.append(_m_parsed)
-                    except Exception as e:
-                        log_warning(f"Failed to validate message: {e}")
-            # Add the extra messages to the run_response
-            if len(messages_to_add_to_run_response) > 0:
-                log_debug(f"Adding {len(messages_to_add_to_run_response)} extra messages")
-                if run_response.additional_input is None:
-                    run_response.additional_input = messages_to_add_to_run_response
-                else:
-                    run_response.additional_input.extend(messages_to_add_to_run_response)
-
-        # 3. Add history to run_messages
-        if add_history_to_context:
-            from copy import deepcopy
-
-            # Only skip messages from history when system_message_role is NOT a standard conversation role.
-            # Standard conversation roles ("user", "assistant", "tool") should never be filtered
-            # to preserve conversation continuity.
-            skip_role = (
-                self.system_message_role if self.system_message_role not in ["user", "assistant", "tool"] else None
-            )
-
-            history: List[Message] = session.get_messages(
-                last_n_runs=self.num_history_runs,
-                limit=self.num_history_messages,
-                skip_roles=[skip_role] if skip_role else None,
-                agent_id=self.id if self.team_id is not None else None,
-            )
-
-            if len(history) > 0:
-                # Create a deep copy of the history messages to avoid modifying the original messages
-                history_copy = [deepcopy(msg) for msg in history]
-
-                # Tag each message as coming from history
-                for _msg in history_copy:
-                    _msg.from_history = True
-
-                # Filter tool calls from history if limit is set (before adding to run_messages)
-                if self.max_tool_calls_from_history is not None:
-                    filter_tool_calls(history_copy, self.max_tool_calls_from_history)
-
-                log_debug(f"Adding {len(history_copy)} messages from history")
-
-                run_messages.messages += history_copy
-
-        # 4. Add user message to run_messages
-        user_message: Optional[Message] = None
-
-        # 4.1 Build user message if input is None, str or list and not a list of Message/dict objects
-        if (
-            input is None
-            or isinstance(input, str)
-            or (
-                isinstance(input, list)
-                and not (
-                    len(input) > 0
-                    and (isinstance(input[0], Message) or (isinstance(input[0], dict) and "role" in input[0]))
-                )
-            )
-        ):
-            user_message = await self._aget_user_message(
-                run_response=run_response,
-                run_context=run_context,
-                input=input,
-                audio=audio,
-                images=images,
-                videos=videos,
-                files=files,
-                add_dependencies_to_context=add_dependencies_to_context,
-                **kwargs,
-            )
-
-        # 4.2 If input is provided as a Message, use it directly
-        elif isinstance(input, Message):
-            user_message = input
-
-        # 4.3 If input is provided as a dict, try to validate it as a Message
-        elif isinstance(input, dict):
-            try:
-                user_message = Message.model_validate(input)
-            except Exception as e:
-                log_warning(f"Failed to validate message: {e}")
-
-        # 4.4 If input is provided as a BaseModel, convert it to a Message
-        elif isinstance(input, BaseModel):
-            try:
-                # Create a user message with the BaseModel content
-                content = input.model_dump_json(indent=2, exclude_none=True)
-                user_message = Message(role=self.user_message_role, content=content)
-            except Exception as e:
-                log_warning(f"Failed to convert BaseModel to message: {e}")
-
-        # 5. Add input messages to run_messages if provided (List[Message] or List[Dict])
-        if (
-            isinstance(input, list)
-            and len(input) > 0
-            and (isinstance(input[0], Message) or (isinstance(input[0], dict) and "role" in input[0]))
-        ):
-            for _m in input:
-                if isinstance(_m, Message):
-                    run_messages.messages.append(_m)
-                    if run_messages.extra_messages is None:
-                        run_messages.extra_messages = []
-                    run_messages.extra_messages.append(_m)
-                elif isinstance(_m, dict):
-                    try:
-                        msg = Message.model_validate(_m)
-                        run_messages.messages.append(msg)
-                        if run_messages.extra_messages is None:
-                            run_messages.extra_messages = []
-                        run_messages.extra_messages.append(msg)
-                    except Exception as e:
-                        log_warning(f"Failed to validate message: {e}")
-
-        # Add user message to run_messages
-        if user_message is not None:
-            run_messages.user_message = user_message
-            run_messages.messages.append(user_message)
-
-        return run_messages
-
-    def _get_continue_run_messages(
-        self,
-        input: List[Message],
-    ) -> RunMessages:
-        """This function returns a RunMessages object with the following attributes:
-            - system_message: The system message for this run
-            - user_message: The user message for this run
-            - messages: List of messages to send to the model
-
-        It continues from a previous run and completes a tool call that was paused.
-        """
-
-        # Initialize the RunMessages object
-        run_messages = RunMessages()
-
-        # Extract most recent user message from messages as the original user message
-        user_message = None
-        for msg in reversed(input):
-            if msg.role == self.user_message_role:
-                user_message = msg
-                break
-
-        # Extract system message from messages
-        system_message = None
-        for msg in input:
-            if msg.role == self.system_message_role:
-                system_message = msg
-                break
-
-        run_messages.system_message = system_message
-        run_messages.user_message = user_message
-        run_messages.messages = input
-
-        return run_messages
+    def _get_continue_run_messages(self, input: List[Message]) -> RunMessages:
+        return _msg._get_continue_run_messages(self, input)
 
     def _get_messages_for_parser_model(
         self,
@@ -10199,23 +8267,7 @@ class Agent:
         response_format: Optional[Union[Dict, Type[BaseModel]]],
         run_context: Optional[RunContext] = None,
     ) -> List[Message]:
-        """Get the messages for the parser model."""
-        # Get output_schema from run_context
-        output_schema = run_context.output_schema if run_context else None
-
-        system_content = (
-            self.parser_model_prompt
-            if self.parser_model_prompt is not None
-            else "You are tasked with creating a structured output from the provided user message."
-        )
-
-        if response_format == {"type": "json_object"} and output_schema is not None:
-            system_content += f"{get_json_output_prompt(output_schema)}"  # type: ignore
-
-        return [
-            Message(role="system", content=system_content),
-            Message(role="user", content=model_response.content),
-        ]
+        return _msg._get_messages_for_parser_model(self, model_response, response_format, run_context=run_context)
 
     def _get_messages_for_parser_model_stream(
         self,
@@ -10223,41 +8275,10 @@ class Agent:
         response_format: Optional[Union[Dict, Type[BaseModel]]],
         run_context: Optional[RunContext] = None,
     ) -> List[Message]:
-        """Get the messages for the parser model."""
-        # Get output_schema from run_context
-        output_schema = run_context.output_schema if run_context else None
-
-        system_content = (
-            self.parser_model_prompt
-            if self.parser_model_prompt is not None
-            else "You are tasked with creating a structured output from the provided data."
-        )
-
-        if response_format == {"type": "json_object"} and output_schema is not None:
-            system_content += f"{get_json_output_prompt(output_schema)}"  # type: ignore
-
-        return [
-            Message(role="system", content=system_content),
-            Message(role="user", content=run_response.content),
-        ]
+        return _msg._get_messages_for_parser_model_stream(self, run_response, response_format, run_context=run_context)
 
     def _get_messages_for_output_model(self, messages: List[Message]) -> List[Message]:
-        """Get the messages for the output model."""
-
-        if self.output_model_prompt is not None:
-            system_message_exists = False
-            for message in messages:
-                if message.role == "system":
-                    system_message_exists = True
-                    message.content = self.output_model_prompt
-                    break
-            if not system_message_exists:
-                messages.insert(0, Message(role="system", content=self.output_model_prompt))
-
-        # Remove the last assistant message from the messages list
-        messages.pop(-1)
-
-        return messages
+        return _msg._get_messages_for_output_model(self, messages)
 
     def get_relevant_docs_from_knowledge(
         self,
@@ -10268,91 +8289,15 @@ class Agent:
         run_context: Optional[RunContext] = None,
         **kwargs,
     ) -> Optional[List[Union[Dict[str, Any], str]]]:
-        """Get relevant docs from the knowledge base to answer a query.
-
-        Args:
-            query (str): The query to search for.
-            num_documents (Optional[int]): Number of documents to return.
-            filters (Optional[Dict[str, Any]]): Filters to apply to the search.
-            validate_filters (bool): Whether to validate the filters against known valid filter keys.
-            run_context (Optional[RunContext]): Runtime context containing dependencies and other context.
-            **kwargs: Additional keyword arguments.
-
-        Returns:
-            Optional[List[Dict[str, Any]]]: List of relevant document dicts.
-        """
-        from agno.knowledge.document import Document
-
-        # Extract dependencies from run_context if available
-        dependencies = run_context.dependencies if run_context else None
-
-        if num_documents is None and self.knowledge is not None:
-            num_documents = getattr(self.knowledge, "max_results", None)
-        # Validate the filters against known valid filter keys
-        if self.knowledge is not None and filters is not None:
-            if validate_filters:
-                valid_filters, invalid_keys = self.knowledge.validate_filters(filters)  # type: ignore
-
-                # Warn about invalid filter keys
-                if invalid_keys:
-                    # type: ignore
-                    log_warning(f"Invalid filter keys provided: {invalid_keys}. These filters will be ignored.")
-
-                    # Only use valid filters
-                    filters = valid_filters
-                    if not filters:
-                        log_warning("No valid filters remain after validation. Search will proceed without filters.")
-
-                if invalid_keys == [] and valid_filters == {}:
-                    log_warning("No valid filters provided. Search will proceed without filters.")
-                    filters = None
-
-        if self.knowledge_retriever is not None and callable(self.knowledge_retriever):
-            from inspect import signature
-
-            try:
-                sig = signature(self.knowledge_retriever)
-                knowledge_retriever_kwargs: Dict[str, Any] = {}
-                if "agent" in sig.parameters:
-                    knowledge_retriever_kwargs = {"agent": self}
-                if "filters" in sig.parameters:
-                    knowledge_retriever_kwargs["filters"] = filters
-                if "run_context" in sig.parameters:
-                    knowledge_retriever_kwargs["run_context"] = run_context
-                elif "dependencies" in sig.parameters:
-                    # Backward compatibility: support dependencies parameter
-                    knowledge_retriever_kwargs["dependencies"] = dependencies
-                knowledge_retriever_kwargs.update({"query": query, "num_documents": num_documents, **kwargs})
-                return self.knowledge_retriever(**knowledge_retriever_kwargs)
-            except Exception as e:
-                log_warning(f"Knowledge retriever failed: {e}")
-                raise e
-
-        # Use knowledge protocol's retrieve method
-        try:
-            if self.knowledge is None:
-                return None
-
-            # Use protocol retrieve() method if available
-            retrieve_fn = getattr(self.knowledge, "retrieve", None)
-            if not callable(retrieve_fn):
-                log_debug("Knowledge does not implement retrieve()")
-                return None
-
-            if num_documents is None:
-                num_documents = getattr(self.knowledge, "max_results", 10)
-
-            log_debug(f"Retrieving from knowledge base with filters: {filters}")
-            relevant_docs: List[Document] = retrieve_fn(query=query, max_results=num_documents, filters=filters)
-
-            if not relevant_docs or len(relevant_docs) == 0:
-                log_debug("No relevant documents found for query")
-                return None
-
-            return [doc.to_dict() for doc in relevant_docs]
-        except Exception as e:
-            log_warning(f"Error retrieving from knowledge base: {e}")
-            raise e
+        return _msg.get_relevant_docs_from_knowledge(
+            self,
+            query,
+            num_documents=num_documents,
+            filters=filters,
+            validate_filters=validate_filters,
+            run_context=run_context,
+            **kwargs,
+        )
 
     async def aget_relevant_docs_from_knowledge(
         self,
@@ -10363,263 +8308,27 @@ class Agent:
         run_context: Optional[RunContext] = None,
         **kwargs,
     ) -> Optional[List[Union[Dict[str, Any], str]]]:
-        """Get relevant documents from knowledge base asynchronously."""
-        from agno.knowledge.document import Document
-
-        # Extract dependencies from run_context if available
-        dependencies = run_context.dependencies if run_context else None
-
-        if num_documents is None and self.knowledge is not None:
-            num_documents = getattr(self.knowledge, "max_results", None)
-
-        # Validate the filters against known valid filter keys
-        if self.knowledge is not None and filters is not None:
-            if validate_filters:
-                valid_filters, invalid_keys = await self.knowledge.avalidate_filters(filters)  # type: ignore
-
-                # Warn about invalid filter keys
-                if invalid_keys:  # type: ignore
-                    log_warning(f"Invalid filter keys provided: {invalid_keys}. These filters will be ignored.")
-
-                    # Only use valid filters
-                    filters = valid_filters
-                    if not filters:
-                        log_warning("No valid filters remain after validation. Search will proceed without filters.")
-
-                if invalid_keys == [] and valid_filters == {}:
-                    log_warning("No valid filters provided. Search will proceed without filters.")
-                    filters = None
-
-        if self.knowledge_retriever is not None and callable(self.knowledge_retriever):
-            from inspect import isawaitable, signature
-
-            try:
-                sig = signature(self.knowledge_retriever)
-                knowledge_retriever_kwargs: Dict[str, Any] = {}
-                if "agent" in sig.parameters:
-                    knowledge_retriever_kwargs = {"agent": self}
-                if "filters" in sig.parameters:
-                    knowledge_retriever_kwargs["filters"] = filters
-                if "run_context" in sig.parameters:
-                    knowledge_retriever_kwargs["run_context"] = run_context
-                elif "dependencies" in sig.parameters:
-                    # Backward compatibility: support dependencies parameter
-                    knowledge_retriever_kwargs["dependencies"] = dependencies
-                knowledge_retriever_kwargs.update({"query": query, "num_documents": num_documents, **kwargs})
-                result = self.knowledge_retriever(**knowledge_retriever_kwargs)
-
-                if isawaitable(result):
-                    result = await result
-
-                return result
-            except Exception as e:
-                log_warning(f"Knowledge retriever failed: {e}")
-                raise e
-
-        # Use knowledge protocol's retrieve method
-        try:
-            if self.knowledge is None:
-                return None
-
-            # Use protocol aretrieve() or retrieve() method if available
-            aretrieve_fn = getattr(self.knowledge, "aretrieve", None)
-            retrieve_fn = getattr(self.knowledge, "retrieve", None)
-
-            if not callable(aretrieve_fn) and not callable(retrieve_fn):
-                log_debug("Knowledge does not implement retrieve()")
-                return None
-
-            if num_documents is None:
-                num_documents = getattr(self.knowledge, "max_results", 10)
-
-            log_debug(f"Retrieving from knowledge base with filters: {filters}")
-
-            if callable(aretrieve_fn):
-                relevant_docs: List[Document] = await aretrieve_fn(
-                    query=query, max_results=num_documents, filters=filters
-                )
-            elif callable(retrieve_fn):
-                relevant_docs = retrieve_fn(query=query, max_results=num_documents, filters=filters)
-            else:
-                return None
-
-            if not relevant_docs or len(relevant_docs) == 0:
-                log_debug("No relevant documents found for query")
-                return None
-
-            return [doc.to_dict() for doc in relevant_docs]
-        except Exception as e:
-            log_warning(f"Error retrieving from knowledge base: {e}")
-            raise e
+        return await _msg.aget_relevant_docs_from_knowledge(
+            self,
+            query,
+            num_documents=num_documents,
+            filters=filters,
+            validate_filters=validate_filters,
+            run_context=run_context,
+            **kwargs,
+        )
 
     def _convert_documents_to_string(self, docs: List[Union[Dict[str, Any], str]]) -> str:
-        if docs is None or len(docs) == 0:
-            return ""
-
-        if self.references_format == "yaml":
-            import yaml
-
-            return yaml.dump(docs)
-
-        import json
-
-        return json.dumps(docs, indent=2, ensure_ascii=False)
+        return _msg._convert_documents_to_string(self, docs)
 
     def _convert_dependencies_to_string(self, context: Dict[str, Any]) -> str:
-        """Convert the context dictionary to a string representation.
-
-        Args:
-            context: Dictionary containing context data
-
-        Returns:
-            String representation of the context, or empty string if conversion fails
-        """
-        if context is None:
-            return ""
-
-        import json
-
-        try:
-            return json.dumps(context, indent=2, default=str)
-        except (TypeError, ValueError, OverflowError) as e:
-            log_warning(f"Failed to convert context to JSON: {e}")
-            # Attempt a fallback conversion for non-serializable objects
-            sanitized_context = {}
-            for key, value in context.items():
-                try:
-                    # Try to serialize each value individually
-                    json.dumps({key: value}, default=str)
-                    sanitized_context[key] = value
-                except Exception:
-                    # If serialization fails, convert to string representation
-                    sanitized_context[key] = str(value)
-
-            try:
-                return json.dumps(sanitized_context, indent=2)
-            except Exception as e:
-                log_error(f"Failed to convert sanitized context to JSON: {e}")
-                return str(context)
+        return _msg._convert_dependencies_to_string(context)
 
     def deep_copy(self, *, update: Optional[Dict[str, Any]] = None) -> Agent:
-        """Create and return a deep copy of this Agent, optionally updating fields.
-
-        Args:
-            update (Optional[Dict[str, Any]]): Optional dictionary of fields for the new Agent.
-
-        Returns:
-            Agent: A new Agent instance.
-        """
-        from dataclasses import fields
-
-        # Extract the fields to set for the new Agent
-        fields_for_new_agent: Dict[str, Any] = {}
-
-        for f in fields(self):
-            # Skip private fields (not part of __init__ signature)
-            if f.name.startswith("_"):
-                continue
-
-            field_value = getattr(self, f.name)
-            if field_value is not None:
-                try:
-                    fields_for_new_agent[f.name] = self._deep_copy_field(f.name, field_value)
-                except Exception as e:
-                    log_warning(f"Failed to deep copy field '{f.name}': {e}. Using original value.")
-                    fields_for_new_agent[f.name] = field_value
-
-        # Update fields if provided
-        if update:
-            fields_for_new_agent.update(update)
-
-        # Create a new Agent
-        try:
-            new_agent = self.__class__(**fields_for_new_agent)
-            log_debug(f"Created new {self.__class__.__name__}")
-            return new_agent
-        except Exception as e:
-            log_error(f"Failed to create deep copy of {self.__class__.__name__}: {e}")
-            raise
+        return _ser.deep_copy(self, update=update)
 
     def _deep_copy_field(self, field_name: str, field_value: Any) -> Any:
-        """Helper method to deep copy a field based on its type."""
-        from copy import copy, deepcopy
-
-        # For memory and reasoning_agent, use their deep_copy methods
-        if field_name == "reasoning_agent":
-            return field_value.deep_copy()
-
-        # For tools, share MCP tools but copy others
-        if field_name == "tools" and field_value is not None:
-            try:
-                copied_tools = []
-                for tool in field_value:
-                    try:
-                        # Share MCP tools (they maintain server connections)
-                        is_mcp_tool = hasattr(type(tool), "__mro__") and any(
-                            c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
-                        )
-                        if is_mcp_tool:
-                            copied_tools.append(tool)
-                        else:
-                            try:
-                                copied_tools.append(deepcopy(tool))
-                            except Exception:
-                                # Tool can't be deep copied, share by reference
-                                copied_tools.append(tool)
-                    except Exception:
-                        # MCP detection failed, share tool by reference to be safe
-                        copied_tools.append(tool)
-                return copied_tools
-            except Exception as e:
-                # If entire tools processing fails, log and return original list
-                log_warning(f"Failed to process tools for deep copy: {e}")
-                return field_value
-
-        # Share heavy resources - these maintain connections/pools that shouldn't be duplicated
-        if field_name in (
-            "db",
-            "model",
-            "reasoning_model",
-            "knowledge",
-            "memory_manager",
-            "parser_model",
-            "output_model",
-            "session_summary_manager",
-            "culture_manager",
-            "compression_manager",
-            "learning",
-            "skills",
-        ):
-            return field_value
-
-        # For compound types, attempt a deep copy
-        if isinstance(field_value, (list, dict, set)):
-            try:
-                return deepcopy(field_value)
-            except Exception:
-                try:
-                    return copy(field_value)
-                except Exception as e:
-                    log_warning(f"Failed to copy field: {field_name} - {e}")
-                    return field_value
-
-        # For pydantic models, attempt a model_copy
-        if isinstance(field_value, BaseModel):
-            try:
-                return field_value.model_copy(deep=True)
-            except Exception:
-                try:
-                    return field_value.model_copy(deep=False)
-                except Exception as e:
-                    log_warning(f"Failed to copy field: {field_name} - {e}")
-                    return field_value
-
-        # For other types, attempt a shallow copy first
-        try:
-            return copy(field_value)
-        except Exception:
-            # If copy fails, return as is
-            return field_value
+        return _ser._deep_copy_field(self, field_name, field_value)
 
     def save_run_response_to_file(
         self,
@@ -10628,34 +8337,7 @@ class Agent:
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
     ) -> None:
-        if self.save_response_to_file is not None and run_response is not None:
-            message_str = None
-            if input is not None:
-                if isinstance(input, str):
-                    message_str = input
-                else:
-                    log_warning("Did not use input in output file name: input is not a string")
-            try:
-                from pathlib import Path
-
-                fn = self.save_response_to_file.format(
-                    name=self.name,
-                    session_id=session_id,
-                    user_id=user_id,
-                    message=message_str,
-                    run_id=run_response.run_id,
-                )
-                fn_path = Path(fn)
-                if not fn_path.parent.exists():
-                    fn_path.parent.mkdir(parents=True, exist_ok=True)
-                if isinstance(run_response.content, str):
-                    fn_path.write_text(run_response.content)
-                else:
-                    import json
-
-                    fn_path.write_text(json.dumps(run_response.content, indent=2))
-            except Exception as e:
-                log_warning(f"Failed to save output to file: {e}")
+        return _ser.save_run_response_to_file(self, run_response, input=input, session_id=session_id, user_id=user_id)
 
     def _calculate_run_metrics(self, messages: List[Message], current_run_metrics: Optional[Metrics] = None) -> Metrics:
         """Sum the metrics of the given messages into a Metrics object"""
