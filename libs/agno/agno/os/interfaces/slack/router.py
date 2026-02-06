@@ -211,12 +211,12 @@ def attach_routes(
             return text
 
         if len(message) <= 40000:
-            slack_tools.send_message(channel=channel, text=_format(message) or "", thread_ts=thread_ts)
+            slack_tools.send_message_thread(channel=channel, text=_format(message) or "", thread_ts=thread_ts)
             return
 
         message_batches = [message[i : i + 40000] for i in range(0, len(message), 40000)]
         for i, batch in enumerate(message_batches, 1):
             batch_message = f"[{i}/{len(message_batches)}] {batch}"
-            slack_tools.send_message(channel=channel, text=_format(batch_message) or "", thread_ts=thread_ts)
+            slack_tools.send_message_thread(channel=channel, text=_format(batch_message) or "", thread_ts=thread_ts)
 
     return router

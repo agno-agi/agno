@@ -23,6 +23,7 @@ class SlackTools(Toolkit):
         markdown: bool = True,
         output_directory: Optional[str] = None,
         enable_send_message: bool = True,
+        enable_send_message_thread: bool = True,
         enable_list_channels: bool = True,
         enable_get_channel_history: bool = True,
         enable_upload_file: bool = True,
@@ -48,6 +49,8 @@ class SlackTools(Toolkit):
         tools: List[Any] = []
         if enable_send_message or all:
             tools.append(self.send_message)
+        if enable_send_message_thread or all:
+            tools.append(self.send_message_thread)
         if enable_list_channels or all:
             tools.append(self.list_channels)
         if enable_get_channel_history or all:
@@ -67,8 +70,34 @@ class SlackTools(Toolkit):
 
         super().__init__(name="slack", tools=tools, **kwargs)
 
-    def send_message(self, channel: str, text: str, thread_ts: Optional[str] = None) -> str:
-        """Send a message. If thread_ts provided, replies in that thread. Supports mrkdwn."""
+    def send_message(self, channel: str, text: str) -> str:
+        """Send a message to a Slack channel.
+
+        Args:
+            channel (str): The channel ID or name to send the message to.
+            text (str): The text of the message to send. Supports Slack mrkdwn formatting.
+
+        Returns:
+            str: A JSON string containing the response from the Slack API.
+        """
+        try:
+            response = self.client.chat_postMessage(channel=channel, text=text, mrkdwn=self.markdown)
+            return json.dumps(response.data)
+        except SlackApiError as e:
+            logger.error(f"Error sending message: {e}")
+            return json.dumps({"error": str(e)})
+
+    def send_message_thread(self, channel: str, text: str, thread_ts: str) -> str:
+        """Reply to a message thread in a Slack channel.
+
+        Args:
+            channel (str): The channel ID or name where the thread exists.
+            text (str): The text of the reply. Supports Slack mrkdwn formatting.
+            thread_ts (str): The timestamp of the parent message to reply to.
+
+        Returns:
+            str: A JSON string containing the response from the Slack API.
+        """
         try:
             response = self.client.chat_postMessage(
                 channel=channel, text=text, thread_ts=thread_ts, mrkdwn=self.markdown
@@ -79,7 +108,11 @@ class SlackTools(Toolkit):
             return json.dumps({"error": str(e)})
 
     def list_channels(self) -> str:
-        """List all channels in the workspace."""
+        """List all channels in the Slack workspace.
+
+        Returns:
+            str: A JSON string containing a list of channels with their IDs and names.
+        """
         try:
             response = self.client.conversations_list()
             channels = [{"id": channel["id"], "name": channel["name"]} for channel in response["channels"]]
@@ -89,7 +122,15 @@ class SlackTools(Toolkit):
             return json.dumps({"error": str(e)})
 
     def get_channel_history(self, channel: str, limit: int = 100) -> str:
-        """Get recent messages from a channel."""
+        """Get the message history of a Slack channel.
+
+        Args:
+            channel (str): The channel ID to fetch history from.
+            limit (int): The maximum number of messages to fetch. Defaults to 100.
+
+        Returns:
+            str: A JSON string containing the channel's message history.
+        """
         try:
             response = self.client.conversations_history(channel=channel, limit=limit)
             messages: List[Dict[str, Any]] = [  # type: ignore
@@ -130,7 +171,19 @@ class SlackTools(Toolkit):
         initial_comment: Optional[str] = None,
         thread_ts: Optional[str] = None,
     ) -> str:
-        """Upload a file to a channel. Content can be text or bytes."""
+        """Upload a file to a Slack channel.
+
+        Args:
+            channel (str): The channel ID to upload the file to.
+            content (str or bytes): The file content. Text strings will be encoded to bytes.
+            filename (str): The name for the uploaded file.
+            title (str): An optional title for the file.
+            initial_comment (str): An optional message to include with the file upload.
+            thread_ts (str): The timestamp of a thread to upload the file into. Optional.
+
+        Returns:
+            str: A JSON string containing the response from the Slack API.
+        """
         try:
             # Handle both string and bytes content
             if isinstance(content, str):
@@ -161,7 +214,15 @@ class SlackTools(Toolkit):
             return json.dumps({"error": str(e)})
 
     def download_file(self, file_id: str, dest_path: Optional[str] = None) -> str:
-        """Download a file by ID. Returns path or base64 content."""
+        """Download a file from Slack by its file ID.
+
+        Args:
+            file_id (str): The Slack file ID to download.
+            dest_path (str): An optional destination path to save the file to. Must be within the configured output_directory.
+
+        Returns:
+            str: A JSON string containing the file metadata and either the local file path or base64-encoded content.
+        """
         try:
             # Get file info from Slack API
             response = self.client.files_info(file=file_id)
@@ -238,7 +299,15 @@ class SlackTools(Toolkit):
             return None
 
     def search_messages(self, query: str, limit: int = 20) -> str:
-        """Search messages. Modifiers: from:@user, in:#channel, has:link, before:/after:date."""
+        """Search messages across the Slack workspace.
+
+        Args:
+            query (str): The search query. Supports modifiers like from:@user, in:#channel, has:link, before:date, after:date.
+            limit (int): The maximum number of results to return. Defaults to 20, max 100.
+
+        Returns:
+            str: A JSON string containing the count and list of matching messages with text, user, channel, timestamp, and permalink.
+        """
         try:
             response = self.client.search_messages(query=query, count=min(limit, 100))
             matches = response.get("messages", {}).get("matches", [])
@@ -259,7 +328,16 @@ class SlackTools(Toolkit):
             return json.dumps({"error": str(e)})
 
     def get_thread(self, channel: str, thread_ts: str, limit: int = 100) -> str:
-        """Get all messages in a thread by its timestamp."""
+        """Get all messages in a thread by the parent message's timestamp.
+
+        Args:
+            channel (str): The channel ID where the thread exists.
+            thread_ts (str): The timestamp of the parent message.
+            limit (int): The maximum number of replies to fetch. Defaults to 100, max 200.
+
+        Returns:
+            str: A JSON string containing the thread timestamp, reply count, and list of messages.
+        """
         try:
             response = self.client.conversations_replies(
                 channel=channel,
@@ -286,7 +364,14 @@ class SlackTools(Toolkit):
             return json.dumps({"error": str(e)})
 
     def list_users(self, limit: int = 100) -> str:
-        """List all users in the workspace."""
+        """List all users in the Slack workspace.
+
+        Args:
+            limit (int): The maximum number of users to fetch. Defaults to 100.
+
+        Returns:
+            str: A JSON string containing the count and list of users with their ID, name, real name, title, and bot status.
+        """
         try:
             response = self.client.users_list(limit=limit)
             users = [
@@ -306,7 +391,14 @@ class SlackTools(Toolkit):
             return json.dumps({"error": str(e)})
 
     def get_user_info(self, user_id: str) -> str:
-        """Get user details by ID (name, email, title, timezone)."""
+        """Get detailed information about a Slack user by their user ID.
+
+        Args:
+            user_id (str): The Slack user ID to look up.
+
+        Returns:
+            str: A JSON string containing the user's ID, name, real name, email, title, timezone, and bot status.
+        """
         try:
             response = self.client.users_info(user=user_id)
             user = response.get("user", {})
