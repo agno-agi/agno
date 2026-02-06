@@ -10171,13 +10171,17 @@ class Team:
             Team: A new Team instance with copied state.
         """
         from dataclasses import fields
+        from inspect import signature
+
+        # Get the set of valid __init__ parameter names
+        init_params = set(signature(self.__class__.__init__).parameters.keys()) - {"self"}
 
         # Extract the fields to set for the new Team
         fields_for_new_team: Dict[str, Any] = {}
 
         for f in fields(self):
-            # Skip private fields (not part of __init__ signature)
-            if f.name.startswith("_"):
+            # Skip private fields and fields not accepted by __init__
+            if f.name.startswith("_") or f.name not in init_params:
                 continue
 
             field_value = getattr(self, f.name)
