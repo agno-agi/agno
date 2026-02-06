@@ -146,6 +146,8 @@ class TeamRunTrait(TeamTraitBase):
                     # 2. Determine tools for model
                     # Initialize team run context
                     team_run_context: Dict[str, Any] = {}
+                    # Note: MCP tool refresh is async-only by design (_check_and_refresh_mcp_tools
+                    # is called in _arun/_arun_stream). Sync paths do not support MCP tools.
 
                     _tools = self._determine_tools_for_model(
                         model=self.model,
@@ -329,7 +331,7 @@ class TeamRunTrait(TeamTraitBase):
                     if run_response.content is None:
                         run_response.content = str(e)
 
-                    log_error(f"Error in Agent run: {str(e)}")
+                    log_error(f"Error in Team run: {str(e)}")
 
                     # Cleanup and store the run response and session
                     self._cleanup_and_store(run_response=run_response, session=session)
@@ -344,7 +346,7 @@ class TeamRunTrait(TeamTraitBase):
             self._disconnect_connectable_tools()
             # Always clean up the run tracking
             cleanup_run(run_response.run_id)  # type: ignore
-        return run_response
+        return run_response  # Defensive fallback for type-checker; all paths return inside the loop
 
     def _run_stream(
         self,
@@ -409,6 +411,8 @@ class TeamRunTrait(TeamTraitBase):
                     # 2. Determine tools for model
                     # Initialize team run context
                     team_run_context: Dict[str, Any] = {}
+                    # Note: MCP tool refresh is async-only by design (_check_and_refresh_mcp_tools
+                    # is called in _arun/_arun_stream). Sync paths do not support MCP tools.
 
                     _tools = self._determine_tools_for_model(
                         model=self.model,
@@ -900,7 +904,7 @@ class TeamRunTrait(TeamTraitBase):
         # output_schema parameter takes priority, even if run_context was provided
         run_context.output_schema = output_schema
 
-        # Resolve callable dependencies if present
+        # Resolve callable dependencies once before retry loop
         if run_context.dependencies is not None:
             self._resolve_run_dependencies(run_context=run_context)
 
@@ -999,10 +1003,6 @@ class TeamRunTrait(TeamTraitBase):
         memory_task = None
 
         try:
-            # Resolve callable dependencies once before retry loop
-            if run_context.dependencies is not None:
-                await self._aresolve_run_dependencies(run_context=run_context)
-
             # Read or create session once before retry loop
             if self._has_async_db():
                 team_session = await self._aread_or_create_session(session_id=session_id, user_id=user_id)
@@ -1021,6 +1021,10 @@ class TeamRunTrait(TeamTraitBase):
                 run_context.session_state = self._load_session_state(
                     session=team_session, session_state=run_context.session_state
                 )
+
+            # Resolve callable dependencies after session state is loaded (matches sync run() order)
+            if run_context.dependencies is not None:
+                await self._aresolve_run_dependencies(run_context=run_context)
 
             # Set up retry logic
             num_attempts = self.retries + 1
@@ -1234,6 +1238,7 @@ class TeamRunTrait(TeamTraitBase):
                         await asyncio.sleep(delay)
                         continue
 
+                    run_response.status = RunStatus.error
                     run_error = create_team_run_error_event(run_response, error=str(e))
                     run_response.events = add_team_error_event(error=run_error, events=run_response.events)
 
@@ -1304,10 +1309,6 @@ class TeamRunTrait(TeamTraitBase):
         memory_task = None
 
         try:
-            # Resolve callable dependencies once before retry loop
-            if run_context.dependencies is not None:
-                await self._aresolve_run_dependencies(run_context=run_context)
-
             # Read or create session once before retry loop
             if self._has_async_db():
                 team_session = await self._aread_or_create_session(session_id=session_id, user_id=user_id)
@@ -1326,6 +1327,10 @@ class TeamRunTrait(TeamTraitBase):
                 run_context.session_state = self._load_session_state(
                     session=team_session, session_state=run_context.session_state
                 )
+
+            # Resolve callable dependencies after session state is loaded (matches sync run() order)
+            if run_context.dependencies is not None:
+                await self._aresolve_run_dependencies(run_context=run_context)
 
             # Set up retry logic
             num_attempts = self.retries + 1
@@ -1857,8 +1862,6 @@ class TeamRunTrait(TeamTraitBase):
         # Start the run metrics timer, to calculate the run duration
         run_response.metrics = Metrics()
         run_response.metrics.start_timer()
-
-        yield_run_output = yield_run_output
 
         if stream:
             return self._arun_stream(  # type: ignore

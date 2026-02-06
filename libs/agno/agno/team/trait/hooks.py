@@ -344,6 +344,9 @@ class TeamHooksTrait(TeamTraitBase):
             except Exception as e:
                 log_error(f"Post-hook #{i + 1} execution failed: {str(e)}")
                 log_exception(e)
+            finally:
+                # Reset global log mode incase an agent in the post-hook changed it
+                self._set_debug(debug_mode=debug_mode)
 
     async def _aexecute_post_hooks(
         self,
@@ -431,6 +434,9 @@ class TeamHooksTrait(TeamTraitBase):
             except Exception as e:
                 log_error(f"Post-hook #{i + 1} execution failed: {str(e)}")
                 log_exception(e)
+            finally:
+                # Reset global log mode incase an agent in the post-hook changed it
+                self._set_debug(debug_mode=debug_mode)
 
     def _update_run_response(
         self,
@@ -630,6 +636,15 @@ class TeamHooksTrait(TeamTraitBase):
         if full_model_response.provider_data is not None:
             run_response.model_provider_data = full_model_response.provider_data
 
+        # Build a list of messages that should be added to the RunOutput
+        messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
+        # Update the TeamRunOutput messages
+        run_response.messages = messages_for_run_response
+        # Update the TeamRunOutput metrics
+        run_response.metrics = self._calculate_metrics(
+            messages_for_run_response, current_run_metrics=run_response.metrics
+        )
+
         if stream_events and reasoning_state["reasoning_started"]:
             all_reasoning_steps: List[ReasoningStep] = []
             if run_response.reasoning_steps:
@@ -647,19 +662,6 @@ class TeamHooksTrait(TeamTraitBase):
                     events_to_skip=self.events_to_skip,
                     store_events=self.store_events,
                 )
-
-        # Build a list of messages that should be added to the RunOutput
-        messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
-        # Update the TeamRunOutput messages
-        run_response.messages = messages_for_run_response
-        # Update the TeamRunOutput metrics
-        run_response.metrics = self._calculate_metrics(
-            messages_for_run_response, current_run_metrics=run_response.metrics
-        )
-
-        # Update the run_response audio if streaming
-        if full_model_response.audio is not None:
-            run_response.response_audio = full_model_response.audio
 
     async def _ahandle_model_response_stream(
         self,
@@ -777,14 +779,6 @@ class TeamHooksTrait(TeamTraitBase):
                 run_context=run_context,
             ):
                 yield event
-
-        # Get output_schema from run_context
-        output_schema = run_context.output_schema if run_context else None
-
-        # Handle structured outputs
-        if (output_schema is not None) and not self.use_json_mode and (full_model_response.parsed is not None):
-            # Update the run_response content with the structured output
-            run_response.content = full_model_response.parsed
 
         # Update TeamRunOutput
         if full_model_response.content is not None:

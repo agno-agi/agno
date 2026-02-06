@@ -356,7 +356,11 @@ class TeamApiTrait(TeamTraitBase):
                 member._scrub_run_output_for_storage(member_response)  # type: ignore
 
             # If this is a nested team, recursively scrub its member responses
-            if isinstance(member_response, TeamRunOutput) and member_response.member_responses:
+            if (
+                isinstance(member, _team_type())
+                and isinstance(member_response, TeamRunOutput)
+                and member_response.member_responses
+            ):
                 member._scrub_member_responses(member_response.member_responses)  # type: ignore
 
     def cli_app(

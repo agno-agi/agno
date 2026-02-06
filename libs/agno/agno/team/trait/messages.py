@@ -271,6 +271,11 @@ class TeamMessagesTrait(TeamTraitBase):
             if self.memory_manager is None:
                 self._set_memory_manager()
                 _memory_manager_not_set = True
+            if self._has_async_db():
+                raise ValueError(
+                    "Sync get_system_message cannot retrieve user memories with an async database. "
+                    "Use aget_system_message instead."
+                )
             user_memories = self.memory_manager.get_user_memories(user_id=user_id)  # type: ignore
             if user_memories and len(user_memories) > 0:
                 system_message_content += "You have access to user info and preferences from previous interactions that you can use to personalize your response:\n\n"
@@ -1579,10 +1584,7 @@ class TeamMessagesTrait(TeamTraitBase):
             "parser_model",
             "output_model",
             "session_summary_manager",
-            "culture_manager",
             "compression_manager",
-            "learning",
-            "skills",
         ):
             return field_value
 

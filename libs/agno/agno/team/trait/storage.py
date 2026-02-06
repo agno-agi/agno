@@ -406,7 +406,7 @@ class TeamStorageTrait(TeamTraitBase):
             config["add_knowledge_to_context"] = self.add_knowledge_to_context
         if not self.search_knowledge:  # default is True
             config["search_knowledge"] = self.search_knowledge
-        if self.add_search_knowledge_instructions:
+        if not self.add_search_knowledge_instructions:  # default is True
             config["add_search_knowledge_instructions"] = self.add_search_knowledge_instructions
         if self.references_format != "json":  # default is "json"
             config["references_format"] = self.references_format
@@ -546,6 +546,10 @@ class TeamStorageTrait(TeamTraitBase):
         # --- Metadata ---
         if self.metadata is not None:
             config["metadata"] = self.metadata
+
+        # --- Version ---
+        if self.version is not None:
+            config["version"] = self.version
 
         # --- Debug and telemetry settings ---
         if self.debug_mode:
@@ -711,7 +715,7 @@ class TeamStorageTrait(TeamTraitBase):
         #     from agno.compression.manager import CompressionManager
         #     config["compression_manager"] = CompressionManager.from_dict(config["compression_manager"])
 
-        return cast(
+        team = cast(
             "Team",
             cls(
                 # --- Team settings ---
@@ -830,6 +834,12 @@ class TeamStorageTrait(TeamTraitBase):
                 telemetry=config.get("telemetry", True),
             ),
         )
+
+        # Set fields that are not constructor parameters
+        if "version" in config:
+            team.version = config["version"]
+
+        return team
 
     def save(
         self,
@@ -1137,16 +1147,28 @@ class TeamStorageTrait(TeamTraitBase):
             loaded_session = None
             # We have a standalone team, so we are loading a TeamSession
             if self.workflow_id is None:
-                loaded_session = cast(TeamSession, await self._aread_session(session_id=session_id_to_load))  # type: ignore
+                if self._has_async_db():
+                    loaded_session = cast(TeamSession, await self._aread_session(session_id=session_id_to_load))  # type: ignore
+                else:
+                    loaded_session = cast(TeamSession, self._read_session(session_id=session_id_to_load))  # type: ignore
             # We have a workflow team, so we are loading a WorkflowSession
             else:
-                loaded_session = cast(
-                    WorkflowSession,
-                    await self._aread_session(
-                        session_id=session_id_to_load,  # type: ignore
-                        session_type=SessionType.WORKFLOW,
-                    ),
-                )
+                if self._has_async_db():
+                    loaded_session = cast(
+                        WorkflowSession,
+                        await self._aread_session(
+                            session_id=session_id_to_load,  # type: ignore
+                            session_type=SessionType.WORKFLOW,
+                        ),
+                    )
+                else:
+                    loaded_session = cast(
+                        WorkflowSession,
+                        self._read_session(
+                            session_id=session_id_to_load,  # type: ignore
+                            session_type=SessionType.WORKFLOW,
+                        ),
+                    )
 
             # Cache the session if relevant
             if loaded_session is not None and self.cache_session:
@@ -1443,7 +1465,10 @@ class TeamStorageTrait(TeamTraitBase):
         """Delete the current session and save to storage"""
         if self.db is None:
             return
-        await self.db.delete_session(session_id=session_id)  # type: ignore
+        if self._has_async_db():
+            await self.db.delete_session(session_id=session_id)  # type: ignore
+        else:
+            self.db.delete_session(session_id=session_id)
 
     def get_session_messages(
         self,
@@ -1524,8 +1549,7 @@ class TeamStorageTrait(TeamTraitBase):
 
         session = await self.aget_session(session_id=session_id)  # type: ignore
         if session is None:
-            log_warning(f"Session {session_id} not found")
-            return []
+            raise Exception("Session not found")
 
         return session.get_messages(
             team_id=self.id,

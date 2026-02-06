@@ -642,9 +642,8 @@ class TeamToolsTrait(TeamTraitBase):
             if self.db is None:
                 return "Previous session messages not available"
 
-            self.db = cast(AsyncBaseDb, self.db)
             if self._has_async_db():
-                selected_sessions = await self.db.get_sessions(  # type: ignore
+                selected_sessions = await cast(AsyncBaseDb, self.db).get_sessions(  # type: ignore
                     session_type=SessionType.TEAM,
                     limit=num_history_sessions,
                     user_id=user_id,
