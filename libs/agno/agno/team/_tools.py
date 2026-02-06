@@ -800,12 +800,13 @@ def _propagate_member_pause(
         return
     if run_response.requirements is None:
         run_response.requirements = []
-    member_id = getattr(member_agent, "agent_id", None) or getattr(member_agent, "team_id", None)
+    member_id = get_member_id(member_agent)
     for req in member_run_response.requirements:
-        req.member_agent_id = member_id
-        req.member_agent_name = member_agent.name
-        req.member_run_id = member_run_response.run_id
-        run_response.requirements.append(req)
+        req_copy = copy(req)
+        req_copy.member_agent_id = member_id
+        req_copy.member_agent_name = member_agent.name
+        req_copy.member_run_id = member_run_response.run_id
+        run_response.requirements.append(req_copy)
 
 
 def _get_delegate_task_function(
@@ -1306,6 +1307,7 @@ def _get_delegate_task_function(
             # Check if the member run is paused (HITL)
             if member_agent_run_response is not None and member_agent_run_response.is_paused:
                 _propagate_member_pause(run_response, member_agent, member_agent_run_response)
+                use_team_logger()
                 _process_delegate_task_to_member(
                     member_agent_run_response,
                     member_agent,
@@ -1450,7 +1452,7 @@ def _get_delegate_task_function(
                     member_agent_task=member_agent_task,
                     history=history,
                     member_agent_index=member_agent_index,
-                ) -> str:
+                ) -> Tuple[str, Optional[Union[Agent, "Team"]], Optional[Union[RunOutput, TeamRunOutput]]]:
                     member_session_state_copy = copy(run_context.session_state)
 
                     member_agent_run_response = await member_agent.arun(
@@ -1476,10 +1478,6 @@ def _get_delegate_task_function(
                     )
                     check_if_run_cancelled(member_agent_run_response)
 
-                    # Check if the member run is paused (HITL)
-                    if member_agent_run_response is not None and member_agent_run_response.is_paused:
-                        _propagate_member_pause(run_response, member_agent, member_agent_run_response)
-
                     _process_delegate_task_to_member(
                         member_agent_run_response,
                         member_agent,
@@ -1490,36 +1488,50 @@ def _get_delegate_task_function(
                     member_name = member_agent.name if member_agent.name else f"agent_{member_agent_index}"
 
                     if member_agent_run_response is not None and member_agent_run_response.is_paused:
-                        return f"Agent {member_name}: Requires human input before continuing."
+                        return (
+                            f"Agent {member_name}: Requires human input before continuing.",
+                            member_agent,
+                            member_agent_run_response,
+                        )
 
+                    result_text: str
                     try:
                         if member_agent_run_response.content is None and (
                             member_agent_run_response.tools is None or len(member_agent_run_response.tools) == 0
                         ):
-                            return f"Agent {member_name}: No response from the member agent."
+                            result_text = f"Agent {member_name}: No response from the member agent."
                         elif isinstance(member_agent_run_response.content, str):
                             if len(member_agent_run_response.content.strip()) > 0:
-                                return f"Agent {member_name}: {member_agent_run_response.content}"
+                                result_text = f"Agent {member_name}: {member_agent_run_response.content}"
                             elif (
                                 member_agent_run_response.tools is not None and len(member_agent_run_response.tools) > 0
                             ):
-                                return f"Agent {member_name}: {','.join([tool.result for tool in member_agent_run_response.tools])}"
+                                result_text = f"Agent {member_name}: {','.join([tool.result for tool in member_agent_run_response.tools])}"
+                            else:
+                                result_text = f"Agent {member_name}: No Response"
                         elif issubclass(type(member_agent_run_response.content), BaseModel):
-                            return f"Agent {member_name}: {member_agent_run_response.content.model_dump_json(indent=2)}"  # type: ignore
+                            result_text = (
+                                f"Agent {member_name}: {member_agent_run_response.content.model_dump_json(indent=2)}"  # type: ignore
+                            )
                         else:
                             import json
 
-                            return f"Agent {member_name}: {json.dumps(member_agent_run_response.content, indent=2)}"
+                            result_text = (
+                                f"Agent {member_name}: {json.dumps(member_agent_run_response.content, indent=2)}"
+                            )
                     except Exception as e:
-                        return f"Agent {member_name}: Error - {str(e)}"
+                        result_text = f"Agent {member_name}: Error - {str(e)}"
 
-                    return f"Agent {member_name}: No Response"
+                    return (result_text, None, None)
 
                 tasks.append(run_member_agent)  # type: ignore
 
-            results = await asyncio.gather(*[task() for task in tasks])  # type: ignore
-            for result in results:
-                yield result
+            gathered = await asyncio.gather(*[task() for task in tasks])  # type: ignore
+            # Propagate HITL pauses sequentially after all coroutines complete
+            for result_text, paused_agent, paused_response in gathered:
+                if paused_agent is not None and paused_response is not None:
+                    _propagate_member_pause(run_response, paused_agent, paused_response)
+                yield result_text
 
         # After all the member runs, switch back to the team logger
         use_team_logger()

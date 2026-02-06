@@ -672,6 +672,7 @@ class TeamRunOutput:
                 "reasoning_steps",
                 "reasoning_messages",
                 "references",
+                "requirements",
             ]
         }
         if self.events is not None:
@@ -727,6 +728,9 @@ class TeamRunOutput:
 
         if self.content and isinstance(self.content, BaseModel):
             _dict["content"] = self.content.model_dump(exclude_none=True, mode="json")
+
+        if self.requirements is not None:
+            _dict["requirements"] = [req.to_dict() if hasattr(req, "to_dict") else req for req in self.requirements]
 
         if self.tools is not None:
             _dict["tools"] = []
@@ -806,6 +810,11 @@ class TeamRunOutput:
         tools = data.pop("tools", [])
         tools = [ToolExecution.from_dict(tool) for tool in tools] if tools else None
 
+        requirements_data = data.pop("requirements", None)
+        requirements = None
+        if requirements_data is not None:
+            requirements = [RunRequirement.from_dict(r) if isinstance(r, dict) else r for r in requirements_data]
+
         response_audio = reconstruct_response_audio(data.pop("response_audio", None))
 
         input_data = data.pop("input", None)
@@ -842,6 +851,7 @@ class TeamRunOutput:
             input=input_obj,
             citations=citations,
             tools=tools,
+            requirements=requirements,
             events=events,
             **filtered_data,
         )
