@@ -7504,7 +7504,7 @@ class Agent:
             config["store_media"] = self.store_media
         if not self.store_tool_messages:
             config["store_tool_messages"] = self.store_tool_messages
-        if not self.store_history_messages:
+        if self.store_history_messages:
             config["store_history_messages"] = self.store_history_messages
 
         # --- System message settings ---
