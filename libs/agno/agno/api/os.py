@@ -1,12 +1,13 @@
 from agno.api.api import api
 from agno.api.routes import ApiRoutes
 from agno.api.schemas.os import OSLaunch
+from agno.api.settings import agno_api_settings
 from agno.utils.log import log_debug
 
 
 def log_os_telemetry(launch: OSLaunch) -> None:
     """Telemetry recording for OS launches"""
-    with api.Client() as api_client:
+    with api.Client(timeout=agno_api_settings.telemetry_timeout) as api_client:
         try:
             response = api_client.post(
                 ApiRoutes.AGENT_OS_LAUNCH,

@@ -18,6 +18,10 @@ class AgnoAPISettings(BaseSettings):
 
     api_url: str = "https://os-api.agno.com"
 
+    # Timeout for telemetry requests (in seconds)
+    # Kept short to avoid blocking agent responses if telemetry endpoint is unreachable
+    telemetry_timeout: int = 3
+
     model_config = SettingsConfigDict(env_prefix="AGNO_")
 
     @field_validator("api_runtime", mode="before")

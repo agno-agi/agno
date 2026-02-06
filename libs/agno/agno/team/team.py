@@ -10126,36 +10126,61 @@ class Team:
         }
 
     def _log_team_telemetry(self, session_id: str, run_id: Optional[str] = None) -> None:
-        """Send a telemetry event to the API for a created Team run"""
+        """Send a telemetry event to the API for a created Team run.
 
+        Telemetry is submitted to a shared ThreadPoolExecutor to avoid blocking the response.
+        """
         self._set_telemetry()
         if not self.telemetry:
             return
 
         from agno.api.team import TeamRunCreate, create_team_run
+        from agno.api.telemetry import submit_telemetry
 
+        # Capture telemetry data before submitting to avoid race conditions
         try:
-            create_team_run(
-                run=TeamRunCreate(session_id=session_id, run_id=run_id, data=self._get_telemetry_data()),
-            )
+            telemetry_data = self._get_telemetry_data()
         except Exception as e:
             log_debug(f"Could not create Team run telemetry event: {e}")
+            return
+
+        def _send_telemetry() -> None:
+            try:
+                create_team_run(
+                    run=TeamRunCreate(session_id=session_id, run_id=run_id, data=telemetry_data),
+                )
+            except Exception as e:
+                log_debug(f"Could not create Team run telemetry event: {e}")
+
+        # Submit telemetry to background thread pool
+        submit_telemetry(_send_telemetry)
 
     async def _alog_team_telemetry(self, session_id: str, run_id: Optional[str] = None) -> None:
-        """Send a telemetry event to the API for a created Team async run"""
+        """Send a telemetry event to the API for a created Team async run.
 
+        Telemetry is sent as a fire-and-forget background task to avoid blocking the response.
+        """
         self._set_telemetry()
         if not self.telemetry:
             return
 
         from agno.api.team import TeamRunCreate, acreate_team_run
 
+        # Capture telemetry data before creating task to avoid race conditions
         try:
-            await acreate_team_run(
-                run=TeamRunCreate(session_id=session_id, run_id=run_id, data=self._get_telemetry_data())
-            )
+            telemetry_data = self._get_telemetry_data()
         except Exception as e:
             log_debug(f"Could not create Team run telemetry event: {e}")
+            return
+
+        async def _send_telemetry() -> None:
+            try:
+                await acreate_team_run(run=TeamRunCreate(session_id=session_id, run_id=run_id, data=telemetry_data))
+            except Exception as e:
+                log_debug(f"Could not create Team run telemetry event: {e}")
+
+        # Fire-and-forget: create task but don't await it
+        asyncio.create_task(_send_telemetry())
 
     def deep_copy(self, *, update: Optional[Dict[str, Any]] = None) -> "Team":
         """Create and return a deep copy of this Team, optionally updating fields.

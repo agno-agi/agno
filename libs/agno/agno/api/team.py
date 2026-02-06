@@ -1,12 +1,13 @@
 from agno.api.api import api
 from agno.api.routes import ApiRoutes
 from agno.api.schemas.team import TeamRunCreate
+from agno.api.settings import agno_api_settings
 from agno.utils.log import log_debug
 
 
 def create_team_run(run: TeamRunCreate) -> None:
     """Telemetry recording for Team runs"""
-    with api.Client() as api_client:
+    with api.Client(timeout=agno_api_settings.telemetry_timeout) as api_client:
         try:
             response = api_client.post(
                 ApiRoutes.RUN_CREATE,
@@ -19,7 +20,7 @@ def create_team_run(run: TeamRunCreate) -> None:
 
 async def acreate_team_run(run: TeamRunCreate) -> None:
     """Telemetry recording for async Team runs"""
-    async with api.AsyncClient() as api_client:
+    async with api.AsyncClient(timeout=agno_api_settings.telemetry_timeout) as api_client:
         try:
             response = await api_client.post(
                 ApiRoutes.RUN_CREATE,

@@ -4662,36 +4662,63 @@ class Workflow:
         }
 
     def _log_workflow_telemetry(self, session_id: str, run_id: Optional[str] = None) -> None:
-        """Send a telemetry event to the API for a created Workflow run"""
+        """Send a telemetry event to the API for a created Workflow run.
 
+        Telemetry is submitted to a shared ThreadPoolExecutor to avoid blocking the response.
+        """
         self._set_telemetry()
         if not self.telemetry:
             return
 
+        from agno.api.telemetry import submit_telemetry
         from agno.api.workflow import WorkflowRunCreate, create_workflow_run
 
+        # Capture telemetry data before submitting to avoid race conditions
         try:
-            create_workflow_run(
-                workflow=WorkflowRunCreate(session_id=session_id, run_id=run_id, data=self._get_telemetry_data()),
-            )
+            telemetry_data = self._get_telemetry_data()
         except Exception as e:
             log_debug(f"Could not create Workflow run telemetry event: {e}")
+            return
+
+        def _send_telemetry() -> None:
+            try:
+                create_workflow_run(
+                    workflow=WorkflowRunCreate(session_id=session_id, run_id=run_id, data=telemetry_data),
+                )
+            except Exception as e:
+                log_debug(f"Could not create Workflow run telemetry event: {e}")
+
+        # Submit telemetry to background thread pool
+        submit_telemetry(_send_telemetry)
 
     async def _alog_workflow_telemetry(self, session_id: str, run_id: Optional[str] = None) -> None:
-        """Send a telemetry event to the API for a created Workflow async run"""
+        """Send a telemetry event to the API for a created Workflow async run.
 
+        Telemetry is sent as a fire-and-forget background task to avoid blocking the response.
+        """
         self._set_telemetry()
         if not self.telemetry:
             return
 
         from agno.api.workflow import WorkflowRunCreate, acreate_workflow_run
 
+        # Capture telemetry data before creating task to avoid race conditions
         try:
-            await acreate_workflow_run(
-                workflow=WorkflowRunCreate(session_id=session_id, run_id=run_id, data=self._get_telemetry_data())
-            )
+            telemetry_data = self._get_telemetry_data()
         except Exception as e:
             log_debug(f"Could not create Workflow run telemetry event: {e}")
+            return
+
+        async def _send_telemetry() -> None:
+            try:
+                await acreate_workflow_run(
+                    workflow=WorkflowRunCreate(session_id=session_id, run_id=run_id, data=telemetry_data)
+                )
+            except Exception as e:
+                log_debug(f"Could not create Workflow run telemetry event: {e}")
+
+        # Fire-and-forget: create task but don't await it
+        asyncio.create_task(_send_telemetry())
 
     def cli_app(
         self,
