@@ -810,11 +810,6 @@ class TeamRunOutput:
         tools = data.pop("tools", [])
         tools = [ToolExecution.from_dict(tool) for tool in tools] if tools else None
 
-        requirements_data = data.pop("requirements", None)
-        requirements = None
-        if requirements_data is not None:
-            requirements = [RunRequirement.from_dict(r) if isinstance(r, dict) else r for r in requirements_data]
-
         response_audio = reconstruct_response_audio(data.pop("response_audio", None))
 
         input_data = data.pop("input", None)
