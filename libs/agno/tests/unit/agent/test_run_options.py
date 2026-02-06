@@ -4,8 +4,8 @@ import dataclasses
 
 import pytest
 
-from agno.agent.agent import Agent
 from agno.agent._run_options import ResolvedRunOptions, resolve_run_options
+from agno.agent.agent import Agent
 
 
 def _make_agent(**kwargs) -> Agent:

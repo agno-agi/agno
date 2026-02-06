@@ -95,6 +95,7 @@ from agno.utils.log import (
     log_warning,
 )
 
+
 def initialize_session(
     agent: Agent,
     session_id: Optional[str] = None,
@@ -274,7 +275,10 @@ def run_impl(
 
                 # 7. Update the RunOutput with the model response
                 agent._update_run_response(
-                    model_response=model_response, run_response=run_response, run_messages=run_messages, run_context=run_context
+                    model_response=model_response,
+                    run_response=run_response,
+                    run_messages=run_messages,
+                    run_context=run_context,
                 )
 
                 # We should break out of the run function
@@ -925,6 +929,8 @@ def run_dispatch(
         user_id=user_id,
         session_state=session_state,
         dependencies=opts.dependencies,
+        knowledge_filters=opts.knowledge_filters,
+        metadata=opts.metadata,
         output_schema=opts.output_schema,
     )
     # output_schema parameter takes priority, even if run_context was provided
@@ -933,12 +939,6 @@ def run_dispatch(
     # Resolve dependencies
     if run_context.dependencies is not None:
         agent._resolve_run_dependencies(run_context=run_context)
-
-    # Populate RunContext with resolved filters and metadata
-    if opts.knowledge_filters is not None:
-        run_context.knowledge_filters = opts.knowledge_filters
-    if opts.metadata is not None:
-        run_context.metadata = opts.metadata
 
     # Prepare arguments for the model
     response_format = agent._get_response_format(run_context=run_context) if agent.parser_model is None else None
@@ -2081,16 +2081,13 @@ def continue_run_dispatch(
         user_id=user_id,
         session_state=session_state,
         dependencies=opts.dependencies,
+        knowledge_filters=opts.knowledge_filters,
+        metadata=opts.metadata,
     )
 
     # Resolve dependencies
     if run_context.dependencies is not None:
         agent._resolve_run_dependencies(run_context=run_context)
-
-    # Populate RunContext with resolved filters and metadata
-    if opts.knowledge_filters is not None or run_context.knowledge_filters is not None:
-        run_context.knowledge_filters = opts.knowledge_filters or run_context.knowledge_filters
-    run_context.metadata = opts.metadata
 
     # Run can be continued from previous run response or from passed run_response context
     if run_response is not None:
@@ -2253,7 +2250,10 @@ def continue_run_impl(
 
                 # 3. Update the RunOutput with the model response
                 agent._update_run_response(
-                    model_response=model_response, run_response=run_response, run_messages=run_messages, run_context=run_context
+                    model_response=model_response,
+                    run_response=run_response,
+                    run_messages=run_messages,
+                    run_context=run_context,
                 )
 
                 # We should break out of the run function
@@ -3059,7 +3059,7 @@ async def acontinue_run_impl(
         await agent._disconnect_mcp_tools()
 
         # Always clean up the run tracking
-        cleanup_run(run_response.run_id)  # type: ignore
+        await acleanup_run(run_response.run_id)  # type: ignore
     return run_response  # type: ignore
 
 
