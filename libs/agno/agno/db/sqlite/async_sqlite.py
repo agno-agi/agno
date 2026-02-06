@@ -31,6 +31,14 @@ from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
 
 try:
+    import greenlet  # noqa: F401
+except ImportError:
+    raise ImportError(
+        "`greenlet` not installed. Required for async database operations. "
+        "Please install it using `pip install greenlet`"
+    )
+
+try:
     from sqlalchemy import Column, ForeignKey, MetaData, String, Table, func, select, text
     from sqlalchemy.dialects import sqlite
     from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
@@ -1791,6 +1799,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
+        linked_to: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
         """Get all knowledge contents from the database.
 
@@ -1799,6 +1808,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             page (Optional[int]): The page number.
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
+            linked_to (Optional[str]): Filter by linked_to value (knowledge instance name).
 
         Returns:
             Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
@@ -1813,6 +1823,10 @@ class AsyncSqliteDb(AsyncBaseDb):
         try:
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = select(table)
+
+                # Apply linked_to filter if provided
+                if linked_to is not None:
+                    stmt = stmt.where(table.c.linked_to == linked_to)
 
                 # Apply sorting
                 if sort_by is not None:

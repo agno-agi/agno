@@ -49,6 +49,10 @@ class Knowledge(RemoteKnowledge):
     max_results: int = 10
     readers: Optional[Dict[str, Reader]] = None
     content_sources: Optional[List[RemoteContentConfig]] = None
+    # Opt-in flag to enable vector search filtering by knowledge instanceP:
+    # When enabled, search results are filtered to only include documents from this knowledge instance
+    # Requires re-indexing existing data to include linked_to in document metadata
+    isolate_vector_search: bool = False
 
     def __post_init__(self):
         from agno.vectordb import VectorDb
@@ -518,9 +522,28 @@ class Knowledge(RemoteKnowledge):
                 log_warning("No vector db provided")
                 return []
 
+            # Inject linked_to filter if isolate_vector_search is enabled
+            search_filters = filters
+            if self.isolate_vector_search:
+                if not self.name:
+                    log_warning(
+                        "isolate_vector_search is enabled but knowledge instance has no name. "
+                        "Vector search isolation requires a knowledge name to filter by."
+                    )
+                elif search_filters is None:
+                    search_filters = {"linked_to": self.name}
+                elif isinstance(search_filters, dict):
+                    search_filters = {**search_filters, "linked_to": self.name}
+                elif isinstance(search_filters, list):
+                    log_warning(
+                        "isolate_vector_search is enabled but filters are list-based. "
+                        "Cannot inject linked_to filter into list-based filters. "
+                        "Consider using dict-based filters or add linked_to filter manually."
+                    )
+
             _max_results = max_results or self.max_results
             log_debug(f"Getting {_max_results} relevant documents for query: {query}")
-            return self.vector_db.search(query=query, limit=_max_results, filters=filters)
+            return self.vector_db.search(query=query, limit=_max_results, filters=search_filters)
         except Exception as e:
             log_error(f"Error searching for documents: {e}")
             return []
@@ -548,10 +571,29 @@ class Knowledge(RemoteKnowledge):
                 log_warning("No vector db provided")
                 return []
 
+            # Inject linked_to filter if isolate_vector_search is enabled
+            search_filters = filters
+            if self.isolate_vector_search:
+                if not self.name:
+                    log_warning(
+                        "isolate_vector_search is enabled but knowledge instance has no name. "
+                        "Vector search isolation requires a knowledge name to filter by."
+                    )
+                elif search_filters is None:
+                    search_filters = {"linked_to": self.name}
+                elif isinstance(search_filters, dict):
+                    search_filters = {**search_filters, "linked_to": self.name}
+                elif isinstance(search_filters, list):
+                    log_warning(
+                        "isolate_vector_search is enabled but filters are list-based. "
+                        "Cannot inject linked_to filter into list-based filters. "
+                        "Consider using dict-based filters or add linked_to filter manually."
+                    )
+
             _max_results = max_results or self.max_results
             log_debug(f"Getting {_max_results} relevant documents for query: {query}")
             try:
-                return await self.vector_db.async_search(query=query, limit=_max_results, filters=filters)
+                return await self.vector_db.async_search(query=query, limit=_max_results, filters=search_filters)
             except NotImplementedError:
                 log_info("Vector db does not support async search")
                 return self.search(query=query, max_results=_max_results, filters=filters)
@@ -577,7 +619,7 @@ class Knowledge(RemoteKnowledge):
             raise ValueError("get_content() is not supported for async databases. Please use aget_content() instead.")
 
         contents, count = self.contents_db.get_knowledge_contents(
-            limit=limit, page=page, sort_by=sort_by, sort_order=sort_order
+            limit=limit, page=page, sort_by=sort_by, sort_order=sort_order, linked_to=self.name
         )
         return [self._content_row_to_content(row) for row in contents], count
 
@@ -593,11 +635,11 @@ class Knowledge(RemoteKnowledge):
 
         if isinstance(self.contents_db, AsyncBaseDb):
             contents, count = await self.contents_db.get_knowledge_contents(
-                limit=limit, page=page, sort_by=sort_by, sort_order=sort_order
+                limit=limit, page=page, sort_by=sort_by, sort_order=sort_order, linked_to=self.name
             )
         else:
             contents, count = self.contents_db.get_knowledge_contents(
-                limit=limit, page=page, sort_by=sort_by, sort_order=sort_order
+                limit=limit, page=page, sort_by=sort_by, sort_order=sort_order, linked_to=self.name
             )
         return [self._content_row_to_content(row) for row in contents], count
 
@@ -1259,6 +1301,8 @@ class Knowledge(RemoteKnowledge):
         """
         for document in documents:
             document.content_id = content_id
+            # Add linked_to to metadata for vector search filtering (future use)
+            document.meta_data["linked_to"] = self.name or ""
             if calculate_sizes and document.content and not document.size:
                 document.size = len(document.content.encode("utf-8"))
             if metadata:

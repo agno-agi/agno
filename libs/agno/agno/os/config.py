@@ -33,6 +33,16 @@ class KnowledgeDomainConfig(BaseModel):
     display_name: Optional[str] = None
 
 
+class KnowledgeInstanceConfig(BaseModel):
+    """Configuration for a single knowledge instance"""
+
+    id: str
+    name: str
+    description: Optional[str] = None
+    db_id: str
+    table: str
+
+
 class MetricsDomainConfig(BaseModel):
     """Configuration for the Metrics domain of the AgentOS"""
 
@@ -84,6 +94,7 @@ class KnowledgeConfig(KnowledgeDomainConfig):
     """Configuration for the Knowledge domain of the AgentOS"""
 
     dbs: Optional[List[DatabaseConfig[KnowledgeDomainConfig]]] = None
+    knowledge_instances: Optional[List[KnowledgeInstanceConfig]] = None
 
 
 class MetricsConfig(MetricsDomainConfig):
