@@ -966,8 +966,15 @@ class Gemini(Model):
 
     def _format_file_for_message(self, file: File) -> Optional[Part]:
         # Case 1: File is a bytes object
-        if file.content and isinstance(file.content, bytes) and file.mime_type:
-            return Part.from_bytes(mime_type=file.mime_type, data=file.content)
+        if file.content and isinstance(file.content, bytes):
+            import mimetypes
+
+            _mime = (
+                file.mime_type
+                or mimetypes.guess_type(getattr(file, "filename", "") or "")[0]
+                or "application/octet-stream"
+            )
+            return Part.from_bytes(mime_type=_mime, data=file.content)
 
         # Case 2: File is a URL
         elif file.url is not None:

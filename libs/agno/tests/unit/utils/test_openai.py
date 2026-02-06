@@ -393,3 +393,32 @@ def test_format_file_raw_bytes():
     data_url = msg["file"]["file_data"]
     assert data_url.startswith("data:application/pdf;base64,")
     assert base64.b64decode(data_url.split(",", 1)[1]) == content
+
+
+def test_format_file_bytes_no_mime_defaults_to_pdf():
+    content = b"RAWBYTES"
+    f = File(content=content, filename="file")
+    msg = _format_file_for_message(f)
+    assert msg is not None
+    data_url = msg["file"]["file_data"]
+    assert data_url.startswith("data:application/pdf;base64,")
+
+
+def test_format_file_path_no_mime_guesses_from_extension(tmp_path):
+    p = tmp_path / "report.csv"
+    p.write_text("x,y\n1,2")
+    f = File(filepath=str(p))
+    msg = _format_file_for_message(f)
+    assert msg is not None
+    data_url = msg["file"]["file_data"]
+    assert data_url.startswith("data:text/csv;base64,")
+
+
+def test_format_file_path_unknown_ext_defaults_to_pdf(tmp_path):
+    p = tmp_path / "data.qqqnotreal"
+    p.write_bytes(b"mystery content")
+    f = File(filepath=str(p))
+    msg = _format_file_for_message(f)
+    assert msg is not None
+    data_url = msg["file"]["file_data"]
+    assert data_url.startswith("data:application/pdf;base64,")
