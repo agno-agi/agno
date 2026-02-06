@@ -1398,7 +1398,7 @@ class Agent:
             stream_events=stream_events,
         )
 
-    async def _areason(
+    def _areason(
         self,
         run_response: RunOutput,
         run_messages: RunMessages,
@@ -2388,7 +2388,7 @@ class Agent:
             **kwargs,
         )
 
-    async def _arun_stream(
+    def _arun_stream(
         self,
         run_response: RunOutput,
         run_context: RunContext,
@@ -2766,7 +2766,7 @@ class Agent:
             **kwargs,
         )
 
-    async def _acontinue_run_stream(
+    def _acontinue_run_stream(
         self,
         session_id: str,
         run_context: RunContext,
