@@ -33,7 +33,9 @@ class TestInternalServiceTokenInAuth:
         assert resp.status_code == 200
         data = resp.json()
         assert data["authenticated"] is True
-        assert "agent_os:admin" in data["scopes"]
+        assert "agents:run" in data["scopes"]
+        assert "teams:run" in data["scopes"]
+        assert "workflows:run" in data["scopes"]
 
     def test_wrong_token_rejected(self, app_with_security_key):
         client = TestClient(app_with_security_key)

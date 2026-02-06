@@ -3149,7 +3149,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 async with sess.begin():
                     stmt = table.update().where(table.c.id == schedule_id).values(**kwargs)
                     result = await sess.execute(stmt)
-                    if result.rowcount == 0:
+                    if result.rowcount == 0:  # type: ignore
                         return None
             return await self.get_schedule(schedule_id)
         except Exception as e:
@@ -3167,7 +3167,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                     if runs_table is not None:
                         await sess.execute(runs_table.delete().where(runs_table.c.schedule_id == schedule_id))
                     result = await sess.execute(schedule_table.delete().where(schedule_table.c.id == schedule_id))
-                    return result.rowcount > 0
+                    return result.rowcount > 0  # type: ignore
         except Exception as e:
             log_debug(f"Error deleting schedule: {e}")
             return False
@@ -3226,7 +3226,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 async with sess.begin():
                     stmt = table.update().where(table.c.id == schedule_id).values(**updates)
                     result = await sess.execute(stmt)
-                    return result.rowcount > 0
+                    return result.rowcount > 0  # type: ignore
         except Exception as e:
             log_debug(f"Error releasing schedule: {e}")
             return False
@@ -3254,7 +3254,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 async with sess.begin():
                     stmt = table.update().where(table.c.id == run_id).values(**kwargs)
                     result = await sess.execute(stmt)
-                    if result.rowcount == 0:
+                    if result.rowcount == 0:  # type: ignore
                         return None
             return await self.get_schedule_run(run_id)
         except Exception as e:

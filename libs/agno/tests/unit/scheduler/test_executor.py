@@ -108,7 +108,7 @@ class TestScheduleExecutorExecute:
             with patch("agno.scheduler.cron.compute_next_run", return_value=int(time.time()) + 60):
                 result = await executor.execute(_make_schedule(), db)
 
-        assert result["status"] == "running"  # The run_dict has initial "running" status
+        assert result["status"] == "success"  # run_dict now reflects final state
         assert len(db.created_runs) == 1
         assert db.created_runs[0]["schedule_id"] == "sched-1"
         assert db.created_runs[0]["status"] == "running"
