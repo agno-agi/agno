@@ -1,7 +1,7 @@
 """Tests for agno.scheduler.executor — mocked HTTP calls, retry logic, SSE streaming."""
 
 import time
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -67,6 +67,7 @@ class FakeDb:
         self.created_runs = []
         self.updated_runs = []
         self.released_schedules = []
+        self.updated_schedules = []
 
     async def create_schedule_run(self, run_dict):
         self.created_runs.append(run_dict)
@@ -76,6 +77,9 @@ class FakeDb:
 
     async def release_schedule(self, schedule_id, next_run_at=None):
         self.released_schedules.append({"schedule_id": schedule_id, "next_run_at": next_run_at})
+
+    async def update_schedule(self, schedule_id, **kwargs):
+        self.updated_schedules.append({"schedule_id": schedule_id, **kwargs})
 
 
 def _make_schedule(**overrides):
@@ -155,8 +159,8 @@ class TestScheduleExecutorExecute:
         assert len(db.released_schedules) == 0
 
     @pytest.mark.asyncio
-    async def test_graceful_cron_failure(self):
-        """If compute_next_run fails, schedule is still released."""
+    async def test_cron_failure_disables_schedule(self):
+        """If compute_next_run fails, schedule is disabled and released."""
         executor = ScheduleExecutor(base_url="http://localhost:7777", internal_service_token="tok")
         db = FakeDb()
 
@@ -169,3 +173,135 @@ class TestScheduleExecutorExecute:
 
         assert len(db.released_schedules) == 1
         assert db.released_schedules[0]["next_run_at"] is None
+        # Schedule should be disabled to prevent it from becoming stuck
+        assert len(db.updated_schedules) == 1
+        assert db.updated_schedules[0]["enabled"] is False
+
+
+class TestScheduleExecutorSimpleRequest:
+    @pytest.mark.asyncio
+    async def test_simple_request_success(self):
+        executor = ScheduleExecutor(base_url="http://localhost:7777", internal_service_token="tok")
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.text = "OK"
+
+        mock_client = AsyncMock()
+        mock_client.request = AsyncMock(return_value=mock_resp)
+
+        result = await executor._simple_request(
+            mock_client,
+            "POST",
+            "http://localhost:7777/agents/test/runs",
+            {"Authorization": "Bearer tok"},
+            {"msg": "hi"},
+        )
+
+        assert result["status"] == "success"
+        assert result["status_code"] == 200
+        assert result["error"] is None
+
+    @pytest.mark.asyncio
+    async def test_simple_request_failure(self):
+        executor = ScheduleExecutor(base_url="http://localhost:7777", internal_service_token="tok")
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 500
+        mock_resp.text = "Internal Server Error"
+
+        mock_client = AsyncMock()
+        mock_client.request = AsyncMock(return_value=mock_resp)
+
+        result = await executor._simple_request(
+            mock_client, "GET", "http://localhost:7777/health", {"Authorization": "Bearer tok"}, None
+        )
+
+        assert result["status"] == "failed"
+        assert result["status_code"] == 500
+        assert result["error"] == "Internal Server Error"
+
+
+class TestScheduleExecutorSSE:
+    @pytest.mark.asyncio
+    async def test_stream_sse_success(self):
+        executor = ScheduleExecutor(base_url="http://localhost:7777", internal_service_token="tok")
+
+        sse_lines = [
+            "event: RunStarted",
+            'data: {"run_id": "r1", "session_id": "s1"}',
+            "",
+            "event: RunCompleted",
+            'data: {"run_id": "r1", "session_id": "s1"}',
+            "",
+        ]
+
+        mock_resp = AsyncMock()
+        mock_resp.status_code = 200
+        mock_resp.aiter_lines = MagicMock(return_value=_async_iter(sse_lines))
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+        mock_client = MagicMock()
+        mock_client.stream = MagicMock(return_value=mock_resp)
+
+        result = await executor._stream_sse(
+            mock_client, "http://localhost:7777/agents/test/runs", {"Authorization": "Bearer tok"}, {"msg": "hi"}
+        )
+
+        assert result["status"] == "success"
+        assert result["run_id"] == "r1"
+        assert result["session_id"] == "s1"
+
+    @pytest.mark.asyncio
+    async def test_stream_sse_error_event(self):
+        executor = ScheduleExecutor(base_url="http://localhost:7777", internal_service_token="tok")
+
+        sse_lines = [
+            "event: RunError",
+            'data: {"run_id": "r1", "error": "something went wrong"}',
+            "",
+        ]
+
+        mock_resp = AsyncMock()
+        mock_resp.status_code = 200
+        mock_resp.aiter_lines = MagicMock(return_value=_async_iter(sse_lines))
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+        mock_client = MagicMock()
+        mock_client.stream = MagicMock(return_value=mock_resp)
+
+        result = await executor._stream_sse(
+            mock_client, "http://localhost:7777/agents/test/runs", {"Authorization": "Bearer tok"}, None
+        )
+
+        assert result["status"] == "failed"
+        assert result["error"] == "something went wrong"
+        assert result["run_id"] == "r1"
+
+    @pytest.mark.asyncio
+    async def test_stream_sse_http_error(self):
+        executor = ScheduleExecutor(base_url="http://localhost:7777", internal_service_token="tok")
+
+        mock_resp = AsyncMock()
+        mock_resp.status_code = 403
+        mock_resp.aread = AsyncMock(return_value=b"Forbidden")
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+        mock_client = MagicMock()
+        mock_client.stream = MagicMock(return_value=mock_resp)
+
+        result = await executor._stream_sse(
+            mock_client, "http://localhost:7777/agents/test/runs", {"Authorization": "Bearer tok"}, None
+        )
+
+        assert result["status"] == "failed"
+        assert result["status_code"] == 403
+        assert result["error"] == "Forbidden"
+
+
+async def _async_iter(items):
+    for item in items:
+        yield item
