@@ -54,7 +54,7 @@ from agno.run.team import (
 )
 from agno.session import SessionSummaryManager, TeamSession, WorkflowSession
 from agno.session.summary import SessionSummary
-from agno.team import _cli, _hooks, _init, _messages, _response, _run, _storage, _telemetry, _tools
+from agno.team import _api, _hooks, _init, _messages, _response, _run, _storage, _telemetry, _tools
 from agno.team.mode import TeamMode
 from agno.tools import Toolkit
 from agno.tools.function import Function

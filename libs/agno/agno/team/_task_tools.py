@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from agno.team.team import Team
 
-from copy import deepcopy
+from copy import copy
 from typing import (
     Any,
     AsyncIterator,
@@ -201,11 +201,6 @@ def _get_task_management_tools(
             yield f"Task with ID '{task_id}' not found."
             return
 
-        # Guard: only pending or in_progress tasks can be executed
-        if task.status not in (TaskStatus.pending, TaskStatus.in_progress):
-            yield f"Task [{task_id}] is {task.status.value} and cannot be executed."
-            return
-
         # Find the member
         result = team._find_member_by_id(member_id)
         if result is None:
@@ -244,68 +239,60 @@ def _get_task_management_tools(
             )
 
         use_agent_logger()
-        member_session_state_copy = deepcopy(run_context.session_state)
+        member_session_state_copy = copy(run_context.session_state)
 
         member_run_response: Optional[Union[TeamRunOutput, RunOutput]] = None
 
-        try:
-            if stream:
-                member_stream = member_agent.run(
-                    input=member_agent_task,
-                    user_id=user_id,
-                    session_id=session.session_id,
-                    session_state=member_session_state_copy,
-                    images=_images,
-                    videos=_videos,
-                    audio=_audio,
-                    files=_files,
-                    stream=True,
-                    stream_events=stream_events or team.stream_member_events,
-                    debug_mode=debug_mode,
-                    dependencies=run_context.dependencies,
-                    add_dependencies_to_context=add_dependencies_to_context,
-                    metadata=run_context.metadata,
-                    add_session_state_to_context=add_session_state_to_context,
-                    knowledge_filters=run_context.knowledge_filters
-                    if not member_agent.knowledge_filters and member_agent.knowledge
-                    else None,
-                    yield_run_output=True,
-                )
-                for event in member_stream:
-                    if isinstance(event, (TeamRunOutput, RunOutput)):
-                        member_run_response = event
-                        continue
-                    check_if_run_cancelled(event)
-                    event.parent_run_id = event.parent_run_id or run_response.run_id
-                    yield event
-            else:
-                member_run_response = member_agent.run(
-                    input=member_agent_task,
-                    user_id=user_id,
-                    session_id=session.session_id,
-                    session_state=member_session_state_copy,
-                    images=_images,
-                    videos=_videos,
-                    audio=_audio,
-                    files=_files,
-                    stream=False,
-                    debug_mode=debug_mode,
-                    dependencies=run_context.dependencies,
-                    add_dependencies_to_context=add_dependencies_to_context,
-                    add_session_state_to_context=add_session_state_to_context,
-                    metadata=run_context.metadata,
-                    knowledge_filters=run_context.knowledge_filters
-                    if not member_agent.knowledge_filters and member_agent.knowledge
-                    else None,
-                )
-                check_if_run_cancelled(member_run_response)
-        except Exception as e:
-            task.status = TaskStatus.failed
-            task.result = f"Member execution error: {e}"
-            save_task_list(run_context.session_state, task_list)
-            use_team_logger()
-            yield f"Task [{task.id}] failed due to member execution error: {e}"
-            return
+        if stream:
+            member_stream = member_agent.run(
+                input=member_agent_task,
+                user_id=user_id,
+                session_id=session.session_id,
+                session_state=member_session_state_copy,
+                images=_images,
+                videos=_videos,
+                audio=_audio,
+                files=_files,
+                stream=True,
+                stream_events=stream_events or team.stream_member_events,
+                debug_mode=debug_mode,
+                dependencies=run_context.dependencies,
+                add_dependencies_to_context=add_dependencies_to_context,
+                metadata=run_context.metadata,
+                add_session_state_to_context=add_session_state_to_context,
+                knowledge_filters=run_context.knowledge_filters
+                if not member_agent.knowledge_filters and member_agent.knowledge
+                else None,
+                yield_run_output=True,
+            )
+            for event in member_stream:
+                if isinstance(event, (TeamRunOutput, RunOutput)):
+                    member_run_response = event
+                    continue
+                check_if_run_cancelled(event)
+                event.parent_run_id = event.parent_run_id or run_response.run_id
+                yield event
+        else:
+            member_run_response = member_agent.run(
+                input=member_agent_task,
+                user_id=user_id,
+                session_id=session.session_id,
+                session_state=member_session_state_copy,
+                images=_images,
+                videos=_videos,
+                audio=_audio,
+                files=_files,
+                stream=False,
+                debug_mode=debug_mode,
+                dependencies=run_context.dependencies,
+                add_dependencies_to_context=add_dependencies_to_context,
+                add_session_state_to_context=add_session_state_to_context,
+                metadata=run_context.metadata,
+                knowledge_filters=run_context.knowledge_filters
+                if not member_agent.knowledge_filters and member_agent.knowledge
+                else None,
+            )
+            check_if_run_cancelled(member_run_response)
 
         # Check HITL pause
         if member_run_response is not None and member_run_response.is_paused:
@@ -321,18 +308,18 @@ def _get_task_management_tools(
         use_team_logger()
         _post_process_member_run(member_run_response, member_agent, member_agent_task, member_session_state_copy)
 
-        # Update task status based on result — check error/cancelled before content
-        if member_run_response is not None and member_run_response.status == RunStatus.error:
-            task.status = TaskStatus.failed
-            task.result = str(member_run_response.content) if member_run_response.content else "Task failed"
-            save_task_list(run_context.session_state, task_list)
-            yield f"Task [{task.id}] failed: {task.result}"
-        elif member_run_response is not None and member_run_response.content:
+        # Update task status based on result
+        if member_run_response is not None and member_run_response.content:
             content = str(member_run_response.content)
             task.status = TaskStatus.completed
             task.result = content
             save_task_list(run_context.session_state, task_list)
             yield f"Task [{task.id}] completed. Result: {content}"
+        elif member_run_response is not None and member_run_response.status == RunStatus.error:
+            task.status = TaskStatus.failed
+            task.result = str(member_run_response.content) if member_run_response.content else "Task failed"
+            save_task_list(run_context.session_state, task_list)
+            yield f"Task [{task.id}] failed: {task.result}"
         else:
             task.status = TaskStatus.completed
             task.result = "No content returned"
@@ -357,11 +344,6 @@ def _get_task_management_tools(
         task = task_list.get_task(task_id)
         if task is None:
             yield f"Task with ID '{task_id}' not found."
-            return
-
-        # Guard: only pending or in_progress tasks can be executed
-        if task.status not in (TaskStatus.pending, TaskStatus.in_progress):
-            yield f"Task [{task_id}] is {task.status.value} and cannot be executed."
             return
 
         result = team._find_member_by_id(member_id)
@@ -397,68 +379,60 @@ def _get_task_management_tools(
             )
 
         use_agent_logger()
-        member_session_state_copy = deepcopy(run_context.session_state)
+        member_session_state_copy = copy(run_context.session_state)
 
         member_run_response: Optional[Union[TeamRunOutput, RunOutput]] = None
 
-        try:
-            if stream:
-                member_stream = member_agent.arun(
-                    input=member_agent_task,
-                    user_id=user_id,
-                    session_id=session.session_id,
-                    session_state=member_session_state_copy,
-                    images=_images,
-                    videos=_videos,
-                    audio=_audio,
-                    files=_files,
-                    stream=True,
-                    stream_events=stream_events or team.stream_member_events,
-                    debug_mode=debug_mode,
-                    dependencies=run_context.dependencies,
-                    add_dependencies_to_context=add_dependencies_to_context,
-                    metadata=run_context.metadata,
-                    add_session_state_to_context=add_session_state_to_context,
-                    knowledge_filters=run_context.knowledge_filters
-                    if not member_agent.knowledge_filters and member_agent.knowledge
-                    else None,
-                    yield_run_output=True,
-                )
-                async for event in member_stream:
-                    if isinstance(event, (TeamRunOutput, RunOutput)):
-                        member_run_response = event
-                        continue
-                    check_if_run_cancelled(event)
-                    event.parent_run_id = event.parent_run_id or run_response.run_id
-                    yield event
-            else:
-                member_run_response = await member_agent.arun(
-                    input=member_agent_task,
-                    user_id=user_id,
-                    session_id=session.session_id,
-                    session_state=member_session_state_copy,
-                    images=_images,
-                    videos=_videos,
-                    audio=_audio,
-                    files=_files,
-                    stream=False,
-                    debug_mode=debug_mode,
-                    dependencies=run_context.dependencies,
-                    add_dependencies_to_context=add_dependencies_to_context,
-                    add_session_state_to_context=add_session_state_to_context,
-                    metadata=run_context.metadata,
-                    knowledge_filters=run_context.knowledge_filters
-                    if not member_agent.knowledge_filters and member_agent.knowledge
-                    else None,
-                )
-                check_if_run_cancelled(member_run_response)
-        except Exception as e:
-            task.status = TaskStatus.failed
-            task.result = f"Member execution error: {e}"
-            save_task_list(run_context.session_state, task_list)
-            use_team_logger()
-            yield f"Task [{task.id}] failed due to member execution error: {e}"
-            return
+        if stream:
+            member_stream = member_agent.arun(
+                input=member_agent_task,
+                user_id=user_id,
+                session_id=session.session_id,
+                session_state=member_session_state_copy,
+                images=_images,
+                videos=_videos,
+                audio=_audio,
+                files=_files,
+                stream=True,
+                stream_events=stream_events or team.stream_member_events,
+                debug_mode=debug_mode,
+                dependencies=run_context.dependencies,
+                add_dependencies_to_context=add_dependencies_to_context,
+                metadata=run_context.metadata,
+                add_session_state_to_context=add_session_state_to_context,
+                knowledge_filters=run_context.knowledge_filters
+                if not member_agent.knowledge_filters and member_agent.knowledge
+                else None,
+                yield_run_output=True,
+            )
+            async for event in member_stream:
+                if isinstance(event, (TeamRunOutput, RunOutput)):
+                    member_run_response = event
+                    continue
+                check_if_run_cancelled(event)
+                event.parent_run_id = event.parent_run_id or run_response.run_id
+                yield event
+        else:
+            member_run_response = await member_agent.arun(
+                input=member_agent_task,
+                user_id=user_id,
+                session_id=session.session_id,
+                session_state=member_session_state_copy,
+                images=_images,
+                videos=_videos,
+                audio=_audio,
+                files=_files,
+                stream=False,
+                debug_mode=debug_mode,
+                dependencies=run_context.dependencies,
+                add_dependencies_to_context=add_dependencies_to_context,
+                add_session_state_to_context=add_session_state_to_context,
+                metadata=run_context.metadata,
+                knowledge_filters=run_context.knowledge_filters
+                if not member_agent.knowledge_filters and member_agent.knowledge
+                else None,
+            )
+            check_if_run_cancelled(member_run_response)
 
         if member_run_response is not None and member_run_response.is_paused:
             _propagate_member_pause(run_response, member_agent, member_run_response)
@@ -472,18 +446,17 @@ def _get_task_management_tools(
         use_team_logger()
         _post_process_member_run(member_run_response, member_agent, member_agent_task, member_session_state_copy)
 
-        # Update task status based on result — check error/cancelled before content
-        if member_run_response is not None and member_run_response.status == RunStatus.error:
-            task.status = TaskStatus.failed
-            task.result = str(member_run_response.content) if member_run_response.content else "Task failed"
-            save_task_list(run_context.session_state, task_list)
-            yield f"Task [{task.id}] failed: {task.result}"
-        elif member_run_response is not None and member_run_response.content:
+        if member_run_response is not None and member_run_response.content:
             content = str(member_run_response.content)
             task.status = TaskStatus.completed
             task.result = content
             save_task_list(run_context.session_state, task_list)
             yield f"Task [{task.id}] completed. Result: {content}"
+        elif member_run_response is not None and member_run_response.status == RunStatus.error:
+            task.status = TaskStatus.failed
+            task.result = str(member_run_response.content) if member_run_response.content else "Task failed"
+            save_task_list(run_context.session_state, task_list)
+            yield f"Task [{task.id}] failed: {task.result}"
         else:
             task.status = TaskStatus.completed
             task.result = "No content returned"
