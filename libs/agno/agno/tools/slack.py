@@ -35,6 +35,24 @@ class SlackTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
+        """Initialize the SlackTools class.
+
+        Args:
+            token (str): The Slack API token. Defaults to the SLACK_TOKEN environment variable.
+            markdown (bool): Whether to enable Slack markdown formatting. Defaults to True.
+            output_directory (str): Optional path to save downloaded/uploaded files locally.
+            enable_send_message (bool): Whether to enable the send_message tool. Defaults to True.
+            enable_send_message_thread (bool): Whether to enable the send_message_thread tool. Defaults to True.
+            enable_list_channels (bool): Whether to enable the list_channels tool. Defaults to True.
+            enable_get_channel_history (bool): Whether to enable the get_channel_history tool. Defaults to True.
+            enable_upload_file (bool): Whether to enable the upload_file tool. Defaults to True.
+            enable_download_file (bool): Whether to enable the download_file tool. Defaults to True.
+            enable_search_messages (bool): Whether to enable the search_messages tool. Defaults to False.
+            enable_get_thread (bool): Whether to enable the get_thread tool. Defaults to False.
+            enable_list_users (bool): Whether to enable the list_users tool. Defaults to False.
+            enable_get_user_info (bool): Whether to enable the get_user_info tool. Defaults to False.
+            all (bool): Whether to enable all tools. Defaults to False.
+        """
         self.token: Optional[str] = token or getenv("SLACK_TOKEN")
         if self.token is None or self.token == "":
             raise ValueError("SLACK_TOKEN is not set")
