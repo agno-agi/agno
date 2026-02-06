@@ -221,6 +221,30 @@ class TestScheduleCRUD:
         assert resp2.status_code == 200
         assert resp2.json()["description"] == "updated"
 
+    def test_update_partial_merge(self, client):
+        """Only fields included in the request should be updated."""
+        resp = self._create(client)
+        schedule_id = resp.json()["id"]
+        original = resp.json()
+
+        # Update only description, other fields should remain unchanged
+        resp2 = client.patch(f"/schedules/{schedule_id}", json={"description": "new desc"})
+        assert resp2.status_code == 200
+        data = resp2.json()
+        assert data["description"] == "new desc"
+        assert data["name"] == original["name"]
+        assert data["cron_expr"] == original["cron_expr"]
+        assert data["endpoint"] == original["endpoint"]
+        assert data["max_retries"] == original["max_retries"]
+
+    def test_update_empty_body_returns_existing(self, client):
+        """An update with no fields should return the existing schedule unchanged."""
+        resp = self._create(client)
+        schedule_id = resp.json()["id"]
+        resp2 = client.patch(f"/schedules/{schedule_id}", json={})
+        assert resp2.status_code == 200
+        assert resp2.json()["id"] == schedule_id
+
     def test_update_not_found(self, client):
         resp = client.patch("/schedules/nonexistent", json={"description": "x"})
         assert resp.status_code == 404

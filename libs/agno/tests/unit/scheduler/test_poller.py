@@ -22,7 +22,7 @@ class FakeDb:
         self._claim_idx = 0
         self.get_schedule_calls = []
 
-    async def claim_due_schedule(self, worker_id, lock_grace_seconds=60):
+    async def claim_due_schedule(self, worker_id, lock_grace_seconds=300):
         if self._claim_idx < len(self._schedules):
             s = self._schedules[self._claim_idx]
             self._claim_idx += 1
@@ -31,7 +31,7 @@ class FakeDb:
 
     async def get_schedule(self, schedule_id):
         self.get_schedule_calls.append(schedule_id)
-        return {"id": schedule_id, "name": "test"}
+        return {"id": schedule_id, "name": "test", "enabled": True}
 
 
 class TestPollerLifecycle:
@@ -64,6 +64,23 @@ class TestPollerLifecycle:
         poller = SchedulePoller(db=FakeDb(), executor=FakeExecutor(), worker_id="custom-1")
         assert poller.worker_id == "custom-1"
 
+    @pytest.mark.asyncio
+    async def test_stop_cancels_in_flight(self):
+        db = FakeDb()
+        executor = FakeExecutor()
+        poller = SchedulePoller(db=db, executor=executor, poll_interval=1)
+
+        # Simulate an in-flight task
+        async def slow_task():
+            await asyncio.sleep(100)
+
+        task = asyncio.create_task(slow_task())
+        poller._in_flight.add(task)
+
+        await poller.stop()
+        assert task.cancelled() or task.done()
+        assert len(poller._in_flight) == 0
+
 
 class TestPollerPollOnce:
     @pytest.mark.asyncio
@@ -78,10 +95,9 @@ class TestPollerPollOnce:
         poller._running = True
 
         await poller._poll_once()
-        # Gather all pending tasks to ensure they complete
-        pending = [t for t in asyncio.all_tasks() if t is not asyncio.current_task() and not t.done()]
-        if pending:
-            await asyncio.gather(*pending, return_exceptions=True)
+        # Wait for in-flight tasks to complete
+        if poller._in_flight:
+            await asyncio.gather(*poller._in_flight, return_exceptions=True)
 
         assert len(executor.executed) == 2
 
@@ -95,6 +111,33 @@ class TestPollerPollOnce:
         await poller._poll_once()
         assert len(executor.executed) == 0
 
+    @pytest.mark.asyncio
+    async def test_respects_max_concurrent(self):
+        """Should stop claiming when max_concurrent is reached."""
+        schedules = [{"id": f"s{i}", "name": f"schedule-{i}"} for i in range(20)]
+        db = FakeDb(schedules_to_claim=schedules)
+
+        class SlowExecutor:
+            def __init__(self):
+                self.executed = []
+
+            async def execute(self, schedule, db, release_schedule=True):
+                self.executed.append(schedule)
+                await asyncio.sleep(10)
+
+        executor = SlowExecutor()
+        poller = SchedulePoller(db=db, executor=executor, poll_interval=1, max_concurrent=3)
+        poller._running = True
+
+        await poller._poll_once()
+        # Should have claimed at most max_concurrent schedules
+        assert len(poller._in_flight) <= 3
+
+        # Clean up
+        for task in list(poller._in_flight):
+            task.cancel()
+        await asyncio.gather(*poller._in_flight, return_exceptions=True)
+
 
 class TestPollerTrigger:
     @pytest.mark.asyncio
@@ -104,10 +147,9 @@ class TestPollerTrigger:
         poller = SchedulePoller(db=db, executor=executor)
 
         await poller.trigger("sched-1")
-        # Gather all pending tasks to ensure they complete
-        pending = [t for t in asyncio.all_tasks() if t is not asyncio.current_task() and not t.done()]
-        if pending:
-            await asyncio.gather(*pending, return_exceptions=True)
+        # Wait for in-flight tasks to complete
+        if poller._in_flight:
+            await asyncio.gather(*poller._in_flight, return_exceptions=True)
 
         assert "sched-1" in db.get_schedule_calls
         assert len(executor.executed) == 1
@@ -122,3 +164,36 @@ class TestPollerTrigger:
         poller = SchedulePoller(db=NoScheduleDb(), executor=FakeExecutor())
         # Should not raise
         await poller.trigger("nonexistent")
+
+    @pytest.mark.asyncio
+    async def test_trigger_disabled_schedule(self):
+        """Triggering a disabled schedule should be skipped."""
+
+        class DisabledDb:
+            async def get_schedule(self, sid):
+                return {"id": sid, "name": "test", "enabled": False}
+
+        executor = FakeExecutor()
+        poller = SchedulePoller(db=DisabledDb(), executor=executor)
+        await poller.trigger("disabled-1")
+
+        # Should not have executed anything
+        assert len(executor.executed) == 0
+
+
+class TestPollerPollFirstThenSleep:
+    @pytest.mark.asyncio
+    async def test_polls_immediately(self):
+        """Verify the poller polls before sleeping (not sleep-first)."""
+        schedules = [{"id": "s1", "name": "schedule-1"}]
+        db = FakeDb(schedules_to_claim=schedules)
+        executor = FakeExecutor()
+        poller = SchedulePoller(db=db, executor=executor, poll_interval=60)
+
+        await poller.start()
+        # Give a small window for the first poll to happen
+        await asyncio.sleep(0.1)
+        await poller.stop()
+
+        # Should have executed without waiting for the full poll interval
+        assert len(executor.executed) >= 1
