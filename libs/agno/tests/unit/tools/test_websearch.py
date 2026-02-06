@@ -38,6 +38,8 @@ def test_init_defaults():
         assert tools.proxy is None
         assert tools.timeout == 10
         assert tools.fixed_max_results is None
+        assert tools.fixed_timelimit is None
+        assert tools.fixed_region is None
         assert tools.modifier is None
         assert tools.verify_ssl is True
 
@@ -113,6 +115,8 @@ def test_init_with_all_params():
             proxy="http://proxy:8080",
             timeout=60,
             fixed_max_results=20,
+            fixed_timelimit="m",
+            fixed_region="us-en",
             modifier="site:example.com",
             verify_ssl=False,
         )
@@ -120,8 +124,24 @@ def test_init_with_all_params():
         assert tools.proxy == "http://proxy:8080"
         assert tools.timeout == 60
         assert tools.fixed_max_results == 20
+        assert tools.fixed_timelimit == "m"
+        assert tools.fixed_region == "us-en"
         assert tools.modifier == "site:example.com"
         assert tools.verify_ssl is False
+
+
+def test_init_with_fixed_timelimit():
+    """Test initialization with fixed timelimit."""
+    with patch("agno.tools.websearch.DDGS"):
+        tools = WebSearchTools(fixed_timelimit="w")
+        assert tools.fixed_timelimit == "w"
+
+
+def test_init_with_fixed_region():
+    """Test initialization with fixed region."""
+    with patch("agno.tools.websearch.DDGS"):
+        tools = WebSearchTools(fixed_region="ko-kr")
+        assert tools.fixed_region == "ko-kr"
 
 
 # ============================================================================
@@ -202,7 +222,9 @@ def test_web_search_with_max_results(websearch_tools, mock_ddgs):
 
     websearch_tools.web_search("test query", max_results=10)
 
-    mock_instance.text.assert_called_once_with(query="test query", max_results=10, backend="auto")
+    mock_instance.text.assert_called_once_with(
+        query="test query", max_results=10, timelimit=None, region="wt-wt", backend="auto"
+    )
 
 
 def test_web_search_with_fixed_max_results():
@@ -216,7 +238,9 @@ def test_web_search_with_fixed_max_results():
         tools = WebSearchTools(fixed_max_results=3)
         tools.web_search("test query", max_results=10)
 
-        mock_instance.text.assert_called_once_with(query="test query", max_results=3, backend="auto")
+        mock_instance.text.assert_called_once_with(
+            query="test query", max_results=3, timelimit=None, region="wt-wt", backend="auto"
+        )
 
 
 def test_web_search_with_modifier():
@@ -231,7 +255,11 @@ def test_web_search_with_modifier():
         tools.web_search("python frameworks")
 
         mock_instance.text.assert_called_once_with(
-            query="site:github.com python frameworks", max_results=5, backend="auto"
+            query="site:github.com python frameworks",
+            max_results=5,
+            timelimit=None,
+            region="wt-wt",
+            backend="auto",
         )
 
 
@@ -246,7 +274,9 @@ def test_web_search_with_backend():
         tools = WebSearchTools(backend="google")
         tools.web_search("test query")
 
-        mock_instance.text.assert_called_once_with(query="test query", max_results=5, backend="google")
+        mock_instance.text.assert_called_once_with(
+            query="test query", max_results=5, timelimit=None, region="wt-wt", backend="google"
+        )
 
 
 def test_web_search_empty_results(websearch_tools, mock_ddgs):
@@ -304,7 +334,9 @@ def test_search_news_with_max_results(websearch_tools, mock_ddgs):
 
     websearch_tools.search_news("test news", max_results=10)
 
-    mock_instance.news.assert_called_once_with(query="test news", max_results=10, backend="auto")
+    mock_instance.news.assert_called_once_with(
+        query="test news", max_results=10, timelimit=None, region="wt-wt", backend="auto"
+    )
 
 
 def test_search_news_with_fixed_max_results():
@@ -318,7 +350,9 @@ def test_search_news_with_fixed_max_results():
         tools = WebSearchTools(fixed_max_results=3)
         tools.search_news("test news", max_results=10)
 
-        mock_instance.news.assert_called_once_with(query="test news", max_results=3, backend="auto")
+        mock_instance.news.assert_called_once_with(
+            query="test news", max_results=3, timelimit=None, region="wt-wt", backend="auto"
+        )
 
 
 def test_search_news_with_backend():
@@ -332,7 +366,9 @@ def test_search_news_with_backend():
         tools = WebSearchTools(backend="bing")
         tools.search_news("test news")
 
-        mock_instance.news.assert_called_once_with(query="test news", max_results=5, backend="bing")
+        mock_instance.news.assert_called_once_with(
+            query="test news", max_results=5, timelimit=None, region="wt-wt", backend="bing"
+        )
 
 
 def test_search_news_empty_results(websearch_tools, mock_ddgs):
@@ -524,4 +560,155 @@ def test_modifier_with_empty_query():
         tools = WebSearchTools(modifier="site:github.com")
         tools.web_search("")
 
-        mock_instance.text.assert_called_once_with(query="site:github.com ", max_results=5, backend="auto")
+        mock_instance.text.assert_called_once_with(
+            query="site:github.com ", max_results=5, timelimit=None, region="wt-wt", backend="auto"
+        )
+
+
+# ============================================================================
+# TIMELIMIT AND REGION TESTS
+# ============================================================================
+
+
+def test_web_search_with_timelimit():
+    """Test web search with timelimit parameter."""
+    with patch("agno.tools.websearch.DDGS") as mock_ddgs_cls:
+        mock_instance = MagicMock()
+        mock_ddgs_cls.return_value.__enter__ = MagicMock(return_value=mock_instance)
+        mock_ddgs_cls.return_value.__exit__ = MagicMock(return_value=False)
+        mock_instance.text.return_value = []
+
+        tools = WebSearchTools()
+        tools.web_search("test query", timelimit="w")
+
+        mock_instance.text.assert_called_once_with(
+            query="test query", max_results=5, timelimit="w", region="wt-wt", backend="auto"
+        )
+
+
+def test_web_search_with_region():
+    """Test web search with region parameter."""
+    with patch("agno.tools.websearch.DDGS") as mock_ddgs_cls:
+        mock_instance = MagicMock()
+        mock_ddgs_cls.return_value.__enter__ = MagicMock(return_value=mock_instance)
+        mock_ddgs_cls.return_value.__exit__ = MagicMock(return_value=False)
+        mock_instance.text.return_value = []
+
+        tools = WebSearchTools()
+        tools.web_search("test query", region="ko-kr")
+
+        mock_instance.text.assert_called_once_with(
+            query="test query", max_results=5, timelimit=None, region="ko-kr", backend="auto"
+        )
+
+
+def test_web_search_with_timelimit_and_region():
+    """Test web search with both timelimit and region parameters."""
+    with patch("agno.tools.websearch.DDGS") as mock_ddgs_cls:
+        mock_instance = MagicMock()
+        mock_ddgs_cls.return_value.__enter__ = MagicMock(return_value=mock_instance)
+        mock_ddgs_cls.return_value.__exit__ = MagicMock(return_value=False)
+        mock_instance.text.return_value = []
+
+        tools = WebSearchTools()
+        tools.web_search("test query", timelimit="m", region="ja-jp")
+
+        mock_instance.text.assert_called_once_with(
+            query="test query", max_results=5, timelimit="m", region="ja-jp", backend="auto"
+        )
+
+
+def test_web_search_fixed_timelimit_overrides_parameter():
+    """Test that fixed_timelimit overrides timelimit parameter."""
+    with patch("agno.tools.websearch.DDGS") as mock_ddgs_cls:
+        mock_instance = MagicMock()
+        mock_ddgs_cls.return_value.__enter__ = MagicMock(return_value=mock_instance)
+        mock_ddgs_cls.return_value.__exit__ = MagicMock(return_value=False)
+        mock_instance.text.return_value = []
+
+        tools = WebSearchTools(fixed_timelimit="d")
+        tools.web_search("test query", timelimit="y")
+
+        mock_instance.text.assert_called_once_with(
+            query="test query", max_results=5, timelimit="d", region="wt-wt", backend="auto"
+        )
+
+
+def test_web_search_fixed_region_overrides_parameter():
+    """Test that fixed_region overrides region parameter."""
+    with patch("agno.tools.websearch.DDGS") as mock_ddgs_cls:
+        mock_instance = MagicMock()
+        mock_ddgs_cls.return_value.__enter__ = MagicMock(return_value=mock_instance)
+        mock_ddgs_cls.return_value.__exit__ = MagicMock(return_value=False)
+        mock_instance.text.return_value = []
+
+        tools = WebSearchTools(fixed_region="us-en")
+        tools.web_search("test query", region="ko-kr")
+
+        mock_instance.text.assert_called_once_with(
+            query="test query", max_results=5, timelimit=None, region="us-en", backend="auto"
+        )
+
+
+def test_search_news_with_timelimit():
+    """Test news search with timelimit parameter."""
+    with patch("agno.tools.websearch.DDGS") as mock_ddgs_cls:
+        mock_instance = MagicMock()
+        mock_ddgs_cls.return_value.__enter__ = MagicMock(return_value=mock_instance)
+        mock_ddgs_cls.return_value.__exit__ = MagicMock(return_value=False)
+        mock_instance.news.return_value = []
+
+        tools = WebSearchTools()
+        tools.search_news("test news", timelimit="d")
+
+        mock_instance.news.assert_called_once_with(
+            query="test news", max_results=5, timelimit="d", region="wt-wt", backend="auto"
+        )
+
+
+def test_search_news_with_region():
+    """Test news search with region parameter."""
+    with patch("agno.tools.websearch.DDGS") as mock_ddgs_cls:
+        mock_instance = MagicMock()
+        mock_ddgs_cls.return_value.__enter__ = MagicMock(return_value=mock_instance)
+        mock_ddgs_cls.return_value.__exit__ = MagicMock(return_value=False)
+        mock_instance.news.return_value = []
+
+        tools = WebSearchTools()
+        tools.search_news("test news", region="uk-en")
+
+        mock_instance.news.assert_called_once_with(
+            query="test news", max_results=5, timelimit=None, region="uk-en", backend="auto"
+        )
+
+
+def test_search_news_fixed_timelimit_overrides_parameter():
+    """Test that fixed_timelimit overrides timelimit parameter for news."""
+    with patch("agno.tools.websearch.DDGS") as mock_ddgs_cls:
+        mock_instance = MagicMock()
+        mock_ddgs_cls.return_value.__enter__ = MagicMock(return_value=mock_instance)
+        mock_ddgs_cls.return_value.__exit__ = MagicMock(return_value=False)
+        mock_instance.news.return_value = []
+
+        tools = WebSearchTools(fixed_timelimit="w")
+        tools.search_news("test news", timelimit="y")
+
+        mock_instance.news.assert_called_once_with(
+            query="test news", max_results=5, timelimit="w", region="wt-wt", backend="auto"
+        )
+
+
+def test_search_news_fixed_region_overrides_parameter():
+    """Test that fixed_region overrides region parameter for news."""
+    with patch("agno.tools.websearch.DDGS") as mock_ddgs_cls:
+        mock_instance = MagicMock()
+        mock_ddgs_cls.return_value.__enter__ = MagicMock(return_value=mock_instance)
+        mock_ddgs_cls.return_value.__exit__ = MagicMock(return_value=False)
+        mock_instance.news.return_value = []
+
+        tools = WebSearchTools(fixed_region="de-de")
+        tools.search_news("test news", region="fr-fr")
+
+        mock_instance.news.assert_called_once_with(
+            query="test news", max_results=5, timelimit=None, region="de-de", backend="auto"
+        )
