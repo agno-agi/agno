@@ -931,7 +931,7 @@ def load(
     if config is None:
         return None
 
-    agent = from_dict(cls, config, registry=registry)
+    agent = cls.from_dict(config, registry=registry)
     agent.id = id
     agent.db = db
 
