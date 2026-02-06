@@ -985,7 +985,7 @@ class BaseDb(ABC):
         """Delete a schedule and its associated runs."""
         raise NotImplementedError
 
-    def claim_due_schedule(self, worker_id: str, lock_grace_seconds: int = 60) -> Optional[Dict[str, Any]]:
+    def claim_due_schedule(self, worker_id: str, lock_grace_seconds: int = 300) -> Optional[Dict[str, Any]]:
         """Atomically claim a due schedule for execution."""
         raise NotImplementedError
 
@@ -1627,7 +1627,7 @@ class AsyncBaseDb(ABC):
         """Delete a schedule and its associated runs."""
         raise NotImplementedError
 
-    async def claim_due_schedule(self, worker_id: str, lock_grace_seconds: int = 60) -> Optional[Dict[str, Any]]:
+    async def claim_due_schedule(self, worker_id: str, lock_grace_seconds: int = 300) -> Optional[Dict[str, Any]]:
         """Atomically claim a due schedule for execution."""
         raise NotImplementedError
 

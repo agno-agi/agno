@@ -155,6 +155,21 @@ class TestAsyncClaimRelease:
         assert claimed is None
 
     @pytest.mark.asyncio
+    async def test_claim_skips_already_locked(self, db):
+        """A schedule locked by another worker should not be re-claimed."""
+        now = int(time.time())
+        schedule = _make_schedule(next_run_at=now - 10, enabled=True)
+        await db.create_schedule(schedule)
+
+        # First claim should succeed
+        claimed1 = await db.claim_due_schedule("worker-1")
+        assert claimed1 is not None
+
+        # Second claim should return None (already locked)
+        claimed2 = await db.claim_due_schedule("worker-2")
+        assert claimed2 is None
+
+    @pytest.mark.asyncio
     async def test_release_schedule(self, db):
         now = int(time.time())
         schedule = _make_schedule(next_run_at=now - 10, enabled=True)

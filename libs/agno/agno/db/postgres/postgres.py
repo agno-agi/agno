@@ -4638,7 +4638,9 @@ class PostgresDb(BaseDb):
                 schedule_id = row["id"]
                 update_stmt = table.update().where(table.c.id == schedule_id).values(locked_by=worker_id, locked_at=now)
                 sess.execute(update_stmt)
-            return self.get_schedule(schedule_id)
+                row["locked_by"] = worker_id
+                row["locked_at"] = now
+            return row
         except Exception as e:
             log_debug(f"Error claiming due schedule: {e}")
             return None

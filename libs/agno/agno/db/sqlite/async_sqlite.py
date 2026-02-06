@@ -3434,7 +3434,9 @@ class AsyncSqliteDb(AsyncBaseDb):
                         table.update().where(table.c.id == schedule_id).values(locked_by=worker_id, locked_at=now)
                     )
                     await sess.execute(update_stmt)
-            return await self.get_schedule(schedule_id)
+                    row_dict["locked_by"] = worker_id
+                    row_dict["locked_at"] = now
+            return row_dict
         except Exception as e:
             log_debug(f"Error claiming due schedule: {e}")
             return None
