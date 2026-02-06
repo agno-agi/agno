@@ -92,21 +92,37 @@ async def test_async_show_member_responses_streaming(team_show_member_responses_
 
 
 def test_get_member_id():
+    # Agent with only name -> use name
     member = Agent(name="Test Agent")
     assert get_member_id(member) == "test-agent"
+
+    # Agent with custom (non-UUID) id -> use id (takes priority over name)
     member = Agent(name="Test Agent", id="123")
     assert get_member_id(member) == "123"
-    member = Agent(name="Test Agent", id=str(uuid.uuid4()))
-    assert get_member_id(member) == "test-agent"
+
+    # Agent with UUID id -> use the UUID id (takes priority over name)
+    uuid_id = str(uuid.uuid4())
+    member = Agent(name="Test Agent", id=uuid_id)
+    assert get_member_id(member) == uuid_id
+
+    # Agent with only UUID id (no name) -> use the UUID id
     member = Agent(id=str(uuid.uuid4()))
     assert get_member_id(member) == member.id
 
+    # Team with only name -> use name
     member = Agent(name="Test Agent")
     inner_team = Team(name="Test Team", members=[member])
     assert get_member_id(inner_team) == "test-team"
+
+    # Team with custom (non-UUID) id -> use id (takes priority over name)
     inner_team = Team(name="Test Team", id="123", members=[member])
     assert get_member_id(inner_team) == "123"
-    inner_team = Team(name="Test Team", id=str(uuid.uuid4()), members=[member])
-    assert get_member_id(inner_team) == "test-team"
+
+    # Team with UUID id -> use the UUID id (takes priority over name)
+    uuid_id = str(uuid.uuid4())
+    inner_team = Team(name="Test Team", id=uuid_id, members=[member])
+    assert get_member_id(inner_team) == uuid_id
+
+    # Team with only UUID id (no name) -> use the UUID id
     inner_team = Team(id=str(uuid.uuid4()), members=[member])
     assert get_member_id(inner_team) == inner_team.id
