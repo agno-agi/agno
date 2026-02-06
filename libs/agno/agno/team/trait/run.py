@@ -979,25 +979,49 @@ class TeamRunTrait(TeamTraitBase):
         Steps:
         1. Read or create session
         2. Update metadata and session state
-        3. Execute pre-hooks
-        4. Determine tools for model
-        5. Prepare run messages
-        6. Start memory creation in background task
-        7. Reason about the task if reasoning is enabled
-        8. Get a response from the Model
-        9. Update TeamRunOutput with the model response
-        10. Store media if enabled
-        11. Convert response to structured format
-        12. Execute post-hooks
-        13. Wait for background memory creation
-        14. Create session summary
-        15. Cleanup and store (scrub, add to session, calculate metrics, save session)
+        3. Resolve callable dependencies
+        4. Execute pre-hooks
+        5. Determine tools for model
+        6. Prepare run messages
+        7. Start memory creation in background task
+        8. Reason about the task if reasoning is enabled
+        9. Get a response from the Model
+        10. Update TeamRunOutput with the model response
+        11. Store media if enabled
+        12. Convert response to structured format
+        13. Execute post-hooks
+        14. Wait for background memory creation
+        15. Create session summary
+        16. Cleanup and store (scrub, add to session, calculate metrics, save session)
         """
         await aregister_run(run_context.run_id)
         log_debug(f"Team Run Start: {run_response.run_id}", center=True)
         memory_task = None
 
         try:
+            # Resolve callable dependencies once before retry loop
+            if run_context.dependencies is not None:
+                await self._aresolve_run_dependencies(run_context=run_context)
+
+            # Read or create session once before retry loop
+            if self._has_async_db():
+                team_session = await self._aread_or_create_session(session_id=session_id, user_id=user_id)
+            else:
+                team_session = self._read_or_create_session(session_id=session_id, user_id=user_id)
+
+            # Update metadata and session state
+            self._update_metadata(session=team_session)
+            run_context.session_state = self._initialize_session_state(
+                session_state=run_context.session_state if run_context.session_state is not None else {},
+                user_id=user_id,
+                session_id=session_id,
+                run_id=run_response.run_id,
+            )
+            if run_context.session_state is not None:
+                run_context.session_state = self._load_session_state(
+                    session=team_session, session_state=run_context.session_state
+                )
+
             # Set up retry logic
             num_attempts = self.retries + 1
             for attempt in range(num_attempts):
@@ -1005,33 +1029,9 @@ class TeamRunTrait(TeamTraitBase):
                     log_debug(f"Retrying Team run {run_response.run_id}. Attempt {attempt + 1} of {num_attempts}...")
 
                 try:
-                    if run_context.dependencies is not None:
-                        await self._aresolve_run_dependencies(run_context=run_context)
-
-                    # 1. Read or create session. Reads from the database if provided.
-                    if self._has_async_db():
-                        team_session = await self._aread_or_create_session(session_id=session_id, user_id=user_id)
-                    else:
-                        team_session = self._read_or_create_session(session_id=session_id, user_id=user_id)
-
-                    # 2. Update metadata and session state
-                    self._update_metadata(session=team_session)
-                    # Initialize session state
-                    run_context.session_state = self._initialize_session_state(
-                        session_state=run_context.session_state if run_context.session_state is not None else {},
-                        user_id=user_id,
-                        session_id=session_id,
-                        run_id=run_response.run_id,
-                    )
-                    # Update session state from DB
-                    if run_context.session_state is not None:
-                        run_context.session_state = self._load_session_state(
-                            session=team_session, session_state=run_context.session_state
-                        )
-
                     run_input = cast(TeamRunInput, run_response.input)
 
-                    # 3. Execute pre-hooks after session is loaded but before processing starts
+                    # 1. Execute pre-hooks after session is loaded but before processing starts
                     if self.pre_hooks is not None:
                         pre_hook_iterator = self._aexecute_pre_hooks(
                             hooks=self.pre_hooks,  # type: ignore
@@ -1231,7 +1231,7 @@ class TeamRunTrait(TeamTraitBase):
                             delay = self.delay_between_retries
 
                         log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
-                        time.sleep(delay)
+                        await asyncio.sleep(delay)
                         continue
 
                     run_error = create_team_run_error_event(run_response, error=str(e))
@@ -1283,9 +1283,9 @@ class TeamRunTrait(TeamTraitBase):
         """Run the Team and return the response.
 
         Steps:
-        1. Resolve dependencies
-        2. Read or create session
-        3. Update metadata and session state
+        1. Read or create session
+        2. Update metadata and session state
+        3. Resolve callable dependencies
         4. Execute pre-hooks
         5. Determine tools for model
         6. Prepare run messages
@@ -1304,6 +1304,29 @@ class TeamRunTrait(TeamTraitBase):
         memory_task = None
 
         try:
+            # Resolve callable dependencies once before retry loop
+            if run_context.dependencies is not None:
+                await self._aresolve_run_dependencies(run_context=run_context)
+
+            # Read or create session once before retry loop
+            if self._has_async_db():
+                team_session = await self._aread_or_create_session(session_id=session_id, user_id=user_id)
+            else:
+                team_session = self._read_or_create_session(session_id=session_id, user_id=user_id)
+
+            # Update metadata and session state
+            self._update_metadata(session=team_session)
+            run_context.session_state = self._initialize_session_state(
+                session_state=run_context.session_state if run_context.session_state is not None else {},
+                user_id=user_id,
+                session_id=session_id,
+                run_id=run_response.run_id,
+            )
+            if run_context.session_state is not None:
+                run_context.session_state = self._load_session_state(
+                    session=team_session, session_state=run_context.session_state
+                )
+
             # Set up retry logic
             num_attempts = self.retries + 1
             for attempt in range(num_attempts):
@@ -1311,32 +1334,7 @@ class TeamRunTrait(TeamTraitBase):
                     log_debug(f"Retrying Team run {run_response.run_id}. Attempt {attempt + 1} of {num_attempts}...")
 
                 try:
-                    # 1. Resolve dependencies
-                    if run_context.dependencies is not None:
-                        await self._aresolve_run_dependencies(run_context=run_context)
-
-                    # 2. Read or create session. Reads from the database if provided.
-                    if self._has_async_db():
-                        team_session = await self._aread_or_create_session(session_id=session_id, user_id=user_id)
-                    else:
-                        team_session = self._read_or_create_session(session_id=session_id, user_id=user_id)
-
-                    # 3. Update metadata and session state
-                    self._update_metadata(session=team_session)
-                    # Initialize session state
-                    run_context.session_state = self._initialize_session_state(
-                        session_state=run_context.session_state if run_context.session_state is not None else {},
-                        user_id=user_id,
-                        session_id=session_id,
-                        run_id=run_response.run_id,
-                    )
-                    # Update session state from DB
-                    if run_context.session_state is not None:
-                        run_context.session_state = self._load_session_state(
-                            session=team_session, session_state=run_context.session_state
-                        )  # type: ignore
-
-                    # 4. Execute pre-hooks
+                    # 1. Execute pre-hooks
                     run_input = cast(TeamRunInput, run_response.input)
                     self.model = cast(Model, self.model)
                     if self.pre_hooks is not None:
@@ -1592,6 +1590,7 @@ class TeamRunTrait(TeamTraitBase):
 
                     # Cleanup and store the run response and session
                     await self._acleanup_and_store(run_response=run_response, session=team_session)
+                    break
 
                 except (InputCheckError, OutputCheckError) as e:
                     run_response.status = RunStatus.error
@@ -1623,7 +1622,7 @@ class TeamRunTrait(TeamTraitBase):
                             delay = self.delay_between_retries
 
                         log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
-                        time.sleep(delay)
+                        await asyncio.sleep(delay)
                         continue
 
                     run_response.status = RunStatus.error
@@ -1863,7 +1862,6 @@ class TeamRunTrait(TeamTraitBase):
 
         if stream:
             return self._arun_stream(  # type: ignore
-                input=validated_input,
                 run_response=run_response,
                 run_context=run_context,
                 session_id=session_id,
@@ -1880,7 +1878,6 @@ class TeamRunTrait(TeamTraitBase):
             )
         else:
             return self._arun(  # type: ignore
-                input=validated_input,
                 run_response=run_response,
                 run_context=run_context,
                 session_id=session_id,

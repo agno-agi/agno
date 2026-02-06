@@ -18,7 +18,6 @@ from agno.agent.agent import Agent
 from agno.team.team import Team
 from agno.team.trait.base import TeamTraitBase
 
-
 # =============================================================================
 # Fixtures
 # =============================================================================

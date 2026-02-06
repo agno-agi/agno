@@ -788,7 +788,7 @@ class TeamStorageTrait(TeamTraitBase):
                 # --- Memory settings ---
                 # memory_manager=config.get("memory_manager"),  # TODO
                 enable_agentic_memory=config.get("enable_agentic_memory", False),
-                enable_user_memories=config.get("enable_user_memories", False),
+                enable_user_memories=config.get("enable_user_memories"),
                 add_memories_to_context=config.get("add_memories_to_context"),
                 enable_session_summaries=config.get("enable_session_summaries", False),
                 add_session_summary_to_context=config.get("add_session_summary_to_context"),
