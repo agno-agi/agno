@@ -65,8 +65,10 @@ class RunRequirement:
             return False
         if self.tool_execution.answered is True:
             return False
-        if self.user_input_schema and not all(field.value is not None for field in self.user_input_schema):
-            return True
+        if self.user_input_schema:
+            if not all(field.value is not None for field in self.user_input_schema):
+                return True
+            return False
 
         return self.tool_execution.requires_user_input or False
 
@@ -107,8 +109,9 @@ class RunRequirement:
             for input_field in self.user_input_schema:
                 if input_field.name in values:
                     input_field.value = values[input_field.name]
-        if self.tool_execution:
-            self.tool_execution.answered = True
+            # Only mark as answered when all fields have values
+            if all(f.value is not None for f in self.user_input_schema) and self.tool_execution:
+                self.tool_execution.answered = True
 
     def set_external_execution_result(self, result: str):
         if not self.needs_external_execution:

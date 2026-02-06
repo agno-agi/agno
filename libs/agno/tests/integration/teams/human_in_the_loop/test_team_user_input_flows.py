@@ -73,7 +73,7 @@ def test_team_continue_run_user_input(shared_db):
 
     # Provide user input
     req = response.active_requirements[0]
-    req.user_input_schema[0].value = "Tokyo"
+    req.provide_user_input({"city": "Tokyo"})
 
     # Continue the run
     result = team.continue_run(response)
@@ -94,7 +94,7 @@ def test_team_user_input_with_run_id(shared_db):
     assert response.is_paused
 
     # Provide user input
-    response.active_requirements[0].user_input_schema[0].value = "Tokyo"
+    response.active_requirements[0].provide_user_input({"city": "Tokyo"})
 
     # Continue using run_id
     result = team.continue_run(
@@ -118,7 +118,7 @@ async def test_team_user_input_async(shared_db):
     assert response.is_paused
 
     # Provide user input
-    response.active_requirements[0].user_input_schema[0].value = "Tokyo"
+    response.active_requirements[0].provide_user_input({"city": "Tokyo"})
 
     # Continue
     result = await team.acontinue_run(response)

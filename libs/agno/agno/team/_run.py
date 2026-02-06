@@ -2005,9 +2005,19 @@ async def _aroute_requirements_to_members(
 
 def _build_continuation_message(member_results: Dict[str, Union["RunOutput", TeamRunOutput]]) -> str:
     """Build a user message summarizing member agent results for the team model."""
+    from pydantic import BaseModel
+
     parts = []
     for member_name, result in member_results.items():
-        content = result.content if result.content else "(no content)"
+        content = result.content
+        if content is None:
+            content = "(no content)"
+        elif isinstance(content, BaseModel):
+            content = content.model_dump_json(indent=2)
+        elif not isinstance(content, str):
+            import json
+
+            content = json.dumps(content, indent=2)
         parts.append(f"Results from '{member_name}':\n{content}")
     return "Previously delegated tasks have been completed.\n\n" + "\n\n".join(parts)
 

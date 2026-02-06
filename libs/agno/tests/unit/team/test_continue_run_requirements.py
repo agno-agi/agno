@@ -267,11 +267,8 @@ def test_continue_run_dispatch_raises_without_args():
 
     team = Team(name="TestTeam", members=[Agent(name="A")])
 
-    try:
+    with pytest.raises(ValueError, match="Either run_response or run_id must be provided"):
         _run.continue_run_dispatch(team)
-        assert False, "Should have raised ValueError"
-    except ValueError as e:
-        assert "Either run_response or run_id must be provided" in str(e)
 
 
 def test_continue_run_dispatch_raises_without_session_id():
@@ -409,7 +406,7 @@ def test_provide_user_input_raises_if_not_needed():
 
 
 def test_provide_user_input_partial_values():
-    """Verify provide_user_input handles partial value provision."""
+    """Verify provide_user_input with partial values does NOT mark as answered."""
     te = ToolExecution(
         tool_call_id="tc_partial",
         tool_name="get_info",
@@ -423,10 +420,18 @@ def test_provide_user_input_partial_values():
     req = RunRequirement(tool_execution=te)
     req.provide_user_input({"city": "Tokyo"})
 
-    # answered is True (the method marks it)
-    assert req.tool_execution.answered is True
+    # Partial input should NOT mark as answered
+    assert req.tool_execution.answered is not True
     assert req.user_input_schema[0].value == "Tokyo"
     assert req.user_input_schema[1].value is None
+    # Requirement should still need user input
+    assert req.needs_user_input is True
+    assert req.is_resolved() is False
+
+    # Now provide the remaining field
+    req.provide_user_input({"country": "Japan"})
+    assert req.tool_execution.answered is True
+    assert req.is_resolved() is True
 
 
 # ---------------------------------------------------------------------------
@@ -453,6 +458,23 @@ def test_build_continuation_message_none_content():
     msg = _run._build_continuation_message({"AgentX": result})
 
     assert "(no content)" in msg
+
+
+def test_build_continuation_message_structured_content():
+    """Verify _build_continuation_message handles BaseModel content."""
+    from pydantic import BaseModel
+
+    class WeatherResult(BaseModel):
+        city: str
+        temperature: int
+
+    result = RunOutput(run_id="run_structured", content=WeatherResult(city="Tokyo", temperature=70))
+    msg = _run._build_continuation_message({"AgentX": result})
+
+    # Should serialize as JSON, not the Pydantic __str__ repr
+    assert "Tokyo" in msg
+    assert "70" in msg
+    assert "WeatherResult(" not in msg
 
 
 # ---------------------------------------------------------------------------
@@ -482,8 +504,8 @@ def test_handle_team_run_paused_stream_yields_event():
 
     events = list(_hooks.handle_team_run_paused_stream(team_mock, run_response=team_run, session=session_mock))
 
-    # Should yield at least one event (the pause event)
-    assert len(events) >= 1
+    # Should yield exactly one event (the pause event)
+    assert len(events) == 1
     assert team_run.status == RunStatus.paused
 
 

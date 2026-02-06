@@ -1,10 +1,10 @@
 """Tests for RunRequirement property bug fixes.
 
-Validates that needs_confirmation and needs_external_execution return
-the correct values when tool_execution fields are set directly.
+Validates that needs_confirmation, needs_user_input, and needs_external_execution
+return the correct values when tool_execution fields are set directly.
 """
 
-from agno.models.response import ToolExecution
+from agno.models.response import ToolExecution, UserInputField
 from agno.run.requirement import RunRequirement
 
 
@@ -134,3 +134,57 @@ def test_reject_accepts_note_and_propagates_to_tool():
     assert req.tool_execution is not None
     assert req.tool_execution.confirmed is False
     assert req.tool_execution.confirmation_note == "Denied by reviewer"
+
+
+def test_needs_user_input_false_when_all_fields_set_directly():
+    """needs_user_input should be False when all schema field values are set directly."""
+    tool_exec = ToolExecution(
+        tool_call_id="test_user_input",
+        tool_name="get_weather",
+        tool_args={},
+        requires_user_input=True,
+        user_input_schema=[
+            UserInputField(name="city", field_type=str, description="City name"),
+        ],
+    )
+    req = RunRequirement(tool_execution=tool_exec)
+
+    # Initially needs user input
+    assert req.needs_user_input is True
+    assert req.is_resolved() is False
+
+    # Set value directly (not via provide_user_input)
+    req.user_input_schema[0].value = "Tokyo"
+
+    # Should now be resolved
+    assert req.needs_user_input is False
+    assert req.is_resolved() is True
+
+
+def test_needs_user_input_true_when_some_fields_missing():
+    """needs_user_input should be True when only some schema fields have values."""
+    tool_exec = ToolExecution(
+        tool_call_id="test_partial",
+        tool_name="get_info",
+        tool_args={},
+        requires_user_input=True,
+        user_input_schema=[
+            UserInputField(name="city", field_type=str, description="City name"),
+            UserInputField(name="country", field_type=str, description="Country name"),
+        ],
+    )
+    req = RunRequirement(tool_execution=tool_exec)
+
+    # Set only one field
+    req.user_input_schema[0].value = "Tokyo"
+
+    # Should still need user input (second field is missing)
+    assert req.needs_user_input is True
+    assert req.is_resolved() is False
+
+    # Set the second field
+    req.user_input_schema[1].value = "Japan"
+
+    # Now resolved
+    assert req.needs_user_input is False
+    assert req.is_resolved() is True

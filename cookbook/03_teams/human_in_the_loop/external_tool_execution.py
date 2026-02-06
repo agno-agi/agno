@@ -27,7 +27,8 @@ db = SqliteDb(session_table="team_ext_exec_sessions", db_file="tmp/team_hitl.db"
 @tool(external_execution=True)
 def send_email(to: str, subject: str, body: str) -> str:
     """Send an email to someone. Executed externally."""
-    pass
+    # Body is never called -- the result is provided by the external system
+    return ""
 
 
 # Create the member agent

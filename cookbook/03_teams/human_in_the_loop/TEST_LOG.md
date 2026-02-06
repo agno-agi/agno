@@ -3,48 +3,38 @@
 Last updated: 2026-02-06
 
 ## Test Environment
-- Python: `.venv/bin/python`
-- Command runner: `pytest`
-- OpenAI key: not set in local environment
+- Python: `.venvs/demo/bin/python`
+- Run command: `.venvs/demo/bin/python cookbook/03_teams/human_in_the_loop/<file>.py`
+- Requires: `OPENAI_API_KEY` environment variable
 
 ---
 
-### libs/agno/tests/integration/teams/human_in_the_loop/test_run_requirement_fixes.py
-
-**Status:** PASS
-
-**Description:** Validates `RunRequirement` behavior fixes for confirmation/external execution state checks and member context serialization.
-
-**Result:** 6/6 tests passed locally.
-
----
-
-### libs/agno/tests/integration/teams/human_in_the_loop/test_team_confirmation_flows.py
+### confirmation_required.py
 
 **Status:** NOT RUN
 
-**Description:** End-to-end team confirmation pause/continue scenarios.
+**Description:** Demonstrates team pausing when a member agent's tool requires user confirmation. Shows the full pause/confirm/continue cycle with interactive prompts.
 
-**Result:** Requires model API credentials for execution.
-
----
-
-### libs/agno/tests/integration/teams/human_in_the_loop/test_team_external_execution_flows.py
-
-**Status:** NOT RUN
-
-**Description:** End-to-end team external-execution pause/continue scenarios.
-
-**Result:** Requires model API credentials for execution.
+**Result:** Requires `OPENAI_API_KEY` and interactive terminal for Rich prompts.
 
 ---
 
-### libs/agno/tests/integration/teams/human_in_the_loop/test_team_user_input_flows.py
+### external_tool_execution.py
 
 **Status:** NOT RUN
 
-**Description:** End-to-end team user-input pause/continue scenarios.
+**Description:** Demonstrates external tool execution where the tool result is provided by the caller (e.g., actually sending an email). Shows pause/provide-result/continue cycle.
 
-**Result:** Requires model API credentials for execution.
+**Result:** Requires `OPENAI_API_KEY` and interactive terminal for Rich prompts.
+
+---
+
+### user_input_required.py
+
+**Status:** NOT RUN
+
+**Description:** Demonstrates collecting user input when a member agent's tool needs additional fields before execution. Shows pause/collect-input/continue cycle with schema-driven prompts.
+
+**Result:** Requires `OPENAI_API_KEY` and interactive terminal for Rich prompts.
 
 ---

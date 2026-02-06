@@ -195,3 +195,91 @@ def test_team_paused_event_streaming(shared_db):
 
     # Should have a paused event
     assert "TeamRunPaused" in events_by_type
+
+
+@pytest.mark.asyncio
+async def test_team_confirmation_async_streaming(shared_db):
+    """Async streaming team confirmation flow with continue_run."""
+    agent = _make_weather_agent(db=shared_db)
+    team = _make_team(agent, db=shared_db)
+
+    session_id = "test_team_async_stream_confirm"
+
+    # Stream the run
+    paused_output = None
+    async for event in team.arun(
+        "What is the weather in Tokyo?",
+        session_id=session_id,
+        stream=True,
+        yield_run_output=True,
+    ):
+        from agno.run.team import TeamRunOutput
+
+        if isinstance(event, TeamRunOutput) and event.is_paused:
+            paused_output = event
+
+    assert paused_output is not None
+    assert paused_output.is_paused
+
+    # Confirm
+    paused_output.active_requirements[0].confirm()
+
+    # Continue (non-streaming)
+    result = await team.acontinue_run(paused_output)
+    assert not result.is_paused
+    assert result.content is not None
+
+
+def test_team_continue_run_unresolved_stays_paused(shared_db):
+    """Team stays paused when continue_run is called without resolving requirements."""
+    agent = _make_weather_agent(db=shared_db)
+    team = _make_team(agent, db=shared_db)
+
+    session_id = "test_team_unresolved"
+    response = team.run("What is the weather in Tokyo?", session_id=session_id)
+
+    assert response.is_paused
+
+    # Do NOT resolve the requirement -- continue immediately
+    result = team.continue_run(response)
+
+    # Should still be paused since the requirement was not resolved
+    assert result.is_paused
+
+
+def test_team_chained_hitl_multi_round(shared_db):
+    """Team handles multiple pause-resume rounds in the same session.
+
+    Round 1: Ask weather for Tokyo -> pause -> confirm -> complete
+    Round 2: Ask weather for Paris (same session) -> pause -> confirm -> complete
+    """
+    agent = _make_weather_agent(db=shared_db)
+    team = _make_team(agent, db=shared_db)
+
+    session_id = "test_team_chained"
+
+    # Round 1: first query triggers pause
+    response = team.run("What is the weather in Tokyo?", session_id=session_id)
+    assert response.is_paused
+    assert len(response.active_requirements) >= 1
+
+    req = response.active_requirements[0]
+    assert req.needs_confirmation
+    req.confirm()
+
+    result = team.continue_run(response)
+    assert not result.is_paused
+    assert result.content is not None
+
+    # Round 2: second query in the same session triggers another pause
+    response2 = team.run("Now what is the weather in Paris?", session_id=session_id)
+    assert response2.is_paused
+    assert len(response2.active_requirements) >= 1
+
+    req2 = response2.active_requirements[0]
+    assert req2.needs_confirmation
+    req2.confirm()
+
+    result2 = team.continue_run(response2)
+    assert not result2.is_paused
+    assert result2.content is not None
