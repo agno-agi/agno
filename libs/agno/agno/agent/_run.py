@@ -1939,7 +1939,6 @@ def arun_dispatch(  # type: ignore
     agent.model = cast(Model, agent.model)
 
     # Get knowledge filters
-    knowledge_filters = knowledge_filters
     if agent.knowledge_filters or knowledge_filters:
         knowledge_filters = agent._get_effective_filters(knowledge_filters)
 
@@ -2751,7 +2750,6 @@ def acontinue_run_dispatch(  # type: ignore
         stream_events = False
 
     # Get knowledge filters
-    knowledge_filters = knowledge_filters
     if agent.knowledge_filters or knowledge_filters:
         knowledge_filters = agent._get_effective_filters(knowledge_filters)
 
