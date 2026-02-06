@@ -86,6 +86,46 @@ if TYPE_CHECKING:
     from agno.team.team import Team
 
 
+async def _asetup_session(
+    team: "Team",
+    run_context: RunContext,
+    session_id: str,
+    user_id: Optional[str],
+    run_id: Optional[str],
+) -> TeamSession:
+    """Read/create session, load state from DB, and resolve callable dependencies.
+
+    Shared setup for _arun() and _arun_stream(). Mirrors what the sync run()
+    does inline before calling _run()/_run_stream().
+    """
+    # Read or create session
+    if team._has_async_db():
+        team_session = await team._aread_or_create_session(session_id=session_id, user_id=user_id)
+    else:
+        team_session = team._read_or_create_session(session_id=session_id, user_id=user_id)
+
+    # Update metadata
+    team._update_metadata(session=team_session)
+
+    # Initialize and load session state from DB
+    run_context.session_state = team._initialize_session_state(
+        session_state=run_context.session_state if run_context.session_state is not None else {},
+        user_id=user_id,
+        session_id=session_id,
+        run_id=run_id,
+    )
+    if run_context.session_state is not None:
+        run_context.session_state = team._load_session_state(
+            session=team_session, session_state=run_context.session_state
+        )
+
+    # Resolve callable dependencies AFTER state is loaded
+    if run_context.dependencies is not None:
+        await team._aresolve_run_dependencies(run_context=run_context)
+
+    return team_session
+
+
 def _run(
     team: "Team",
     run_response: TeamRunOutput,
@@ -926,50 +966,34 @@ async def _arun(
     """Run the Team and return the response.
 
     Steps:
-    1. Read or create session
-    2. Update metadata and session state
-    3. Resolve callable dependencies
-    4. Execute pre-hooks
-    5. Determine tools for model
-    6. Prepare run messages
-    7. Start memory creation in background task
-    8. Reason about the task if reasoning is enabled
-    9. Get a response from the Model
-    10. Update TeamRunOutput with the model response
-    11. Store media if enabled
-    12. Convert response to structured format
-    13. Execute post-hooks
-    14. Wait for background memory creation
-    15. Create session summary
-    16. Cleanup and store (scrub, add to session, calculate metrics, save session)
+    1. Setup session via _asetup_session (read/create, load state, resolve dependencies)
+    2. Execute pre-hooks
+    3. Determine tools for model
+    4. Prepare run messages
+    5. Start memory creation in background task
+    6. Reason about the task if reasoning is enabled
+    7. Get a response from the Model
+    8. Update TeamRunOutput with the model response
+    9. Store media if enabled
+    10. Convert response to structured format
+    11. Execute post-hooks
+    12. Wait for background memory creation
+    13. Create session summary
+    14. Cleanup and store (scrub, add to session, calculate metrics, save session)
     """
     await aregister_run(run_context.run_id)
     log_debug(f"Team Run Start: {run_response.run_id}", center=True)
     memory_task = None
 
     try:
-        # Read or create session once before retry loop
-        if team._has_async_db():
-            team_session = await team._aread_or_create_session(session_id=session_id, user_id=user_id)
-        else:
-            team_session = team._read_or_create_session(session_id=session_id, user_id=user_id)
-
-        # Update metadata and session state
-        team._update_metadata(session=team_session)
-        run_context.session_state = team._initialize_session_state(
-            session_state=run_context.session_state if run_context.session_state is not None else {},
-            user_id=user_id,
+        # Setup session: read/create, load state, resolve dependencies
+        team_session = await _asetup_session(
+            team=team,
+            run_context=run_context,
             session_id=session_id,
+            user_id=user_id,
             run_id=run_response.run_id,
         )
-        if run_context.session_state is not None:
-            run_context.session_state = team._load_session_state(
-                session=team_session, session_state=run_context.session_state
-            )
-
-        # Resolve callable dependencies after session state is loaded (matches sync run() order)
-        if run_context.dependencies is not None:
-            await team._aresolve_run_dependencies(run_context=run_context)
 
         # Set up retry logic
         num_attempts = team.retries + 1
@@ -1231,22 +1255,20 @@ async def _arun_stream(
     background_tasks: Optional[Any] = None,
     **kwargs: Any,
 ) -> AsyncIterator[Union[TeamRunOutputEvent, RunOutputEvent, TeamRunOutput]]:
-    """Run the Team and return the response.
+    """Run the Team and return the response as a stream.
 
     Steps:
-    1. Read or create session
-    2. Update metadata and session state
-    3. Resolve callable dependencies
-    4. Execute pre-hooks
-    5. Determine tools for model
-    6. Prepare run messages
-    7. Start memory creation in background task
-    8. Reason about the task if reasoning is enabled
-    9. Get a response from the model
-    10. Parse response with parser model if provided
-    11. Wait for background memory creation
-    12. Create session summary
-    13. Cleanup and store (scrub, add to session, calculate metrics, save session)
+    1. Setup session via _asetup_session (read/create, load state, resolve dependencies)
+    2. Execute pre-hooks
+    3. Determine tools for model
+    4. Prepare run messages
+    5. Start memory creation in background task
+    6. Reason about the task if reasoning is enabled
+    7. Get a response from the model
+    8. Parse response with parser model if provided
+    9. Wait for background memory creation
+    10. Create session summary
+    11. Cleanup and store (scrub, add to session, calculate metrics, save session)
     """
     log_debug(f"Team Run Start: {run_response.run_id}", center=True)
 
@@ -1255,28 +1277,14 @@ async def _arun_stream(
     memory_task = None
 
     try:
-        # Read or create session once before retry loop
-        if team._has_async_db():
-            team_session = await team._aread_or_create_session(session_id=session_id, user_id=user_id)
-        else:
-            team_session = team._read_or_create_session(session_id=session_id, user_id=user_id)
-
-        # Update metadata and session state
-        team._update_metadata(session=team_session)
-        run_context.session_state = team._initialize_session_state(
-            session_state=run_context.session_state if run_context.session_state is not None else {},
-            user_id=user_id,
+        # Setup session: read/create, load state, resolve dependencies
+        team_session = await _asetup_session(
+            team=team,
+            run_context=run_context,
             session_id=session_id,
+            user_id=user_id,
             run_id=run_response.run_id,
         )
-        if run_context.session_state is not None:
-            run_context.session_state = team._load_session_state(
-                session=team_session, session_state=run_context.session_state
-            )
-
-        # Resolve callable dependencies after session state is loaded (matches sync run() order)
-        if run_context.dependencies is not None:
-            await team._aresolve_run_dependencies(run_context=run_context)
 
         # Set up retry logic
         num_attempts = team.retries + 1
