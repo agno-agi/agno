@@ -1,3 +1,4 @@
-from .agent import reasoning_scout, scout, scout_knowledge, scout_learnings
-
-__all__ = ["scout", "reasoning_scout", "scout_knowledge", "scout_learnings"]
+from .agent import reasoning_scout as reasoning_scout
+from .agent import scout as scout
+from .agent import scout_knowledge as scout_knowledge
+from .agent import scout_learnings as scout_learnings

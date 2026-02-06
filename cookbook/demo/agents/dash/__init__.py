@@ -1,5 +1,6 @@
 """Dash - A self-learning data agent with 6 layers of context."""
 
-from .agent import dash, dash_knowledge, dash_learnings, reasoning_dash
-
-__all__ = ["dash", "reasoning_dash", "dash_knowledge", "dash_learnings"]
+from .agent import dash as dash
+from .agent import dash_knowledge as dash_knowledge
+from .agent import dash_learnings as dash_learnings
+from .agent import reasoning_dash as reasoning_dash
