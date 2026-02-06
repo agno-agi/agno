@@ -293,6 +293,9 @@ class AgentToolsTrait(AgentTraitBase):
         if callable(close_fn):
             result = close_fn()
             if isawaitable(result):
+                # Prevent RuntimeWarning by closing the unawaited coroutine
+                if hasattr(result, "close"):
+                    result.close()
                 log_warning("close() returned an awaitable in sync cache clear; call aclear_callable_cache() instead.")
 
     @staticmethod

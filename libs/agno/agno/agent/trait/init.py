@@ -238,11 +238,16 @@ class AgentInitTrait(AgentTraitBase):
             self._formatter = SafeFormatter()
 
     def add_tool(self, tool: Union[Toolkit, Callable, Function, Dict]):
-        if self.tools is None or callable(self.tools):
+        if callable(self.tools):
+            log_warning("add_tool() replaces the callable tools factory. Use set_tools() to explicitly replace.")
+            self._callable_tools_cache.clear()
+            self.tools = []
+        elif self.tools is None:
             self.tools = []
         self.tools.append(tool)
 
     def set_tools(self, tools: Sequence[Union[Toolkit, Callable, Function, Dict]]):
+        self._callable_tools_cache.clear()
         self.tools = list(tools) if tools else []
 
     async def _connect_mcp_tools(
