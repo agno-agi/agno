@@ -320,7 +320,7 @@ def to_dict(team: "Team") -> Dict[str, Any]:
         config["model"] = team.model.to_dict() if isinstance(team.model, Model) else str(team.model)
 
     # --- Members ---
-    if team.members and isinstance(team.members, list):
+    if team.members:
         serialized_members = []
         for member in team.members:
             if isinstance(member, Agent):
@@ -337,11 +337,8 @@ def to_dict(team: "Team") -> Dict[str, Any]:
         config["respond_directly"] = team.respond_directly
     if team.delegate_to_all_members:
         config["delegate_to_all_members"] = team.delegate_to_all_members
-    effective_pass_user_input_to_members = team.effective_pass_user_input_to_members
-    if team.pass_user_input_to_members is not None or effective_pass_user_input_to_members:
-        config["pass_user_input_to_members"] = effective_pass_user_input_to_members
-        # Keep legacy key during transition for backwards compatibility.
-        config["determine_input_for_members"] = not effective_pass_user_input_to_members
+    if not team.determine_input_for_members:  # default is True
+        config["determine_input_for_members"] = team.determine_input_for_members
     if team.max_iterations != 10:
         config["max_iterations"] = team.max_iterations
 
@@ -437,8 +434,7 @@ def to_dict(team: "Team") -> Dict[str, Any]:
         config["references_format"] = team.references_format
 
     # --- Tools ---
-    # Serialize static tools only. Callable tools factories are not persisted.
-    if team.tools and isinstance(team.tools, list):
+    if team.tools:
         serialized_tools = []
         for tool in team.tools:
             try:
@@ -454,10 +450,6 @@ def to_dict(team: "Team") -> Dict[str, Any]:
                 log_warning(f"Could not serialize tool {tool}: {e}")
         if serialized_tools:
             config["tools"] = serialized_tools
-
-    # Persist cache_callables only if non-default
-    if not team.cache_callables:
-        config["cache_callables"] = team.cache_callables
     if team.tool_choice is not None:
         config["tool_choice"] = team.tool_choice
     if team.tool_call_limit is not None:
@@ -514,12 +506,6 @@ def to_dict(team: "Team") -> Dict[str, Any]:
     # TODO: implement session summary manager serialization
     # if team.session_summary_manager is not None:
     #     config["session_summary_manager"] = team.session_summary_manager.to_dict()
-
-    # --- Learning settings ---
-    if team.learning is not None:
-        config["learning"] = True if team.learning else False
-    if not team.add_learnings_to_context:  # default is True
-        config["add_learnings_to_context"] = team.add_learnings_to_context
 
     # --- History settings ---
     if team.add_history_to_context:
@@ -751,11 +737,6 @@ def from_dict(
     #     from agno.compression.manager import CompressionManager
     #     config["compression_manager"] = CompressionManager.from_dict(config["compression_manager"])
 
-    has_pass_user_input_to_members = "pass_user_input_to_members" in config
-    has_determine_input_for_members = "determine_input_for_members" in config
-    pass_user_input_to_members = config.get("pass_user_input_to_members") if has_pass_user_input_to_members else None
-    determine_input_for_members = config.get("determine_input_for_members") if has_determine_input_for_members else None
-
     team = cast(
         "Team",
         cls(
@@ -772,8 +753,7 @@ def from_dict(
             mode=_parse_team_mode(config.get("mode")),
             respond_directly=config.get("respond_directly", False),
             delegate_to_all_members=config.get("delegate_to_all_members", False),
-            pass_user_input_to_members=pass_user_input_to_members,
-            determine_input_for_members=determine_input_for_members,
+            determine_input_for_members=config.get("determine_input_for_members", True),
             max_iterations=config.get("max_iterations", 10),
             # --- User settings ---
             user_id=config.get("user_id"),
@@ -841,9 +821,6 @@ def from_dict(
             enable_session_summaries=config.get("enable_session_summaries", False),
             add_session_summary_to_context=config.get("add_session_summary_to_context"),
             # session_summary_manager=config.get("session_summary_manager"),  # TODO
-            # --- Learning settings ---
-            learning=config.get("learning"),
-            add_learnings_to_context=config.get("add_learnings_to_context", True),
             # --- History settings ---
             add_history_to_context=config.get("add_history_to_context", False),
             num_history_runs=config.get("num_history_runs"),
@@ -924,8 +901,7 @@ def save(
         all_links: List[Dict[str, Any]] = []
 
         # Save each member (Agent or nested Team) and collect links
-        _members = team.members if isinstance(team.members, list) else []
-        for position, member in enumerate(_members):
+        for position, member in enumerate(team.members or []):
             # Save member first - returns version
             member_version = member.save(db=db_, stage=stage, label=label, notes=notes)
 

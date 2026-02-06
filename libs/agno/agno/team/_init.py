@@ -32,7 +32,6 @@ from agno.eval.base import BaseEval
 from agno.filters import FilterExpr
 from agno.guardrails import BaseGuardrail
 from agno.knowledge.protocol import KnowledgeProtocol
-from agno.learn.machine import LearningMachine
 from agno.memory import MemoryManager
 from agno.models.base import Model
 from agno.models.message import Message
@@ -60,15 +59,14 @@ from agno.utils.string import generate_id_from_name
 
 def __init__(
     team: "Team",
-    members: Union[List[Union[Agent, "Team"]], Callable[..., List[Union[Agent, "Team"]]]],
+    members: List[Union[Agent, "Team"]],
     id: Optional[str] = None,
     model: Optional[Union[Model, str]] = None,
     name: Optional[str] = None,
     role: Optional[str] = None,
     mode: Optional["TeamMode"] = None,
     respond_directly: bool = False,
-    pass_user_input_to_members: Optional[bool] = None,
-    determine_input_for_members: Optional[bool] = None,
+    determine_input_for_members: bool = True,
     delegate_to_all_members: bool = False,
     max_iterations: int = 10,
     user_id: Optional[str] = None,
@@ -100,7 +98,7 @@ def __init__(
     additional_input: Optional[List[Union[str, Dict, BaseModel, Message]]] = None,
     dependencies: Optional[Dict[str, Any]] = None,
     add_dependencies_to_context: bool = False,
-    knowledge: Optional[Union[KnowledgeProtocol, Callable[..., KnowledgeProtocol]]] = None,
+    knowledge: Optional[KnowledgeProtocol] = None,
     knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
     add_knowledge_to_context: bool = False,
     enable_agentic_knowledge_filters: Optional[bool] = False,
@@ -120,19 +118,10 @@ def __init__(
     num_history_runs: Optional[int] = None,
     num_history_messages: Optional[int] = None,
     max_tool_calls_from_history: Optional[int] = None,
-    tools: Optional[
-        Union[
-            List[Union[Toolkit, Callable, Function, Dict]],
-            Callable[..., List[Union[Toolkit, Callable, Function, Dict]]],
-        ]
-    ] = None,
+    tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]] = None,
     tool_call_limit: Optional[int] = None,
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     tool_hooks: Optional[List[Callable]] = None,
-    cache_callables: bool = True,
-    callable_tools_cache_key: Optional[Callable[..., Optional[str]]] = None,
-    callable_knowledge_cache_key: Optional[Callable[..., Optional[str]]] = None,
-    callable_members_cache_key: Optional[Callable[..., Optional[str]]] = None,
     pre_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, BaseEval]]] = None,
     post_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, BaseEval]]] = None,
     input_schema: Optional[Type[BaseModel]] = None,
@@ -152,8 +141,6 @@ def __init__(
     enable_session_summaries: bool = False,
     session_summary_manager: Optional[SessionSummaryManager] = None,
     add_session_summary_to_context: Optional[bool] = None,
-    learning: Optional[Union[bool, LearningMachine]] = None,
-    add_learnings_to_context: bool = True,
     compress_tool_results: bool = False,
     compression_manager: Optional["CompressionManager"] = None,
     metadata: Optional[Dict[str, Any]] = None,
@@ -185,21 +172,7 @@ def __init__(
     team.role = role
 
     team.respond_directly = respond_directly
-    team.pass_user_input_to_members = pass_user_input_to_members
-    legacy_determine_input_for_members = (
-        determine_input_for_members if determine_input_for_members is not None else True
-    )
-    team.determine_input_for_members = legacy_determine_input_for_members
-    if (
-        pass_user_input_to_members is not None
-        and determine_input_for_members is not None
-        and pass_user_input_to_members != (not determine_input_for_members)
-    ):
-        log_warning(
-            "`pass_user_input_to_members` and `determine_input_for_members` were both provided with conflicting "
-            "values. `pass_user_input_to_members` takes precedence. `determine_input_for_members` is deprecated "
-            "and will be removed in a future release."
-        )
+    team.determine_input_for_members = determine_input_for_members
     team.delegate_to_all_members = delegate_to_all_members
     team.max_iterations = max_iterations
 
@@ -208,16 +181,11 @@ def __init__(
 
     if mode is not None:
         team.mode = mode
-        # Normalize booleans deterministically so conflicting flags can't leak through
+        # Sync booleans for internal code that checks them
         if mode == TeamMode.route:
             team.respond_directly = True
-            team.delegate_to_all_members = False
         elif mode == TeamMode.broadcast:
             team.delegate_to_all_members = True
-            team.respond_directly = False
-        elif mode in (TeamMode.coordinate, TeamMode.tasks):
-            team.respond_directly = False
-            team.delegate_to_all_members = False
     else:
         if team.respond_directly:
             team.mode = TeamMode.route
@@ -289,20 +257,10 @@ def __init__(
     team.store_history_messages = store_history_messages
     team.send_media_to_model = send_media_to_model
 
-    if tools is None:
-        team.tools = None
-    elif callable(tools) and not isinstance(tools, (Toolkit, Function)):
-        team.tools = tools  # type: ignore[assignment]
-    else:
-        team.tools = list(tools) if tools else None  # type: ignore[arg-type]
+    team.tools = tools
     team.tool_choice = tool_choice
     team.tool_call_limit = tool_call_limit
     team.tool_hooks = tool_hooks
-
-    team.cache_callables = cache_callables
-    team.callable_tools_cache_key = callable_tools_cache_key
-    team.callable_knowledge_cache_key = callable_knowledge_cache_key
-    team.callable_members_cache_key = callable_members_cache_key
 
     # Initialize hooks
     team.pre_hooks = pre_hooks
@@ -332,9 +290,6 @@ def __init__(
     team.enable_session_summaries = enable_session_summaries
     team.session_summary_manager = session_summary_manager
     team.add_session_summary_to_context = add_session_summary_to_context
-
-    team.learning = learning
-    team.add_learnings_to_context = add_learnings_to_context
 
     # Context compression settings
     team.compress_tool_results = compress_tool_results
@@ -399,16 +354,8 @@ def __init__(
     # List of connectable tools that were initialized on the last run
     team._connectable_tools_initialized_on_run = []
 
-    # Internal resolved LearningMachine instance
-    team._learning = None
-
     # Lazy-initialized shared thread pool executor for background tasks (memory, cultural knowledge, etc.)
     team._background_executor = None
-
-    # Callable factory caches
-    team._callable_tools_cache = {}
-    team._callable_knowledge_cache = {}
-    team._callable_members_cache = {}
 
     team._resolve_models()
 
@@ -483,8 +430,6 @@ def _initialize_member(team: "Team", member: Union["Team", Agent], debug_mode: O
         # Initialize the sub-team's model first so it has its model set
         member._set_default_model()
         # Then let the sub-team initialize its own members so they inherit from the sub-team
-        if not isinstance(member.members, list):
-            return
         for sub_member in member.members:
             member._initialize_member(sub_member, debug_mode=debug_mode)
 
@@ -502,9 +447,6 @@ def propagate_run_hooks_in_background(team: "Team", run_in_background: bool = Tr
     from agno.team.team import Team
 
     team._run_hooks_in_background = run_in_background
-
-    if not isinstance(team.members, list):
-        return
 
     for member in team.members:
         if hasattr(member, "_run_hooks_in_background"):
@@ -575,42 +517,6 @@ def _set_compression_manager(team: "Team") -> None:
             team.compression_manager.model = team.model
         if team.compression_manager.compress_tool_results:
             team.compress_tool_results = True
-
-
-def _set_learning_machine(team: "Team") -> None:
-    """Initialize LearningMachine with team's db and model.
-
-    Sets the internal _learning field without modifying the public learning field.
-
-    Handles:
-    - learning=True: Create default LearningMachine
-    - learning=False/None: Disabled
-    - learning=LearningMachine(...): Use provided, inject db/model
-    """
-    if team.learning is None or team.learning is False:
-        team._learning = None
-        return
-
-    if team.db is None:
-        log_warning("Database not provided. LearningMachine not initialized.")
-        team._learning = None
-        return
-
-    if team.learning is True:
-        team._learning = LearningMachine(db=team.db, model=team.model, user_profile=True, user_memory=True)
-        return
-
-    if isinstance(team.learning, LearningMachine):
-        if team.learning.db is None:
-            team.learning.db = team.db
-        if team.learning.model is None:
-            team.learning.model = team.model
-        team._learning = team.learning
-
-
-def get_learning_machine(team: "Team") -> Optional[LearningMachine]:
-    """Get the resolved LearningMachine instance."""
-    return team._learning
 
 
 def _initialize_session(
@@ -696,8 +602,6 @@ def initialize_team(team: "Team", debug_mode: Optional[bool] = None) -> None:
         team._set_session_summary_manager()
     if team.compress_tool_results or team.compression_manager is not None:
         team._set_compression_manager()
-    if team.learning is not None and team.learning is not False:
-        team._set_learning_machine()
 
     log_debug(f"Team ID: {team.id}", center=True)
 
@@ -705,36 +609,23 @@ def initialize_team(team: "Team", debug_mode: Optional[bool] = None) -> None:
     if team._formatter is None:
         team._formatter = SafeFormatter()
 
-    # Only initialize members if they are a static list (not a callable factory)
-    if isinstance(team.members, list):
-        for member in team.members:
-            team._initialize_member(member, debug_mode=team.debug_mode)
+    for member in team.members:
+        team._initialize_member(member, debug_mode=team.debug_mode)
 
 
 def add_tool(team: "Team", tool: Union[Toolkit, Callable, Function, Dict]) -> None:
-    if callable(team.tools) and not isinstance(team.tools, (Toolkit, Function)):
-        raise RuntimeError(
-            "Cannot add_tool when tools is a callable factory. "
-            "Use set_tools() with a list to replace the factory first."
-        )
     if not team.tools:
         team.tools = []
-    team.tools.append(tool)  # type: ignore[union-attr]
+    team.tools.append(tool)
 
 
-def set_tools(team: "Team", tools: Union[List[Union[Toolkit, Callable, Function, Dict]], Callable]) -> None:
-    from agno.utils.callables import is_callable_factory
-
-    if is_callable_factory(tools, excluded_types=(Toolkit, Function)):
-        team.tools = tools  # type: ignore[assignment]
-        team._callable_tools_cache.clear()
-    else:
-        team.tools = list(tools) if tools else []  # type: ignore[assignment,arg-type]
+def set_tools(team: "Team", tools: List[Union[Toolkit, Callable, Function, Dict]]) -> None:
+    team.tools = tools
 
 
 async def _connect_mcp_tools(team: "Team") -> None:
     """Connect the MCP tools to the agent."""
-    if team.tools is not None and isinstance(team.tools, list):
+    if team.tools is not None:
         for tool in team.tools:
             # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
             if (
@@ -745,14 +636,14 @@ async def _connect_mcp_tools(team: "Team") -> None:
                 try:
                     # Connect the MCP server
                     await tool.connect()  # type: ignore
-                    team._mcp_tools_initialized_on_run.append(tool)  # type: ignore[union-attr]
+                    team._mcp_tools_initialized_on_run.append(tool)
                 except Exception as e:
                     log_warning(f"Error connecting tool: {str(e)}")
 
 
 async def _disconnect_mcp_tools(team: "Team") -> None:
     """Disconnect the MCP tools from the agent."""
-    for tool in team._mcp_tools_initialized_on_run:  # type: ignore[union-attr]
+    for tool in team._mcp_tools_initialized_on_run:
         try:
             await tool.close()
         except Exception as e:
@@ -762,24 +653,24 @@ async def _disconnect_mcp_tools(team: "Team") -> None:
 
 def _connect_connectable_tools(team: "Team") -> None:
     """Connect tools that require connection management (e.g., database connections)."""
-    if team.tools and isinstance(team.tools, list):
+    if team.tools:
         for tool in team.tools:
             if (
                 hasattr(tool, "requires_connect")
                 and tool.requires_connect  # type: ignore
                 and hasattr(tool, "connect")
-                and tool not in team._connectable_tools_initialized_on_run  # type: ignore[operator]
+                and tool not in team._connectable_tools_initialized_on_run
             ):
                 try:
                     tool.connect()  # type: ignore
-                    team._connectable_tools_initialized_on_run.append(tool)  # type: ignore[union-attr]
+                    team._connectable_tools_initialized_on_run.append(tool)
                 except Exception as e:
                     log_warning(f"Error connecting tool: {str(e)}")
 
 
 def _disconnect_connectable_tools(team: "Team") -> None:
     """Disconnect tools that require connection management."""
-    for tool in team._connectable_tools_initialized_on_run:  # type: ignore[union-attr]
+    for tool in team._connectable_tools_initialized_on_run:
         if hasattr(tool, "close"):
             try:
                 tool.close()  # type: ignore

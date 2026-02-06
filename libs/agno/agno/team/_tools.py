@@ -177,7 +177,7 @@ async def _check_and_refresh_mcp_tools(team: "Team") -> None:
     await team._connect_mcp_tools()
 
     # Add provided tools
-    if team.tools is not None and isinstance(team.tools, list):
+    if team.tools is not None:
         for tool in team.tools:
             # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
             if hasattr(type(tool), "__mro__") and any(
@@ -197,22 +197,6 @@ async def _check_and_refresh_mcp_tools(team: "Team") -> None:
                     except (RuntimeError, BaseException) as e:
                         log_warning(f"Failed to build tools for {str(tool)}: {e}")
                         continue
-
-
-async def _aresolve_callable_resources(team: "Team", run_context: RunContext) -> None:
-    """Async resolution of callable factories for tools, knowledge, and members.
-
-    Must be called from async run paths before _determine_tools_for_model.
-    """
-    from agno.utils.callables import (
-        aresolve_callable_knowledge,
-        aresolve_callable_members,
-        aresolve_callable_tools,
-    )
-
-    await aresolve_callable_tools(team, run_context)
-    await aresolve_callable_knowledge(team, run_context)
-    await aresolve_callable_members(team, run_context)
 
 
 def _determine_tools_for_model(
@@ -237,37 +221,15 @@ def _determine_tools_for_model(
     stream_events: Optional[bool] = None,
     check_mcp_tools: bool = True,
 ) -> List[Union[Function, dict]]:
-    from agno.utils.callables import (
-        get_resolved_knowledge,
-        get_resolved_members,
-        get_resolved_tools,
-        resolve_callable_knowledge,
-        resolve_callable_members,
-        resolve_callable_tools,
-    )
-
-    # Resolve callable factories (sync only — async paths pre-resolve via _aresolve_callable_resources)
-    if not async_mode:
-        resolve_callable_tools(team, run_context)
-        resolve_callable_knowledge(team, run_context)
-        resolve_callable_members(team, run_context)
-
-    # Initialize members that were resolved from a callable factory
-    resolved_members = get_resolved_members(team, run_context)
-    if run_context.members is not None and resolved_members is not None:
-        for member in resolved_members:
-            team._initialize_member(member, debug_mode=team.debug_mode if hasattr(team, "debug_mode") else None)
-
     # Connect tools that require connection management
     team._connect_connectable_tools()
 
     # Prepare tools
     _tools: List[Union[Toolkit, Callable, Function, Dict]] = []
 
-    # Add provided tools (resolved from factory or static)
-    resolved_tools_list = get_resolved_tools(team, run_context)
-    if resolved_tools_list is not None:
-        for tool in resolved_tools_list:
+    # Add provided tools
+    if team.tools is not None:
+        for tool in team.tools:
             # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
             if hasattr(type(tool), "__mro__") and any(
                 c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
@@ -283,15 +245,6 @@ def _determine_tools_for_model(
     if team.memory_manager is not None and team.enable_agentic_memory:
         _tools.append(team._get_update_user_memory_function(user_id=user_id, async_mode=async_mode))
 
-    # Add learning machine tools
-    if team._learning is not None:
-        learning_tools = team._learning.get_tools(
-            user_id=user_id,
-            session_id=session.session_id if session else None,
-            team_id=team.id,
-        )
-        _tools.extend(learning_tools)
-
     if team.enable_agentic_state:
         _tools.append(Function(name="update_session_state", entrypoint=team._update_session_state_tool))
 
@@ -302,13 +255,12 @@ def _determine_tools_for_model(
             )
         )
 
-    # Add tools for accessing knowledge (use resolved knowledge if available)
-    resolved_knowledge = get_resolved_knowledge(team, run_context)
-    if resolved_knowledge is not None and team.search_knowledge:
+    # Add tools for accessing knowledge
+    if team.knowledge is not None and team.search_knowledge:
         # Use knowledge protocol's get_tools method
-        _get_tools_fn = getattr(resolved_knowledge, "get_tools", None)
-        if callable(_get_tools_fn):
-            knowledge_tools = _get_tools_fn(
+        get_tools_fn = getattr(team.knowledge, "get_tools", None)
+        if callable(get_tools_fn):
+            knowledge_tools = get_tools_fn(
                 run_response=run_response,
                 run_context=run_context,
                 knowledge_filters=run_context.knowledge_filters,
@@ -318,91 +270,78 @@ def _determine_tools_for_model(
             )
             _tools.extend(knowledge_tools)
 
-    if resolved_knowledge is not None and team.update_knowledge:
-        _run_ctx = run_context
+    if team.knowledge is not None and team.update_knowledge:
+        _tools.append(team.add_to_knowledge)
 
-        def _add_to_knowledge_tool(query: str, result: str) -> str:
-            return add_to_knowledge(team, query=query, result=result, run_context=_run_ctx)
+    if team.members:
+        from agno.team.mode import TeamMode
 
-        _add_to_knowledge_tool.__name__ = "add_to_knowledge"
-        _add_to_knowledge_tool.__doc__ = add_to_knowledge.__doc__
-        _tools.append(_add_to_knowledge_tool)
+        if team.mode == TeamMode.tasks:
+            # Tasks mode: provide task management tools instead of delegation tools
+            from agno.team._task_tools import _get_task_management_tools
+            from agno.team.task import load_task_list
 
-    from agno.team.mode import TeamMode
-
-    # Use resolved members if available
-    effective_members = (
-        resolved_members if resolved_members is not None else (team.members if isinstance(team.members, list) else [])
-    )
-
-    if team.mode == TeamMode.tasks:
-        # Tasks mode: provide task management tools regardless of whether members exist
-        from agno.team._task_tools import _get_task_management_tools
-        from agno.team.task import load_task_list
-
-        _task_list = load_task_list(run_context.session_state)
-        task_tools = _get_task_management_tools(
-            team=team,
-            task_list=_task_list,
-            run_response=run_response,
-            run_context=run_context,
-            session=session,
-            team_run_context=team_run_context,
-            user_id=user_id,
-            stream=stream or False,
-            stream_events=stream_events or False,
-            async_mode=async_mode,
-            images=images,  # type: ignore
-            videos=videos,  # type: ignore
-            audio=audio,  # type: ignore
-            files=files,  # type: ignore
-            add_history_to_context=add_history_to_context,
-            add_dependencies_to_context=add_dependencies_to_context,
-            add_session_state_to_context=add_session_state_to_context,
-            debug_mode=debug_mode,
-        )
-        _tools.extend(task_tools)
-    elif effective_members:
-        # Standard modes: provide delegation tools
-        effective_pass_user_input_to_members = team.effective_pass_user_input_to_members
-        # Get the user message if we are using the input directly
-        user_message_content = None
-        if effective_pass_user_input_to_members:
-            user_message = team._get_user_message(
+            _task_list = load_task_list(run_context.session_state)
+            task_tools = _get_task_management_tools(
+                team=team,
+                task_list=_task_list,
                 run_response=run_response,
                 run_context=run_context,
-                input_message=input_message,
+                session=session,
+                team_run_context=team_run_context,
                 user_id=user_id,
-                audio=audio,
-                images=images,
-                videos=videos,
-                files=files,
+                stream=stream or False,
+                stream_events=stream_events or False,
+                async_mode=async_mode,
+                images=images,  # type: ignore
+                videos=videos,  # type: ignore
+                audio=audio,  # type: ignore
+                files=files,  # type: ignore
+                add_history_to_context=add_history_to_context,
                 add_dependencies_to_context=add_dependencies_to_context,
+                add_session_state_to_context=add_session_state_to_context,
+                debug_mode=debug_mode,
             )
-            user_message_content = user_message.content if user_message is not None else None
+            _tools.extend(task_tools)
+        else:
+            # Standard modes: provide delegation tools
+            # Get the user message if we are using the input directly
+            user_message_content = None
+            if team.determine_input_for_members is False:
+                user_message = team._get_user_message(
+                    run_response=run_response,
+                    run_context=run_context,
+                    input_message=input_message,
+                    user_id=user_id,
+                    audio=audio,
+                    images=images,
+                    videos=videos,
+                    files=files,
+                    add_dependencies_to_context=add_dependencies_to_context,
+                )
+                user_message_content = user_message.content if user_message is not None else None
 
-        delegate_task_func = team._get_delegate_task_function(
-            run_response=run_response,
-            run_context=run_context,
-            session=session,
-            team_run_context=team_run_context,
-            input=user_message_content,
-            pass_user_input_to_members=effective_pass_user_input_to_members,
-            user_id=user_id,
-            stream=stream or False,
-            stream_events=stream_events or False,
-            async_mode=async_mode,
-            images=images,  # type: ignore
-            videos=videos,  # type: ignore
-            audio=audio,  # type: ignore
-            files=files,  # type: ignore
-            add_history_to_context=add_history_to_context,
-            add_dependencies_to_context=add_dependencies_to_context,
-            add_session_state_to_context=add_session_state_to_context,
-            debug_mode=debug_mode,
-        )
+            delegate_task_func = team._get_delegate_task_function(
+                run_response=run_response,
+                run_context=run_context,
+                session=session,
+                team_run_context=team_run_context,
+                input=user_message_content,
+                user_id=user_id,
+                stream=stream or False,
+                stream_events=stream_events or False,
+                async_mode=async_mode,
+                images=images,  # type: ignore
+                videos=videos,  # type: ignore
+                audio=audio,  # type: ignore
+                files=files,  # type: ignore
+                add_history_to_context=add_history_to_context,
+                add_dependencies_to_context=add_dependencies_to_context,
+                add_session_state_to_context=add_session_state_to_context,
+                debug_mode=debug_mode,
+            )
 
-        _tools.append(delegate_task_func)
+            _tools.append(delegate_task_func)
 
         if team.get_member_information_tool:
             _tools.append(team.get_member_information)
@@ -853,15 +792,12 @@ def _determine_team_member_interactions(
     return team_member_interactions_str
 
 
-def _find_member_by_id(
-    team: "Team", member_id: str, run_context: Optional[RunContext] = None
-) -> Optional[Tuple[int, Union[Agent, "Team"]]]:
-    """Find a member (agent or team) by URL-safe ID, searching recursively.
+def _find_member_by_id(team: "Team", member_id: str) -> Optional[Tuple[int, Union[Agent, "Team"]]]:
+    """Find a member (agent or team) by its URL-safe ID, searching recursively.
 
     Args:
         team: The team to search in.
         member_id (str): URL-safe ID of the member to find.
-        run_context: Optional run context containing resolved callable members.
 
     Returns:
         Optional[Tuple[int, Union[Agent, "Team"]]]: Tuple containing:
@@ -869,13 +805,9 @@ def _find_member_by_id(
             - The matched member (Agent or Team)
     """
     from agno.team.team import Team
-    from agno.utils.callables import get_resolved_members
-
-    # Use resolved members (from run_context or static list)
-    members = get_resolved_members(team, run_context) or []
 
     # First check direct members
-    for i, member in enumerate(members):
+    for i, member in enumerate(team.members):
         url_safe_member_id = get_member_id(member)
         if url_safe_member_id == member_id:
             return i, member
@@ -923,8 +855,7 @@ def _get_delegate_task_function(
     stream: bool = False,
     stream_events: bool = False,
     async_mode: bool = False,
-    input: Optional[str] = None,  # Used when pass_user_input_to_members=True
-    pass_user_input_to_members: Optional[bool] = None,
+    input: Optional[str] = None,  # Used for determine_input_for_members=False
     images: Optional[List[Image]] = None,
     videos: Optional[List[Video]] = None,
     audio: Optional[List[Audio]] = None,
@@ -942,11 +873,6 @@ def _get_delegate_task_function(
         audio = []
     if not files:
         files = []
-    effective_pass_user_input_to_members = (
-        pass_user_input_to_members
-        if pass_user_input_to_members is not None
-        else team.effective_pass_user_input_to_members
-    )
 
     def _setup_delegate_task_to_member(member_agent: Union[Agent, "Team"], task: str):
         # 1. Initialize the member agent
@@ -984,7 +910,7 @@ def _get_delegate_task_function(
             team_history_str = session.get_team_history_context(num_runs=team.num_team_history_runs)
 
         # 6. Create the member agent task or use the input directly
-        if effective_pass_user_input_to_members:
+        if team.determine_input_for_members is False:
             member_agent_task = input  # type: ignore
         else:
             member_agent_task = task
@@ -1072,7 +998,7 @@ def _get_delegate_task_function(
         """
 
         # Find the member agent using the helper function
-        result = team._find_member_by_id(member_id, run_context=run_context)
+        result = team._find_member_by_id(member_id)
         if result is None:
             yield f"Member with ID {member_id} not found in the team or any subteams. Please choose the correct member from the list of members:\n\n{team.get_members_system_message_content(indent=0)}"
             return
@@ -1212,7 +1138,7 @@ def _get_delegate_task_function(
         """
 
         # Find the member agent using the helper function
-        result = team._find_member_by_id(member_id, run_context=run_context)
+        result = team._find_member_by_id(member_id)
         if result is None:
             yield f"Member with ID {member_id} not found in the team or any subteams. Please choose the correct member from the list of members:\n\n{team.get_members_system_message_content(indent=0)}"
             return
@@ -1347,10 +1273,7 @@ def _get_delegate_task_function(
         """
 
         # Run all the members sequentially
-        from agno.utils.callables import get_resolved_members
-
-        _members = get_resolved_members(team, run_context) or []
-        for _, member_agent in enumerate(_members):
+        for _, member_agent in enumerate(team.members):
             member_agent_task, history = _setup_delegate_task_to_member(member_agent=member_agent, task=task)
 
             member_session_state_copy = copy(run_context.session_state)
@@ -1472,7 +1395,6 @@ def _get_delegate_task_function(
         Returns:
             str: The result of the delegated task.
         """
-        from agno.utils.callables import get_resolved_members as _get_resolved_members
 
         if stream:
             # Concurrent streaming: launch each member as a streaming worker and merge events.
@@ -1547,8 +1469,7 @@ def _get_delegate_task_function(
 
             # Initialize and launch all members
             tasks: List[asyncio.Task[None]] = []
-            _members = _get_resolved_members(team, run_context) or []
-            for member_agent in _members:
+            for member_agent in team.members:
                 current_agent = member_agent
                 team._initialize_member(current_agent)
                 tasks.append(asyncio.create_task(stream_member(current_agent)))
@@ -1579,8 +1500,7 @@ def _get_delegate_task_function(
         else:
             # Non-streaming concurrent run of members; collect results when done
             tasks = []
-            _members = _get_resolved_members(team, run_context) or []
-            for member_agent_index, member_agent in enumerate(_members):
+            for member_agent_index, member_agent in enumerate(team.members):
                 current_agent = member_agent
                 member_agent_task, history = _setup_delegate_task_to_member(member_agent=current_agent, task=task)
 
@@ -1702,7 +1622,7 @@ def _get_delegate_task_function(
     return delegate_func
 
 
-def add_to_knowledge(team: "Team", query: str, result: str, run_context: Optional[RunContext] = None) -> str:
+def add_to_knowledge(team: "Team", query: str, result: str) -> str:
     """Use this function to add information to the knowledge base for future use.
 
     Args:
@@ -1712,14 +1632,11 @@ def add_to_knowledge(team: "Team", query: str, result: str, run_context: Optiona
     Returns:
         str: A string indicating the status of the addition.
     """
-    from agno.utils.callables import get_resolved_knowledge
-
-    _knowledge = get_resolved_knowledge(team, run_context)
-    if _knowledge is None:
+    if team.knowledge is None:
         log_warning("Knowledge is not set, cannot add to knowledge")
         return "Knowledge is not set, cannot add to knowledge"
 
-    insert_method = getattr(_knowledge, "insert", None)
+    insert_method = getattr(team.knowledge, "insert", None)
     if not callable(insert_method):
         log_warning("Knowledge base does not support adding content")
         return "Knowledge base does not support adding content"
@@ -1743,19 +1660,16 @@ def get_relevant_docs_from_knowledge(
 ) -> Optional[List[Union[Dict[str, Any], str]]]:
     """Return a list of references from the knowledge base"""
     from agno.knowledge.document import Document
-    from agno.utils.callables import get_resolved_knowledge
-
-    _knowledge = get_resolved_knowledge(team, run_context)
 
     # Extract dependencies from run_context if available
     dependencies = run_context.dependencies if run_context else None
 
-    if num_documents is None and _knowledge is not None:
-        num_documents = getattr(_knowledge, "max_results", None)
+    if num_documents is None and team.knowledge is not None:
+        num_documents = getattr(team.knowledge, "max_results", None)
 
     # Validate the filters against known valid filter keys
-    if _knowledge is not None and filters is not None:
-        validate_filters_method = getattr(_knowledge, "validate_filters", None)
+    if team.knowledge is not None and filters is not None:
+        validate_filters_method = getattr(team.knowledge, "validate_filters", None)
         if callable(validate_filters_method):
             valid_filters, invalid_keys = validate_filters_method(filters)
 
@@ -1794,17 +1708,17 @@ def get_relevant_docs_from_knowledge(
             raise e
     # Use knowledge protocol's retrieve method
     try:
-        if _knowledge is None:
+        if team.knowledge is None:
             return None
 
         # Use protocol retrieve() method if available
-        retrieve_fn = getattr(_knowledge, "retrieve", None)
+        retrieve_fn = getattr(team.knowledge, "retrieve", None)
         if not callable(retrieve_fn):
             log_debug("Knowledge does not implement retrieve()")
             return None
 
         if num_documents is None:
-            num_documents = getattr(_knowledge, "max_results", 10)
+            num_documents = getattr(team.knowledge, "max_results", 10)
 
         log_debug(f"Retrieving from knowledge base with filters: {filters}")
         relevant_docs: List[Document] = retrieve_fn(query=query, max_results=num_documents, filters=filters)
@@ -1829,19 +1743,16 @@ async def aget_relevant_docs_from_knowledge(
 ) -> Optional[List[Union[Dict[str, Any], str]]]:
     """Get relevant documents from knowledge base asynchronously."""
     from agno.knowledge.document import Document
-    from agno.utils.callables import get_resolved_knowledge
-
-    _knowledge = get_resolved_knowledge(team, run_context)
 
     # Extract dependencies from run_context if available
     dependencies = run_context.dependencies if run_context else None
 
-    if num_documents is None and _knowledge is not None:
-        num_documents = getattr(_knowledge, "max_results", None)
+    if num_documents is None and team.knowledge is not None:
+        num_documents = getattr(team.knowledge, "max_results", None)
 
     # Validate the filters against known valid filter keys
-    if _knowledge is not None and filters is not None:
-        avalidate_filters_method = getattr(_knowledge, "avalidate_filters", None)
+    if team.knowledge is not None and filters is not None:
+        avalidate_filters_method = getattr(team.knowledge, "avalidate_filters", None)
         if callable(avalidate_filters_method):
             valid_filters, invalid_keys = await avalidate_filters_method(filters)
 
@@ -1887,19 +1798,19 @@ async def aget_relevant_docs_from_knowledge(
 
     # Use knowledge protocol's retrieve method
     try:
-        if _knowledge is None:
+        if team.knowledge is None:
             return None
 
         # Use protocol aretrieve() or retrieve() method if available
-        aretrieve_fn = getattr(_knowledge, "aretrieve", None)
-        retrieve_fn = getattr(_knowledge, "retrieve", None)
+        aretrieve_fn = getattr(team.knowledge, "aretrieve", None)
+        retrieve_fn = getattr(team.knowledge, "retrieve", None)
 
         if not callable(aretrieve_fn) and not callable(retrieve_fn):
             log_debug("Knowledge does not implement retrieve()")
             return None
 
         if num_documents is None:
-            num_documents = getattr(_knowledge, "max_results", 10)
+            num_documents = getattr(team.knowledge, "max_results", 10)
 
         log_debug(f"Retrieving from knowledge base with filters: {filters}")
 
