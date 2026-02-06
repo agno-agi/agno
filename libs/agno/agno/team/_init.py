@@ -57,7 +57,7 @@ from agno.utils.string import generate_id_from_name
 
 
 def __init__(
-    team,
+    team: "Team",
     members: List[Union[Agent, "Team"]],
     id: Optional[str] = None,
     model: Optional[Union[Model, str]] = None,
@@ -497,7 +497,7 @@ def _set_compression_manager(team: "Team") -> None:
 
 
 def _initialize_session(
-    team,
+    team: "Team",
     session_id: Optional[str] = None,
     user_id: Optional[str] = None,
 ) -> Tuple[str, Optional[str]]:
@@ -521,7 +521,7 @@ def _initialize_session(
 
 
 def _initialize_session_state(
-    team,
+    team: "Team",
     session_state: Dict[str, Any],
     user_id: Optional[str] = None,
     session_id: Optional[str] = None,
@@ -590,13 +590,13 @@ def initialize_team(team: "Team", debug_mode: Optional[bool] = None) -> None:
         team._initialize_member(member, debug_mode=team.debug_mode)
 
 
-def add_tool(team: "Team", tool: Union[Toolkit, Callable, Function, Dict]):
+def add_tool(team: "Team", tool: Union[Toolkit, Callable, Function, Dict]) -> None:
     if not team.tools:
         team.tools = []
     team.tools.append(tool)
 
 
-def set_tools(team: "Team", tools: List[Union[Toolkit, Callable, Function, Dict]]):
+def set_tools(team: "Team", tools: List[Union[Toolkit, Callable, Function, Dict]]) -> None:
     team.tools = tools
 
 
