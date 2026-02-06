@@ -80,10 +80,7 @@ class Schedule:
             "updated_at",
         }
         filtered = {k: v for k, v in data.items() if k in valid_keys}
-        if "created_at" in filtered and filtered["created_at"] is not None:
-            filtered["created_at"] = to_epoch_s(filtered["created_at"])
-        if "updated_at" in filtered and filtered["updated_at"] is not None:
-            filtered["updated_at"] = to_epoch_s(filtered["updated_at"])
+        # __post_init__ handles datetime conversion, so no need to convert here
         return cls(**filtered)
 
 
@@ -143,6 +140,5 @@ class ScheduleRun:
             "created_at",
         }
         filtered = {k: v for k, v in data.items() if k in valid_keys}
-        if "created_at" in filtered and filtered["created_at"] is not None:
-            filtered["created_at"] = to_epoch_s(filtered["created_at"])
+        # __post_init__ handles datetime conversion, so no need to convert here
         return cls(**filtered)
