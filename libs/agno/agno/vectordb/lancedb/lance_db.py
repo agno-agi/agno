@@ -98,6 +98,8 @@ class LanceDb(VectorDb):
 
         # LanceDB connection details
         self.uri: lancedb.URI = uri
+        if str(uri).startswith("db://") and not (api_key or getenv("LANCEDB_API_KEY")):
+            raise ValueError("LanceDB Cloud URI (db://...) requires an API key. Pass api_key= or set LANCEDB_API_KEY.")
         self.connection: lancedb.DBConnection = connection or lancedb.connect(uri=self.uri, api_key=api_key)
         self.table: Optional[lancedb.db.LanceTable] = table
 
@@ -737,12 +739,12 @@ class LanceDb(VectorDb):
             return False
 
         try:
-            result = self.table.search().select(["payload"]).to_pandas()
-            # Convert the JSON strings in payload column to dictionaries
-            payloads = result["payload"].apply(json.loads)
-
-            # Check if the name exists in any of the payloads
-            return any(payload.get("name") == name for payload in payloads)
+            result = self.table.search().select(["payload"]).to_list()
+            for row in result:
+                payload = json.loads(row["payload"])
+                if payload.get("name") == name:
+                    return True
+            return False
         except Exception as e:
             logger.error(f"Error checking name existence: {e}")
             return False
@@ -757,8 +759,7 @@ class LanceDb(VectorDb):
             return False
 
         try:
-            # Search for the document with the specific ID
-            result = self.table.search().where(f"{self._id} = '{id}'").to_pandas()
+            result = self.table.search().where(f"{self._id} = '{id}'").to_list()
             return len(result) > 0
         except Exception as e:
             logger.error(f"Error checking id existence: {e}")
@@ -787,16 +788,14 @@ class LanceDb(VectorDb):
 
         try:
             total_count = self.table.count_rows()
-            result = self.table.search().select(["id", "payload"]).limit(total_count).to_pandas()
+            result = self.table.search().select(["id", "payload"]).limit(total_count).to_list()
 
-            # Find matching IDs
             ids_to_delete = []
-            for _, row in result.iterrows():
+            for row in result:
                 payload = json.loads(row["payload"])
                 if payload.get("name") == name:
                     ids_to_delete.append(row["id"])
 
-            # Delete matching records
             if ids_to_delete:
                 for doc_id in ids_to_delete:
                     self.table.delete(f"{self._id} = '{doc_id}'")
@@ -818,15 +817,13 @@ class LanceDb(VectorDb):
 
         try:
             total_count = self.table.count_rows()
-            result = self.table.search().select(["id", "payload"]).limit(total_count).to_pandas()
+            result = self.table.search().select(["id", "payload"]).limit(total_count).to_list()
 
-            # Find matching IDs
             ids_to_delete = []
-            for _, row in result.iterrows():
+            for row in result:
                 payload = json.loads(row["payload"])
                 doc_metadata = payload.get("meta_data", {})
 
-                # Check if all metadata key-value pairs match
                 match = True
                 for key, value in metadata.items():
                     if key not in doc_metadata or doc_metadata[key] != value:
@@ -836,7 +833,6 @@ class LanceDb(VectorDb):
                 if match:
                     ids_to_delete.append(row["id"])
 
-            # Delete matching records
             if ids_to_delete:
                 for doc_id in ids_to_delete:
                     self.table.delete(f"{self._id} = '{doc_id}'")
@@ -860,16 +856,14 @@ class LanceDb(VectorDb):
 
         try:
             total_count = self.table.count_rows()
-            result = self.table.search().select(["id", "payload"]).limit(total_count).to_pandas()
+            result = self.table.search().select(["id", "payload"]).limit(total_count).to_list()
 
-            # Find matching IDs
             ids_to_delete = []
-            for _, row in result.iterrows():
+            for row in result:
                 payload = json.loads(row["payload"])
                 if payload.get("content_id") == content_id:
                     ids_to_delete.append(row["id"])
 
-            # Delete matching records
             if ids_to_delete:
                 for doc_id in ids_to_delete:
                     self.table.delete(f"{self._id} = '{doc_id}'")
@@ -893,16 +887,14 @@ class LanceDb(VectorDb):
 
         try:
             total_count = self.table.count_rows()
-            result = self.table.search().select(["id", "payload"]).limit(total_count).to_pandas()
+            result = self.table.search().select(["id", "payload"]).limit(total_count).to_list()
 
-            # Find matching IDs
             ids_to_delete = []
-            for _, row in result.iterrows():
+            for row in result:
                 payload = json.loads(row["payload"])
                 if payload.get("content_hash") == content_hash:
                     ids_to_delete.append(row["id"])
 
-            # Delete matching records
             if ids_to_delete:
                 for doc_id in ids_to_delete:
                     self.table.delete(f"{self._id} = '{doc_id}'")
@@ -926,10 +918,9 @@ class LanceDb(VectorDb):
 
         try:
             total_count = self.table.count_rows()
-            result = self.table.search().select(["id", "payload"]).limit(total_count).to_pandas()
+            result = self.table.search().select(["id", "payload"]).limit(total_count).to_list()
 
-            # Check if any records match the content_hash
-            for _, row in result.iterrows():
+            for row in result:
                 payload = json.loads(row["payload"])
                 if payload.get("content_hash") == content_hash:
                     return True
@@ -955,17 +946,15 @@ class LanceDb(VectorDb):
                 logger.error("Table not initialized")
                 return
 
-            # Get all documents and filter in Python (LanceDB doesn't support JSON operators)
             total_count = self.table.count_rows()
-            results = self.table.search().select(["id", "payload", "vector"]).limit(total_count).to_pandas()
+            results = self.table.search().select(["id", "payload", "vector"]).limit(total_count).to_list()
 
-            if results.empty:
+            if not results:
                 logger.debug("No documents found")
                 return
 
-            # Find matching documents with the given content_id
             matching_rows = []
-            for _, row in results.iterrows():
+            for row in results:
                 payload = json.loads(row["payload"])
                 if payload.get("content_id") == content_id:
                     matching_rows.append(row)

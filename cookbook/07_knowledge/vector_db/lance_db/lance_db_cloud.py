@@ -21,11 +21,8 @@ API_KEY = os.getenv("LANCE_DB_API_KEY") or os.getenv("LANCEDB_API_KEY")
 
 
 def main():
-    if not URI or not URI.startswith("db://"):
-        print("Set LANCE_DB_URI to your LanceDB Cloud URI (e.g. db://your-database-id)")
-        return
-    if not API_KEY:
-        print("Set LANCE_DB_API_KEY or LANCEDB_API_KEY to your LanceDB Cloud API key")
+    if not URI:
+        print("Set LANCE_DB_URI (e.g. db://your-database-id)")
         return
 
     vector_db = LanceDb(
