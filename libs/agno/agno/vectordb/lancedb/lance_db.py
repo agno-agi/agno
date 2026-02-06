@@ -104,8 +104,9 @@ class LanceDb(VectorDb):
         self.async_connection: Optional[lancedb.AsyncConnection] = async_connection
         self.async_table: Optional[lancedb.db.AsyncTable] = async_table
 
-        if table_name and table_name in self._get_table_names(self.connection):
-            # Open the table if it exists
+        is_cloud = bool(api_key or getenv("LANCEDB_API_KEY") or str(uri).startswith("db://"))
+
+        if table_name and not is_cloud and table_name in self._get_table_names(self.connection):
             try:
                 self.table = self.connection.open_table(name=table_name)
                 self.table_name = self.table.name
@@ -115,6 +116,19 @@ class LanceDb(VectorDb):
                 # Table might have been dropped by async operations but sync connection hasn't updated
                 if "was not found" in str(e):
                     log_debug(f"Table {table_name} listed but not accessible, will create if needed")
+                    self.table = None
+                else:
+                    raise
+
+        if table_name and is_cloud and self.table is None:
+            try:
+                self.table = self.connection.open_table(name=table_name)
+                self.table_name = self.table.name
+                self._vector_col = self.table.schema.names[0]
+                self._id = self.table.schema.names[1]  # type: ignore
+            except ValueError as e:
+                if "was not found" in str(e) or "not found" in str(e).lower():
+                    log_debug(f"Table {table_name} not found on cloud, will create")
                     self.table = None
                 else:
                     raise
@@ -156,6 +170,10 @@ class LanceDb(VectorDb):
                 )
 
         log_debug(f"Initialized LanceDb with table: '{self.table_name}'")
+
+    def _is_cloud(self) -> bool:
+        """True if connected to LanceDB Cloud (db:// URI or api_key)."""
+        return bool(self.api_key or getenv("LANCEDB_API_KEY") or str(self.uri).startswith("db://"))
 
     def _get_table_names(self, conn: lancedb.DBConnection) -> List[str]:
         """Get table names with backward compatibility for older LanceDB versions."""
@@ -212,6 +230,8 @@ class LanceDb(VectorDb):
 
     def _refresh_sync_connection(self) -> None:
         """Refresh the sync connection to see changes made by async operations."""
+        if self._is_cloud():
+            return
         try:
             # Re-establish sync connection to see async changes
             if self.connection is not None and self.table_name in self._get_table_names(self.connection):
@@ -474,8 +494,9 @@ class LanceDb(VectorDb):
         Returns:
             List[Document]: List of matching documents
         """
-        if self.connection is not None:
-            self.table = self.connection.open_table(name=self.table_name)
+        if self.table is None:
+            logger.error("Table not initialized")
+            return []
 
         results = None
 
@@ -545,7 +566,7 @@ class LanceDb(VectorDb):
 
     def vector_search(
         self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
-    ) -> List[Document]:
+    ) -> Optional[List[Dict[str, Any]]]:
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
             logger.error(f"Error getting embedding for Query: {query}")
@@ -563,11 +584,11 @@ class LanceDb(VectorDb):
         if self.nprobes:
             results.nprobes(self.nprobes)
 
-        return results.to_pandas()
+        return results.to_list()
 
     def hybrid_search(
         self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
-    ) -> List[Document]:
+    ) -> List[Dict[str, Any]]:
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
             logger.error(f"Error getting embedding for Query: {query}")
@@ -594,11 +615,11 @@ class LanceDb(VectorDb):
         if self.nprobes:
             results.nprobes(self.nprobes)
 
-        return results.to_pandas()
+        return results.to_list()
 
     def keyword_search(
         self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
-    ) -> List[Document]:
+    ) -> List[Dict[str, Any]]:
         if self.table is None:
             logger.error("Table not initialized. Please create the table first")
             return []
@@ -612,12 +633,12 @@ class LanceDb(VectorDb):
             query_type="fts",
         ).limit(limit)
 
-        return results.to_pandas()
+        return results.to_list()
 
-    def _build_search_results(self, results) -> List[Document]:  # TODO: typehint pandas?
+    def _build_search_results(self, results: List[Dict[str, Any]]) -> List[Document]:
         search_results: List[Document] = []
         try:
-            for _, item in results.iterrows():
+            for item in results:
                 payload = json.loads(item["payload"])
                 search_results.append(
                     Document(
@@ -656,6 +677,8 @@ class LanceDb(VectorDb):
         # If we have an async table that was created, the table exists
         if self.async_table is not None:
             return True
+        if self._is_cloud():
+            return self.table is not None
         if self.connection is not None:
             return self.table_name in self._get_table_names(self.connection)
         return False
