@@ -348,10 +348,10 @@ def parse_tools(
                 continue
             _function_names.append(tool.name)
 
+            tool = tool.model_copy(deep=True)
             # Respect the function's explicit strict setting if set
             effective_strict = strict if tool.strict is None else tool.strict
             tool.process_entrypoint(strict=effective_strict)
-            tool = tool.model_copy(deep=True)
 
             tool._agent = agent
             if strict and tool.strict is None:

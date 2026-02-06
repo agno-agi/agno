@@ -1298,7 +1298,7 @@ async def arun_impl(
                         delay = agent.delay_between_retries
 
                     log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
-                    time.sleep(delay)
+                    await asyncio.sleep(delay)
                     continue
 
                 run_response.status = RunStatus.error
@@ -1772,7 +1772,7 @@ async def arun_stream_impl(
                         delay = agent.delay_between_retries
 
                     log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
-                    time.sleep(delay)
+                    await asyncio.sleep(delay)
                     continue
 
                 # Handle exceptions during async streaming
@@ -3017,7 +3017,7 @@ async def acontinue_run_impl(
                         delay = agent.delay_between_retries
 
                     log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
-                    time.sleep(delay)
+                    await asyncio.sleep(delay)
                     continue
 
                 if not run_response:
@@ -3424,7 +3424,7 @@ async def acontinue_run_stream_impl(
                         delay = agent.delay_between_retries
 
                     log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
-                    time.sleep(delay)
+                    await asyncio.sleep(delay)
                     continue
 
                 # Handle exceptions during async streaming
