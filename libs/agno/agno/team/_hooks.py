@@ -118,6 +118,18 @@ def handle_team_run_paused(
     if not run_response.content:
         run_response.content = _get_team_paused_content(run_response)
 
+    # Store the pause event for event history parity with streaming handlers
+    handle_event(
+        create_team_run_paused_event(
+            from_run_response=run_response,
+            tools=run_response.tools,
+            requirements=run_response.requirements,
+        ),
+        run_response,
+        events_to_skip=team.events_to_skip,  # type: ignore
+        store_events=team.store_events,
+    )
+
     _api._cleanup_and_store(team, run_response=run_response, session=session)
 
     log_debug(f"Team Run Paused: {run_response.run_id}", center=True, symbol="*")
@@ -165,6 +177,18 @@ async def ahandle_team_run_paused(
     run_response.status = RunStatus.paused
     if not run_response.content:
         run_response.content = _get_team_paused_content(run_response)
+
+    # Store the pause event for event history parity with streaming handlers
+    handle_event(
+        create_team_run_paused_event(
+            from_run_response=run_response,
+            tools=run_response.tools,
+            requirements=run_response.requirements,
+        ),
+        run_response,
+        events_to_skip=team.events_to_skip,  # type: ignore
+        store_events=team.store_events,
+    )
 
     await _api._acleanup_and_store(team, run_response=run_response, session=session)
 

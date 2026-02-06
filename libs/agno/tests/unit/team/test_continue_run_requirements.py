@@ -1,3 +1,5 @@
+import pytest
+
 from agno.agent import Agent
 from agno.models.response import ToolExecution
 from agno.run import RunStatus
@@ -6,6 +8,7 @@ from agno.run.requirement import RunRequirement
 from agno.run.team import TeamRunOutput
 from agno.team import _run
 from agno.team._tools import _propagate_member_pause
+from agno.tools.function import UserInputField
 
 
 def _make_requirement(tool_call_id: str, **kwargs) -> RunRequirement:
@@ -277,8 +280,150 @@ def test_continue_run_dispatch_raises_without_session_id():
 
     team = Team(name="TestTeam", members=[Agent(name="A")])
 
-    try:
+    with pytest.raises(ValueError, match="Session ID is required"):
         _run.continue_run_dispatch(team, run_id="some_run_id")
-        assert False, "Should have raised ValueError"
-    except ValueError as e:
-        assert "Session ID is required" in str(e)
+
+
+# ---------------------------------------------------------------------------
+# deepcopy prevents ToolExecution aliasing
+# ---------------------------------------------------------------------------
+
+
+def test_propagate_member_pause_deepcopy_prevents_tool_execution_aliasing():
+    """Verify that resolving the team's copy does not mutate the member's original ToolExecution."""
+    team_run = TeamRunOutput(run_id="team_run")
+    member_agent = Agent(name="DeepCopyAgent")
+    req = _make_requirement("tc_alias")
+    member_run = RunOutput(
+        run_id="member_run_alias",
+        status=RunStatus.paused,
+        requirements=[req],
+    )
+
+    _propagate_member_pause(team_run, member_agent, member_run)
+
+    # Resolve the team-level copy
+    team_req = team_run.requirements[0]
+    team_req.confirm()
+
+    # The team copy should be resolved
+    assert team_req.tool_execution.confirmed is True
+    assert team_req.is_resolved()
+
+    # The original member requirement should NOT be affected
+    assert req.tool_execution.confirmed is not True
+    assert req.confirmation is None
+
+
+def test_propagate_still_paused_does_not_mutate_original_requirements():
+    """Verify _propagate_still_paused_member_requirements copies instead of mutating originals."""
+    team_run = TeamRunOutput(run_id="team_run")
+    req = _make_requirement("tc_still")
+    paused_member = RunOutput(
+        run_id="agent_run_still",
+        agent_id="agent_still",
+        agent_name="StillPausedAgent",
+        status=RunStatus.paused,
+        requirements=[req],
+    )
+
+    _run._propagate_still_paused_member_requirements(team_run, {"StillPausedAgent": paused_member})
+
+    # Original requirement should not have member context
+    assert req.member_agent_id is None
+    assert req.member_agent_name is None
+    assert req.member_run_id is None
+
+    # Team copy should have member context
+    assert team_run.requirements[0].member_agent_id == "agent_still"
+    assert team_run.requirements[0].member_agent_name == "StillPausedAgent"
+    assert team_run.requirements[0].member_run_id == "agent_run_still"
+
+
+def test_propagate_still_paused_deepcopy_prevents_tool_execution_aliasing():
+    """Verify resolving the team copy from _propagate_still_paused does not mutate originals."""
+    team_run = TeamRunOutput(run_id="team_run")
+    req = _make_requirement("tc_still_alias")
+    paused_member = RunOutput(
+        run_id="agent_run_alias2",
+        agent_id="agent_alias2",
+        agent_name="AliasAgent",
+        status=RunStatus.paused,
+        requirements=[req],
+    )
+
+    _run._propagate_still_paused_member_requirements(team_run, {"AliasAgent": paused_member})
+
+    # Resolve the team-level copy
+    team_req = team_run.requirements[0]
+    team_req.confirm()
+
+    # The original should NOT be affected
+    assert req.tool_execution.confirmed is not True
+    assert req.confirmation is None
+
+
+# ---------------------------------------------------------------------------
+# RunRequirement.provide_user_input
+# ---------------------------------------------------------------------------
+
+
+def test_provide_user_input_sets_values_and_marks_answered():
+    """Verify provide_user_input correctly sets field values and marks tool as answered."""
+    te = ToolExecution(
+        tool_call_id="tc_ui",
+        tool_name="get_info",
+        tool_args={},
+        requires_user_input=True,
+        user_input_schema=[
+            UserInputField(name="city", field_type=str, description="City name"),
+            UserInputField(name="country", field_type=str, description="Country name"),
+        ],
+    )
+    req = RunRequirement(tool_execution=te)
+
+    assert req.needs_user_input is True
+    assert not req.is_resolved()
+
+    req.provide_user_input({"city": "Tokyo", "country": "Japan"})
+
+    assert req.tool_execution.answered is True
+    assert req.user_input_schema[0].value == "Tokyo"
+    assert req.user_input_schema[1].value == "Japan"
+    assert not req.needs_user_input
+    assert req.is_resolved()
+
+
+def test_provide_user_input_raises_if_not_needed():
+    """Verify provide_user_input raises ValueError when requirement does not need user input."""
+    te = ToolExecution(
+        tool_call_id="tc_conf",
+        tool_name="do_thing",
+        tool_args={},
+        requires_confirmation=True,
+    )
+    req = RunRequirement(tool_execution=te)
+
+    with pytest.raises(ValueError, match="does not require user input"):
+        req.provide_user_input({"x": "y"})
+
+
+def test_provide_user_input_partial_values():
+    """Verify provide_user_input handles partial value provision."""
+    te = ToolExecution(
+        tool_call_id="tc_partial",
+        tool_name="get_info",
+        tool_args={},
+        requires_user_input=True,
+        user_input_schema=[
+            UserInputField(name="city", field_type=str, description="City name"),
+            UserInputField(name="country", field_type=str, description="Country name"),
+        ],
+    )
+    req = RunRequirement(tool_execution=te)
+    req.provide_user_input({"city": "Tokyo"})
+
+    # answered is True (the method marks it)
+    assert req.tool_execution.answered is True
+    assert req.user_input_schema[0].value == "Tokyo"
+    assert req.user_input_schema[1].value is None

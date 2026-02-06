@@ -10,7 +10,7 @@ if TYPE_CHECKING:
 import asyncio
 import contextlib
 import json
-from copy import copy
+from copy import copy, deepcopy
 from typing import (
     Any,
     AsyncIterator,
@@ -802,7 +802,7 @@ def _propagate_member_pause(
         run_response.requirements = []
     member_id = get_member_id(member_agent)
     for req in member_run_response.requirements:
-        req_copy = copy(req)
+        req_copy = deepcopy(req)
         req_copy.member_agent_id = member_id
         req_copy.member_agent_name = member_agent.name
         req_copy.member_run_id = member_run_response.run_id

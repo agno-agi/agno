@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import time
 from collections import deque
+from copy import deepcopy
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -1924,12 +1925,15 @@ def _route_requirements_to_members(
         _, member = found
 
         # Continue the member's run
-        member_result = member.continue_run(
-            run_id=member_run_id,
-            requirements=reqs,
-            session_id=session.session_id,
-        )
-        results[member_name] = member_result
+        try:
+            member_result = member.continue_run(
+                run_id=member_run_id,
+                requirements=reqs,
+                session_id=session.session_id,
+            )
+            results[member_name] = member_result
+        except Exception as e:
+            log_warning(f"Failed to continue run for member '{member_name}' (run_id={member_run_id}): {e}")
 
     return results
 
@@ -1969,19 +1973,26 @@ async def _aroute_requirements_to_members(
             log_warning(f"Could not find member agent with ID {member_id}")
             return None
         _, member = found
-        result = await member.acontinue_run(
-            run_id=member_run_id,
-            requirements=reqs,
-            session_id=session.session_id,
-        )
-        return (member_name, result)
+        try:
+            result = await member.acontinue_run(
+                run_id=member_run_id,
+                requirements=reqs,
+                session_id=session.session_id,
+            )
+            return (member_name, result)
+        except Exception as e:
+            log_warning(f"Failed to continue run for member '{member_name}' (run_id={member_run_id}): {e}")
+            return None
 
     tasks = [
         _continue_member(member_id, member_name, member_run_id, reqs)
         for (member_id, member_name, member_run_id), reqs in member_requirements.items()
     ]
-    completed = await asyncio.gather(*tasks)
+    completed = await asyncio.gather(*tasks, return_exceptions=True)
     for item in completed:
+        if isinstance(item, BaseException):
+            log_warning(f"Member continuation failed: {item}")
+            continue
         if item is not None:
             name, result = item
             results[name] = result
@@ -2012,10 +2023,11 @@ def _propagate_still_paused_member_requirements(
         member_name = getattr(result, "agent_name", None) or getattr(result, "team_name", None) or fallback_name
 
         for req in result.requirements:
-            req.member_agent_id = member_id
-            req.member_agent_name = member_name
-            req.member_run_id = result.run_id
-            run_response.requirements.append(req)
+            req_copy = deepcopy(req)
+            req_copy.member_agent_id = member_id
+            req_copy.member_agent_name = member_name
+            req_copy.member_run_id = result.run_id
+            run_response.requirements.append(req_copy)
 
 
 # ---------------------------------------------------------------------------
@@ -2098,25 +2110,33 @@ def continue_run_dispatch(
         _propagate_still_paused_member_requirements(run_response, still_paused)
         return _hooks.handle_team_run_paused(team, run_response=run_response, session=team_session, user_id=user_id)
 
-    # Mark the paused run as completed (it's done, member results are in)
-    run_response.status = RunStatus.completed
-    team._cleanup_and_store(run_response=run_response, session=team_session)
-
     # Build continuation message and re-invoke the team
     continuation_message = _build_continuation_message(member_results)
 
-    return run(
-        team,
-        input=continuation_message,
-        stream=stream,
-        stream_events=stream_events,
-        session_id=session_id,
-        user_id=user_id,
-        debug_mode=debug_mode,
-        yield_run_output=yield_run_output,
-        add_history_to_context=True,
-        **kwargs,
-    )
+    try:
+        result = run(
+            team,
+            input=continuation_message,
+            stream=stream,
+            stream_events=stream_events,
+            session_id=session_id,
+            user_id=user_id,
+            debug_mode=debug_mode,
+            yield_run_output=yield_run_output,
+            add_history_to_context=True,
+            **kwargs,
+        )
+    except Exception:
+        # If continuation fails, keep the original run as paused so user can retry
+        run_response.status = RunStatus.paused
+        team._cleanup_and_store(run_response=run_response, session=team_session)
+        raise
+
+    # Mark the paused run as completed only after the continuation succeeds
+    run_response.status = RunStatus.completed
+    team._cleanup_and_store(run_response=run_response, session=team_session)
+
+    return result
 
 
 def acontinue_run_dispatch(  # type: ignore
@@ -2244,23 +2264,31 @@ async def _acontinue_run_impl(
             team, run_response=run_response, session=team_session, user_id=user_id
         )
 
-    # Mark the paused run as completed
-    run_response.status = RunStatus.completed
-    await team._acleanup_and_store(run_response=run_response, session=team_session)
-
     # Build continuation message and re-invoke the team
     continuation_message = _build_continuation_message(member_results)
 
-    return await arun(  # type: ignore[misc]
-        team,
-        input=continuation_message,
-        stream=False,
-        session_id=session_id,
-        user_id=user_id,
-        debug_mode=debug_mode,
-        add_history_to_context=True,
-        **kwargs,
-    )
+    try:
+        result = await arun(  # type: ignore[misc]
+            team,
+            input=continuation_message,
+            stream=False,
+            session_id=session_id,
+            user_id=user_id,
+            debug_mode=debug_mode,
+            add_history_to_context=True,
+            **kwargs,
+        )
+    except Exception:
+        # If continuation fails, keep the original run as paused so user can retry
+        run_response.status = RunStatus.paused
+        await team._acleanup_and_store(run_response=run_response, session=team_session)
+        raise
+
+    # Mark the paused run as completed only after the continuation succeeds
+    run_response.status = RunStatus.completed
+    await team._acleanup_and_store(run_response=run_response, session=team_session)
+
+    return result
 
 
 async def _acontinue_run_stream_impl(
@@ -2313,10 +2341,6 @@ async def _acontinue_run_stream_impl(
             yield run_response
         return
 
-    # Mark the paused run as completed
-    run_response.status = RunStatus.completed
-    await team._acleanup_and_store(run_response=run_response, session=team_session)
-
     # Build continuation message and re-invoke the team
     continuation_message = _build_continuation_message(member_results)
 
@@ -2333,5 +2357,15 @@ async def _acontinue_run_stream_impl(
         **kwargs,
     )
 
-    async for item in new_run_response_stream:  # type: ignore[union-attr]
-        yield item
+    try:
+        async for item in new_run_response_stream:  # type: ignore[union-attr]
+            yield item
+    except Exception:
+        # If continuation fails, keep the original run as paused so user can retry
+        run_response.status = RunStatus.paused
+        await team._acleanup_and_store(run_response=run_response, session=team_session)
+        raise
+
+    # Mark the paused run as completed only after streaming finishes
+    run_response.status = RunStatus.completed
+    await team._acleanup_and_store(run_response=run_response, session=team_session)

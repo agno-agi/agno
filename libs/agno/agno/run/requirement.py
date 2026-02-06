@@ -95,6 +95,21 @@ class RunRequirement:
             self.tool_execution.confirmed = False
             self.tool_execution.confirmation_note = note
 
+    def provide_user_input(self, values: Dict[str, Any]) -> None:
+        """Provide user input values for a user-input requirement.
+
+        Args:
+            values: A dictionary mapping field names to their values.
+        """
+        if not self.needs_user_input:
+            raise ValueError("This requirement does not require user input")
+        if self.user_input_schema:
+            for input_field in self.user_input_schema:
+                if input_field.name in values:
+                    input_field.value = values[input_field.name]
+        if self.tool_execution:
+            self.tool_execution.answered = True
+
     def set_external_execution_result(self, result: str):
         if not self.needs_external_execution:
             raise ValueError("This requirement does not require external execution")
