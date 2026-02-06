@@ -2721,12 +2721,14 @@ def acontinue_run_dispatch(  # type: ignore
 
         background_tasks: BackgroundTasks = background_tasks  # type: ignore
 
+    session_id = run_response.session_id if run_response else session_id
+    run_id: str = run_response.run_id if run_response else run_id  # type: ignore
+
     session_id, user_id = initialize_session(
         agent,
         session_id=session_id,
         user_id=user_id,
     )
-    run_id: str = run_id or run_response.run_id if run_response else run_id  # type: ignore
 
     # Initialize the Agent
     agent.initialize_agent(debug_mode=debug_mode)
@@ -3058,7 +3060,7 @@ async def acontinue_run_impl(
 
                 log_error(f"Validation failed: {str(e)} | Check trigger: {e.check_trigger}")
 
-                agent._cleanup_and_store(
+                await agent._acleanup_and_store(
                     run_response=run_response, session=agent_session, run_context=run_context, user_id=user_id
                 )
 
@@ -3282,7 +3284,7 @@ async def acontinue_run_stream_impl(
                         stream_events=stream_events,
                         run_context=run_context,
                     ):
-                        raise_if_cancelled(run_response.run_id)  # type: ignore
+                        await araise_if_cancelled(run_response.run_id)  # type: ignore
                         if isinstance(event, RunContentEvent):
                             if stream_events:
                                 yield IntermediateRunContentEvent(
