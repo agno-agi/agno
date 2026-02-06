@@ -9169,15 +9169,17 @@ class Team:
                 self._upsert_session(session=session)
             log_debug(f"Created or updated TeamSession record: {session.session_id}")
 
-    def generate_session_name(self, session: TeamSession) -> str:
+    def generate_session_name(self, session: TeamSession, _attempt: int = 0) -> str:
         """
         Generate a name for the team session
 
         Args:
             session: The TeamSession to generate a name for.
+            _attempt: Internal retry counter (do not set manually).
         Returns:
             str: The generated session name.
         """
+        max_retries = 3
 
         if self.model is None:
             raise Exception("Model not set")
@@ -9204,11 +9206,17 @@ class Team:
         generated_name = self.model.response(messages=generate_name_messages)
         content = generated_name.content
         if content is None:
-            log_error("Generated name is None. Trying again.")
-            return self.generate_session_name(session=session)
+            if _attempt < max_retries:
+                log_error("Generated name is None. Trying again.")
+                return self.generate_session_name(session=session, _attempt=_attempt + 1)
+            log_error("Generated name is None after max retries. Using default name.")
+            return "Untitled Session"
         if len(content.split()) > 15:
-            log_error("Generated name is too long. Trying again.")
-            return self.generate_session_name(session=session)
+            if _attempt < max_retries:
+                log_error("Generated name is too long. Trying again.")
+                return self.generate_session_name(session=session, _attempt=_attempt + 1)
+            log_error("Generated name is too long after max retries. Truncating.")
+            return " ".join(content.split()[:15]).replace('"', "").strip()
         return content.replace('"', "").strip()
 
     def set_session_name(
