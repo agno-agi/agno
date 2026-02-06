@@ -458,7 +458,7 @@ def parse_response_with_parser_model_stream(
     run_response: RunOutput,
     stream_events: bool = True,
     run_context: Optional[RunContext] = None,
-):
+) -> Iterator[RunOutputEvent]:
     """Parse the model response using the parser model"""
     if agent.parser_model is not None:
         # Get output_schema from run_context
@@ -522,7 +522,7 @@ async def aparse_response_with_parser_model_stream(
     run_response: RunOutput,
     stream_events: bool = True,
     run_context: Optional[RunContext] = None,
-):
+) -> AsyncIterator[RunOutputEvent]:
     """Parse the model response using the parser model stream."""
     if agent.parser_model is not None:
         # Get output_schema from run_context
@@ -597,7 +597,7 @@ def generate_response_with_output_model_stream(
     run_response: RunOutput,
     run_messages: RunMessages,
     stream_events: bool = False,
-):
+) -> Iterator[RunOutputEvent]:
     """Parse the model response using the output model."""
     from agno.utils.events import (
         create_output_model_response_completed_event,
@@ -660,7 +660,7 @@ async def agenerate_response_with_output_model_stream(
     run_response: RunOutput,
     run_messages: RunMessages,
     stream_events: bool = False,
-):
+) -> AsyncIterator[RunOutputEvent]:
     """Parse the model response using the output model."""
     from agno.utils.events import (
         create_output_model_response_completed_event,
