@@ -41,7 +41,9 @@ refinement_loop = Loop(
 )
 
 
-def loop_selector(step_input: StepInput, step_choices: list) -> Union[str, Step, List[Step]]:
+def loop_selector(
+    step_input: StepInput, step_choices: list
+) -> Union[str, Step, List[Step]]:
     """
     Select between quick response, draft writing, or iterative refinement loop.
     step_choices contains: [quick_response Step, draft_writer Step, refinement Loop]
@@ -73,4 +75,6 @@ workflow = Workflow(
 )
 
 if __name__ == "__main__":
-    workflow.print_response("Please refine and polish a blog post about Python", stream=True)
+    workflow.print_response(
+        "Please refine and polish a blog post about Python", stream=True
+    )

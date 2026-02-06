@@ -120,6 +120,8 @@ class Skills:
             "3. **Reference**: Use `get_skill_reference` to access specific documentation as needed",
             "4. **Scripts**: Use `get_skill_script` to read or execute scripts from a skill",
             "",
+            "**IMPORTANT**: References are documentation files (NOT executable). Only use `get_skill_script` when `<scripts>` lists actual script files. If `<scripts>none</scripts>`, do NOT call `get_skill_script`.",
+            "",
             "This approach ensures you only load detailed instructions when actually needed.",
             "",
             "## Available Skills",
@@ -131,6 +133,9 @@ class Skills:
             if skill.scripts:
                 script_names = [s["name"] if isinstance(s, dict) else s for s in skill.scripts]
                 lines.append(f"  <scripts>{', '.join(script_names)}</scripts>")
+            else:
+                # Explicitly indicate no scripts to prevent model confusion
+                lines.append("  <scripts>none</scripts>")
             if skill.references:
                 ref_names = [r["name"] if isinstance(r, dict) else r for r in skill.references]
                 lines.append(f"  <references>{', '.join(ref_names)}</references>")
