@@ -14,6 +14,7 @@ from agno.db.postgres.schemas import (
     SESSION_TABLE_SCHEMA,
     get_table_schema_definition,
 )
+from agno.db.utils import json_serializer
 
 
 @pytest.fixture
@@ -80,6 +81,7 @@ def test_init_with_url(mock_create_engine):
         "postgresql://user:pass@localhost/db",
         pool_pre_ping=True,
         pool_recycle=3600,
+        json_serializer=json_serializer,
     )
     assert db.db_engine == mock_engine
 
