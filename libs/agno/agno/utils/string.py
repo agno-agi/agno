@@ -170,7 +170,22 @@ def parse_response_model_str(content: str, output_schema: Type[BaseModel]) -> Op
         if reasoning_content:
             content = output_content
 
-    # Clean content first to simplify all parsing attempts
+    # FIRST: try RAW content (do NOT clean)
+    try:
+        # Try parsing the RAW content directly as JSON, without any cleaning.
+        structured_output = output_schema.model_validate_json(content)
+        return structured_output
+    except (ValidationError, json.JSONDecodeError):
+        try:
+            # Fallback: explicitly load JSON into a dict, then validate
+            data = json.loads(content)
+            structured_output = output_schema.model_validate(data)
+            return structured_output
+        except (ValidationError, json.JSONDecodeError):
+            # Raw parsing failed; proceed to cleaning-based fallbacks
+            pass
+
+    # SECOND: Clean content to simplify further parsing attempts
     cleaned_content = _clean_json_content(content)
 
     try:
