@@ -27,6 +27,7 @@ from pydantic import BaseModel
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
 
+from agno.agent._run_options import resolve_run_options
 from agno.exceptions import (
     InputCheckError,
     OutputCheckError,
@@ -93,8 +94,6 @@ from agno.utils.log import (
     log_info,
     log_warning,
 )
-from agno.utils.merge_dict import merge_dictionaries
-
 
 def initialize_session(
     agent: Agent,
@@ -904,12 +903,20 @@ def run_dispatch(
     session_state = session_state if session_state is not None else {}
     session_state = agent._load_session_state(session=agent_session, session_state=session_state)
 
-    # Determine runtime dependencies
-    dependencies = dependencies if dependencies is not None else agent.dependencies
-
-    # Resolve output_schema parameter takes precedence, then fall back to agent.output_schema
-    if output_schema is None:
-        output_schema = agent.output_schema
+    # Resolve all run options centrally
+    opts = resolve_run_options(
+        agent,
+        stream=stream,
+        stream_events=stream_events,
+        yield_run_output=yield_run_output,
+        add_history_to_context=add_history_to_context,
+        add_dependencies_to_context=add_dependencies_to_context,
+        add_session_state_to_context=add_session_state_to_context,
+        dependencies=dependencies,
+        knowledge_filters=knowledge_filters,
+        metadata=metadata,
+        output_schema=output_schema,
+    )
 
     # Initialize run context
     run_context = run_context or RunContext(
@@ -917,46 +924,25 @@ def run_dispatch(
         session_id=session_id,
         user_id=user_id,
         session_state=session_state,
-        dependencies=dependencies,
-        output_schema=output_schema,
+        dependencies=opts.dependencies,
+        output_schema=opts.output_schema,
     )
     # output_schema parameter takes priority, even if run_context was provided
-    run_context.output_schema = output_schema
+    run_context.output_schema = opts.output_schema
 
     # Resolve dependencies
     if run_context.dependencies is not None:
         agent._resolve_run_dependencies(run_context=run_context)
 
-    add_dependencies = (
-        add_dependencies_to_context if add_dependencies_to_context is not None else agent.add_dependencies_to_context
-    )
-    add_session_state = (
-        add_session_state_to_context if add_session_state_to_context is not None else agent.add_session_state_to_context
-    )
-    add_history = add_history_to_context if add_history_to_context is not None else agent.add_history_to_context
-
-    # When filters are passed manually
-    if agent.knowledge_filters or knowledge_filters:
-        run_context.knowledge_filters = agent._get_effective_filters(knowledge_filters)
-
-    # Use stream override value when necessary
-    if stream is None:
-        stream = False if agent.stream is None else agent.stream
-
-    # Can't stream events if streaming is disabled
-    if stream is False:
-        stream_events = False
-
-    if stream_events is None:
-        stream_events = False if agent.stream_events is None else agent.stream_events
+    # Populate RunContext with resolved filters and metadata
+    if opts.knowledge_filters is not None:
+        run_context.knowledge_filters = opts.knowledge_filters
+    if opts.metadata is not None:
+        run_context.metadata = opts.metadata
 
     # Prepare arguments for the model
     response_format = agent._get_response_format(run_context=run_context) if agent.parser_model is None else None
     agent.model = cast(Model, agent.model)
-
-    # Merge agent metadata with run metadata
-    if agent.metadata is not None and metadata is not None:
-        merge_dictionaries(metadata, agent.metadata)
 
     # Create a new run_response for this attempt
     run_response = RunOutput(
@@ -977,19 +963,19 @@ def run_dispatch(
     run_response.metrics = Metrics()
     run_response.metrics.start_timer()
 
-    if stream:
+    if opts.stream:
         response_iterator = run_stream_impl(
             agent,
             run_response=run_response,
             run_context=run_context,
             session=agent_session,
             user_id=user_id,
-            add_history_to_context=add_history,
-            add_dependencies_to_context=add_dependencies,
-            add_session_state_to_context=add_session_state,
+            add_history_to_context=opts.add_history_to_context,
+            add_dependencies_to_context=opts.add_dependencies_to_context,
+            add_session_state_to_context=opts.add_session_state_to_context,
             response_format=response_format,
-            stream_events=stream_events,
-            yield_run_output=yield_run_output,
+            stream_events=opts.stream_events,
+            yield_run_output=opts.yield_run_output,
             debug_mode=debug_mode,
             background_tasks=background_tasks,
             **kwargs,
@@ -1002,9 +988,9 @@ def run_dispatch(
             run_context=run_context,
             session=agent_session,
             user_id=user_id,
-            add_history_to_context=add_history,
-            add_dependencies_to_context=add_dependencies,
-            add_session_state_to_context=add_session_state,
+            add_history_to_context=opts.add_history_to_context,
+            add_dependencies_to_context=opts.add_dependencies_to_context,
+            add_session_state_to_context=opts.add_session_state_to_context,
             response_format=response_format,
             debug_mode=debug_mode,
             background_tasks=background_tasks,
@@ -1912,16 +1898,6 @@ def arun_dispatch(  # type: ignore
         images=images, videos=videos, audios=audio, files=files
     )
 
-    # Resolve variables
-    dependencies = dependencies if dependencies is not None else agent.dependencies
-    add_dependencies = (
-        add_dependencies_to_context if add_dependencies_to_context is not None else agent.add_dependencies_to_context
-    )
-    add_session_state = (
-        add_session_state_to_context if add_session_state_to_context is not None else agent.add_session_state_to_context
-    )
-    add_history = add_history_to_context if add_history_to_context is not None else agent.add_history_to_context
-
     # Create RunInput to capture the original user input
     run_input = RunInput(
         input_content=validated_input,
@@ -1931,33 +1907,22 @@ def arun_dispatch(  # type: ignore
         files=file_artifacts,
     )
 
-    # Use stream override value when necessary
-    if stream is None:
-        stream = False if agent.stream is None else agent.stream
-
-    # Can't stream events if streaming is disabled
-    if stream is False:
-        stream_events = False
-
-    if stream_events is None:
-        stream_events = False if agent.stream_events is None else agent.stream_events
+    # Resolve all run options centrally
+    opts = resolve_run_options(
+        agent,
+        stream=stream,
+        stream_events=stream_events,
+        yield_run_output=yield_run_output,
+        add_history_to_context=add_history_to_context,
+        add_dependencies_to_context=add_dependencies_to_context,
+        add_session_state_to_context=add_session_state_to_context,
+        dependencies=dependencies,
+        knowledge_filters=knowledge_filters,
+        metadata=metadata,
+        output_schema=output_schema,
+    )
 
     agent.model = cast(Model, agent.model)
-
-    # Get knowledge filters
-    if agent.knowledge_filters or knowledge_filters:
-        knowledge_filters = agent._get_effective_filters(knowledge_filters)
-
-    # Merge agent metadata with run metadata
-    if agent.metadata is not None:
-        if metadata is None:
-            metadata = agent.metadata
-        else:
-            merge_dictionaries(metadata, agent.metadata)
-
-    # Resolve output_schema parameter takes precedence, then fall back to agent.output_schema
-    if output_schema is None:
-        output_schema = agent.output_schema
 
     # Initialize run context
     run_context = run_context or RunContext(
@@ -1965,13 +1930,13 @@ def arun_dispatch(  # type: ignore
         session_id=session_id,
         user_id=user_id,
         session_state=session_state,
-        dependencies=dependencies,
-        knowledge_filters=knowledge_filters,
-        metadata=metadata,
-        output_schema=output_schema,
+        dependencies=opts.dependencies,
+        knowledge_filters=opts.knowledge_filters,
+        metadata=opts.metadata,
+        output_schema=opts.output_schema,
     )
     # output_schema parameter takes priority, even if run_context was provided
-    run_context.output_schema = output_schema
+    run_context.output_schema = opts.output_schema
 
     # Prepare arguments for the model (must be after run_context is fully initialized)
     response_format = agent._get_response_format(run_context=run_context) if agent.parser_model is None else None
@@ -1996,19 +1961,19 @@ def arun_dispatch(  # type: ignore
     run_response.metrics.start_timer()
 
     # Pass the new run_response to _arun
-    if stream:
+    if opts.stream:
         return arun_stream_impl(  # type: ignore
             agent,
             run_response=run_response,
             run_context=run_context,
             user_id=user_id,
             response_format=response_format,
-            stream_events=stream_events,
-            yield_run_output=yield_run_output,
+            stream_events=opts.stream_events,
+            yield_run_output=opts.yield_run_output,
             session_id=session_id,
-            add_history_to_context=add_history,
-            add_dependencies_to_context=add_dependencies,
-            add_session_state_to_context=add_session_state,
+            add_history_to_context=opts.add_history_to_context,
+            add_dependencies_to_context=opts.add_dependencies_to_context,
+            add_session_state_to_context=opts.add_session_state_to_context,
             debug_mode=debug_mode,
             background_tasks=background_tasks,
             **kwargs,
@@ -2021,9 +1986,9 @@ def arun_dispatch(  # type: ignore
             user_id=user_id,
             response_format=response_format,
             session_id=session_id,
-            add_history_to_context=add_history,
-            add_dependencies_to_context=add_dependencies,
-            add_session_state_to_context=add_session_state,
+            add_history_to_context=opts.add_history_to_context,
+            add_dependencies_to_context=opts.add_dependencies_to_context,
+            add_session_state_to_context=opts.add_session_state_to_context,
             debug_mode=debug_mode,
             background_tasks=background_tasks,
             **kwargs,
@@ -2098,7 +2063,16 @@ def continue_run_dispatch(
     # Initialize session state. Get it from DB if relevant.
     session_state = agent._load_session_state(session=agent_session, session_state={})
 
-    dependencies = dependencies if dependencies is not None else agent.dependencies
+    # Resolve all run options centrally
+    opts = resolve_run_options(
+        agent,
+        stream=stream,
+        stream_events=stream_events,
+        yield_run_output=yield_run_output,
+        dependencies=dependencies,
+        knowledge_filters=knowledge_filters,
+        metadata=metadata,
+    )
 
     # Initialize run context
     run_context = run_context or RunContext(
@@ -2106,35 +2080,17 @@ def continue_run_dispatch(
         session_id=session_id,
         user_id=user_id,
         session_state=session_state,
-        dependencies=dependencies,
+        dependencies=opts.dependencies,
     )
 
     # Resolve dependencies
     if run_context.dependencies is not None:
         agent._resolve_run_dependencies(run_context=run_context)
 
-    # When filters are passed manually
-    if agent.knowledge_filters or run_context.knowledge_filters or knowledge_filters:
-        run_context.knowledge_filters = agent._get_effective_filters(knowledge_filters)
-
-    # Merge agent metadata with run metadata
-    run_context.metadata = metadata
-    if agent.metadata is not None:
-        if run_context.metadata is None:
-            run_context.metadata = agent.metadata
-        else:
-            merge_dictionaries(run_context.metadata, agent.metadata)
-
-    # Use stream override value when necessary
-    if stream is None:
-        stream = False if agent.stream is None else agent.stream
-
-    # Can't stream events if streaming is disabled
-    if stream is False:
-        stream_events = False
-
-    if stream_events is None:
-        stream_events = False if agent.stream_events is None else agent.stream_events
+    # Populate RunContext with resolved filters and metadata
+    if opts.knowledge_filters is not None or run_context.knowledge_filters is not None:
+        run_context.knowledge_filters = opts.knowledge_filters or run_context.knowledge_filters
+    run_context.metadata = opts.metadata
 
     # Run can be continued from previous run response or from passed run_response context
     if run_response is not None:
@@ -2205,7 +2161,7 @@ def continue_run_dispatch(
     # Reset the run state
     run_response.status = RunStatus.running
 
-    if stream:
+    if opts.stream:
         response_iterator = continue_run_stream_impl(
             agent,
             run_response=run_response,
@@ -2215,8 +2171,8 @@ def continue_run_dispatch(
             user_id=user_id,
             session=agent_session,
             response_format=response_format,
-            stream_events=stream_events,
-            yield_run_output=yield_run_output,
+            stream_events=opts.stream_events,
+            yield_run_output=opts.yield_run_output,
             debug_mode=debug_mode,
             background_tasks=background_tasks,
             **kwargs,
@@ -2738,33 +2694,16 @@ def acontinue_run_dispatch(  # type: ignore
     # Initialize the Agent
     agent.initialize_agent(debug_mode=debug_mode)
 
-    dependencies = dependencies if dependencies is not None else agent.dependencies
-
-    # Use stream override value when necessary
-    if stream is None:
-        stream = False if agent.stream is None else agent.stream
-
-    # Can't stream events if streaming is disabled
-    if stream is False:
-        stream_events = False
-
-    if stream_events is None:
-        stream_events = False if agent.stream_events is None else agent.stream_events
-
-    # Can't have stream_events if stream is False
-    if stream is False:
-        stream_events = False
-
-    # Get knowledge filters
-    if agent.knowledge_filters or knowledge_filters:
-        knowledge_filters = agent._get_effective_filters(knowledge_filters)
-
-    # Merge agent metadata with run metadata
-    if agent.metadata is not None:
-        if metadata is None:
-            metadata = agent.metadata
-        else:
-            merge_dictionaries(metadata, agent.metadata)
+    # Resolve all run options centrally
+    opts = resolve_run_options(
+        agent,
+        stream=stream,
+        stream_events=stream_events,
+        yield_run_output=yield_run_output,
+        dependencies=dependencies,
+        knowledge_filters=knowledge_filters,
+        metadata=metadata,
+    )
 
     # Prepare arguments for the model
     response_format = agent._get_response_format(run_context=run_context)
@@ -2776,12 +2715,12 @@ def acontinue_run_dispatch(  # type: ignore
         session_id=session_id,
         user_id=user_id,
         session_state={},
-        dependencies=dependencies,
-        knowledge_filters=knowledge_filters,
-        metadata=metadata,
+        dependencies=opts.dependencies,
+        knowledge_filters=opts.knowledge_filters,
+        metadata=opts.metadata,
     )
 
-    if stream:
+    if opts.stream:
         return acontinue_run_stream_impl(
             agent,
             run_response=run_response,
@@ -2792,8 +2731,8 @@ def acontinue_run_dispatch(  # type: ignore
             user_id=user_id,
             session_id=session_id,
             response_format=response_format,
-            stream_events=stream_events,
-            yield_run_output=yield_run_output,
+            stream_events=opts.stream_events,
+            yield_run_output=opts.yield_run_output,
             debug_mode=debug_mode,
             background_tasks=background_tasks,
             **kwargs,
