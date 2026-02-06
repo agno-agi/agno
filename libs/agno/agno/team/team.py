@@ -223,7 +223,7 @@ class Team:
     # If True, store tool results in run output
     store_tool_messages: bool = True
     # If True, store history messages in run output
-    store_history_messages: bool = True
+    store_history_messages: bool = False
 
     # --- Team Tools ---
     # A list of tools provided to the Model.

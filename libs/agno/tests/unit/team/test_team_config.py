@@ -194,6 +194,13 @@ class TestTeamToDict:
         assert "retries" not in config  # defaults to 0
         assert "respond_directly" not in config  # defaults to False
 
+    def test_store_history_messages_default_is_false(self):
+        """Test store_history_messages defaults to False and is omitted from config."""
+        team = Team(id="history-default-team", members=[])
+
+        assert team.store_history_messages is False
+        assert "store_history_messages" not in team.to_dict()
+
     def test_to_dict_with_db(self, basic_team, mock_db):
         """Test to_dict includes database configuration."""
         basic_team.db = mock_db
