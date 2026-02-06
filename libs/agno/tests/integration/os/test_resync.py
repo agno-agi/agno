@@ -738,22 +738,32 @@ class TestResyncPreservesCustomRoutes:
 
         with TestClient(app) as client:
             # Verify all custom routes work before resync
-            assert client.get("/status").status_code == 200
-            assert client.get("/custom/endpoint").status_code == 200
-            assert client.post("/custom/data").status_code == 200
-            assert client.put("/custom/update").status_code == 200
-            assert client.delete("/custom/delete").status_code == 200
+            status_response = client.get("/status")
+            assert status_response.status_code == 200
+            custom_endpoint_response = client.get("/custom/endpoint")
+            assert custom_endpoint_response.status_code == 200
+            post_data_response = client.post("/custom/data")
+            assert post_data_response.status_code == 200
+            update_data_response = client.put("/custom/update")
+            assert update_data_response.status_code == 200
+            delete_data_response = client.delete("/custom/delete")
+            assert delete_data_response.status_code == 200
 
             # Add new agent and resync
             agent_os.agents.append(second_agent)
             agent_os.resync(app=app)
 
             # Verify all custom routes still work after resync
-            assert client.get("/status").status_code == 200, "GET /status was deleted"
-            assert client.get("/custom/endpoint").status_code == 200, "GET /custom/endpoint was deleted"
-            assert client.post("/custom/data").status_code == 200, "POST /custom/data was deleted"
-            assert client.put("/custom/update").status_code == 200, "PUT /custom/update was deleted"
-            assert client.delete("/custom/delete").status_code == 200, "DELETE /custom/delete was deleted"
+            status_response = client.get("/status")
+            assert status_response.status_code == 200, "GET /status was deleted"
+            custom_endpoint_response = client.get("/custom/endpoint")
+            assert custom_endpoint_response.status_code == 200, "GET /custom/endpoint was deleted"
+            post_data_response = client.post("/custom/data")
+            assert post_data_response.status_code == 200, "POST /custom/data was deleted"
+            update_data_response = client.put("/custom/update")
+            assert update_data_response.status_code == 200, "PUT /custom/update was deleted"
+            delete_data_response = client.delete("/custom/delete")
+            assert delete_data_response.status_code == 200, "DELETE /custom/delete was deleted"
 
     def test_resync_preserves_custom_routes_after_multiple_resyncs(self, test_agent: Agent):
         """Test that custom routes are preserved after multiple resync calls."""
