@@ -112,7 +112,7 @@ class SlackTools(Toolkit):
         if not self.output_directory:
             return None
 
-        file_path = self.output_directory / filename
+        file_path = self.output_directory / Path(filename).name
         try:
             file_path.write_bytes(content)
             log_debug(f"File saved to: {file_path}")
@@ -183,9 +183,11 @@ class SlackTools(Toolkit):
             # Determine where to save
             save_path: Optional[Path] = None
             if dest_path:
-                save_path = Path(dest_path)
+                save_path = Path(dest_path).resolve()
+                if self.output_directory and not save_path.is_relative_to(self.output_directory.resolve()):
+                    return json.dumps({"error": "dest_path must be within the configured output_directory"})
             elif self.output_directory:
-                save_path = self.output_directory / filename
+                save_path = self.output_directory / Path(filename).name
 
             result: Dict[str, Any] = {
                 "file_id": file_id,

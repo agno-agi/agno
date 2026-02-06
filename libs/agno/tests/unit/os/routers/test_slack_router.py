@@ -35,7 +35,7 @@ _install_fake_slack_sdk()
 SIGNING_SECRET = "test-secret"
 
 
-def _make_signed_request(client: TestClient, body: dict) -> "TestClient":
+def _make_signed_request(client: TestClient, body: dict):
     body_bytes = json.dumps(body).encode()
     timestamp = str(int(time.time()))
     sig_base = f"v0:{timestamp}:{body_bytes.decode()}"
@@ -76,31 +76,38 @@ def _slack_event_with_files(files: list, event_type: str = "message") -> dict:
     }
 
 
-# === MIME type sanitization ===
-
-
-@pytest.mark.asyncio
-async def test_non_whitelisted_mime_type_creates_file_with_none():
-    """Files with non-whitelisted MIME types should still be created (with mime_type=None)."""
+def _make_agent_mock():
     agent_mock = AsyncMock()
     agent_mock.arun = AsyncMock(
         return_value=Mock(
             status="OK", content="done", reasoning_content=None, images=None, files=None, videos=None, audio=None
         )
     )
+    return agent_mock
 
-    app = _build_app(agent_mock)
+
+def _make_slack_mock(**kwargs):
+    mock_slack = Mock()
+    mock_slack.send_message = Mock()
+    mock_slack.upload_file = Mock()
+    for k, v in kwargs.items():
+        setattr(mock_slack, k, v)
+    return mock_slack
+
+
+@pytest.mark.asyncio
+async def test_non_whitelisted_mime_type_creates_file_with_none():
+    """Files with non-whitelisted MIME types should still be created (with mime_type=None)."""
+    agent_mock = _make_agent_mock()
+    mock_slack = _make_slack_mock()
+    mock_slack.download_file_bytes.return_value = b"zipdata"
 
     with (
         patch("agno.os.interfaces.slack.router.verify_slack_signature", return_value=True),
-        patch("agno.os.interfaces.slack.router.SlackTools") as mock_slack_cls,
+        patch("agno.os.interfaces.slack.router.SlackTools", return_value=mock_slack),
         patch.dict("os.environ", {"SLACK_TOKEN": "test"}),
     ):
-        mock_slack = Mock()
-        mock_slack.download_file_bytes.return_value = b"zipdata"
-        mock_slack.send_message = Mock()
-        mock_slack_cls.return_value = mock_slack
-
+        app = _build_app(agent_mock)
         client = TestClient(app)
         body = _slack_event_with_files(
             [
@@ -110,10 +117,8 @@ async def test_non_whitelisted_mime_type_creates_file_with_none():
         response = _make_signed_request(client, body)
         assert response.status_code == 200
 
-        # Wait for background task
         await _wait_for_agent_call(agent_mock)
 
-        # Verify agent was called with a file (not dropped)
         agent_mock.arun.assert_called_once()
         call_kwargs = agent_mock.arun.call_args
         files = call_kwargs.kwargs.get("files") or call_kwargs[1].get("files")
@@ -127,25 +132,16 @@ async def test_non_whitelisted_mime_type_creates_file_with_none():
 @pytest.mark.asyncio
 async def test_whitelisted_mime_type_preserved():
     """Files with whitelisted MIME types should keep their mime_type."""
-    agent_mock = AsyncMock()
-    agent_mock.arun = AsyncMock(
-        return_value=Mock(
-            status="OK", content="done", reasoning_content=None, images=None, files=None, videos=None, audio=None
-        )
-    )
-
-    app = _build_app(agent_mock)
+    agent_mock = _make_agent_mock()
+    mock_slack = _make_slack_mock()
+    mock_slack.download_file_bytes.return_value = b"hello world"
 
     with (
         patch("agno.os.interfaces.slack.router.verify_slack_signature", return_value=True),
-        patch("agno.os.interfaces.slack.router.SlackTools") as mock_slack_cls,
+        patch("agno.os.interfaces.slack.router.SlackTools", return_value=mock_slack),
         patch.dict("os.environ", {"SLACK_TOKEN": "test"}),
     ):
-        mock_slack = Mock()
-        mock_slack.download_file_bytes.return_value = b"hello world"
-        mock_slack.send_message = Mock()
-        mock_slack_cls.return_value = mock_slack
-
+        app = _build_app(agent_mock)
         client = TestClient(app)
         body = _slack_event_with_files(
             [
@@ -169,25 +165,16 @@ async def test_whitelisted_mime_type_preserved():
 @pytest.mark.asyncio
 async def test_image_files_routed_to_images_list():
     """Image files should go to the images list, not files."""
-    agent_mock = AsyncMock()
-    agent_mock.arun = AsyncMock(
-        return_value=Mock(
-            status="OK", content="done", reasoning_content=None, images=None, files=None, videos=None, audio=None
-        )
-    )
-
-    app = _build_app(agent_mock)
+    agent_mock = _make_agent_mock()
+    mock_slack = _make_slack_mock()
+    mock_slack.download_file_bytes.return_value = b"\x89PNG"
 
     with (
         patch("agno.os.interfaces.slack.router.verify_slack_signature", return_value=True),
-        patch("agno.os.interfaces.slack.router.SlackTools") as mock_slack_cls,
+        patch("agno.os.interfaces.slack.router.SlackTools", return_value=mock_slack),
         patch.dict("os.environ", {"SLACK_TOKEN": "test"}),
     ):
-        mock_slack = Mock()
-        mock_slack.download_file_bytes.return_value = b"\x89PNG"
-        mock_slack.send_message = Mock()
-        mock_slack_cls.return_value = mock_slack
-
+        app = _build_app(agent_mock)
         client = TestClient(app)
         body = _slack_event_with_files(
             [
@@ -212,25 +199,16 @@ async def test_image_files_routed_to_images_list():
 @pytest.mark.asyncio
 async def test_octet_stream_default_not_dropped():
     """application/octet-stream (Slack's default) should not cause file to be dropped."""
-    agent_mock = AsyncMock()
-    agent_mock.arun = AsyncMock(
-        return_value=Mock(
-            status="OK", content="done", reasoning_content=None, images=None, files=None, videos=None, audio=None
-        )
-    )
-
-    app = _build_app(agent_mock)
+    agent_mock = _make_agent_mock()
+    mock_slack = _make_slack_mock()
+    mock_slack.download_file_bytes.return_value = b"binarydata"
 
     with (
         patch("agno.os.interfaces.slack.router.verify_slack_signature", return_value=True),
-        patch("agno.os.interfaces.slack.router.SlackTools") as mock_slack_cls,
+        patch("agno.os.interfaces.slack.router.SlackTools", return_value=mock_slack),
         patch.dict("os.environ", {"SLACK_TOKEN": "test"}),
     ):
-        mock_slack = Mock()
-        mock_slack.download_file_bytes.return_value = b"binarydata"
-        mock_slack.send_message = Mock()
-        mock_slack_cls.return_value = mock_slack
-
+        app = _build_app(agent_mock)
         client = TestClient(app)
         body = _slack_event_with_files(
             [
@@ -254,25 +232,16 @@ async def test_octet_stream_default_not_dropped():
 @pytest.mark.asyncio
 async def test_mixed_files_and_images():
     """Multiple files of different types should be categorized correctly."""
-    agent_mock = AsyncMock()
-    agent_mock.arun = AsyncMock(
-        return_value=Mock(
-            status="OK", content="done", reasoning_content=None, images=None, files=None, videos=None, audio=None
-        )
-    )
-
-    app = _build_app(agent_mock)
+    agent_mock = _make_agent_mock()
+    mock_slack = _make_slack_mock()
+    mock_slack.download_file_bytes.side_effect = [b"csv-data", b"img-data", b"zip-data"]
 
     with (
         patch("agno.os.interfaces.slack.router.verify_slack_signature", return_value=True),
-        patch("agno.os.interfaces.slack.router.SlackTools") as mock_slack_cls,
+        patch("agno.os.interfaces.slack.router.SlackTools", return_value=mock_slack),
         patch.dict("os.environ", {"SLACK_TOKEN": "test"}),
     ):
-        mock_slack = Mock()
-        mock_slack.download_file_bytes.side_effect = [b"csv-data", b"img-data", b"zip-data"]
-        mock_slack.send_message = Mock()
-        mock_slack_cls.return_value = mock_slack
-
+        app = _build_app(agent_mock)
         client = TestClient(app)
         body = _slack_event_with_files(
             [
@@ -305,24 +274,15 @@ async def test_mixed_files_and_images():
 @pytest.mark.asyncio
 async def test_no_files_in_event():
     """Events without files should pass files=None to agent."""
-    agent_mock = AsyncMock()
-    agent_mock.arun = AsyncMock(
-        return_value=Mock(
-            status="OK", content="done", reasoning_content=None, images=None, files=None, videos=None, audio=None
-        )
-    )
-
-    app = _build_app(agent_mock)
+    agent_mock = _make_agent_mock()
+    mock_slack = _make_slack_mock()
 
     with (
         patch("agno.os.interfaces.slack.router.verify_slack_signature", return_value=True),
-        patch("agno.os.interfaces.slack.router.SlackTools") as mock_slack_cls,
+        patch("agno.os.interfaces.slack.router.SlackTools", return_value=mock_slack),
         patch.dict("os.environ", {"SLACK_TOKEN": "test"}),
     ):
-        mock_slack = Mock()
-        mock_slack.send_message = Mock()
-        mock_slack_cls.return_value = mock_slack
-
+        app = _build_app(agent_mock)
         client = TestClient(app)
         body = {
             "type": "event_callback",
