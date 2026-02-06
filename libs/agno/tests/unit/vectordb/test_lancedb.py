@@ -71,13 +71,13 @@ def test_vector_search(lance_db, sample_documents):
     """Test vector search"""
     lance_db.insert(documents=sample_documents, content_hash="test_hash")
     results = lance_db.vector_search("coconut dishes", limit=2)
+    assert results is not None
     assert len(results) == 2
-    # results is a DataFrame, so check the 'payload' column for content
-    # Each payload is a JSON string, so parse it and check for 'coconut'
+    # results is a list of dicts (LanceDB .to_list()), check payload for content
     import json
 
     found = False
-    for _, row in results.iterrows():
+    for row in results:
         payload = json.loads(row["payload"])
         if "coconut" in payload["content"].lower():
             found = True
