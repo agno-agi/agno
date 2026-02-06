@@ -52,8 +52,27 @@ class CustomJSONEncoder(json.JSONEncoder):
         return super().default(obj)
 
 
+def json_serializer(obj: Any) -> str:
+    """Custom JSON serializer for SQLAlchemy engine.
+
+    This function is used as the json_serializer parameter when creating
+    SQLAlchemy engines for PostgreSQL. It handles non-JSON-serializable
+    types like datetime, date, UUID, etc.
+
+    Args:
+        obj: The object to serialize to JSON.
+
+    Returns:
+        JSON string representation of the object.
+    """
+    return json.dumps(obj, cls=CustomJSONEncoder)
+
+
 def serialize_session_json_fields(session: dict) -> dict:
     """Serialize all JSON fields in the given Session dictionary.
+
+    Uses CustomJSONEncoder to handle non-JSON-serializable types like
+    datetime, date, UUID, Message, Metrics, etc.
 
     Args:
         data (dict): The dictionary to serialize JSON fields in.
