@@ -790,6 +790,24 @@ def _find_member_by_id(team: "Team", member_id: str) -> Optional[Tuple[int, Unio
     return None
 
 
+def _propagate_member_pause(
+    run_response: TeamRunOutput,
+    member_agent: Union[Agent, "Team"],
+    member_run_response: Union[RunOutput, TeamRunOutput],
+) -> None:
+    """Copy HITL requirements from a paused member run to the team run response."""
+    if not member_run_response.requirements:
+        return
+    if run_response.requirements is None:
+        run_response.requirements = []
+    member_id = getattr(member_agent, "agent_id", None) or getattr(member_agent, "team_id", None)
+    for req in member_run_response.requirements:
+        req.member_agent_id = member_id
+        req.member_agent_name = member_agent.name
+        req.member_run_id = member_run_response.run_id
+        run_response.requirements.append(req)
+
+
 def _get_delegate_task_function(
     team: "Team",
     run_response: TeamRunOutput,
@@ -1018,6 +1036,20 @@ def _get_delegate_task_function(
 
             check_if_run_cancelled(member_agent_run_response)  # type: ignore
 
+        # Check if the member run is paused (HITL)
+        if member_agent_run_response is not None and member_agent_run_response.is_paused:
+            _propagate_member_pause(run_response, member_agent, member_agent_run_response)
+            use_team_logger()
+            _process_delegate_task_to_member(
+                member_agent_run_response,
+                member_agent,
+                member_agent_task,  # type: ignore
+                member_session_state_copy,  # type: ignore
+            )
+            yield f"Member '{member_agent.name}' requires human input before continuing."
+            return
+
+        if not stream:
             try:
                 if member_agent_run_response.content is None and (  # type: ignore
                     member_agent_run_response.tools is None or len(member_agent_run_response.tools) == 0  # type: ignore
@@ -1143,6 +1175,20 @@ def _get_delegate_task_function(
             )
             check_if_run_cancelled(member_agent_run_response)  # type: ignore
 
+        # Check if the member run is paused (HITL)
+        if member_agent_run_response is not None and member_agent_run_response.is_paused:
+            _propagate_member_pause(run_response, member_agent, member_agent_run_response)
+            use_team_logger()
+            _process_delegate_task_to_member(
+                member_agent_run_response,
+                member_agent,
+                member_agent_task,  # type: ignore
+                member_session_state_copy,  # type: ignore
+            )
+            yield f"Member '{member_agent.name}' requires human input before continuing."
+            return
+
+        if not stream:
             try:
                 if member_agent_run_response.content is None and (  # type: ignore
                     member_agent_run_response.tools is None or len(member_agent_run_response.tools) == 0  # type: ignore
@@ -1257,6 +1303,19 @@ def _get_delegate_task_function(
 
                 check_if_run_cancelled(member_agent_run_response)  # type: ignore
 
+            # Check if the member run is paused (HITL)
+            if member_agent_run_response is not None and member_agent_run_response.is_paused:
+                _propagate_member_pause(run_response, member_agent, member_agent_run_response)
+                _process_delegate_task_to_member(
+                    member_agent_run_response,
+                    member_agent,
+                    member_agent_task,  # type: ignore
+                    member_session_state_copy,  # type: ignore
+                )
+                yield f"Agent {member_agent.name}: Requires human input before continuing."
+                continue
+
+            if not stream:
                 try:
                     if member_agent_run_response.content is None and (  # type: ignore
                         member_agent_run_response.tools is None or len(member_agent_run_response.tools) == 0  # type: ignore
@@ -1343,6 +1402,9 @@ def _get_delegate_task_function(
                         )
                         await queue.put(member_agent_run_output_event)
                 finally:
+                    # Check if the member run is paused (HITL)
+                    if member_agent_run_response is not None and member_agent_run_response.is_paused:
+                        _propagate_member_pause(run_response, agent, member_agent_run_response)
                     _process_delegate_task_to_member(
                         member_agent_run_response,
                         agent,
@@ -1414,6 +1476,10 @@ def _get_delegate_task_function(
                     )
                     check_if_run_cancelled(member_agent_run_response)
 
+                    # Check if the member run is paused (HITL)
+                    if member_agent_run_response is not None and member_agent_run_response.is_paused:
+                        _propagate_member_pause(run_response, member_agent, member_agent_run_response)
+
                     _process_delegate_task_to_member(
                         member_agent_run_response,
                         member_agent,
@@ -1422,6 +1488,10 @@ def _get_delegate_task_function(
                     )
 
                     member_name = member_agent.name if member_agent.name else f"agent_{member_agent_index}"
+
+                    if member_agent_run_response is not None and member_agent_run_response.is_paused:
+                        return f"Agent {member_name}: Requires human input before continuing."
+
                     try:
                         if member_agent_run_response.content is None and (
                             member_agent_run_response.tools is None or len(member_agent_run_response.tools) == 0

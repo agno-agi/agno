@@ -34,7 +34,7 @@ from agno.models.message import Message
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
 from agno.run import RunContext, RunStatus
-from agno.run.agent import RunOutputEvent
+from agno.run.agent import RunOutput, RunOutputEvent
 from agno.run.cancel import (
     acleanup_run,
     araise_if_cancelled,
@@ -277,6 +277,14 @@ def _run(
                     run_messages=run_messages,
                     run_context=run_context,
                 )
+
+                # 7b. Check if delegation propagated member HITL requirements
+                if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
+                    from agno.team import _hooks
+
+                    return _hooks.handle_team_run_paused(
+                        team, run_response=run_response, session=session, user_id=user_id
+                    )
 
                 # 8. Store media if enabled
                 if team.store_media:
@@ -586,6 +594,17 @@ def _run_stream(
 
                 # Check for cancellation after model processing
                 raise_if_cancelled(run_response.run_id)  # type: ignore
+
+                # 6b. Check if delegation propagated member HITL requirements
+                if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
+                    from agno.team import _hooks
+
+                    yield from _hooks.handle_team_run_paused_stream(
+                        team, run_response=run_response, session=session, user_id=user_id
+                    )
+                    if yield_run_output:
+                        yield run_response
+                    return
 
                 # 7. Parse response with parser model if provided
                 yield from team._parse_response_with_parser_model_stream(
@@ -1133,7 +1152,15 @@ async def _arun(
                     run_context=run_context,
                 )
 
-                # 8. Store media if enabled
+                # 9b. Check if delegation propagated member HITL requirements
+                if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
+                    from agno.team import _hooks
+
+                    return await _hooks.ahandle_team_run_paused(
+                        team, run_response=run_response, session=team_session, user_id=user_id
+                    )
+
+                # 10. Store media if enabled
                 if team.store_media:
                     store_media_util(run_response, model_response)
 
@@ -1458,7 +1485,19 @@ async def _arun_stream(
                 # Check for cancellation after model processing
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 
-                # 7. Parse response with parser model if provided
+                # 9b. Check if delegation propagated member HITL requirements
+                if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
+                    from agno.team import _hooks
+
+                    async for item in _hooks.ahandle_team_run_paused_stream(  # type: ignore[assignment]
+                        team, run_response=run_response, session=team_session, user_id=user_id
+                    ):
+                        yield item
+                    if yield_run_output:
+                        yield run_response
+                    return
+
+                # 10. Parse response with parser model if provided
                 async for event in team._aparse_response_with_parser_model_stream(
                     session=team_session,
                     run_response=run_response,
@@ -1842,3 +1881,457 @@ def _handle_event(
             run_response.events = []
         run_response.events.append(event)
     return event
+
+
+# ---------------------------------------------------------------------------
+# continue_run helpers
+# ---------------------------------------------------------------------------
+
+
+def _route_requirements_to_members(
+    team: "Team",
+    run_response: TeamRunOutput,
+    session: TeamSession,
+) -> Dict[str, Union["RunOutput", TeamRunOutput]]:
+    """Route requirements from a paused team run to their respective member agents (sync).
+
+    Groups requirements by member_run_id and calls member.continue_run() for each group.
+
+    Returns:
+        Dict mapping member name/id to their RunOutput/TeamRunOutput.
+    """
+    from collections import defaultdict
+
+    from agno.run.requirement import RunRequirement
+
+    if not run_response.requirements:
+        return {}
+
+    # Group requirements by (member_agent_id, member_run_id)
+    member_requirements: Dict[tuple, List[RunRequirement]] = defaultdict(list)
+    for req in run_response.requirements:
+        if req.member_agent_id and req.member_run_id:
+            key = (req.member_agent_id, req.member_agent_name or req.member_agent_id, req.member_run_id)
+            member_requirements[key].append(req)
+
+    results: Dict[str, Union[RunOutput, TeamRunOutput]] = {}
+    for (member_id, member_name, member_run_id), reqs in member_requirements.items():
+        # Find the member agent
+        found = team._find_member_by_id(member_id)
+        if found is None:
+            log_warning(f"Could not find member agent with ID {member_id}")
+            continue
+        _, member = found
+
+        # Continue the member's run
+        member_result = member.continue_run(
+            run_id=member_run_id,
+            requirements=reqs,
+            session_id=session.session_id,
+        )
+        results[member_name] = member_result
+
+    return results
+
+
+async def _aroute_requirements_to_members(
+    team: "Team",
+    run_response: TeamRunOutput,
+    session: TeamSession,
+) -> Dict[str, Union["RunOutput", TeamRunOutput]]:
+    """Route requirements from a paused team run to their respective member agents (async).
+
+    Groups requirements by member_run_id and calls member.acontinue_run() for each group.
+
+    Returns:
+        Dict mapping member name/id to their RunOutput/TeamRunOutput.
+    """
+    from collections import defaultdict
+
+    from agno.run.requirement import RunRequirement
+
+    if not run_response.requirements:
+        return {}
+
+    # Group requirements by (member_agent_id, member_run_id)
+    member_requirements: Dict[tuple, List[RunRequirement]] = defaultdict(list)
+    for req in run_response.requirements:
+        if req.member_agent_id and req.member_run_id:
+            key = (req.member_agent_id, req.member_agent_name or req.member_agent_id, req.member_run_id)
+            member_requirements[key].append(req)
+
+    results: Dict[str, Union[RunOutput, TeamRunOutput]] = {}
+
+    # Run all member continue_runs concurrently
+    async def _continue_member(member_id: str, member_name: str, member_run_id: str, reqs: list) -> Optional[tuple]:
+        found = team._find_member_by_id(member_id)
+        if found is None:
+            log_warning(f"Could not find member agent with ID {member_id}")
+            return None
+        _, member = found
+        result = await member.acontinue_run(
+            run_id=member_run_id,
+            requirements=reqs,
+            session_id=session.session_id,
+        )
+        return (member_name, result)
+
+    tasks = [
+        _continue_member(member_id, member_name, member_run_id, reqs)
+        for (member_id, member_name, member_run_id), reqs in member_requirements.items()
+    ]
+    completed = await asyncio.gather(*tasks)
+    for item in completed:
+        if item is not None:
+            name, result = item
+            results[name] = result
+
+    return results
+
+
+def _build_continuation_message(member_results: Dict[str, Union["RunOutput", TeamRunOutput]]) -> str:
+    """Build a user message summarizing member agent results for the team model."""
+    parts = []
+    for member_name, result in member_results.items():
+        content = result.content if result.content else "(no content)"
+        parts.append(f"Results from '{member_name}':\n{content}")
+    return "Previously delegated tasks have been completed.\n\n" + "\n\n".join(parts)
+
+
+def _propagate_still_paused_member_requirements(
+    run_response: TeamRunOutput,
+    still_paused: Dict[str, Union["RunOutput", TeamRunOutput]],
+) -> None:
+    """Rebuild team requirements from paused member results for chained HITL flows."""
+    run_response.requirements = []
+    for fallback_name, result in still_paused.items():
+        if not result.requirements:
+            continue
+
+        member_id = getattr(result, "agent_id", None) or getattr(result, "team_id", None)
+        member_name = getattr(result, "agent_name", None) or getattr(result, "team_name", None) or fallback_name
+
+        for req in result.requirements:
+            req.member_agent_id = member_id
+            req.member_agent_name = member_name
+            req.member_run_id = result.run_id
+            run_response.requirements.append(req)
+
+
+# ---------------------------------------------------------------------------
+# continue_run dispatch
+# ---------------------------------------------------------------------------
+
+
+def continue_run_dispatch(
+    team: "Team",
+    run_response: Optional[TeamRunOutput] = None,
+    *,
+    run_id: Optional[str] = None,
+    requirements: Optional[list] = None,
+    stream: Optional[bool] = None,
+    stream_events: Optional[bool] = None,
+    user_id: Optional[str] = None,
+    session_id: Optional[str] = None,
+    debug_mode: Optional[bool] = None,
+    yield_run_output: bool = False,
+    **kwargs: Any,
+) -> Union[TeamRunOutput, Iterator[Union[RunOutputEvent, TeamRunOutputEvent]]]:
+    """Continue a paused team run by routing requirements to members and re-invoking the team.
+
+    Args:
+        run_response: The paused run response to continue.
+        run_id: The run id to continue. Alternative to passing run_response.
+        requirements: The resolved requirements. Required when using run_id.
+        stream: Whether to stream the response.
+        stream_events: Whether to stream all events.
+        user_id: The user id.
+        session_id: The session id. Required when using run_id.
+        debug_mode: Whether to enable debug mode.
+        yield_run_output: Whether to yield the final run output (streaming only).
+    """
+    if run_response is None and run_id is None:
+        raise ValueError("Either run_response or run_id must be provided.")
+
+    if run_response is None and (run_id is not None and (session_id is None and team.session_id is None)):
+        raise ValueError("Session ID is required to continue a run from a run_id.")
+
+    if team._has_async_db():
+        raise Exception("continue_run() is not supported with an async DB. Please use acontinue_run() instead.")
+
+    # Initialize Team
+    team.initialize_team(debug_mode=debug_mode)
+
+    session_id = run_response.session_id if run_response else session_id
+    user_id = run_response.user_id if run_response and run_response.user_id else user_id
+
+    session_id, user_id = team._initialize_session(session_id=session_id, user_id=user_id)
+
+    # Read existing session
+    team_session = team._read_or_create_session(session_id=session_id, user_id=user_id)
+
+    # Find run_response from session if only run_id provided
+    if run_response is None and run_id is not None:
+        if requirements is None:
+            raise ValueError("To continue a run from a given run_id, the requirements parameter must be provided.")
+
+        runs = team_session.runs or []
+        run_response = cast(Optional[TeamRunOutput], next((r for r in runs if r.run_id == run_id), None))
+        if run_response is None:
+            raise RuntimeError(f"No runs found for run ID {run_id}")
+
+        run_response.requirements = requirements
+
+    run_response = cast(TeamRunOutput, run_response)
+
+    log_debug(f"Team Run Continue: {run_response.run_id}", center=True, symbol="*")
+
+    # Route requirements to member agents
+    member_results = _route_requirements_to_members(team, run_response, team_session)
+
+    # Check if any member is still paused (chained HITL)
+    still_paused = {name: result for name, result in member_results.items() if getattr(result, "is_paused", False)}
+    if still_paused:
+        from agno.team import _hooks
+
+        # Re-propagate requirements with member context for chained pauses.
+        _propagate_still_paused_member_requirements(run_response, still_paused)
+        return _hooks.handle_team_run_paused(team, run_response=run_response, session=team_session, user_id=user_id)
+
+    # Mark the paused run as completed (it's done, member results are in)
+    run_response.status = RunStatus.completed
+    team._cleanup_and_store(run_response=run_response, session=team_session)
+
+    # Build continuation message and re-invoke the team
+    continuation_message = _build_continuation_message(member_results)
+
+    return run(
+        team,
+        input=continuation_message,
+        stream=stream,
+        stream_events=stream_events,
+        session_id=session_id,
+        user_id=user_id,
+        debug_mode=debug_mode,
+        yield_run_output=yield_run_output,
+        add_history_to_context=True,
+        **kwargs,
+    )
+
+
+def acontinue_run_dispatch(  # type: ignore
+    team: "Team",
+    run_response: Optional[TeamRunOutput] = None,
+    *,
+    run_id: Optional[str] = None,
+    requirements: Optional[list] = None,
+    stream: Optional[bool] = None,
+    stream_events: Optional[bool] = None,
+    user_id: Optional[str] = None,
+    session_id: Optional[str] = None,
+    debug_mode: Optional[bool] = None,
+    yield_run_output: bool = False,
+    **kwargs: Any,
+) -> Union[TeamRunOutput, AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent]]]:
+    """Continue a paused team run asynchronously.
+
+    Args:
+        run_response: The paused run response to continue.
+        run_id: The run id to continue. Alternative to passing run_response.
+        requirements: The resolved requirements. Required when using run_id.
+        stream: Whether to stream the response.
+        stream_events: Whether to stream all events.
+        user_id: The user id.
+        session_id: The session id. Required when using run_id.
+        debug_mode: Whether to enable debug mode.
+        yield_run_output: Whether to yield the final run output (streaming only).
+    """
+    if run_response is None and run_id is None:
+        raise ValueError("Either run_response or run_id must be provided.")
+
+    if run_response is None and (run_id is not None and (session_id is None and team.session_id is None)):
+        raise ValueError("Session ID is required to continue a run from a run_id.")
+
+    # Initialize Team
+    team.initialize_team(debug_mode=debug_mode)
+
+    session_id = run_response.session_id if run_response else session_id
+    user_id = run_response.user_id if run_response and run_response.user_id else user_id
+
+    session_id, user_id = team._initialize_session(session_id=session_id, user_id=user_id)
+
+    if run_response is not None:
+        run_response = cast(TeamRunOutput, run_response)
+
+    # Use stream override value when necessary
+    if stream is None:
+        stream = False if team.stream is None else team.stream
+
+    # Can't stream events if streaming is disabled
+    if stream is False:
+        stream_events = False
+
+    if stream_events is None:
+        stream_events = False if team.stream_events is None else team.stream_events
+
+    if stream:
+        return _acontinue_run_stream_impl(  # type: ignore[return-value]
+            team,
+            run_response=run_response,
+            run_id=run_id,
+            requirements=requirements,
+            session_id=session_id,
+            user_id=user_id,
+            stream_events=stream_events,
+            yield_run_output=yield_run_output,
+            debug_mode=debug_mode,
+            **kwargs,
+        )
+    else:
+        return _acontinue_run_impl(  # type: ignore
+            team,
+            run_response=run_response,
+            run_id=run_id,
+            requirements=requirements,
+            session_id=session_id,
+            user_id=user_id,
+            debug_mode=debug_mode,
+            **kwargs,
+        )
+
+
+async def _acontinue_run_impl(
+    team: "Team",
+    session_id: str,
+    run_response: Optional[TeamRunOutput] = None,
+    run_id: Optional[str] = None,
+    requirements: Optional[list] = None,
+    user_id: Optional[str] = None,
+    debug_mode: Optional[bool] = None,
+    **kwargs: Any,
+) -> TeamRunOutput:
+    """Async non-streaming implementation of continue_run for teams."""
+
+    # Read existing session
+    team_session = await team._aread_or_create_session(session_id=session_id, user_id=user_id)
+
+    # Find run_response from session if only run_id provided
+    if run_response is None and run_id is not None:
+        if requirements is None:
+            raise ValueError("To continue a run from a given run_id, the requirements parameter must be provided.")
+
+        runs = team_session.runs or []
+        run_response = cast(Optional[TeamRunOutput], next((r for r in runs if r.run_id == run_id), None))
+        if run_response is None:
+            raise RuntimeError(f"No runs found for run ID {run_id}")
+
+        run_response.requirements = requirements
+
+    run_response = cast(TeamRunOutput, run_response)
+
+    log_debug(f"Team Run Continue: {run_response.run_id}", center=True, symbol="*")
+
+    # Route requirements to member agents
+    member_results = await _aroute_requirements_to_members(team, run_response, team_session)
+
+    # Check if any member is still paused (chained HITL)
+    still_paused = {name: result for name, result in member_results.items() if getattr(result, "is_paused", False)}
+    if still_paused:
+        from agno.team import _hooks
+
+        _propagate_still_paused_member_requirements(run_response, still_paused)
+        return await _hooks.ahandle_team_run_paused(
+            team, run_response=run_response, session=team_session, user_id=user_id
+        )
+
+    # Mark the paused run as completed
+    run_response.status = RunStatus.completed
+    await team._acleanup_and_store(run_response=run_response, session=team_session)
+
+    # Build continuation message and re-invoke the team
+    continuation_message = _build_continuation_message(member_results)
+
+    return await arun(  # type: ignore[misc]
+        team,
+        input=continuation_message,
+        stream=False,
+        session_id=session_id,
+        user_id=user_id,
+        debug_mode=debug_mode,
+        add_history_to_context=True,
+        **kwargs,
+    )
+
+
+async def _acontinue_run_stream_impl(
+    team: "Team",
+    session_id: str,
+    run_response: Optional[TeamRunOutput] = None,
+    run_id: Optional[str] = None,
+    requirements: Optional[list] = None,
+    user_id: Optional[str] = None,
+    stream_events: bool = False,
+    yield_run_output: bool = False,
+    debug_mode: Optional[bool] = None,
+    **kwargs: Any,
+) -> AsyncIterator[Union[TeamRunOutputEvent, RunOutputEvent, TeamRunOutput]]:
+    """Async streaming implementation of continue_run for teams."""
+
+    # Read existing session
+    team_session = await team._aread_or_create_session(session_id=session_id, user_id=user_id)
+
+    # Find run_response from session if only run_id provided
+    if run_response is None and run_id is not None:
+        if requirements is None:
+            raise ValueError("To continue a run from a given run_id, the requirements parameter must be provided.")
+
+        runs = team_session.runs or []
+        run_response = cast(Optional[TeamRunOutput], next((r for r in runs if r.run_id == run_id), None))
+        if run_response is None:
+            raise RuntimeError(f"No runs found for run ID {run_id}")
+
+        run_response.requirements = requirements
+
+    run_response = cast(TeamRunOutput, run_response)
+
+    log_debug(f"Team Run Continue: {run_response.run_id}", center=True, symbol="*")
+
+    # Route requirements to member agents
+    member_results = await _aroute_requirements_to_members(team, run_response, team_session)
+
+    # Check if any member is still paused (chained HITL)
+    still_paused = {name: result for name, result in member_results.items() if getattr(result, "is_paused", False)}
+    if still_paused:
+        from agno.team import _hooks
+
+        _propagate_still_paused_member_requirements(run_response, still_paused)
+        async for item in _hooks.ahandle_team_run_paused_stream(
+            team, run_response=run_response, session=team_session, user_id=user_id
+        ):
+            yield item
+        if yield_run_output:
+            yield run_response
+        return
+
+    # Mark the paused run as completed
+    run_response.status = RunStatus.completed
+    await team._acleanup_and_store(run_response=run_response, session=team_session)
+
+    # Build continuation message and re-invoke the team
+    continuation_message = _build_continuation_message(member_results)
+
+    new_run_response_stream = arun(
+        team,
+        input=continuation_message,
+        stream=True,
+        stream_events=stream_events,
+        session_id=session_id,
+        user_id=user_id,
+        debug_mode=debug_mode,
+        yield_run_output=yield_run_output,
+        add_history_to_context=True,
+        **kwargs,
+    )
+
+    async for item in new_run_response_stream:  # type: ignore[union-attr]
+        yield item
