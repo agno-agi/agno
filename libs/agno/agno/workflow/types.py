@@ -697,7 +697,7 @@ class StepRequirement:
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
-        result = {
+        result: Dict[str, Any] = {
             "step_id": self.step_id,
             "step_name": self.step_name,
             "step_index": self.step_index,
@@ -796,7 +796,7 @@ class RouterRequirement:
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
-        result = {
+        result: Dict[str, Any] = {
             "router_id": self.router_id,
             "router_name": self.router_name,
             "requires_user_input": self.requires_user_input,

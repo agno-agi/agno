@@ -2982,9 +2982,8 @@ class Workflow:
                             workflow_name=workflow_run_response.workflow_name,
                             workflow_id=workflow_run_response.workflow_id,
                             session_id=workflow_run_response.session_id,
-                            router_name=step_name,
-                            router_id=router_requirement.router_id,
-                            available_choices=router_requirement.available_choices,
+                            step_name=step_name,
+                            available_choices=router_requirement.available_choices or [],
                             allow_multiple_selections=step.allow_multiple_selections,
                             user_input_message=step.user_input_message,
                         )
@@ -4577,7 +4576,7 @@ class Workflow:
                             workflow_id=self.id,
                             workflow_name=self.name,
                             session_id=run_response.session_id,
-                            reason=run_response.content,
+                            reason=str(run_response.content) if run_response.content else None,
                         )
 
                     return cancelled_generator()
@@ -4591,31 +4590,31 @@ class Workflow:
         # Extract user input from step requirements to pass to the step
         user_input_data: Optional[Dict[str, Any]] = None
         if step_requirements or run_response.step_requirements:
-            reqs = step_requirements or run_response.step_requirements or []
-            for req in reqs:
-                if req.user_input:
-                    user_input_data = req.user_input
+            step_reqs = step_requirements or run_response.step_requirements or []
+            for step_req in step_reqs:
+                if step_req.user_input:
+                    user_input_data = step_req.user_input
                     break
 
         # Extract router selection to pass to the router
         router_selection: Optional[List[str]] = None
         if run_response.router_requirements:
-            for req in run_response.router_requirements:
-                if req.selected_choices:
-                    router_selection = req.selected_choices
+            for router_req in run_response.router_requirements:
+                if router_req.selected_choices:
+                    router_selection = router_req.selected_choices
                     break
 
         # Handle error requirements (retry or skip)
         error_should_skip = False
         error_should_retry = False
         if run_response.error_requirements:
-            for req in run_response.error_requirements:
-                if req.should_skip:
+            for error_req in run_response.error_requirements:
+                if error_req.should_skip:
                     error_should_skip = True
-                    log_debug(f"Step '{req.step_name}' error - user chose to skip")
-                elif req.should_retry:
+                    log_debug(f"Step '{error_req.step_name}' error - user chose to skip")
+                elif error_req.should_retry:
                     error_should_retry = True
-                    log_debug(f"Step '{req.step_name}' error - user chose to retry")
+                    log_debug(f"Step '{error_req.step_name}' error - user chose to retry")
 
         # Clear the HITL requirements since they're now resolved
         # This allows the step to execute on resume
@@ -4745,7 +4744,7 @@ class Workflow:
             router_selection = kwargs.get("router_selection")
 
             # Continue from the paused step
-            for i, step in enumerate(self.steps[start_step_index:], start=start_step_index):  # type: ignore[arg-type]
+            for i, step in enumerate(self.steps[start_step_index:], start=start_step_index):  # type: ignore[arg-type, index]
                 raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
                 step_name = getattr(step, "name", f"step_{i + 1}")
                 log_debug(f"Continuing step {i + 1}/{self._get_step_count()}: {step_name}")
@@ -5063,7 +5062,7 @@ class Workflow:
             router_selection = kwargs.get("router_selection")
 
             # Continue from the paused step
-            for i, step in enumerate(self.steps[start_step_index:], start=start_step_index):  # type: ignore[arg-type]
+            for i, step in enumerate(self.steps[start_step_index:], start=start_step_index):  # type: ignore[arg-type, index]
                 raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
                 step_name = getattr(step, "name", f"step_{i + 1}")
                 log_debug(f"Streaming continued step {i + 1}/{self._get_step_count()}: {step_name}")
@@ -5094,7 +5093,7 @@ class Workflow:
 
                     if not selected_steps:
                         logger.warning(f"Router '{step_name}': No valid steps found for selection {router_selection}")
-                        step_output = StepOutput(
+                        router_step_output: Optional[StepOutput] = StepOutput(
                             step_name=step_name,
                             step_id=str(uuid4()),
                             step_type=StepType.ROUTER,
@@ -5106,7 +5105,7 @@ class Workflow:
                         original_selector = step.selector
                         step.selector = lambda _: selected_steps  # type: ignore[assignment]
 
-                        step_output = None
+                        router_step_output = None
                         for event in step.execute_stream(
                             step_input,
                             session_id=session.session_id,
@@ -5125,7 +5124,7 @@ class Workflow:
                             background_tasks=background_tasks,
                         ):
                             if isinstance(event, StepOutput):
-                                step_output = event
+                                router_step_output = event
                             elif isinstance(event, WorkflowRunOutputEvent):  # type: ignore
                                 enriched_event = self._enrich_event_with_workflow_context(
                                     event, workflow_run_response, step_index=i, step=step
@@ -5141,8 +5140,8 @@ class Workflow:
                         # Restore original selector
                         step.selector = original_selector
 
-                        if step_output is None:
-                            step_output = StepOutput(
+                        if router_step_output is None:
+                            router_step_output = StepOutput(
                                 step_name=step_name,
                                 step_id=str(uuid4()),
                                 step_type=StepType.ROUTER,
@@ -5150,18 +5149,20 @@ class Workflow:
                                 success=True,
                             )
 
-                    # Update tracking
-                    previous_step_outputs[step_name] = step_output
-                    collected_step_outputs.append(step_output)
+                    # Update tracking - router_step_output is guaranteed non-None at this point
+                    # Both branches above ensure router_step_output is assigned a StepOutput
+                    final_router_output: StepOutput = router_step_output  # type: ignore[assignment]
+                    previous_step_outputs[step_name] = final_router_output
+                    collected_step_outputs.append(final_router_output)
 
-                    shared_images.extend(step_output.images or [])
-                    shared_videos.extend(step_output.videos or [])
-                    shared_audio.extend(step_output.audio or [])
-                    shared_files.extend(step_output.files or [])
-                    output_images.extend(step_output.images or [])
-                    output_videos.extend(step_output.videos or [])
-                    output_audio.extend(step_output.audio or [])
-                    output_files.extend(step_output.files or [])
+                    shared_images.extend(final_router_output.images or [])
+                    shared_videos.extend(final_router_output.videos or [])
+                    shared_audio.extend(final_router_output.audio or [])
+                    shared_files.extend(final_router_output.files or [])
+                    output_images.extend(final_router_output.images or [])
+                    output_videos.extend(final_router_output.videos or [])
+                    output_audio.extend(final_router_output.audio or [])
+                    output_files.extend(final_router_output.files or [])
 
                     continue  # Move to next step
 
@@ -5231,9 +5232,8 @@ class Workflow:
                         workflow_name=workflow_run_response.workflow_name,
                         workflow_id=workflow_run_response.workflow_id,
                         session_id=workflow_run_response.session_id,
-                        router_name=step_name,
-                        router_id=router_requirement.router_id,
-                        available_choices=router_requirement.available_choices,
+                        step_name=step_name,
+                        available_choices=router_requirement.available_choices or [],
                         allow_multiple_selections=step.allow_multiple_selections,
                         user_input_message=step.user_input_message,
                     )
@@ -5597,7 +5597,7 @@ class Workflow:
                             workflow_id=self.id,
                             workflow_name=self.name,
                             session_id=run_response.session_id,
-                            reason=run_response.content,
+                            reason=str(run_response.content) if run_response.content else None,
                         )
 
                     return cancelled_generator()
@@ -5611,31 +5611,31 @@ class Workflow:
         # Extract user input from step requirements to pass to the step
         user_input_data: Optional[Dict[str, Any]] = None
         if step_requirements or run_response.step_requirements:
-            reqs = step_requirements or run_response.step_requirements or []
-            for req in reqs:
-                if req.user_input:
-                    user_input_data = req.user_input
+            step_reqs = step_requirements or run_response.step_requirements or []
+            for step_req in step_reqs:
+                if step_req.user_input:
+                    user_input_data = step_req.user_input
                     break
 
         # Extract router selection to pass to the router
         router_selection: Optional[List[str]] = None
         if run_response.router_requirements:
-            for req in run_response.router_requirements:
-                if req.selected_choices:
-                    router_selection = req.selected_choices
+            for router_req in run_response.router_requirements:
+                if router_req.selected_choices:
+                    router_selection = router_req.selected_choices
                     break
 
         # Handle error requirements (retry or skip)
         error_should_skip = False
         error_should_retry = False
         if run_response.error_requirements:
-            for req in run_response.error_requirements:
-                if req.should_skip:
+            for error_req in run_response.error_requirements:
+                if error_req.should_skip:
                     error_should_skip = True
-                    log_debug(f"Step '{req.step_name}' error - user chose to skip")
-                elif req.should_retry:
+                    log_debug(f"Step '{error_req.step_name}' error - user chose to skip")
+                elif error_req.should_retry:
                     error_should_retry = True
-                    log_debug(f"Step '{req.step_name}' error - user chose to retry")
+                    log_debug(f"Step '{error_req.step_name}' error - user chose to retry")
 
         # Clear the HITL requirements since they're now resolved
         # This allows the step to execute on resume
@@ -5764,7 +5764,7 @@ class Workflow:
             router_selection = kwargs.get("router_selection")
 
             # Continue from the paused step
-            for i, step in enumerate(self.steps[start_step_index:], start=start_step_index):  # type: ignore[arg-type]
+            for i, step in enumerate(self.steps[start_step_index:], start=start_step_index):  # type: ignore[arg-type, index]
                 await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
                 step_name = getattr(step, "name", f"step_{i + 1}")
                 log_debug(f"Continuing step {i + 1}/{self._get_step_count()}: {step_name}")
@@ -6070,7 +6070,7 @@ class Workflow:
             router_selection = kwargs.get("router_selection")
 
             # Continue from the paused step
-            for i, step in enumerate(self.steps[start_step_index:], start=start_step_index):  # type: ignore[arg-type]
+            for i, step in enumerate(self.steps[start_step_index:], start=start_step_index):  # type: ignore[arg-type, index]
                 await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
                 step_name = getattr(step, "name", f"step_{i + 1}")
                 log_debug(f"Streaming continued step {i + 1}/{self._get_step_count()}: {step_name}")
@@ -6101,7 +6101,7 @@ class Workflow:
 
                     if not selected_steps:
                         logger.warning(f"Router '{step_name}': No valid steps found for selection {router_selection}")
-                        step_output = StepOutput(
+                        router_step_output: Optional[StepOutput] = StepOutput(
                             step_name=step_name,
                             step_id=str(uuid4()),
                             step_type=StepType.ROUTER,
@@ -6113,7 +6113,7 @@ class Workflow:
                         original_selector = step.selector
                         step.selector = lambda _: selected_steps  # type: ignore[assignment]
 
-                        step_output = None
+                        router_step_output = None
                         async for event in step.aexecute_stream(
                             step_input,
                             session_id=session.session_id,
@@ -6132,7 +6132,7 @@ class Workflow:
                             background_tasks=background_tasks,
                         ):
                             if isinstance(event, StepOutput):
-                                step_output = event
+                                router_step_output = event
                             elif isinstance(event, WorkflowRunOutputEvent):  # type: ignore
                                 enriched_event = self._enrich_event_with_workflow_context(
                                     event, workflow_run_response, step_index=i, step=step
@@ -6148,8 +6148,8 @@ class Workflow:
                         # Restore original selector
                         step.selector = original_selector
 
-                        if step_output is None:
-                            step_output = StepOutput(
+                        if router_step_output is None:
+                            router_step_output = StepOutput(
                                 step_name=step_name,
                                 step_id=str(uuid4()),
                                 step_type=StepType.ROUTER,
@@ -6157,18 +6157,20 @@ class Workflow:
                                 success=True,
                             )
 
-                    # Update tracking
-                    previous_step_outputs[step_name] = step_output
-                    collected_step_outputs.append(step_output)
+                    # Update tracking - router_step_output is guaranteed non-None at this point
+                    # Both branches above ensure router_step_output is assigned a StepOutput
+                    final_router_output: StepOutput = router_step_output  # type: ignore[assignment]
+                    previous_step_outputs[step_name] = final_router_output
+                    collected_step_outputs.append(final_router_output)
 
-                    shared_images.extend(step_output.images or [])
-                    shared_videos.extend(step_output.videos or [])
-                    shared_audio.extend(step_output.audio or [])
-                    shared_files.extend(step_output.files or [])
-                    output_images.extend(step_output.images or [])
-                    output_videos.extend(step_output.videos or [])
-                    output_audio.extend(step_output.audio or [])
-                    output_files.extend(step_output.files or [])
+                    shared_images.extend(final_router_output.images or [])
+                    shared_videos.extend(final_router_output.videos or [])
+                    shared_audio.extend(final_router_output.audio or [])
+                    shared_files.extend(final_router_output.files or [])
+                    output_images.extend(final_router_output.images or [])
+                    output_videos.extend(final_router_output.videos or [])
+                    output_audio.extend(final_router_output.audio or [])
+                    output_files.extend(final_router_output.files or [])
 
                     continue  # Move to next step
 
@@ -6238,9 +6240,8 @@ class Workflow:
                         workflow_name=workflow_run_response.workflow_name,
                         workflow_id=workflow_run_response.workflow_id,
                         session_id=workflow_run_response.session_id,
-                        router_name=step_name,
-                        router_id=router_requirement.router_id,
-                        available_choices=router_requirement.available_choices,
+                        step_name=step_name,
+                        available_choices=router_requirement.available_choices or [],
                         allow_multiple_selections=step.allow_multiple_selections,
                         user_input_message=step.user_input_message,
                     )
