@@ -849,6 +849,11 @@ def run(
     # Update session state from DB
     session_state = team._load_session_state(session=team_session, session_state=session_state)
 
+    dependencies_provided = dependencies is not None
+    knowledge_filters_provided = knowledge_filters is not None
+    metadata_provided = metadata is not None
+    output_schema_provided = output_schema is not None
+
     # Determine runtime dependencies
     dependencies = dependencies if dependencies is not None else team.dependencies
 
@@ -900,10 +905,23 @@ def run(
         metadata=metadata,
         output_schema=output_schema,
     )
-    # Apply resolved options to run_context (covers both new and caller-provided contexts)
-    run_context.output_schema = output_schema
-    run_context.metadata = metadata
-    run_context.knowledge_filters = effective_filters
+    # Apply options with precedence: explicit args > existing run_context > resolved defaults.
+    if dependencies_provided:
+        run_context.dependencies = dependencies
+    elif run_context.dependencies is None:
+        run_context.dependencies = dependencies
+    if knowledge_filters_provided:
+        run_context.knowledge_filters = effective_filters
+    elif run_context.knowledge_filters is None:
+        run_context.knowledge_filters = effective_filters
+    if metadata_provided:
+        run_context.metadata = metadata
+    elif run_context.metadata is None:
+        run_context.metadata = metadata
+    if output_schema_provided:
+        run_context.output_schema = output_schema
+    elif run_context.output_schema is None:
+        run_context.output_schema = output_schema
 
     # Resolve callable dependencies once before retry loop
     if run_context.dependencies is not None:
@@ -1715,6 +1733,11 @@ def arun(  # type: ignore
         images=images, videos=videos, audios=audio, files=files
     )
 
+    dependencies_provided = dependencies is not None
+    knowledge_filters_provided = knowledge_filters is not None
+    metadata_provided = metadata is not None
+    output_schema_provided = output_schema is not None
+
     # Resolve variables
     dependencies = dependencies if dependencies is not None else team.dependencies
     add_dependencies = (
@@ -1773,10 +1796,23 @@ def arun(  # type: ignore
         metadata=metadata,
         output_schema=output_schema,
     )
-    # Apply resolved options to run_context (covers both new and caller-provided contexts)
-    run_context.output_schema = output_schema
-    run_context.metadata = metadata
-    run_context.knowledge_filters = effective_filters
+    # Apply options with precedence: explicit args > existing run_context > resolved defaults.
+    if dependencies_provided:
+        run_context.dependencies = dependencies
+    elif run_context.dependencies is None:
+        run_context.dependencies = dependencies
+    if knowledge_filters_provided:
+        run_context.knowledge_filters = effective_filters
+    elif run_context.knowledge_filters is None:
+        run_context.knowledge_filters = effective_filters
+    if metadata_provided:
+        run_context.metadata = metadata
+    elif run_context.metadata is None:
+        run_context.metadata = metadata
+    if output_schema_provided:
+        run_context.output_schema = output_schema
+    elif run_context.output_schema is None:
+        run_context.output_schema = output_schema
 
     # Configure the model for runs
     response_format: Optional[Union[Dict, Type[BaseModel]]] = (

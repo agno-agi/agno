@@ -341,3 +341,375 @@ def test_session_read_wrappers_default_to_agent_session_type():
 
     assert read_default == SessionType.AGENT
     assert aread_default == SessionType.AGENT
+
+
+def _make_precedence_test_agent() -> Agent:
+    return Agent(
+        name="precedence-agent",
+        dependencies={"agent_dep": "default"},
+        knowledge_filters={"agent_filter": "default"},
+        metadata={"agent_meta": "default"},
+        output_schema={"type": "object", "properties": {"agent": {"type": "string"}}},
+    )
+
+
+def _patch_continue_dispatch_dependencies(agent: Agent, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(agent, "_has_async_db", lambda: False)
+    monkeypatch.setattr(agent, "initialize_agent", lambda debug_mode=None: None)
+    monkeypatch.setattr(agent, "_update_metadata", lambda session: None)
+    monkeypatch.setattr(agent, "_load_session_state", lambda session, session_state: session_state)
+    monkeypatch.setattr(
+        agent,
+        "_read_or_create_session",
+        lambda session_id, user_id: AgentSession(session_id=session_id, user_id=user_id, runs=[]),
+    )
+    monkeypatch.setattr(agent, "_set_default_model", lambda: None)
+    monkeypatch.setattr(agent, "_get_response_format", lambda run_context=None: None)
+    monkeypatch.setattr(agent, "get_tools", lambda **kwargs: [])
+    monkeypatch.setattr(agent, "_determine_tools_for_model", lambda **kwargs: [])
+    monkeypatch.setattr(agent, "_get_continue_run_messages", lambda input: RunMessages(messages=[]))
+
+
+def test_run_dispatch_respects_run_context_precedence(monkeypatch: pytest.MonkeyPatch):
+    agent = _make_precedence_test_agent()
+    _patch_sync_dispatch_dependencies(agent, monkeypatch, runs=[])
+    monkeypatch.setattr(agent, "initialize_agent", lambda debug_mode=None: None)
+
+    def fake_run_impl(
+        agent: Agent,
+        run_response,
+        run_context,
+        session,
+        user_id: Optional[str] = None,
+        add_history_to_context: Optional[bool] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
+        response_format: Optional[Any] = None,
+        debug_mode: Optional[bool] = None,
+        background_tasks: Optional[Any] = None,
+        **kwargs: Any,
+    ):
+        cleanup_run(run_response.run_id)  # type: ignore[arg-type]
+        return run_response
+
+    monkeypatch.setattr(_run, "run_impl", fake_run_impl)
+
+    preserved_context = RunContext(
+        run_id="ctx-preserve",
+        session_id="session-1",
+        session_state={},
+        dependencies={"ctx_dep": "keep"},
+        knowledge_filters={"ctx_filter": "keep"},
+        metadata={"ctx_meta": "keep"},
+        output_schema={"ctx_schema": "keep"},
+    )
+    _run.run_dispatch(
+        agent=agent,
+        input="hello",
+        run_id="run-preserve",
+        stream=False,
+        run_context=preserved_context,
+    )
+    assert preserved_context.dependencies == {"ctx_dep": "keep"}
+    assert preserved_context.knowledge_filters == {"ctx_filter": "keep"}
+    assert preserved_context.metadata == {"ctx_meta": "keep"}
+    assert preserved_context.output_schema == {"ctx_schema": "keep"}
+
+    override_context = RunContext(
+        run_id="ctx-override",
+        session_id="session-1",
+        session_state={},
+        dependencies={"ctx_dep": "keep"},
+        knowledge_filters={"ctx_filter": "keep"},
+        metadata={"ctx_meta": "keep"},
+        output_schema={"ctx_schema": "keep"},
+    )
+    _run.run_dispatch(
+        agent=agent,
+        input="hello",
+        run_id="run-override",
+        stream=False,
+        run_context=override_context,
+        dependencies={"call_dep": "override"},
+        knowledge_filters={"call_filter": "override"},
+        metadata={"call_meta": "override"},
+        output_schema={"call_schema": "override"},
+    )
+    assert override_context.dependencies == {"call_dep": "override"}
+    assert override_context.knowledge_filters == {"agent_filter": "default", "call_filter": "override"}
+    assert override_context.metadata == {"call_meta": "override", "agent_meta": "default"}
+    assert override_context.output_schema == {"call_schema": "override"}
+
+    empty_context = RunContext(
+        run_id="ctx-empty",
+        session_id="session-1",
+        session_state={},
+        dependencies=None,
+        knowledge_filters=None,
+        metadata=None,
+        output_schema=None,
+    )
+    _run.run_dispatch(
+        agent=agent,
+        input="hello",
+        run_id="run-empty",
+        stream=False,
+        run_context=empty_context,
+    )
+    assert empty_context.dependencies == {"agent_dep": "default"}
+    assert empty_context.knowledge_filters == {"agent_filter": "default"}
+    assert empty_context.metadata == {"agent_meta": "default"}
+    assert empty_context.output_schema == {"type": "object", "properties": {"agent": {"type": "string"}}}
+
+
+@pytest.mark.asyncio
+async def test_arun_dispatch_respects_run_context_precedence(monkeypatch: pytest.MonkeyPatch):
+    agent = _make_precedence_test_agent()
+    monkeypatch.setattr(agent, "initialize_agent", lambda debug_mode=None: None)
+    monkeypatch.setattr(agent, "_get_response_format", lambda run_context=None: None)
+
+    async def fake_arun_impl(
+        agent: Agent,
+        run_response,
+        run_context,
+        user_id: Optional[str] = None,
+        response_format: Optional[Any] = None,
+        session_id: Optional[str] = None,
+        add_history_to_context: Optional[bool] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
+        debug_mode: Optional[bool] = None,
+        background_tasks: Optional[Any] = None,
+        **kwargs: Any,
+    ):
+        return run_response
+
+    monkeypatch.setattr(_run, "arun_impl", fake_arun_impl)
+
+    preserved_context = RunContext(
+        run_id="actx-preserve",
+        session_id="session-1",
+        session_state={},
+        dependencies={"ctx_dep": "keep"},
+        knowledge_filters={"ctx_filter": "keep"},
+        metadata={"ctx_meta": "keep"},
+        output_schema={"ctx_schema": "keep"},
+    )
+    await _run.arun_dispatch(
+        agent=agent,
+        input="hello",
+        run_id="arun-preserve",
+        stream=False,
+        run_context=preserved_context,
+    )
+    assert preserved_context.dependencies == {"ctx_dep": "keep"}
+    assert preserved_context.knowledge_filters == {"ctx_filter": "keep"}
+    assert preserved_context.metadata == {"ctx_meta": "keep"}
+    assert preserved_context.output_schema == {"ctx_schema": "keep"}
+
+    override_context = RunContext(
+        run_id="actx-override",
+        session_id="session-1",
+        session_state={},
+        dependencies={"ctx_dep": "keep"},
+        knowledge_filters={"ctx_filter": "keep"},
+        metadata={"ctx_meta": "keep"},
+        output_schema={"ctx_schema": "keep"},
+    )
+    await _run.arun_dispatch(
+        agent=agent,
+        input="hello",
+        run_id="arun-override",
+        stream=False,
+        run_context=override_context,
+        dependencies={"call_dep": "override"},
+        knowledge_filters={"call_filter": "override"},
+        metadata={"call_meta": "override"},
+        output_schema={"call_schema": "override"},
+    )
+    assert override_context.dependencies == {"call_dep": "override"}
+    assert override_context.knowledge_filters == {"agent_filter": "default", "call_filter": "override"}
+    assert override_context.metadata == {"call_meta": "override", "agent_meta": "default"}
+    assert override_context.output_schema == {"call_schema": "override"}
+
+    empty_context = RunContext(
+        run_id="actx-empty",
+        session_id="session-1",
+        session_state={},
+        dependencies=None,
+        knowledge_filters=None,
+        metadata=None,
+        output_schema=None,
+    )
+    await _run.arun_dispatch(
+        agent=agent,
+        input="hello",
+        run_id="arun-empty",
+        stream=False,
+        run_context=empty_context,
+    )
+    assert empty_context.dependencies == {"agent_dep": "default"}
+    assert empty_context.knowledge_filters == {"agent_filter": "default"}
+    assert empty_context.metadata == {"agent_meta": "default"}
+    assert empty_context.output_schema == {"type": "object", "properties": {"agent": {"type": "string"}}}
+
+
+def test_continue_run_dispatch_respects_run_context_precedence(monkeypatch: pytest.MonkeyPatch):
+    agent = _make_precedence_test_agent()
+    _patch_continue_dispatch_dependencies(agent, monkeypatch)
+
+    def fake_continue_run_impl(
+        agent: Agent,
+        run_response: RunOutput,
+        run_messages: RunMessages,
+        run_context: RunContext,
+        session: AgentSession,
+        tools,
+        user_id: Optional[str] = None,
+        response_format: Optional[Any] = None,
+        debug_mode: Optional[bool] = None,
+        background_tasks: Optional[Any] = None,
+        **kwargs: Any,
+    ) -> RunOutput:
+        return run_response
+
+    monkeypatch.setattr(_run, "continue_run_impl", fake_continue_run_impl)
+
+    preserved_context = RunContext(
+        run_id="continue-preserve",
+        session_id="session-1",
+        session_state={},
+        dependencies={"ctx_dep": "keep"},
+        knowledge_filters={"ctx_filter": "keep"},
+        metadata={"ctx_meta": "keep"},
+    )
+    _run.continue_run_dispatch(
+        agent=agent,
+        run_response=RunOutput(run_id="continue-run-1", session_id="session-1", messages=[]),
+        stream=False,
+        run_context=preserved_context,
+    )
+    assert preserved_context.dependencies == {"ctx_dep": "keep"}
+    assert preserved_context.knowledge_filters == {"ctx_filter": "keep"}
+    assert preserved_context.metadata == {"ctx_meta": "keep"}
+
+    override_context = RunContext(
+        run_id="continue-override",
+        session_id="session-1",
+        session_state={},
+        dependencies={"ctx_dep": "keep"},
+        knowledge_filters={"ctx_filter": "keep"},
+        metadata={"ctx_meta": "keep"},
+    )
+    _run.continue_run_dispatch(
+        agent=agent,
+        run_response=RunOutput(run_id="continue-run-2", session_id="session-1", messages=[]),
+        stream=False,
+        run_context=override_context,
+        dependencies={"call_dep": "override"},
+        knowledge_filters={"call_filter": "override"},
+        metadata={"call_meta": "override"},
+    )
+    assert override_context.dependencies == {"call_dep": "override"}
+    assert override_context.knowledge_filters == {"agent_filter": "default", "call_filter": "override"}
+    assert override_context.metadata == {"call_meta": "override", "agent_meta": "default"}
+
+    empty_context = RunContext(
+        run_id="continue-empty",
+        session_id="session-1",
+        session_state={},
+        dependencies=None,
+        knowledge_filters=None,
+        metadata=None,
+    )
+    _run.continue_run_dispatch(
+        agent=agent,
+        run_response=RunOutput(run_id="continue-run-3", session_id="session-1", messages=[]),
+        stream=False,
+        run_context=empty_context,
+    )
+    assert empty_context.dependencies == {"agent_dep": "default"}
+    assert empty_context.knowledge_filters == {"agent_filter": "default"}
+    assert empty_context.metadata == {"agent_meta": "default"}
+
+
+@pytest.mark.asyncio
+async def test_acontinue_run_dispatch_respects_run_context_precedence(monkeypatch: pytest.MonkeyPatch):
+    agent = _make_precedence_test_agent()
+    monkeypatch.setattr(agent, "initialize_agent", lambda debug_mode=None: None)
+    monkeypatch.setattr(agent, "_get_response_format", lambda run_context=None: None)
+
+    async def fake_acontinue_run_impl(
+        agent: Agent,
+        session_id: str,
+        run_context: RunContext,
+        run_response: Optional[RunOutput] = None,
+        updated_tools=None,
+        requirements=None,
+        run_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        response_format: Optional[Any] = None,
+        debug_mode: Optional[bool] = None,
+        background_tasks: Optional[Any] = None,
+        **kwargs: Any,
+    ) -> RunOutput:
+        return run_response if run_response is not None else RunOutput(run_id=run_id, session_id=session_id)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(_run, "acontinue_run_impl", fake_acontinue_run_impl)
+
+    preserved_context = RunContext(
+        run_id="acontinue-preserve",
+        session_id="session-1",
+        session_state={},
+        dependencies={"ctx_dep": "keep"},
+        knowledge_filters={"ctx_filter": "keep"},
+        metadata={"ctx_meta": "keep"},
+    )
+    await _run.acontinue_run_dispatch(
+        agent=agent,
+        run_response=RunOutput(run_id="acontinue-run-1", session_id="session-1", messages=[]),
+        stream=False,
+        run_context=preserved_context,
+    )
+    assert preserved_context.dependencies == {"ctx_dep": "keep"}
+    assert preserved_context.knowledge_filters == {"ctx_filter": "keep"}
+    assert preserved_context.metadata == {"ctx_meta": "keep"}
+
+    override_context = RunContext(
+        run_id="acontinue-override",
+        session_id="session-1",
+        session_state={},
+        dependencies={"ctx_dep": "keep"},
+        knowledge_filters={"ctx_filter": "keep"},
+        metadata={"ctx_meta": "keep"},
+    )
+    await _run.acontinue_run_dispatch(
+        agent=agent,
+        run_response=RunOutput(run_id="acontinue-run-2", session_id="session-1", messages=[]),
+        stream=False,
+        run_context=override_context,
+        dependencies={"call_dep": "override"},
+        knowledge_filters={"call_filter": "override"},
+        metadata={"call_meta": "override"},
+    )
+    assert override_context.dependencies == {"call_dep": "override"}
+    assert override_context.knowledge_filters == {"agent_filter": "default", "call_filter": "override"}
+    assert override_context.metadata == {"call_meta": "override", "agent_meta": "default"}
+
+    empty_context = RunContext(
+        run_id="acontinue-empty",
+        session_id="session-1",
+        session_state={},
+        dependencies=None,
+        knowledge_filters=None,
+        metadata=None,
+    )
+    await _run.acontinue_run_dispatch(
+        agent=agent,
+        run_response=RunOutput(run_id="acontinue-run-3", session_id="session-1", messages=[]),
+        stream=False,
+        run_context=empty_context,
+    )
+    assert empty_context.dependencies == {"agent_dep": "default"}
+    assert empty_context.knowledge_filters == {"agent_filter": "default"}
+    assert empty_context.metadata == {"agent_meta": "default"}
