@@ -927,39 +927,26 @@ def save(
         raise
 
 
-def load(
+def _hydrate_from_graph(
     cls,
-    id: str,
+    graph: Dict[str, Any],
     *,
     db: "BaseDb",
     registry: Optional["Registry"] = None,
-    label: Optional[str] = None,
-    version: Optional[int] = None,
 ) -> Optional["Team"]:
     """
-    Load a team by id, with hydrated members.
+    Hydrate a team and its members from an already-loaded component graph.
 
-    Args:
-        id: The id of the team to load.
-        db: The database to load the team from.
-        label: The label of the team to load.
-
-    Returns:
-        The team loaded from the database with hydrated members, or None if not found.
+    This avoids re-querying the DB for nested teams whose graphs are already available.
     """
     from agno.agent.agent import Agent
-
-    # Use graph to load team + all members
-    graph = db.load_component_graph(id, version=version, label=label)
-    if graph is None:
-        return None
 
     config = graph["config"].get("config")
     if config is None:
         return None
 
     team = cls.from_dict(config, db=db, registry=registry)
-    team.id = id
+    team.id = graph["component"]["component_id"]
     team.db = db
 
     # Hydrate members from graph children
@@ -982,12 +969,40 @@ def load(
             agent.db = db
             team.members.append(agent)
         elif member_type == "team":
-            # Recursive load for nested teams
-            nested_team = cls.load(child_graph["component"]["component_id"], db=db)
+            # Recursively hydrate nested teams from the already-loaded child graph
+            nested_team = _hydrate_from_graph(cls, child_graph, db=db, registry=registry)
             if nested_team:
                 team.members.append(nested_team)
 
     return team
+
+
+def load(
+    cls,
+    id: str,
+    *,
+    db: "BaseDb",
+    registry: Optional["Registry"] = None,
+    label: Optional[str] = None,
+    version: Optional[int] = None,
+) -> Optional["Team"]:
+    """
+    Load a team by id, with hydrated members.
+
+    Args:
+        id: The id of the team to load.
+        db: The database to load the team from.
+        label: The label of the team to load.
+
+    Returns:
+        The team loaded from the database with hydrated members, or None if not found.
+    """
+    # Use graph to load team + all members in a single DB call
+    graph = db.load_component_graph(id, version=version, label=label)
+    if graph is None:
+        return None
+
+    return _hydrate_from_graph(cls, graph, db=db, registry=registry)
 
 
 def delete(

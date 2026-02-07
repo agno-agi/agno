@@ -404,6 +404,7 @@ def _initialize_member(team: "Team", member: Union["Team", Agent], debug_mode: O
 
     elif isinstance(member, Team):
         member.parent_team_id = team.id
+        member.set_id()
         # Initialize the sub-team's model first so it has its model set
         member._set_default_model()
         # Then let the sub-team initialize its own members so they inherit from the sub-team

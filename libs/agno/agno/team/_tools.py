@@ -784,8 +784,7 @@ def _find_member_by_id(team: "Team", member_id: str) -> Optional[Tuple[int, Unio
         if isinstance(member, Team):
             result = member._find_member_by_id(member_id)
             if result is not None:
-                # Found in subteam, return with the top-level team member's name
-                return i, member
+                return result
 
     return None
 
@@ -1374,7 +1373,7 @@ def _get_delegate_task_function(
                         t.cancel()
                 # Await cancellation to suppress warnings
                 for t in tasks:
-                    with contextlib.suppress(asyncio.CancelledError):
+                    with contextlib.suppress(Exception):
                         await t
         else:
             # Non-streaming concurrent run of members; collect results when done
