@@ -35,7 +35,7 @@ from agno.agent import (
 )
 from agno.compression.manager import CompressionManager
 from agno.culture.manager import CultureManager
-from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, UserMemory
+from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, SessionType, UserMemory
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.eval.base import BaseEval
 from agno.filters import FilterExpr
@@ -1067,20 +1067,16 @@ class Agent:
     # ---------------------------------------------------------------
 
     def _read_session(
-        self, session_id: str, session_type: Any = None
+        self, session_id: str, session_type: Optional[SessionType] = SessionType.AGENT
     ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession]]:
         if session_type is None:
-            from agno.db.base import SessionType
-
             session_type = SessionType.AGENT
         return _storage.read_session(self, session_id=session_id, session_type=session_type)
 
     async def _aread_session(
-        self, session_id: str, session_type: Any = None
+        self, session_id: str, session_type: Optional[SessionType] = SessionType.AGENT
     ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession]]:
         if session_type is None:
-            from agno.db.base import SessionType
-
             session_type = SessionType.AGENT
         return await _storage.aread_session(self, session_id=session_id, session_type=session_type)
 
