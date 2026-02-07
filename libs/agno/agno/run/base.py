@@ -27,6 +27,11 @@ class RunContext:
     session_state: Optional[Dict[str, Any]] = None
     output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None
 
+    # Runtime-resolved callable resources (populated by callable factory resolution)
+    tools: Optional[List[Any]] = None
+    knowledge: Optional[Any] = None
+    members: Optional[List[Any]] = None
+
 
 @dataclass
 class BaseRunOutputEvent:

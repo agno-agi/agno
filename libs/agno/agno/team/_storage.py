@@ -324,7 +324,7 @@ def to_dict(team: "Team") -> Dict[str, Any]:
         config["model"] = team.model.to_dict() if isinstance(team.model, Model) else str(team.model)
 
     # --- Members ---
-    if team.members:
+    if team.members and isinstance(team.members, list):
         serialized_members = []
         for member in team.members:
             if isinstance(member, Agent):
@@ -438,7 +438,8 @@ def to_dict(team: "Team") -> Dict[str, Any]:
         config["references_format"] = team.references_format
 
     # --- Tools ---
-    if team.tools:
+    # Serialize static tools only. Callable tools factories are not persisted.
+    if team.tools and isinstance(team.tools, list):
         serialized_tools = []
         for tool in team.tools:
             try:
@@ -454,6 +455,10 @@ def to_dict(team: "Team") -> Dict[str, Any]:
                 log_warning(f"Could not serialize tool {tool}: {e}")
         if serialized_tools:
             config["tools"] = serialized_tools
+
+    # Persist cache_callables only if non-default
+    if not team.cache_callables:
+        config["cache_callables"] = team.cache_callables
     if team.tool_choice is not None:
         config["tool_choice"] = team.tool_choice
     if team.tool_call_limit is not None:
@@ -919,7 +924,8 @@ def save(
         all_links: List[Dict[str, Any]] = []
 
         # Save each member (Agent or nested Team) and collect links
-        for position, member in enumerate(team.members or []):
+        _members = team.members if isinstance(team.members, list) else []
+        for position, member in enumerate(_members):
             # Save member first - returns version
             member_version = member.save(db=db_, stage=stage, label=label, notes=notes)
 
