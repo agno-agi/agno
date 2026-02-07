@@ -85,7 +85,7 @@ Never share sensitive personal information in responses.\
 """
 
 # ============================================================================
-# Create the Agent with Guardrails
+# Create the Agent
 # ============================================================================
 agent_with_guardrails = Agent(
     name="Agent with Guardrails",

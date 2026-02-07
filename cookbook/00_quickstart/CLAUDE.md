@@ -23,6 +23,12 @@ export GOOGLE_API_KEY=your-google-api-key
 python cookbook/00_quickstart/agent_with_tools.py
 ```
 
+**Run Agent OS (script or module style):**
+```bash
+python cookbook/00_quickstart/run.py
+python -m cookbook.00_quickstart.run
+```
+
 **Test results file:**
 ```
 cookbook/00_quickstart/TEST_LOG.md
@@ -50,6 +56,8 @@ Set API key:
 export GOOGLE_API_KEY=your-key
 ```
 
+Run commands from the repository root so quickstart-relative paths resolve as expected.
+
 ### 2. Running Tests
 
 Run individual cookbooks:
@@ -60,6 +68,11 @@ python cookbook/00_quickstart/agent_with_tools.py
 For long outputs:
 ```bash
 python cookbook/00_quickstart/agent_with_tools.py 2>&1 | tail -100
+```
+
+Batch run (non-interactive scripts):
+```bash
+python3 cookbook/scripts/cookbook_runner.py cookbook/00_quickstart --batch --python-bin .venvs/demo/bin/python --json-report .context/quickstart-run.json
 ```
 
 ### 3. Updating TEST_LOG.md
@@ -86,8 +99,8 @@ After each test, update `cookbook/00_quickstart/TEST_LOG.md` with:
 | 08 | `custom_tool_for_self_learning.py` | Gemini, yfinance, ChromaDb | Custom tools |
 | 09 | `agent_with_guardrails.py` | Gemini, yfinance | Guardrails |
 | 10 | `human_in_the_loop.py` | Gemini, yfinance, ChromaDb | Confirmation (interactive) |
-| 11 | `multi_agent_team.py` | Gemini, yfinance, duckduckgo | Multi-agent teams |
-| 12 | `sequential_workflow.py` | Gemini, yfinance, duckduckgo | Workflows |
+| 11 | `multi_agent_team.py` | Gemini, yfinance | Multi-agent teams |
+| 12 | `sequential_workflow.py` | Gemini, yfinance | Workflows |
 | -- | `run.py` | All | Agent OS entrypoint (see docstring) |
 
 ---
@@ -98,9 +111,6 @@ After each test, update `cookbook/00_quickstart/TEST_LOG.md` with:
 - `GOOGLE_API_KEY` - For Gemini model and embeddings
 - `yfinance` - Stock data
 - `chromadb` - Vector storage (local, no server)
-
-**Optional (for specific cookbooks):**
-- `duckduckgo-search` - For teams/workflows
 
 **No external services required:**
 - SQLite: Local file (`tmp/agents.db`)
@@ -143,7 +153,7 @@ After each test, update `cookbook/00_quickstart/TEST_LOG.md` with:
 
 2. **Interactive tests**: `human_in_the_loop.py` requires user input - cannot be fully automated.
 
-3. **Network dependent**: yfinance and DuckDuckGo require internet access.
+3. **Network dependent**: yfinance requires internet access.
 
 4. **tmp/ directory**: Tests create files in `tmp/` - this is expected and can be cleaned up.
 
@@ -163,4 +173,14 @@ Check tmp files:
 ls -la tmp/
 # agents.db - SQLite database
 # chromadb/ - Vector storage
+```
+
+## Contributor Validation Commands
+
+Run these before submitting quickstart changes:
+
+```bash
+bash cookbook/scripts/validate.sh
+python3 cookbook/scripts/check_cookbook_pattern.py --base-dir cookbook/00_quickstart
+python3 cookbook/scripts/audit_cookbook_metadata.py --scope direct
 ```

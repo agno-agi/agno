@@ -1,6 +1,6 @@
-# Get Started with Agents, The Easy Way
+# Build Agents that lean.
 
-This guide walks through the basics of building Agents, the easy way. Follow along to learn how to build agents with tools, storage, memory, knowledge, state, guardrails, and human in the loop. We'll also build multi-agent teams and step-based agentic workflows.
+This guide walks through the basics of building Agents with Agno. Follow along to learn how to build agents with tools, storage, memory, knowledge, state, guardrails, and human in the loop. We'll also build multi-agent teams and step-based agentic workflows.
 
 Each example can be run independently and contains detailed comments to help you understand what's happening behind the scenes. We'll use **Gemini 3 Flash** — fast, affordable, and excellent at tool calling but you can swap in any model with a one line change.
 
@@ -74,11 +74,16 @@ python cookbook/00_quickstart/agent_with_tools.py
 
 **That's it.** No Docker, no Postgres — just Python and an API key.
 
+> [!NOTE]
+> Run commands from the repository root (`agno/`) so relative paths like `tmp/agents.db` and `tmp/chromadb` resolve consistently.
+
 ## Run via Agent OS
 
 Agent OS provides a web interface for interacting with your agents. Start the server:
 ```bash
 python cookbook/00_quickstart/run.py
+# or
+python -m cookbook.00_quickstart.run
 ```
 
 Then visit [os.agno.com](https://os.agno.com) and add `http://localhost:7777` as an endpoint.
@@ -149,6 +154,24 @@ python cookbook/00_quickstart/multi_agent_team.py
 python cookbook/00_quickstart/sequential_workflow.py
 ```
 
+## Contributor Validation
+
+Before opening a PR for quickstart changes, run:
+
+```bash
+bash cookbook/scripts/validate.sh
+python3 cookbook/scripts/check_cookbook_pattern.py --base-dir cookbook/00_quickstart
+python3 cookbook/scripts/audit_cookbook_metadata.py --scope direct
+```
+
+Optional batch runner for quickstart examples:
+
+```bash
+python3 cookbook/scripts/cookbook_runner.py cookbook/00_quickstart --batch --python-bin .venvs/demo/bin/python --json-report .context/quickstart-run.json
+```
+
+`human_in_the_loop.py` is interactive and should be tested manually.
+
 ## File Structure
 ```
 cookbook/00_quickstart/
@@ -178,4 +201,3 @@ All examples in this Quick Start use synchronous code for simplicity. For async/
 
 - [Agno Documentation](https://docs.agno.com)
 - [Agent OS Overview](https://docs.agno.com/agent-os/overview)
-

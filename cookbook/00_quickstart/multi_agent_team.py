@@ -82,13 +82,9 @@ Be critical but fair. Use the tools to get real numbers to support your concerns
 )
 
 # ============================================================================
-# Team Leader — Synthesizes Both Views
+# Team Leader Instructions — Synthesizes Both Views
 # ============================================================================
-multi_agent_team = Team(
-    name="Multi-Agent Team",
-    model=Gemini(id="gemini-3-flash-preview"),
-    members=[bull_agent, bear_agent],
-    instructions="""\
+team_leader_instructions = """\
 You lead an investment research team with a Bull Analyst and Bear Analyst.
 
 ## Process
@@ -107,7 +103,16 @@ After hearing from both analysts, provide:
 - **Key Metrics**: A table of the important numbers
 
 Be decisive but acknowledge uncertainty.\
-""",
+"""
+
+# ============================================================================
+# Create the Team
+# ============================================================================
+multi_agent_team = Team(
+    name="Multi-Agent Team",
+    model=Gemini(id="gemini-3-flash-preview"),
+    members=[bull_agent, bear_agent],
+    instructions=team_leader_instructions,
     db=team_db,
     show_members_responses=True,
     add_datetime_to_context=True,

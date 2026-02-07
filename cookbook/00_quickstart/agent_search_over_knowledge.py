@@ -97,7 +97,7 @@ agent_with_knowledge = Agent(
 )
 
 # ============================================================================
-# Load Knowledge and Run the Agent
+# Run the Agent
 # ============================================================================
 if __name__ == "__main__":
     # Load the introduction from the Agno documentation into the knowledge base
