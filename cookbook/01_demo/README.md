@@ -105,17 +105,17 @@ Drafts replies to emails, messages, and questions. Learns your tone, communicati
 
 ```bash
 # 1. Set up the demo virtual environment
-./scripts/demo_setup.sh
+../../scripts/demo_setup.sh
 
 # 2. Start PostgreSQL with pgvector
-./cookbook/scripts/run_pgvector.sh
+../scripts/run_pgvector.sh
 
 # 3. Load data for Dash (F1 dataset)
-.venvs/demo/bin/python cookbook/01_demo/agents/dash/scripts/load_data.py
-.venvs/demo/bin/python cookbook/01_demo/agents/dash/scripts/load_knowledge.py
+python -m agents.dash.scripts.load_data
+python -m agents.dash.scripts.load_knowledge
 
 # 4. Load knowledge for Scout (enterprise docs)
-.venvs/demo/bin/python cookbook/01_demo/agents/scout/scripts/load_knowledge.py
+python -m agents.scout.scripts.load_knowledge
 ```
 
 ## Environment Variables
@@ -131,7 +131,7 @@ export DATABASE_URL="..."        # Optional (defaults to postgresql+psycopg://ai
 ### Via AgentOS
 
 ```bash
-cd cookbook/01_demo && ../../.venvs/demo/bin/python run.py
+python -m run
 ```
 
 Then connect via [os.agno.com](https://os.agno.com) pointing to `http://localhost:7777`.
@@ -139,12 +139,12 @@ Then connect via [os.agno.com](https://os.agno.com) pointing to `http://localhos
 ### Individual Agents
 
 ```bash
-.venvs/demo/bin/python cookbook/01_demo/agents/dash/agent.py
-.venvs/demo/bin/python cookbook/01_demo/agents/scout/agent.py
-.venvs/demo/bin/python cookbook/01_demo/agents/pal/agent.py
-.venvs/demo/bin/python cookbook/01_demo/agents/seek/agent.py
-.venvs/demo/bin/python cookbook/01_demo/agents/dex/agent.py
-.venvs/demo/bin/python cookbook/01_demo/agents/ace/agent.py
+python -m agents.dash.agent
+python -m agents.scout.agent
+python -m agents.pal.agent
+python -m agents.seek.agent
+python -m agents.dex.agent
+python -m agents.ace.agent
 ```
 
 ### Evals
@@ -153,14 +153,14 @@ Then connect via [os.agno.com](https://os.agno.com) pointing to `http://localhos
 
 ```bash
 # Run all evals
-cd cookbook/01_demo && ../../.venvs/demo/bin/python -m evals.run_evals
+python -m evals.run_evals
 
 # Filter by agent
-cd cookbook/01_demo && ../../.venvs/demo/bin/python -m evals.run_evals --agent dash
+python -m evals.run_evals --agent dash
 
 # Filter by category
-cd cookbook/01_demo && ../../.venvs/demo/bin/python -m evals.run_evals --category dash_basic
+python -m evals.run_evals --category dash_basic
 
 # Verbose mode (show full responses on failure)
-cd cookbook/01_demo && ../../.venvs/demo/bin/python -m evals.run_evals --verbose
+python -m evals.run_evals --verbose
 ```

@@ -2,15 +2,11 @@
 Load Knowledge - Loads source metadata, routing rules, and patterns into knowledge base.
 
 Usage:
-    .venvs/demo/bin/python cookbook/01_demo/agents/scout/scripts/load_knowledge.py
-    .venvs/demo/bin/python cookbook/01_demo/agents/scout/scripts/load_knowledge.py --recreate
+    python -m agents.scout.scripts.load_knowledge
+    python -m agents.scout.scripts.load_knowledge --recreate
 """
 
 import argparse
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
 from ..paths import KNOWLEDGE_DIR
 

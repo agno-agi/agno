@@ -7,13 +7,8 @@ leader routes questions to the right agents and produces accurate, well-sourced
 responses.
 
 Test:
-    .venvs/demo/bin/python cookbook/01_demo/teams/support/team.py
+    python -m teams.support.team
 """
-
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from agents.ace import ace
 from agents.dash import dash

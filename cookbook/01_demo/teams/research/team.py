@@ -7,13 +7,8 @@ coordinates three agents to produce comprehensive research from external sources
 internal knowledge, and relationship context.
 
 Test:
-    .venvs/demo/bin/python cookbook/01_demo/teams/research/team.py
+    python -m teams.research.team
 """
-
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from agents.dex import dex
 from agents.scout import scout

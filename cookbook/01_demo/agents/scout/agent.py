@@ -10,14 +10,10 @@ Enterprise knowledge agent with Claude Code-like capabilities:
 - Learn: builds knowledge over time
 
 Test:
-    .venvs/demo/bin/python cookbook/01_demo/agents/scout/agent.py
+    python -m agents.scout.agent
 """
 
-import sys
 from os import getenv
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from agno.agent import Agent
 from agno.knowledge import Knowledge

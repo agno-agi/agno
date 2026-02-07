@@ -8,14 +8,11 @@ Pal researches, captures, organizes, connects, and retrieves your personal
 knowledge - so nothing useful is ever lost.
 
 Test:
-    .venvs/demo/bin/python cookbook/01_demo/agents/pal/agent.py
+    python -m agents.pal.agent
 """
 
-import sys
 from os import getenv
 from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from agno.agent import Agent
 from agno.learn import (

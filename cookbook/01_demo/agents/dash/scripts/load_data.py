@@ -1,14 +1,10 @@
 """
 Load F1 Data - Downloads F1 data (1950-2020) and loads into PostgreSQL.
 
-Usage: .venvs/demo/bin/python cookbook/01_demo/agents/dash/scripts/load_data.py
+Usage: python -m agents.dash.scripts.load_data
 """
 
-import sys
 from io import StringIO
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
 import httpx
 import pandas as pd

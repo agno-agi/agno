@@ -7,14 +7,10 @@ Learns the user's tone, communication style, and preferences for different
 contexts. Gets better at matching voice over time.
 
 Test:
-    .venvs/demo/bin/python cookbook/01_demo/agents/ace/agent.py
+    python -m agents.ace.agent
 """
 
-import sys
 from os import getenv
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from agno.agent import Agent
 from agno.learn import (

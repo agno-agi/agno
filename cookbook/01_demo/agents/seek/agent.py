@@ -7,14 +7,10 @@ exhaustive multi-source research and produces structured reports. Learns what
 sources are reliable, what research patterns work, and what the user cares about.
 
 Test:
-    .venvs/demo/bin/python cookbook/01_demo/agents/seek/agent.py
+    python -m agents.seek.agent
 """
 
-import sys
 from os import getenv
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from agno.agent import Agent
 from agno.learn import (

@@ -2,19 +2,15 @@
 Run evaluations against demo agents, teams, and workflows.
 
 Usage:
-    .venvs/demo/bin/python cookbook/01_demo/evals/run_evals.py
-    .venvs/demo/bin/python cookbook/01_demo/evals/run_evals.py --agent dash
-    .venvs/demo/bin/python cookbook/01_demo/evals/run_evals.py --agent seek --verbose
-    .venvs/demo/bin/python cookbook/01_demo/evals/run_evals.py --category dash_basic
+    python -m evals.run_evals
+    python -m evals.run_evals --agent dash
+    python -m evals.run_evals --agent seek --verbose
+    python -m evals.run_evals --category dash_basic
 """
 
 import argparse
-import sys
 import time
-from pathlib import Path
 from typing import TypedDict
-
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from rich.console import Console
 from rich.panel import Panel

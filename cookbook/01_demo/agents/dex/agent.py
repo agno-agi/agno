@@ -8,14 +8,11 @@ everything you know and need to know about that person. Learns connection
 patterns and relationship context over time.
 
 Test:
-    .venvs/demo/bin/python cookbook/01_demo/agents/dex/agent.py
+    python -m agents.dex.agent
 """
 
-import sys
 from os import getenv
 from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from agno.agent import Agent
 from agno.learn import (

@@ -11,13 +11,8 @@ Steps:
 3. Synthesize into a meeting prep brief
 
 Test:
-    .venvs/demo/bin/python cookbook/01_demo/workflows/meeting_prep/workflow.py
+    python -m workflows.meeting_prep.workflow
 """
-
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIResponses
