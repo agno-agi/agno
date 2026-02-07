@@ -1,105 +1,99 @@
-# Slack API Integration Setup Guide
+# Slack Interface
 
-This guide will help you set up and configure the Slack API integration for your application.
+Connect Agno agents and teams to Slack via the `Slack` interface.
 
-## Prerequisites
+## Examples
 
-- Python 3.7+
-- A Slack workspace where you have admin privileges
-- ngrok (for local development)
+| Example | Description |
+|---------|-------------|
+| `basic.py` | Minimal agent with Slack interface |
+| `reasoning_agent.py` | Claude agent that shows its reasoning |
+| `file_analyst.py` | Analyzes files shared in Slack (CSV, JSON, code) |
+| `channel_summarizer.py` | Summarizes channel activity and threads |
+| `research_assistant.py` | Searches Slack and the web for information |
+| `support_team.py` | Team of agents that routes questions to specialists |
+| `agent_with_user_memory.py` | Agent that remembers user preferences |
+| `basic_workflow.py` | Workflow-based Slack bot |
+| `multiple_instances.py` | Multiple agents on one AgentOS |
 
-## Setup Steps
+## Setup
 
 ### 1. Create a Slack App
 
-1. Go to the Slack App Directory (https://api.slack.com/apps)
-2. Click "Create New App"
-3. Select "From scratch"
-4. Give your app a name and select a workspace
-5. Click "Create App"
+1. Go to https://api.slack.com/apps
+2. Click "Create New App" > "From scratch"
+3. Name your app and select a workspace
 
-### 2. Configure OAuth & Permissions
+### 2. Configure Bot Token Scopes
 
-1. Go to "OAuth & Permissions" in your Slack App settings
-2. Click "Add Scopes"
-3. Add the following scopes:
-   - `app_mention`
-   - `chat:write`
-   - `chat:write.customize`
-   - `chat:write.public`
-   - `im:history`
-   - `im:read`
-   - `im:write`
+Go to "OAuth & Permissions" and add these **Bot Token Scopes**:
 
-### 3. Install to your workspace
+**Required for all examples:**
+- `app_mentions:read`
+- `chat:write`
+- `im:history`
+- `im:read`
+- `im:write`
 
-1. Go to "Install App" in your Slack App settings
-2. Click "Install to Workspace"
-3. Authorize the app
+**For file handling** (`file_analyst.py`):
+- `files:read`
+- `files:write`
 
-You'll have to repeat this step if you change any scopes/permissions.
+**For channel history** (`channel_summarizer.py`):
+- `channels:history`
+- `channels:read`
 
+**For user info** (`research_assistant.py`, `support_team.py`):
+- `users:read`
 
-### 4. Configure Environment Variables
+> **Note:** `search:read` requires a **user token** (`xoxp-...`), not a bot token.
+> Bot tokens will get `not_allowed_token_type` errors for search. If using `search_messages`,
+> set `SLACK_TOKEN` to a user token obtained via OAuth with user token scopes.
 
-Save the following credentials as environment variables:
+### 3. Install to Workspace
+
+Go to "Install App" > "Install to Workspace" > Authorize. Repeat after changing scopes.
+
+### 4. Subscribe to Events
+
+Go to "Event Subscriptions" > Enable > add your Request URL (see step 6), then subscribe to:
+- `app_mention`
+- `message.im`
+- `message.channels`
+- `message.groups`
+
+### 5. Enable Direct Messages
+
+Go to "App Home" > "Show Tabs" > check "Allow users to send Slash commands and messages from the messages tab".
+
+### 6. Environment Variables
 
 ```bash
-export SLACK_TOKEN="xoxb-your-bot-user-token"  # Bot User OAuth Token
-export SLACK_SIGNING_SECRET="your-signing-secret"  # App Signing Secret
+export SLACK_TOKEN="xoxb-your-bot-token"
+export SLACK_SIGNING_SECRET="your-signing-secret"
 ```
 
-You can find these values in your Slack App settings:
-- Bot User OAuth Token: Under "OAuth & Permissions"
-- Signing Secret: Under "Basic Information" > "App Credentials"
+Find these in your Slack App settings:
+- Bot token: "OAuth & Permissions"
+- Signing secret: "Basic Information" > "App Credentials"
 
-### 5 Run Ngrok
-   1. For local testing with Agno's SlackApp and agents, we recommend using ngrok to create a secure tunnel to your local server. It is also easier if you get a static url from ngrok.
-   2. Run ngrok:
-   ```bash
-   ngrok http --url=your-url.ngrok-free.app http://localhost:7777
-   ```
-   3. Run your app locally with `python <my-app>.py`
-   4. Subscribe to the following events:
-      - `app_mention`
-      - `message.im`
-      - `message.channels`
-      - `message.groups`
+### 7. Run with ngrok
 
+```bash
+ngrok http --url=your-url.ngrok-free.app 8000
+```
 
-### 6. Configure Event Subscriptions
+Then run your example:
 
-1. Go to "Event Subscriptions" in your Slack App settings
-2. Enable events by toggling the switch
-3. Add your ngrok URL + "/slack/events" to the Request URL (or with a custom prefix)
-   - Example: `https://your-ngrok-url.ngrok.io/slack/events` (or with a custom prefix: `https://your-ngrok-url.ngrok.io/custom-prefix/events`)
-4. Make sure your app is running with ngrok, then verify the request URL
-5. Reinstall the app to your workspace to apply the changes
+```bash
+python cookbook/05_agent_os/interfaces/slack/basic.py
+```
 
-### 7. Enable Direct Messages
-
-To allow users to send messages to the bot:
-
-1. Go to "App Home" in your Slack App settings
-2. Scroll down to "Show Tabs"
-3. Check "Allow users to send Slash commands and messages from the messages tab"
-4. Reinstall the app to apply changes
-
-
-## Testing the Integration
-
-1. Start your application locally with `python <my-app>.py` (ensure ngrok is running)
-2. Invite the bot to a channel using `/invite @YourAppName`
-3. Try mentioning the bot in the channel: `@YourAppName hello`
-4. Test direct messages by opening a DM with the bot.
+Set the Request URL in Event Subscriptions to: `https://your-url.ngrok-free.app/slack/events`
 
 ## Troubleshooting
 
-- If events aren't being received, verify your ngrok URL is correct and the app is properly installed
-- Check that all required environment variables are set
-- Ensure the bot has been invited to the channels where you're testing
-- Verify that the correct events are subscribed in Event Subscriptions
-
-## Support
-
-If you encounter any issues, please check the Slack API documentation or open an issue in the repository. 
+- **Events not received:** Verify ngrok URL, check app is installed, ensure bot is invited to the channel
+- **File uploads failing:** Add `files:read` and `files:write` scopes, reinstall app
+- **Search not working:** `search:read` needs a user token (`xoxp-...`), not a bot token
+- **Signature verification failing:** Check `SLACK_SIGNING_SECRET` matches your app's signing secret

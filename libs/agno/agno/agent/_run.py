@@ -933,7 +933,14 @@ def run_dispatch(
         metadata=opts.metadata,
         output_schema=opts.output_schema,
     )
-    # output_schema parameter takes priority, even if run_context was provided
+    # Apply explicit call-site overrides to existing run_context
+    if dependencies is not None:
+        run_context.dependencies = opts.dependencies
+    if knowledge_filters is not None:
+        run_context.knowledge_filters = opts.knowledge_filters
+    if metadata is not None:
+        run_context.metadata = opts.metadata
+    # output_schema always takes priority, even if run_context was provided
     run_context.output_schema = opts.output_schema
 
     # Resolve dependencies
@@ -1935,7 +1942,14 @@ def arun_dispatch(  # type: ignore
         metadata=opts.metadata,
         output_schema=opts.output_schema,
     )
-    # output_schema parameter takes priority, even if run_context was provided
+    # Apply explicit call-site overrides to existing run_context
+    if dependencies is not None:
+        run_context.dependencies = opts.dependencies
+    if knowledge_filters is not None:
+        run_context.knowledge_filters = opts.knowledge_filters
+    if metadata is not None:
+        run_context.metadata = opts.metadata
+    # output_schema always takes priority, even if run_context was provided
     run_context.output_schema = opts.output_schema
 
     # Prepare arguments for the model (must be after run_context is fully initialized)
@@ -2084,6 +2098,13 @@ def continue_run_dispatch(
         knowledge_filters=opts.knowledge_filters,
         metadata=opts.metadata,
     )
+    # Apply explicit call-site overrides to existing run_context
+    if dependencies is not None:
+        run_context.dependencies = opts.dependencies
+    if knowledge_filters is not None:
+        run_context.knowledge_filters = opts.knowledge_filters
+    if metadata is not None:
+        run_context.metadata = opts.metadata
 
     # Resolve dependencies
     if run_context.dependencies is not None:
@@ -2247,6 +2268,12 @@ def continue_run_impl(
 
                 # Check for cancellation after model processing
                 raise_if_cancelled(run_response.run_id)  # type: ignore
+
+                # If an output model is provided, generate output using the output model
+                agent._generate_response_with_output_model(model_response, run_messages)
+
+                # If a parser model is provided, structure the response separately
+                agent._parse_response_with_parser_model(model_response, run_messages, run_context=run_context)
 
                 # 3. Update the RunOutput with the model response
                 agent._update_run_response(
@@ -2438,7 +2465,7 @@ def continue_run_stream_impl(
 
                 # Parse response with parser model if provided
                 yield from agent._parse_response_with_parser_model_stream(  # type: ignore
-                    session=session, run_response=run_response, stream_events=stream_events
+                    session=session, run_response=run_response, stream_events=stream_events, run_context=run_context
                 )
 
                 # Yield RunContentCompletedEvent
@@ -2719,6 +2746,13 @@ def acontinue_run_dispatch(  # type: ignore
         knowledge_filters=opts.knowledge_filters,
         metadata=opts.metadata,
     )
+    # Apply explicit call-site overrides to existing run_context
+    if dependencies is not None:
+        run_context.dependencies = opts.dependencies
+    if knowledge_filters is not None:
+        run_context.knowledge_filters = opts.knowledge_filters
+    if metadata is not None:
+        run_context.metadata = opts.metadata
 
     if opts.stream:
         return acontinue_run_stream_impl(
@@ -2875,7 +2909,7 @@ async def acontinue_run_impl(
                 )
 
                 # Register run for cancellation tracking
-                register_run(run_response.run_id)  # type: ignore
+                await aregister_run(run_response.run_id)  # type: ignore
 
                 # 7. Handle the updated tools
                 await agent._ahandle_tool_call_updates(
@@ -3181,7 +3215,7 @@ async def acontinue_run_stream_impl(
                 )
 
                 # Register run for cancellation tracking
-                register_run(run_response.run_id)  # type: ignore
+                await aregister_run(run_response.run_id)  # type: ignore
 
                 # Start the Run by yielding a RunContinued event
                 if stream_events:
