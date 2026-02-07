@@ -374,7 +374,7 @@ def get_team_router(
 
         cancelled = await team.acancel_run(run_id=run_id)
         if not cancelled:
-            raise HTTPException(status_code=500, detail="Failed to cancel run - run not found or already completed")
+            raise HTTPException(status_code=404, detail="Run not found or already completed")
 
         return JSONResponse(content={}, status_code=200)
 
