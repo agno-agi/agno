@@ -82,7 +82,7 @@ Each cookbook folder should have the following files:
 - `README.md` — The README for the cookbook.
 - `TEST_LOG.md` — Test results log.
 
-### Cookbook Python Structure Standard (v2.5)
+### Cookbook Python Structure Standard
 
 For runnable cookbook `.py` examples, follow `cookbook/STYLE_GUIDE.md`:
 - Module docstring at top
@@ -98,11 +98,14 @@ Validation commands:
 .venvs/demo/bin/python cookbook/scripts/check_cookbook_pattern.py --base-dir cookbook/00_quickstart
 ```
 
-Non-interactive cookbook runs:
+### API Keys
 
+API keys like `OPENAI_API_KEY` are available via `direnv`. To load them, run:
 ```bash
-.venvs/demo/bin/python cookbook/scripts/cookbook_runner.py cookbook/<folder> --batch --python-bin .venvs/demo/bin/python
+direnv allow
 ```
+
+If `.envrc` does not exist, stop execution and let the user know.
 
 ### Testing Workflow
 
