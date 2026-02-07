@@ -272,7 +272,7 @@ def _run_tasks(
             if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
                 from agno.team import _hooks
 
-                return _hooks.handle_team_run_paused(team, run_response=run_response, session=session, user_id=user_id)
+                return _hooks.handle_team_run_paused(team, run_response=run_response, session=session)
 
             # Accumulate model response messages for next iteration
             accumulated_messages = list(model_response.messages) if model_response.messages else accumulated_messages  # type: ignore
@@ -1408,9 +1408,7 @@ async def _arun_tasks(
             if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
                 from agno.team import _hooks
 
-                return await _hooks.ahandle_team_run_paused(
-                    team, run_response=run_response, session=team_session, user_id=user_id
-                )
+                return await _hooks.ahandle_team_run_paused(team, run_response=run_response, session=team_session)
 
             accumulated_messages = list(model_response.messages) if model_response.messages else accumulated_messages  # type: ignore
 
