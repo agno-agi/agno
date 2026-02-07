@@ -1,8 +1,8 @@
 """
-Example demonstrating how to use checks with Agno Agent to implement guardrails.
+Prompt Injection
+=============================
 
-This example shows how to:
-1. An input validation check that checks for prompt injection
+Example demonstrating how to use checks with Agno Agent to implement guardrails.
 """
 
 from agno.agent import Agent
@@ -10,7 +10,9 @@ from agno.exceptions import InputCheckError
 from agno.guardrails import PromptInjectionGuardrail
 from agno.models.openai import OpenAIChat
 
-
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 def main():
     """Demonstrate the prompt injection guardrails functionality."""
     print("Prompt Injection Guardrails Demo")
@@ -85,5 +87,8 @@ def main():
         print(f"   Trigger: {e.check_trigger}")
 
 
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     main()

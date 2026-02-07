@@ -436,7 +436,7 @@ Based on the team capabilities analysis, these features lack cookbook examples:
 
 ## 6. Recommended Cookbook Template
 
-Same template as `02_agents/RESTRUCTURE_PLAN.md` — teams follow the same STYLE_GUIDE.md.
+Same STYLE_GUIDE.md as agents, adapted for teams (Create Members → Create Team → Run Team).
 
 ```python
 """
@@ -444,50 +444,39 @@ Same template as `02_agents/RESTRUCTURE_PLAN.md` — teams follow the same STYLE
 =============================
 
 Demonstrates <what this file teaches> using Agno Teams.
-
-Key concepts:
-- <concept 1>
-- <concept 2>
 """
 
-# ---------------------------------------------------------------------------
-# Setup
-# ---------------------------------------------------------------------------
-
 from agno.agent import Agent
+from agno.models.openai import OpenAIResponses
 from agno.team import Team
-from agno.models.openai import OpenAIChat
 
 # ---------------------------------------------------------------------------
 # Create Members
 # ---------------------------------------------------------------------------
-
 researcher = Agent(
     name="Researcher",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     role="Research and gather information",
 )
 
 writer = Agent(
     name="Writer",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     role="Write clear summaries",
 )
 
 # ---------------------------------------------------------------------------
 # Create Team
 # ---------------------------------------------------------------------------
-
 team = Team(
     name="Research Team",
     members=[researcher, writer],
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
 )
 
 # ---------------------------------------------------------------------------
 # Run Team
 # ---------------------------------------------------------------------------
-
 if __name__ == "__main__":
     # Sync usage
     team.print_response("What are the latest trends in AI?", stream=True)
@@ -499,14 +488,15 @@ if __name__ == "__main__":
 
 ### Template Rules
 
-1. **Module docstring** — Title with `=====` underline, then what it demonstrates and key concepts
-2. **Section banners** — `# ---------------------------------------------------------------------------` with section name on next line
-3. **Section flow** — Setup → Create Members → Create Team → Run Team
-4. **Main gate** — All runnable code inside `if __name__ == "__main__":`
-5. **No emoji** — No emoji characters anywhere
-6. **One feature** — Each file demonstrates exactly one team capability
-7. **Sync + async together** — Show both patterns in sections when relevant
-8. **Self-contained** — Each file independently runnable via `.venvs/demo/bin/python <path>`
+1. **Module docstring** — Title with `=====` underline, then what it demonstrates
+2. **Imports before first banner** — `from` imports go between the docstring and the first `# ---` banner
+3. **Section banners** — `# ---------------------------------------------------------------------------` above section name, no blank line between banner and content
+4. **Section flow** — Create Members → Create Team → Run Team (add Setup section if needed)
+5. **Main gate** — All runnable code inside `if __name__ == "__main__":`
+6. **No emoji** — No emoji characters anywhere
+7. **One feature** — Each file demonstrates exactly one team capability
+8. **Sync + async together** — Show both patterns in sections when relevant
+9. **Self-contained** — Each file independently runnable via `.venvs/demo/bin/python <path>`
 
 ### Best Current Examples (reference)
 
