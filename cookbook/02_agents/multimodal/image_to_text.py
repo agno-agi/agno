@@ -1,11 +1,8 @@
-"""Image to Text Example
+"""
+Image To Text
+=============================
 
-Demonstrates how to pass an image to an agent for analysis and description.
-The agent uses a multimodal model (GPT-4o) to understand and describe image content.
-
-Requirements:
-- OPENAI_API_KEY environment variable
-- A sample.jpg file in the same directory (or modify the path)
+Image to Text Example.
 """
 
 from pathlib import Path
@@ -14,13 +11,21 @@ from agno.agent import Agent
 from agno.media import Image
 from agno.models.openai import OpenAIChat
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     markdown=True,
 )
 
 image_path = Path(__file__).parent.joinpath("sample.jpg")
-agent.print_response(
-    "Write a 3 sentence fiction story about the image",
-    images=[Image(filepath=image_path)],
-)
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    agent.print_response(
+        "Write a 3 sentence fiction story about the image",
+        images=[Image(filepath=image_path)],
+    )
