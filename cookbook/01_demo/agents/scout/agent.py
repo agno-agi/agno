@@ -9,8 +9,6 @@ Test:
 from os import getenv
 
 from agno.agent import Agent
-from agno.knowledge import Knowledge
-from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.learn import (
     LearnedKnowledgeConfig,
     LearningMachine,
@@ -21,8 +19,7 @@ from agno.learn import (
 from agno.models.openai import OpenAIResponses
 from agno.tools.mcp import MCPTools
 from agno.tools.reasoning import ReasoningTools
-from agno.vectordb.pgvector import PgVector, SearchType
-from db import db_url, get_postgres_db
+from db import create_knowledge, get_postgres_db
 
 from .context.intent_routing import INTENT_ROUTING_CONTEXT
 from .context.source_registry import SOURCE_REGISTRY_STR
@@ -40,28 +37,10 @@ from .tools import (
 agent_db = get_postgres_db()
 
 # KNOWLEDGE: Static, curated (source registry, intent routing, known patterns)
-scout_knowledge = Knowledge(
-    name="Scout Knowledge",
-    vector_db=PgVector(
-        db_url=db_url,
-        table_name="scout_knowledge",
-        search_type=SearchType.hybrid,
-        embedder=OpenAIEmbedder(id="text-embedding-3-small"),
-    ),
-    contents_db=get_postgres_db(contents_table="scout_knowledge_contents"),
-)
+scout_knowledge = create_knowledge("Scout Knowledge", "scout_knowledge")
 
 # LEARNINGS: Dynamic, discovered (decision traces, what worked, what didn't)
-scout_learnings = Knowledge(
-    name="Scout Learnings",
-    vector_db=PgVector(
-        db_url=db_url,
-        table_name="scout_learnings",
-        search_type=SearchType.hybrid,
-        embedder=OpenAIEmbedder(id="text-embedding-3-small"),
-    ),
-    contents_db=get_postgres_db(contents_table="scout_learnings_contents"),
-)
+scout_learnings = create_knowledge("Scout Learnings", "scout_learnings")
 
 # ============================================================================
 # Tools

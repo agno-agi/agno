@@ -9,8 +9,6 @@ Test:
 from os import getenv
 
 from agno.agent import Agent
-from agno.knowledge import Knowledge
-from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.learn import (
     LearnedKnowledgeConfig,
     LearningMachine,
@@ -22,8 +20,7 @@ from agno.models.openai import OpenAIResponses
 from agno.tools.mcp import MCPTools
 from agno.tools.reasoning import ReasoningTools
 from agno.tools.sql import SQLTools
-from agno.vectordb.pgvector import PgVector, SearchType
-from db import db_url, get_postgres_db
+from db import create_knowledge, db_url, get_postgres_db
 
 from .context.business_rules import BUSINESS_CONTEXT
 from .context.semantic_model import SEMANTIC_MODEL_STR
@@ -35,27 +32,11 @@ from .tools import create_introspect_schema_tool, create_save_validated_query_to
 
 agent_db = get_postgres_db()
 
-dash_knowledge = Knowledge(
-    name="Dash Knowledge",
-    vector_db=PgVector(
-        db_url=db_url,
-        table_name="dash_knowledge",
-        search_type=SearchType.hybrid,
-        embedder=OpenAIEmbedder(id="text-embedding-3-small"),
-    ),
-    contents_db=get_postgres_db(contents_table="dash_knowledge_contents"),
-)
+# KNOWLEDGE: Static, curated (table schemas, validated queries, business rules)
+dash_knowledge = create_knowledge("Dash Knowledge", "dash_knowledge")
 
-dash_learnings = Knowledge(
-    name="Dash Learnings",
-    vector_db=PgVector(
-        db_url=db_url,
-        table_name="dash_learnings",
-        search_type=SearchType.hybrid,
-        embedder=OpenAIEmbedder(id="text-embedding-3-small"),
-    ),
-    contents_db=get_postgres_db(contents_table="dash_learnings_contents"),
-)
+# LEARNINGS: Dynamic, discovered (type errors, date formats, business rules)
+dash_learnings = create_knowledge("Dash Learnings", "dash_learnings")
 
 # ============================================================================
 # Tools
