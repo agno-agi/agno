@@ -43,12 +43,11 @@ class InMemoryRunCancellationManager(BaseRunCancellationManager):
             bool: True if run was found and cancelled, False if run not found.
         """
         with self._lock:
-            found = run_id in self._cancelled_runs
-            if not found:
+            if run_id not in self._cancelled_runs:
                 logger.info(f"Run {run_id} not yet registered, storing cancellation intent")
             self._cancelled_runs[run_id] = True
             logger.info(f"Run {run_id} marked for cancellation")
-            return found
+            return True
 
     async def acancel_run(self, run_id: str) -> bool:
         """Cancel a run by marking it as cancelled (async version).
@@ -60,12 +59,11 @@ class InMemoryRunCancellationManager(BaseRunCancellationManager):
             bool: True if run was found and cancelled, False if run not found.
         """
         async with self._async_lock:
-            found = run_id in self._cancelled_runs
-            if not found:
+            if run_id not in self._cancelled_runs:
                 logger.info(f"Run {run_id} not yet registered, storing cancellation intent")
             self._cancelled_runs[run_id] = True
             logger.info(f"Run {run_id} marked for cancellation")
-            return found
+            return True
 
     def is_cancelled(self, run_id: str) -> bool:
         """Check if a run is cancelled."""
