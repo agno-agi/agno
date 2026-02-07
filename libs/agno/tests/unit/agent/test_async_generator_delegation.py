@@ -2,7 +2,6 @@ import inspect
 from unittest.mock import Mock
 
 import pytest
-
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 
