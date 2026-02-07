@@ -153,7 +153,6 @@ def handle_team_run_paused(
             team_id=team.id,
             team_name=team.name,
         )
-
     log_debug(f"Team Run Paused: {run_response.run_id}", center=True, symbol="*")
     return run_response
 
@@ -204,7 +203,6 @@ def handle_team_run_paused_stream(
             team_id=team.id,
             team_name=team.name,
         )
-
     if pause_event is not None:
         yield pause_event
 
@@ -258,7 +256,6 @@ async def ahandle_team_run_paused(
             team_id=team.id,
             team_name=team.name,
         )
-
     log_debug(f"Team Run Paused: {run_response.run_id}", center=True, symbol="*")
     return run_response
 
@@ -309,7 +306,6 @@ async def ahandle_team_run_paused_stream(
             team_id=team.id,
             team_name=team.name,
         )
-
     if pause_event is not None:
         yield pause_event
 
