@@ -850,6 +850,10 @@ class Claude(Model):
         """
         model_response = ModelResponse()
 
+        if response.stop_reason == "max_tokens":
+            model_response.provider_data = model_response.provider_data or {}
+            model_response.provider_data["stop_reason"] = "max_tokens"
+
         # Add role (Claude always uses 'assistant')
         model_response.role = response.role or "assistant"
 
@@ -1025,6 +1029,10 @@ class Claude(Model):
 
         # Capture citations from the final response and handle structured outputs
         elif isinstance(response, (MessageStopEvent, ParsedBetaMessageStopEvent)):
+            if response.stop_reason == "max_tokens":
+                model_response.provider_data = model_response.provider_data or {}
+                model_response.provider_data["stop_reason"] = "max_tokens"
+
             # In streaming mode, content has already been emitted via ContentBlockDeltaEvent chunks
             # Setting content here would cause duplication since _populate_stream_data accumulates with +=
             # Keep content empty to avoid duplication
