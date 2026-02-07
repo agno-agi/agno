@@ -111,6 +111,30 @@ STEP_TYPE_MAPPING = {
 }
 
 
+def _normalize_user_input_schema(schema: Optional[List[Any]]) -> Optional[List[UserInputField]]:
+    """Convert user input schema to list of UserInputField objects.
+
+    Handles both UserInputField objects and dict format (from @hitl decorator).
+    """
+    if not schema:
+        return None
+    result = []
+    for f in schema:
+        if isinstance(f, UserInputField):
+            result.append(f)
+        else:
+            # Dict format
+            result.append(
+                UserInputField(
+                    name=f["name"],
+                    field_type=f.get("field_type", "str"),
+                    description=f.get("description"),
+                    required=f.get("required", True),
+                )
+            )
+    return result
+
+
 def _step_from_dict(
     data: Dict[str, Any],
     registry: Optional["Registry"] = None,
@@ -1724,17 +1748,7 @@ class Workflow:
                         log_debug(f"Step '{step_name}' requires {hitl_type} - pausing workflow")
 
                         # Build user input schema if needed
-                        user_input_schema = None
-                        if step.requires_user_input and step.user_input_schema:
-                            user_input_schema = [
-                                UserInputField(
-                                    name=f["name"],
-                                    field_type=f.get("field_type", "str"),
-                                    description=f.get("description"),
-                                    required=f.get("required", True),
-                                )
-                                for f in step.user_input_schema
-                            ]
+                        user_input_schema = _normalize_user_input_schema(step.user_input_schema) if step.requires_user_input else None
 
                         # Create step requirement
                         step_requirement = StepRequirement(
@@ -1982,17 +1996,7 @@ class Workflow:
                         log_debug(f"Step '{step_name}' requires {hitl_type} - pausing workflow")
 
                         # Build user input schema if needed
-                        user_input_schema = None
-                        if step.requires_user_input and step.user_input_schema:
-                            user_input_schema = [
-                                UserInputField(
-                                    name=f["name"],
-                                    field_type=f.get("field_type", "str"),
-                                    description=f.get("description"),
-                                    required=f.get("required", True),
-                                )
-                                for f in step.user_input_schema
-                            ]
+                        user_input_schema = _normalize_user_input_schema(step.user_input_schema) if step.requires_user_input else None
 
                         # Create step requirement
                         step_requirement = StepRequirement(
@@ -2465,17 +2469,24 @@ class Workflow:
                     # Check for cancellation before executing step
                     await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
 
-                    # Check if step requires confirmation (HITL)
-                    if isinstance(step, Step) and step.requires_confirmation:
-                        log_debug(f"Step '{step_name}' requires confirmation - pausing workflow")
+                    # Check if step requires HITL (confirmation or user input)
+                    if isinstance(step, Step) and (step.requires_confirmation or step.requires_user_input):
+                        hitl_type = "confirmation" if step.requires_confirmation else "user input"
+                        log_debug(f"Step '{step_name}' requires {hitl_type} - pausing workflow")
+
+                        # Build user input schema if needed
+                        user_input_schema = _normalize_user_input_schema(step.user_input_schema) if step.requires_user_input else None
 
                         # Create step requirement
                         step_requirement = StepRequirement(
                             step_id=step.step_id or str(uuid4()),
                             step_name=step_name,
                             step_index=i,
-                            requires_confirmation=True,
+                            requires_confirmation=step.requires_confirmation,
                             confirmation_message=step.confirmation_message,
+                            requires_user_input=step.requires_user_input,
+                            user_input_message=step.user_input_message,
+                            user_input_schema=user_input_schema,
                             step_input=step_input,
                         )
 
@@ -2486,6 +2497,31 @@ class Workflow:
                         workflow_run_response.step_results = collected_step_outputs
 
                         # Save the session with paused state
+                        self._update_session_metrics(
+                            session=workflow_session, workflow_run_response=workflow_run_response
+                        )
+                        workflow_session.upsert_run(run=workflow_run_response)
+                        if self._has_async_db():
+                            await self.asave_session(session=workflow_session)
+                        else:
+                            self.save_session(session=workflow_session)
+
+                        return workflow_run_response
+
+                    # Check if Router requires HITL (user-driven routing)
+                    if isinstance(step, Router) and step.requires_user_input:
+                        log_debug(f"Router '{step_name}' requires user selection - pausing workflow")
+
+                        router_requirement = step.create_router_requirement(
+                            router_id=str(uuid4()),
+                            step_input=step_input,
+                        )
+
+                        workflow_run_response.status = RunStatus.paused
+                        workflow_run_response.router_requirements = [router_requirement]
+                        workflow_run_response._paused_step_index = i
+                        workflow_run_response.step_results = collected_step_outputs
+
                         self._update_session_metrics(
                             session=workflow_session, workflow_run_response=workflow_run_response
                         )
@@ -2703,17 +2739,24 @@ class Workflow:
                         shared_files=shared_files,
                     )
 
-                    # Check if step requires confirmation (HITL)
-                    if isinstance(step, Step) and step.requires_confirmation:
-                        log_debug(f"Step '{step_name}' requires confirmation - pausing workflow")
+                    # Check if step requires HITL (confirmation or user input)
+                    if isinstance(step, Step) and (step.requires_confirmation or step.requires_user_input):
+                        hitl_type = "confirmation" if step.requires_confirmation else "user input"
+                        log_debug(f"Step '{step_name}' requires {hitl_type} - pausing workflow")
+
+                        # Build user input schema if needed
+                        user_input_schema = _normalize_user_input_schema(step.user_input_schema) if step.requires_user_input else None
 
                         # Create step requirement
                         step_requirement = StepRequirement(
                             step_id=step.step_id or str(uuid4()),
                             step_name=step_name,
                             step_index=i,
-                            requires_confirmation=True,
+                            requires_confirmation=step.requires_confirmation,
                             confirmation_message=step.confirmation_message,
+                            requires_user_input=step.requires_user_input,
+                            user_input_message=step.user_input_message,
+                            user_input_schema=user_input_schema,
                             step_input=step_input,
                         )
 
@@ -2732,14 +2775,57 @@ class Workflow:
                             step_name=step_name,
                             step_index=i,
                             step_id=step.step_id,
-                            requires_confirmation=True,
+                            requires_confirmation=step.requires_confirmation,
                             confirmation_message=step.confirmation_message,
+                            requires_user_input=step.requires_user_input,
+                            user_input_message=step.user_input_message,
                         )
                         yield self._handle_event(
                             step_paused_event, workflow_run_response, websocket_handler=websocket_handler
                         )
 
                         # Save the session with paused state
+                        self._update_session_metrics(
+                            session=workflow_session, workflow_run_response=workflow_run_response
+                        )
+                        workflow_session.upsert_run(run=workflow_run_response)
+                        if self._has_async_db():
+                            await self.asave_session(session=workflow_session)
+                        else:
+                            self.save_session(session=workflow_session)
+
+                        return
+
+                    # Check if Router requires HITL (user-driven routing)
+                    if isinstance(step, Router) and step.requires_user_input:
+                        log_debug(f"Router '{step_name}' requires user selection - pausing workflow")
+
+                        router_requirement = step.create_router_requirement(
+                            router_id=str(uuid4()),
+                            step_input=step_input,
+                        )
+
+                        workflow_run_response.status = RunStatus.paused
+                        workflow_run_response.router_requirements = [router_requirement]
+                        workflow_run_response._paused_step_index = i
+                        workflow_run_response.step_results = collected_step_outputs
+
+                        # Yield RouterPausedEvent
+                        router_paused_event = RouterPausedEvent(
+                            run_id=workflow_run_response.run_id or "",
+                            workflow_name=workflow_run_response.workflow_name,
+                            workflow_id=workflow_run_response.workflow_id,
+                            session_id=workflow_run_response.session_id,
+                            router_name=step_name,
+                            router_id=router_requirement.router_id,
+                            available_choices=router_requirement.available_choices,
+                            allow_multiple_selections=step.allow_multiple_selections,
+                            user_input_message=step.user_input_message,
+                        )
+                        yield self._handle_event(
+                            router_paused_event, workflow_run_response, websocket_handler=websocket_handler
+                        )
+
                         self._update_session_metrics(
                             session=workflow_session, workflow_run_response=workflow_run_response
                         )
@@ -4476,17 +4562,7 @@ class Workflow:
                     log_debug(f"Step '{step_name}' requires {hitl_type} - pausing workflow")
 
                     # Build user input schema if needed
-                    user_input_schema = None
-                    if step.requires_user_input and step.user_input_schema:
-                        user_input_schema = [
-                            UserInputField(
-                                name=f["name"],
-                                field_type=f.get("field_type", "str"),
-                                description=f.get("description"),
-                                required=f.get("required", True),
-                            )
-                            for f in step.user_input_schema
-                        ]
+                    user_input_schema = _normalize_user_input_schema(step.user_input_schema) if step.requires_user_input else None
 
                     step_requirement = StepRequirement(
                         step_id=step.step_id or str(uuid4()),
@@ -4679,16 +4755,23 @@ class Workflow:
                     shared_files=shared_files,
                 )
 
-                # Check if step requires confirmation (HITL) - for subsequent steps
-                if isinstance(step, Step) and step.requires_confirmation and i != start_step_index:
-                    log_debug(f"Step '{step_name}' requires confirmation - pausing workflow")
+                # Check if step requires HITL (confirmation or user input) - for subsequent steps
+                if isinstance(step, Step) and (step.requires_confirmation or step.requires_user_input) and i != start_step_index:
+                    hitl_type = "confirmation" if step.requires_confirmation else "user input"
+                    log_debug(f"Step '{step_name}' requires {hitl_type} - pausing workflow")
+
+                    # Build user input schema if needed
+                    user_input_schema = _normalize_user_input_schema(step.user_input_schema) if step.requires_user_input else None
 
                     step_requirement = StepRequirement(
                         step_id=step.step_id or str(uuid4()),
                         step_name=step_name,
                         step_index=i,
-                        requires_confirmation=True,
+                        requires_confirmation=step.requires_confirmation,
                         confirmation_message=step.confirmation_message,
+                        requires_user_input=step.requires_user_input,
+                        user_input_message=step.user_input_message,
+                        user_input_schema=user_input_schema,
                         step_input=step_input,
                     )
 
@@ -4705,10 +4788,45 @@ class Workflow:
                         step_name=step_name,
                         step_index=i,
                         step_id=step.step_id,
-                        requires_confirmation=True,
+                        requires_confirmation=step.requires_confirmation,
                         confirmation_message=step.confirmation_message,
+                        requires_user_input=step.requires_user_input,
+                        user_input_message=step.user_input_message,
                     )
                     yield self._handle_event(step_paused_event, workflow_run_response)
+
+                    self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
+                    session.upsert_run(run=workflow_run_response)
+                    self.save_session(session=session)
+
+                    return
+
+                # Check if Router requires HITL (user-driven routing) - for subsequent steps
+                if isinstance(step, Router) and step.requires_user_input and i != start_step_index:
+                    log_debug(f"Router '{step_name}' requires user selection - pausing workflow")
+
+                    router_requirement = step.create_router_requirement(
+                        router_id=str(uuid4()),
+                        step_input=step_input,
+                    )
+
+                    workflow_run_response.status = RunStatus.paused
+                    workflow_run_response.router_requirements = [router_requirement]
+                    workflow_run_response._paused_step_index = i
+                    workflow_run_response.step_results = collected_step_outputs
+
+                    router_paused_event = RouterPausedEvent(
+                        run_id=workflow_run_response.run_id or "",
+                        workflow_name=workflow_run_response.workflow_name,
+                        workflow_id=workflow_run_response.workflow_id,
+                        session_id=workflow_run_response.session_id,
+                        router_name=step_name,
+                        router_id=router_requirement.router_id,
+                        available_choices=router_requirement.available_choices,
+                        allow_multiple_selections=step.allow_multiple_selections,
+                        user_input_message=step.user_input_message,
+                    )
+                    yield self._handle_event(router_paused_event, workflow_run_response)
 
                     self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
                     session.upsert_run(run=workflow_run_response)
@@ -5120,21 +5238,48 @@ class Workflow:
 
                 await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
 
-                # Check if step requires confirmation (HITL) - for subsequent steps
-                if isinstance(step, Step) and step.requires_confirmation and i != start_step_index:
-                    log_debug(f"Step '{step_name}' requires confirmation - pausing workflow")
+                # Check if step requires HITL (confirmation or user input) - for subsequent steps
+                if isinstance(step, Step) and (step.requires_confirmation or step.requires_user_input) and i != start_step_index:
+                    hitl_type = "confirmation" if step.requires_confirmation else "user input"
+                    log_debug(f"Step '{step_name}' requires {hitl_type} - pausing workflow")
+
+                    # Build user input schema if needed
+                    user_input_schema = _normalize_user_input_schema(step.user_input_schema) if step.requires_user_input else None
 
                     step_requirement = StepRequirement(
                         step_id=step.step_id or str(uuid4()),
                         step_name=step_name,
                         step_index=i,
-                        requires_confirmation=True,
+                        requires_confirmation=step.requires_confirmation,
                         confirmation_message=step.confirmation_message,
+                        requires_user_input=step.requires_user_input,
+                        user_input_message=step.user_input_message,
+                        user_input_schema=user_input_schema,
                         step_input=step_input,
                     )
 
                     workflow_run_response.status = RunStatus.paused
                     workflow_run_response.step_requirements = [step_requirement]
+                    workflow_run_response._paused_step_index = i
+                    workflow_run_response.step_results = collected_step_outputs
+
+                    self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
+                    session.upsert_run(run=workflow_run_response)
+                    await self.asave_session(session=session)
+
+                    return workflow_run_response
+
+                # Check if Router requires HITL (user-driven routing) - for subsequent steps
+                if isinstance(step, Router) and step.requires_user_input and i != start_step_index:
+                    log_debug(f"Router '{step_name}' requires user selection - pausing workflow")
+
+                    router_requirement = step.create_router_requirement(
+                        router_id=str(uuid4()),
+                        step_input=step_input,
+                    )
+
+                    workflow_run_response.status = RunStatus.paused
+                    workflow_run_response.router_requirements = [router_requirement]
                     workflow_run_response._paused_step_index = i
                     workflow_run_response.step_results = collected_step_outputs
 
@@ -5292,16 +5437,23 @@ class Workflow:
                     shared_files=shared_files,
                 )
 
-                # Check if step requires confirmation (HITL) - for subsequent steps
-                if isinstance(step, Step) and step.requires_confirmation and i != start_step_index:
-                    log_debug(f"Step '{step_name}' requires confirmation - pausing workflow")
+                # Check if step requires HITL (confirmation or user input) - for subsequent steps
+                if isinstance(step, Step) and (step.requires_confirmation or step.requires_user_input) and i != start_step_index:
+                    hitl_type = "confirmation" if step.requires_confirmation else "user input"
+                    log_debug(f"Step '{step_name}' requires {hitl_type} - pausing workflow")
+
+                    # Build user input schema if needed
+                    user_input_schema = _normalize_user_input_schema(step.user_input_schema) if step.requires_user_input else None
 
                     step_requirement = StepRequirement(
                         step_id=step.step_id or str(uuid4()),
                         step_name=step_name,
                         step_index=i,
-                        requires_confirmation=True,
+                        requires_confirmation=step.requires_confirmation,
                         confirmation_message=step.confirmation_message,
+                        requires_user_input=step.requires_user_input,
+                        user_input_message=step.user_input_message,
+                        user_input_schema=user_input_schema,
                         step_input=step_input,
                     )
 
@@ -5318,10 +5470,45 @@ class Workflow:
                         step_name=step_name,
                         step_index=i,
                         step_id=step.step_id,
-                        requires_confirmation=True,
+                        requires_confirmation=step.requires_confirmation,
                         confirmation_message=step.confirmation_message,
+                        requires_user_input=step.requires_user_input,
+                        user_input_message=step.user_input_message,
                     )
                     yield self._handle_event(step_paused_event, workflow_run_response)
+
+                    self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
+                    session.upsert_run(run=workflow_run_response)
+                    await self.asave_session(session=session)
+
+                    return
+
+                # Check if Router requires HITL (user-driven routing) - for subsequent steps
+                if isinstance(step, Router) and step.requires_user_input and i != start_step_index:
+                    log_debug(f"Router '{step_name}' requires user selection - pausing workflow")
+
+                    router_requirement = step.create_router_requirement(
+                        router_id=str(uuid4()),
+                        step_input=step_input,
+                    )
+
+                    workflow_run_response.status = RunStatus.paused
+                    workflow_run_response.router_requirements = [router_requirement]
+                    workflow_run_response._paused_step_index = i
+                    workflow_run_response.step_results = collected_step_outputs
+
+                    router_paused_event = RouterPausedEvent(
+                        run_id=workflow_run_response.run_id or "",
+                        workflow_name=workflow_run_response.workflow_name,
+                        workflow_id=workflow_run_response.workflow_id,
+                        session_id=workflow_run_response.session_id,
+                        router_name=step_name,
+                        router_id=router_requirement.router_id,
+                        available_choices=router_requirement.available_choices,
+                        allow_multiple_selections=step.allow_multiple_selections,
+                        user_input_message=step.user_input_message,
+                    )
+                    yield self._handle_event(router_paused_event, workflow_run_response)
 
                     self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
                     session.upsert_run(run=workflow_run_response)

@@ -536,6 +536,15 @@ class Step:
                             if history_messages:
                                 final_message = f"{history_messages}{message}"
 
+                        # Append user input context if available (from HITL)
+                        if step_input.additional_data and step_input.additional_data.get("user_input"):
+                            user_input = step_input.additional_data["user_input"]
+                            user_input_str = "\n".join(f"- {k}: {v}" for k, v in user_input.items())
+                            if final_message:
+                                final_message = f"{final_message}\n\nUser preferences:\n{user_input_str}"
+                            else:
+                                final_message = f"User preferences:\n{user_input_str}"
+
                         response = self.active_executor.run(  # type: ignore
                             input=final_message,  # type: ignore
                             images=images,
@@ -794,6 +803,15 @@ class Step:
                             history_messages = workflow_session.get_workflow_history_context(num_runs=num_history_runs)
                             if history_messages:
                                 final_message = f"{history_messages}{message}"
+
+                        # Append user input context if available (from HITL)
+                        if step_input.additional_data and step_input.additional_data.get("user_input"):
+                            user_input = step_input.additional_data["user_input"]
+                            user_input_str = "\n".join(f"- {k}: {v}" for k, v in user_input.items())
+                            if final_message:
+                                final_message = f"{final_message}\n\nUser preferences:\n{user_input_str}"
+                            else:
+                                final_message = f"User preferences:\n{user_input_str}"
 
                         response_stream = self.active_executor.run(  # type: ignore[call-overload, misc]
                             input=final_message,
@@ -1061,6 +1079,15 @@ class Step:
                             if history_messages:
                                 final_message = f"{history_messages}{message}"
 
+                        # Append user input context if available (from HITL)
+                        if step_input.additional_data and step_input.additional_data.get("user_input"):
+                            user_input = step_input.additional_data["user_input"]
+                            user_input_str = "\n".join(f"- {k}: {v}" for k, v in user_input.items())
+                            if final_message:
+                                final_message = f"{final_message}\n\nUser preferences:\n{user_input_str}"
+                            else:
+                                final_message = f"User preferences:\n{user_input_str}"
+
                         response = await self.active_executor.arun(  # type: ignore
                             input=final_message,  # type: ignore
                             images=images,
@@ -1313,6 +1340,15 @@ class Step:
                             history_messages = workflow_session.get_workflow_history_context(num_runs=num_history_runs)
                             if history_messages:
                                 final_message = f"{history_messages}{message}"
+
+                        # Append user input context if available (from HITL)
+                        if step_input.additional_data and step_input.additional_data.get("user_input"):
+                            user_input = step_input.additional_data["user_input"]
+                            user_input_str = "\n".join(f"- {k}: {v}" for k, v in user_input.items())
+                            if final_message:
+                                final_message = f"{final_message}\n\nUser preferences:\n{user_input_str}"
+                            else:
+                                final_message = f"User preferences:\n{user_input_str}"
 
                         response_stream = self.active_executor.arun(  # type: ignore
                             input=final_message,
