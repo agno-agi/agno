@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, Any, AsyncGenerator, List, Optional, Union
+from typing import TYPE_CHECKING, Any, AsyncGenerator, List, Optional, Union, cast
 from uuid import uuid4
 
 from fastapi import (
@@ -37,7 +37,9 @@ from agno.os.utils import (
     process_video,
 )
 from agno.registry import Registry
+from agno.run import RunStatus
 from agno.run.team import RunErrorEvent as TeamRunErrorEvent
+from agno.run.team import TeamRunOutput
 from agno.team.remote import RemoteTeam
 from agno.team.team import Team
 from agno.utils.log import log_warning, logger
@@ -169,6 +171,7 @@ def get_team_router(
         user_id: Optional[str] = Form(None),
         files: Optional[List[UploadFile]] = File(None),
         version: Optional[int] = Form(None),
+        background: bool = Form(False),
     ):
         kwargs = await get_request_kwargs(request, create_team_run)
 
@@ -265,6 +268,44 @@ def get_team_router(
 
         # Extract auth token for remote teams
         auth_token = get_auth_token_from_request(request)
+
+        # Background execution: return 202 immediately, run team asynchronously
+        if background:
+            if isinstance(team, RemoteTeam):
+                raise HTTPException(status_code=400, detail="Background execution is not supported for remote teams")
+            if team.db is None:
+                raise HTTPException(
+                    status_code=400, detail="Background runs require database configuration on the team"
+                )
+
+            try:
+                run_response = await team.arun(
+                    input=message,
+                    session_id=session_id,
+                    user_id=user_id,
+                    images=base64_images if base64_images else None,
+                    audio=base64_audios if base64_audios else None,
+                    videos=base64_videos if base64_videos else None,
+                    files=document_files if document_files else None,
+                    stream=False,
+                    background=True,
+                    **kwargs,
+                )
+                run_response = cast(TeamRunOutput, run_response)
+                return JSONResponse(
+                    status_code=202,
+                    content={
+                        "run_id": run_response.run_id,
+                        "session_id": run_response.session_id,
+                        "status": run_response.status.value
+                        if isinstance(run_response.status, RunStatus)
+                        else run_response.status,
+                    },
+                )
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e))
+            except InputCheckError as e:
+                raise HTTPException(status_code=400, detail=str(e))
 
         if stream:
             return StreamingResponse(
