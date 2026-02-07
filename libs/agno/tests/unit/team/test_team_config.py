@@ -214,6 +214,7 @@ class TestTeamToDict:
         config = team.to_dict()
 
         assert config["add_search_knowledge_instructions"] is False
+
     def test_to_dict_with_db(self, basic_team, mock_db):
         """Test to_dict includes database configuration."""
         basic_team.db = mock_db
