@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import BaseModel
 
 from agno.agent import Agent
 from agno.models.response import ToolExecution
@@ -37,6 +38,148 @@ from agno.run.workflow import (
 )
 from agno.team import Team
 from agno.workflow import Workflow
+
+
+def _build_request_body(method: str, text: str, context_id: str | None = "context-789") -> dict:
+    message = {
+        "messageId": "msg-123",
+        "role": "user",
+        "parts": [{"kind": "text", "text": text}],
+    }
+    if context_id is not None:
+        message["contextId"] = context_id
+    return {
+        "jsonrpc": "2.0",
+        "method": method,
+        "id": "request-123",
+        "params": {"message": message},
+    }
+
+
+def _parse_sse_events(response_text: str) -> list[dict]:
+    events = []
+    for chunk in response_text.split("\n\n"):
+        if chunk.strip():
+            lines = chunk.strip().split("\n")
+            for line in lines:
+                if line.startswith("data: "):
+                    events.append(json.loads(line[6:]))
+    return events
+
+
+def _team_stream_events(team: Team, parts: list[str], final_content: str) -> AsyncIterator[RunOutputEvent]:
+    async def _stream() -> AsyncIterator[RunOutputEvent]:
+        yield RunStartedEvent(
+            session_id="context-789",
+            agent_id=team.id,
+            agent_name=team.name,
+            run_id="test-run-123",
+        )
+
+        for part in parts:
+            yield RunContentEvent(
+                session_id="context-789",
+                agent_id=team.id,
+                agent_name=team.name,
+                run_id="test-run-123",
+                content=part,
+            )
+
+        yield RunCompletedEvent(
+            session_id="context-789",
+            agent_id=team.id,
+            agent_name=team.name,
+            run_id="test-run-123",
+            content=final_content,
+        )
+
+    return _stream()
+
+
+def _team_data_stream_events(
+    team: Team, start_data: dict, final_data: dict
+) -> AsyncIterator[RunOutputEvent]:
+    async def _stream() -> AsyncIterator[RunOutputEvent]:
+        yield RunStartedEvent(
+            session_id="context-789",
+            agent_id=team.id,
+            agent_name=team.name,
+            run_id="test-run-123",
+        )
+
+        yield RunContentEvent(
+            session_id="context-789",
+            agent_id=team.id,
+            agent_name=team.name,
+            run_id="test-run-123",
+            content=start_data,
+        )
+
+        yield RunCompletedEvent(
+            session_id="context-789",
+            agent_id=team.id,
+            agent_name=team.name,
+            run_id="test-run-123",
+            content=final_data,
+        )
+
+    return _stream()
+
+
+def _workflow_stream_events(workflow: Workflow, final_content: str):
+    async def _stream():
+        yield WorkflowStartedEvent(
+            session_id="context-789",
+            workflow_id=workflow.id,
+            workflow_name=workflow.name,
+            run_id="test-run-123",
+        )
+
+        yield WorkflowStepStartedEvent(
+            session_id="context-789",
+            workflow_id=workflow.id,
+            workflow_name=workflow.name,
+            run_id="test-run-123",
+            step_name="echo_step",
+        )
+
+        yield WorkflowStepCompletedEvent(
+            session_id="context-789",
+            workflow_id=workflow.id,
+            workflow_name=workflow.name,
+            run_id="test-run-123",
+            step_name="echo_step",
+        )
+
+        yield WorkflowCompletedEvent(
+            session_id="context-789",
+            workflow_id=workflow.id,
+            workflow_name=workflow.name,
+            run_id="test-run-123",
+            content=final_content,
+        )
+
+    return _stream()
+
+
+def _workflow_data_stream_events(workflow: Workflow, final_data: dict):
+    async def _stream():
+        yield WorkflowStartedEvent(
+            session_id="context-789",
+            workflow_id=workflow.id,
+            workflow_name=workflow.name,
+            run_id="test-run-123",
+        )
+
+        yield WorkflowCompletedEvent(
+            session_id="context-789",
+            workflow_id=workflow.id,
+            workflow_name=workflow.name,
+            run_id="test-run-123",
+            content=final_data,
+        )
+
+    return _stream()
 
 
 @pytest.fixture
@@ -131,6 +274,52 @@ def test_a2a(test_agent: Agent, test_client: TestClient):
         call_kwargs = mock_arun.call_args.kwargs
         assert call_kwargs["input"] == "Hello, agent!"
         assert call_kwargs["session_id"] == "context-789"
+
+
+def test_a2a_structured_output_datapart(test_agent: Agent, test_client: TestClient):
+    """Test that structured outputs are mapped to DataPart."""
+
+    class StructuredOutput(BaseModel):
+        result: str
+        score: int
+
+    mock_output = RunOutput(
+        run_id="test-run-123",
+        session_id="context-789",
+        agent_id=test_agent.id,
+        agent_name=test_agent.name,
+        content=StructuredOutput(result="ok", score=95),
+    )
+
+    with patch.object(test_agent, "arun", new_callable=AsyncMock) as mock_arun:
+        mock_arun.return_value = mock_output
+
+        request_body = {
+            "jsonrpc": "2.0",
+            "method": "message/send",
+            "id": "request-123",
+            "params": {
+                "message": {
+                    "messageId": "msg-123",
+                    "role": "user",
+                    "contextId": "context-789",
+                    "parts": [{"kind": "text", "text": "Hello, agent!"}],
+                }
+            },
+        }
+
+        response = test_client.post(f"/a2a/agents/{test_agent.id}/v1/message:send", json=request_body)
+
+        assert response.status_code == 200
+        data = response.json()
+
+        message = data["result"]["history"][0]
+        assert message["role"] == "agent"
+        assert len(message["parts"]) == 1
+        assert message["parts"][0]["kind"] == "data"
+        assert message["parts"][0]["data"] == {"result": "ok", "score": 95}
+
+        mock_arun.assert_called_once()
 
 
 def test_a2a_streaming(test_agent: Agent, test_client: TestClient):
@@ -242,6 +431,74 @@ def test_a2a_streaming(test_agent: Agent, test_client: TestClient):
         assert call_kwargs["session_id"] == "context-789"
         assert call_kwargs["stream"] is True
         assert call_kwargs["stream_events"] is True
+
+
+def test_a2a_streaming_structured_output_datapart(test_agent: Agent, test_client: TestClient):
+    """Test streaming DataPart output for structured responses."""
+
+    async def mock_event_stream() -> AsyncIterator[RunOutputEvent]:
+        yield RunStartedEvent(
+            session_id="context-789",
+            agent_id=test_agent.id,
+            agent_name=test_agent.name,
+            run_id="test-run-123",
+        )
+
+        yield RunContentEvent(
+            session_id="context-789",
+            agent_id=test_agent.id,
+            agent_name=test_agent.name,
+            run_id="test-run-123",
+            content={"step": "working", "value": 1},
+        )
+
+        yield RunCompletedEvent(
+            session_id="context-789",
+            agent_id=test_agent.id,
+            agent_name=test_agent.name,
+            run_id="test-run-123",
+            content={"step": "done", "value": 2},
+        )
+
+    with patch.object(test_agent, "arun") as mock_arun:
+        mock_arun.return_value = mock_event_stream()
+
+        request_body = {
+            "jsonrpc": "2.0",
+            "method": "message/stream",
+            "id": "request-123",
+            "params": {
+                "message": {
+                    "messageId": "msg-123",
+                    "role": "user",
+                    "contextId": "context-789",
+                    "parts": [{"kind": "text", "text": "Hello, agent!"}],
+                }
+            },
+        }
+
+        response = test_client.post(f"/a2a/agents/{test_agent.id}/v1/message:stream", json=request_body)
+
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "text/event-stream; charset=utf-8"
+
+        events = []
+        for chunk in response.text.split("\n\n"):
+            if chunk.strip():
+                lines = chunk.strip().split("\n")
+                for line in lines:
+                    if line.startswith("data: "):
+                        events.append(json.loads(line[6:]))
+
+        content_messages = [e for e in events if e["result"].get("kind") == "message" and e["result"].get("parts")]
+        assert len(content_messages) == 1
+        assert content_messages[0]["result"]["parts"][0]["kind"] == "data"
+        assert content_messages[0]["result"]["parts"][0]["data"] == {"step": "working", "value": 1}
+
+        final_task = events[-1]
+        assert final_task["result"]["status"]["state"] == "completed"
+        assert final_task["result"]["history"][0]["parts"][0]["kind"] == "data"
+        assert final_task["result"]["history"][0]["parts"][0]["data"] == {"step": "done", "value": 2}
 
 
 def test_a2a_streaming_with_tools(test_agent: Agent, test_client: TestClient):
@@ -599,35 +856,66 @@ def test_team_client(test_team: Team):
     return TestClient(app)
 
 
-def test_a2a_team(test_team: Team, test_team_client: TestClient):
-    """Test the basic non-streaming A2A flow with a Team."""
-
-    mock_output = RunOutput(
-        run_id="test-run-123",
-        session_id="context-789",
-        agent_id=test_team.id,
-        agent_name=test_team.name,
-        content="Hello! This is a test response from the team.",
-    )
-
-    with patch.object(test_team, "arun", new_callable=AsyncMock) as mock_arun:
-        mock_arun.return_value = mock_output
-
-        request_body = {
-            "jsonrpc": "2.0",
-            "method": "message/send",
-            "id": "request-123",
-            "params": {
-                "message": {
-                    "messageId": "msg-123",
-                    "role": "user",
-                    "contextId": "context-789",
-                    "parts": [{"kind": "text", "text": "Hello, team!"}],
-                }
-            },
+@pytest.fixture(params=["team", "workflow"])
+def a2a_target(request):
+    if request.param == "team":
+        team = request.getfixturevalue("test_team")
+        client = request.getfixturevalue("test_team_client")
+        return {
+            "type": "team",
+            "target": team,
+            "client": client,
+            "route_prefix": "teams",
+            "request_text": "Hello, team!",
+            "response_text": "Hello! This is a test response from the team.",
+            "stream_parts": ["Hello! ", "This is ", "a streaming response from the team."],
+            "stream_final_text": "Hello! this is a streaming response from the team.",
+            "data_output": {"result": "ok", "score": 88},
+            "stream_data_start": {"step": "working", "value": 1},
+            "stream_data_final": {"step": "done", "value": 2},
         }
 
-        response = test_team_client.post(f"/a2a/teams/{test_team.id}/v1/message:send", json=request_body)
+    workflow = request.getfixturevalue("test_workflow")
+    client = request.getfixturevalue("test_workflow_client")
+    return {
+        "type": "workflow",
+        "target": workflow,
+        "client": client,
+        "route_prefix": "workflows",
+        "request_text": "Hello, workflow!",
+        "response_text": "Workflow echo: Hello from workflow!",
+        "data_output": {"status": "ok", "count": 3},
+        "stream_data_final": {"status": "done", "count": 4},
+    }
+
+
+def test_a2a_send_team_workflow(a2a_target):
+    """Test the basic non-streaming A2A flow with a Team or Workflow."""
+    target = a2a_target["target"]
+    client = a2a_target["client"]
+    request_body = _build_request_body("message/send", a2a_target["request_text"])
+
+    if a2a_target["type"] == "team":
+        mock_output = RunOutput(
+            run_id="test-run-123",
+            session_id="context-789",
+            agent_id=target.id,
+            agent_name=target.name,
+            content=a2a_target["response_text"],
+        )
+    else:
+        mock_output = WorkflowRunOutput(
+            run_id="test-run-123",
+            session_id="context-789",
+            workflow_id=target.id,
+            workflow_name=target.name,
+            content=a2a_target["response_text"],
+        )
+
+    with patch.object(target, "arun", new_callable=AsyncMock) as mock_arun:
+        mock_arun.return_value = mock_output
+
+        response = client.post(f"/a2a/{a2a_target['route_prefix']}/{target.id}/v1/message:send", json=request_body)
 
         assert response.status_code == 200
         data = response.json()
@@ -637,7 +925,8 @@ def test_a2a_team(test_team: Team, test_team_client: TestClient):
         assert "result" in data
 
         task = data["result"]
-        assert task["id"] == "test-run-123"
+        if a2a_target["type"] == "team":
+            assert task["id"] == "test-run-123"
         assert task["contextId"] == "context-789"
         assert task["status"]["state"] == "completed"
         assert len(task["history"]) == 1
@@ -646,126 +935,150 @@ def test_a2a_team(test_team: Team, test_team_client: TestClient):
         assert message["role"] == "agent"
         assert len(message["parts"]) == 1
         assert message["parts"][0]["kind"] == "text"
-        assert message["parts"][0]["text"] == "Hello! This is a test response from the team."
+        assert message["parts"][0]["text"] == a2a_target["response_text"]
 
         mock_arun.assert_called_once()
         call_kwargs = mock_arun.call_args.kwargs
-        assert call_kwargs["input"] == "Hello, team!"
+        assert call_kwargs["input"] == a2a_target["request_text"]
         assert call_kwargs["session_id"] == "context-789"
 
 
-def test_a2a_streaming_team(test_team: Team, test_team_client: TestClient):
-    """Test the basic streaming A2A flow with a Team."""
+def test_a2a_send_structured_output_datapart_team_workflow(a2a_target):
+    """Test that structured outputs are mapped to DataPart."""
+    target = a2a_target["target"]
+    client = a2a_target["client"]
+    request_body = _build_request_body("message/send", a2a_target["request_text"])
 
-    async def mock_event_stream() -> AsyncIterator[RunOutputEvent]:
-        yield RunStartedEvent(
-            session_id="context-789",
-            agent_id=test_team.id,
-            agent_name=test_team.name,
+    if a2a_target["type"] == "team":
+        mock_output = RunOutput(
             run_id="test-run-123",
+            session_id="context-789",
+            agent_id=target.id,
+            agent_name=target.name,
+            content=a2a_target["data_output"],
+        )
+    else:
+        mock_output = WorkflowRunOutput(
+            run_id="test-run-123",
+            session_id="context-789",
+            workflow_id=target.id,
+            workflow_name=target.name,
+            content=a2a_target["data_output"],
         )
 
-        yield RunContentEvent(
-            session_id="context-789",
-            agent_id=test_team.id,
-            agent_name=test_team.name,
-            run_id="test-run-123",
-            content="Hello! ",
-        )
+    with patch.object(target, "arun", new_callable=AsyncMock) as mock_arun:
+        mock_arun.return_value = mock_output
 
-        yield RunContentEvent(
-            session_id="context-789",
-            agent_id=test_team.id,
-            agent_name=test_team.name,
-            run_id="test-run-123",
-            content="This is ",
-        )
+        response = client.post(f"/a2a/{a2a_target['route_prefix']}/{target.id}/v1/message:send", json=request_body)
 
-        yield RunContentEvent(
-            session_id="context-789",
-            agent_id=test_team.id,
-            agent_name=test_team.name,
-            run_id="test-run-123",
-            content="a streaming response from the team.",
-        )
+        assert response.status_code == 200
+        data = response.json()
 
-        yield RunCompletedEvent(
-            session_id="context-789",
-            agent_id=test_team.id,
-            agent_name=test_team.name,
-            run_id="test-run-123",
-            content="Hello! this is a streaming response from the team.",
-        )
+        message = data["result"]["history"][0]
+        assert message["role"] == "agent"
+        assert len(message["parts"]) == 1
+        assert message["parts"][0]["kind"] == "data"
+        assert message["parts"][0]["data"] == a2a_target["data_output"]
 
-    with patch.object(test_team, "arun") as mock_arun:
-        mock_arun.return_value = mock_event_stream()
+        mock_arun.assert_called_once()
 
-        request_body = {
-            "jsonrpc": "2.0",
-            "method": "message/stream",
-            "id": "request-123",
-            "params": {
-                "message": {
-                    "messageId": "msg-123",
-                    "role": "user",
-                    "contextId": "context-789",
-                    "parts": [{"kind": "text", "text": "Hello, team!"}],
-                }
-            },
-        }
 
-        response = test_team_client.post(f"/a2a/teams/{test_team.id}/v1/message:stream", json=request_body)
+def test_a2a_streaming_team_workflow(a2a_target):
+    """Test the basic streaming A2A flow with a Team or Workflow."""
+    target = a2a_target["target"]
+    client = a2a_target["client"]
+    request_body = _build_request_body("message/stream", a2a_target["request_text"])
+
+    if a2a_target["type"] == "team":
+        stream = _team_stream_events(target, a2a_target["stream_parts"], a2a_target["stream_final_text"])
+    else:
+        stream = _workflow_stream_events(target, a2a_target["response_text"])
+
+    with patch.object(target, "arun") as mock_arun:
+        mock_arun.return_value = stream
+
+        response = client.post(f"/a2a/{a2a_target['route_prefix']}/{target.id}/v1/message:stream", json=request_body)
 
         assert response.status_code == 200
         assert response.headers["content-type"] == "text/event-stream; charset=utf-8"
 
-        # Parse SSE format: "event: EventType\ndata: JSON\n\n"
-        events = []
-        for chunk in response.text.split("\n\n"):
-            if chunk.strip():
-                lines = chunk.strip().split("\n")
-                for line in lines:
-                    if line.startswith("data: "):
-                        events.append(json.loads(line[6:]))
+        events = _parse_sse_events(response.text)
+        assert len(events) >= 2
 
-        assert len(events) >= 5
+        if a2a_target["type"] == "team":
+            assert len(events) >= 5
+            assert events[0]["result"]["kind"] == "status-update"
+            assert events[0]["result"]["status"]["state"] == "working"
+            assert events[0]["result"]["taskId"] == "test-run-123"
+            assert events[0]["result"]["contextId"] == "context-789"
 
-        assert events[0]["result"]["kind"] == "status-update"
-        assert events[0]["result"]["status"]["state"] == "working"
-        assert events[0]["result"]["taskId"] == "test-run-123"
-        assert events[0]["result"]["contextId"] == "context-789"
+            content_messages = [e for e in events if e["result"].get("kind") == "message" and e["result"].get("parts")]
+            assert len(content_messages) == 3
+            assert content_messages[0]["result"]["parts"][0]["text"] == a2a_target["stream_parts"][0]
+            assert content_messages[1]["result"]["parts"][0]["text"] == a2a_target["stream_parts"][1]
+            assert content_messages[2]["result"]["parts"][0]["text"] == a2a_target["stream_parts"][2]
 
-        content_messages = [e for e in events if e["result"].get("kind") == "message" and e["result"].get("parts")]
-        assert len(content_messages) == 3
-        assert content_messages[0]["result"]["parts"][0]["text"] == "Hello! "
-        assert content_messages[1]["result"]["parts"][0]["text"] == "This is "
-        assert content_messages[2]["result"]["parts"][0]["text"] == "a streaming response from the team."
+            for msg in content_messages:
+                assert msg["result"]["metadata"]["agno_content_category"] == "content"
+                assert msg["result"]["role"] == "agent"
 
-        for msg in content_messages:
-            assert msg["result"]["metadata"]["agno_content_category"] == "content"
-            assert msg["result"]["role"] == "agent"
+            final_status_events = [
+                e for e in events if e["result"].get("kind") == "status-update" and e["result"].get("final") is True
+            ]
+            assert len(final_status_events) == 1
+            assert final_status_events[0]["result"]["status"]["state"] == "completed"
 
-        final_status_events = [
-            e for e in events if e["result"].get("kind") == "status-update" and e["result"].get("final") is True
-        ]
-        assert len(final_status_events) == 1
-        assert final_status_events[0]["result"]["status"]["state"] == "completed"
+            final_task = events[-1]
+            assert final_task["id"] == "request-123"
+            assert final_task["result"]["contextId"] == "context-789"
+            assert final_task["result"]["status"]["state"] == "completed"
+            assert final_task["result"]["history"][0]["parts"][0]["text"] == a2a_target["stream_final_text"]
+
+            mock_arun.assert_called_once()
+            call_kwargs = mock_arun.call_args.kwargs
+            assert call_kwargs["input"] == a2a_target["request_text"]
+            assert call_kwargs["session_id"] == "context-789"
+            assert call_kwargs["stream"] is True
+            assert call_kwargs["stream_events"] is True
+        else:
+            final_task = events[-1]
+            assert final_task["result"]["kind"] == "task"
+            assert final_task["result"]["status"]["state"] in ["completed", "failed"]
+
+
+def test_a2a_streaming_structured_output_datapart_team_workflow(a2a_target):
+    """Test streaming DataPart output for team/workflow responses."""
+    target = a2a_target["target"]
+    client = a2a_target["client"]
+    request_body = _build_request_body("message/stream", a2a_target["request_text"])
+
+    if a2a_target["type"] == "team":
+        stream = _team_data_stream_events(
+            target, a2a_target["stream_data_start"], a2a_target["stream_data_final"]
+        )
+    else:
+        stream = _workflow_data_stream_events(target, a2a_target["stream_data_final"])
+
+    with patch.object(target, "arun") as mock_arun:
+        mock_arun.return_value = stream
+
+        response = client.post(f"/a2a/{a2a_target['route_prefix']}/{target.id}/v1/message:stream", json=request_body)
+
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "text/event-stream; charset=utf-8"
+
+        events = _parse_sse_events(response.text)
+
+        if a2a_target["type"] == "team":
+            content_messages = [e for e in events if e["result"].get("kind") == "message" and e["result"].get("parts")]
+            assert len(content_messages) == 1
+            assert content_messages[0]["result"]["parts"][0]["kind"] == "data"
+            assert content_messages[0]["result"]["parts"][0]["data"] == a2a_target["stream_data_start"]
 
         final_task = events[-1]
-        assert final_task["id"] == "request-123"
-        assert final_task["result"]["contextId"] == "context-789"
         assert final_task["result"]["status"]["state"] == "completed"
-        assert (
-            final_task["result"]["history"][0]["parts"][0]["text"]
-            == "Hello! this is a streaming response from the team."
-        )
-
-        mock_arun.assert_called_once()
-        call_kwargs = mock_arun.call_args.kwargs
-        assert call_kwargs["input"] == "Hello, team!"
-        assert call_kwargs["session_id"] == "context-789"
-        assert call_kwargs["stream"] is True
-        assert call_kwargs["stream_events"] is True
+        assert final_task["result"]["history"][0]["parts"][0]["kind"] == "data"
+        assert final_task["result"]["history"][0]["parts"][0]["data"] == a2a_target["stream_data_final"]
 
 
 def test_a2a_user_id_from_header(test_agent: Agent, test_client: TestClient):
@@ -1102,130 +1415,3 @@ def test_workflow_client(test_workflow: Workflow):
     agent_os = AgentOS(workflows=[test_workflow], a2a_interface=True)
     app = agent_os.get_app()
     return TestClient(app)
-
-
-def test_a2a_workflow(test_workflow: Workflow, test_workflow_client: TestClient):
-    """Test the basic non-streaming A2A flow with a Workflow."""
-
-    mock_output = WorkflowRunOutput(
-        run_id="test-run-123",
-        session_id="context-789",
-        workflow_id=test_workflow.id,
-        workflow_name=test_workflow.name,
-        content="Workflow echo: Hello from workflow!",
-    )
-
-    with patch.object(test_workflow, "arun", new_callable=AsyncMock) as mock_arun:
-        mock_arun.return_value = mock_output
-
-        request_body = {
-            "jsonrpc": "2.0",
-            "method": "message/send",
-            "id": "request-123",
-            "params": {
-                "message": {
-                    "messageId": "msg-123",
-                    "role": "user",
-                    "contextId": "context-789",
-                    "parts": [{"kind": "text", "text": "Hello, workflow!"}],
-                }
-            },
-        }
-
-        response = test_workflow_client.post(f"/a2a/workflows/{test_workflow.id}/v1/message:send", json=request_body)
-
-        assert response.status_code == 200
-        data = response.json()
-
-        assert data["jsonrpc"] == "2.0"
-        assert data["id"] == "request-123"
-        assert "result" in data
-
-        task = data["result"]
-        assert task["contextId"] == "context-789"
-        assert task["status"]["state"] == "completed"
-        assert len(task["history"]) == 1
-
-        message = task["history"][0]
-        assert message["role"] == "agent"
-        assert len(message["parts"]) == 1
-        assert message["parts"][0]["kind"] == "text"
-        assert message["parts"][0]["text"] == "Workflow echo: Hello from workflow!"
-
-        mock_arun.assert_called_once()
-        call_kwargs = mock_arun.call_args.kwargs
-        assert call_kwargs["input"] == "Hello, workflow!"
-        assert call_kwargs["session_id"] == "context-789"
-
-
-def test_a2a_streaming_workflow(test_workflow: Workflow, test_workflow_client: TestClient):
-    """Test the basic streaming A2A flow with a Workflow."""
-
-    async def mock_event_stream():
-        yield WorkflowStartedEvent(
-            session_id="context-789",
-            workflow_id=test_workflow.id,
-            workflow_name=test_workflow.name,
-            run_id="test-run-123",
-        )
-
-        yield WorkflowStepStartedEvent(
-            session_id="context-789",
-            workflow_id=test_workflow.id,
-            workflow_name=test_workflow.name,
-            run_id="test-run-123",
-            step_name="echo_step",
-        )
-
-        yield WorkflowStepCompletedEvent(
-            session_id="context-789",
-            workflow_id=test_workflow.id,
-            workflow_name=test_workflow.name,
-            run_id="test-run-123",
-            step_name="echo_step",
-        )
-
-        yield WorkflowCompletedEvent(
-            session_id="context-789",
-            workflow_id=test_workflow.id,
-            workflow_name=test_workflow.name,
-            run_id="test-run-123",
-            content="Workflow echo: Hello from workflow!",
-        )
-
-    with patch.object(test_workflow, "arun") as mock_arun:
-        mock_arun.return_value = mock_event_stream()
-
-        request_body = {
-            "jsonrpc": "2.0",
-            "method": "message/stream",
-            "id": "request-123",
-            "params": {
-                "message": {
-                    "messageId": "msg-123",
-                    "role": "user",
-                    "contextId": "context-789",
-                    "parts": [{"kind": "text", "text": "Hello, workflow!"}],
-                }
-            },
-        }
-
-        response = test_workflow_client.post(f"/a2a/workflows/{test_workflow.id}/v1/message:stream", json=request_body)
-
-        assert response.status_code == 200
-        assert response.headers["content-type"] == "text/event-stream; charset=utf-8"
-
-        # Parse SSE format: "event: EventType\ndata: JSON\n\n"
-        events = []
-        for chunk in response.text.split("\n\n"):
-            if chunk.strip():
-                lines = chunk.strip().split("\n")
-                for line in lines:
-                    if line.startswith("data: "):
-                        events.append(json.loads(line[6:]))
-
-        assert len(events) >= 2
-
-        final_task = events[-1]
-        assert final_task["result"]["kind"] == "task"
-        assert final_task["result"]["status"]["state"] in ["completed", "failed"]
