@@ -6,15 +6,11 @@ This guide standardizes runnable cookbook `.py` examples.
 
 1. Module docstring at the top:
 - What this example demonstrates
-- Key concepts
-- Prompts or inputs to try
 
 2. Sectioned flow using banner comments:
-- Config sections (storage, tools, knowledge, schemas) as needed
+- Setup section
 - Instructions section
 - `Create ...` section
-- `Run ...` section
-- Optional `More Examples` section
 
 3. Main execution gate:
 - `if __name__ == "__main__":`
@@ -27,11 +23,13 @@ This guide standardizes runnable cookbook `.py` examples.
 ```python
 """
 <Title>
+=============================
+
 <What this demonstrates>
 """
 
 # ============================================================================
-# <Config / Setup>
+# Setup
 # ============================================================================
 
 # ============================================================================
@@ -40,12 +38,12 @@ This guide standardizes runnable cookbook `.py` examples.
 instructions = """..."""
 
 # ============================================================================
-# Create the Agent
+# Create Agent
 # ============================================================================
 example_agent = Agent(...)
 
 # ============================================================================
-# Run the Agent
+# Run Agent
 # ============================================================================
 if __name__ == "__main__":
     example_agent.print_response("...", stream=True)
@@ -56,11 +54,5 @@ if __name__ == "__main__":
 Run structure checks:
 
 ```bash
-python3 cookbook/scripts/check_cookbook_pattern.py --base-dir cookbook/00_quickstart
-```
-
-Run metadata checks:
-
-```bash
-python3 cookbook/scripts/audit_cookbook_metadata.py --scope direct
+.venvs/demo/bin/python cookbook/scripts/check_cookbook_pattern.py --base-dir cookbook/00_quickstart
 ```
