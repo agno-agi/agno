@@ -1,15 +1,23 @@
-# human in the loop
+# Teams Human-In-The-Loop Cookbooks
 
-Examples for team workflows in human_in_the_loop.
+Examples for pausing and resuming team runs when a member agent needs human intervention.
 
-## Prerequisites
+## Included Examples
 
-- Load environment variables (for example, OPENAI_API_KEY) via direnv allow.
-- Use .venvs/demo/bin/python to run cookbook examples.
-- Some examples require additional services (for example PostgreSQL, LanceDB, or Infinity server) as noted in file docstrings.
+- `confirmation_required.py`: member tool requires explicit user approval.
+- `user_input_required.py`: member tool requires additional user-provided fields.
+- `external_tool_execution.py`: member tool execution happens outside the agent runtime.
 
-## Files
+## What These Show
 
-- confirmation_required.py - Demonstrates confirmation required.
-- external_tool_execution.py - Demonstrates external tool execution.
-- user_input_required.py - Demonstrates user input required.
+- Member-level pauses propagating to the team run.
+- Team-level `requirements` carrying member context (`member_agent_name`, `member_run_id`).
+- Resuming paused runs with `team.continue_run(...)`.
+
+## Run
+
+```bash
+.venvs/demo/bin/python cookbook/03_teams/human_in_the_loop/confirmation_required.py
+.venvs/demo/bin/python cookbook/03_teams/human_in_the_loop/user_input_required.py
+.venvs/demo/bin/python cookbook/03_teams/human_in_the_loop/external_tool_execution.py
+```
