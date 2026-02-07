@@ -2419,6 +2419,7 @@ def arun(  # type: ignore
     debug_mode: Optional[bool] = None,
     yield_run_output: bool = False,
     output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
+    background: bool = False,
     **kwargs: Any,
 ) -> Union[TeamRunOutput, AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent]]]:
     """Run the Team asynchronously and return the response."""
@@ -2562,6 +2563,23 @@ def arun(  # type: ignore
     run_response.metrics = Metrics()
     run_response.metrics.start_timer()
 
+    # Background execution: pre-persist PENDING run, spawn task, return immediately
+    if background:
+        return arun_background_impl(  # type: ignore
+            team,
+            run_response=run_response,
+            run_context=run_context,
+            session_id=session_id,
+            user_id=user_id,
+            response_format=response_format,
+            add_history_to_context=add_history,
+            add_dependencies_to_context=add_dependencies,
+            add_session_state_to_context=add_session_state,
+            debug_mode=debug_mode,
+            background_tasks=background_tasks,
+            **kwargs,
+        )
+
     if stream:
         return team._arun_stream(  # type: ignore
             run_response=run_response,
@@ -2592,6 +2610,79 @@ def arun(  # type: ignore
             background_tasks=background_tasks,
             **kwargs,
         )
+
+
+async def arun_background_impl(
+    team: "Team",
+    run_response: TeamRunOutput,
+    run_context: RunContext,
+    session_id: str,
+    user_id: Optional[str] = None,
+    add_history_to_context: Optional[bool] = None,
+    add_dependencies_to_context: Optional[bool] = None,
+    add_session_state_to_context: Optional[bool] = None,
+    response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+    debug_mode: Optional[bool] = None,
+    background_tasks: Optional[Any] = None,
+    **kwargs: Any,
+) -> TeamRunOutput:
+    """Execute team run in background, return PENDING TeamRunOutput immediately.
+
+    Follows the pattern established by Agent.arun_background_impl():
+    1. Validate that team has a database configured
+    2. Set run status to PENDING and pre-persist to DB
+    3. Spawn asyncio.create_task to execute the run
+    4. Return the PENDING TeamRunOutput immediately
+    """
+    # 1. Validate DB is configured (required for polling)
+    if team.db is None:
+        raise ValueError("Background runs require a database to be configured on the team (team.db)")
+
+    # 2. Set PENDING status and pre-persist
+    run_response.status = RunStatus.pending
+    team_session = await team._aread_or_create_session(session_id=session_id, user_id=user_id)
+    team_session.upsert_run(run_response)
+    await team.asave_session(session=team_session)
+
+    log_debug(f"Background team run {run_response.run_id} created with status PENDING")
+
+    # 3. Define background coroutine
+    async def execute_team_background() -> None:
+        try:
+            await _arun(
+                team,
+                run_response=run_response,
+                run_context=run_context,
+                session_id=session_id,
+                user_id=user_id,
+                response_format=response_format,
+                add_history_to_context=add_history_to_context,
+                add_dependencies_to_context=add_dependencies_to_context,
+                add_session_state_to_context=add_session_state_to_context,
+                debug_mode=debug_mode,
+                background_tasks=background_tasks,
+                **kwargs,
+            )
+        except Exception as e:
+            # Safety net: catch errors that escape _arun's own error handling
+            log_error(f"Background team execution failed for run {run_response.run_id}: {e}")
+            run_response.status = RunStatus.error
+            run_response.content = f"Background execution failed: {str(e)}"
+            try:
+                error_session = await team._aread_or_create_session(session_id=session_id, user_id=user_id)
+                error_session.upsert_run(run_response)
+                await team.asave_session(session=error_session)
+            except Exception as persist_err:
+                log_error(f"Failed to persist error state for team run {run_response.run_id}: {persist_err}")
+
+    # 4. Spawn background task
+    loop = asyncio.get_running_loop()
+    task = loop.create_task(execute_team_background())
+    # Ensure exceptions don't go silently unhandled
+    task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
+
+    # 5. Return PENDING response immediately
+    return run_response
 
 
 def _handle_event(

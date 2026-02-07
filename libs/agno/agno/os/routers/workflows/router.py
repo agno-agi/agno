@@ -646,6 +646,7 @@ def get_workflow_router(
         session_id: Optional[str] = Form(None),
         user_id: Optional[str] = Form(None),
         version: Optional[int] = Form(None),
+        background: bool = Form(False),
     ):
         kwargs = await get_request_kwargs(request, create_workflow_run)
 
@@ -693,6 +694,42 @@ def get_workflow_router(
 
         # Extract auth token for remote workflows
         auth_token = get_auth_token_from_request(request)
+
+        # Background execution: return 202 immediately, run workflow asynchronously
+        if background:
+            if isinstance(workflow, RemoteWorkflow):
+                raise HTTPException(
+                    status_code=400, detail="Background execution is not supported for remote workflows"
+                )
+            if workflow.db is None:
+                raise HTTPException(
+                    status_code=400, detail="Background runs require database configuration on the workflow"
+                )
+
+            try:
+                run_response = await workflow.arun(
+                    input=message,
+                    session_id=session_id,
+                    user_id=user_id,
+                    stream=False,
+                    background=True,
+                    background_tasks=background_tasks,
+                    **kwargs,
+                )
+                return JSONResponse(
+                    status_code=202,
+                    content={
+                        "run_id": run_response.run_id,
+                        "session_id": run_response.session_id,
+                        "status": run_response.status.value
+                        if isinstance(run_response.status, RunStatus)
+                        else run_response.status,
+                    },
+                )
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e))
+            except InputCheckError as e:
+                raise HTTPException(status_code=400, detail=str(e))
 
         # Return based on stream parameter
         try:
