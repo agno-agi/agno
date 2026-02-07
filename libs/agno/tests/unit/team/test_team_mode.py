@@ -102,7 +102,9 @@ class TestTeamModeBackwardsCompat:
         """Explicit mode=coordinate should force both booleans False."""
         from agno.team.team import Team
 
-        team = Team(name="test", members=[], mode=TeamMode.coordinate, respond_directly=True, delegate_to_all_members=True)
+        team = Team(
+            name="test", members=[], mode=TeamMode.coordinate, respond_directly=True, delegate_to_all_members=True
+        )
         assert team.mode == TeamMode.coordinate
         assert team.respond_directly is False
         assert team.delegate_to_all_members is False
