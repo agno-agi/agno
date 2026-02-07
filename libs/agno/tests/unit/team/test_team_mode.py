@@ -80,6 +80,42 @@ class TestTeamModeBackwardsCompat:
         team = Team(name="test", members=[], delegate_to_all_members=True)
         assert team.mode == TeamMode.broadcast
 
+    def test_mode_route_overrides_conflicting_delegate_to_all(self):
+        """Explicit mode=route should force delegate_to_all_members=False even if passed True."""
+        from agno.team.team import Team
+
+        team = Team(name="test", members=[], mode=TeamMode.route, delegate_to_all_members=True)
+        assert team.mode == TeamMode.route
+        assert team.respond_directly is True
+        assert team.delegate_to_all_members is False
+
+    def test_mode_broadcast_overrides_conflicting_respond_directly(self):
+        """Explicit mode=broadcast should force respond_directly=False even if passed True."""
+        from agno.team.team import Team
+
+        team = Team(name="test", members=[], mode=TeamMode.broadcast, respond_directly=True)
+        assert team.mode == TeamMode.broadcast
+        assert team.delegate_to_all_members is True
+        assert team.respond_directly is False
+
+    def test_mode_coordinate_overrides_conflicting_booleans(self):
+        """Explicit mode=coordinate should force both booleans False."""
+        from agno.team.team import Team
+
+        team = Team(name="test", members=[], mode=TeamMode.coordinate, respond_directly=True, delegate_to_all_members=True)
+        assert team.mode == TeamMode.coordinate
+        assert team.respond_directly is False
+        assert team.delegate_to_all_members is False
+
+    def test_mode_tasks_overrides_conflicting_booleans(self):
+        """Explicit mode=tasks should force both booleans False."""
+        from agno.team.team import Team
+
+        team = Team(name="test", members=[], mode=TeamMode.tasks, respond_directly=True, delegate_to_all_members=True)
+        assert team.mode == TeamMode.tasks
+        assert team.respond_directly is False
+        assert team.delegate_to_all_members is False
+
     def test_max_iterations_default(self):
         from agno.team.team import Team
 
