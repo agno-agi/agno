@@ -1,5 +1,5 @@
 # TEST_LOG
-Generated: 2026-02-07 23:33:34
+Generated: 2026-02-07 23:53:42
 
 ### check_cookbook_pattern.py
 
@@ -7,7 +7,7 @@ Generated: 2026-02-07 23:33:34
 
 **Description:** Ran `.venvs/demo/bin/python cookbook/scripts/check_cookbook_pattern.py --base-dir cookbook/02_agents/context_management`.
 
-**Result:** Structure validation passed with no violations (exit code 0).
+**Result:** Structure validation passed with no violations (checked 4 file(s)).
 
 ---
 
@@ -17,7 +17,7 @@ Generated: 2026-02-07 23:33:34
 
 **Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/context_management/few_shot_learning.py`.
 
-**Result:** Example completed successfully. (exit code 0).
+**Result:** Example completed successfully. (exit code 0, ~3.4s).
 
 ---
 
@@ -27,7 +27,7 @@ Generated: 2026-02-07 23:33:34
 
 **Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/context_management/filter_tool_calls_from_history.py`.
 
-**Result:** Example completed successfully. (exit code 0).
+**Result:** Example completed successfully. (exit code 0, ~12.88s).
 
 ---
 
@@ -37,7 +37,7 @@ Generated: 2026-02-07 23:33:34
 
 **Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/context_management/instructions.py`.
 
-**Result:** Example completed successfully. (exit code 0).
+**Result:** Example completed successfully. (exit code 0, ~3.96s).
 
 ---
 
@@ -47,7 +47,6 @@ Generated: 2026-02-07 23:33:34
 
 **Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/context_management/instructions_with_state.py`.
 
-**Result:** Example completed successfully. (exit code 0).
+**Result:** Example completed successfully. (exit code 0, ~5.93s).
 
 ---
-

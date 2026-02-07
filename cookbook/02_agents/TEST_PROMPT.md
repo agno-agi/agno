@@ -26,7 +26,6 @@ Execution requirements:
       - Imports between docstring and first banner
       - `if __name__ == "__main__":` gate
       - No emoji characters
-      - Instructions use `"""\...\"""` format
    d. Make only minimal, behavior-preserving edits where needed for style compliance.
    e. Update `cookbook/02_agents/<SUBDIR>/TEST_LOG.md` with fresh PASS/FAIL entries per file.
 3. After all agents complete, collect and merge results.

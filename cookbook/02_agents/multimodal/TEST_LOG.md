@@ -1,5 +1,5 @@
 # TEST_LOG
-Generated: 2026-02-07 23:33:34
+Generated: 2026-02-07 23:53:42
 
 ### check_cookbook_pattern.py
 
@@ -7,7 +7,7 @@ Generated: 2026-02-07 23:33:34
 
 **Description:** Ran `.venvs/demo/bin/python cookbook/scripts/check_cookbook_pattern.py --base-dir cookbook/02_agents/multimodal`.
 
-**Result:** Structure validation passed with no violations (exit code 0).
+**Result:** Structure validation passed with no violations (checked 10 file(s)).
 
 ---
 
@@ -17,7 +17,7 @@ Generated: 2026-02-07 23:33:34
 
 **Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/multimodal/audio_input_output.py`.
 
-**Result:** Example completed successfully. (exit code 0).
+**Result:** Example completed successfully. (exit code 0, ~7.23s).
 
 ---
 
@@ -27,7 +27,7 @@ Generated: 2026-02-07 23:33:34
 
 **Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/multimodal/audio_sentiment_analysis.py`.
 
-**Result:** Example completed successfully. (exit code 0).
+**Result:** Example completed successfully. (exit code 0, ~16.11s).
 
 ---
 
@@ -37,7 +37,7 @@ Generated: 2026-02-07 23:33:34
 
 **Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/multimodal/audio_streaming.py`.
 
-**Result:** Example completed successfully. (exit code 0).
+**Result:** Example completed successfully. (exit code 0, ~4.28s).
 
 ---
 
@@ -47,7 +47,7 @@ Generated: 2026-02-07 23:33:34
 
 **Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/multimodal/audio_to_text.py`.
 
-**Result:** Example completed successfully. (exit code 0).
+**Result:** Example completed successfully. (exit code 0, ~6.69s).
 
 ---
 
@@ -57,7 +57,7 @@ Generated: 2026-02-07 23:33:34
 
 **Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/multimodal/image_to_audio.py`.
 
-**Result:** Example completed successfully. (exit code 0).
+**Result:** Example completed successfully. (exit code 0, ~6.02s).
 
 ---
 
@@ -67,7 +67,7 @@ Generated: 2026-02-07 23:33:34
 
 **Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/multimodal/image_to_image.py`.
 
-**Result:** Failed with exit code 1. Missing dependency `fal_client` in demo environment.
+**Result:** Failed with exit code 1. ImportError: `fal_client` not installed. Please install using `pip install fal-client`
 
 ---
 
@@ -77,7 +77,7 @@ Generated: 2026-02-07 23:33:34
 
 **Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/multimodal/image_to_structured_output.py`.
 
-**Result:** Example completed successfully. (exit code 0).
+**Result:** Example completed successfully. (exit code 0, ~6.27s).
 
 ---
 
@@ -87,7 +87,7 @@ Generated: 2026-02-07 23:33:34
 
 **Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/multimodal/image_to_text.py`.
 
-**Result:** Example completed successfully. (exit code 0).
+**Result:** Example completed successfully. (exit code 0, ~1.52s).
 
 ---
 
@@ -97,7 +97,7 @@ Generated: 2026-02-07 23:33:34
 
 **Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/multimodal/media_input_for_tool.py`.
 
-**Result:** Example completed successfully. (exit code 0).
+**Result:** Example completed successfully. (exit code 0, ~8.49s).
 
 ---
 
@@ -107,7 +107,6 @@ Generated: 2026-02-07 23:33:34
 
 **Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/multimodal/video_caption.py`.
 
-**Result:** Failed with exit code 1. Missing dependency `moviepy` in demo environment.
+**Result:** Failed with exit code 1. ImportError: `moviepy` not installed. Please install using `pip install moviepy ffmpeg`
 
 ---
-
