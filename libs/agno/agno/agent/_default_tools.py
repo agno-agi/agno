@@ -243,11 +243,11 @@ def get_chat_history_function(agent: Agent, session: AgentSession) -> Callable:
         if len(all_chats) == 0:
             return ""
 
-        for chat in all_chats[::-1]:  # type: ignore
-            history.insert(0, chat.to_dict())  # type: ignore
+        for chat in all_chats:  # type: ignore
+            history.append(chat.to_dict())  # type: ignore
 
         if num_chats is not None:
-            history = history[:num_chats]
+            history = history[-num_chats:]
 
         return json.dumps(history)
 
@@ -592,7 +592,6 @@ def get_previous_sessions_messages_function(
                                     user_content = last_user.content
                                     assistant_content = msg.content
                                     if user_content is None or assistant_content is None:
-                                        last_user = None
                                         continue
 
                                     msg_pair_id = f"{user_content}:{assistant_content}"
@@ -674,7 +673,6 @@ async def aget_previous_sessions_messages_function(
                                     user_content = last_user.content
                                     assistant_content = msg.content
                                     if user_content is None or assistant_content is None:
-                                        last_user = None
                                         continue
 
                                     msg_pair_id = f"{user_content}:{assistant_content}"

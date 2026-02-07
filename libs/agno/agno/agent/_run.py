@@ -859,7 +859,6 @@ def run_dispatch(
     session_id, user_id = initialize_session(agent, session_id=session_id, user_id=user_id)
     # Set the id for the run
     run_id = run_id or str(uuid4())
-    register_run(run_id)
 
     if (add_history_to_context or agent.add_history_to_context) and not agent.db and not agent.team_id:
         log_warning(
@@ -874,6 +873,9 @@ def run_dispatch(
 
     # Validate input against input_schema if provided
     validated_input = validate_input(input, agent.input_schema)
+
+    # Register run for cancellation tracking after validation succeeds
+    register_run(run_id)
 
     # Normalise hook & guardails
     if not agent._hooks_normalised:
