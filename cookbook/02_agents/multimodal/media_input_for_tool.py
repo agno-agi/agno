@@ -13,6 +13,7 @@ from agno.models.google import Gemini
 from agno.models.openai import OpenAIChat  # noqa: F401
 from agno.tools import Toolkit
 
+
 # ---------------------------------------------------------------------------
 # Create Agent
 # ---------------------------------------------------------------------------
