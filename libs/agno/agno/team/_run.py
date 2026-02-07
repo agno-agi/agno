@@ -148,6 +148,7 @@ def _run_tasks(
 
     max_iterations = team.max_iterations
     memory_future = None
+    learning_future = None
     accumulated_messages: List[Message] = []
 
     try:
@@ -223,6 +224,11 @@ def _run_tasks(
                     run_messages=run_messages,
                     user_id=user_id,
                     existing_future=None,
+                )
+                learning_future = team._start_learning_future(
+                    run_messages=run_messages,
+                    session=session,
+                    user_id=user_id,
                 )
 
                 # Reasoning on first iteration
@@ -311,7 +317,7 @@ def _run_tasks(
 
         raise_if_cancelled(run_response.run_id)  # type: ignore
 
-        wait_for_open_threads(memory_future=memory_future)  # type: ignore
+        wait_for_open_threads(memory_future=memory_future, learning_future=learning_future)  # type: ignore
 
         raise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -366,6 +372,8 @@ def _run_tasks(
     finally:
         if memory_future is not None and not memory_future.done():
             memory_future.cancel()
+        if learning_future is not None and not learning_future.done():
+            learning_future.cancel()
         team._disconnect_connectable_tools()
         cleanup_run(run_response.run_id)  # type: ignore
 
@@ -422,6 +430,7 @@ def _run(
     log_debug(f"Team Run Start: {run_response.run_id}", center=True)
 
     memory_future = None
+    learning_future = None
     try:
         # Set up retry logic
         num_attempts = team.retries + 1
@@ -502,6 +511,11 @@ def _run(
                     user_id=user_id,
                     existing_future=memory_future,
                 )
+                learning_future = team._start_learning_future(
+                    run_messages=run_messages,
+                    session=session,
+                    user_id=user_id,
+                )
 
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -570,7 +584,7 @@ def _run(
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
                 # 11. Wait for background memory creation
-                wait_for_open_threads(memory_future=memory_future)  # type: ignore
+                wait_for_open_threads(memory_future=memory_future, learning_future=learning_future)  # type: ignore
 
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -663,6 +677,8 @@ def _run(
         # Cancel background futures on error (wait_for_open_threads handles waiting on success)
         if memory_future is not None and not memory_future.done():
             memory_future.cancel()
+        if learning_future is not None and not learning_future.done():
+            learning_future.cancel()
 
         # Always disconnect connectable tools
         team._disconnect_connectable_tools()
@@ -725,6 +741,7 @@ def _run_stream(
     log_debug(f"Team Run Start: {run_response.run_id}", center=True)
 
     memory_future = None
+    learning_future = None
     try:
         # Set up retry logic
         num_attempts = team.retries + 1
@@ -805,6 +822,11 @@ def _run_stream(
                     run_messages=run_messages,
                     user_id=user_id,
                     existing_future=memory_future,
+                )
+                learning_future = team._start_learning_future(
+                    run_messages=run_messages,
+                    session=session,
+                    user_id=user_id,
                 )
 
                 # Start the Run by yielding a RunStarted event
@@ -919,6 +941,7 @@ def _run_stream(
                 yield from wait_for_thread_tasks_stream(
                     run_response=run_response,
                     memory_future=memory_future,  # type: ignore
+                    learning_future=learning_future,  # type: ignore
                     stream_events=stream_events,
                     events_to_skip=team.events_to_skip,  # type: ignore
                     store_events=team.store_events,
@@ -1052,6 +1075,8 @@ def _run_stream(
         # Cancel background futures on error (wait_for_thread_tasks_stream handles waiting on success)
         if memory_future is not None and not memory_future.done():
             memory_future.cancel()
+        if learning_future is not None and not learning_future.done():
+            learning_future.cancel()
 
         # Always disconnect connectable tools
         team._disconnect_connectable_tools()
@@ -1312,6 +1337,7 @@ async def _arun_tasks(
 
     max_iterations = team.max_iterations
     memory_task = None
+    learning_task = None
     accumulated_messages: List[Message] = []
     team_session = None
 
@@ -1398,6 +1424,12 @@ async def _arun_tasks(
                     user_id=user_id,
                     existing_task=None,
                 )
+                learning_task = await team._astart_learning_task(
+                    run_messages=run_messages,
+                    session=team_session,
+                    user_id=user_id,
+                    existing_task=learning_task,
+                )
 
                 await team._ahandle_reasoning(
                     run_response=run_response, run_messages=run_messages, run_context=run_context
@@ -1481,7 +1513,7 @@ async def _arun_tasks(
                 pass
 
         await araise_if_cancelled(run_response.run_id)  # type: ignore
-        await await_for_open_threads(memory_task=memory_task)  # type: ignore
+        await await_for_open_threads(memory_task=memory_task, learning_task=learning_task)  # type: ignore
         await araise_if_cancelled(run_response.run_id)  # type: ignore
 
         if team.session_summary_manager is not None:
@@ -1560,6 +1592,12 @@ async def _arun_tasks(
                 await memory_task  # type: ignore
             except asyncio.CancelledError:
                 pass
+        if learning_task is not None and not learning_task.done():
+            learning_task.cancel()
+            try:
+                await learning_task
+            except asyncio.CancelledError:
+                pass
 
         # Always clean up the run tracking
         await acleanup_run(run_response.run_id)  # type: ignore
@@ -1621,6 +1659,7 @@ async def _arun(
     await aregister_run(run_context.run_id)
     log_debug(f"Team Run Start: {run_response.run_id}", center=True)
     memory_task = None
+    learning_task = None
 
     try:
         # Setup session: read/create, load state, resolve dependencies
@@ -1710,6 +1749,12 @@ async def _arun(
                     user_id=user_id,
                     existing_task=memory_task,
                 )
+                learning_task = await team._astart_learning_task(
+                    run_messages=run_messages,
+                    session=team_session,
+                    user_id=user_id,
+                    existing_task=learning_task,
+                )
 
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
                 # 5. Reason about the task if reasoning is enabled
@@ -1783,7 +1828,7 @@ async def _arun(
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 
                 # 11. Wait for background memory creation
-                await await_for_open_threads(memory_task=memory_task)
+                await await_for_open_threads(memory_task=memory_task, learning_task=learning_task)
 
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
                 # 12. Create session summary
@@ -1881,6 +1926,12 @@ async def _arun(
                 await memory_task
             except asyncio.CancelledError:
                 pass
+        if learning_task is not None and not learning_task.done():
+            learning_task.cancel()
+            try:
+                await learning_task
+            except asyncio.CancelledError:
+                pass
 
         # Always clean up the run tracking
         await acleanup_run(run_response.run_id)  # type: ignore
@@ -1948,6 +1999,7 @@ async def _arun_stream(
     await aregister_run(run_context.run_id)
 
     memory_task = None
+    learning_task = None
 
     try:
         # Setup session: read/create, load state, resolve dependencies
@@ -2033,6 +2085,12 @@ async def _arun_stream(
                     run_messages=run_messages,
                     user_id=user_id,
                     existing_task=memory_task,
+                )
+                learning_task = await team._astart_learning_task(
+                    run_messages=run_messages,
+                    session=team_session,
+                    user_id=user_id,
+                    existing_task=learning_task,
                 )
 
                 # Yield the run started event
@@ -2156,6 +2214,7 @@ async def _arun_stream(
                 async for event in await_for_thread_tasks_stream(
                     run_response=run_response,
                     memory_task=memory_task,
+                    learning_task=learning_task,
                     stream_events=stream_events,
                     events_to_skip=team.events_to_skip,  # type: ignore
                     store_events=team.store_events,
@@ -2304,6 +2363,12 @@ async def _arun_stream(
             memory_task.cancel()
             try:
                 await memory_task
+            except asyncio.CancelledError:
+                pass
+        if learning_task is not None and not learning_task.done():
+            learning_task.cancel()
+            try:
+                await learning_task
             except asyncio.CancelledError:
                 pass
 
