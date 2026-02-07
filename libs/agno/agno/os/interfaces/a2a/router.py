@@ -426,6 +426,10 @@ def attach_routes(
         if not user_id:
             user_id = request_body.get("params", {}).get("message", {}).get("metadata", {}).get("userId")
 
+        # Check if non-blocking mode is requested
+        configuration = request_body.get("params", {}).get("configuration", {})
+        is_blocking = configuration.get("blocking", True) if configuration else True
+
         # 3. Run the Team
         try:
             response = await team.arun(
@@ -436,6 +440,7 @@ def attach_routes(
                 files=run_input.files,
                 session_id=context_id,
                 user_id=user_id,
+                background=not is_blocking,
                 **kwargs,
             )
 
@@ -621,6 +626,10 @@ def attach_routes(
         if not user_id:
             user_id = request_body.get("params", {}).get("message", {}).get("metadata", {}).get("userId")
 
+        # Check if non-blocking mode is requested
+        configuration = request_body.get("params", {}).get("configuration", {})
+        is_blocking = configuration.get("blocking", True) if configuration else True
+
         # 3. Run the Workflow
         try:
             response = await workflow.arun(
@@ -631,6 +640,7 @@ def attach_routes(
                 files=list(run_input.files) if run_input.files else None,
                 session_id=context_id,
                 user_id=user_id,
+                background=not is_blocking,
                 **kwargs,
             )
 
