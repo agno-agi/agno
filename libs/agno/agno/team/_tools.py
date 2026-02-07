@@ -177,7 +177,7 @@ async def _check_and_refresh_mcp_tools(team: "Team") -> None:
     await team._connect_mcp_tools()
 
     # Add provided tools
-    if team.tools is not None:
+    if team.tools is not None and isinstance(team.tools, list):
         for tool in team.tools:
             # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
             if hasattr(type(tool), "__mro__") and any(
@@ -221,15 +221,36 @@ def _determine_tools_for_model(
     stream_events: Optional[bool] = None,
     check_mcp_tools: bool = True,
 ) -> List[Union[Function, dict]]:
+    from agno.utils.callables import (
+        get_resolved_knowledge,
+        get_resolved_members,
+        get_resolved_tools,
+        resolve_callable_knowledge,
+        resolve_callable_members,
+        resolve_callable_tools,
+    )
+
+    # Resolve callable factories for tools, knowledge, and members
+    resolve_callable_tools(team, run_context)
+    resolve_callable_knowledge(team, run_context)
+    resolve_callable_members(team, run_context)
+
+    # Initialize members that were resolved from a callable factory
+    resolved_members = get_resolved_members(team, run_context)
+    if run_context.members is not None and resolved_members is not None:
+        for member in resolved_members:
+            team._initialize_member(member, debug_mode=team.debug_mode if hasattr(team, "debug_mode") else None)
+
     # Connect tools that require connection management
     team._connect_connectable_tools()
 
     # Prepare tools
     _tools: List[Union[Toolkit, Callable, Function, Dict]] = []
 
-    # Add provided tools
-    if team.tools is not None:
-        for tool in team.tools:
+    # Add provided tools (resolved from factory or static)
+    resolved_tools_list = get_resolved_tools(team, run_context)
+    if resolved_tools_list is not None:
+        for tool in resolved_tools_list:
             # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
             if hasattr(type(tool), "__mro__") and any(
                 c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
@@ -264,12 +285,13 @@ def _determine_tools_for_model(
             )
         )
 
-    # Add tools for accessing knowledge
-    if team.knowledge is not None and team.search_knowledge:
+    # Add tools for accessing knowledge (use resolved knowledge if available)
+    resolved_knowledge = get_resolved_knowledge(team, run_context)
+    if resolved_knowledge is not None and team.search_knowledge:
         # Use knowledge protocol's get_tools method
-        get_tools_fn = getattr(team.knowledge, "get_tools", None)
-        if callable(get_tools_fn):
-            knowledge_tools = get_tools_fn(
+        _get_tools_fn = getattr(resolved_knowledge, "get_tools", None)
+        if callable(_get_tools_fn):
+            knowledge_tools = _get_tools_fn(
                 run_response=run_response,
                 run_context=run_context,
                 knowledge_filters=run_context.knowledge_filters,
@@ -279,21 +301,51 @@ def _determine_tools_for_model(
             )
             _tools.extend(knowledge_tools)
 
-    if team.knowledge is not None and team.update_knowledge:
+    if resolved_knowledge is not None and team.update_knowledge:
         _tools.append(team.add_to_knowledge)
 
     if team.members:
         from agno.team.mode import TeamMode
 
-        if team.mode == TeamMode.tasks:
-            # Tasks mode: provide task management tools instead of delegation tools
-            from agno.team._task_tools import _get_task_management_tools
-            from agno.team.task import load_task_list
+    # Use resolved members if available
+    effective_members = (
+        resolved_members if resolved_members is not None else (team.members if isinstance(team.members, list) else [])
+    )
 
-            _task_list = load_task_list(run_context.session_state)
-            task_tools = _get_task_management_tools(
-                team=team,
-                task_list=_task_list,
+    if team.mode == TeamMode.tasks:
+        # Tasks mode: provide task management tools regardless of whether members exist
+        from agno.team._task_tools import _get_task_management_tools
+        from agno.team.task import load_task_list
+
+        _task_list = load_task_list(run_context.session_state)
+        task_tools = _get_task_management_tools(
+            team=team,
+            task_list=_task_list,
+            run_response=run_response,
+            run_context=run_context,
+            session=session,
+            team_run_context=team_run_context,
+            user_id=user_id,
+            stream=stream or False,
+            stream_events=stream_events or False,
+            async_mode=async_mode,
+            images=images,  # type: ignore
+            videos=videos,  # type: ignore
+            audio=audio,  # type: ignore
+            files=files,  # type: ignore
+            add_history_to_context=add_history_to_context,
+            add_dependencies_to_context=add_dependencies_to_context,
+            add_session_state_to_context=add_session_state_to_context,
+            debug_mode=debug_mode,
+        )
+        _tools.extend(task_tools)
+    elif effective_members:
+        # Standard modes: provide delegation tools
+        effective_pass_user_input_to_members = team.effective_pass_user_input_to_members
+        # Get the user message if we are using the input directly
+        user_message_content = None
+        if effective_pass_user_input_to_members:
+            user_message = team._get_user_message(
                 run_response=run_response,
                 run_context=run_context,
                 session=session,
@@ -817,8 +869,11 @@ def _find_member_by_id(team: "Team", member_id: str) -> Optional[Tuple[int, Unio
     """
     from agno.team.team import Team
 
+    # Use resolved members if available, otherwise fall back to static members
+    members = team.members if isinstance(team.members, list) else []
+
     # First check direct members
-    for i, member in enumerate(team.members):
+    for i, member in enumerate(members):
         url_safe_member_id = get_member_id(member)
         if url_safe_member_id == member_id:
             return i, member
@@ -1318,7 +1373,8 @@ def _get_delegate_task_function(
         """
 
         # Run all the members sequentially
-        for _, member_agent in enumerate(team.members):
+        _members = team.members if isinstance(team.members, list) else []
+        for _, member_agent in enumerate(_members):
             member_agent_task, history = _setup_delegate_task_to_member(member_agent=member_agent, task=task)
 
             member_session_state_copy = copy(run_context.session_state)
@@ -1514,7 +1570,8 @@ def _get_delegate_task_function(
 
             # Initialize and launch all members
             tasks: List[asyncio.Task[None]] = []
-            for member_agent in team.members:
+            _members = team.members if isinstance(team.members, list) else []
+            for member_agent in _members:
                 current_agent = member_agent
                 team._initialize_member(current_agent)
                 tasks.append(asyncio.create_task(stream_member(current_agent)))
@@ -1545,7 +1602,8 @@ def _get_delegate_task_function(
         else:
             # Non-streaming concurrent run of members; collect results when done
             tasks = []
-            for member_agent_index, member_agent in enumerate(team.members):
+            _members = team.members if isinstance(team.members, list) else []
+            for member_agent_index, member_agent in enumerate(_members):
                 current_agent = member_agent
                 member_agent_task, history = _setup_delegate_task_to_member(member_agent=current_agent, task=task)
 

@@ -411,26 +411,34 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
         config["references_format"] = agent.references_format
 
     # --- Tools ---
-    # Serialize tools to their dictionary representations
-    _tools: List[Union[Function, dict]] = []
-    if agent.model is not None:
-        _tools = agent._parse_tools(
-            model=agent.model,
-            tools=agent.tools or [],
-        )
-    if _tools:
-        serialized_tools = []
-        for tool in _tools:
-            try:
-                if isinstance(tool, Function):
-                    serialized_tools.append(tool.to_dict())
-                else:
-                    serialized_tools.append(tool)
-            except Exception as e:
-                # Skip tools that can't be serialized
-                log_warning(f"Could not serialize tool {tool}: {e}")
-        if serialized_tools:
-            config["tools"] = serialized_tools
+    # Serialize static tools only. Callable tools factories are not persisted.
+    if callable(agent.tools) and not isinstance(agent.tools, list):
+        # Callable factory - skip serialization
+        pass
+    else:
+        _tools: List[Union[Function, dict]] = []
+        if agent.model is not None:
+            _tools = agent._parse_tools(
+                model=agent.model,
+                tools=agent.tools or [],
+            )
+        if _tools:
+            serialized_tools = []
+            for tool in _tools:
+                try:
+                    if isinstance(tool, Function):
+                        serialized_tools.append(tool.to_dict())
+                    else:
+                        serialized_tools.append(tool)
+                except Exception as e:
+                    # Skip tools that can't be serialized
+                    log_warning(f"Could not serialize tool {tool}: {e}")
+            if serialized_tools:
+                config["tools"] = serialized_tools
+
+    # Persist cache_callables only if non-default
+    if not agent.cache_callables:
+        config["cache_callables"] = agent.cache_callables
 
     if agent.tool_call_limit is not None:
         config["tool_call_limit"] = agent.tool_call_limit

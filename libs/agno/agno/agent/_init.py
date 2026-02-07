@@ -235,18 +235,30 @@ def initialize_agent(agent: Agent, debug_mode: Optional[bool] = None) -> None:
 
 
 def add_tool(agent: Agent, tool: Union[Toolkit, Callable, Function, Dict]) -> None:
+    if callable(agent.tools) and not isinstance(agent.tools, (Toolkit, Function)):
+        raise RuntimeError(
+            "Cannot add_tool when tools is a callable factory. "
+            "Use set_tools() with a list to replace the factory first."
+        )
     if not agent.tools:
         agent.tools = []
-    agent.tools.append(tool)
+    agent.tools.append(tool)  # type: ignore[union-attr]
 
 
-def set_tools(agent: Agent, tools: Sequence[Union[Toolkit, Callable, Function, Dict]]) -> None:
-    agent.tools = list(tools) if tools else []
+def set_tools(agent: Agent, tools: Union[Sequence[Union[Toolkit, Callable, Function, Dict]], Callable]) -> None:
+    from agno.utils.callables import is_callable_factory
+
+    if is_callable_factory(tools, excluded_types=(Toolkit, Function)):
+        agent.tools = tools  # type: ignore[assignment]
+        # Clear stale cache when replacing factory
+        agent._callable_tools_cache.clear()
+    else:
+        agent.tools = list(tools) if tools else []  # type: ignore[assignment,arg-type]
 
 
 async def connect_mcp_tools(agent: Agent) -> None:
     """Connect the MCP tools to the agent."""
-    if agent.tools:
+    if agent.tools and isinstance(agent.tools, list):
         for tool in agent.tools:
             # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
             if (
@@ -274,7 +286,7 @@ async def disconnect_mcp_tools(agent: Agent) -> None:
 
 def connect_connectable_tools(agent: Agent) -> None:
     """Connect tools that require connection management (e.g., database connections)."""
-    if agent.tools:
+    if agent.tools and isinstance(agent.tools, list):
         for tool in agent.tools:
             if (
                 hasattr(tool, "requires_connect")
