@@ -97,6 +97,9 @@ class Team:
     respond_directly: bool = False
     # If True, the team leader will delegate the task to all members, instead of deciding for a subset
     delegate_to_all_members: bool = False
+    # Set to True to send run input directly to member agents.
+    # Preferred over determine_input_for_members.
+    pass_user_input_to_members: Optional[bool] = None
     # Set to false if you want to send the run input directly to the member agents
     determine_input_for_members: bool = True
     # Maximum number of iterations for autonomous task loop (mode=tasks)
@@ -384,7 +387,8 @@ class Team:
         role: Optional[str] = None,
         mode: Optional[TeamMode] = None,
         respond_directly: bool = False,
-        determine_input_for_members: bool = True,
+        pass_user_input_to_members: Optional[bool] = None,
+        determine_input_for_members: Optional[bool] = None,
         delegate_to_all_members: bool = False,
         max_iterations: int = 10,
         user_id: Optional[str] = None,
@@ -490,6 +494,7 @@ class Team:
             role=role,
             mode=mode,
             respond_directly=respond_directly,
+            pass_user_input_to_members=pass_user_input_to_members,
             determine_input_for_members=determine_input_for_members,
             delegate_to_all_members=delegate_to_all_members,
             max_iterations=max_iterations,
@@ -595,6 +600,12 @@ class Team:
     @property
     def cached_session(self) -> Optional[TeamSession]:
         return _init.cached_session(self)
+
+    @property
+    def effective_pass_user_input_to_members(self) -> bool:
+        if self.pass_user_input_to_members is not None:
+            return self.pass_user_input_to_members
+        return not self.determine_input_for_members
 
     def set_id(self) -> None:
         return _init.set_id(self)
@@ -2041,7 +2052,8 @@ class Team:
         stream: bool = False,
         stream_events: bool = False,
         async_mode: bool = False,
-        input: Optional[str] = None,  # Used for determine_input_for_members=False
+        input: Optional[str] = None,  # Used when effective_pass_user_input_to_members=True
+        pass_user_input_to_members: Optional[bool] = None,
         images: Optional[List[Image]] = None,
         videos: Optional[List[Video]] = None,
         audio: Optional[List[Audio]] = None,
@@ -2062,6 +2074,7 @@ class Team:
             stream_events=stream_events,
             async_mode=async_mode,
             input=input,
+            pass_user_input_to_members=pass_user_input_to_members,
             images=images,
             videos=videos,
             audio=audio,

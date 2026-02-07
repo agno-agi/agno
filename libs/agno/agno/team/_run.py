@@ -142,7 +142,7 @@ def _run_tasks(
     **kwargs: Any,
 ) -> TeamRunOutput:
     """Autonomous task loop for mode=tasks. Iterates model calls until all tasks are done."""
-    from agno.team.task import load_task_list, save_task_list
+    from agno.team.task import TaskStatus, load_task_list
 
     log_debug(f"Team Tasks Run Start: {run_response.run_id}", center=True)
 
@@ -265,28 +265,27 @@ def _run_tasks(
                 run_context=run_context,
             )
 
-            # Persist task list to session state after model call (tools may have updated it)
-            task_list = load_task_list(run_context.session_state)
-            save_task_list(run_context.session_state, task_list)
-
             # Check HITL pause
             if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
                 from agno.team import _hooks
 
                 return _hooks.handle_team_run_paused(team, run_response=run_response, session=session)
 
-            # Accumulate model response messages for next iteration
-            accumulated_messages = list(model_response.messages) if model_response.messages else accumulated_messages  # type: ignore
+            # Note: accumulated_messages is already up-to-date — model.response() mutates the list in-place.
 
             # Check termination: goal marked complete or all tasks in terminal state
+            task_list = load_task_list(run_context.session_state)
             if task_list.goal_complete:
                 log_debug("Tasks mode: goal marked complete by leader")
                 goal_reached = True
                 break
 
             if task_list.tasks and task_list.all_terminal():
-                log_debug("Tasks mode: all tasks in terminal state")
-                goal_reached = True
+                if any(t.status == TaskStatus.failed for t in task_list.tasks) and not task_list.goal_complete:
+                    log_debug("Tasks mode: all tasks terminal but some failed — not marking as goal reached")
+                else:
+                    log_debug("Tasks mode: all tasks in terminal state")
+                    goal_reached = True
                 break
 
             raise_if_cancelled(run_response.run_id)  # type: ignore
@@ -1306,7 +1305,7 @@ async def _arun_tasks(
     **kwargs: Any,
 ) -> TeamRunOutput:
     """Async autonomous task loop for mode=tasks."""
-    from agno.team.task import load_task_list, save_task_list
+    from agno.team.task import TaskStatus, load_task_list
 
     await aregister_run(run_context.run_id)
     log_debug(f"Team Async Tasks Run Start: {run_response.run_id}", center=True)
@@ -1438,25 +1437,27 @@ async def _arun_tasks(
                 run_context=run_context,
             )
 
-            task_list = load_task_list(run_context.session_state)
-            save_task_list(run_context.session_state, task_list)
-
             # Check HITL pause
             if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
                 from agno.team import _hooks
 
                 return await _hooks.ahandle_team_run_paused(team, run_response=run_response, session=team_session)
 
-            accumulated_messages = list(model_response.messages) if model_response.messages else accumulated_messages  # type: ignore
+            # Note: accumulated_messages is already up-to-date — model.aresponse() mutates the list in-place.
 
+            # Check termination: goal marked complete or all tasks in terminal state
+            task_list = load_task_list(run_context.session_state)
             if task_list.goal_complete:
                 log_debug("Async tasks mode: goal marked complete by leader")
                 goal_reached = True
                 break
 
             if task_list.tasks and task_list.all_terminal():
-                log_debug("Async tasks mode: all tasks in terminal state")
-                goal_reached = True
+                if any(t.status == TaskStatus.failed for t in task_list.tasks) and not task_list.goal_complete:
+                    log_debug("Async tasks mode: all tasks terminal but some failed — not marking as goal reached")
+                else:
+                    log_debug("Async tasks mode: all tasks in terminal state")
+                    goal_reached = True
                 break
 
             await araise_if_cancelled(run_response.run_id)  # type: ignore
