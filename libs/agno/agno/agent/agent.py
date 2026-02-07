@@ -1931,8 +1931,12 @@ class Agent:
         self.model = cast(Model, self.model)
 
         # Merge agent metadata with run metadata
-        if self.metadata is not None and metadata is not None:
-            merge_dictionaries(metadata, self.metadata)
+        if self.metadata is not None:
+            if metadata is None:
+                metadata = self.metadata
+            else:
+                merge_dictionaries(metadata, self.metadata)
+        run_context.metadata = metadata
 
         # Create a new run_response for this attempt
         run_response = RunOutput(
