@@ -4,12 +4,16 @@ Tests that a team properly pauses when a member agent's tool requires confirmati
 propagates requirements to the team level, and resumes correctly via continue_run.
 """
 
+import os
+
 import pytest
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
 from agno.tools.decorator import tool
+
+pytestmark = pytest.mark.skipif(not os.getenv("OPENAI_API_KEY"), reason="OPENAI_API_KEY not set")
 
 
 @tool(requires_confirmation=True)
