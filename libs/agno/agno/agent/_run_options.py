@@ -90,7 +90,13 @@ def resolve_run_options(
     )
 
     # dependencies: call-site > agent.dependencies
-    resolved_deps = dependencies if dependencies is not None else agent.dependencies
+    # Defensive copy to prevent dependency resolution from mutating agent defaults
+    if dependencies is not None:
+        resolved_deps = dependencies.copy()
+    elif agent.dependencies is not None:
+        resolved_deps = agent.dependencies.copy()
+    else:
+        resolved_deps = None
 
     # knowledge_filters: delegate to existing get_effective_filters()
     resolved_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
@@ -103,9 +109,9 @@ def resolve_run_options(
         resolved_metadata = metadata.copy()
         merge_dictionaries(resolved_metadata, agent.metadata)
     elif metadata is not None:
-        resolved_metadata = metadata
+        resolved_metadata = metadata.copy()
     elif agent.metadata is not None:
-        resolved_metadata = agent.metadata
+        resolved_metadata = agent.metadata.copy()
 
     # output_schema: call-site > agent.output_schema
     resolved_output_schema = output_schema if output_schema is not None else agent.output_schema
