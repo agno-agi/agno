@@ -1,83 +1,113 @@
-# Test Log: multimodal
+# TEST_LOG
+Generated: 2026-02-07 23:33:34
 
-> Tests not yet run. Run each file and update this log.
+### check_cookbook_pattern.py
+
+**Status:** PASS
+
+**Description:** Ran `.venvs/demo/bin/python cookbook/scripts/check_cookbook_pattern.py --base-dir cookbook/02_agents/multimodal`.
+
+**Result:** Structure validation passed with no violations (exit code 0).
+
+---
 
 ### audio_input_output.py
 
-**Status:** PENDING
+**Status:** PASS
 
-**Description:** Demonstrates audio input output.
+**Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/multimodal/audio_input_output.py`.
+
+**Result:** Example completed successfully. (exit code 0).
 
 ---
 
 ### audio_sentiment_analysis.py
 
-**Status:** PENDING
+**Status:** PASS
 
-**Description:** Demonstrates audio sentiment analysis.
+**Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/multimodal/audio_sentiment_analysis.py`.
+
+**Result:** Example completed successfully. (exit code 0).
 
 ---
 
 ### audio_streaming.py
 
-**Status:** PENDING
+**Status:** PASS
 
-**Description:** Demonstrates audio streaming.
+**Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/multimodal/audio_streaming.py`.
+
+**Result:** Example completed successfully. (exit code 0).
 
 ---
 
 ### audio_to_text.py
 
-**Status:** PENDING
+**Status:** PASS
 
-**Description:** Demonstrates audio to text.
+**Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/multimodal/audio_to_text.py`.
+
+**Result:** Example completed successfully. (exit code 0).
 
 ---
 
 ### image_to_audio.py
 
-**Status:** PENDING
+**Status:** PASS
 
-**Description:** Demonstrates image to audio.
+**Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/multimodal/image_to_audio.py`.
+
+**Result:** Example completed successfully. (exit code 0).
 
 ---
 
 ### image_to_image.py
 
-**Status:** PENDING
+**Status:** FAIL
 
-**Description:** Demonstrates image to image.
+**Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/multimodal/image_to_image.py`.
+
+**Result:** Failed with exit code 1. Missing dependency `fal_client` in demo environment.
 
 ---
 
 ### image_to_structured_output.py
 
-**Status:** PENDING
+**Status:** PASS
 
-**Description:** Demonstrates image to structured output.
+**Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/multimodal/image_to_structured_output.py`.
+
+**Result:** Example completed successfully. (exit code 0).
 
 ---
 
 ### image_to_text.py
 
-**Status:** PENDING
+**Status:** PASS
 
-**Description:** Demonstrates image to text.
+**Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/multimodal/image_to_text.py`.
+
+**Result:** Example completed successfully. (exit code 0).
 
 ---
 
 ### media_input_for_tool.py
 
-**Status:** PENDING
+**Status:** PASS
 
-**Description:** Demonstrates media input for tool.
+**Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/multimodal/media_input_for_tool.py`.
+
+**Result:** Example completed successfully. (exit code 0).
 
 ---
 
 ### video_caption.py
 
-**Status:** PENDING
+**Status:** FAIL
 
-**Description:** Demonstrates video caption.
+**Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/multimodal/video_caption.py`.
+
+**Result:** Failed with exit code 1. Missing dependency `moviepy` in demo environment.
 
 ---
+

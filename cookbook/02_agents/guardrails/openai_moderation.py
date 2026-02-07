@@ -14,6 +14,7 @@ from agno.guardrails import OpenAIModerationGuardrail
 from agno.media import Image
 from agno.models.openai import OpenAIChat
 
+
 # ---------------------------------------------------------------------------
 # Create Agent
 # ---------------------------------------------------------------------------
