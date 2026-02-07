@@ -3012,12 +3012,8 @@ async def acontinue_run_impl(
                 run_response = cast(RunOutput, run_response)
                 # Handle run cancellation
                 log_info(f"Run {run_response.run_id if run_response else run_id} was cancelled")
-
-                run_response = RunOutput(
-                    run_id=run_id,
-                    status=RunStatus.cancelled,
-                    content=str(e),
-                )
+                run_response.status = RunStatus.cancelled
+                run_response.content = str(e)
                 # Cleanup and store the run response and session
                 await agent._acleanup_and_store(
                     run_response=run_response,
