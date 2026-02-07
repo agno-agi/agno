@@ -48,11 +48,11 @@ The directory needs aggressive consolidation. The current 164 files can be reduc
 
 ## 2. Proposed Directory Structure
 
-Remove `async/`, `other/`, and `agentic_search/`. Add `_01_quickstart/`, `learning/`, `reasoning/`, and `run_control/`. Rename `custom_logging/` to `logging/`.
+Remove `async/`, `other/`, and `agentic_search/`. Add `01_quickstart/`, `learning/`, `reasoning/`, and `run_control/`. Rename `custom_logging/` to `logging/`.
 
 ```
 cookbook/02_agents/
-├── _01_quickstart/             # [NEW] Entry point: minimal agent examples to get started
+├── 01_quickstart/             # [NEW] Entry point: minimal agent examples to get started
 ├── caching/                    # Model response caching strategies
 ├── context_compression/        # Tool call result compression and token management
 ├── context_management/         # Agent instructions, context injection, few-shot learning
@@ -82,7 +82,7 @@ cookbook/02_agents/
 | **REMOVE** `other/` | Dissolved. Files redistributed to `run_control/`, `events/`, or cut. |
 | **REMOVE** `agentic_search/` | Merged into `rag/`. Both directories cover RAG patterns. |
 | **RENAME** `custom_logging/` → `logging/` | Shorter, clearer name. |
-| **ADD** `_01_quickstart/` | Entry point for new users. Minimal examples: basic agent, agent with tools, agent with instructions. Gives users a clear "start here" when opening the folder. |
+| **ADD** `01_quickstart/` | Entry point for new users. Minimal examples: basic agent, agent with tools, agent with instructions. Gives users a clear "start here" when opening the folder. |
 | **ADD** `learning/` | Covers LearningMachine, a major agent feature with no cookbook example. |
 | **ADD** `reasoning/` | Covers extended reasoning, a major agent feature with only a trivial 19-line example buried in `async/`. |
 | **ADD** `run_control/` | Groups operational concerns: cancel, retry, debug, limits, metrics, serialization, concurrent execution. |
@@ -446,9 +446,9 @@ These agent features lack cookbook coverage:
 
 | Suggested File | Directory | Feature | Description |
 |----------------|-----------|---------|-------------|
-| `basic_agent.py` | `_01_quickstart/` | Getting Started | Minimal agent: create, run, print response. The simplest possible example |
-| `agent_with_tools.py` | `_01_quickstart/` | Tools Quickstart | Basic agent with a tool (e.g., WebSearch). Shows tool usage in 20 lines |
-| `agent_with_instructions.py` | `_01_quickstart/` | Instructions Quickstart | Agent with custom instructions showing personality/behavior control |
+| `basic_agent.py` | `01_quickstart/` | Getting Started | Minimal agent: create, run, print response. The simplest possible example |
+| `agent_with_tools.py` | `01_quickstart/` | Tools Quickstart | Basic agent with a tool (e.g., WebSearch). Shows tool usage in 20 lines |
+| `agent_with_instructions.py` | `01_quickstart/` | Instructions Quickstart | Agent with custom instructions showing personality/behavior control |
 | `learning_machine.py` | `learning/` | LearningMachine | Demonstrate the unified learning system: agent learns from outcomes, retrieves learnings in context, continuous improvement |
 | `basic_reasoning.py` | `reasoning/` | Extended Reasoning | Demonstrate step-by-step reasoning with configurable min/max steps, show_full_reasoning, and reasoning model selection |
 | `agent_serialization.py` | `run_control/` | Agent save/load | Demonstrate `to_dict()`, `from_dict()`, `save()`, `load()` for agent persistence and configuration sharing |
@@ -517,42 +517,35 @@ Based on `cookbook/STYLE_GUIDE.md` and the best examples found during review.
 =============================
 
 Demonstrates <what this file teaches> using Agno's <specific API/feature>.
-
-Key concepts:
-- <concept 1>
-- <concept 2>
 """
+
+from agno.agent import Agent
+from agno.models.openai import OpenAIResponses
 
 # ---------------------------------------------------------------------------
 # Setup
 # ---------------------------------------------------------------------------
-
-from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+agent_db = SqliteDb(db_file="tmp/agents.db")
 
 # ---------------------------------------------------------------------------
 # Agent Instructions
 # ---------------------------------------------------------------------------
-
-instructions = [
-    "You are a helpful assistant.",
-    "Respond concisely and accurately.",
-]
+instructions = """\
+You are a helpful assistant.\
+"""
 
 # ---------------------------------------------------------------------------
 # Create Agent
 # ---------------------------------------------------------------------------
-
 agent = Agent(
     name="Example Agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.2"),
     instructions=instructions,
 )
 
 # ---------------------------------------------------------------------------
 # Run Agent
 # ---------------------------------------------------------------------------
-
 if __name__ == "__main__":
     # Sync usage
     agent.print_response("What is the capital of France?", stream=True)
