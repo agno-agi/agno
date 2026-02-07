@@ -10,6 +10,7 @@ from agno.exceptions import InputCheckError
 from agno.guardrails import PromptInjectionGuardrail
 from agno.models.openai import OpenAIChat
 
+
 # ---------------------------------------------------------------------------
 # Create Agent
 # ---------------------------------------------------------------------------

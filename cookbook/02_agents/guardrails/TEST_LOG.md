@@ -1,43 +1,63 @@
-# Test Log: guardrails
+# TEST_LOG
+Generated: 2026-02-07 23:33:34
 
-> Tests not yet run. Run each file and update this log.
+### check_cookbook_pattern.py
+
+**Status:** PASS
+
+**Description:** Ran `.venvs/demo/bin/python cookbook/scripts/check_cookbook_pattern.py --base-dir cookbook/02_agents/guardrails`.
+
+**Result:** Structure validation passed with no violations (exit code 0).
+
+---
 
 ### custom_guardrail.py
 
-**Status:** PENDING
+**Status:** PASS
 
-**Description:** Demonstrates custom guardrail.
+**Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/guardrails/custom_guardrail.py`.
+
+**Result:** Example completed successfully. (exit code 0).
 
 ---
 
 ### openai_moderation.py
 
-**Status:** PENDING
+**Status:** PASS
 
-**Description:** Demonstrates openai moderation.
+**Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/guardrails/openai_moderation.py`.
+
+**Result:** Example completed successfully. (exit code 0).
 
 ---
 
 ### output_guardrail.py
 
-**Status:** PENDING
+**Status:** PASS
 
-**Description:** Demonstrates output guardrail.
+**Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/guardrails/output_guardrail.py`.
+
+**Result:** Example completed successfully. (exit code 0).
 
 ---
 
 ### pii_detection.py
 
-**Status:** PENDING
+**Status:** PASS
 
-**Description:** Demonstrates pii detection.
+**Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/guardrails/pii_detection.py`.
+
+**Result:** Example completed successfully. (exit code 0).
 
 ---
 
 ### prompt_injection.py
 
-**Status:** PENDING
+**Status:** PASS
 
-**Description:** Demonstrates prompt injection.
+**Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/guardrails/prompt_injection.py`.
+
+**Result:** Example completed successfully. (exit code 0).
 
 ---
+

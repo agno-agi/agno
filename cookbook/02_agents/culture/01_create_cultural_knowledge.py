@@ -7,7 +7,7 @@ Create cultural knowledge to use with your Agents.
 
 from agno.culture.manager import CultureManager
 from agno.db.sqlite import SqliteDb
-from agno.models.anthropic import Claude
+from agno.models.openai import OpenAIResponses
 from rich.pretty import pprint
 
 # ---------------------------------------------------------------------------
@@ -22,7 +22,7 @@ db = SqliteDb(db_file="tmp/demo.db")
 # that your Agents can access for consistent reasoning and behavior.
 culture_manager = CultureManager(
     db=db,
-    model=Claude(id="claude-sonnet-4-5"),
+    model=OpenAIResponses(id="gpt-5.2"),
 )
 
 # ---------------------------------------------------------------------------
