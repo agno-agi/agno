@@ -2110,6 +2110,7 @@ class Model(ABC):
                         tool_args=fc.arguments,
                         requires_confirmation=True,
                         external_execution_silent=fc.function.external_execution_silent,
+                        requires_approval=fc.function.requires_approval,
                     )
                 )
 
@@ -2130,6 +2131,7 @@ class Model(ABC):
                         requires_user_input=True,
                         user_input_schema=user_input_schema,
                         external_execution_silent=fc.function.external_execution_silent,
+                        requires_approval=fc.function.requires_approval,
                     )
                 )
 
@@ -2179,6 +2181,7 @@ class Model(ABC):
                         tool_args=fc.arguments,
                         external_execution_required=True,
                         external_execution_silent=fc.function.external_execution_silent,
+                        requires_approval=fc.function.requires_approval,
                     )
                 )
 
@@ -2274,6 +2277,7 @@ class Model(ABC):
                         tool_args=fc.arguments,
                         requires_confirmation=True,
                         external_execution_silent=fc.function.external_execution_silent,
+                        requires_approval=fc.function.requires_approval,
                     )
                 )
             # If the function requires user input, we yield a message to the user
@@ -2293,6 +2297,7 @@ class Model(ABC):
                         requires_user_input=True,
                         user_input_schema=user_input_schema,
                         external_execution_silent=fc.function.external_execution_silent,
+                        requires_approval=fc.function.requires_approval,
                     )
                 )
             # If the function is from the user control flow tools, we handle it here
@@ -2346,6 +2351,7 @@ class Model(ABC):
                         tool_args=fc.arguments,
                         external_execution_required=True,
                         external_execution_silent=fc.function.external_execution_silent,
+                        requires_approval=fc.function.requires_approval,
                     )
                 )
 
