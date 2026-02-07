@@ -1,35 +1,53 @@
-# Test Log: context_management
+# TEST_LOG
+Generated: 2026-02-07 23:33:34
 
-> Tests not yet run. Run each file and update this log.
+### check_cookbook_pattern.py
+
+**Status:** PASS
+
+**Description:** Ran `.venvs/demo/bin/python cookbook/scripts/check_cookbook_pattern.py --base-dir cookbook/02_agents/context_management`.
+
+**Result:** Structure validation passed with no violations (exit code 0).
+
+---
 
 ### few_shot_learning.py
 
-**Status:** PENDING
+**Status:** PASS
 
-**Description:** Demonstrates few shot learning.
+**Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/context_management/few_shot_learning.py`.
+
+**Result:** Example completed successfully. (exit code 0).
 
 ---
 
 ### filter_tool_calls_from_history.py
 
-**Status:** PENDING
+**Status:** PASS
 
-**Description:** Demonstrates filter tool calls from history.
+**Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/context_management/filter_tool_calls_from_history.py`.
+
+**Result:** Example completed successfully. (exit code 0).
 
 ---
 
 ### instructions.py
 
-**Status:** PENDING
+**Status:** PASS
 
-**Description:** Demonstrates instructions.
+**Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/context_management/instructions.py`.
+
+**Result:** Example completed successfully. (exit code 0).
 
 ---
 
 ### instructions_with_state.py
 
-**Status:** PENDING
+**Status:** PASS
 
-**Description:** Demonstrates instructions with state.
+**Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/context_management/instructions_with_state.py`.
+
+**Result:** Example completed successfully. (exit code 0).
 
 ---
+

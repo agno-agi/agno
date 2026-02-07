@@ -1,27 +1,43 @@
-# Test Log: context_compression
+# TEST_LOG
+Generated: 2026-02-07 23:33:34
 
-> Tests not yet run. Run each file and update this log.
+### check_cookbook_pattern.py
+
+**Status:** PASS
+
+**Description:** Ran `.venvs/demo/bin/python cookbook/scripts/check_cookbook_pattern.py --base-dir cookbook/02_agents/context_compression`.
+
+**Result:** Structure validation passed with no violations (exit code 0).
+
+---
 
 ### advanced_compression.py
 
-**Status:** PENDING
+**Status:** PASS
 
-**Description:** Demonstrates advanced compression.
+**Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/context_compression/advanced_compression.py`.
+
+**Result:** Example completed successfully. (exit code 0).
 
 ---
 
 ### compression_events.py
 
-**Status:** PENDING
+**Status:** PASS
 
-**Description:** Demonstrates compression events.
+**Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/context_compression/compression_events.py`.
+
+**Result:** Example completed successfully. (exit code 0).
 
 ---
 
 ### tool_call_compression.py
 
-**Status:** PENDING
+**Status:** FAIL
 
-**Description:** Demonstrates tool call compression.
+**Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/context_compression/tool_call_compression.py`.
+
+**Result:** Failed with exit code 142. Timed out after 240s
 
 ---
+
