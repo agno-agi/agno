@@ -1,5 +1,5 @@
 # TEST_LOG
-Generated: 2026-02-07 23:33:34
+Generated: 2026-02-07 23:53:42
 
 ### check_cookbook_pattern.py
 
@@ -7,7 +7,7 @@ Generated: 2026-02-07 23:33:34
 
 **Description:** Ran `.venvs/demo/bin/python cookbook/scripts/check_cookbook_pattern.py --base-dir cookbook/02_agents/rag`.
 
-**Result:** Structure validation passed with no violations (exit code 0).
+**Result:** Structure validation passed with no violations (checked 5 file(s)).
 
 ---
 
@@ -17,7 +17,7 @@ Generated: 2026-02-07 23:33:34
 
 **Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/rag/agentic_rag.py`.
 
-**Result:** Example completed successfully. (exit code 0).
+**Result:** Example completed successfully. (exit code 0, ~9.49s).
 
 ---
 
@@ -27,7 +27,7 @@ Generated: 2026-02-07 23:33:34
 
 **Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/rag/agentic_rag_with_reasoning.py`.
 
-**Result:** Failed with exit code 1. Missing dependency `cohere` in demo environment.
+**Result:** Failed with exit code 1. ImportError: `cohere` not installed. Please install using `pip install cohere`.
 
 ---
 
@@ -37,7 +37,7 @@ Generated: 2026-02-07 23:33:34
 
 **Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/rag/agentic_rag_with_reranking.py`.
 
-**Result:** Failed with exit code 1. Missing dependency `cohere` in demo environment.
+**Result:** Failed with exit code 1. ImportError: cohere not installed, please run pip install cohere
 
 ---
 
@@ -47,7 +47,7 @@ Generated: 2026-02-07 23:33:34
 
 **Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/rag/rag_custom_embeddings.py`.
 
-**Result:** Failed with exit code 1. Missing dependency `sentence_transformers` in demo environment.
+**Result:** Failed with exit code 1. ImportError: `sentence-transformers` not installed, please run `pip install sentence-transformers`
 
 ---
 
@@ -57,7 +57,6 @@ Generated: 2026-02-07 23:33:34
 
 **Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/rag/traditional_rag.py`.
 
-**Result:** Example completed successfully. (exit code 0).
+**Result:** Example completed successfully. (exit code 0, ~10.94s).
 
 ---
-
