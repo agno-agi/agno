@@ -6,11 +6,15 @@ This guide standardizes runnable cookbook `.py` examples.
 
 1. Module docstring at the top:
 - What this example demonstrates
+- Key concepts
+- Prompts or inputs to try
 
 2. Sectioned flow using banner comments:
-- Setup section
+- Config sections (storage, tools, knowledge, schemas) as needed
 - Instructions section
 - `Create ...` section
+- `Run ...` section
+- Optional `More Examples` section
 
 3. Main execution gate:
 - `if __name__ == "__main__":`
@@ -23,28 +27,26 @@ This guide standardizes runnable cookbook `.py` examples.
 ```python
 """
 <Title>
-=============================
-
 <What this demonstrates>
 """
 
-# ---------------------------------------------------------------------------
-# Setup
-# ---------------------------------------------------------------------------
+# ============================================================================
+# <Config / Setup>
+# ============================================================================
 
-# ---------------------------------------------------------------------------
+# ============================================================================
 # Agent Instructions
-# ---------------------------------------------------------------------------
+# ============================================================================
 instructions = """..."""
 
-# ---------------------------------------------------------------------------
-# Create Agent
-# ---------------------------------------------------------------------------
+# ============================================================================
+# Create the Agent
+# ============================================================================
 example_agent = Agent(...)
 
-# ---------------------------------------------------------------------------
-# Run Agent
-# ---------------------------------------------------------------------------
+# ============================================================================
+# Run the Agent
+# ============================================================================
 if __name__ == "__main__":
     example_agent.print_response("...", stream=True)
 ```
@@ -55,4 +57,10 @@ Run structure checks:
 
 ```bash
 .venvs/demo/bin/python cookbook/scripts/check_cookbook_pattern.py --base-dir cookbook/00_quickstart
+```
+
+Run metadata checks:
+
+```bash
+.venvs/demo/bin/python cookbook/scripts/audit_cookbook_metadata.py --scope direct
 ```

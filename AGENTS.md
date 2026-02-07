@@ -82,7 +82,7 @@ Each cookbook folder should have the following files:
 - `README.md` — The README for the cookbook.
 - `TEST_LOG.md` — Test results log.
 
-### Cookbook Python Structure Standard
+### Cookbook Python Structure Standard (v2.5)
 
 For runnable cookbook `.py` examples, follow `cookbook/STYLE_GUIDE.md`:
 - Module docstring at top
@@ -96,6 +96,9 @@ Validation commands:
 ```bash
 # Structure checker (currently enforced on quickstart)
 .venvs/demo/bin/python cookbook/scripts/check_cookbook_pattern.py --base-dir cookbook/00_quickstart
+
+# Metadata audit for README.md / TEST_LOG.md coverage
+.venvs/demo/bin/python cookbook/scripts/audit_cookbook_metadata.py --scope direct
 ```
 
 ### API Keys
@@ -107,6 +110,11 @@ direnv allow
 
 If `.envrc` does not exist, stop execution and let the user know.
 
+Non-interactive cookbook runs:
+
+```bash
+.venvs/demo/bin/python cookbook/scripts/cookbook_runner.py cookbook/<folder> --batch --python-bin .venvs/demo/bin/python
+```
 ### Testing Workflow
 
 **1. Before Testing**
