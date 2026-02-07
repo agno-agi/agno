@@ -520,7 +520,6 @@ def add_to_knowledge(agent: Agent, query: str, result: str) -> str:
     return "Successfully added to knowledge base"
 
 
-
 def get_previous_sessions_messages_function(
     agent: Agent, num_history_sessions: Optional[int] = 2, user_id: Optional[str] = None
 ) -> Callable:

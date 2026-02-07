@@ -237,7 +237,7 @@ def _run(
                 memory_future = team._start_memory_future(
                     run_messages=run_messages,
                     user_id=user_id,
-                    existing_future=None,
+                    existing_future=memory_future,
                 )
 
                 raise_if_cancelled(run_response.run_id)  # type: ignore
@@ -513,7 +513,7 @@ def _run_stream(
                 memory_future = team._start_memory_future(
                     run_messages=run_messages,
                     user_id=user_id,
-                    existing_future=None,
+                    existing_future=memory_future,
                 )
 
                 # Start the Run by yielding a RunStarted event
@@ -900,8 +900,10 @@ def run(
         metadata=metadata,
         output_schema=output_schema,
     )
-    # output_schema parameter takes priority, even if run_context was provided
+    # Apply resolved options to run_context (covers both new and caller-provided contexts)
     run_context.output_schema = output_schema
+    run_context.metadata = metadata
+    run_context.knowledge_filters = effective_filters
 
     # Resolve callable dependencies once before retry loop
     if run_context.dependencies is not None:
@@ -1771,8 +1773,10 @@ def arun(  # type: ignore
         metadata=metadata,
         output_schema=output_schema,
     )
-    # output_schema parameter takes priority, even if run_context was provided
+    # Apply resolved options to run_context (covers both new and caller-provided contexts)
     run_context.output_schema = output_schema
+    run_context.metadata = metadata
+    run_context.knowledge_filters = effective_filters
 
     # Configure the model for runs
     response_format: Optional[Union[Dict, Type[BaseModel]]] = (
