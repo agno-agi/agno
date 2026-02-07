@@ -107,6 +107,31 @@ direnv allow
 
 If `.envrc` does not exist, stop execution and let the user know.
 
+### Cookbook Python Structure Standard (v2.5)
+
+For runnable cookbook `.py` examples, follow `cookbook/STYLE_GUIDE.md`:
+- Module docstring at top
+- Section banner flow (`# ============================================================================`)
+- `Create ...` section before `Run ...` section
+- `if __name__ == "__main__":` main execution gate
+- No emojis in Python examples or print output
+
+Validation commands:
+
+```bash
+# Structure checker (currently enforced on quickstart)
+python3 cookbook/scripts/check_cookbook_pattern.py --base-dir cookbook/00_quickstart
+
+# Metadata audit for README.md / TEST_LOG.md coverage
+python3 cookbook/scripts/audit_cookbook_metadata.py --scope direct
+```
+
+Non-interactive cookbook runs:
+
+```bash
+python3 cookbook/scripts/cookbook_runner.py cookbook/<folder> --batch --python-bin .venvs/demo/bin/python
+```
+
 ### Testing Workflow
 
 **1. Before Testing**

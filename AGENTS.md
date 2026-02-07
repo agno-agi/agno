@@ -56,6 +56,8 @@ This project uses two virtual environments:
 
 Apart from implementing features, your most important task will be to test and maintain the cookbooks in `cookbook/` directory.
 
+> See `cookbook/08_learning/` for the golden standard.
+
 ### Quick Reference
 
 **Test Environment:**
@@ -82,7 +84,7 @@ Each cookbook folder should have the following files:
 - `README.md` — The README for the cookbook.
 - `TEST_LOG.md` — Test results log.
 
-### Cookbook Python Structure Standard
+### Cookbook Python Structure Standard (v2.5)
 
 For runnable cookbook `.py` examples, follow `cookbook/STYLE_GUIDE.md`:
 - Module docstring at top
@@ -95,17 +97,17 @@ Validation commands:
 
 ```bash
 # Structure checker (currently enforced on quickstart)
-.venvs/demo/bin/python cookbook/scripts/check_cookbook_pattern.py --base-dir cookbook/00_quickstart
+python3 cookbook/scripts/check_cookbook_pattern.py --base-dir cookbook/00_quickstart
+
+# Metadata audit for README.md / TEST_LOG.md coverage
+python3 cookbook/scripts/audit_cookbook_metadata.py --scope direct
 ```
 
-### API Keys
+Non-interactive cookbook runs:
 
-API keys like `OPENAI_API_KEY` are available via `direnv`. To load them, run:
 ```bash
-direnv allow
+python3 cookbook/scripts/cookbook_runner.py cookbook/<folder> --batch --python-bin .venvs/demo/bin/python
 ```
-
-If `.envrc` does not exist, stop execution and let the user know.
 
 ### Testing Workflow
 
@@ -142,6 +144,31 @@ Format:
 
 ---
 ```
+
+---
+
+## Design Documents
+
+The `specs/` folder contains design documents for ongoing initiatives.
+
+**Always read the design document first**.
+
+Each spec follows this structure:
+```
+specs/agno/<spec-name>/
+├── design.md           # The specification
+├── implementation.md   # Current status and what's done
+├── prompts.md          # Prompts used for testing
+└── notes.md            # Notes on the design and implementation
+```
+
+**Workflow:**
+1. Read `design.md` to understand what we're building
+2. Check `implementation.md` for current status
+3. Find the relevant code in `libs/agno`
+4. Create/update cookbooks to test patterns
+
+---
 
 ## Code Locations
 
@@ -219,8 +246,10 @@ Both scripts must pass with no errors before code review.
 
 **PR Title Format:**
 
-PR titles must follow one this format:
+PR titles must follow one of these formats:
+- `[type] description` — e.g., `[feat] add workflow serialization`
 - `type: description` — e.g., `feat: add workflow serialization`
+- `type-kebab-case` — e.g., `feat-workflow-serialization`
 
 Valid types: `feat`, `fix`, `cookbook`, `test`, `refactor`, `chore`, `style`, `revert`, `release`
 
