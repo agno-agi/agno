@@ -2201,7 +2201,6 @@ def continue_run_dispatch(
 
     if stream_events is None:
         stream_events = False if team.stream_events is None else team.stream_events
-
     log_debug(f"Team Run Continue: {run_response.run_id}", center=True, symbol="*")
 
     # Route requirements to member agents
