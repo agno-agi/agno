@@ -520,22 +520,6 @@ def add_to_knowledge(agent: Agent, query: str, result: str) -> str:
     return "Successfully added to knowledge base"
 
 
-def make_add_to_knowledge_entrypoint(agent: Agent) -> Callable:
-    """Create a closure that binds agent to the add_to_knowledge function."""
-
-    def _entrypoint(query: str, result: str) -> str:
-        """Use this function to add information to the knowledge base for future use.
-
-        Args:
-            query (str): The query or topic to add.
-            result (str): The actual content or information to store.
-        Returns:
-            str: A string indicating the status of the addition.
-        """
-        return add_to_knowledge(agent, query, result)
-
-    return _entrypoint
-
 
 def get_previous_sessions_messages_function(
     agent: Agent, num_history_sessions: Optional[int] = 2, user_id: Optional[str] = None

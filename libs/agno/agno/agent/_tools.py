@@ -144,7 +144,7 @@ def get_tools(
         )
 
     if agent.knowledge is not None and agent.update_knowledge:
-        agent_tools.append(_default_tools.make_add_to_knowledge_entrypoint(agent))
+        agent_tools.append(agent.add_to_knowledge)
 
     # Add tools for accessing skills
     if agent.skills is not None:
@@ -275,7 +275,7 @@ async def aget_tools(
         )
 
     if agent.knowledge is not None and agent.update_knowledge:
-        agent_tools.append(_default_tools.make_add_to_knowledge_entrypoint(agent))
+        agent_tools.append(agent.add_to_knowledge)
 
     # Add tools for accessing skills
     if agent.skills is not None:
