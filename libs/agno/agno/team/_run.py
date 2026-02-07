@@ -2191,6 +2191,17 @@ def continue_run_dispatch(
     run_response = cast(TeamRunOutput, run_response)
     run_response.requirements = _normalize_requirements_payload(run_response.requirements)
 
+    # Use stream override value when necessary
+    if stream is None:
+        stream = False if team.stream is None else team.stream
+
+    # Can't stream events if streaming is disabled
+    if stream is False:
+        stream_events = False
+
+    if stream_events is None:
+        stream_events = False if team.stream_events is None else team.stream_events
+
     log_debug(f"Team Run Continue: {run_response.run_id}", center=True, symbol="*")
 
     # Route requirements to member agents
