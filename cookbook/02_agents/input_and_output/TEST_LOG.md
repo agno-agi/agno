@@ -1,43 +1,63 @@
-# Test Log: input_and_output
+# TEST_LOG
+Generated: 2026-02-07 23:33:34
 
-> Tests not yet run. Run each file and update this log.
+### check_cookbook_pattern.py
+
+**Status:** PASS
+
+**Description:** Ran `.venvs/demo/bin/python cookbook/scripts/check_cookbook_pattern.py --base-dir cookbook/02_agents/input_and_output`.
+
+**Result:** Structure validation passed with no violations (exit code 0).
+
+---
 
 ### input_formats.py
 
-**Status:** PENDING
+**Status:** PASS
 
-**Description:** Demonstrates input formats.
+**Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/input_and_output/input_formats.py`.
+
+**Result:** Example completed successfully. (exit code 0).
 
 ---
 
 ### input_schema.py
 
-**Status:** PENDING
+**Status:** PASS
 
-**Description:** Demonstrates input schema.
+**Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/input_and_output/input_schema.py`.
+
+**Result:** Example completed successfully. (exit code 0).
 
 ---
 
 ### output_schema.py
 
-**Status:** PENDING
+**Status:** PASS
 
-**Description:** Demonstrates output schema.
+**Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/input_and_output/output_schema.py`.
+
+**Result:** Example completed successfully. (exit code 0).
 
 ---
 
 ### parser_model.py
 
-**Status:** PENDING
+**Status:** PASS
 
-**Description:** Demonstrates parser model.
+**Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/input_and_output/parser_model.py`.
+
+**Result:** Example completed successfully. (exit code 0).
 
 ---
 
 ### response_as_variable.py
 
-**Status:** PENDING
+**Status:** FAIL
 
-**Description:** Demonstrates response as variable.
+**Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/input_and_output/response_as_variable.py`.
+
+**Result:** Failed with exit code 1. Toolkit API mismatch: unexpected keyword argument `stock_price`.
 
 ---
+
