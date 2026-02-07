@@ -18,9 +18,9 @@
 
 ### Key Problems
 
-1. **Sync/async duplication.** Eight confirmed duplication pairs across `async_flows/` ↔ `01_quickstart/`, `streaming/`, `structured_input_output/`, `reasoning/`, and `context_compression/`. These should be consolidated into single files showing both patterns.
+1. **Sync/async duplication.** Eight confirmed duplication pairs across `async_flows/` ↔ `basic_flows/`, `streaming/`, `structured_input_output/`, `reasoning/`, and `context_compression/`. These should be consolidated into single files showing both patterns.
 
-2. **Zero section banner compliance.** No file uses the `# ---------------------------------------------------------------------------` format required by STYLE_GUIDE.md. Docstring and main gate coverage are much better than `02_agents/` but still incomplete.
+2. **Zero section banner compliance.** No file uses the `# ============================================================================` format required by STYLE_GUIDE.md. Docstring and main gate coverage are much better than `02_agents/` but still incomplete.
 
 3. **Catch-all directory.** `other/` (10 files) mixes input formats, CLI apps, cancellation, retries, model inheritance, and few-shot learning — unrelated concerns that belong in their respective feature directories.
 
@@ -48,11 +48,11 @@
 
 ## 2. Proposed Directory Structure
 
-Remove `async_flows/` (merge into `01_quickstart/`) and `other/` (dissolve and redistribute). Add `run_control/`.
+Remove `async_flows/` (merge into `basic_flows/`) and `other/` (dissolve and redistribute). Add `run_control/`.
 
 ```
 cookbook/03_teams/
-├── 01_quickstart/                # Core team coordination: modes, history, caching (absorbs async_flows/)
+├── basic_flows/                # Core team coordination: modes, history, caching (absorbs async_flows/)
 ├── context_compression/        # Tool call result compression and token management
 ├── context_management/         # Instructions, context filtering, few-shot learning
 ├── dependencies/               # Runtime dependency injection for teams and members
@@ -78,7 +78,7 @@ cookbook/03_teams/
 
 | Change | Details |
 |--------|---------|
-| **REMOVE** `async_flows/` | Dissolved. 3 files merge into their sync counterparts in `01_quickstart/`. 1 unique file (concurrent members) moves to `01_quickstart/`. |
+| **REMOVE** `async_flows/` | Dissolved. 3 files merge into their sync counterparts in `basic_flows/`. 1 unique file (concurrent members) moves to `basic_flows/`. |
 | **REMOVE** `other/` | Dissolved. Files redistributed: few_shot→context_management, input formats→structured_input_output, cancel/retries→run_control, model_inheritance→run_control. CLI app and model_string cut. |
 | **ADD** `run_control/` | Groups operational concerns from `other/`: cancellation, retries, model configuration. |
 
@@ -92,31 +92,31 @@ Style fixes needed on all files: add section banners. Many also need docstring a
 
 ---
 
-### `async_flows/` → dissolve into `01_quickstart/`
+### `async_flows/` → dissolve into `basic_flows/`
 
 | File | Disposition | New Name/Location | Rationale |
 |------|------------|-------------------|-----------|
-| `01_async_coordination_team.py` | **MERGE INTO** `01_quickstart/01_basic_coordination.py` | — | Async variant of basic coordination. Merge sync+async into one file |
-| `02_async_delegate_to_all_members.py` | **MERGE INTO** `01_quickstart/03_delegate_to_all_members_cooperation.py` | — | Async variant of delegate-to-all. Merge into sync counterpart |
-| `03_async_respond_directly.py` | **MERGE INTO** `01_quickstart/02_respond_directly_router_team.py` | — | Async variant of router team. Merge into sync counterpart |
-| `04_concurrent_member_agents.py` | **KEEP + MOVE + FIX** | `01_quickstart/08_concurrent_member_agents.py` | Unique: concurrent member execution with event streaming and timing. No sync counterpart |
+| `01_async_coordination_team.py` | **MERGE INTO** `basic_flows/01_basic_coordination.py` | — | Async variant of basic coordination. Merge sync+async into one file |
+| `02_async_delegate_to_all_members.py` | **MERGE INTO** `basic_flows/03_delegate_to_all_members_cooperation.py` | — | Async variant of delegate-to-all. Merge into sync counterpart |
+| `03_async_respond_directly.py` | **MERGE INTO** `basic_flows/02_respond_directly_router_team.py` | — | Async variant of router team. Merge into sync counterpart |
+| `04_concurrent_member_agents.py` | **KEEP + MOVE + FIX** | `basic_flows/08_concurrent_member_agents.py` | Unique: concurrent member execution with event streaming and timing. No sync counterpart |
 
 ---
 
-### `01_quickstart/`
+### `basic_flows/`
 
 | File | Disposition | New Name/Location | Rationale |
 |------|------------|-------------------|-----------|
-| `01_basic_coordination.py` | **REWRITE** | `01_quickstart/01_basic_coordination.py` | Absorb async variant from `async_flows/01`. Add section banners, main gate |
-| `02_respond_directly_router_team.py` | **REWRITE** | `01_quickstart/02_respond_directly_router_team.py` | Absorb async variant from `async_flows/03`. Add banners, main gate |
-| `03_delegate_to_all_members_cooperation.py` | **REWRITE** | `01_quickstart/03_delegate_to_all_members.py` | Absorb async variant from `async_flows/02`. Shorten name. Add banners, main gate |
-| `04_respond_directly_with_history.py` | **KEEP + FIX** | `01_quickstart/04_respond_directly_with_history.py` | Unique: respond_directly + team history. Add docstring, banners, main gate |
-| `05_team_history.py` | **KEEP + FIX** | `01_quickstart/05_team_history.py` | Team-level shared history. Add docstring, banners, main gate |
-| `06_history_of_members.py` | **KEEP + FIX** | `01_quickstart/06_history_of_members.py` | Unique: member-specific history. Add docstring, banners, main gate |
-| `07_share_member_interactions.py` | **KEEP + FIX** | `01_quickstart/07_share_member_interactions.py` | Unique: share_member_interactions flag. Add docstring, banners, main gate |
-| `caching/cache_team_response.py` | **KEEP + FIX** | `01_quickstart/caching/cache_team_response.py` | Unique: two-layer caching. Add banners, main gate |
+| `01_basic_coordination.py` | **REWRITE** | `basic_flows/01_basic_coordination.py` | Absorb async variant from `async_flows/01`. Add section banners, main gate |
+| `02_respond_directly_router_team.py` | **REWRITE** | `basic_flows/02_respond_directly_router_team.py` | Absorb async variant from `async_flows/03`. Add banners, main gate |
+| `03_delegate_to_all_members_cooperation.py` | **REWRITE** | `basic_flows/03_delegate_to_all_members.py` | Absorb async variant from `async_flows/02`. Shorten name. Add banners, main gate |
+| `04_respond_directly_with_history.py` | **KEEP + FIX** | `basic_flows/04_respond_directly_with_history.py` | Unique: respond_directly + team history. Add docstring, banners, main gate |
+| `05_team_history.py` | **KEEP + FIX** | `basic_flows/05_team_history.py` | Team-level shared history. Add docstring, banners, main gate |
+| `06_history_of_members.py` | **KEEP + FIX** | `basic_flows/06_history_of_members.py` | Unique: member-specific history. Add docstring, banners, main gate |
+| `07_share_member_interactions.py` | **KEEP + FIX** | `basic_flows/07_share_member_interactions.py` | Unique: share_member_interactions flag. Add docstring, banners, main gate |
+| `caching/cache_team_response.py` | **KEEP + FIX** | `basic_flows/caching/cache_team_response.py` | Unique: two-layer caching. Add banners, main gate |
 
-**Result: 8 01_quickstart + 4 async_flows = 12 total → 9 files**
+**Result: 8 basic_flows + 4 async_flows = 12 total → 9 files**
 
 ---
 
@@ -395,11 +395,11 @@ Based on the team capabilities analysis, these features lack cookbook examples:
 
 | Suggested File | Directory | Feature | Description |
 |----------------|-----------|---------|-------------|
-| `task_mode.py` | `01_quickstart/` | `mode=TeamMode.tasks` | Demonstrate autonomous task-based execution where team decomposes goals into a shared task list with dependencies |
-| `broadcast_mode.py` | `01_quickstart/` | `mode=TeamMode.broadcast` | Demonstrate broadcast mode where the same task is delegated to all members simultaneously |
+| `task_mode.py` | `basic_flows/` | `mode=TeamMode.tasks` | Demonstrate autonomous task-based execution where team decomposes goals into a shared task list with dependencies |
+| `broadcast_mode.py` | `basic_flows/` | `mode=TeamMode.broadcast` | Demonstrate broadcast mode where the same task is delegated to all members simultaneously |
 | `learning_machine.py` | `memory/` | Learning | Demonstrate team-level learning from outcomes via LearningMachine |
 | `remote_team.py` | `run_control/` | RemoteTeam | Demonstrate executing teams remotely via AgentOS or A2A protocol |
-| `nested_teams.py` | `01_quickstart/` | Teams of teams | Demonstrate team hierarchy: teams containing other teams as members |
+| `nested_teams.py` | `basic_flows/` | Teams of teams | Demonstrate team hierarchy: teams containing other teams as members |
 
 ---
 
@@ -409,7 +409,7 @@ Based on the team capabilities analysis, these features lack cookbook examples:
 |--------------|-----------|-------------|
 | `03_teams/` (root) | EXISTS | **MISSING** |
 | `async_flows/` | EXISTS | **MISSING** |
-| `01_quickstart/` | EXISTS | **MISSING** |
+| `basic_flows/` | EXISTS | **MISSING** |
 | `context_compression/` | **MISSING** | **MISSING** |
 | `context_management/` | **MISSING** | **MISSING** |
 | `dependencies/` | EXISTS | **MISSING** |
@@ -436,7 +436,7 @@ Based on the team capabilities analysis, these features lack cookbook examples:
 
 ## 6. Recommended Cookbook Template
 
-Same STYLE_GUIDE.md as agents, adapted for teams (Create Members → Create Team → Run Team).
+Same template as `02_agents/RESTRUCTURE_PLAN.md` — teams follow the same STYLE_GUIDE.md.
 
 ```python
 """
@@ -444,39 +444,50 @@ Same STYLE_GUIDE.md as agents, adapted for teams (Create Members → Create Team
 =============================
 
 Demonstrates <what this file teaches> using Agno Teams.
+
+Key concepts:
+- <concept 1>
+- <concept 2>
 """
 
-from agno.agent import Agent
-from agno.models.openai import OpenAIResponses
-from agno.team import Team
+# ============================================================================
+# Setup
+# ============================================================================
 
-# ---------------------------------------------------------------------------
+from agno.agent import Agent
+from agno.team import Team
+from agno.models.openai import OpenAIChat
+
+# ============================================================================
 # Create Members
-# ---------------------------------------------------------------------------
+# ============================================================================
+
 researcher = Agent(
     name="Researcher",
-    model=OpenAIResponses(id="gpt-5.2"),
+    model=OpenAIChat(id="gpt-4o"),
     role="Research and gather information",
 )
 
 writer = Agent(
     name="Writer",
-    model=OpenAIResponses(id="gpt-5.2"),
+    model=OpenAIChat(id="gpt-4o"),
     role="Write clear summaries",
 )
 
-# ---------------------------------------------------------------------------
+# ============================================================================
 # Create Team
-# ---------------------------------------------------------------------------
+# ============================================================================
+
 team = Team(
     name="Research Team",
     members=[researcher, writer],
-    model=OpenAIResponses(id="gpt-5.2"),
+    model=OpenAIChat(id="gpt-4o"),
 )
 
-# ---------------------------------------------------------------------------
+# ============================================================================
 # Run Team
-# ---------------------------------------------------------------------------
+# ============================================================================
+
 if __name__ == "__main__":
     # Sync usage
     team.print_response("What are the latest trends in AI?", stream=True)
@@ -488,15 +499,14 @@ if __name__ == "__main__":
 
 ### Template Rules
 
-1. **Module docstring** — Title with `=====` underline, then what it demonstrates
-2. **Imports before first banner** — `from` imports go between the docstring and the first `# ---` banner
-3. **Section banners** — `# ---------------------------------------------------------------------------` above section name, no blank line between banner and content
-4. **Section flow** — Create Members → Create Team → Run Team (add Setup section if needed)
-5. **Main gate** — All runnable code inside `if __name__ == "__main__":`
-6. **No emoji** — No emoji characters anywhere
-7. **One feature** — Each file demonstrates exactly one team capability
-8. **Sync + async together** — Show both patterns in sections when relevant
-9. **Self-contained** — Each file independently runnable via `.venvs/demo/bin/python <path>`
+1. **Module docstring** — Title with `=====` underline, then what it demonstrates and key concepts
+2. **Section banners** — `# ============================================================================` with section name on next line
+3. **Section flow** — Setup → Create Members → Create Team → Run Team
+4. **Main gate** — All runnable code inside `if __name__ == "__main__":`
+5. **No emoji** — No emoji characters anywhere
+6. **One feature** — Each file demonstrates exactly one team capability
+7. **Sync + async together** — Show both patterns in sections when relevant
+8. **Self-contained** — Each file independently runnable via `.venvs/demo/bin/python <path>`
 
 ### Best Current Examples (reference)
 
