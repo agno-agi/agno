@@ -1,7 +1,11 @@
+import os
+
 import pytest
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
+
+pytestmark = pytest.mark.skipif(not os.getenv("OPENAI_API_KEY"), reason="OPENAI_API_KEY not set")
 
 
 @pytest.fixture
