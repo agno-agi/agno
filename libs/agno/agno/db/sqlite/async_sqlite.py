@@ -127,6 +127,18 @@ class AsyncSqliteDb(AsyncBaseDb):
         # Initialize database session factory
         self.async_session_factory = async_sessionmaker(bind=self.db_engine, expire_on_commit=False)
 
+        # Initialize table attributes for type checking
+        self.session_table: Optional[Table] = None
+        self.memory_table: Optional[Table] = None
+        self.metrics_table: Optional[Table] = None
+        self.eval_table: Optional[Table] = None
+        self.knowledge_table: Optional[Table] = None
+        self.culture_table: Optional[Table] = None
+        self.versions_table: Optional[Table] = None
+        self.traces_table: Optional[Table] = None
+        self.spans_table: Optional[Table] = None
+        self.learnings_table: Optional[Table] = None
+
     async def close(self) -> None:
         """Close database connections and dispose of the connection pool.
 
@@ -263,6 +275,8 @@ class AsyncSqliteDb(AsyncBaseDb):
 
     async def _get_table(self, table_type: str, create_table_if_not_found: Optional[bool] = False) -> Optional[Table]:
         if table_type == "sessions":
+            if self.session_table is not None:
+                return self.session_table
             self.session_table = await self._get_or_create_table(
                 table_name=self.session_table_name,
                 table_type=table_type,
@@ -271,6 +285,8 @@ class AsyncSqliteDb(AsyncBaseDb):
             return self.session_table
 
         elif table_type == "memories":
+            if self.memory_table is not None:
+                return self.memory_table
             self.memory_table = await self._get_or_create_table(
                 table_name=self.memory_table_name,
                 table_type="memories",
@@ -279,6 +295,8 @@ class AsyncSqliteDb(AsyncBaseDb):
             return self.memory_table
 
         elif table_type == "metrics":
+            if self.metrics_table is not None:
+                return self.metrics_table
             self.metrics_table = await self._get_or_create_table(
                 table_name=self.metrics_table_name,
                 table_type="metrics",
@@ -287,6 +305,8 @@ class AsyncSqliteDb(AsyncBaseDb):
             return self.metrics_table
 
         elif table_type == "evals":
+            if self.eval_table is not None:
+                return self.eval_table
             self.eval_table = await self._get_or_create_table(
                 table_name=self.eval_table_name,
                 table_type="evals",
@@ -295,6 +315,8 @@ class AsyncSqliteDb(AsyncBaseDb):
             return self.eval_table
 
         elif table_type == "knowledge":
+            if self.knowledge_table is not None:
+                return self.knowledge_table
             self.knowledge_table = await self._get_or_create_table(
                 table_name=self.knowledge_table_name,
                 table_type="knowledge",
@@ -303,6 +325,8 @@ class AsyncSqliteDb(AsyncBaseDb):
             return self.knowledge_table
 
         elif table_type == "culture":
+            if self.culture_table is not None:
+                return self.culture_table
             self.culture_table = await self._get_or_create_table(
                 table_name=self.culture_table_name,
                 table_type="culture",
@@ -311,6 +335,8 @@ class AsyncSqliteDb(AsyncBaseDb):
             return self.culture_table
 
         elif table_type == "versions":
+            if self.versions_table is not None:
+                return self.versions_table
             self.versions_table = await self._get_or_create_table(
                 table_name=self.versions_table_name,
                 table_type="versions",
@@ -319,6 +345,8 @@ class AsyncSqliteDb(AsyncBaseDb):
             return self.versions_table
 
         elif table_type == "traces":
+            if self.traces_table is not None:
+                return self.traces_table
             self.traces_table = await self._get_or_create_table(
                 table_name=self.trace_table_name,
                 table_type="traces",
@@ -327,6 +355,8 @@ class AsyncSqliteDb(AsyncBaseDb):
             return self.traces_table
 
         elif table_type == "spans":
+            if self.spans_table is not None:
+                return self.spans_table
             # Ensure traces table exists first (spans has FK to traces)
             if create_table_if_not_found:
                 await self._get_table(table_type="traces", create_table_if_not_found=True)
@@ -338,6 +368,8 @@ class AsyncSqliteDb(AsyncBaseDb):
             return self.spans_table
 
         elif table_type == "learnings":
+            if self.learnings_table is not None:
+                return self.learnings_table
             self.learnings_table = await self._get_or_create_table(
                 table_name=self.learnings_table_name,
                 table_type="learnings",
