@@ -359,6 +359,7 @@ def _get_task_management_tools(
             yield f"Task with ID '{task_id}' not found."
             return
 
+        result = team._find_member_by_id(member_id, run_context=run_context)
         # Guard: only pending or in_progress tasks can be executed
         if task.status not in (TaskStatus.pending, TaskStatus.in_progress):
             yield f"Task [{task_id}] is {task.status.value} and cannot be executed."
