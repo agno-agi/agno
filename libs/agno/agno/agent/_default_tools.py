@@ -243,11 +243,11 @@ def get_chat_history_function(agent: Agent, session: AgentSession) -> Callable:
         if len(all_chats) == 0:
             return ""
 
-        for chat in all_chats[::-1]:  # type: ignore
-            history.insert(0, chat.to_dict())  # type: ignore
+        for chat in all_chats:  # type: ignore
+            history.append(chat.to_dict())  # type: ignore
 
         if num_chats is not None:
-            history = history[:num_chats]
+            history = history[-num_chats:]
 
         return json.dumps(history)
 
@@ -562,7 +562,7 @@ def get_previous_sessions_messages_function(
         import json
 
         if agent.db is None:
-            return "Previous session messages not available"
+            return json.dumps([])
 
         agent.db = cast(BaseDb, agent.db)
 
@@ -592,7 +592,6 @@ def get_previous_sessions_messages_function(
                                     user_content = last_user.content
                                     assistant_content = msg.content
                                     if user_content is None or assistant_content is None:
-                                        last_user = None
                                         continue
 
                                     msg_pair_id = f"{user_content}:{assistant_content}"
@@ -607,7 +606,7 @@ def get_previous_sessions_messages_function(
                                 last_user = None
                                 continue
 
-        return json.dumps([msg.to_dict() for msg in all_messages]) if all_messages else "No history found"
+        return json.dumps([msg.to_dict() for msg in all_messages]) if all_messages else json.dumps([])
 
     return get_previous_session_messages
 
@@ -637,7 +636,7 @@ async def aget_previous_sessions_messages_function(
         import json
 
         if agent.db is None:
-            return "Previous session messages not available"
+            return json.dumps([])
 
         if _init.has_async_db(agent):
             selected_sessions = await agent.db.get_sessions(  # type: ignore
@@ -674,7 +673,6 @@ async def aget_previous_sessions_messages_function(
                                     user_content = last_user.content
                                     assistant_content = msg.content
                                     if user_content is None or assistant_content is None:
-                                        last_user = None
                                         continue
 
                                     msg_pair_id = f"{user_content}:{assistant_content}"
@@ -689,6 +687,6 @@ async def aget_previous_sessions_messages_function(
                                 last_user = None
                                 continue
 
-        return json.dumps([msg.to_dict() for msg in all_messages]) if all_messages else "No history found"
+        return json.dumps([msg.to_dict() for msg in all_messages]) if all_messages else json.dumps([])
 
     return Function.from_callable(aget_previous_session_messages, name="get_previous_session_messages")
