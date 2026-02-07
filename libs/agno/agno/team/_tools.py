@@ -784,7 +784,9 @@ def _find_member_by_id(team: "Team", member_id: str) -> Optional[Tuple[int, Unio
         if isinstance(member, Team):
             result = member._find_member_by_id(member_id)
             if result is not None:
-                return result
+                # Return the top-level subteam member so callers route
+                # through the subteam's own continue_run path.
+                return i, member
 
     return None
 
