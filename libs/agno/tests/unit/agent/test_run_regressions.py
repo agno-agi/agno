@@ -1,11 +1,13 @@
+import inspect
 from typing import Any, Optional
 
 import pytest
 
 from agno.agent import _run
 from agno.agent.agent import Agent
+from agno.db.base import SessionType
 from agno.run import RunContext
-from agno.run.agent import RunErrorEvent
+from agno.run.agent import RunErrorEvent, RunOutput
 from agno.run.base import RunStatus
 from agno.run.cancel import (
     cancel_run,
@@ -16,6 +18,7 @@ from agno.run.cancel import (
     set_cancellation_manager,
 )
 from agno.run.cancellation_management.in_memory_cancellation_manager import InMemoryRunCancellationManager
+from agno.run.messages import RunMessages
 from agno.session import AgentSession
 
 
@@ -197,3 +200,144 @@ async def test_acontinue_run_stream_impl_yields_error_event_without_attribute_er
     assert events[0].run_id == run_id
     assert events[0].content is not None
     assert "No runs found for run ID missing-stream-run" in events[0].content
+
+
+@pytest.mark.asyncio
+async def test_arun_stream_impl_cleans_up_registered_run_on_session_read_failure(monkeypatch: pytest.MonkeyPatch):
+    agent = Agent(name="test-agent")
+    run_id = "arun-stream-session-fail"
+
+    async def fail_aread_or_create_session(session_id: str, user_id: Optional[str] = None):
+        raise RuntimeError("session read failed")
+
+    async def fake_disconnect_mcp_tools():
+        return None
+
+    monkeypatch.setattr(agent, "_aread_or_create_session", fail_aread_or_create_session)
+    monkeypatch.setattr(agent, "_disconnect_connectable_tools", lambda: None)
+    monkeypatch.setattr(agent, "_disconnect_mcp_tools", fake_disconnect_mcp_tools)
+
+    run_context = RunContext(run_id=run_id, session_id="session-1", session_state={})
+    run_response = RunOutput(run_id=run_id)
+
+    response_stream = _run.arun_stream_impl(
+        agent=agent,
+        run_response=run_response,
+        run_context=run_context,
+        session_id="session-1",
+    )
+
+    with pytest.raises(RuntimeError, match="session read failed"):
+        await response_stream.__anext__()
+
+    assert run_id not in get_active_runs()
+
+
+@pytest.mark.asyncio
+async def test_arun_impl_preserves_original_error_when_session_read_fails(monkeypatch: pytest.MonkeyPatch):
+    agent = Agent(name="test-agent")
+    run_id = "arun-session-fail"
+    cleanup_calls = []
+
+    async def fail_aread_or_create_session(session_id: str, user_id: Optional[str] = None):
+        raise RuntimeError("session read failed")
+
+    async def fake_acleanup_and_store(**kwargs: Any):
+        cleanup_calls.append(kwargs)
+        return None
+
+    async def fake_disconnect_mcp_tools():
+        return None
+
+    monkeypatch.setattr(agent, "_aread_or_create_session", fail_aread_or_create_session)
+    monkeypatch.setattr(agent, "_acleanup_and_store", fake_acleanup_and_store)
+    monkeypatch.setattr(agent, "_disconnect_connectable_tools", lambda: None)
+    monkeypatch.setattr(agent, "_disconnect_mcp_tools", fake_disconnect_mcp_tools)
+
+    run_context = RunContext(run_id=run_id, session_id="session-1", session_state={})
+    run_response = RunOutput(run_id=run_id)
+
+    response = await _run.arun_impl(
+        agent=agent,
+        run_response=run_response,
+        run_context=run_context,
+        session_id="session-1",
+    )
+
+    assert response.status == RunStatus.error
+    assert response.content == "session read failed"
+    assert cleanup_calls == []
+    assert run_id not in get_active_runs()
+
+
+@pytest.mark.asyncio
+async def test_acontinue_run_impl_preserves_original_error_when_session_read_fails(monkeypatch: pytest.MonkeyPatch):
+    agent = Agent(name="test-agent")
+    run_id = "acontinue-session-fail"
+    cleanup_calls = []
+
+    async def fail_aread_or_create_session(session_id: str, user_id: Optional[str] = None):
+        raise RuntimeError("session read failed")
+
+    async def fake_acleanup_and_store(**kwargs: Any):
+        cleanup_calls.append(kwargs)
+        return None
+
+    async def fake_disconnect_mcp_tools():
+        return None
+
+    monkeypatch.setattr(agent, "_aread_or_create_session", fail_aread_or_create_session)
+    monkeypatch.setattr(agent, "_acleanup_and_store", fake_acleanup_and_store)
+    monkeypatch.setattr(agent, "_disconnect_connectable_tools", lambda: None)
+    monkeypatch.setattr(agent, "_disconnect_mcp_tools", fake_disconnect_mcp_tools)
+
+    run_context = RunContext(run_id=run_id, session_id="session-1", session_state={})
+
+    response = await _run.acontinue_run_impl(
+        agent=agent,
+        session_id="session-1",
+        run_context=run_context,
+        run_id=run_id,
+        requirements=[],
+    )
+
+    assert response.status == RunStatus.error
+    assert response.content == "session read failed"
+    assert cleanup_calls == []
+    assert run_id not in get_active_runs()
+
+
+def test_continue_run_stream_impl_registers_run_for_cancellation():
+    agent = Agent(name="test-agent")
+    run_id = "continue-stream-register"
+
+    run_response = RunOutput(run_id=run_id)
+    run_messages = RunMessages(messages=[])
+    run_context = RunContext(run_id=run_id, session_id="session-1", session_state={})
+    session = AgentSession(session_id="session-1")
+
+    response_stream = _run.continue_run_stream_impl(
+        agent=agent,
+        run_response=run_response,
+        run_messages=run_messages,
+        run_context=run_context,
+        session=session,
+        tools=[],
+        stream_events=True,
+    )
+
+    next(response_stream)
+
+    assert run_id in get_active_runs()
+    assert cancel_run(run_id) is True
+
+    response_stream.close()
+    assert run_id not in get_active_runs()
+
+
+def test_session_read_wrappers_default_to_agent_session_type():
+    read_default = inspect.signature(Agent._read_session).parameters["session_type"].default
+    aread_default = inspect.signature(Agent._aread_session).parameters["session_type"].default
+
+    assert read_default == SessionType.AGENT
+    assert aread_default == SessionType.AGENT

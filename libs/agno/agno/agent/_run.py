@@ -1046,6 +1046,7 @@ async def arun_impl(
     memory_task = None
     learning_task = None
     cultural_knowledge_task = None
+    agent_session: Optional[AgentSession] = None
 
     # Set up retry logic
     num_attempts = agent.retries + 1
@@ -1270,12 +1271,13 @@ async def arun_impl(
                 run_response.status = RunStatus.cancelled
 
                 # Cleanup and store the run response and session
-                await agent._acleanup_and_store(
-                    run_response=run_response,
-                    session=agent_session,
-                    run_context=run_context,
-                    user_id=user_id,
-                )
+                if agent_session is not None:
+                    await agent._acleanup_and_store(
+                        run_response=run_response,
+                        session=agent_session,
+                        run_context=run_context,
+                        user_id=user_id,
+                    )
 
                 return run_response
             except (InputCheckError, OutputCheckError) as e:
@@ -1287,12 +1289,13 @@ async def arun_impl(
 
                 log_error(f"Validation failed: {str(e)} | Check trigger: {e.check_trigger}")
 
-                await agent._acleanup_and_store(
-                    run_response=run_response,
-                    session=agent_session,
-                    run_context=run_context,
-                    user_id=user_id,
-                )
+                if agent_session is not None:
+                    await agent._acleanup_and_store(
+                        run_response=run_response,
+                        session=agent_session,
+                        run_context=run_context,
+                        user_id=user_id,
+                    )
 
                 return run_response
 
@@ -1323,12 +1326,13 @@ async def arun_impl(
                 log_error(f"Error in Agent run: {str(e)}")
 
                 # Cleanup and store the run response and session
-                await agent._acleanup_and_store(
-                    run_response=run_response,
-                    session=agent_session,
-                    run_context=run_context,
-                    user_id=user_id,
-                )
+                if agent_session is not None:
+                    await agent._acleanup_and_store(
+                        run_response=run_response,
+                        session=agent_session,
+                        run_context=run_context,
+                        user_id=user_id,
+                    )
 
                 return run_response
     finally:
@@ -1403,12 +1407,12 @@ async def arun_stream_impl(
     cultural_knowledge_task = None
     learning_task = None
 
-    # 1. Read or create session. Reads from the database if provided.
-    agent_session = await agent._aread_or_create_session(session_id=session_id, user_id=user_id)
-
     # Set up retry logic
     num_attempts = agent.retries + 1
     try:
+        # 1. Read or create session. Reads from the database if provided.
+        agent_session = await agent._aread_or_create_session(session_id=session_id, user_id=user_id)
+
         for attempt in range(num_attempts):
             if num_attempts > 1:
                 log_debug(f"Retrying Agent run {run_response.run_id}. Attempt {attempt + 1} of {num_attempts}...")
@@ -2518,6 +2522,8 @@ def continue_run_stream_impl(
     6. Cleanup and store the run response and session
     """
 
+    register_run(run_response.run_id)  # type: ignore
+
     # Set up retry logic
     num_attempts = agent.retries + 1
     try:
@@ -2912,6 +2918,7 @@ async def acontinue_run_impl(
     14. Cleanup and store (scrub, stop timer, save to file, add to session, calculate metrics, save session)
     """
     log_debug(f"Agent Run Continue: {run_response.run_id if run_response else run_id}", center=True)  # type: ignore
+    agent_session: Optional[AgentSession] = None
 
     # Resolve retry parameters
     try:
@@ -3106,12 +3113,13 @@ async def acontinue_run_impl(
                 run_response.status = RunStatus.cancelled
                 run_response.content = str(e)
                 # Cleanup and store the run response and session
-                await agent._acleanup_and_store(
-                    run_response=run_response,
-                    session=agent_session,
-                    run_context=run_context,
-                    user_id=user_id,
-                )
+                if agent_session is not None:
+                    await agent._acleanup_and_store(
+                        run_response=run_response,
+                        session=agent_session,
+                        run_context=run_context,
+                        user_id=user_id,
+                    )
 
                 return run_response
             except (InputCheckError, OutputCheckError) as e:
@@ -3124,9 +3132,10 @@ async def acontinue_run_impl(
 
                 log_error(f"Validation failed: {str(e)} | Check trigger: {e.check_trigger}")
 
-                await agent._acleanup_and_store(
-                    run_response=run_response, session=agent_session, run_context=run_context, user_id=user_id
-                )
+                if agent_session is not None:
+                    await agent._acleanup_and_store(
+                        run_response=run_response, session=agent_session, run_context=run_context, user_id=user_id
+                    )
 
                 return run_response
 
@@ -3164,12 +3173,13 @@ async def acontinue_run_impl(
                 log_error(f"Error in Agent run: {str(e)}")
 
                 # Cleanup and store the run response and session
-                await agent._acleanup_and_store(
-                    run_response=run_response,  # type: ignore
-                    session=agent_session,
-                    run_context=run_context,
-                    user_id=user_id,
-                )
+                if agent_session is not None:
+                    await agent._acleanup_and_store(
+                        run_response=run_response,  # type: ignore
+                        session=agent_session,
+                        run_context=run_context,
+                        user_id=user_id,
+                    )
 
                 return run_response  # type: ignore
 
