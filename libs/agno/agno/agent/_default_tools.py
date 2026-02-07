@@ -519,7 +519,6 @@ def add_to_knowledge(agent: Agent, query: str, result: str) -> str:
     insert_fn(name=document_name, text_content=document_content, reader=TextReader())
     return "Successfully added to knowledge base"
 
-
 def get_previous_sessions_messages_function(
     agent: Agent, num_history_sessions: Optional[int] = 2, user_id: Optional[str] = None
 ) -> Callable:
