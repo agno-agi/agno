@@ -9,6 +9,7 @@ These tests verify that when an agent is cancelled mid-execution:
 """
 
 import asyncio
+import os
 import threading
 import time
 from unittest.mock import patch
@@ -21,6 +22,8 @@ from agno.models.openai import OpenAIChat
 from agno.run.agent import RunCancelledEvent
 from agno.run.base import RunStatus
 from agno.run.cancellation_management.base import BaseRunCancellationManager
+
+pytestmark = pytest.mark.skipif(not os.getenv("OPENAI_API_KEY"), reason="OPENAI_API_KEY not set")
 
 
 # ============================================================================
@@ -233,6 +236,7 @@ def test_cancel_agent_with_tool_calls(shared_db):
     Note: In sync streaming, a RunCancelledEvent is yielded when the run is cancelled.
     We verify that events were collected before cancellation.
     """
+    pytest.importorskip("ddgs", reason="ddgs not installed")
     from agno.tools.websearch import WebSearchTools
 
     agent = Agent(
