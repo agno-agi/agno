@@ -1,5 +1,5 @@
 """
-Shared database configuration for the Agno demo.
+Shared database configuration.
 
 All agents, teams, and workflows use this module for database connections.
 """
