@@ -85,6 +85,9 @@ class Step:
     user_input_message: Optional[str] = None
     # Schema for user input fields (list of dicts with name, field_type, description, required)
     user_input_schema: Optional[List[Dict[str, Any]]] = None
+    # What to do when step encounters an error: "fail" (default), "skip", "pause" (HITL)
+    # "pause" triggers HITL allowing user to retry or skip the failed step
+    on_error: str = "fail"
 
     _retry_count: int = 0
 
@@ -107,6 +110,7 @@ class Step:
         requires_user_input: bool = False,
         user_input_message: Optional[str] = None,
         user_input_schema: Optional[List[Dict[str, Any]]] = None,
+        on_error: str = "fail",
     ):
         # Auto-detect HITL metadata from @hitl decorator on executor function
         if executor is not None:
@@ -153,6 +157,7 @@ class Step:
         self.requires_user_input = requires_user_input
         self.user_input_message = user_input_message
         self.user_input_schema = user_input_schema
+        self.on_error = on_error
         self.step_id = step_id
 
         if step_id is None:
@@ -178,6 +183,8 @@ class Step:
             "requires_user_input": self.requires_user_input,
             "user_input_message": self.user_input_message,
             "user_input_schema": self.user_input_schema,
+            "on_reject": self.on_reject,
+            "on_error": self.on_error,
         }
 
         if self.agent is not None:
@@ -246,9 +253,11 @@ class Step:
             num_history_runs=config.get("num_history_runs", 3),
             requires_confirmation=config.get("requires_confirmation", False),
             confirmation_message=config.get("confirmation_message"),
+            on_reject=config.get("on_reject", "cancel"),
             requires_user_input=config.get("requires_user_input", False),
             user_input_message=config.get("user_input_message"),
             user_input_schema=config.get("user_input_schema"),
+            on_error=config.get("on_error", "fail"),
             agent=agent,
             team=team,
             executor=executor,

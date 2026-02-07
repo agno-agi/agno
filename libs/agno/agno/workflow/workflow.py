@@ -55,6 +55,7 @@ from agno.run.team import RunContentEvent as TeamRunContentEvent
 from agno.run.team import TeamRunEvent
 from agno.run.workflow import (
     RouterPausedEvent,
+    StepErrorEvent,
     StepOutputEvent,
     StepPausedEvent,
     WorkflowCancelledEvent,
@@ -91,6 +92,7 @@ from agno.workflow.router import Router
 from agno.workflow.step import Step
 from agno.workflow.steps import Steps
 from agno.workflow.types import (
+    ErrorRequirement,
     StepInput,
     StepMetrics,
     StepOutput,
@@ -1800,20 +1802,66 @@ class Workflow:
 
                         return workflow_run_response
 
-                    step_output = step.execute(  # type: ignore[union-attr]
-                        step_input,
-                        session_id=session.session_id,
-                        user_id=self.user_id,
-                        workflow_run_response=workflow_run_response,
-                        run_context=run_context,
-                        store_executor_outputs=self.store_executor_outputs,
-                        workflow_session=session,
-                        add_workflow_history_to_steps=self.add_workflow_history_to_steps
-                        if self.add_workflow_history_to_steps
-                        else None,
-                        num_history_runs=self.num_history_runs,
-                        background_tasks=background_tasks,
-                    )
+                    try:
+                        step_output = step.execute(  # type: ignore[union-attr]
+                            step_input,
+                            session_id=session.session_id,
+                            user_id=self.user_id,
+                            workflow_run_response=workflow_run_response,
+                            run_context=run_context,
+                            store_executor_outputs=self.store_executor_outputs,
+                            workflow_session=session,
+                            add_workflow_history_to_steps=self.add_workflow_history_to_steps
+                            if self.add_workflow_history_to_steps
+                            else None,
+                            num_history_runs=self.num_history_runs,
+                            background_tasks=background_tasks,
+                        )
+                    except Exception as step_error:
+                        # Handle step execution error based on on_error policy
+                        step_on_error = getattr(step, "on_error", "fail") if isinstance(step, Step) else "fail"
+
+                        if step_on_error == "pause":
+                            # Pause workflow and let user decide to retry or skip
+                            log_debug(f"Step '{step_name}' failed with on_error='pause' - pausing workflow")
+
+                            error_requirement = ErrorRequirement(
+                                step_id=getattr(step, "step_id", str(uuid4())),
+                                step_name=step_name,
+                                step_index=i,
+                                error_message=str(step_error),
+                                error_type=type(step_error).__name__,
+                                retry_count=getattr(step, "_retry_count", 0),
+                                # Note: We don't store step_input here to avoid serialization issues
+                                # It will be reconstructed when resuming
+                            )
+
+                            # Store the paused state
+                            workflow_run_response.status = RunStatus.paused
+                            workflow_run_response.error_requirements = [error_requirement]
+                            workflow_run_response._paused_step_index = i
+                            workflow_run_response.step_results = collected_step_outputs
+
+                            # Save the session with paused state
+                            self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
+                            session.upsert_run(run=workflow_run_response)
+                            self.save_session(session=session)
+
+                            return workflow_run_response
+                        elif step_on_error == "skip":
+                            # Skip the failed step and continue
+                            log_debug(f"Step '{step_name}' failed with on_error='skip' - skipping step")
+                            step_output = StepOutput(
+                                step_name=step_name,
+                                step_id=getattr(step, "step_id", str(uuid4())),
+                                step_type=StepType.STEP,
+                                content=f"Step skipped due to error: {step_error}",
+                                success=False,
+                                error=str(step_error),
+                            )
+                        else:
+                            # Default behavior: re-raise the exception
+                            raise
 
                     # Check for cancellation after step execution
                     raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
@@ -2079,43 +2127,64 @@ class Workflow:
                         return
 
                     # Execute step with streaming and yield all events
-                    for event in step.execute_stream(  # type: ignore[union-attr]
-                        step_input,
-                        session_id=session.session_id,
-                        user_id=self.user_id,
-                        stream_events=stream_events,
-                        stream_executor_events=self.stream_executor_events,
-                        workflow_run_response=workflow_run_response,
-                        run_context=run_context,
-                        step_index=i,
-                        store_executor_outputs=self.store_executor_outputs,
-                        workflow_session=session,
-                        add_workflow_history_to_steps=self.add_workflow_history_to_steps
-                        if self.add_workflow_history_to_steps
-                        else None,
-                        num_history_runs=self.num_history_runs,
-                        background_tasks=background_tasks,
-                    ):
-                        raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+                    step_error_occurred = False
+                    step_error_exception = None
+                    try:
+                        for event in step.execute_stream(  # type: ignore[union-attr]
+                            step_input,
+                            session_id=session.session_id,
+                            user_id=self.user_id,
+                            stream_events=stream_events,
+                            stream_executor_events=self.stream_executor_events,
+                            workflow_run_response=workflow_run_response,
+                            run_context=run_context,
+                            step_index=i,
+                            store_executor_outputs=self.store_executor_outputs,
+                            workflow_session=session,
+                            add_workflow_history_to_steps=self.add_workflow_history_to_steps
+                            if self.add_workflow_history_to_steps
+                            else None,
+                            num_history_runs=self.num_history_runs,
+                            background_tasks=background_tasks,
+                        ):
+                            raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
 
-                        # Accumulate partial data from streaming events
-                        partial_step_content = self._accumulate_partial_step_data(event, partial_step_content)  # type: ignore
+                            # Accumulate partial data from streaming events
+                            partial_step_content = self._accumulate_partial_step_data(event, partial_step_content)  # type: ignore
 
-                        # Handle events
-                        if isinstance(event, StepOutput):
-                            step_output = event
-                            collected_step_outputs.append(step_output)
+                            # Handle events
+                            if isinstance(event, StepOutput):
+                                step_output = event
+                                collected_step_outputs.append(step_output)
 
-                            # Update the workflow-level previous_step_outputs dictionary
-                            previous_step_outputs[step_name] = step_output
+                                # Update the workflow-level previous_step_outputs dictionary
+                                previous_step_outputs[step_name] = step_output
 
-                            # Transform StepOutput to StepOutputEvent for consistent streaming interface
-                            step_output_event = self._transform_step_output_to_event(
-                                step_output, workflow_run_response, step_index=i
-                            )
+                                # Transform StepOutput to StepOutputEvent for consistent streaming interface
+                                step_output_event = self._transform_step_output_to_event(
+                                    step_output, workflow_run_response, step_index=i
+                                )
 
-                            if step_output.stop:
-                                logger.info(f"Early termination requested by step {step_name}")
+                                if step_output.stop:
+                                    logger.info(f"Early termination requested by step {step_name}")
+                                    # Update shared media for next step
+                                    shared_images.extend(step_output.images or [])
+                                    shared_videos.extend(step_output.videos or [])
+                                    shared_audio.extend(step_output.audio or [])
+                                    shared_files.extend(step_output.files or [])
+                                    output_images.extend(step_output.images or [])
+                                    output_videos.extend(step_output.videos or [])
+                                    output_audio.extend(step_output.audio or [])
+                                    output_files.extend(step_output.files or [])
+
+                                    # Only yield StepOutputEvent for function executors, not for agents/teams
+                                    if getattr(step, "executor_type", None) == "function":
+                                        yield step_output_event
+
+                                    # Break out of the step loop
+                                    early_termination = True
+                                    break
+
                                 # Update shared media for next step
                                 shared_images.extend(step_output.images or [])
                                 shared_videos.extend(step_output.videos or [])
@@ -2126,42 +2195,86 @@ class Workflow:
                                 output_audio.extend(step_output.audio or [])
                                 output_files.extend(step_output.files or [])
 
-                                # Only yield StepOutputEvent for function executors, not for agents/teams
+                                # Only yield StepOutputEvent for generator functions, not for agents/teams
                                 if getattr(step, "executor_type", None) == "function":
                                     yield step_output_event
 
-                                # Break out of the step loop
-                                early_termination = True
-                                break
-
-                            # Update shared media for next step
-                            shared_images.extend(step_output.images or [])
-                            shared_videos.extend(step_output.videos or [])
-                            shared_audio.extend(step_output.audio or [])
-                            shared_files.extend(step_output.files or [])
-                            output_images.extend(step_output.images or [])
-                            output_videos.extend(step_output.videos or [])
-                            output_audio.extend(step_output.audio or [])
-                            output_files.extend(step_output.files or [])
-
-                            # Only yield StepOutputEvent for generator functions, not for agents/teams
-                            if getattr(step, "executor_type", None) == "function":
-                                yield step_output_event
-
-                        elif isinstance(event, WorkflowRunOutputEvent):  # type: ignore
-                            # Enrich event with workflow context before yielding
-                            enriched_event = self._enrich_event_with_workflow_context(
-                                event, workflow_run_response, step_index=i, step=step
-                            )
-                            yield self._handle_event(enriched_event, workflow_run_response)  # type: ignore
-
-                        else:
-                            # Enrich other events with workflow context before yielding
-                            enriched_event = self._enrich_event_with_workflow_context(
-                                event, workflow_run_response, step_index=i, step=step
-                            )
-                            if self.stream_executor_events:
+                            elif isinstance(event, WorkflowRunOutputEvent):  # type: ignore
+                                # Enrich event with workflow context before yielding
+                                enriched_event = self._enrich_event_with_workflow_context(
+                                    event, workflow_run_response, step_index=i, step=step
+                                )
                                 yield self._handle_event(enriched_event, workflow_run_response)  # type: ignore
+
+                            else:
+                                # Enrich other events with workflow context before yielding
+                                enriched_event = self._enrich_event_with_workflow_context(
+                                    event, workflow_run_response, step_index=i, step=step
+                                )
+                                if self.stream_executor_events:
+                                    yield self._handle_event(enriched_event, workflow_run_response)  # type: ignore
+                    except Exception as step_error:
+                        step_error_occurred = True
+                        step_error_exception = step_error
+
+                    # Handle step execution error based on on_error policy
+                    if step_error_occurred and step_error_exception is not None:
+                        step_on_error = getattr(step, "on_error", "fail") if isinstance(step, Step) else "fail"
+
+                        if step_on_error == "pause":
+                            # Pause workflow and let user decide to retry or skip
+                            log_debug(f"Step '{step_name}' failed with on_error='pause' - pausing workflow")
+
+                            error_requirement = ErrorRequirement(
+                                step_id=getattr(step, "step_id", str(uuid4())),
+                                step_name=step_name,
+                                step_index=i,
+                                error_message=str(step_error_exception),
+                                error_type=type(step_error_exception).__name__,
+                                retry_count=getattr(step, "_retry_count", 0),
+                            )
+
+                            # Store the paused state
+                            workflow_run_response.status = RunStatus.paused
+                            workflow_run_response.error_requirements = [error_requirement]
+                            workflow_run_response._paused_step_index = i
+                            workflow_run_response.step_results = collected_step_outputs
+
+                            # Yield error paused event
+                            error_paused_event = StepErrorEvent(
+                                run_id=workflow_run_response.run_id or "",
+                                workflow_name=workflow_run_response.workflow_name,
+                                workflow_id=workflow_run_response.workflow_id,
+                                session_id=workflow_run_response.session_id,
+                                step_name=step_name,
+                                step_index=i,
+                                step_id=getattr(step, "step_id", None),
+                                error=str(step_error_exception),
+                            )
+                            yield self._handle_event(error_paused_event, workflow_run_response)
+
+                            # Save the session with paused state
+                            self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
+                            session.upsert_run(run=workflow_run_response)
+                            self.save_session(session=session)
+
+                            return
+                        elif step_on_error == "skip":
+                            # Skip the failed step and continue
+                            log_debug(f"Step '{step_name}' failed with on_error='skip' - skipping step")
+                            step_output = StepOutput(
+                                step_name=step_name,
+                                step_id=getattr(step, "step_id", str(uuid4())),
+                                step_type=StepType.STEP,
+                                content=f"Step skipped due to error: {step_error_exception}",
+                                success=False,
+                                error=str(step_error_exception),
+                            )
+                            collected_step_outputs.append(step_output)
+                            previous_step_outputs[step_name] = step_output
+                        else:
+                            # Default behavior: re-raise the exception
+                            raise step_error_exception
 
                     # Break out of main step loop if early termination was requested
                     if "early_termination" in locals() and early_termination:
@@ -2536,20 +2649,69 @@ class Workflow:
 
                         return workflow_run_response
 
-                    step_output = await step.aexecute(  # type: ignore[union-attr]
-                        step_input,
-                        session_id=session_id,
-                        user_id=self.user_id,
-                        workflow_run_response=workflow_run_response,
-                        run_context=run_context,
-                        store_executor_outputs=self.store_executor_outputs,
-                        workflow_session=workflow_session,
-                        add_workflow_history_to_steps=self.add_workflow_history_to_steps
-                        if self.add_workflow_history_to_steps
-                        else None,
-                        num_history_runs=self.num_history_runs,
-                        background_tasks=background_tasks,
-                    )
+                    try:
+                        step_output = await step.aexecute(  # type: ignore[union-attr]
+                            step_input,
+                            session_id=session_id,
+                            user_id=self.user_id,
+                            workflow_run_response=workflow_run_response,
+                            run_context=run_context,
+                            store_executor_outputs=self.store_executor_outputs,
+                            workflow_session=workflow_session,
+                            add_workflow_history_to_steps=self.add_workflow_history_to_steps
+                            if self.add_workflow_history_to_steps
+                            else None,
+                            num_history_runs=self.num_history_runs,
+                            background_tasks=background_tasks,
+                        )
+                    except Exception as step_error:
+                        # Handle step execution error based on on_error policy
+                        step_on_error = getattr(step, "on_error", "fail") if isinstance(step, Step) else "fail"
+
+                        if step_on_error == "pause":
+                            # Pause workflow and let user decide to retry or skip
+                            log_debug(f"Step '{step_name}' failed with on_error='pause' - pausing workflow")
+
+                            error_requirement = ErrorRequirement(
+                                step_id=getattr(step, "step_id", str(uuid4())),
+                                step_name=step_name,
+                                step_index=i,
+                                error_message=str(step_error),
+                                error_type=type(step_error).__name__,
+                                retry_count=getattr(step, "_retry_count", 0),
+                            )
+
+                            # Store the paused state
+                            workflow_run_response.status = RunStatus.paused
+                            workflow_run_response.error_requirements = [error_requirement]
+                            workflow_run_response._paused_step_index = i
+                            workflow_run_response.step_results = collected_step_outputs
+
+                            # Save the session with paused state
+                            self._update_session_metrics(
+                                session=workflow_session, workflow_run_response=workflow_run_response
+                            )
+                            workflow_session.upsert_run(run=workflow_run_response)
+                            if self._has_async_db():
+                                await self.asave_session(session=workflow_session)
+                            else:
+                                self.save_session(session=workflow_session)
+
+                            return workflow_run_response
+                        elif step_on_error == "skip":
+                            # Skip the failed step and continue
+                            log_debug(f"Step '{step_name}' failed with on_error='skip' - skipping step")
+                            step_output = StepOutput(
+                                step_name=step_name,
+                                step_id=getattr(step, "step_id", str(uuid4())),
+                                step_type=StepType.STEP,
+                                content=f"Step skipped due to error: {step_error}",
+                                success=False,
+                                error=str(step_error),
+                            )
+                        else:
+                            # Default behavior: re-raise the exception
+                            raise
 
                     # Check for cancellation after step execution
                     await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
@@ -2842,43 +3004,63 @@ class Workflow:
                         return
 
                     # Execute step with streaming and yield all events
-                    async for event in step.aexecute_stream(  # type: ignore[union-attr]
-                        step_input,
-                        session_id=session_id,
-                        user_id=self.user_id,
-                        stream_events=stream_events,
-                        stream_executor_events=self.stream_executor_events,
-                        workflow_run_response=workflow_run_response,
-                        run_context=run_context,
-                        step_index=i,
-                        store_executor_outputs=self.store_executor_outputs,
-                        workflow_session=workflow_session,
-                        add_workflow_history_to_steps=self.add_workflow_history_to_steps
-                        if self.add_workflow_history_to_steps
-                        else None,
-                        num_history_runs=self.num_history_runs,
-                        background_tasks=background_tasks,
-                    ):
-                        if workflow_run_response.run_id:
-                            await araise_if_cancelled(workflow_run_response.run_id)
+                    step_error_occurred = False
+                    step_error_exception = None
+                    try:
+                        async for event in step.aexecute_stream(  # type: ignore[union-attr]
+                            step_input,
+                            session_id=session_id,
+                            user_id=self.user_id,
+                            stream_events=stream_events,
+                            stream_executor_events=self.stream_executor_events,
+                            workflow_run_response=workflow_run_response,
+                            run_context=run_context,
+                            step_index=i,
+                            store_executor_outputs=self.store_executor_outputs,
+                            workflow_session=workflow_session,
+                            add_workflow_history_to_steps=self.add_workflow_history_to_steps
+                            if self.add_workflow_history_to_steps
+                            else None,
+                            num_history_runs=self.num_history_runs,
+                            background_tasks=background_tasks,
+                        ):
+                            if workflow_run_response.run_id:
+                                await araise_if_cancelled(workflow_run_response.run_id)
 
-                        # Accumulate partial data from streaming events
-                        partial_step_content = self._accumulate_partial_step_data(event, partial_step_content)  # type: ignore
+                            # Accumulate partial data from streaming events
+                            partial_step_content = self._accumulate_partial_step_data(event, partial_step_content)  # type: ignore
 
-                        if isinstance(event, StepOutput):
-                            step_output = event
-                            collected_step_outputs.append(step_output)
+                            if isinstance(event, StepOutput):
+                                step_output = event
+                                collected_step_outputs.append(step_output)
 
-                            # Update the workflow-level previous_step_outputs dictionary
-                            previous_step_outputs[step_name] = step_output
+                                # Update the workflow-level previous_step_outputs dictionary
+                                previous_step_outputs[step_name] = step_output
 
-                            # Transform StepOutput to StepOutputEvent for consistent streaming interface
-                            step_output_event = self._transform_step_output_to_event(
-                                step_output, workflow_run_response, step_index=i
-                            )
+                                # Transform StepOutput to StepOutputEvent for consistent streaming interface
+                                step_output_event = self._transform_step_output_to_event(
+                                    step_output, workflow_run_response, step_index=i
+                                )
 
-                            if step_output.stop:
-                                logger.info(f"Early termination requested by step {step_name}")
+                                if step_output.stop:
+                                    logger.info(f"Early termination requested by step {step_name}")
+                                    # Update shared media for next step
+                                    shared_images.extend(step_output.images or [])
+                                    shared_videos.extend(step_output.videos or [])
+                                    shared_audio.extend(step_output.audio or [])
+                                    shared_files.extend(step_output.files or [])
+                                    output_images.extend(step_output.images or [])
+                                    output_videos.extend(step_output.videos or [])
+                                    output_audio.extend(step_output.audio or [])
+                                    output_files.extend(step_output.files or [])
+
+                                    if getattr(step, "executor_type", None) == "function":
+                                        yield step_output_event
+
+                                    # Break out of the step loop
+                                    early_termination = True
+                                    break
+
                                 # Update shared media for next step
                                 shared_images.extend(step_output.images or [])
                                 shared_videos.extend(step_output.videos or [])
@@ -2889,45 +3071,97 @@ class Workflow:
                                 output_audio.extend(step_output.audio or [])
                                 output_files.extend(step_output.files or [])
 
+                                # Only yield StepOutputEvent for generator functions, not for agents/teams
                                 if getattr(step, "executor_type", None) == "function":
                                     yield step_output_event
 
-                                # Break out of the step loop
-                                early_termination = True
-                                break
-
-                            # Update shared media for next step
-                            shared_images.extend(step_output.images or [])
-                            shared_videos.extend(step_output.videos or [])
-                            shared_audio.extend(step_output.audio or [])
-                            shared_files.extend(step_output.files or [])
-                            output_images.extend(step_output.images or [])
-                            output_videos.extend(step_output.videos or [])
-                            output_audio.extend(step_output.audio or [])
-                            output_files.extend(step_output.files or [])
-
-                            # Only yield StepOutputEvent for generator functions, not for agents/teams
-                            if getattr(step, "executor_type", None) == "function":
-                                yield step_output_event
-
-                        elif isinstance(event, WorkflowRunOutputEvent):  # type: ignore
-                            # Enrich event with workflow context before yielding
-                            enriched_event = self._enrich_event_with_workflow_context(
-                                event, workflow_run_response, step_index=i, step=step
-                            )
-                            yield self._handle_event(
-                                enriched_event, workflow_run_response, websocket_handler=websocket_handler
-                            )  # type: ignore
-
-                        else:
-                            # Enrich other events with workflow context before yielding
-                            enriched_event = self._enrich_event_with_workflow_context(
-                                event, workflow_run_response, step_index=i, step=step
-                            )
-                            if self.stream_executor_events:
+                            elif isinstance(event, WorkflowRunOutputEvent):  # type: ignore
+                                # Enrich event with workflow context before yielding
+                                enriched_event = self._enrich_event_with_workflow_context(
+                                    event, workflow_run_response, step_index=i, step=step
+                                )
                                 yield self._handle_event(
                                     enriched_event, workflow_run_response, websocket_handler=websocket_handler
                                 )  # type: ignore
+
+                            else:
+                                # Enrich other events with workflow context before yielding
+                                enriched_event = self._enrich_event_with_workflow_context(
+                                    event, workflow_run_response, step_index=i, step=step
+                                )
+                                if self.stream_executor_events:
+                                    yield self._handle_event(
+                                        enriched_event, workflow_run_response, websocket_handler=websocket_handler
+                                    )  # type: ignore
+                    except Exception as step_error:
+                        step_error_occurred = True
+                        step_error_exception = step_error
+
+                    # Handle step execution error based on on_error policy
+                    if step_error_occurred and step_error_exception is not None:
+                        step_on_error = getattr(step, "on_error", "fail") if isinstance(step, Step) else "fail"
+
+                        if step_on_error == "pause":
+                            # Pause workflow and let user decide to retry or skip
+                            log_debug(f"Step '{step_name}' failed with on_error='pause' - pausing workflow")
+
+                            error_requirement = ErrorRequirement(
+                                step_id=getattr(step, "step_id", str(uuid4())),
+                                step_name=step_name,
+                                step_index=i,
+                                error_message=str(step_error_exception),
+                                error_type=type(step_error_exception).__name__,
+                                retry_count=getattr(step, "_retry_count", 0),
+                            )
+
+                            # Store the paused state
+                            workflow_run_response.status = RunStatus.paused
+                            workflow_run_response.error_requirements = [error_requirement]
+                            workflow_run_response._paused_step_index = i
+                            workflow_run_response.step_results = collected_step_outputs
+
+                            # Yield error paused event
+                            error_paused_event = StepErrorEvent(
+                                run_id=workflow_run_response.run_id or "",
+                                workflow_name=workflow_run_response.workflow_name,
+                                workflow_id=workflow_run_response.workflow_id,
+                                session_id=workflow_run_response.session_id,
+                                step_name=step_name,
+                                step_index=i,
+                                step_id=getattr(step, "step_id", None),
+                                error=str(step_error_exception),
+                            )
+                            yield self._handle_event(
+                                error_paused_event, workflow_run_response, websocket_handler=websocket_handler
+                            )
+
+                            # Save the session with paused state
+                            self._update_session_metrics(
+                                session=workflow_session, workflow_run_response=workflow_run_response
+                            )
+                            workflow_session.upsert_run(run=workflow_run_response)
+                            if self._has_async_db():
+                                await self.asave_session(session=workflow_session)
+                            else:
+                                self.save_session(session=workflow_session)
+
+                            return
+                        elif step_on_error == "skip":
+                            # Skip the failed step and continue
+                            log_debug(f"Step '{step_name}' failed with on_error='skip' - skipping step")
+                            step_output = StepOutput(
+                                step_name=step_name,
+                                step_id=getattr(step, "step_id", str(uuid4())),
+                                step_type=StepType.STEP,
+                                content=f"Step skipped due to error: {step_error_exception}",
+                                success=False,
+                                error=str(step_error_exception),
+                            )
+                            collected_step_outputs.append(step_output)
+                            previous_step_outputs[step_name] = step_output
+                        else:
+                            # Default behavior: re-raise the exception
+                            raise step_error_exception
 
                     # Break out of main step loop if early termination was requested
                     if "early_termination" in locals() and early_termination:
@@ -4302,6 +4536,11 @@ class Workflow:
             unresolved = [req.router_name for req in run_response.active_router_requirements]
             raise ValueError(f"Cannot continue run - unresolved router requirements: {unresolved}")
 
+        # Validate that all error requirements are resolved
+        if run_response.active_error_requirements:
+            unresolved = [req.step_name for req in run_response.active_error_requirements]
+            raise ValueError(f"Cannot continue run - unresolved error requirements: {unresolved}")
+
         # Check if any step was rejected
         rejected_steps = [
             req
@@ -4366,6 +4605,18 @@ class Workflow:
                     router_selection = req.selected_choices
                     break
 
+        # Handle error requirements (retry or skip)
+        error_should_skip = False
+        error_should_retry = False
+        if run_response.error_requirements:
+            for req in run_response.error_requirements:
+                if req.should_skip:
+                    error_should_skip = True
+                    log_debug(f"Step '{req.step_name}' error - user chose to skip")
+                elif req.should_retry:
+                    error_should_retry = True
+                    log_debug(f"Step '{req.step_name}' error - user chose to retry")
+
         # Clear the HITL requirements since they're now resolved
         # This allows the step to execute on resume
         if isinstance(self.steps, list) and paused_step_index < len(self.steps):
@@ -4395,6 +4646,7 @@ class Workflow:
         run_response.status = RunStatus.running
         run_response.step_requirements = None
         run_response.router_requirements = None
+        run_response.error_requirements = None
 
         # Create run context
         run_context = RunContext(
@@ -4417,8 +4669,14 @@ class Workflow:
         if router_selection:
             kwargs["router_selection"] = router_selection
 
-        # If step was rejected with on_reject="skip", start from next step
-        start_index = paused_step_index + 1 if skip_rejected_step else paused_step_index
+        # Store error retry flag to pass to continue_execute
+        if error_should_retry:
+            kwargs["error_retry"] = True
+
+        # If step was rejected with on_reject="skip" or error with skip, start from next step
+        start_index = paused_step_index
+        if skip_rejected_step or error_should_skip:
+            start_index = paused_step_index + 1
 
         if stream:
             return self._continue_execute_stream(
@@ -4624,20 +4882,64 @@ class Workflow:
 
                     return workflow_run_response
 
-                step_output = step.execute(  # type: ignore[union-attr]
-                    step_input,
-                    session_id=session.session_id,
-                    user_id=self.user_id,
-                    workflow_run_response=workflow_run_response,
-                    run_context=run_context,
-                    store_executor_outputs=self.store_executor_outputs,
-                    workflow_session=session,
-                    add_workflow_history_to_steps=self.add_workflow_history_to_steps
-                    if self.add_workflow_history_to_steps
-                    else None,
-                    num_history_runs=self.num_history_runs,
-                    background_tasks=background_tasks,
-                )
+                try:
+                    step_output = step.execute(  # type: ignore[union-attr]
+                        step_input,
+                        session_id=session.session_id,
+                        user_id=self.user_id,
+                        workflow_run_response=workflow_run_response,
+                        run_context=run_context,
+                        store_executor_outputs=self.store_executor_outputs,
+                        workflow_session=session,
+                        add_workflow_history_to_steps=self.add_workflow_history_to_steps
+                        if self.add_workflow_history_to_steps
+                        else None,
+                        num_history_runs=self.num_history_runs,
+                        background_tasks=background_tasks,
+                    )
+                except Exception as step_error:
+                    # Handle step execution error based on on_error policy
+                    step_on_error = getattr(step, "on_error", "fail") if isinstance(step, Step) else "fail"
+
+                    if step_on_error == "pause":
+                        # Pause workflow and let user decide to retry or skip
+                        log_debug(f"Step '{step_name}' failed with on_error='pause' - pausing workflow")
+
+                        error_requirement = ErrorRequirement(
+                            step_id=getattr(step, "step_id", str(uuid4())),
+                            step_name=step_name,
+                            step_index=i,
+                            error_message=str(step_error),
+                            error_type=type(step_error).__name__,
+                            retry_count=getattr(step, "_retry_count", 0),
+                        )
+
+                        # Store the paused state
+                        workflow_run_response.status = RunStatus.paused
+                        workflow_run_response.error_requirements = [error_requirement]
+                        workflow_run_response._paused_step_index = i
+                        workflow_run_response.step_results = collected_step_outputs
+
+                        # Save the session with paused state
+                        self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
+                        session.upsert_run(run=workflow_run_response)
+                        self.save_session(session=session)
+
+                        return workflow_run_response
+                    elif step_on_error == "skip":
+                        # Skip the failed step and continue
+                        log_debug(f"Step '{step_name}' failed with on_error='skip' - skipping step")
+                        step_output = StepOutput(
+                            step_name=step_name,
+                            step_id=getattr(step, "step_id", str(uuid4())),
+                            step_type=StepType.STEP,
+                            content=f"Step skipped due to error: {step_error}",
+                            success=False,
+                            error=str(step_error),
+                        )
+                    else:
+                        # Default behavior: re-raise the exception
+                        raise
 
                 raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
 
@@ -4853,36 +5155,54 @@ class Workflow:
                     return
 
                 # Execute step with streaming
-                for event in step.execute_stream(  # type: ignore[union-attr]
-                    step_input,
-                    session_id=session.session_id,
-                    user_id=self.user_id,
-                    stream_events=stream_events,
-                    stream_executor_events=self.stream_executor_events,
-                    workflow_run_response=workflow_run_response,
-                    run_context=run_context,
-                    step_index=i,
-                    store_executor_outputs=self.store_executor_outputs,
-                    workflow_session=session,
-                    add_workflow_history_to_steps=self.add_workflow_history_to_steps
-                    if self.add_workflow_history_to_steps
-                    else None,
-                    num_history_runs=self.num_history_runs,
-                    background_tasks=background_tasks,
-                ):
-                    raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+                step_error_occurred = False
+                step_error_exception = None
+                try:
+                    for event in step.execute_stream(  # type: ignore[union-attr]
+                        step_input,
+                        session_id=session.session_id,
+                        user_id=self.user_id,
+                        stream_events=stream_events,
+                        stream_executor_events=self.stream_executor_events,
+                        workflow_run_response=workflow_run_response,
+                        run_context=run_context,
+                        step_index=i,
+                        store_executor_outputs=self.store_executor_outputs,
+                        workflow_session=session,
+                        add_workflow_history_to_steps=self.add_workflow_history_to_steps
+                        if self.add_workflow_history_to_steps
+                        else None,
+                        num_history_runs=self.num_history_runs,
+                        background_tasks=background_tasks,
+                    ):
+                        raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
 
-                    if isinstance(event, StepOutput):
-                        step_output = event
-                        collected_step_outputs.append(step_output)
-                        previous_step_outputs[step_name] = step_output
+                        if isinstance(event, StepOutput):
+                            step_output = event
+                            collected_step_outputs.append(step_output)
+                            previous_step_outputs[step_name] = step_output
 
-                        step_output_event = self._transform_step_output_to_event(
-                            step_output, workflow_run_response, step_index=i
-                        )
+                            step_output_event = self._transform_step_output_to_event(
+                                step_output, workflow_run_response, step_index=i
+                            )
 
-                        if step_output.stop:
-                            logger.info(f"Early termination requested by step {step_name}")
+                            if step_output.stop:
+                                logger.info(f"Early termination requested by step {step_name}")
+                                shared_images.extend(step_output.images or [])
+                                shared_videos.extend(step_output.videos or [])
+                                shared_audio.extend(step_output.audio or [])
+                                shared_files.extend(step_output.files or [])
+                                output_images.extend(step_output.images or [])
+                                output_videos.extend(step_output.videos or [])
+                                output_audio.extend(step_output.audio or [])
+                                output_files.extend(step_output.files or [])
+
+                                if getattr(step, "executor_type", None) == "function":
+                                    yield step_output_event
+
+                                early_termination = True
+                                break
+
                             shared_images.extend(step_output.images or [])
                             shared_videos.extend(step_output.videos or [])
                             shared_audio.extend(step_output.audio or [])
@@ -4895,33 +5215,74 @@ class Workflow:
                             if getattr(step, "executor_type", None) == "function":
                                 yield step_output_event
 
-                            early_termination = True
-                            break
-
-                        shared_images.extend(step_output.images or [])
-                        shared_videos.extend(step_output.videos or [])
-                        shared_audio.extend(step_output.audio or [])
-                        shared_files.extend(step_output.files or [])
-                        output_images.extend(step_output.images or [])
-                        output_videos.extend(step_output.videos or [])
-                        output_audio.extend(step_output.audio or [])
-                        output_files.extend(step_output.files or [])
-
-                        if getattr(step, "executor_type", None) == "function":
-                            yield step_output_event
-
-                    elif isinstance(event, WorkflowRunOutputEvent):  # type: ignore
-                        enriched_event = self._enrich_event_with_workflow_context(
-                            event, workflow_run_response, step_index=i, step=step
-                        )
-                        yield self._handle_event(enriched_event, workflow_run_response)  # type: ignore
-
-                    else:
-                        enriched_event = self._enrich_event_with_workflow_context(
-                            event, workflow_run_response, step_index=i, step=step
-                        )
-                        if self.stream_executor_events:
+                        elif isinstance(event, WorkflowRunOutputEvent):  # type: ignore
+                            enriched_event = self._enrich_event_with_workflow_context(
+                                event, workflow_run_response, step_index=i, step=step
+                            )
                             yield self._handle_event(enriched_event, workflow_run_response)  # type: ignore
+
+                        else:
+                            enriched_event = self._enrich_event_with_workflow_context(
+                                event, workflow_run_response, step_index=i, step=step
+                            )
+                            if self.stream_executor_events:
+                                yield self._handle_event(enriched_event, workflow_run_response)  # type: ignore
+                except Exception as step_error:
+                    step_error_occurred = True
+                    step_error_exception = step_error
+
+                # Handle step execution error based on on_error policy
+                if step_error_occurred and step_error_exception is not None:
+                    step_on_error = getattr(step, "on_error", "fail") if isinstance(step, Step) else "fail"
+
+                    if step_on_error == "pause":
+                        log_debug(f"Step '{step_name}' failed with on_error='pause' - pausing workflow")
+
+                        error_requirement = ErrorRequirement(
+                            step_id=getattr(step, "step_id", str(uuid4())),
+                            step_name=step_name,
+                            step_index=i,
+                            error_message=str(step_error_exception),
+                            error_type=type(step_error_exception).__name__,
+                            retry_count=getattr(step, "_retry_count", 0),
+                        )
+
+                        workflow_run_response.status = RunStatus.paused
+                        workflow_run_response.error_requirements = [error_requirement]
+                        workflow_run_response._paused_step_index = i
+                        workflow_run_response.step_results = collected_step_outputs
+
+                        error_paused_event = StepErrorEvent(
+                            run_id=workflow_run_response.run_id or "",
+                            workflow_name=workflow_run_response.workflow_name,
+                            workflow_id=workflow_run_response.workflow_id,
+                            session_id=workflow_run_response.session_id,
+                            step_name=step_name,
+                            step_index=i,
+                            step_id=getattr(step, "step_id", None),
+                            error=str(step_error_exception),
+                        )
+                        yield self._handle_event(error_paused_event, workflow_run_response)
+
+                        self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
+                        session.upsert_run(run=workflow_run_response)
+                        self.save_session(session=session)
+
+                        return
+                    elif step_on_error == "skip":
+                        log_debug(f"Step '{step_name}' failed with on_error='skip' - skipping step")
+                        step_output = StepOutput(
+                            step_name=step_name,
+                            step_id=getattr(step, "step_id", str(uuid4())),
+                            step_type=StepType.STEP,
+                            content=f"Step skipped due to error: {step_error_exception}",
+                            success=False,
+                            error=str(step_error_exception),
+                        )
+                        collected_step_outputs.append(step_output)
+                        previous_step_outputs[step_name] = step_output
+                    else:
+                        raise step_error_exception
 
                 if early_termination:
                     break
@@ -5099,6 +5460,16 @@ class Workflow:
             unresolved = [req.step_name for req in run_response.active_step_requirements]
             raise ValueError(f"Cannot continue run - unresolved step requirements: {unresolved}")
 
+        # Validate that all router requirements are resolved
+        if run_response.active_router_requirements:
+            unresolved = [req.router_name for req in run_response.active_router_requirements]
+            raise ValueError(f"Cannot continue run - unresolved router requirements: {unresolved}")
+
+        # Validate that all error requirements are resolved
+        if run_response.active_error_requirements:
+            unresolved = [req.step_name for req in run_response.active_error_requirements]
+            raise ValueError(f"Cannot continue run - unresolved error requirements: {unresolved}")
+
         # Check if any step was rejected
         rejected_steps = [
             req
@@ -5146,12 +5517,44 @@ class Workflow:
         if paused_step_index is None:
             raise ValueError("Cannot continue run - no paused step index found")
 
-        # Clear the confirmation requirement since it's now resolved
+        # Extract user input from step requirements to pass to the step
+        user_input_data: Optional[Dict[str, Any]] = None
+        if step_requirements or run_response.step_requirements:
+            reqs = step_requirements or run_response.step_requirements or []
+            for req in reqs:
+                if req.user_input:
+                    user_input_data = req.user_input
+                    break
+
+        # Extract router selection to pass to the router
+        router_selection: Optional[List[str]] = None
+        if run_response.router_requirements:
+            for req in run_response.router_requirements:
+                if req.selected_choices:
+                    router_selection = req.selected_choices
+                    break
+
+        # Handle error requirements (retry or skip)
+        error_should_skip = False
+        error_should_retry = False
+        if run_response.error_requirements:
+            for req in run_response.error_requirements:
+                if req.should_skip:
+                    error_should_skip = True
+                    log_debug(f"Step '{req.step_name}' error - user chose to skip")
+                elif req.should_retry:
+                    error_should_retry = True
+                    log_debug(f"Step '{req.step_name}' error - user chose to retry")
+
+        # Clear the HITL requirements since they're now resolved
         # This allows the step to execute on resume
         if isinstance(self.steps, list) and paused_step_index < len(self.steps):
             step = self.steps[paused_step_index]
             if isinstance(step, Step):
                 step.requires_confirmation = False
+                step.requires_user_input = False
+            elif isinstance(step, Router):
+                step.requires_user_input = False
 
         # Resume execution
         session_id = run_response.session_id or self.session_id
@@ -5171,6 +5574,8 @@ class Workflow:
         # Update run status to running
         run_response.status = RunStatus.running
         run_response.step_requirements = None
+        run_response.router_requirements = None
+        run_response.error_requirements = None
 
         # Create run context
         run_context = RunContext(
@@ -5185,8 +5590,9 @@ class Workflow:
             input=run_response.input,
         )
 
-        # If step was rejected with on_reject="skip", start from next step
-        start_index = paused_step_index + 1 if skip_rejected_step else paused_step_index
+        # Determine start index based on skip decisions
+        # If error skip or reject skip, start from next step
+        start_index = paused_step_index + 1 if (skip_rejected_step or error_should_skip) else paused_step_index
 
         if stream:
             return self._acontinue_execute_stream(
@@ -5320,20 +5726,59 @@ class Workflow:
 
                     return workflow_run_response
 
-                step_output = await step.aexecute(  # type: ignore[union-attr]
-                    step_input,
-                    session_id=session.session_id,
-                    user_id=self.user_id,
-                    workflow_run_response=workflow_run_response,
-                    run_context=run_context,
-                    store_executor_outputs=self.store_executor_outputs,
-                    workflow_session=session,
-                    add_workflow_history_to_steps=self.add_workflow_history_to_steps
-                    if self.add_workflow_history_to_steps
-                    else None,
-                    num_history_runs=self.num_history_runs,
-                    background_tasks=background_tasks,
-                )
+                try:
+                    step_output = await step.aexecute(  # type: ignore[union-attr]
+                        step_input,
+                        session_id=session.session_id,
+                        user_id=self.user_id,
+                        workflow_run_response=workflow_run_response,
+                        run_context=run_context,
+                        store_executor_outputs=self.store_executor_outputs,
+                        workflow_session=session,
+                        add_workflow_history_to_steps=self.add_workflow_history_to_steps
+                        if self.add_workflow_history_to_steps
+                        else None,
+                        num_history_runs=self.num_history_runs,
+                        background_tasks=background_tasks,
+                    )
+                except Exception as step_error:
+                    # Handle step execution error based on on_error policy
+                    step_on_error = getattr(step, "on_error", "fail") if isinstance(step, Step) else "fail"
+
+                    if step_on_error == "pause":
+                        log_debug(f"Step '{step_name}' failed with on_error='pause' - pausing workflow")
+
+                        error_requirement = ErrorRequirement(
+                            step_id=getattr(step, "step_id", str(uuid4())),
+                            step_name=step_name,
+                            step_index=i,
+                            error_message=str(step_error),
+                            error_type=type(step_error).__name__,
+                            retry_count=getattr(step, "_retry_count", 0),
+                        )
+
+                        workflow_run_response.status = RunStatus.paused
+                        workflow_run_response.error_requirements = [error_requirement]
+                        workflow_run_response._paused_step_index = i
+                        workflow_run_response.step_results = collected_step_outputs
+
+                        self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
+                        session.upsert_run(run=workflow_run_response)
+                        await self.asave_session(session=session)
+
+                        return workflow_run_response
+                    elif step_on_error == "skip":
+                        log_debug(f"Step '{step_name}' failed with on_error='skip' - skipping step")
+                        step_output = StepOutput(
+                            step_name=step_name,
+                            step_id=getattr(step, "step_id", str(uuid4())),
+                            step_type=StepType.STEP,
+                            content=f"Step skipped due to error: {step_error}",
+                            success=False,
+                            error=str(step_error),
+                        )
+                    else:
+                        raise
 
                 await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
 
@@ -5549,36 +5994,54 @@ class Workflow:
                     return
 
                 # Execute step with streaming
-                async for event in step.aexecute_stream(  # type: ignore[union-attr]
-                    step_input,
-                    session_id=session.session_id,
-                    user_id=self.user_id,
-                    stream_events=stream_events,
-                    stream_executor_events=self.stream_executor_events,
-                    workflow_run_response=workflow_run_response,
-                    run_context=run_context,
-                    step_index=i,
-                    store_executor_outputs=self.store_executor_outputs,
-                    workflow_session=session,
-                    add_workflow_history_to_steps=self.add_workflow_history_to_steps
-                    if self.add_workflow_history_to_steps
-                    else None,
-                    num_history_runs=self.num_history_runs,
-                    background_tasks=background_tasks,
-                ):
-                    await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+                step_error_occurred = False
+                step_error_exception = None
+                try:
+                    async for event in step.aexecute_stream(  # type: ignore[union-attr]
+                        step_input,
+                        session_id=session.session_id,
+                        user_id=self.user_id,
+                        stream_events=stream_events,
+                        stream_executor_events=self.stream_executor_events,
+                        workflow_run_response=workflow_run_response,
+                        run_context=run_context,
+                        step_index=i,
+                        store_executor_outputs=self.store_executor_outputs,
+                        workflow_session=session,
+                        add_workflow_history_to_steps=self.add_workflow_history_to_steps
+                        if self.add_workflow_history_to_steps
+                        else None,
+                        num_history_runs=self.num_history_runs,
+                        background_tasks=background_tasks,
+                    ):
+                        await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
 
-                    if isinstance(event, StepOutput):
-                        step_output = event
-                        collected_step_outputs.append(step_output)
-                        previous_step_outputs[step_name] = step_output
+                        if isinstance(event, StepOutput):
+                            step_output = event
+                            collected_step_outputs.append(step_output)
+                            previous_step_outputs[step_name] = step_output
 
-                        step_output_event = self._transform_step_output_to_event(
-                            step_output, workflow_run_response, step_index=i
-                        )
+                            step_output_event = self._transform_step_output_to_event(
+                                step_output, workflow_run_response, step_index=i
+                            )
 
-                        if step_output.stop:
-                            logger.info(f"Early termination requested by step {step_name}")
+                            if step_output.stop:
+                                logger.info(f"Early termination requested by step {step_name}")
+                                shared_images.extend(step_output.images or [])
+                                shared_videos.extend(step_output.videos or [])
+                                shared_audio.extend(step_output.audio or [])
+                                shared_files.extend(step_output.files or [])
+                                output_images.extend(step_output.images or [])
+                                output_videos.extend(step_output.videos or [])
+                                output_audio.extend(step_output.audio or [])
+                                output_files.extend(step_output.files or [])
+
+                                if getattr(step, "executor_type", None) == "function":
+                                    yield step_output_event
+
+                                early_termination = True
+                                break
+
                             shared_images.extend(step_output.images or [])
                             shared_videos.extend(step_output.videos or [])
                             shared_audio.extend(step_output.audio or [])
@@ -5591,33 +6054,74 @@ class Workflow:
                             if getattr(step, "executor_type", None) == "function":
                                 yield step_output_event
 
-                            early_termination = True
-                            break
-
-                        shared_images.extend(step_output.images or [])
-                        shared_videos.extend(step_output.videos or [])
-                        shared_audio.extend(step_output.audio or [])
-                        shared_files.extend(step_output.files or [])
-                        output_images.extend(step_output.images or [])
-                        output_videos.extend(step_output.videos or [])
-                        output_audio.extend(step_output.audio or [])
-                        output_files.extend(step_output.files or [])
-
-                        if getattr(step, "executor_type", None) == "function":
-                            yield step_output_event
-
-                    elif isinstance(event, WorkflowRunOutputEvent):  # type: ignore
-                        enriched_event = self._enrich_event_with_workflow_context(
-                            event, workflow_run_response, step_index=i, step=step
-                        )
-                        yield self._handle_event(enriched_event, workflow_run_response)  # type: ignore
-
-                    else:
-                        enriched_event = self._enrich_event_with_workflow_context(
-                            event, workflow_run_response, step_index=i, step=step
-                        )
-                        if self.stream_executor_events:
+                        elif isinstance(event, WorkflowRunOutputEvent):  # type: ignore
+                            enriched_event = self._enrich_event_with_workflow_context(
+                                event, workflow_run_response, step_index=i, step=step
+                            )
                             yield self._handle_event(enriched_event, workflow_run_response)  # type: ignore
+
+                        else:
+                            enriched_event = self._enrich_event_with_workflow_context(
+                                event, workflow_run_response, step_index=i, step=step
+                            )
+                            if self.stream_executor_events:
+                                yield self._handle_event(enriched_event, workflow_run_response)  # type: ignore
+                except Exception as step_error:
+                    step_error_occurred = True
+                    step_error_exception = step_error
+
+                # Handle step execution error based on on_error policy
+                if step_error_occurred and step_error_exception is not None:
+                    step_on_error = getattr(step, "on_error", "fail") if isinstance(step, Step) else "fail"
+
+                    if step_on_error == "pause":
+                        log_debug(f"Step '{step_name}' failed with on_error='pause' - pausing workflow")
+
+                        error_requirement = ErrorRequirement(
+                            step_id=getattr(step, "step_id", str(uuid4())),
+                            step_name=step_name,
+                            step_index=i,
+                            error_message=str(step_error_exception),
+                            error_type=type(step_error_exception).__name__,
+                            retry_count=getattr(step, "_retry_count", 0),
+                        )
+
+                        workflow_run_response.status = RunStatus.paused
+                        workflow_run_response.error_requirements = [error_requirement]
+                        workflow_run_response._paused_step_index = i
+                        workflow_run_response.step_results = collected_step_outputs
+
+                        error_paused_event = StepErrorEvent(
+                            run_id=workflow_run_response.run_id or "",
+                            workflow_name=workflow_run_response.workflow_name,
+                            workflow_id=workflow_run_response.workflow_id,
+                            session_id=workflow_run_response.session_id,
+                            step_name=step_name,
+                            step_index=i,
+                            step_id=getattr(step, "step_id", None),
+                            error=str(step_error_exception),
+                        )
+                        yield self._handle_event(error_paused_event, workflow_run_response)
+
+                        self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
+                        session.upsert_run(run=workflow_run_response)
+                        await self.asave_session(session=session)
+
+                        return
+                    elif step_on_error == "skip":
+                        log_debug(f"Step '{step_name}' failed with on_error='skip' - skipping step")
+                        step_output = StepOutput(
+                            step_name=step_name,
+                            step_id=getattr(step, "step_id", str(uuid4())),
+                            step_type=StepType.STEP,
+                            content=f"Step skipped due to error: {step_error_exception}",
+                            success=False,
+                            error=str(step_error_exception),
+                        )
+                        collected_step_outputs.append(step_output)
+                        previous_step_outputs[step_name] = step_output
+                    else:
+                        raise step_error_exception
 
                 if early_termination:
                     break

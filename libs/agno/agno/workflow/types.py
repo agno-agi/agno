@@ -758,3 +758,84 @@ class RouterRequirement:
             selected_choices=data.get("selected_choices"),
             step_input=step_input,
         )
+
+
+@dataclass
+class ErrorRequirement:
+    """Requirement to handle a step error (used for error-based HITL flows).
+
+    When a Step has `on_error="pause"` and encounters an exception,
+    the workflow pauses and creates this requirement. The user can
+    decide to retry the step or skip it and continue with the next step.
+    """
+
+    step_id: str
+    step_name: Optional[str] = None
+    step_index: Optional[int] = None
+
+    # Error information
+    error_message: str = ""
+    error_type: Optional[str] = None  # e.g., "ValueError", "TimeoutError"
+    retry_count: int = 0  # How many times this step has been retried
+
+    # User's decision: "retry" or "skip"
+    decision: Optional[str] = None
+
+    # The step input that was used when the error occurred
+    step_input: Optional["StepInput"] = None
+
+    def retry(self) -> None:
+        """Retry the failed step."""
+        self.decision = "retry"
+
+    def skip(self) -> None:
+        """Skip the failed step and continue with the next step."""
+        self.decision = "skip"
+
+    @property
+    def needs_decision(self) -> bool:
+        """Check if this requirement still needs a user decision."""
+        return self.decision is None
+
+    @property
+    def is_resolved(self) -> bool:
+        """Check if this requirement has been resolved."""
+        return self.decision is not None
+
+    @property
+    def should_retry(self) -> bool:
+        """Check if the user decided to retry."""
+        return self.decision == "retry"
+
+    @property
+    def should_skip(self) -> bool:
+        """Check if the user decided to skip."""
+        return self.decision == "skip"
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary."""
+        # Note: We intentionally don't serialize step_input to avoid circular reference issues
+        # The step_input will be reconstructed when resuming the workflow
+        return {
+            "step_id": self.step_id,
+            "step_name": self.step_name,
+            "step_index": self.step_index,
+            "error_message": self.error_message,
+            "error_type": self.error_type,
+            "retry_count": self.retry_count,
+            "decision": self.decision,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "ErrorRequirement":
+        """Create ErrorRequirement from dictionary."""
+        # Note: step_input is not serialized/deserialized to avoid circular reference issues
+        return cls(
+            step_id=data["step_id"],
+            step_name=data.get("step_name"),
+            step_index=data.get("step_index"),
+            error_message=data.get("error_message", ""),
+            error_type=data.get("error_type"),
+            retry_count=data.get("retry_count", 0),
+            decision=data.get("decision"),
+        )

@@ -17,12 +17,19 @@ from agno.utils.media import (
 )
 
 if TYPE_CHECKING:
-    from agno.workflow.types import ConditionRequirement, RouterRequirement, StepOutput, StepRequirement, WorkflowMetrics
+    from agno.workflow.types import (
+        ErrorRequirement,
+        RouterRequirement,
+        StepOutput,
+        StepRequirement,
+        WorkflowMetrics,
+    )
 else:
     StepOutput = Any
     StepRequirement = Any
     RouterRequirement = Any
     ConditionRequirement = Any
+    ErrorRequirement = Any
     WorkflowMetrics = Any
 
 
@@ -220,15 +227,20 @@ class StepCompletedEvent(BaseWorkflowRunOutputEvent):
 
 @dataclass
 class StepPausedEvent(BaseWorkflowRunOutputEvent):
-    """Event sent when step execution is paused (e.g., requires user confirmation)"""
+    """Event sent when step execution is paused (e.g., requires user confirmation or user input)"""
 
     event: str = WorkflowRunEvent.step_paused.value
     step_name: Optional[str] = None
     step_index: Optional[Union[int, tuple]] = None
+    step_id: Optional[str] = None
 
     # Confirmation fields
     requires_confirmation: bool = False
     confirmation_message: Optional[str] = None
+
+    # User input fields
+    requires_user_input: bool = False
+    user_input_message: Optional[str] = None
 
 
 @dataclass
@@ -576,6 +588,9 @@ class WorkflowRunOutput:
     # Router-level HITL requirements for user-driven routing
     router_requirements: Optional[List["RouterRequirement"]] = None
 
+    # Error-level HITL requirements for handling step failures
+    error_requirements: Optional[List["ErrorRequirement"]] = None
+
     # Track the current step index for resumption
     _paused_step_index: Optional[int] = None
 
@@ -623,6 +638,20 @@ class WorkflowRunOutput:
             return []
         return [req for req in self.router_requirements if req.needs_selection]
 
+    @property
+    def active_error_requirements(self) -> List["ErrorRequirement"]:
+        """Get error requirements that still need user decision"""
+        if not self.error_requirements:
+            return []
+        return [req for req in self.error_requirements if not req.is_resolved]
+
+    @property
+    def steps_with_errors(self) -> List["ErrorRequirement"]:
+        """Get error requirements that need user decision (retry or skip)"""
+        if not self.error_requirements:
+            return []
+        return [req for req in self.error_requirements if req.needs_decision]
+
     def to_dict(self) -> Dict[str, Any]:
         _dict = {
             k: v
@@ -642,6 +671,7 @@ class WorkflowRunOutput:
                 "workflow_agent_run",
                 "step_requirements",
                 "router_requirements",
+                "error_requirements",
                 "_paused_step_index",
             ]
         }
@@ -701,6 +731,9 @@ class WorkflowRunOutput:
 
         if self.router_requirements is not None:
             _dict["router_requirements"] = [req.to_dict() for req in self.router_requirements]
+
+        if self.error_requirements is not None:
+            _dict["error_requirements"] = [req.to_dict() for req in self.error_requirements]
 
         if self._paused_step_index is not None:
             _dict["_paused_step_index"] = self._paused_step_index
@@ -787,6 +820,14 @@ class WorkflowRunOutput:
 
             router_requirements = [RouterRequirement.from_dict(req) for req in router_requirements_data]
 
+        # Parse error_requirements
+        error_requirements_data = data.pop("error_requirements", None)
+        error_requirements = None
+        if error_requirements_data:
+            from agno.workflow.types import ErrorRequirement
+
+            error_requirements = [ErrorRequirement.from_dict(req) for req in error_requirements_data]
+
         paused_step_index = data.pop("_paused_step_index", None)
 
         input_data = data.pop("input", None)
@@ -810,6 +851,7 @@ class WorkflowRunOutput:
             step_executor_runs=step_executor_runs,
             step_requirements=step_requirements,
             router_requirements=router_requirements,
+            error_requirements=error_requirements,
             input=input_data,
             **filtered_data,
         )
