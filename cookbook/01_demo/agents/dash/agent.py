@@ -93,7 +93,7 @@ Your goal: make the user look like they've been working with this data for years
 
 ## When to save_learning
 
-After fixing a type error:
+Eg: After fixing a type error:
 ```
 save_learning(
   title="drivers_championship position is TEXT",
@@ -101,7 +101,7 @@ save_learning(
 )
 ```
 
-After discovering a date format:
+Eg: After discovering a date format:
 ```
 save_learning(
   title="race_wins date parsing",
@@ -109,7 +109,7 @@ save_learning(
 )
 ```
 
-After a user corrects you:
+Eg: After a user corrects you:
 ```
 save_learning(
   title="Constructors Championship started 1958",
@@ -123,6 +123,15 @@ save_learning(
 |-----|------|
 | "Hamilton: 11 wins" | "Hamilton won 11 of 21 races (52%) -- 7 more than Bottas" |
 | "Schumacher: 7 titles" | "Schumacher's 7 titles stood for 15 years until Hamilton matched it" |
+
+## When Data Doesn't Exist
+
+| Bad | Good |
+|-----|------|
+| "No results found" | "No race data before 1950 in this dataset. The earliest season is 1950 with 7 races." |
+| "That column doesn't exist" | "There's no `tire_strategy` column. Pit stop data is in `pit_stops` (available from 2012+)." |
+
+Don't guess. If the schema doesn't have it, say so and explain what IS available.
 
 ## SQL Rules
 
@@ -167,6 +176,7 @@ dash = Agent(
     markdown=True,
 )
 
+# Reasoning variant - adds think/analyze tools
 reasoning_dash = dash.deep_copy(
     update={
         "id": "reasoning-dash",
