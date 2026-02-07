@@ -22,12 +22,6 @@ if TYPE_CHECKING:
 from agno.models.base import Model
 from agno.run import RunContext
 from agno.run.agent import RunOutput
-from agno.run.cancel import (
-    acancel_run as acancel_run_global,
-)
-from agno.run.cancel import (
-    cancel_run as cancel_run_global,
-)
 from agno.session import AgentSession
 from agno.tools import Toolkit
 from agno.tools.function import Function
@@ -150,7 +144,7 @@ def get_tools(
         )
 
     if agent.knowledge is not None and agent.update_knowledge:
-        agent_tools.append(_default_tools.make_add_to_knowledge_entrypoint(agent))
+        agent_tools.append(agent.add_to_knowledge)
 
     # Add tools for accessing skills
     if agent.skills is not None:
@@ -281,7 +275,7 @@ async def aget_tools(
         )
 
     if agent.knowledge is not None and agent.update_knowledge:
-        agent_tools.append(_default_tools.make_add_to_knowledge_entrypoint(agent))
+        agent_tools.append(agent.add_to_knowledge)
 
     # Add tools for accessing skills
     if agent.skills is not None:
@@ -348,10 +342,10 @@ def parse_tools(
                 continue
             _function_names.append(tool.name)
 
+            tool = tool.model_copy(deep=True)
             # Respect the function's explicit strict setting if set
             effective_strict = strict if tool.strict is None else tool.strict
             tool.process_entrypoint(strict=effective_strict)
-            tool = tool.model_copy(deep=True)
 
             tool._agent = agent
             if strict and tool.strict is None:
@@ -555,38 +549,3 @@ async def aresolve_run_dependencies(agent: Agent, run_context: RunContext) -> No
             run_context.dependencies[key] = result
         except Exception as e:
             log_warning(f"Failed to resolve context for '{key}': {e}")
-
-
-def get_agent_data(agent: Agent) -> Dict[str, Any]:
-    agent_data: Dict[str, Any] = {}
-    if agent.name is not None:
-        agent_data["name"] = agent.name
-    if agent.id is not None:
-        agent_data["agent_id"] = agent.id
-    if agent.model is not None:
-        agent_data["model"] = agent.model.to_dict()
-    return agent_data
-
-
-def cancel_run(run_id: str) -> bool:
-    """Cancel a running agent execution.
-
-    Args:
-        run_id: The run_id to cancel.
-
-    Returns:
-        True if the run was found and marked for cancellation, False otherwise.
-    """
-    return cancel_run_global(run_id)
-
-
-async def acancel_run(run_id: str) -> bool:
-    """Cancel a running agent execution (async version).
-
-    Args:
-        run_id: The run_id to cancel.
-
-    Returns:
-        True if the run was found and marked for cancellation, False otherwise.
-    """
-    return await acancel_run_global(run_id)
