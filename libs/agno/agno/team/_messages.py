@@ -1279,9 +1279,9 @@ def _get_messages_for_parser_model(
     response_format: Optional[Union[Dict, Type[BaseModel]]],
     run_context: Optional[RunContext] = None,
 ) -> List[Message]:
+    """Get the messages for the parser model."""
     from agno.utils.prompts import get_json_output_prompt
 
-    """Get the messages for the parser model."""
     # Get output_schema from run_context
     output_schema = run_context.output_schema if run_context else None
 
@@ -1341,7 +1341,8 @@ def _get_messages_for_output_model(team: "Team", messages: List[Message]) -> Lis
             messages.insert(0, Message(role="system", content=team.output_model_prompt))
 
     # Remove the last assistant message from the messages list
-    messages.pop(-1)
+    if messages and messages[-1].role == "assistant":
+        messages.pop(-1)
 
     return messages
 

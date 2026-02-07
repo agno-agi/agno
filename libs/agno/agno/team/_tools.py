@@ -1349,7 +1349,7 @@ def _get_delegate_task_function(
                         member_agent_task,  # type: ignore
                         member_session_state_copy,  # type: ignore
                     )
-                await queue.put(done_marker)
+                    await queue.put(done_marker)
 
             # Initialize and launch all members
             tasks: List[asyncio.Task[None]] = []
@@ -1374,7 +1374,7 @@ def _get_delegate_task_function(
                         t.cancel()
                 # Await cancellation to suppress warnings
                 for t in tasks:
-                    with contextlib.suppress(Exception):
+                    with contextlib.suppress(asyncio.CancelledError):
                         await t
         else:
             # Non-streaming concurrent run of members; collect results when done

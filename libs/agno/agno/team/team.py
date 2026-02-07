@@ -223,7 +223,7 @@ class Team:
     # If True, store tool results in run output
     store_tool_messages: bool = True
     # If True, store history messages in run output
-    store_history_messages: bool = True
+    store_history_messages: bool = False
 
     # --- Team Tools ---
     # A list of tools provided to the Model.
@@ -853,6 +853,7 @@ class Team:
         stream_events: Optional[bool] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
+        run_context: Optional[RunContext] = None,
         user_id: Optional[str] = None,
         run_id: Optional[str] = None,
         audio: Optional[Sequence[Audio]] = None,
