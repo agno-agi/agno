@@ -143,6 +143,17 @@ def handle_team_run_paused(
             user_id=run_response.user_id,
         )
 
+    # Create approval record if any tool has requires_approval=True
+    if team.db is not None:
+        from agno.run.approval import create_approval_from_pause
+
+        create_approval_from_pause(
+            team.db,
+            run_response,
+            team_id=team.id,
+            team_name=team.name,
+        )
+
     log_debug(f"Team Run Paused: {run_response.run_id}", center=True, symbol="*")
     return run_response
 
@@ -181,6 +192,17 @@ def handle_team_run_paused_stream(
             team_id=team.id,
             team_name=team.name,
             user_id=run_response.user_id,
+        )
+
+    # Create approval record if any tool has requires_approval=True
+    if team.db is not None:
+        from agno.run.approval import create_approval_from_pause
+
+        create_approval_from_pause(
+            team.db,
+            run_response,
+            team_id=team.id,
+            team_name=team.name,
         )
 
     if pause_event is not None:
@@ -226,6 +248,17 @@ async def ahandle_team_run_paused(
             user_id=run_response.user_id,
         )
 
+    # Create approval record if any tool has requires_approval=True
+    if team.db is not None:
+        from agno.run.approval import acreate_approval_from_pause
+
+        await acreate_approval_from_pause(
+            team.db,
+            run_response,
+            team_id=team.id,
+            team_name=team.name,
+        )
+
     log_debug(f"Team Run Paused: {run_response.run_id}", center=True, symbol="*")
     return run_response
 
@@ -264,6 +297,17 @@ async def ahandle_team_run_paused_stream(
             team_id=team.id,
             team_name=team.name,
             user_id=run_response.user_id,
+        )
+
+    # Create approval record if any tool has requires_approval=True
+    if team.db is not None:
+        from agno.run.approval import acreate_approval_from_pause
+
+        await acreate_approval_from_pause(
+            team.db,
+            run_response,
+            team_id=team.id,
+            team_name=team.name,
         )
 
     if pause_event is not None:
