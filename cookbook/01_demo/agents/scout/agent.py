@@ -1,13 +1,6 @@
 """
-Scout Agent
+Scout - Enterprise Knowledge Agent
 ===========
-
-Enterprise knowledge agent with Claude Code-like capabilities:
-- Awareness: knows what sources exist and what they contain
-- Search: grep-like search across sources
-- Read: full documents with context (not chunks)
-- Write: create and update docs
-- Learn: builds knowledge over time
 
 Test:
     python -m agents.scout.agent
