@@ -2538,8 +2538,6 @@ def _update_team_media(team: "Team", run_response: Union[TeamRunOutput, RunOutpu
         if team.audio is None:
             team.audio = []
         team.audio.extend(run_response.audio)
-
-
 # ---------------------------------------------------------------------------
 # continue_run helpers
 # ---------------------------------------------------------------------------
