@@ -22,7 +22,7 @@ from pathlib import Path
 
 EMOJI_RE = re.compile(r"[\U0001F300-\U0001FAFF]")
 MAIN_GATE_RE = re.compile(r'if __name__ == ["\']__main__["\']:')
-SECTION_RE = re.compile(r"^# =+\n# (?P<title>.+?)\n# =+$", re.MULTILINE)
+SECTION_RE = re.compile(r"^# [-=]+\n# (?P<title>.+?)\n# [-=]+$", re.MULTILINE)
 SKIP_FILE_NAMES = {"__init__.py"}
 SKIP_DIR_NAMES = {"__pycache__", ".git", ".context"}
 
@@ -113,7 +113,7 @@ def validate_file(path: Path) -> list[Violation]:
                 path=path.as_posix(),
                 line=1,
                 code="missing_sections",
-                message="Expected section banners using # === style.",
+                message="Expected section banners using # --- style.",
             )
         )
     else:
