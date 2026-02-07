@@ -279,10 +279,12 @@ def _run_tasks(
             # Check termination: goal marked complete or all tasks in terminal state
             if task_list.goal_complete:
                 log_debug("Tasks mode: goal marked complete by leader")
+                goal_reached = True
                 break
 
             if task_list.tasks and task_list.all_terminal():
                 log_debug("Tasks mode: all tasks in terminal state")
+                goal_reached = True
                 break
 
             raise_if_cancelled(run_response.run_id)  # type: ignore
@@ -1475,10 +1477,12 @@ async def _arun_tasks(
 
             if task_list.goal_complete:
                 log_debug("Async tasks mode: goal marked complete by leader")
+                goal_reached = True
                 break
 
             if task_list.tasks and task_list.all_terminal():
                 log_debug("Async tasks mode: all tasks in terminal state")
+                goal_reached = True
                 break
 
             await araise_if_cancelled(run_response.run_id)  # type: ignore
