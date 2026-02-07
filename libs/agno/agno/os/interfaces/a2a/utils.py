@@ -64,6 +64,7 @@ except ImportError as e:
 
 
 from agno.media import Audio, File, Image, Video
+from agno.run import RunStatus
 from agno.run.agent import (
     MemoryUpdateCompletedEvent,
     MemoryUpdateStartedEvent,
@@ -176,6 +177,19 @@ async def map_a2a_request_to_run_input(request_body: dict, stream: bool = True) 
     )
 
 
+def _map_run_status_to_task_state(status: RunStatus) -> TaskState:
+    """Map Agno RunStatus to A2A TaskState."""
+    _status_map = {
+        RunStatus.pending: TaskState.submitted,
+        RunStatus.running: TaskState.working,
+        RunStatus.completed: TaskState.completed,
+        RunStatus.error: TaskState.failed,
+        RunStatus.cancelled: TaskState.canceled,
+        RunStatus.paused: TaskState.input_required,
+    }
+    return _status_map.get(status, TaskState.working)
+
+
 def map_run_output_to_a2a_task(run_output: Union[RunOutput, WorkflowRunOutput]) -> Task:
     """Map the given RunOutput or WorkflowRunOutput into an A2A Task.
 
@@ -274,11 +288,17 @@ def map_run_output_to_a2a_task(run_output: Union[RunOutput, WorkflowRunOutput]) 
     # 4. Build and return the A2A task
     run_id = cast(str, run_output.run_id) if run_output.run_id else str(uuid4())
     session_id = cast(str, run_output.session_id) if run_output.session_id else str(uuid4())
+
+    # Map RunStatus to A2A TaskState dynamically
+    task_state = (
+        _map_run_status_to_task_state(run_output.status) if hasattr(run_output, "status") else TaskState.completed
+    )
+
     return Task(
         id=run_id,
         context_id=session_id,
-        status=TaskStatus(state=TaskState.completed),
-        history=[agent_message],
+        status=TaskStatus(state=task_state),
+        history=[agent_message] if parts else None,
         artifacts=artifacts if artifacts else None,
     )
 
