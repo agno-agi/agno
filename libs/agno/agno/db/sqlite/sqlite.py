@@ -212,6 +212,7 @@ class SqliteDb(BaseDb):
             (self.learnings_table_name, "learnings"),
             (self.schedule_table_name, "schedules"),
             (self.schedule_runs_table_name, "schedule_runs"),
+            (self.approvals_table_name, "approvals"),
         ]
 
         for table_name, table_type in tables_to_create:
@@ -408,6 +409,7 @@ class SqliteDb(BaseDb):
             "versions": self.versions_table_name,
             "schedules": self.schedule_table_name,
             "schedule_runs": self.schedule_runs_table_name,
+            "approvals": self.approvals_table_name,
         }
         return table_map.get(logical_name, logical_name)
 
@@ -544,6 +546,14 @@ class SqliteDb(BaseDb):
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.schedule_runs_table
+
+        elif table_type == "approvals":
+            self.approvals_table = self._get_or_create_table(
+                table_name=self.approvals_table_name,
+                table_type="approvals",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.approvals_table
 
         else:
             raise ValueError(f"Unknown table type: '{table_type}'")
@@ -4583,3 +4593,127 @@ class SqliteDb(BaseDb):
         except Exception as e:
             log_warning(f"Error getting schedule runs: {e}")
             return []
+
+    # --- Approvals ---
+
+    def create_approval(self, approval_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="approvals", create_table_if_not_found=True)
+            if table is None:
+                return None
+            with self.Session() as sess, sess.begin():
+                stmt = sqlite.insert(table).values(**approval_data)
+                sess.execute(stmt)
+            return approval_data
+        except Exception as e:
+            log_debug(f"Error creating approval: {e}")
+            return None
+
+    def get_approval(self, approval_id: str) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="approvals")
+            if table is None:
+                return None
+            with self.Session() as sess:
+                stmt = select(table).where(table.c.id == approval_id)
+                result = sess.execute(stmt).fetchone()
+                if result is None:
+                    return None
+                return dict(result._mapping)
+        except Exception as e:
+            log_debug(f"Error getting approval: {e}")
+            return None
+
+    def get_approvals(
+        self,
+        status: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        schedule_id: Optional[str] = None,
+        source_type: Optional[str] = None,
+        run_id: Optional[str] = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        from sqlalchemy import and_
+
+        try:
+            table = self._get_table(table_type="approvals")
+            if table is None:
+                return [], 0
+            with self.Session() as sess:
+                conditions = []
+                if status is not None:
+                    conditions.append(table.c.status == status)
+                if agent_id is not None:
+                    conditions.append(table.c.agent_id == agent_id)
+                if team_id is not None:
+                    conditions.append(table.c.team_id == team_id)
+                if workflow_id is not None:
+                    conditions.append(table.c.workflow_id == workflow_id)
+                if user_id is not None:
+                    conditions.append(table.c.user_id == user_id)
+                if schedule_id is not None:
+                    conditions.append(table.c.schedule_id == schedule_id)
+                if source_type is not None:
+                    conditions.append(table.c.source_type == source_type)
+                if run_id is not None:
+                    conditions.append(table.c.run_id == run_id)
+
+                where_clause = and_(*conditions) if conditions else True  # noqa: E712
+
+                count_stmt = select(func.count()).select_from(table).where(where_clause)
+                total = sess.execute(count_stmt).scalar() or 0
+
+                stmt = select(table).where(where_clause).order_by(table.c.created_at.desc()).limit(limit).offset(offset)
+                results = sess.execute(stmt).fetchall()
+                return [dict(row._mapping) for row in results], total
+        except Exception as e:
+            log_debug(f"Error getting approvals: {e}")
+            return [], 0
+
+    def update_approval(self, approval_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="approvals")
+            if table is None:
+                return None
+            with self.Session() as sess, sess.begin():
+                stmt = table.update().where(table.c.id == approval_id).values(**kwargs)
+                result = sess.execute(stmt)
+                if result.rowcount == 0:
+                    return None
+            return self.get_approval(approval_id)
+        except Exception as e:
+            log_debug(f"Error updating approval: {e}")
+            return None
+
+    def delete_approval(self, approval_id: str) -> bool:
+        try:
+            table = self._get_table(table_type="approvals")
+            if table is None:
+                return False
+            with self.Session() as sess, sess.begin():
+                result = sess.execute(table.delete().where(table.c.id == approval_id))
+                return result.rowcount > 0
+        except Exception as e:
+            log_debug(f"Error deleting approval: {e}")
+            return False
+
+    def get_pending_approval_count(self, user_id: Optional[str] = None) -> int:
+        from sqlalchemy import and_
+
+        try:
+            table = self._get_table(table_type="approvals")
+            if table is None:
+                return 0
+            with self.Session() as sess:
+                conditions = [table.c.status == "pending"]
+                if user_id is not None:
+                    conditions.append(table.c.user_id == user_id)
+                stmt = select(func.count()).select_from(table).where(and_(*conditions))
+                return sess.execute(stmt).scalar() or 0
+        except Exception as e:
+            log_debug(f"Error getting pending approval count: {e}")
+            return 0
