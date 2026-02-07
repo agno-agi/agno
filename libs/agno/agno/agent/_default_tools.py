@@ -575,6 +575,7 @@ def get_previous_sessions_messages_function(
                                     user_content = last_user.content
                                     assistant_content = msg.content
                                     if user_content is None or assistant_content is None:
+                                        last_user = None
                                         continue
 
                                     msg_pair_id = f"{user_content}:{assistant_content}"
@@ -656,6 +657,7 @@ async def aget_previous_sessions_messages_function(
                                     user_content = last_user.content
                                     assistant_content = msg.content
                                     if user_content is None or assistant_content is None:
+                                        last_user = None
                                         continue
 
                                     msg_pair_id = f"{user_content}:{assistant_content}"
