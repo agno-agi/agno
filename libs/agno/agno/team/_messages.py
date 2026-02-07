@@ -1329,13 +1329,19 @@ def _get_messages_for_parser_model_stream(
 
 def _get_messages_for_output_model(team: "Team", messages: List[Message]) -> List[Message]:
     """Get the messages for the output model."""
+    from copy import copy
+
+    # Work on a copy to avoid mutating the caller's list
+    messages = list(messages)
 
     if team.output_model_prompt is not None:
         system_message_exists = False
-        for message in messages:
+        for i, message in enumerate(messages):
             if message.role == "system":
                 system_message_exists = True
-                message.content = team.output_model_prompt
+                msg_copy = copy(message)
+                msg_copy.content = team.output_model_prompt
+                messages[i] = msg_copy
                 break
         if not system_message_exists:
             messages.insert(0, Message(role="system", content=team.output_model_prompt))
