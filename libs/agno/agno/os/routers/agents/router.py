@@ -9,6 +9,8 @@ from fastapi import (
     File,
     Form,
     HTTPException,
+    Path,
+    Query,
     Request,
     UploadFile,
 )
@@ -40,6 +42,7 @@ from agno.os.utils import (
     process_video,
 )
 from agno.registry import Registry
+from agno.run import RunStatus
 from agno.run.agent import RunErrorEvent, RunOutput
 from agno.utils.log import log_debug, log_error, log_warning
 
@@ -220,6 +223,7 @@ def get_agent_router(
         user_id: Optional[str] = Form(None),
         files: Optional[List[UploadFile]] = File(None),
         version: Optional[str] = Form(None),
+        background: bool = Form(False),
     ):
         kwargs = await get_request_kwargs(request, create_agent_run)
 
@@ -347,6 +351,46 @@ def get_agent_router(
         # Extract auth token for remote agents
         auth_token = get_auth_token_from_request(request)
 
+        # Background execution: return 202 immediately, run agent asynchronously
+        if background:
+            if isinstance(agent, RemoteAgent):
+                raise HTTPException(status_code=400, detail="Background execution is not supported for remote agents")
+            if agent.db is None:
+                raise HTTPException(
+                    status_code=400, detail="Background runs require database configuration on the agent"
+                )
+
+            try:
+                run_response = cast(
+                    RunOutput,
+                    await agent.arun(
+                        input=message,
+                        session_id=session_id,
+                        user_id=user_id,
+                        images=base64_images if base64_images else None,
+                        audio=base64_audios if base64_audios else None,
+                        videos=base64_videos if base64_videos else None,
+                        files=input_files if input_files else None,
+                        stream=False,
+                        background=True,
+                        **kwargs,
+                    ),
+                )
+                return JSONResponse(
+                    status_code=202,
+                    content={
+                        "run_id": run_response.run_id,
+                        "session_id": run_response.session_id,
+                        "status": run_response.status.value
+                        if isinstance(run_response.status, RunStatus)
+                        else run_response.status,
+                    },
+                )
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e))
+            except InputCheckError as e:
+                raise HTTPException(status_code=400, detail=str(e))
+
         if stream:
             return StreamingResponse(
                 agent_response_streamer(
@@ -389,6 +433,43 @@ def get_agent_router(
 
             except InputCheckError as e:
                 raise HTTPException(status_code=400, detail=str(e))
+
+    @router.get(
+        "/agents/{agent_id}/runs/{run_id}",
+        tags=["Agents"],
+        operation_id="get_agent_run",
+        response_model_exclude_none=True,
+        summary="Get Agent Run Status",
+        description=(
+            "Get the status and output of an agent run. Use this to poll for results of background runs.\n\n"
+            "The `session_id` is required and was returned in the initial background run response."
+        ),
+        responses={
+            200: {"description": "Run found"},
+            404: {"description": "Agent or run not found", "model": NotFoundResponse},
+        },
+        dependencies=[Depends(require_resource_access("agents", "run", "agent_id"))],
+    )
+    async def get_agent_run(
+        agent_id: str = Path(..., description="Agent ID"),
+        run_id: str = Path(..., description="Run ID"),
+        session_id: str = Query(..., description="Session ID (returned in the background run response)"),
+        user_id: Optional[str] = Query(None, description="User ID"),
+        version: Optional[str] = Query(None, description="Agent version"),
+    ):
+        agent = get_agent_by_id(
+            agent_id, os.agents, os.db, registry, version=int(version) if version else None, create_fresh=True
+        )
+        if agent is None:
+            raise HTTPException(status_code=404, detail="Agent not found")
+        if isinstance(agent, RemoteAgent):
+            raise HTTPException(status_code=400, detail="Run polling is not supported for remote agents")
+
+        run_output = await agent.aget_run_output(run_id=run_id, session_id=session_id)
+        if run_output is None:
+            raise HTTPException(status_code=404, detail="Run not found")
+
+        return run_output.to_dict()
 
     @router.post(
         "/agents/{agent_id}/runs/{run_id}/cancel",
