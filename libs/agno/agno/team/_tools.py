@@ -874,6 +874,9 @@ def _find_member_by_id(
     # Use resolved members (from run_context or static list)
     members = get_resolved_members(team, run_context) or []
 
+    # Use resolved members if available, otherwise fall back to static members
+    members = team.members if isinstance(team.members, list) else []
+
     # First check direct members
     for i, member in enumerate(members):
         url_safe_member_id = get_member_id(member)
