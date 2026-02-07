@@ -464,7 +464,7 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
         config["store_media"] = agent.store_media
     if not agent.store_tool_messages:
         config["store_tool_messages"] = agent.store_tool_messages
-    if not agent.store_history_messages:
+    if agent.store_history_messages:
         config["store_history_messages"] = agent.store_history_messages
 
     # --- System message settings ---
