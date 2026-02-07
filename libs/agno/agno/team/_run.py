@@ -1808,13 +1808,13 @@ async def _arun(
                     run_context=run_context,
                 )
 
-                # 7b. Check if delegation propagated member HITL requirements
+                # 9b. Check if delegation propagated member HITL requirements
                 if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
                     from agno.team import _hooks
 
                     return await _hooks.ahandle_team_run_paused(team, run_response=run_response, session=team_session)
 
-                # 8. Store media if enabled
+                # 10. Store media if enabled
                 if team.store_media:
                     store_media_util(run_response, model_response)
 
@@ -2174,7 +2174,7 @@ async def _arun_stream(
                 # Check for cancellation after model processing
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 
-                # 6b. Check if delegation propagated member HITL requirements
+                # 9b. Check if delegation propagated member HITL requirements
                 if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
                     from agno.team import _hooks
 
@@ -2186,7 +2186,7 @@ async def _arun_stream(
                         yield run_response
                     return
 
-                # 7. Parse response with parser model if provided
+                # 10. Parse response with parser model if provided
                 async for event in team._aparse_response_with_parser_model_stream(
                     session=team_session,
                     run_response=run_response,
@@ -2599,20 +2599,6 @@ def _handle_event(
     return event
 
 
-def _update_team_media(team: "Team", run_response: Union[TeamRunOutput, RunOutput]) -> None:
-    """Update the team state with the run response."""
-    if run_response.images is not None:
-        if team.images is None:
-            team.images = []
-        team.images.extend(run_response.images)
-    if run_response.videos is not None:
-        if team.videos is None:
-            team.videos = []
-        team.videos.extend(run_response.videos)
-    if run_response.audio is not None:
-        if team.audio is None:
-            team.audio = []
-        team.audio.extend(run_response.audio)
 # ---------------------------------------------------------------------------
 # continue_run helpers
 # ---------------------------------------------------------------------------
@@ -2774,7 +2760,7 @@ def _build_continuation_message(member_results: Dict[str, Union["RunOutput", Tea
         elif not isinstance(content, str):
             import json
 
-            content = json.dumps(content, indent=2, default=str)
+            content = json.dumps(content, indent=2)
         parts.append(f"Results from '{member_name}':\n{content}")
     return "Previously delegated tasks have been completed.\n\n" + "\n\n".join(parts)
 
