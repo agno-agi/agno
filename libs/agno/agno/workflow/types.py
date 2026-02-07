@@ -552,6 +552,8 @@ class StepRequirement:
     requires_confirmation: bool = False
     confirmation_message: Optional[str] = None
     confirmed: Optional[bool] = None
+    # What to do when step is rejected: "skip" (skip step, continue workflow) or "cancel" (cancel workflow)
+    on_reject: str = "cancel"
 
     # User input fields
     requires_user_input: bool = False
@@ -627,6 +629,7 @@ class StepRequirement:
             "requires_confirmation": self.requires_confirmation,
             "confirmation_message": self.confirmation_message,
             "confirmed": self.confirmed,
+            "on_reject": self.on_reject,
             "requires_user_input": self.requires_user_input,
             "user_input_message": self.user_input_message,
             "user_input": self.user_input,
@@ -655,6 +658,7 @@ class StepRequirement:
             requires_confirmation=data.get("requires_confirmation", False),
             confirmation_message=data.get("confirmation_message"),
             confirmed=data.get("confirmed"),
+            on_reject=data.get("on_reject", "cancel"),
             requires_user_input=data.get("requires_user_input", False),
             user_input_message=data.get("user_input_message"),
             user_input_schema=user_input_schema,

@@ -1757,6 +1757,7 @@ class Workflow:
                             step_index=i,
                             requires_confirmation=step.requires_confirmation,
                             confirmation_message=step.confirmation_message,
+                            on_reject=step.on_reject,
                             requires_user_input=step.requires_user_input,
                             user_input_message=step.user_input_message,
                             user_input_schema=user_input_schema,
@@ -2005,6 +2006,7 @@ class Workflow:
                             step_index=i,
                             requires_confirmation=step.requires_confirmation,
                             confirmation_message=step.confirmation_message,
+                            on_reject=step.on_reject,
                             requires_user_input=step.requires_user_input,
                             user_input_message=step.user_input_message,
                             user_input_schema=user_input_schema,
@@ -2484,6 +2486,7 @@ class Workflow:
                             step_index=i,
                             requires_confirmation=step.requires_confirmation,
                             confirmation_message=step.confirmation_message,
+                            on_reject=step.on_reject,
                             requires_user_input=step.requires_user_input,
                             user_input_message=step.user_input_message,
                             user_input_schema=user_input_schema,
@@ -2754,6 +2757,7 @@ class Workflow:
                             step_index=i,
                             requires_confirmation=step.requires_confirmation,
                             confirmation_message=step.confirmation_message,
+                            on_reject=step.on_reject,
                             requires_user_input=step.requires_user_input,
                             user_input_message=step.user_input_message,
                             user_input_schema=user_input_schema,
@@ -4304,32 +4308,41 @@ class Workflow:
             for req in (run_response.step_requirements or [])
             if req.requires_confirmation and req.confirmed is False
         ]
+
+        # Handle rejected steps based on on_reject policy
+        skip_rejected_step = False
         if rejected_steps:
-            # Mark workflow as cancelled due to rejected step
-            run_response.status = RunStatus.cancelled
-            run_response.content = f"Workflow cancelled: Step '{rejected_steps[0].step_name}' was rejected"
+            rejected_step = rejected_steps[0]
+            if rejected_step.on_reject == "skip":
+                # Skip the rejected step, continue with next step
+                skip_rejected_step = True
+                log_debug(f"Step '{rejected_step.step_name}' was rejected with on_reject='skip' - skipping step")
+            else:
+                # Cancel workflow (default behavior)
+                run_response.status = RunStatus.cancelled
+                run_response.content = f"Workflow cancelled: Step '{rejected_step.step_name}' was rejected"
 
-            # Save and return
-            session_id = run_response.session_id or self.session_id
-            if session_id:
-                session = self.get_session(session_id=session_id)
-                if session:
-                    session.upsert_run(run=run_response)
-                    self.save_session(session=session)
+                # Save and return
+                session_id = run_response.session_id or self.session_id
+                if session_id:
+                    session = self.get_session(session_id=session_id)
+                    if session:
+                        session.upsert_run(run=run_response)
+                        self.save_session(session=session)
 
-            if stream:
+                if stream:
 
-                def cancelled_generator() -> Iterator[WorkflowRunOutputEvent]:
-                    yield WorkflowCancelledEvent(
-                        run_id=run_response.run_id or "",
-                        workflow_id=self.id,
-                        workflow_name=self.name,
-                        session_id=run_response.session_id,
-                        reason=run_response.content,
-                    )
+                    def cancelled_generator() -> Iterator[WorkflowRunOutputEvent]:
+                        yield WorkflowCancelledEvent(
+                            run_id=run_response.run_id or "",
+                            workflow_id=self.id,
+                            workflow_name=self.name,
+                            session_id=run_response.session_id,
+                            reason=run_response.content,
+                        )
 
-                return cancelled_generator()
-            return run_response
+                    return cancelled_generator()
+                return run_response
 
         # Get the paused step index
         paused_step_index = run_response._paused_step_index
@@ -4404,13 +4417,16 @@ class Workflow:
         if router_selection:
             kwargs["router_selection"] = router_selection
 
+        # If step was rejected with on_reject="skip", start from next step
+        start_index = paused_step_index + 1 if skip_rejected_step else paused_step_index
+
         if stream:
             return self._continue_execute_stream(
                 session=session,
                 execution_input=execution_input,
                 workflow_run_response=run_response,
                 run_context=run_context,
-                start_step_index=paused_step_index,
+                start_step_index=start_index,
                 stream_events=stream_events or False,
                 **kwargs,
             )
@@ -4420,7 +4436,7 @@ class Workflow:
                 execution_input=execution_input,
                 workflow_run_response=run_response,
                 run_context=run_context,
-                start_step_index=paused_step_index,
+                start_step_index=start_index,
                 **kwargs,
             )
 
@@ -4570,6 +4586,7 @@ class Workflow:
                         step_index=i,
                         requires_confirmation=step.requires_confirmation,
                         confirmation_message=step.confirmation_message,
+                        on_reject=step.on_reject,
                         requires_user_input=step.requires_user_input,
                         user_input_message=step.user_input_message,
                         user_input_schema=user_input_schema,
@@ -4769,6 +4786,7 @@ class Workflow:
                         step_index=i,
                         requires_confirmation=step.requires_confirmation,
                         confirmation_message=step.confirmation_message,
+                        on_reject=step.on_reject,
                         requires_user_input=step.requires_user_input,
                         user_input_message=step.user_input_message,
                         user_input_schema=user_input_schema,
@@ -5087,32 +5105,41 @@ class Workflow:
             for req in (run_response.step_requirements or [])
             if req.requires_confirmation and req.confirmed is False
         ]
+
+        # Handle rejected steps based on on_reject policy
+        skip_rejected_step = False
         if rejected_steps:
-            # Mark workflow as cancelled due to rejected step
-            run_response.status = RunStatus.cancelled
-            run_response.content = f"Workflow cancelled: Step '{rejected_steps[0].step_name}' was rejected"
+            rejected_step = rejected_steps[0]
+            if rejected_step.on_reject == "skip":
+                # Skip the rejected step, continue with next step
+                skip_rejected_step = True
+                log_debug(f"Step '{rejected_step.step_name}' was rejected with on_reject='skip' - skipping step")
+            else:
+                # Cancel workflow (default behavior)
+                run_response.status = RunStatus.cancelled
+                run_response.content = f"Workflow cancelled: Step '{rejected_step.step_name}' was rejected"
 
-            # Save and return
-            session_id = run_response.session_id or self.session_id
-            if session_id:
-                session = await self.aget_session(session_id=session_id)
-                if session:
-                    session.upsert_run(run=run_response)
-                    await self.asave_session(session=session)
+                # Save and return
+                session_id = run_response.session_id or self.session_id
+                if session_id:
+                    session = await self.aget_session(session_id=session_id)
+                    if session:
+                        session.upsert_run(run=run_response)
+                        await self.asave_session(session=session)
 
-            if stream:
+                if stream:
 
-                async def cancelled_generator() -> AsyncIterator[WorkflowRunOutputEvent]:
-                    yield WorkflowCancelledEvent(
-                        run_id=run_response.run_id or "",
-                        workflow_id=self.id,
-                        workflow_name=self.name,
-                        session_id=run_response.session_id,
-                        reason=run_response.content,
-                    )
+                    async def cancelled_generator() -> AsyncIterator[WorkflowRunOutputEvent]:
+                        yield WorkflowCancelledEvent(
+                            run_id=run_response.run_id or "",
+                            workflow_id=self.id,
+                            workflow_name=self.name,
+                            session_id=run_response.session_id,
+                            reason=run_response.content,
+                        )
 
-                return cancelled_generator()
-            return run_response
+                    return cancelled_generator()
+                return run_response
 
         # Get the paused step index
         paused_step_index = run_response._paused_step_index
@@ -5158,13 +5185,16 @@ class Workflow:
             input=run_response.input,
         )
 
+        # If step was rejected with on_reject="skip", start from next step
+        start_index = paused_step_index + 1 if skip_rejected_step else paused_step_index
+
         if stream:
             return self._acontinue_execute_stream(
                 session=session,
                 execution_input=execution_input,
                 workflow_run_response=run_response,
                 run_context=run_context,
-                start_step_index=paused_step_index,
+                start_step_index=start_index,
                 stream_events=stream_events or False,
                 **kwargs,
             )
@@ -5174,7 +5204,7 @@ class Workflow:
                 execution_input=execution_input,
                 workflow_run_response=run_response,
                 run_context=run_context,
-                start_step_index=paused_step_index,
+                start_step_index=start_index,
                 **kwargs,
             )
 
@@ -5252,6 +5282,7 @@ class Workflow:
                         step_index=i,
                         requires_confirmation=step.requires_confirmation,
                         confirmation_message=step.confirmation_message,
+                        on_reject=step.on_reject,
                         requires_user_input=step.requires_user_input,
                         user_input_message=step.user_input_message,
                         user_input_schema=user_input_schema,
@@ -5451,6 +5482,7 @@ class Workflow:
                         step_index=i,
                         requires_confirmation=step.requires_confirmation,
                         confirmation_message=step.confirmation_message,
+                        on_reject=step.on_reject,
                         requires_user_input=step.requires_user_input,
                         user_input_message=step.user_input_message,
                         user_input_schema=user_input_schema,

@@ -77,6 +77,8 @@ class Step:
     requires_confirmation: bool = False
     # Message to display to the user when requesting confirmation
     confirmation_message: Optional[str] = None
+    # What to do when step is rejected: "skip" (skip step, continue workflow) or "cancel" (cancel workflow)
+    on_reject: str = "cancel"
     # If True, the step will pause before execution and require user input
     requires_user_input: bool = False
     # Message to display to the user when requesting input
@@ -101,6 +103,7 @@ class Step:
         num_history_runs: int = 3,
         requires_confirmation: bool = False,
         confirmation_message: Optional[str] = None,
+        on_reject: str = "cancel",
         requires_user_input: bool = False,
         user_input_message: Optional[str] = None,
         user_input_schema: Optional[List[Dict[str, Any]]] = None,
@@ -146,6 +149,7 @@ class Step:
         self.num_history_runs = num_history_runs
         self.requires_confirmation = requires_confirmation
         self.confirmation_message = confirmation_message
+        self.on_reject = on_reject
         self.requires_user_input = requires_user_input
         self.user_input_message = user_input_message
         self.user_input_schema = user_input_schema

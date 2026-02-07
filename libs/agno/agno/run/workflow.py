@@ -17,11 +17,12 @@ from agno.utils.media import (
 )
 
 if TYPE_CHECKING:
-    from agno.workflow.types import RouterRequirement, StepOutput, StepRequirement, WorkflowMetrics
+    from agno.workflow.types import ConditionRequirement, RouterRequirement, StepOutput, StepRequirement, WorkflowMetrics
 else:
     StepOutput = Any
     StepRequirement = Any
     RouterRequirement = Any
+    ConditionRequirement = Any
     WorkflowMetrics = Any
 
 
@@ -51,6 +52,7 @@ class WorkflowRunEvent(str, Enum):
 
     condition_execution_started = "ConditionExecutionStarted"
     condition_execution_completed = "ConditionExecutionCompleted"
+    condition_paused = "ConditionPaused"
 
     router_execution_started = "RouterExecutionStarted"
     router_execution_completed = "RouterExecutionCompleted"
