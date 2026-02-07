@@ -35,7 +35,7 @@ from agno.agent import (
 )
 from agno.compression.manager import CompressionManager
 from agno.culture.manager import CultureManager
-from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, UserMemory
+from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, SessionType, UserMemory
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.eval.base import BaseEval
 from agno.filters import FilterExpr
