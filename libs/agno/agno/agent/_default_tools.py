@@ -583,25 +583,29 @@ def get_previous_sessions_messages_function(
                 for run in session.runs:
                     messages = run.messages
                     if messages is not None:
-                        for i in range(0, len(messages) - 1, 2):
-                            if i + 1 < len(messages):
-                                try:
-                                    user_msg = messages[i]
-                                    assistant_msg = messages[i + 1]
-                                    user_content = user_msg.content
-                                    assistant_content = assistant_msg.content
+                        last_user = None
+                        for msg in messages:
+                            try:
+                                if msg.role == "user":
+                                    last_user = msg
+                                elif msg.role == "assistant" and last_user is not None:
+                                    user_content = last_user.content
+                                    assistant_content = msg.content
                                     if user_content is None or assistant_content is None:
-                                        continue  # Skip this pair if either message has no content
+                                        last_user = None
+                                        continue
 
                                     msg_pair_id = f"{user_content}:{assistant_content}"
                                     if msg_pair_id not in seen_message_pairs:
                                         seen_message_pairs.add(msg_pair_id)
-                                        all_messages.append(Message.model_validate(user_msg))
-                                        all_messages.append(Message.model_validate(assistant_msg))
+                                        all_messages.append(Message.model_validate(last_user))
+                                        all_messages.append(Message.model_validate(msg))
                                         message_count += 1
-                                except Exception as e:
-                                    log_warning(f"Error processing message pair: {e}")
-                                    continue
+                                    last_user = None
+                            except Exception as e:
+                                log_warning(f"Error processing message pair: {e}")
+                                last_user = None
+                                continue
 
         return json.dumps([msg.to_dict() for msg in all_messages]) if all_messages else "No history found"
 
@@ -661,25 +665,29 @@ async def aget_previous_sessions_messages_function(
                 for run in session.runs:
                     messages = run.messages
                     if messages is not None:
-                        for i in range(0, len(messages) - 1, 2):
-                            if i + 1 < len(messages):
-                                try:
-                                    user_msg = messages[i]
-                                    assistant_msg = messages[i + 1]
-                                    user_content = user_msg.content
-                                    assistant_content = assistant_msg.content
+                        last_user = None
+                        for msg in messages:
+                            try:
+                                if msg.role == "user":
+                                    last_user = msg
+                                elif msg.role == "assistant" and last_user is not None:
+                                    user_content = last_user.content
+                                    assistant_content = msg.content
                                     if user_content is None or assistant_content is None:
-                                        continue  # Skip this pair if either message has no content
+                                        last_user = None
+                                        continue
 
                                     msg_pair_id = f"{user_content}:{assistant_content}"
                                     if msg_pair_id not in seen_message_pairs:
                                         seen_message_pairs.add(msg_pair_id)
-                                        all_messages.append(Message.model_validate(user_msg))
-                                        all_messages.append(Message.model_validate(assistant_msg))
+                                        all_messages.append(Message.model_validate(last_user))
+                                        all_messages.append(Message.model_validate(msg))
                                         message_count += 1
-                                except Exception as e:
-                                    log_warning(f"Error processing message pair: {e}")
-                                    continue
+                                    last_user = None
+                            except Exception as e:
+                                log_warning(f"Error processing message pair: {e}")
+                                last_user = None
+                                continue
 
         return json.dumps([msg.to_dict() for msg in all_messages]) if all_messages else "No history found"
 
