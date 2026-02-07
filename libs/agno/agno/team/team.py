@@ -1185,6 +1185,7 @@ class Team:
         debug_mode: Optional[bool] = None,
         yield_run_output: bool = False,
         output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
+        background: bool = False,
         **kwargs: Any,
     ) -> Union[TeamRunOutput, AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent]]]:
         return _run.arun(
@@ -1210,6 +1211,7 @@ class Team:
             debug_mode=debug_mode,
             yield_run_output=yield_run_output,
             output_schema=output_schema,
+            background=background,
             **kwargs,
         )
 
