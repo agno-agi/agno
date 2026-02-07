@@ -24,9 +24,9 @@ _TERMINAL_EVENTS = {
     "TeamRunCompleted",
     "TeamRunError",
     "TeamRunCancelled",
-    "WorkflowRunCompleted",
-    "WorkflowRunError",
-    "WorkflowRunCancelled",
+    "WorkflowCompleted",
+    "WorkflowError",
+    "WorkflowCancelled",
 }
 
 
@@ -71,10 +71,7 @@ class ScheduleExecutor:
         """
         from agno.scheduler.cron import compute_next_run
 
-        schedule_id = schedule["id"]
-        max_attempts = max(1, (schedule.get("max_retries") or 0) + 1)
-        retry_delay = schedule.get("retry_delay_seconds") or 60
-
+        schedule_id: Optional[str] = None
         run_id_value: Optional[str] = None
         session_id_value: Optional[str] = None
         last_status = "failed"
@@ -84,6 +81,9 @@ class ScheduleExecutor:
         run_dict: Dict[str, Any] = {}
 
         try:
+            schedule_id = schedule["id"]
+            max_attempts = max(1, (schedule.get("max_retries") or 0) + 1)
+            retry_delay = schedule.get("retry_delay_seconds") or 60
             for attempt in range(1, max_attempts + 1):
                 run_record_id = str(uuid4())
                 now = int(time.time())
@@ -180,7 +180,7 @@ class ScheduleExecutor:
 
         finally:
             # Always release the schedule lock so it doesn't stay stuck
-            if release_schedule:
+            if release_schedule and schedule_id is not None:
                 try:
                     next_run_at = compute_next_run(
                         schedule["cron_expr"],
@@ -213,22 +213,27 @@ class ScheduleExecutor:
         """Make the HTTP call to the schedule's endpoint."""
         method = (schedule.get("method") or "POST").upper()
         endpoint = schedule["endpoint"]
-        payload = schedule.get("payload")
+        payload = schedule.get("payload") or {}
         timeout_seconds = schedule.get("timeout_seconds") or self.timeout
         url = f"{self.base_url}{endpoint}"
 
-        headers = {
+        is_run_endpoint = _RUN_ENDPOINT_RE.match(endpoint) is not None and method == "POST"
+
+        headers: Dict[str, str] = {
             "Authorization": f"Bearer {self.internal_service_token}",
-            "Content-Type": "application/json",
         }
 
-        is_streaming = _RUN_ENDPOINT_RE.match(endpoint) is not None and method == "POST"
-
-        async with httpx.AsyncClient(timeout=httpx.Timeout(timeout_seconds)) as client:
-            if is_streaming:
-                return await self._stream_sse(client, url, headers, payload)
-            else:
-                return await self._simple_request(client, method, url, headers, payload)
+        if is_run_endpoint:
+            # Run endpoints expect Form(...) inputs, not JSON.
+            # Always force stream=true — the executor relies on SSE terminal events.
+            form_payload = {k: str(v) for k, v in payload.items() if k != "stream"}
+            form_payload["stream"] = "true"
+            async with httpx.AsyncClient(timeout=httpx.Timeout(timeout_seconds)) as client:
+                return await self._stream_sse(client, url, headers, form_payload)
+        else:
+            headers["Content-Type"] = "application/json"
+            async with httpx.AsyncClient(timeout=httpx.Timeout(timeout_seconds)) as client:
+                return await self._simple_request(client, method, url, headers, payload if payload else None)
 
     async def _simple_request(
         self,
@@ -260,7 +265,7 @@ class ScheduleExecutor:
         client: Any,
         url: str,
         headers: Dict[str, str],
-        payload: Optional[Dict[str, Any]],
+        payload: Optional[Dict[str, str]],
     ) -> Dict[str, Any]:
         """Stream SSE from a run endpoint and capture run_id/session_id."""
         import json
@@ -273,7 +278,7 @@ class ScheduleExecutor:
 
         kwargs: Dict[str, Any] = {"headers": headers}
         if payload is not None:
-            kwargs["json"] = payload
+            kwargs["data"] = payload
 
         async with client.stream("POST", url, **kwargs) as resp:
             status_code = resp.status_code

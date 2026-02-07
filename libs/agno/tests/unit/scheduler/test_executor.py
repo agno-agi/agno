@@ -1,36 +1,25 @@
-"""Tests for agno.scheduler.executor — background run + polling pattern."""
+"""Tests for agno.scheduler.executor — mocked HTTP calls, retry logic, SSE streaming."""
 
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from agno.scheduler.executor import _RUN_ENDPOINT_RE, _TERMINAL_STATUSES, ScheduleExecutor
+from agno.scheduler.executor import _RUN_ENDPOINT_RE, _TERMINAL_EVENTS, ScheduleExecutor
 
 
 class TestRunEndpointRegex:
     def test_agent_runs(self):
-        m = _RUN_ENDPOINT_RE.match("/agents/my-agent/runs")
-        assert m is not None
-        assert m.group(1) == "agents"
-        assert m.group(2) == "my-agent"
+        assert _RUN_ENDPOINT_RE.match("/agents/my-agent/runs") is not None
 
     def test_team_runs(self):
-        m = _RUN_ENDPOINT_RE.match("/teams/my-team/runs")
-        assert m is not None
-        assert m.group(1) == "teams"
-        assert m.group(2) == "my-team"
+        assert _RUN_ENDPOINT_RE.match("/teams/my-team/runs") is not None
 
     def test_workflow_runs(self):
-        m = _RUN_ENDPOINT_RE.match("/workflows/my-wf/runs")
-        assert m is not None
-        assert m.group(1) == "workflows"
-        assert m.group(2) == "my-wf"
+        assert _RUN_ENDPOINT_RE.match("/workflows/my-wf/runs") is not None
 
     def test_trailing_slash(self):
-        m = _RUN_ENDPOINT_RE.match("/agents/my-agent/runs/")
-        assert m is not None
-        assert m.group(2) == "my-agent"
+        assert _RUN_ENDPOINT_RE.match("/agents/my-agent/runs/") is not None
 
     def test_not_a_run_endpoint(self):
         assert _RUN_ENDPOINT_RE.match("/agents") is None
@@ -41,9 +30,20 @@ class TestRunEndpointRegex:
         assert _RUN_ENDPOINT_RE.match("/agents/my-agent/runs/extra") is None
 
 
-class TestTerminalStatuses:
-    def test_all_terminal_statuses(self):
-        assert _TERMINAL_STATUSES == {"COMPLETED", "CANCELLED", "ERROR"}
+class TestTerminalEvents:
+    def test_all_terminal_types(self):
+        expected = {
+            "RunCompleted",
+            "RunError",
+            "RunCancelled",
+            "TeamRunCompleted",
+            "TeamRunError",
+            "TeamRunCancelled",
+            "WorkflowCompleted",
+            "WorkflowError",
+            "WorkflowCancelled",
+        }
+        assert _TERMINAL_EVENTS == expected
 
 
 class TestScheduleExecutorInit:
@@ -58,14 +58,6 @@ class TestScheduleExecutorInit:
     def test_custom_timeout(self):
         executor = ScheduleExecutor(base_url="http://localhost:7777", internal_service_token="tok", timeout=600)
         assert executor.timeout == 600
-
-    def test_default_poll_interval(self):
-        executor = ScheduleExecutor(base_url="http://localhost:7777", internal_service_token="tok")
-        assert executor.poll_interval == 30
-
-    def test_custom_poll_interval(self):
-        executor = ScheduleExecutor(base_url="http://localhost:7777", internal_service_token="tok", poll_interval=10)
-        assert executor.poll_interval == 10
 
 
 class FakeDb:
@@ -230,58 +222,79 @@ class TestScheduleExecutorSimpleRequest:
         assert result["error"] == "Internal Server Error"
 
 
-class TestScheduleExecutorBackgroundRun:
+class TestScheduleExecutorSSE:
     @pytest.mark.asyncio
-    async def test_background_run_success(self):
-        """POST returns 202, poll returns COMPLETED."""
-        executor = ScheduleExecutor(base_url="http://localhost:7777", internal_service_token="tok", poll_interval=1)
+    async def test_stream_sse_success(self):
+        executor = ScheduleExecutor(base_url="http://localhost:7777", internal_service_token="tok")
 
-        post_resp = MagicMock()
-        post_resp.status_code = 202
-        post_resp.json = MagicMock(return_value={"run_id": "r1", "session_id": "s1", "status": "PENDING"})
+        sse_lines = [
+            "event: RunStarted",
+            'data: {"run_id": "r1", "session_id": "s1"}',
+            "",
+            "event: RunCompleted",
+            'data: {"run_id": "r1", "session_id": "s1"}',
+            "",
+        ]
 
-        poll_resp = MagicMock()
-        poll_resp.status_code = 200
-        poll_resp.json = MagicMock(return_value={"run_id": "r1", "session_id": "s1", "status": "COMPLETED"})
+        mock_resp = AsyncMock()
+        mock_resp.status_code = 200
+        mock_resp.aiter_lines = MagicMock(return_value=_async_iter(sse_lines))
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
 
-        mock_client = AsyncMock()
-        mock_client.request = AsyncMock(side_effect=[post_resp, poll_resp])
+        mock_client = MagicMock()
+        mock_client.stream = MagicMock(return_value=mock_resp)
 
-        with patch("asyncio.sleep", new_callable=AsyncMock):
-            result = await executor._background_run(
-                mock_client,
-                "http://localhost:7777/agents/test/runs",
-                {"Authorization": "Bearer tok"},
-                {"message": "hi", "stream": "false", "background": "true"},
-                "agents",
-                "test",
-                60,
-            )
+        result = await executor._stream_sse(
+            mock_client, "http://localhost:7777/agents/test/runs", {"Authorization": "Bearer tok"}, {"msg": "hi"}
+        )
 
         assert result["status"] == "success"
         assert result["run_id"] == "r1"
         assert result["session_id"] == "s1"
 
     @pytest.mark.asyncio
-    async def test_background_run_http_error(self):
-        """POST returns 4xx/5xx."""
+    async def test_stream_sse_error_event(self):
         executor = ScheduleExecutor(base_url="http://localhost:7777", internal_service_token="tok")
 
-        post_resp = MagicMock()
-        post_resp.status_code = 403
-        post_resp.text = "Forbidden"
+        sse_lines = [
+            "event: RunError",
+            'data: {"run_id": "r1", "error": "something went wrong"}',
+            "",
+        ]
 
-        mock_client = AsyncMock()
-        mock_client.request = AsyncMock(return_value=post_resp)
+        mock_resp = AsyncMock()
+        mock_resp.status_code = 200
+        mock_resp.aiter_lines = MagicMock(return_value=_async_iter(sse_lines))
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
 
-        result = await executor._background_run(
-            mock_client,
-            "http://localhost:7777/agents/test/runs",
-            {"Authorization": "Bearer tok"},
-            {"message": "hi"},
-            "agents",
-            "test",
-            60,
+        mock_client = MagicMock()
+        mock_client.stream = MagicMock(return_value=mock_resp)
+
+        result = await executor._stream_sse(
+            mock_client, "http://localhost:7777/agents/test/runs", {"Authorization": "Bearer tok"}, None
+        )
+
+        assert result["status"] == "failed"
+        assert result["error"] == "something went wrong"
+        assert result["run_id"] == "r1"
+
+    @pytest.mark.asyncio
+    async def test_stream_sse_http_error(self):
+        executor = ScheduleExecutor(base_url="http://localhost:7777", internal_service_token="tok")
+
+        mock_resp = AsyncMock()
+        mock_resp.status_code = 403
+        mock_resp.aread = AsyncMock(return_value=b"Forbidden")
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+        mock_client = MagicMock()
+        mock_client.stream = MagicMock(return_value=mock_resp)
+
+        result = await executor._stream_sse(
+            mock_client, "http://localhost:7777/agents/test/runs", {"Authorization": "Bearer tok"}, None
         )
 
         assert result["status"] == "failed"
@@ -289,333 +302,88 @@ class TestScheduleExecutorBackgroundRun:
         assert result["error"] == "Forbidden"
 
     @pytest.mark.asyncio
-    async def test_background_run_missing_run_id(self):
-        """POST returns 202 but response body missing run_id."""
+    async def test_stream_sse_workflow_completed(self):
+        """WorkflowCompleted (not WorkflowRunCompleted) is the real terminal event."""
         executor = ScheduleExecutor(base_url="http://localhost:7777", internal_service_token="tok")
 
-        post_resp = MagicMock()
-        post_resp.status_code = 202
-        post_resp.json = MagicMock(return_value={"session_id": "s1", "status": "PENDING"})
+        sse_lines = [
+            "event: WorkflowStarted",
+            'data: {"run_id": "wr1", "session_id": "ws1"}',
+            "",
+            "event: WorkflowCompleted",
+            'data: {"run_id": "wr1", "session_id": "ws1"}',
+            "",
+        ]
 
-        mock_client = AsyncMock()
-        mock_client.request = AsyncMock(return_value=post_resp)
+        mock_resp = AsyncMock()
+        mock_resp.status_code = 200
+        mock_resp.aiter_lines = MagicMock(return_value=_async_iter(sse_lines))
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
 
-        result = await executor._background_run(
-            mock_client,
-            "http://localhost:7777/agents/test/runs",
-            {"Authorization": "Bearer tok"},
-            {"message": "hi"},
-            "agents",
-            "test",
-            60,
+        mock_client = MagicMock()
+        mock_client.stream = MagicMock(return_value=mock_resp)
+
+        result = await executor._stream_sse(
+            mock_client, "http://localhost:7777/workflows/test/runs", {"Authorization": "Bearer tok"}, {"message": "hi"}
+        )
+
+        assert result["status"] == "success"
+        assert result["run_id"] == "wr1"
+        assert result["session_id"] == "ws1"
+
+    @pytest.mark.asyncio
+    async def test_stream_sse_workflow_error(self):
+        executor = ScheduleExecutor(base_url="http://localhost:7777", internal_service_token="tok")
+
+        sse_lines = [
+            "event: WorkflowError",
+            'data: {"run_id": "wr1", "error": "step failed"}',
+            "",
+        ]
+
+        mock_resp = AsyncMock()
+        mock_resp.status_code = 200
+        mock_resp.aiter_lines = MagicMock(return_value=_async_iter(sse_lines))
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+        mock_client = MagicMock()
+        mock_client.stream = MagicMock(return_value=mock_resp)
+
+        result = await executor._stream_sse(
+            mock_client, "http://localhost:7777/workflows/test/runs", {"Authorization": "Bearer tok"}, None
         )
 
         assert result["status"] == "failed"
-        assert "Missing run_id or session_id" in result["error"]
-
-    @pytest.mark.asyncio
-    async def test_background_run_invalid_json(self):
-        """POST returns 202 but body is not valid JSON."""
-        executor = ScheduleExecutor(base_url="http://localhost:7777", internal_service_token="tok")
-
-        post_resp = MagicMock()
-        post_resp.status_code = 202
-        post_resp.json = MagicMock(side_effect=ValueError("No JSON"))
-        post_resp.text = "not json"
-
-        mock_client = AsyncMock()
-        mock_client.request = AsyncMock(return_value=post_resp)
-
-        result = await executor._background_run(
-            mock_client,
-            "http://localhost:7777/agents/test/runs",
-            {"Authorization": "Bearer tok"},
-            {"message": "hi"},
-            "agents",
-            "test",
-            60,
-        )
-
-        assert result["status"] == "failed"
-        assert "Invalid JSON" in result["error"]
-
-
-class TestScheduleExecutorPollRun:
-    @pytest.mark.asyncio
-    async def test_poll_completed(self):
-        """Single poll returns COMPLETED."""
-        executor = ScheduleExecutor(base_url="http://localhost:7777", internal_service_token="tok", poll_interval=1)
-
-        poll_resp = MagicMock()
-        poll_resp.status_code = 200
-        poll_resp.json = MagicMock(return_value={"status": "COMPLETED"})
-
-        mock_client = AsyncMock()
-        mock_client.request = AsyncMock(return_value=poll_resp)
-
-        with patch("asyncio.sleep", new_callable=AsyncMock):
-            result = await executor._poll_run(
-                mock_client,
-                {"Authorization": "Bearer tok"},
-                "agents",
-                "test",
-                "r1",
-                "s1",
-                60,
-            )
-
-        assert result["status"] == "success"
-        assert result["run_id"] == "r1"
-        assert result["session_id"] == "s1"
-
-    @pytest.mark.asyncio
-    async def test_poll_error_status(self):
-        """Poll returns ERROR."""
-        executor = ScheduleExecutor(base_url="http://localhost:7777", internal_service_token="tok", poll_interval=1)
-
-        poll_resp = MagicMock()
-        poll_resp.status_code = 200
-        poll_resp.json = MagicMock(return_value={"status": "ERROR", "error": "model failed"})
-
-        mock_client = AsyncMock()
-        mock_client.request = AsyncMock(return_value=poll_resp)
-
-        with patch("asyncio.sleep", new_callable=AsyncMock):
-            result = await executor._poll_run(
-                mock_client,
-                {"Authorization": "Bearer tok"},
-                "agents",
-                "test",
-                "r1",
-                "s1",
-                60,
-            )
-
-        assert result["status"] == "failed"
-        assert result["error"] == "model failed"
-
-    @pytest.mark.asyncio
-    async def test_poll_cancelled_status(self):
-        """Poll returns CANCELLED."""
-        executor = ScheduleExecutor(base_url="http://localhost:7777", internal_service_token="tok", poll_interval=1)
-
-        poll_resp = MagicMock()
-        poll_resp.status_code = 200
-        poll_resp.json = MagicMock(return_value={"status": "CANCELLED"})
-
-        mock_client = AsyncMock()
-        mock_client.request = AsyncMock(return_value=poll_resp)
-
-        with patch("asyncio.sleep", new_callable=AsyncMock):
-            result = await executor._poll_run(
-                mock_client,
-                {"Authorization": "Bearer tok"},
-                "agents",
-                "test",
-                "r1",
-                "s1",
-                60,
-            )
-
-        assert result["status"] == "failed"
-        assert "cancelled" in result["error"].lower()
-
-    @pytest.mark.asyncio
-    async def test_poll_multiple_attempts(self):
-        """First poll returns RUNNING, second returns COMPLETED."""
-        executor = ScheduleExecutor(base_url="http://localhost:7777", internal_service_token="tok", poll_interval=1)
-
-        running_resp = MagicMock()
-        running_resp.status_code = 200
-        running_resp.json = MagicMock(return_value={"status": "RUNNING"})
-
-        completed_resp = MagicMock()
-        completed_resp.status_code = 200
-        completed_resp.json = MagicMock(return_value={"status": "COMPLETED"})
-
-        mock_client = AsyncMock()
-        mock_client.request = AsyncMock(side_effect=[running_resp, completed_resp])
-
-        with patch("asyncio.sleep", new_callable=AsyncMock):
-            result = await executor._poll_run(
-                mock_client,
-                {"Authorization": "Bearer tok"},
-                "agents",
-                "test",
-                "r1",
-                "s1",
-                60,
-            )
-
-        assert result["status"] == "success"
-        assert mock_client.request.call_count == 2
-
-    @pytest.mark.asyncio
-    async def test_poll_timeout(self):
-        """Polling exceeds the deadline."""
-        executor = ScheduleExecutor(base_url="http://localhost:7777", internal_service_token="tok", poll_interval=1)
-
-        running_resp = MagicMock()
-        running_resp.status_code = 200
-        running_resp.json = MagicMock(return_value={"status": "RUNNING"})
-
-        mock_client = AsyncMock()
-        mock_client.request = AsyncMock(return_value=running_resp)
-
-        # First call sets deadline at 100+60=160; after sleep, monotonic returns 170 (past deadline)
-        times = iter([100.0, 170.0])
-        with patch("asyncio.sleep", new_callable=AsyncMock):
-            with patch("time.monotonic", side_effect=times):
-                result = await executor._poll_run(
-                    mock_client,
-                    {"Authorization": "Bearer tok"},
-                    "agents",
-                    "test",
-                    "r1",
-                    "s1",
-                    60,
-                )
-
-        assert result["status"] == "failed"
-        assert "timed out" in result["error"].lower()
-
-    @pytest.mark.asyncio
-    async def test_poll_transient_error_recovery(self):
-        """Network error during poll is retried, then succeeds."""
-        executor = ScheduleExecutor(base_url="http://localhost:7777", internal_service_token="tok", poll_interval=1)
-
-        completed_resp = MagicMock()
-        completed_resp.status_code = 200
-        completed_resp.json = MagicMock(return_value={"status": "COMPLETED"})
-
-        mock_client = AsyncMock()
-        mock_client.request = AsyncMock(side_effect=[Exception("connection reset"), completed_resp])
-
-        with patch("asyncio.sleep", new_callable=AsyncMock):
-            result = await executor._poll_run(
-                mock_client,
-                {"Authorization": "Bearer tok"},
-                "agents",
-                "test",
-                "r1",
-                "s1",
-                60,
-            )
-
-        assert result["status"] == "success"
-
-    @pytest.mark.asyncio
-    async def test_poll_404_is_retried(self):
-        """404 during polling (run not yet visible) is treated as transient."""
-        executor = ScheduleExecutor(base_url="http://localhost:7777", internal_service_token="tok", poll_interval=1)
-
-        not_found_resp = MagicMock()
-        not_found_resp.status_code = 404
-
-        completed_resp = MagicMock()
-        completed_resp.status_code = 200
-        completed_resp.json = MagicMock(return_value={"status": "COMPLETED"})
-
-        mock_client = AsyncMock()
-        mock_client.request = AsyncMock(side_effect=[not_found_resp, completed_resp])
-
-        with patch("asyncio.sleep", new_callable=AsyncMock):
-            result = await executor._poll_run(
-                mock_client,
-                {"Authorization": "Bearer tok"},
-                "agents",
-                "test",
-                "r1",
-                "s1",
-                60,
-            )
-
-        assert result["status"] == "success"
-
-    @pytest.mark.asyncio
-    async def test_poll_http_error(self):
-        """Non-404 HTTP error during polling is a hard failure."""
-        executor = ScheduleExecutor(base_url="http://localhost:7777", internal_service_token="tok", poll_interval=1)
-
-        error_resp = MagicMock()
-        error_resp.status_code = 500
-        error_resp.text = "Internal Server Error"
-
-        mock_client = AsyncMock()
-        mock_client.request = AsyncMock(return_value=error_resp)
-
-        with patch("asyncio.sleep", new_callable=AsyncMock):
-            result = await executor._poll_run(
-                mock_client,
-                {"Authorization": "Bearer tok"},
-                "agents",
-                "test",
-                "r1",
-                "s1",
-                60,
-            )
-
-        assert result["status"] == "failed"
-        assert result["status_code"] == 500
-
-    @pytest.mark.asyncio
-    async def test_poll_url_construction(self):
-        """Verify the polling URL is correctly constructed."""
-        executor = ScheduleExecutor(base_url="http://localhost:7777", internal_service_token="tok", poll_interval=1)
-
-        completed_resp = MagicMock()
-        completed_resp.status_code = 200
-        completed_resp.json = MagicMock(return_value={"status": "COMPLETED"})
-
-        mock_client = AsyncMock()
-        mock_client.request = AsyncMock(return_value=completed_resp)
-
-        with patch("asyncio.sleep", new_callable=AsyncMock):
-            await executor._poll_run(
-                mock_client,
-                {"Authorization": "Bearer tok"},
-                "teams",
-                "my-team",
-                "r1",
-                "s1",
-                60,
-            )
-
-        call_args = mock_client.request.call_args
-        assert call_args[0] == ("GET", "http://localhost:7777/teams/my-team/runs/r1")
-        assert call_args[1]["params"] == {"session_id": "s1"}
+        assert result["error"] == "step failed"
+        assert result["run_id"] == "wr1"
 
 
 class TestCallEndpointFormData:
     @pytest.mark.asyncio
-    async def test_run_endpoint_sends_background_form_data(self):
-        """Run endpoints must send form-encoded data with background=true, stream=false."""
+    async def test_run_endpoint_sends_form_data(self):
+        """Run endpoints must send form-encoded data, not JSON."""
         executor = ScheduleExecutor(base_url="http://localhost:7777", internal_service_token="tok")
 
         captured_kwargs = {}
 
-        async def mock_background_run(client, url, headers, payload, resource_type, resource_id, timeout_seconds):
+        async def mock_stream_sse(client, url, headers, payload):
             captured_kwargs["url"] = url
             captured_kwargs["headers"] = headers
             captured_kwargs["payload"] = payload
-            captured_kwargs["resource_type"] = resource_type
-            captured_kwargs["resource_id"] = resource_id
             return {"status": "success", "status_code": 200, "error": None, "run_id": "r1", "session_id": "s1"}
 
-        schedule = _make_schedule(payload={"message": "hi", "stream": False, "background": False})
-        with patch.object(executor, "_background_run", side_effect=mock_background_run):
+        schedule = _make_schedule(payload={"message": "hi", "stream": False})
+        with patch.object(executor, "_stream_sse", side_effect=mock_stream_sse):
             await executor._call_endpoint(schedule)
 
-        # stream must be forced to "false", background to "true"
-        assert captured_kwargs["payload"]["stream"] == "false"
-        assert captured_kwargs["payload"]["background"] == "true"
+        # stream must be forced to "true"
+        assert captured_kwargs["payload"]["stream"] == "true"
         # message must be stringified for form encoding
         assert captured_kwargs["payload"]["message"] == "hi"
         # No Content-Type header (httpx sets it automatically for form data)
         assert "Content-Type" not in captured_kwargs["headers"]
-        # Resource info extracted correctly
-        assert captured_kwargs["resource_type"] == "agents"
-        assert captured_kwargs["resource_id"] == "test"
 
     @pytest.mark.asyncio
     async def test_non_run_endpoint_sends_json(self):
@@ -652,3 +420,8 @@ class TestScheduleIdGuard:
         # schedule_id was None so release_schedule should not have been called with a valid ID,
         # but the executor must not leave an unhandled exception before finally.
         # Since schedule_id is None, we just verify no crash in the finally block.
+
+
+async def _async_iter(items):
+    for item in items:
+        yield item
