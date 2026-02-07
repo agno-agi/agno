@@ -17,7 +17,7 @@ Then, in another terminal, create a schedule:
             "name": "greeting-every-5m",
             "cron_expr": "*/5 * * * *",
             "endpoint": "/agents/greeter/runs",
-            "payload": {"message": "Say hello!", "stream": false}
+            "payload": {"message": "Say hello!"}
         }'
 """
 

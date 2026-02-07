@@ -75,8 +75,8 @@ class SchedulePoller:
     async def _poll_once(self) -> None:
         """Claim all due schedules in a tight loop and fire them off."""
         while self._running:
-            # Enforce concurrency limit
-            self._in_flight = {t for t in self._in_flight if not t.done()}
+            # Enforce concurrency limit — prune in-place so done-callbacks stay valid
+            self._in_flight -= {t for t in self._in_flight if t.done()}
             if len(self._in_flight) >= self.max_concurrent:
                 log_warning(f"Max concurrent executions reached ({self.max_concurrent}), waiting")
                 break
@@ -93,7 +93,7 @@ class SchedulePoller:
                 log_info(f"Claimed schedule: {schedule.get('name', schedule['id'])}")
                 task = asyncio.create_task(self._execute_safe(schedule))
                 self._in_flight.add(task)
-                task.add_done_callback(self._in_flight.discard)
+                task.add_done_callback(lambda t: self._in_flight.discard(t))
             except Exception as exc:
                 log_error(f"Error claiming schedule: {exc}")
                 break
