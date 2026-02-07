@@ -187,7 +187,7 @@ class TaskList:
         for dep_id in task.dependencies:
             dep = self.get_task(dep_id)
             if dep is None:
-                continue
+                return True  # Unknown dependency ID — treat as blocked (fail-closed)
             if dep.status not in TERMINAL_STATUSES:
                 return True
         return False
