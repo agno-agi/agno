@@ -5058,6 +5058,10 @@ class Workflow:
 
             early_termination = False
 
+            # Get user input and router selection from kwargs if provided
+            user_input = kwargs.get("user_input")
+            router_selection = kwargs.get("router_selection")
+
             # Continue from the paused step
             for i, step in enumerate(self.steps[start_step_index:], start=start_step_index):  # type: ignore[arg-type]
                 raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
@@ -5073,6 +5077,93 @@ class Workflow:
                     shared_audio=shared_audio,
                     shared_files=shared_files,
                 )
+
+                # Inject user input into step_input for the first step (the one that was paused)
+                if i == start_step_index and user_input:
+                    if step_input.additional_data is None:
+                        step_input.additional_data = {}
+                    step_input.additional_data["user_input"] = user_input
+
+                # Handle Router with user selection - execute only the selected steps (streaming)
+                if i == start_step_index and isinstance(step, Router) and router_selection:
+                    log_debug(f"Router '{step_name}' executing with user selection (streaming): {router_selection}")
+
+                    # Get the selected steps from the router
+                    step._prepare_steps()
+                    selected_steps = step._get_steps_from_user_selection(router_selection)
+
+                    if not selected_steps:
+                        logger.warning(f"Router '{step_name}': No valid steps found for selection {router_selection}")
+                        step_output = StepOutput(
+                            step_name=step_name,
+                            step_id=str(uuid4()),
+                            step_type=StepType.ROUTER,
+                            content=f"Router {step_name} completed with 0 results (no valid steps selected)",
+                            success=True,
+                        )
+                    else:
+                        # Execute the selected steps using the router's internal logic with streaming
+                        original_selector = step.selector
+                        step.selector = lambda _: selected_steps  # type: ignore[assignment]
+
+                        step_output = None
+                        for event in step.execute_stream(
+                            step_input,
+                            session_id=session.session_id,
+                            user_id=self.user_id,
+                            stream_events=stream_events,
+                            stream_executor_events=self.stream_executor_events,
+                            workflow_run_response=workflow_run_response,
+                            run_context=run_context,
+                            step_index=i,
+                            store_executor_outputs=self.store_executor_outputs,
+                            workflow_session=session,
+                            add_workflow_history_to_steps=self.add_workflow_history_to_steps
+                            if self.add_workflow_history_to_steps
+                            else None,
+                            num_history_runs=self.num_history_runs,
+                            background_tasks=background_tasks,
+                        ):
+                            if isinstance(event, StepOutput):
+                                step_output = event
+                            elif isinstance(event, WorkflowRunOutputEvent):  # type: ignore
+                                enriched_event = self._enrich_event_with_workflow_context(
+                                    event, workflow_run_response, step_index=i, step=step
+                                )
+                                yield self._handle_event(enriched_event, workflow_run_response)  # type: ignore
+                            else:
+                                enriched_event = self._enrich_event_with_workflow_context(
+                                    event, workflow_run_response, step_index=i, step=step
+                                )
+                                if self.stream_executor_events:
+                                    yield self._handle_event(enriched_event, workflow_run_response)  # type: ignore
+
+                        # Restore original selector
+                        step.selector = original_selector
+
+                        if step_output is None:
+                            step_output = StepOutput(
+                                step_name=step_name,
+                                step_id=str(uuid4()),
+                                step_type=StepType.ROUTER,
+                                content=f"Router {step_name} completed",
+                                success=True,
+                            )
+
+                    # Update tracking
+                    previous_step_outputs[step_name] = step_output
+                    collected_step_outputs.append(step_output)
+
+                    shared_images.extend(step_output.images or [])
+                    shared_videos.extend(step_output.videos or [])
+                    shared_audio.extend(step_output.audio or [])
+                    shared_files.extend(step_output.files or [])
+                    output_images.extend(step_output.images or [])
+                    output_videos.extend(step_output.videos or [])
+                    output_audio.extend(step_output.audio or [])
+                    output_files.extend(step_output.files or [])
+
+                    continue  # Move to next step
 
                 # Check if step requires HITL (confirmation or user input) - for subsequent steps
                 if isinstance(step, Step) and (step.requires_confirmation or step.requires_user_input) and i != start_step_index:
@@ -5590,6 +5681,18 @@ class Workflow:
             input=run_response.input,
         )
 
+        # Store user input in kwargs to pass to continue_execute
+        if user_input_data:
+            kwargs["user_input"] = user_input_data
+
+        # Store router selection in kwargs to pass to continue_execute
+        if router_selection:
+            kwargs["router_selection"] = router_selection
+
+        # Store error retry flag to pass to continue_execute
+        if error_should_retry:
+            kwargs["error_retry"] = True
+
         # Determine start index based on skip decisions
         # If error skip or reject skip, start from next step
         start_index = paused_step_index + 1 if (skip_rejected_step or error_should_skip) else paused_step_index
@@ -5656,6 +5759,10 @@ class Workflow:
                     output_audio.extend(step_output.audio or [])
                     output_files.extend(step_output.files or [])
 
+            # Get user input and router selection from kwargs if provided
+            user_input = kwargs.get("user_input")
+            router_selection = kwargs.get("router_selection")
+
             # Continue from the paused step
             for i, step in enumerate(self.steps[start_step_index:], start=start_step_index):  # type: ignore[arg-type]
                 await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
@@ -5672,7 +5779,68 @@ class Workflow:
                     shared_files=shared_files,
                 )
 
+                # Inject user input into step_input for the first step (the one that was paused)
+                if i == start_step_index and user_input:
+                    if step_input.additional_data is None:
+                        step_input.additional_data = {}
+                    step_input.additional_data["user_input"] = user_input
+
                 await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+
+                # Handle Router with user selection - execute only the selected steps (async)
+                if i == start_step_index and isinstance(step, Router) and router_selection:
+                    log_debug(f"Router '{step_name}' executing with user selection (async): {router_selection}")
+
+                    # Get the selected steps from the router
+                    step._prepare_steps()
+                    selected_steps = step._get_steps_from_user_selection(router_selection)
+
+                    if not selected_steps:
+                        logger.warning(f"Router '{step_name}': No valid steps found for selection {router_selection}")
+                        step_output = StepOutput(
+                            step_name=step_name,
+                            step_id=str(uuid4()),
+                            step_type=StepType.ROUTER,
+                            content=f"Router {step_name} completed with 0 results (no valid steps selected)",
+                            success=True,
+                        )
+                    else:
+                        # Execute the selected steps using the router's internal logic
+                        original_selector = step.selector
+                        step.selector = lambda _: selected_steps  # type: ignore[assignment]
+
+                        step_output = await step.aexecute(
+                            step_input,
+                            session_id=session.session_id,
+                            user_id=self.user_id,
+                            workflow_run_response=workflow_run_response,
+                            run_context=run_context,
+                            store_executor_outputs=self.store_executor_outputs,
+                            workflow_session=session,
+                            add_workflow_history_to_steps=self.add_workflow_history_to_steps
+                            if self.add_workflow_history_to_steps
+                            else None,
+                            num_history_runs=self.num_history_runs,
+                            background_tasks=background_tasks,
+                        )
+
+                        # Restore original selector
+                        step.selector = original_selector
+
+                    # Update tracking
+                    previous_step_outputs[step_name] = step_output
+                    collected_step_outputs.append(step_output)
+
+                    shared_images.extend(step_output.images or [])
+                    shared_videos.extend(step_output.videos or [])
+                    shared_audio.extend(step_output.audio or [])
+                    shared_files.extend(step_output.files or [])
+                    output_images.extend(step_output.images or [])
+                    output_videos.extend(step_output.videos or [])
+                    output_audio.extend(step_output.audio or [])
+                    output_files.extend(step_output.files or [])
+
+                    continue  # Move to next step
 
                 # Check if step requires HITL (confirmation or user input) - for subsequent steps
                 if isinstance(step, Step) and (step.requires_confirmation or step.requires_user_input) and i != start_step_index:
@@ -5897,6 +6065,10 @@ class Workflow:
 
             early_termination = False
 
+            # Get user input and router selection from kwargs if provided
+            user_input = kwargs.get("user_input")
+            router_selection = kwargs.get("router_selection")
+
             # Continue from the paused step
             for i, step in enumerate(self.steps[start_step_index:], start=start_step_index):  # type: ignore[arg-type]
                 await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
@@ -5912,6 +6084,93 @@ class Workflow:
                     shared_audio=shared_audio,
                     shared_files=shared_files,
                 )
+
+                # Inject user input into step_input for the first step (the one that was paused)
+                if i == start_step_index and user_input:
+                    if step_input.additional_data is None:
+                        step_input.additional_data = {}
+                    step_input.additional_data["user_input"] = user_input
+
+                # Handle Router with user selection - execute only the selected steps (async streaming)
+                if i == start_step_index and isinstance(step, Router) and router_selection:
+                    log_debug(f"Router '{step_name}' executing with user selection (async streaming): {router_selection}")
+
+                    # Get the selected steps from the router
+                    step._prepare_steps()
+                    selected_steps = step._get_steps_from_user_selection(router_selection)
+
+                    if not selected_steps:
+                        logger.warning(f"Router '{step_name}': No valid steps found for selection {router_selection}")
+                        step_output = StepOutput(
+                            step_name=step_name,
+                            step_id=str(uuid4()),
+                            step_type=StepType.ROUTER,
+                            content=f"Router {step_name} completed with 0 results (no valid steps selected)",
+                            success=True,
+                        )
+                    else:
+                        # Execute the selected steps using the router's internal logic with async streaming
+                        original_selector = step.selector
+                        step.selector = lambda _: selected_steps  # type: ignore[assignment]
+
+                        step_output = None
+                        async for event in step.aexecute_stream(
+                            step_input,
+                            session_id=session.session_id,
+                            user_id=self.user_id,
+                            stream_events=stream_events,
+                            stream_executor_events=self.stream_executor_events,
+                            workflow_run_response=workflow_run_response,
+                            run_context=run_context,
+                            step_index=i,
+                            store_executor_outputs=self.store_executor_outputs,
+                            workflow_session=session,
+                            add_workflow_history_to_steps=self.add_workflow_history_to_steps
+                            if self.add_workflow_history_to_steps
+                            else None,
+                            num_history_runs=self.num_history_runs,
+                            background_tasks=background_tasks,
+                        ):
+                            if isinstance(event, StepOutput):
+                                step_output = event
+                            elif isinstance(event, WorkflowRunOutputEvent):  # type: ignore
+                                enriched_event = self._enrich_event_with_workflow_context(
+                                    event, workflow_run_response, step_index=i, step=step
+                                )
+                                yield self._handle_event(enriched_event, workflow_run_response)  # type: ignore
+                            else:
+                                enriched_event = self._enrich_event_with_workflow_context(
+                                    event, workflow_run_response, step_index=i, step=step
+                                )
+                                if self.stream_executor_events:
+                                    yield self._handle_event(enriched_event, workflow_run_response)  # type: ignore
+
+                        # Restore original selector
+                        step.selector = original_selector
+
+                        if step_output is None:
+                            step_output = StepOutput(
+                                step_name=step_name,
+                                step_id=str(uuid4()),
+                                step_type=StepType.ROUTER,
+                                content=f"Router {step_name} completed",
+                                success=True,
+                            )
+
+                    # Update tracking
+                    previous_step_outputs[step_name] = step_output
+                    collected_step_outputs.append(step_output)
+
+                    shared_images.extend(step_output.images or [])
+                    shared_videos.extend(step_output.videos or [])
+                    shared_audio.extend(step_output.audio or [])
+                    shared_files.extend(step_output.files or [])
+                    output_images.extend(step_output.images or [])
+                    output_videos.extend(step_output.videos or [])
+                    output_audio.extend(step_output.audio or [])
+                    output_files.extend(step_output.files or [])
+
+                    continue  # Move to next step
 
                 # Check if step requires HITL (confirmation or user input) - for subsequent steps
                 if isinstance(step, Step) and (step.requires_confirmation or step.requires_user_input) and i != start_step_index:

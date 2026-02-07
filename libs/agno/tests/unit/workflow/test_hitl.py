@@ -12,9 +12,6 @@ Tests cover:
 - Serialization/deserialization of HITL requirements
 """
 
-import pytest
-from uuid import uuid4
-
 from agno.run.base import RunStatus
 from agno.run.workflow import WorkflowRunOutput
 from agno.workflow.step import Step

@@ -512,22 +512,35 @@ class StepType(str, Enum):
 
 @dataclass
 class UserInputField:
-    """A field that requires user input"""
+    """A field that requires user input.
+
+    Attributes:
+        name: The field name (used as the key in user input).
+        field_type: The expected type ("str", "int", "float", "bool", "list", "dict").
+        description: Optional description shown to the user.
+        value: The value provided by the user (set after input).
+        required: Whether this field is required.
+        allowed_values: Optional list of allowed values for validation.
+    """
 
     name: str
     field_type: str  # "str", "int", "float", "bool", "list", "dict"
     description: Optional[str] = None
     value: Optional[Any] = None
     required: bool = True
+    allowed_values: Optional[List[Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        result = {
             "name": self.name,
             "field_type": self.field_type,
             "description": self.description,
             "value": self.value,
             "required": self.required,
         }
+        if self.allowed_values is not None:
+            result["allowed_values"] = self.allowed_values
+        return result
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "UserInputField":
@@ -537,6 +550,7 @@ class UserInputField:
             description=data.get("description"),
             value=data.get("value"),
             required=data.get("required", True),
+            allowed_values=data.get("allowed_values"),
         )
 
 
@@ -572,8 +586,17 @@ class StepRequirement:
         """Reject the step execution"""
         self.confirmed = False
 
-    def set_user_input(self, **kwargs) -> None:
-        """Set user input values"""
+    def set_user_input(self, validate: bool = True, **kwargs) -> None:
+        """Set user input values.
+
+        Args:
+            validate: Whether to validate the input against the schema. Defaults to True.
+            **kwargs: The user input values as key-value pairs.
+
+        Raises:
+            ValueError: If validation is enabled and required fields are missing,
+                        or if field types don't match the schema.
+        """
         if self.user_input is None:
             self.user_input = {}
         self.user_input.update(kwargs)
@@ -583,6 +606,58 @@ class StepRequirement:
             for field in self.user_input_schema:
                 if field.name in kwargs:
                     field.value = kwargs[field.name]
+
+        # Validate if schema is present and validation is enabled
+        if validate and self.user_input_schema:
+            self._validate_user_input(kwargs)
+
+    def _validate_user_input(self, user_input: Dict[str, Any]) -> None:
+        """Validate user input against the schema.
+
+        Args:
+            user_input: The user input values to validate.
+
+        Raises:
+            ValueError: If required fields are missing or types don't match.
+        """
+        if not self.user_input_schema:
+            return
+
+        errors = []
+
+        for field in self.user_input_schema:
+            value = user_input.get(field.name)
+
+            # Check required fields
+            if field.required and (value is None or value == ""):
+                errors.append(f"Required field '{field.name}' is missing or empty")
+                continue
+
+            # Skip type validation if value is not provided (and not required)
+            if value is None:
+                continue
+
+            # Validate type
+            expected_type = field.field_type
+            if expected_type == "str" and not isinstance(value, str):
+                errors.append(f"Field '{field.name}' expected str, got {type(value).__name__}")
+            elif expected_type == "int":
+                if not isinstance(value, int) or isinstance(value, bool):
+                    errors.append(f"Field '{field.name}' expected int, got {type(value).__name__}")
+            elif expected_type == "float":
+                if not isinstance(value, (int, float)) or isinstance(value, bool):
+                    errors.append(f"Field '{field.name}' expected float, got {type(value).__name__}")
+            elif expected_type == "bool" and not isinstance(value, bool):
+                errors.append(f"Field '{field.name}' expected bool, got {type(value).__name__}")
+
+            # Validate allowed values if specified
+            if field.allowed_values and value not in field.allowed_values:
+                errors.append(
+                    f"Field '{field.name}' value '{value}' is not in allowed values: {field.allowed_values}"
+                )
+
+        if errors:
+            raise ValueError("User input validation failed:\n  - " + "\n  - ".join(errors))
 
     def get_user_input(self, field_name: str) -> Optional[Any]:
         """Get a specific user input value"""

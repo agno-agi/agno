@@ -11,8 +11,6 @@ Tests cover:
 - Multiple HITL pauses in a workflow
 """
 
-import asyncio
-
 import pytest
 
 from agno.run.base import RunStatus
@@ -220,6 +218,8 @@ class TestStepConfirmation:
 
     def test_step_confirmation_streaming(self, shared_db):
         """Test step confirmation with streaming execution."""
+        from agno.run.workflow import StepPausedEvent, StepStartedEvent, WorkflowStartedEvent
+
         workflow = Workflow(
             name="Streaming Confirmation Test",
             db=shared_db,
@@ -234,12 +234,64 @@ class TestStepConfirmation:
             ],
         )
 
-        # Run with streaming until pause
-        events = list(workflow.run(input="test data", stream=True))
+        # Run with streaming until pause - stream_events=True for step events
+        events = list(workflow.run(input="test data", stream=True, stream_events=True))
+
+        # Check we got a workflow started event
+        workflow_started = [e for e in events if isinstance(e, WorkflowStartedEvent)]
+        assert len(workflow_started) == 1
+
+        # Check we got step started events (fetch should start before we pause on process)
+        step_started = [e for e in events if isinstance(e, StepStartedEvent)]
+        assert len(step_started) >= 1
 
         # Check we got a paused event
-        paused_events = [e for e in events if hasattr(e, "requires_confirmation")]
+        paused_events = [e for e in events if isinstance(e, StepPausedEvent)]
         assert len(paused_events) > 0
+
+    def test_step_confirmation_streaming_continue(self, shared_db):
+        """Test step confirmation with streaming execution and continue."""
+        from agno.run.workflow import StepCompletedEvent, StepStartedEvent
+
+        workflow = Workflow(
+            name="Streaming Confirmation Continue Test",
+            db=shared_db,
+            steps=[
+                Step(name="fetch", executor=fetch_data),
+                Step(
+                    name="process",
+                    executor=process_data,
+                    requires_confirmation=True,
+                ),
+                Step(name="save", executor=save_data),
+            ],
+        )
+
+        # Run with streaming until pause
+        _ = list(workflow.run(input="test data", stream=True, stream_events=True))
+
+        # Get run output from session
+        session = workflow.get_session()
+        assert session is not None
+        response = session.runs[-1]
+        assert response.is_paused is True
+
+        # Confirm the step
+        response.step_requirements[0].confirm()
+
+        # Continue with streaming - stream_events=True for step events
+        continue_events = list(workflow.continue_run(response, stream=True, stream_events=True))
+
+        # Verify we got step events
+        step_started = [e for e in continue_events if isinstance(e, StepStartedEvent)]
+        step_completed = [e for e in continue_events if isinstance(e, StepCompletedEvent)]
+        assert len(step_started) >= 1, "Should have at least one StepStartedEvent"
+        assert len(step_completed) >= 1, "Should have at least one StepCompletedEvent"
+
+        # Get final state
+        session = workflow.get_session()
+        final_response = session.runs[-1]
+        assert final_response.status == RunStatus.completed
 
 
 # =============================================================================
@@ -340,6 +392,64 @@ class TestStepUserInput:
         final_response = await workflow.acontinue_run(response)
 
         assert final_response.status == RunStatus.completed
+
+    def test_step_user_input_streaming(self, shared_db):
+        """Test step user input with streaming execution."""
+        from agno.run.workflow import StepCompletedEvent, StepPausedEvent, StepStartedEvent
+
+        workflow = Workflow(
+            name="Streaming User Input Test",
+            db=shared_db,
+            steps=[
+                Step(name="fetch", executor=fetch_data),
+                Step(
+                    name="process",
+                    executor=process_data,
+                    requires_user_input=True,
+                ),
+                Step(name="save", executor=save_data),
+            ],
+        )
+
+        # Run with streaming until pause - stream_events=True for step events
+        events = list(workflow.run(input="test data", stream=True, stream_events=True))
+
+        # Check we got step events before pause
+        step_started = [e for e in events if isinstance(e, StepStartedEvent)]
+        assert len(step_started) >= 1, "Should have at least one StepStartedEvent"
+
+        # Check we got a paused event with requires_user_input
+        paused_events = [e for e in events if isinstance(e, StepPausedEvent)]
+        assert len(paused_events) > 0
+        assert paused_events[0].requires_user_input is True
+
+        # Get run output from session
+        session = workflow.get_session()
+        assert session is not None
+        response = session.runs[-1]
+        assert response.is_paused is True
+
+        # Provide user input
+        response.step_requirements[0].set_user_input(preference="streaming_value")
+
+        # Continue with streaming - stream_events=True for step events
+        continue_events = list(workflow.continue_run(response, stream=True, stream_events=True))
+
+        # Verify we got step events after continue
+        step_started = [e for e in continue_events if isinstance(e, StepStartedEvent)]
+        step_completed = [e for e in continue_events if isinstance(e, StepCompletedEvent)]
+        assert len(step_started) >= 1, "Should have at least one StepStartedEvent after continue"
+        assert len(step_completed) >= 1, "Should have at least one StepCompletedEvent after continue"
+
+        # Get final state
+        session = workflow.get_session()
+        final_response = session.runs[-1]
+        assert final_response.status == RunStatus.completed
+
+        # Verify user input was used
+        process_output = [r for r in final_response.step_results if r.step_name == "process"]
+        assert len(process_output) == 1
+        assert "streaming_value" in process_output[0].content
 
 
 # =============================================================================
@@ -477,6 +587,63 @@ class TestRouterUserSelection:
 
         assert final_response.status == RunStatus.completed
 
+    def test_router_user_selection_streaming(self, shared_db):
+        """Test Router user selection with streaming execution."""
+        from agno.run.workflow import RouterPausedEvent, StepCompletedEvent, StepStartedEvent
+
+        workflow = Workflow(
+            name="Streaming Router Selection Test",
+            db=shared_db,
+            steps=[
+                Step(name="fetch", executor=fetch_data),
+                Router(
+                    name="route_selector",
+                    requires_user_input=True,
+                    choices=[
+                        Step(name="route_a", executor=route_a),
+                        Step(name="route_b", executor=route_b),
+                    ],
+                ),
+                Step(name="save", executor=save_data),
+            ],
+        )
+
+        # Run with streaming until pause - stream_events=True for step events
+        events = list(workflow.run(input="test data", stream=True, stream_events=True))
+
+        # Check we got step events before pause
+        step_started = [e for e in events if isinstance(e, StepStartedEvent)]
+        assert len(step_started) >= 1, "Should have at least one StepStartedEvent"
+
+        # Check we got a router paused event
+        router_paused = [e for e in events if isinstance(e, RouterPausedEvent)]
+        assert len(router_paused) > 0
+        assert router_paused[0].available_choices == ["route_a", "route_b"]
+
+        # Get run output from session
+        session = workflow.get_session()
+        assert session is not None
+        response = session.runs[-1]
+        assert response.is_paused is True
+        assert response.router_requirements is not None
+
+        # Select a route
+        response.router_requirements[0].select("route_a")
+
+        # Continue with streaming - stream_events=True for step events
+        continue_events = list(workflow.continue_run(response, stream=True, stream_events=True))
+
+        # Verify we got step events after continue
+        step_started = [e for e in continue_events if isinstance(e, StepStartedEvent)]
+        step_completed = [e for e in continue_events if isinstance(e, StepCompletedEvent)]
+        assert len(step_started) >= 1, "Should have at least one StepStartedEvent after continue"
+        assert len(step_completed) >= 1, "Should have at least one StepCompletedEvent after continue"
+
+        # Get final state
+        session = workflow.get_session()
+        final_response = session.runs[-1]
+        assert final_response.status == RunStatus.completed
+
 
 # =============================================================================
 # Error Handling HITL Tests
@@ -611,6 +778,61 @@ class TestErrorHandlingHITL:
         final_response = await workflow.acontinue_run(response)
 
         assert final_response.status == RunStatus.completed
+
+    def test_error_pause_streaming(self, shared_db):
+        """Test error pause with streaming execution."""
+        from agno.run.workflow import StepCompletedEvent, StepErrorEvent, StepStartedEvent
+
+        workflow = Workflow(
+            name="Streaming Error Pause Test",
+            db=shared_db,
+            steps=[
+                Step(name="fetch", executor=fetch_data),
+                Step(
+                    name="failing",
+                    executor=failing_step,
+                    on_error="pause",
+                ),
+                Step(name="save", executor=save_data),
+            ],
+        )
+
+        # Run with streaming until pause - stream_events=True for step events
+        events = list(workflow.run(input="test data", stream=True, stream_events=True))
+
+        # Check we got step events before error
+        step_started = [e for e in events if isinstance(e, StepStartedEvent)]
+        assert len(step_started) >= 1, "Should have at least one StepStartedEvent"
+
+        # Check we got an error event
+        error_events = [e for e in events if isinstance(e, StepErrorEvent)]
+        assert len(error_events) > 0
+        assert error_events[0].step_name == "failing"
+
+        # Get run output from session
+        session = workflow.get_session()
+        assert session is not None
+        response = session.runs[-1]
+        assert response.is_paused is True
+        assert response.error_requirements is not None
+
+        # Skip the failed step
+        response.error_requirements[0].skip()
+
+        # Continue with streaming - stream_events=True for step events
+        continue_events = list(workflow.continue_run(response, stream=True, stream_events=True))
+
+        # Verify we got step events after continue
+        step_started = [e for e in continue_events if isinstance(e, StepStartedEvent)]
+        step_completed = [e for e in continue_events if isinstance(e, StepCompletedEvent)]
+        assert len(step_started) >= 1, "Should have at least one StepStartedEvent after continue"
+        assert len(step_completed) >= 1, "Should have at least one StepCompletedEvent after continue"
+
+        # Get final state
+        session = workflow.get_session()
+        final_response = session.runs[-1]
+        assert final_response.status == RunStatus.completed
+        assert "Data saved" in final_response.content
 
 
 # =============================================================================
