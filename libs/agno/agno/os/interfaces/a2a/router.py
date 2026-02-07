@@ -615,7 +615,7 @@ def attach_routes(
         kwargs = await get_request_kwargs(request, a2a_run_workflow)
 
         # 1. Get the Workflow to run
-        workflow = get_workflow_by_id(id, workflows)
+        workflow = get_workflow_by_id(id, workflows, create_fresh=True)
         if not workflow:
             raise HTTPException(status_code=404, detail="Workflow not found")
 
@@ -705,7 +705,7 @@ def attach_routes(
         kwargs = await get_request_kwargs(request, a2a_stream_workflow)
 
         # 1. Get the Workflow to run
-        workflow = get_workflow_by_id(id, workflows)
+        workflow = get_workflow_by_id(id, workflows, create_fresh=True)
         if not workflow:
             raise HTTPException(status_code=404, detail="Workflow not found")
 
