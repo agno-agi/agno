@@ -4,12 +4,16 @@ Tests that a team properly handles member agents with tools that require
 external execution (results provided by the caller, not the agent).
 """
 
+import os
+
 import pytest
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
 from agno.tools.decorator import tool
+
+pytestmark = pytest.mark.skipif(not os.getenv("OPENAI_API_KEY"), reason="OPENAI_API_KEY not set")
 
 
 @tool(external_execution=True)

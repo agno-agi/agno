@@ -6,9 +6,11 @@ from agno.run import RunStatus
 from agno.run.agent import RunOutput
 from agno.run.requirement import RunRequirement
 from agno.run.team import TeamRunOutput
+from agno.session.team import TeamSession
 from agno.team import _run
 from agno.team._tools import _propagate_member_pause
 from agno.tools.function import UserInputField
+from agno.utils.team import get_member_id
 
 
 def _make_requirement(tool_call_id: str, **kwargs) -> RunRequirement:
@@ -168,6 +170,178 @@ def test_propagate_member_pause_multiple_requirements():
 
 
 # ---------------------------------------------------------------------------
+# Nested team routing context preservation
+# ---------------------------------------------------------------------------
+
+
+def test_propagate_member_pause_preserves_leaf_routing_context_for_subteams():
+    """Verify nested-team propagation keeps existing leaf member routing context."""
+    from agno.team.team import Team
+
+    team_run = TeamRunOutput(run_id="top_run")
+    leaf_agent = Agent(name="LeafAgent", id="leaf_1")
+    subteam = Team(name="ResearchSubteam", id="subteam_1", members=[leaf_agent], telemetry=False)
+
+    leaf_req = _make_requirement("tc_nested_pause")
+    leaf_req.member_agent_id = get_member_id(leaf_agent)
+    leaf_req.member_agent_name = leaf_agent.name
+    leaf_req.member_run_id = "leaf_run_1"
+    paused_subteam = TeamRunOutput(
+        run_id="subteam_run_1",
+        team_id=subteam.id,
+        team_name=subteam.name,
+        status=RunStatus.paused,
+        requirements=[leaf_req],
+    )
+
+    _propagate_member_pause(team_run, subteam, paused_subteam)
+
+    assert team_run.requirements is not None
+    propagated = team_run.requirements[0]
+    assert propagated.member_agent_id == get_member_id(leaf_agent)
+    assert propagated.member_agent_name == "LeafAgent"
+    assert propagated.member_run_id == "leaf_run_1"
+
+
+def test_propagate_still_paused_preserves_leaf_routing_context_for_subteams():
+    """Verify chained nested-team propagation keeps existing leaf member routing context."""
+    team_run = TeamRunOutput(run_id="top_run")
+
+    leaf_req = _make_requirement("tc_nested_still")
+    leaf_req.member_agent_id = "leaf-1"
+    leaf_req.member_agent_name = "LeafAgent"
+    leaf_req.member_run_id = "leaf_run_2"
+    paused_subteam = TeamRunOutput(
+        run_id="subteam_run_2",
+        team_id="subteam_1",
+        team_name="ResearchSubteam",
+        status=RunStatus.paused,
+        requirements=[leaf_req],
+    )
+
+    _run._propagate_still_paused_member_requirements(team_run, {"ResearchSubteam": paused_subteam})
+
+    assert team_run.requirements is not None
+    propagated = team_run.requirements[0]
+    assert propagated.member_agent_id == "leaf-1"
+    assert propagated.member_agent_name == "LeafAgent"
+    assert propagated.member_run_id == "leaf_run_2"
+
+
+def test_nested_team_continue_run_routing_succeeds_sync():
+    """Verify nested-team HITL requirements route top->subteam->leaf in sync continuation."""
+    from agno.team.team import Team
+
+    leaf_agent = Agent(name="LeafAgent", id="leaf_1")
+    subteam = Team(name="ResearchSubteam", id="subteam_1", members=[leaf_agent], telemetry=False)
+    top_team = Team(name="TopTeam", members=[subteam], telemetry=False)
+
+    leaf_req = _make_requirement("tc_nested_sync")
+    leaf_req.member_agent_id = get_member_id(leaf_agent)
+    leaf_req.member_agent_name = leaf_agent.name
+    leaf_req.member_run_id = "leaf_run_sync"
+    paused_subteam = TeamRunOutput(
+        run_id="subteam_run_sync",
+        team_id=subteam.id,
+        team_name=subteam.name,
+        status=RunStatus.paused,
+        requirements=[leaf_req],
+    )
+
+    top_run = TeamRunOutput(run_id="top_run_sync", status=RunStatus.paused)
+    _propagate_member_pause(top_run, subteam, paused_subteam)
+
+    call_log = {}
+
+    def _leaf_continue_run(*, run_id, requirements, session_id):
+        call_log["leaf"] = {
+            "run_id": run_id,
+            "session_id": session_id,
+            "member_agent_id": requirements[0].member_agent_id,
+        }
+        return RunOutput(run_id=run_id, status=RunStatus.completed, content="leaf done")
+
+    def _subteam_continue_run(*, run_id, requirements, session_id):
+        call_log["subteam"] = {
+            "run_id": run_id,
+            "session_id": session_id,
+            "member_agent_id": requirements[0].member_agent_id,
+        }
+        nested_run = TeamRunOutput(run_id="nested_sync", status=RunStatus.paused, requirements=requirements)
+        _run._route_requirements_to_members(subteam, nested_run, TeamSession(session_id=session_id))
+        return TeamRunOutput(run_id=run_id, status=RunStatus.completed, content="subteam done")
+
+    leaf_agent.continue_run = _leaf_continue_run  # type: ignore[method-assign]
+    subteam.continue_run = _subteam_continue_run  # type: ignore[method-assign]
+
+    member_results = _run._route_requirements_to_members(top_team, top_run, TeamSession(session_id="sync_session"))
+
+    assert "LeafAgent" in member_results
+    assert call_log["subteam"]["run_id"] == "leaf_run_sync"
+    assert call_log["subteam"]["member_agent_id"] == get_member_id(leaf_agent)
+    assert call_log["leaf"]["run_id"] == "leaf_run_sync"
+    assert call_log["leaf"]["member_agent_id"] == get_member_id(leaf_agent)
+
+
+@pytest.mark.asyncio
+async def test_nested_team_continue_run_routing_succeeds_async():
+    """Verify nested-team HITL requirements route top->subteam->leaf in async continuation."""
+    from agno.team.team import Team
+
+    leaf_agent = Agent(name="LeafAgent", id="leaf_1")
+    subteam = Team(name="ResearchSubteam", id="subteam_1", members=[leaf_agent], telemetry=False)
+    top_team = Team(name="TopTeam", members=[subteam], telemetry=False)
+
+    leaf_req = _make_requirement("tc_nested_async")
+    leaf_req.member_agent_id = get_member_id(leaf_agent)
+    leaf_req.member_agent_name = leaf_agent.name
+    leaf_req.member_run_id = "leaf_run_async"
+    paused_subteam = TeamRunOutput(
+        run_id="subteam_run_async",
+        team_id=subteam.id,
+        team_name=subteam.name,
+        status=RunStatus.paused,
+        requirements=[leaf_req],
+    )
+
+    top_run = TeamRunOutput(run_id="top_run_async", status=RunStatus.paused)
+    _propagate_member_pause(top_run, subteam, paused_subteam)
+
+    call_log = {}
+
+    async def _leaf_acontinue_run(*, run_id, requirements, session_id):
+        call_log["leaf"] = {
+            "run_id": run_id,
+            "session_id": session_id,
+            "member_agent_id": requirements[0].member_agent_id,
+        }
+        return RunOutput(run_id=run_id, status=RunStatus.completed, content="leaf done")
+
+    async def _subteam_acontinue_run(*, run_id, requirements, session_id):
+        call_log["subteam"] = {
+            "run_id": run_id,
+            "session_id": session_id,
+            "member_agent_id": requirements[0].member_agent_id,
+        }
+        nested_run = TeamRunOutput(run_id="nested_async", status=RunStatus.paused, requirements=requirements)
+        await _run._aroute_requirements_to_members(subteam, nested_run, TeamSession(session_id=session_id))
+        return TeamRunOutput(run_id=run_id, status=RunStatus.completed, content="subteam done")
+
+    leaf_agent.acontinue_run = _leaf_acontinue_run  # type: ignore[method-assign]
+    subteam.acontinue_run = _subteam_acontinue_run  # type: ignore[method-assign]
+
+    member_results = await _run._aroute_requirements_to_members(
+        top_team, top_run, TeamSession(session_id="async_session")
+    )
+
+    assert "LeafAgent" in member_results
+    assert call_log["subteam"]["run_id"] == "leaf_run_async"
+    assert call_log["subteam"]["member_agent_id"] == get_member_id(leaf_agent)
+    assert call_log["leaf"]["run_id"] == "leaf_run_async"
+    assert call_log["leaf"]["member_agent_id"] == get_member_id(leaf_agent)
+
+
+# ---------------------------------------------------------------------------
 # _propagate_still_paused with multiple members
 # ---------------------------------------------------------------------------
 
@@ -279,6 +453,99 @@ def test_continue_run_dispatch_raises_without_session_id():
 
     with pytest.raises(ValueError, match="Session ID is required"):
         _run.continue_run_dispatch(team, run_id="some_run_id")
+
+
+def test_continue_run_dispatch_run_id_normalizes_dict_requirements(monkeypatch):
+    """Verify sync run_id continuation accepts dict requirements payloads."""
+    from agno.team.team import Team
+
+    team = Team(name="TestTeam", members=[Agent(name="A")])
+    paused_run = TeamRunOutput(run_id="team_run_1", session_id="session_1", status=RunStatus.paused)
+    team_session = TeamSession(session_id="session_1", runs=[paused_run])
+
+    req = _make_requirement("tc_dict_sync", confirmed=True)
+    req.member_agent_id = "agent_1"
+    req.member_agent_name = "AgentOne"
+    req.member_run_id = "member_run_1"
+    req_dict = req.to_dict()
+
+    monkeypatch.setattr(team, "_has_async_db", lambda: False)
+    monkeypatch.setattr(team, "initialize_team", lambda debug_mode=None: None)
+    monkeypatch.setattr(team, "_initialize_session", lambda session_id=None, user_id=None: ("session_1", user_id))
+    monkeypatch.setattr(team, "_read_or_create_session", lambda session_id, user_id=None: team_session)
+    monkeypatch.setattr(team, "_cleanup_and_store", lambda run_response, session: None)
+
+    routed: dict = {}
+
+    def _fake_route_requirements_to_members(_team, run_response, _session):
+        routed["requirements"] = run_response.requirements
+        return {"AgentOne": RunOutput(run_id="member_run_1", content="member complete", status=RunStatus.completed)}
+
+    monkeypatch.setattr(_run, "_route_requirements_to_members", _fake_route_requirements_to_members)
+    monkeypatch.setattr(
+        _run,
+        "run",
+        lambda *_args, **_kwargs: TeamRunOutput(
+            run_id="continued_sync", content="team complete", status=RunStatus.completed
+        ),
+    )
+
+    result = _run.continue_run_dispatch(team, run_id="team_run_1", requirements=[req_dict], session_id="session_1")
+
+    assert result.run_id == "continued_sync"
+    assert routed["requirements"] is not None
+    assert all(isinstance(item, RunRequirement) for item in routed["requirements"])
+    assert routed["requirements"][0].member_agent_id == "agent_1"
+    assert routed["requirements"][0].member_run_id == "member_run_1"
+
+
+@pytest.mark.asyncio
+async def test_acontinue_run_impl_run_id_normalizes_dict_requirements(monkeypatch):
+    """Verify async run_id continuation accepts dict requirements payloads."""
+    from agno.team.team import Team
+
+    team = Team(name="TestTeam", members=[Agent(name="A")])
+    paused_run = TeamRunOutput(run_id="team_run_2", session_id="session_2", status=RunStatus.paused)
+    team_session = TeamSession(session_id="session_2", runs=[paused_run])
+
+    req = _make_requirement("tc_dict_async", confirmed=True)
+    req.member_agent_id = "agent_2"
+    req.member_agent_name = "AgentTwo"
+    req.member_run_id = "member_run_2"
+    req_dict = req.to_dict()
+
+    async def _fake_aread_or_create_session(*_args, **_kwargs):
+        return team_session
+
+    async def _fake_acleanup_and_store(*_args, **_kwargs):
+        return None
+
+    routed: dict = {}
+
+    async def _fake_aroute_requirements_to_members(_team, run_response, _session):
+        routed["requirements"] = run_response.requirements
+        return {"AgentTwo": RunOutput(run_id="member_run_2", content="member complete", status=RunStatus.completed)}
+
+    async def _fake_arun(*_args, **_kwargs):
+        return TeamRunOutput(run_id="continued_async", content="team complete", status=RunStatus.completed)
+
+    monkeypatch.setattr(team, "_aread_or_create_session", _fake_aread_or_create_session)
+    monkeypatch.setattr(team, "_acleanup_and_store", _fake_acleanup_and_store)
+    monkeypatch.setattr(_run, "_aroute_requirements_to_members", _fake_aroute_requirements_to_members)
+    monkeypatch.setattr(_run, "arun", _fake_arun)
+
+    result = await _run._acontinue_run_impl(
+        team,
+        run_id="team_run_2",
+        requirements=[req_dict],
+        session_id="session_2",
+    )
+
+    assert result.run_id == "continued_async"
+    assert routed["requirements"] is not None
+    assert all(isinstance(item, RunRequirement) for item in routed["requirements"])
+    assert routed["requirements"][0].member_agent_id == "agent_2"
+    assert routed["requirements"][0].member_run_id == "member_run_2"
 
 
 # ---------------------------------------------------------------------------

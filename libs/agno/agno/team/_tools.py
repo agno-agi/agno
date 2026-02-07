@@ -835,9 +835,12 @@ def _propagate_member_pause(
     member_id = get_member_id(member_agent)
     for req in member_run_response.requirements:
         req_copy = deepcopy(req)
-        req_copy.member_agent_id = member_id
-        req_copy.member_agent_name = member_agent.name
-        req_copy.member_run_id = member_run_response.run_id
+        if req_copy.member_agent_id is None:
+            req_copy.member_agent_id = member_id
+        if req_copy.member_agent_name is None:
+            req_copy.member_agent_name = member_agent.name
+        if req_copy.member_run_id is None:
+            req_copy.member_run_id = member_run_response.run_id
         run_response.requirements.append(req_copy)
 
 
