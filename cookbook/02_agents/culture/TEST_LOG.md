@@ -1,5 +1,5 @@
 # TEST_LOG
-Generated: 2026-02-07 23:33:34
+Generated: 2026-02-07 23:53:42
 
 ### check_cookbook_pattern.py
 
@@ -7,17 +7,17 @@ Generated: 2026-02-07 23:33:34
 
 **Description:** Ran `.venvs/demo/bin/python cookbook/scripts/check_cookbook_pattern.py --base-dir cookbook/02_agents/culture`.
 
-**Result:** Structure validation passed with no violations (exit code 0).
+**Result:** Structure validation passed with no violations (checked 4 file(s)).
 
 ---
 
 ### 01_create_cultural_knowledge.py
 
-**Status:** FAIL
+**Status:** PASS
 
 **Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/culture/01_create_cultural_knowledge.py`.
 
-**Result:** Failed with exit code 1. Anthropic authentication failed (`invalid x-api-key`).
+**Result:** Example completed successfully. (exit code 0, ~6.51s).
 
 ---
 
@@ -27,7 +27,7 @@ Generated: 2026-02-07 23:33:34
 
 **Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/culture/02_use_cultural_knowledge_in_agent.py`.
 
-**Result:** Example completed successfully. (exit code 0).
+**Result:** Example completed successfully. (exit code 0, ~0.67s).
 
 ---
 
@@ -37,7 +37,7 @@ Generated: 2026-02-07 23:33:34
 
 **Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/culture/03_automatic_cultural_management.py`.
 
-**Result:** Example completed successfully. (exit code 0).
+**Result:** Example completed successfully. (exit code 0, ~0.71s).
 
 ---
 
@@ -47,7 +47,6 @@ Generated: 2026-02-07 23:33:34
 
 **Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/culture/04_manually_add_culture.py`.
 
-**Result:** Example completed successfully. (exit code 0).
+**Result:** Example completed successfully. (exit code 0, ~0.65s).
 
 ---
-

@@ -1,5 +1,5 @@
 # TEST_LOG
-Generated: 2026-02-07 23:33:34
+Generated: 2026-02-07 23:53:42
 
 ### check_cookbook_pattern.py
 
@@ -7,7 +7,7 @@ Generated: 2026-02-07 23:33:34
 
 **Description:** Ran `.venvs/demo/bin/python cookbook/scripts/check_cookbook_pattern.py --base-dir cookbook/02_agents/_relocated`.
 
-**Result:** Structure validation passed with no violations (exit code 0).
+**Result:** Structure validation passed with no violations (checked 3 file(s)).
 
 ---
 
@@ -17,7 +17,7 @@ Generated: 2026-02-07 23:33:34
 
 **Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/_relocated/agentic_rag_infinity_reranker.py`.
 
-**Result:** Failed with exit code 1. Missing dependency `cohere` in demo environment.
+**Result:** Failed with exit code 1. ImportError: `cohere` not installed. Please install using `pip install cohere`.
 
 ---
 
@@ -27,7 +27,7 @@ Generated: 2026-02-07 23:33:34
 
 **Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/_relocated/agentic_rag_with_lightrag.py`.
 
-**Result:** Failed with exit code 1. Missing dependency `wikipedia` in demo environment.
+**Result:** Failed with exit code 1. ImportError: The `wikipedia` package is not installed. Please install it via `pip install wikipedia`.
 
 ---
 
@@ -37,7 +37,6 @@ Generated: 2026-02-07 23:33:34
 
 **Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/_relocated/local_rag_langchain_qdrant.py`.
 
-**Result:** Failed with exit code 1. Missing dependency `ollama` in demo environment.
+**Result:** Failed with exit code 1. ImportError: `ollama` not installed. Please install using `pip install ollama`
 
 ---
-
