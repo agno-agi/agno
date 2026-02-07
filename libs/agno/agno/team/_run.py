@@ -223,12 +223,13 @@ def _run_tasks(
                 memory_future = team._start_memory_future(
                     run_messages=run_messages,
                     user_id=user_id,
-                    existing_future=None,
+                    existing_future=memory_future,
                 )
                 learning_future = team._start_learning_future(
                     run_messages=run_messages,
                     session=session,
                     user_id=user_id,
+                    existing_future=learning_future,
                 )
 
                 # Reasoning on first iteration
@@ -515,6 +516,7 @@ def _run(
                     run_messages=run_messages,
                     session=session,
                     user_id=user_id,
+                    existing_future=learning_future,
                 )
 
                 raise_if_cancelled(run_response.run_id)  # type: ignore
@@ -827,6 +829,7 @@ def _run_stream(
                     run_messages=run_messages,
                     session=session,
                     user_id=user_id,
+                    existing_future=learning_future,
                 )
 
                 # Start the Run by yielding a RunStarted event
@@ -1422,7 +1425,7 @@ async def _arun_tasks(
                 memory_task = await team._astart_memory_task(
                     run_messages=run_messages,
                     user_id=user_id,
-                    existing_task=None,
+                    existing_task=memory_task,
                 )
                 learning_task = await team._astart_learning_task(
                     run_messages=run_messages,
