@@ -66,7 +66,8 @@ def __init__(
     role: Optional[str] = None,
     mode: Optional["TeamMode"] = None,
     respond_directly: bool = False,
-    determine_input_for_members: bool = True,
+    pass_user_input_to_members: Optional[bool] = None,
+    determine_input_for_members: Optional[bool] = None,
     delegate_to_all_members: bool = False,
     max_iterations: int = 10,
     user_id: Optional[str] = None,
@@ -172,7 +173,21 @@ def __init__(
     team.role = role
 
     team.respond_directly = respond_directly
-    team.determine_input_for_members = determine_input_for_members
+    team.pass_user_input_to_members = pass_user_input_to_members
+    legacy_determine_input_for_members = (
+        determine_input_for_members if determine_input_for_members is not None else True
+    )
+    team.determine_input_for_members = legacy_determine_input_for_members
+    if (
+        pass_user_input_to_members is not None
+        and determine_input_for_members is not None
+        and pass_user_input_to_members != (not determine_input_for_members)
+    ):
+        log_warning(
+            "`pass_user_input_to_members` and `determine_input_for_members` were both provided with conflicting "
+            "values. `pass_user_input_to_members` takes precedence. `determine_input_for_members` is deprecated "
+            "and will be removed in a future release."
+        )
     team.delegate_to_all_members = delegate_to_all_members
     team.max_iterations = max_iterations
 
