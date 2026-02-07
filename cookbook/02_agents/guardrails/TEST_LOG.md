@@ -1,5 +1,5 @@
 # TEST_LOG
-Generated: 2026-02-07 23:33:34
+Generated: 2026-02-07 23:53:42
 
 ### check_cookbook_pattern.py
 
@@ -7,7 +7,7 @@ Generated: 2026-02-07 23:33:34
 
 **Description:** Ran `.venvs/demo/bin/python cookbook/scripts/check_cookbook_pattern.py --base-dir cookbook/02_agents/guardrails`.
 
-**Result:** Structure validation passed with no violations (exit code 0).
+**Result:** Structure validation passed with no violations (checked 5 file(s)).
 
 ---
 
@@ -17,7 +17,7 @@ Generated: 2026-02-07 23:33:34
 
 **Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/guardrails/custom_guardrail.py`.
 
-**Result:** Example completed successfully. (exit code 0).
+**Result:** Example completed successfully. (exit code 0, ~18.39s).
 
 ---
 
@@ -27,7 +27,7 @@ Generated: 2026-02-07 23:33:34
 
 **Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/guardrails/openai_moderation.py`.
 
-**Result:** Example completed successfully. (exit code 0).
+**Result:** Example completed successfully. (exit code 0, ~10.21s).
 
 ---
 
@@ -37,7 +37,7 @@ Generated: 2026-02-07 23:33:34
 
 **Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/guardrails/output_guardrail.py`.
 
-**Result:** Example completed successfully. (exit code 0).
+**Result:** Example completed successfully. (exit code 0, ~14.32s).
 
 ---
 
@@ -47,7 +47,7 @@ Generated: 2026-02-07 23:33:34
 
 **Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/guardrails/pii_detection.py`.
 
-**Result:** Example completed successfully. (exit code 0).
+**Result:** Example completed successfully. (exit code 0, ~3.51s).
 
 ---
 
@@ -57,7 +57,6 @@ Generated: 2026-02-07 23:33:34
 
 **Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/guardrails/prompt_injection.py`.
 
-**Result:** Example completed successfully. (exit code 0).
+**Result:** Example completed successfully. (exit code 0, ~1.63s).
 
 ---
-

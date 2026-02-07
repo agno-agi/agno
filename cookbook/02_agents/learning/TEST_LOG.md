@@ -1,5 +1,5 @@
 # TEST_LOG
-Generated: 2026-02-07 23:33:34
+Generated: 2026-02-07 23:53:42
 
 ### check_cookbook_pattern.py
 
@@ -7,7 +7,7 @@ Generated: 2026-02-07 23:33:34
 
 **Description:** Ran `.venvs/demo/bin/python cookbook/scripts/check_cookbook_pattern.py --base-dir cookbook/02_agents/learning`.
 
-**Result:** Structure validation passed with no violations (exit code 0).
+**Result:** Structure validation passed with no violations (checked 1 file(s)).
 
 ---
 
@@ -17,7 +17,6 @@ Generated: 2026-02-07 23:33:34
 
 **Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/learning/learning_machine.py`.
 
-**Result:** Example completed successfully. (exit code 0).
+**Result:** Example completed successfully. (exit code 0, ~5.68s).
 
 ---
-

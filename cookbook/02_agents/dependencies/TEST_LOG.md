@@ -1,5 +1,5 @@
 # TEST_LOG
-Generated: 2026-02-07 23:33:34
+Generated: 2026-02-07 23:53:42
 
 ### check_cookbook_pattern.py
 
@@ -7,7 +7,7 @@ Generated: 2026-02-07 23:33:34
 
 **Description:** Ran `.venvs/demo/bin/python cookbook/scripts/check_cookbook_pattern.py --base-dir cookbook/02_agents/dependencies`.
 
-**Result:** Structure validation passed with no violations (exit code 0).
+**Result:** Structure validation passed with no violations (checked 3 file(s)).
 
 ---
 
@@ -17,7 +17,7 @@ Generated: 2026-02-07 23:33:34
 
 **Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/dependencies/dependencies_in_context.py`.
 
-**Result:** Example completed successfully. (exit code 0).
+**Result:** Example completed successfully. (exit code 0, ~9.24s).
 
 ---
 
@@ -27,7 +27,7 @@ Generated: 2026-02-07 23:33:34
 
 **Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/dependencies/dependencies_in_tools.py`.
 
-**Result:** Example completed successfully. (exit code 0).
+**Result:** Example completed successfully. (exit code 0, ~6.59s).
 
 ---
 
@@ -37,7 +37,6 @@ Generated: 2026-02-07 23:33:34
 
 **Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/dependencies/dynamic_tools.py`.
 
-**Result:** Example completed successfully. (exit code 0).
+**Result:** Example completed successfully. (exit code 0, ~3.31s).
 
 ---
-

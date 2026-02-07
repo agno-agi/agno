@@ -1,5 +1,5 @@
 # TEST_LOG
-Generated: 2026-02-07 23:33:34
+Generated: 2026-02-07 23:53:42
 
 ### check_cookbook_pattern.py
 
@@ -7,7 +7,7 @@ Generated: 2026-02-07 23:33:34
 
 **Description:** Ran `.venvs/demo/bin/python cookbook/scripts/check_cookbook_pattern.py --base-dir cookbook/02_agents/state`.
 
-**Result:** Structure validation passed with no violations (exit code 0).
+**Result:** Structure validation passed with no violations (checked 7 file(s)).
 
 ---
 
@@ -17,7 +17,7 @@ Generated: 2026-02-07 23:33:34
 
 **Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/state/agentic_session_state.py`.
 
-**Result:** Example completed successfully. (exit code 0).
+**Result:** Example completed successfully. (exit code 0, ~7.6s).
 
 ---
 
@@ -27,7 +27,7 @@ Generated: 2026-02-07 23:33:34
 
 **Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/state/dynamic_session_state.py`.
 
-**Result:** Example completed successfully. (exit code 0).
+**Result:** Example completed successfully. (exit code 0, ~3.24s).
 
 ---
 
@@ -37,7 +37,7 @@ Generated: 2026-02-07 23:33:34
 
 **Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/state/session_state_advanced.py`.
 
-**Result:** Example completed successfully. (exit code 0).
+**Result:** Example completed successfully. (exit code 0, ~42.66s).
 
 ---
 
@@ -47,7 +47,7 @@ Generated: 2026-02-07 23:33:34
 
 **Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/state/session_state_basic.py`.
 
-**Result:** Example completed successfully. (exit code 0).
+**Result:** Example completed successfully. (exit code 0, ~2.8s).
 
 ---
 
@@ -57,7 +57,7 @@ Generated: 2026-02-07 23:33:34
 
 **Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/state/session_state_events.py`.
 
-**Result:** Example completed successfully. (exit code 0).
+**Result:** Example completed successfully. (exit code 0, ~2.52s).
 
 ---
 
@@ -67,7 +67,7 @@ Generated: 2026-02-07 23:33:34
 
 **Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/state/session_state_manual_update.py`.
 
-**Result:** Example completed successfully. (exit code 0).
+**Result:** Example completed successfully. (exit code 0, ~3.64s).
 
 ---
 
@@ -77,7 +77,6 @@ Generated: 2026-02-07 23:33:34
 
 **Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/state/session_state_multiple_users.py`.
 
-**Result:** Example completed successfully. (exit code 0).
+**Result:** Example completed successfully. (exit code 0, ~26.62s).
 
 ---
-
