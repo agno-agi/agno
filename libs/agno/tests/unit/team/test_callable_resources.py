@@ -10,6 +10,7 @@ from agno.agent.agent import Agent
 from agno.run.base import RunContext
 from agno.utils.callables import (
     aresolve_callable_members,
+    aresolve_callable_tools,
     clear_callable_cache,
     get_resolved_members,
     resolve_callable_members,
@@ -382,3 +383,135 @@ class TestGetResolvedMembers:
         rc = _make_run_context()
         result = get_resolved_members(team, rc)
         assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Async team callable tools
+# ---------------------------------------------------------------------------
+
+
+class TestAsyncTeamCallableTools:
+    @pytest.mark.asyncio
+    async def test_async_tools_factory(self):
+        async def factory(team):
+            return [_dummy_tool]
+
+        team = _make_team(tools=factory)
+        rc = _make_run_context(user_id="u1")
+        await aresolve_callable_tools(team, rc)
+        assert rc.tools == [_dummy_tool]
+
+    @pytest.mark.asyncio
+    async def test_sync_tools_factory_in_async(self):
+        def factory():
+            return [_dummy_tool]
+
+        team = _make_team(tools=factory)
+        rc = _make_run_context(user_id="u1")
+        await aresolve_callable_tools(team, rc)
+        assert rc.tools == [_dummy_tool]
+
+    @pytest.mark.asyncio
+    async def test_async_tools_factory_caching(self):
+        call_count = 0
+
+        async def factory():
+            nonlocal call_count
+            call_count += 1
+            return [_dummy_tool]
+
+        team = _make_team(tools=factory)
+
+        rc1 = _make_run_context(user_id="u1")
+        await aresolve_callable_tools(team, rc1)
+        assert call_count == 1
+
+        rc2 = _make_run_context(user_id="u1")
+        await aresolve_callable_tools(team, rc2)
+        assert call_count == 1  # Cached
+
+
+# ---------------------------------------------------------------------------
+# _find_member_by_id with run_context
+# ---------------------------------------------------------------------------
+
+
+class TestFindMemberByIdWithRunContext:
+    def test_find_static_member(self):
+        from agno.team._tools import _find_member_by_id
+
+        agent = Agent(name="member-1")
+        team = _make_team(members=[agent])
+
+        from agno.team._tools import get_member_id
+
+        member_id = get_member_id(agent)
+        result = _find_member_by_id(team, member_id)
+        assert result is not None
+        assert result[1] is agent
+
+    def test_find_callable_member_via_run_context(self):
+        from agno.team._tools import _find_member_by_id, get_member_id
+
+        agent = Agent(name="dynamic-agent")
+
+        def factory():
+            return [agent]
+
+        team = _make_team(members=factory)
+        rc = _make_run_context(user_id="u1")
+        resolve_callable_members(team, rc)
+
+        member_id = get_member_id(agent)
+        result = _find_member_by_id(team, member_id, run_context=rc)
+        assert result is not None
+        assert result[1] is agent
+
+    def test_find_callable_member_without_run_context_fails(self):
+        from agno.team._tools import _find_member_by_id, get_member_id
+
+        agent = Agent(name="dynamic-agent")
+
+        def factory():
+            return [agent]
+
+        team = _make_team(members=factory)
+        member_id = get_member_id(agent)
+
+        # Without run_context, callable members are not visible
+        result = _find_member_by_id(team, member_id)
+        assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Team deep_copy with callable factories
+# ---------------------------------------------------------------------------
+
+
+class TestTeamDeepCopyCallableFactories:
+    def test_deep_copy_with_callable_tools(self):
+        def tools_factory():
+            return [_dummy_tool]
+
+        team = _make_team(tools=tools_factory)
+        copy = team.deep_copy()
+        assert copy.tools is tools_factory
+
+    def test_deep_copy_with_callable_members(self):
+        def members_factory():
+            return [Agent(name="a")]
+
+        team = _make_team(members=members_factory)
+        copy = team.deep_copy()
+        assert copy.members is members_factory
+
+    def test_deep_copy_with_static_tools(self):
+        team = _make_team(tools=[_dummy_tool])
+        copy = team.deep_copy()
+        assert isinstance(copy.tools, list)
+
+    def test_deep_copy_with_static_members(self):
+        agents = [Agent(name="a")]
+        team = _make_team(members=agents)
+        copy = team.deep_copy()
+        assert isinstance(copy.members, list)
