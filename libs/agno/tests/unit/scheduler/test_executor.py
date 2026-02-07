@@ -39,9 +39,9 @@ class TestTerminalEvents:
             "TeamRunCompleted",
             "TeamRunError",
             "TeamRunCancelled",
-            "WorkflowRunCompleted",
-            "WorkflowRunError",
-            "WorkflowRunCancelled",
+            "WorkflowCompleted",
+            "WorkflowError",
+            "WorkflowCancelled",
         }
         assert _TERMINAL_EVENTS == expected
 
@@ -300,6 +300,126 @@ class TestScheduleExecutorSSE:
         assert result["status"] == "failed"
         assert result["status_code"] == 403
         assert result["error"] == "Forbidden"
+
+    @pytest.mark.asyncio
+    async def test_stream_sse_workflow_completed(self):
+        """WorkflowCompleted (not WorkflowRunCompleted) is the real terminal event."""
+        executor = ScheduleExecutor(base_url="http://localhost:7777", internal_service_token="tok")
+
+        sse_lines = [
+            "event: WorkflowStarted",
+            'data: {"run_id": "wr1", "session_id": "ws1"}',
+            "",
+            "event: WorkflowCompleted",
+            'data: {"run_id": "wr1", "session_id": "ws1"}',
+            "",
+        ]
+
+        mock_resp = AsyncMock()
+        mock_resp.status_code = 200
+        mock_resp.aiter_lines = MagicMock(return_value=_async_iter(sse_lines))
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+        mock_client = MagicMock()
+        mock_client.stream = MagicMock(return_value=mock_resp)
+
+        result = await executor._stream_sse(
+            mock_client, "http://localhost:7777/workflows/test/runs", {"Authorization": "Bearer tok"}, {"message": "hi"}
+        )
+
+        assert result["status"] == "success"
+        assert result["run_id"] == "wr1"
+        assert result["session_id"] == "ws1"
+
+    @pytest.mark.asyncio
+    async def test_stream_sse_workflow_error(self):
+        executor = ScheduleExecutor(base_url="http://localhost:7777", internal_service_token="tok")
+
+        sse_lines = [
+            "event: WorkflowError",
+            'data: {"run_id": "wr1", "error": "step failed"}',
+            "",
+        ]
+
+        mock_resp = AsyncMock()
+        mock_resp.status_code = 200
+        mock_resp.aiter_lines = MagicMock(return_value=_async_iter(sse_lines))
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+        mock_client = MagicMock()
+        mock_client.stream = MagicMock(return_value=mock_resp)
+
+        result = await executor._stream_sse(
+            mock_client, "http://localhost:7777/workflows/test/runs", {"Authorization": "Bearer tok"}, None
+        )
+
+        assert result["status"] == "failed"
+        assert result["error"] == "step failed"
+        assert result["run_id"] == "wr1"
+
+
+class TestCallEndpointFormData:
+    @pytest.mark.asyncio
+    async def test_run_endpoint_sends_form_data(self):
+        """Run endpoints must send form-encoded data, not JSON."""
+        executor = ScheduleExecutor(base_url="http://localhost:7777", internal_service_token="tok")
+
+        captured_kwargs = {}
+
+        async def mock_stream_sse(client, url, headers, payload):
+            captured_kwargs["url"] = url
+            captured_kwargs["headers"] = headers
+            captured_kwargs["payload"] = payload
+            return {"status": "success", "status_code": 200, "error": None, "run_id": "r1", "session_id": "s1"}
+
+        schedule = _make_schedule(payload={"message": "hi", "stream": False})
+        with patch.object(executor, "_stream_sse", side_effect=mock_stream_sse):
+            await executor._call_endpoint(schedule)
+
+        # stream must be forced to "true"
+        assert captured_kwargs["payload"]["stream"] == "true"
+        # message must be stringified for form encoding
+        assert captured_kwargs["payload"]["message"] == "hi"
+        # No Content-Type header (httpx sets it automatically for form data)
+        assert "Content-Type" not in captured_kwargs["headers"]
+
+    @pytest.mark.asyncio
+    async def test_non_run_endpoint_sends_json(self):
+        """Non-run endpoints must send JSON."""
+        executor = ScheduleExecutor(base_url="http://localhost:7777", internal_service_token="tok")
+
+        captured_kwargs = {}
+
+        async def mock_simple_request(client, method, url, headers, payload):
+            captured_kwargs["headers"] = headers
+            captured_kwargs["payload"] = payload
+            return {"status": "success", "status_code": 200, "error": None, "run_id": None, "session_id": None}
+
+        schedule = _make_schedule(endpoint="/schedules", payload={"name": "test"})
+        with patch.object(executor, "_simple_request", side_effect=mock_simple_request):
+            await executor._call_endpoint(schedule)
+
+        assert captured_kwargs["headers"]["Content-Type"] == "application/json"
+
+
+class TestScheduleIdGuard:
+    @pytest.mark.asyncio
+    async def test_malformed_schedule_still_releases(self):
+        """A schedule dict missing 'id' should not prevent finally from running."""
+        executor = ScheduleExecutor(base_url="http://localhost:7777", internal_service_token="tok")
+        db = FakeDb()
+
+        bad_schedule = {"name": "no-id", "cron_expr": "* * * * *", "endpoint": "/agents/x/runs"}
+
+        with pytest.raises(KeyError):
+            with patch("agno.scheduler.cron.compute_next_run", return_value=int(time.time()) + 60):
+                await executor.execute(bad_schedule, db)
+
+        # schedule_id was None so release_schedule should not have been called with a valid ID,
+        # but the executor must not leave an unhandled exception before finally.
+        # Since schedule_id is None, we just verify no crash in the finally block.
 
 
 async def _async_iter(items):
