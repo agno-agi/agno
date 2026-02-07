@@ -96,16 +96,16 @@ Validation commands:
 ```bash
 # Structure checker
 .venvs/demo/bin/python cookbook/scripts/check_cookbook_pattern.py --base-dir cookbook/00_quickstart
-
-# Metadata audit for README.md / TEST_LOG.md coverage
-.venvs/demo/bin/python cookbook/scripts/audit_cookbook_metadata.py --scope direct
 ```
 
-Non-interactive cookbook runs:
+### API Keys
 
+API keys like `OPENAI_API_KEY` are available via `direnv`. To load them, run:
 ```bash
-.venvs/demo/bin/python cookbook/scripts/cookbook_runner.py cookbook/<folder> --batch --python-bin .venvs/demo/bin/python
+direnv allow
 ```
+
+If `.envrc` does not exist, stop execution and let the user know.
 
 ### Testing Workflow
 
