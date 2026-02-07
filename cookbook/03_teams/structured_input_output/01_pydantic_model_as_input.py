@@ -41,7 +41,7 @@ team = Team(
     name="Hackernews Research Team",
     model=OpenAIChat(id="o3-mini"),
     members=[hackernews_agent],
-    determine_input_for_members=False,  # The member gets the input directly, without the team leader synthesizing it
+    pass_user_input_to_members=True,  # The member gets input directly (replaces determine_input_for_members=False).
     instructions=[
         "Conduct thorough research based on the structured input",
         "Address all focus areas mentioned in the research topic",

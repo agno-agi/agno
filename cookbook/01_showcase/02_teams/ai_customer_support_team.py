@@ -85,7 +85,7 @@ customer_support_team = Team(
     name="Customer Support Team",
     model=OpenAIChat("gpt-4o"),
     members=[doc_researcher_agent, escalation_manager_agent, feedback_collector_agent],
-    determine_input_for_members=False,
+    pass_user_input_to_members=True,  # Migration: replaces determine_input_for_members=False
     respond_directly=True,
     markdown=True,
     debug_mode=True,

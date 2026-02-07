@@ -127,6 +127,249 @@ async def _asetup_session(
     return team_session
 
 
+def _run_tasks(
+    team: "Team",
+    run_response: TeamRunOutput,
+    session: TeamSession,
+    run_context: RunContext,
+    user_id: Optional[str] = None,
+    add_history_to_context: Optional[bool] = None,
+    add_dependencies_to_context: Optional[bool] = None,
+    add_session_state_to_context: Optional[bool] = None,
+    response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+    debug_mode: Optional[bool] = None,
+    background_tasks: Optional[Any] = None,
+    **kwargs: Any,
+) -> TeamRunOutput:
+    """Autonomous task loop for mode=tasks. Iterates model calls until all tasks are done."""
+    from agno.team.task import TaskStatus, load_task_list
+
+    log_debug(f"Team Tasks Run Start: {run_response.run_id}", center=True)
+
+    max_iterations = team.max_iterations
+    memory_future = None
+    accumulated_messages: List[Message] = []
+
+    try:
+        run_input = cast(TeamRunInput, run_response.input)
+        team.model = cast(Model, team.model)
+
+        # Execute pre-hooks once at the start
+        if team.pre_hooks is not None:
+            pre_hook_iterator = team._execute_pre_hooks(
+                hooks=team.pre_hooks,  # type: ignore
+                run_response=run_response,
+                run_input=run_input,
+                run_context=run_context,
+                session=session,
+                user_id=user_id,
+                debug_mode=debug_mode,
+                background_tasks=background_tasks,
+                **kwargs,
+            )
+            deque(pre_hook_iterator, maxlen=0)
+
+        goal_reached = False
+        for iteration in range(1, max_iterations + 1):
+            log_debug(f"Tasks iteration {iteration}/{max_iterations}")
+
+            # Initialize team run context
+            team_run_context: Dict[str, Any] = {}
+
+            # Determine tools (task management tools)
+            _tools = team._determine_tools_for_model(
+                model=team.model,
+                run_response=run_response,
+                run_context=run_context,
+                team_run_context=team_run_context,
+                session=session,
+                user_id=user_id,
+                async_mode=False,
+                input_message=run_input.input_content,
+                images=run_input.images,
+                videos=run_input.videos,
+                audio=run_input.audios,
+                files=run_input.files,
+                debug_mode=debug_mode,
+                add_history_to_context=add_history_to_context,
+                add_session_state_to_context=add_session_state_to_context,
+                add_dependencies_to_context=add_dependencies_to_context,
+                stream=False,
+                stream_events=False,
+            )
+
+            if iteration == 1:
+                # First iteration: build full messages
+                run_messages: RunMessages = team._get_run_messages(
+                    run_response=run_response,
+                    session=session,
+                    run_context=run_context,
+                    user_id=user_id,
+                    input_message=run_input.input_content,
+                    audio=run_input.audios,
+                    images=run_input.images,
+                    videos=run_input.videos,
+                    files=run_input.files,
+                    add_history_to_context=add_history_to_context,
+                    add_dependencies_to_context=add_dependencies_to_context,
+                    add_session_state_to_context=add_session_state_to_context,
+                    tools=_tools,
+                    **kwargs,
+                )
+                accumulated_messages = list(run_messages.messages)
+
+                # Start memory creation on first iteration
+                memory_future = team._start_memory_future(
+                    run_messages=run_messages,
+                    user_id=user_id,
+                    existing_future=None,
+                )
+
+                # Reasoning on first iteration
+                team._handle_reasoning(run_response=run_response, run_messages=run_messages, run_context=run_context)
+            else:
+                # Subsequent iterations: inject task state context
+                task_list = load_task_list(run_context.session_state)
+                task_context = task_list.get_summary_string()
+                continuation_msg = Message(
+                    role="user",
+                    content=(
+                        f"<current_task_state>\n{task_context}\n</current_task_state>\n\n"
+                        "Review the current task state above. Continue working toward the goal. "
+                        "Execute pending tasks, create new tasks if needed, or call mark_all_complete if done."
+                    ),
+                )
+                accumulated_messages.append(continuation_msg)
+
+            raise_if_cancelled(run_response.run_id)  # type: ignore
+
+            # Call the model
+            model_response: ModelResponse = team.model.response(
+                messages=accumulated_messages,
+                response_format=response_format,
+                tools=_tools,
+                tool_choice=team.tool_choice,
+                tool_call_limit=team.tool_call_limit,
+                run_response=run_response,
+                send_media_to_model=team.send_media_to_model,
+                compression_manager=team.compression_manager if team.compress_tool_results else None,
+            )
+
+            raise_if_cancelled(run_response.run_id)  # type: ignore
+
+            # Update run response
+            team._update_run_response(
+                model_response=model_response,
+                run_response=run_response,
+                run_messages=RunMessages(messages=accumulated_messages),
+                run_context=run_context,
+            )
+
+            # Check HITL pause
+            if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
+                from agno.team import _hooks
+
+                return _hooks.handle_team_run_paused(team, run_response=run_response, session=session)
+
+            # Note: accumulated_messages is already up-to-date — model.response() mutates the list in-place.
+
+            # Check termination: goal marked complete or all tasks in terminal state
+            task_list = load_task_list(run_context.session_state)
+            if task_list.goal_complete:
+                log_debug("Tasks mode: goal marked complete by leader")
+                goal_reached = True
+                break
+
+            if task_list.tasks and task_list.all_terminal():
+                if any(t.status == TaskStatus.failed for t in task_list.tasks) and not task_list.goal_complete:
+                    log_debug("Tasks mode: all tasks terminal but some failed — not marking as goal reached")
+                else:
+                    log_debug("Tasks mode: all tasks in terminal state")
+                    goal_reached = True
+                break
+
+            raise_if_cancelled(run_response.run_id)  # type: ignore
+
+        else:
+            log_warning(f"Tasks mode reached max_iterations ({max_iterations}) without completion")
+
+        # Post-loop: structured output, post-hooks, memory, session summary, cleanup
+        team._convert_response_to_structured_format(run_response=run_response, run_context=run_context)
+
+        if team.post_hooks is not None:
+            iterator = team._execute_post_hooks(
+                hooks=team.post_hooks,  # type: ignore
+                run_output=run_response,
+                run_context=run_context,
+                session=session,
+                user_id=user_id,
+                debug_mode=debug_mode,
+                background_tasks=background_tasks,
+                **kwargs,
+            )
+            deque(iterator, maxlen=0)
+
+        raise_if_cancelled(run_response.run_id)  # type: ignore
+
+        wait_for_open_threads(memory_future=memory_future)  # type: ignore
+
+        raise_if_cancelled(run_response.run_id)  # type: ignore
+
+        if team.session_summary_manager is not None:
+            session.upsert_run(run_response=run_response)
+            try:
+                team.session_summary_manager.create_session_summary(session=session)
+            except Exception as e:
+                log_warning(f"Error in session summary creation: {str(e)}")
+
+        raise_if_cancelled(run_response.run_id)  # type: ignore
+
+        if goal_reached:
+            run_response.status = RunStatus.completed
+        else:
+            run_response.status = RunStatus.error
+            if not run_response.content:
+                run_response.content = (
+                    f"Tasks mode reached max iterations ({max_iterations}) without completing all tasks"
+                )
+        team._cleanup_and_store(run_response=run_response, session=session)
+        team._log_team_telemetry(session_id=session.session_id, run_id=run_response.run_id)
+
+        log_debug(f"Team Tasks Run End: {run_response.run_id}", center=True, symbol="*")
+
+        return run_response
+    except RunCancelledException as e:
+        log_info(f"Team task run {run_response.run_id} was cancelled")
+        run_response.status = RunStatus.cancelled
+        run_response.content = str(e)
+        team._cleanup_and_store(run_response=run_response, session=session)
+        return run_response
+    except (InputCheckError, OutputCheckError) as e:
+        run_response.status = RunStatus.error
+        if run_response.content is None:
+            run_response.content = str(e)
+        log_error(f"Validation failed: {str(e)} | Check: {e.check_trigger}")
+        team._cleanup_and_store(run_response=run_response, session=session)
+        return run_response
+    except KeyboardInterrupt:
+        run_response = cast(TeamRunOutput, run_response)
+        run_response.status = RunStatus.cancelled
+        run_response.content = "Operation cancelled by user"
+        return run_response
+    except Exception as e:
+        run_response.status = RunStatus.error
+        if run_response.content is None:
+            run_response.content = str(e)
+        log_error(f"Error in Team task run: {str(e)}")
+        team._cleanup_and_store(run_response=run_response, session=session)
+        return run_response
+    finally:
+        if memory_future is not None and not memory_future.done():
+            memory_future.cancel()
+        team._disconnect_connectable_tools()
+        cleanup_run(run_response.run_id)  # type: ignore
+
+
 def _run(
     team: "Team",
     run_response: TeamRunOutput,
@@ -157,6 +400,25 @@ def _run(
     12. Create session summary
     13. Cleanup and store (scrub, stop timer, add to session, calculate metrics, save session)
     """
+    # Dispatch to tasks mode if enabled
+    from agno.team.mode import TeamMode
+
+    if team.mode == TeamMode.tasks:
+        return _run_tasks(
+            team,
+            run_response=run_response,
+            session=session,
+            run_context=run_context,
+            user_id=user_id,
+            add_history_to_context=add_history_to_context,
+            add_dependencies_to_context=add_dependencies_to_context,
+            add_session_state_to_context=add_session_state_to_context,
+            response_format=response_format,
+            debug_mode=debug_mode,
+            background_tasks=background_tasks,
+            **kwargs,
+        )
+
     log_debug(f"Team Run Start: {run_response.run_id}", center=True)
 
     memory_future = None
@@ -438,6 +700,28 @@ def _run_stream(
     9. Create session summary
     10. Cleanup and store (scrub, add to session, calculate metrics, save session)
     """
+    # Tasks mode: fall back to non-streaming _run_tasks for now
+    from agno.team.mode import TeamMode
+
+    if team.mode == TeamMode.tasks:
+        log_warning("Streaming is not yet supported in tasks mode; falling back to non-streaming.")
+        result = _run_tasks(
+            team,
+            run_response=run_response,
+            session=session,
+            run_context=run_context,
+            user_id=user_id,
+            add_history_to_context=add_history_to_context,
+            add_dependencies_to_context=add_dependencies_to_context,
+            add_session_state_to_context=add_session_state_to_context,
+            response_format=response_format,
+            debug_mode=debug_mode,
+            background_tasks=background_tasks,
+            **kwargs,
+        )
+        yield result  # type: ignore
+        return
+
     log_debug(f"Team Run Start: {run_response.run_id}", center=True)
 
     memory_future = None
@@ -1000,6 +1284,281 @@ def run(
         )
 
 
+async def _arun_tasks(
+    team: "Team",
+    run_response: TeamRunOutput,
+    run_context: RunContext,
+    session_id: str,
+    user_id: Optional[str] = None,
+    response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+    add_dependencies_to_context: Optional[bool] = None,
+    add_session_state_to_context: Optional[bool] = None,
+    add_history_to_context: Optional[bool] = None,
+    debug_mode: Optional[bool] = None,
+    background_tasks: Optional[Any] = None,
+    **kwargs: Any,
+) -> TeamRunOutput:
+    """Async autonomous task loop for mode=tasks."""
+    from agno.team.task import TaskStatus, load_task_list
+
+    await aregister_run(run_context.run_id)
+    log_debug(f"Team Async Tasks Run Start: {run_response.run_id}", center=True)
+
+    max_iterations = team.max_iterations
+    memory_task = None
+    accumulated_messages: List[Message] = []
+    team_session = None
+
+    try:
+        # Setup session
+        team_session = await _asetup_session(
+            team=team,
+            run_context=run_context,
+            session_id=session_id,
+            user_id=user_id,
+            run_id=run_context.run_id,
+        )
+
+        run_input = cast(TeamRunInput, run_response.input)
+        team.model = cast(Model, team.model)
+
+        # Pre-hooks
+        if team.pre_hooks is not None:
+            async for _ in team._aexecute_pre_hooks(
+                hooks=team.pre_hooks,  # type: ignore
+                run_response=run_response,
+                run_input=run_input,
+                run_context=run_context,
+                session=team_session,
+                user_id=user_id,
+                debug_mode=debug_mode,
+                background_tasks=background_tasks,
+                **kwargs,
+            ):
+                pass
+
+        # Check and refresh MCP tools
+        await team._check_and_refresh_mcp_tools()
+
+        goal_reached = False
+        for iteration in range(1, max_iterations + 1):
+            log_debug(f"Async tasks iteration {iteration}/{max_iterations}")
+
+            team_run_context: Dict[str, Any] = {}
+
+            _tools = team._determine_tools_for_model(
+                model=team.model,
+                run_response=run_response,
+                run_context=run_context,
+                team_run_context=team_run_context,
+                session=team_session,
+                user_id=user_id,
+                async_mode=True,
+                input_message=run_input.input_content,
+                images=run_input.images,
+                videos=run_input.videos,
+                audio=run_input.audios,
+                files=run_input.files,
+                debug_mode=debug_mode,
+                add_history_to_context=add_history_to_context,
+                add_session_state_to_context=add_session_state_to_context,
+                add_dependencies_to_context=add_dependencies_to_context,
+                stream=False,
+                stream_events=False,
+                check_mcp_tools=False,
+            )
+
+            if iteration == 1:
+                run_messages: RunMessages = await team._aget_run_messages(
+                    run_response=run_response,
+                    session=team_session,
+                    run_context=run_context,
+                    user_id=user_id,
+                    input_message=run_input.input_content,
+                    audio=run_input.audios,
+                    images=run_input.images,
+                    videos=run_input.videos,
+                    files=run_input.files,
+                    add_history_to_context=add_history_to_context,
+                    add_dependencies_to_context=add_dependencies_to_context,
+                    add_session_state_to_context=add_session_state_to_context,
+                    tools=_tools,
+                    **kwargs,
+                )
+                accumulated_messages = list(run_messages.messages)
+
+                memory_task = await team._astart_memory_task(
+                    run_messages=run_messages,
+                    user_id=user_id,
+                    existing_task=None,
+                )
+
+                await team._ahandle_reasoning(
+                    run_response=run_response, run_messages=run_messages, run_context=run_context
+                )
+            else:
+                task_list = load_task_list(run_context.session_state)
+                task_context = task_list.get_summary_string()
+                continuation_msg = Message(
+                    role="user",
+                    content=(
+                        f"<current_task_state>\n{task_context}\n</current_task_state>\n\n"
+                        "Review the current task state above. Continue working toward the goal. "
+                        "Execute pending tasks, create new tasks if needed, or call mark_all_complete if done."
+                    ),
+                )
+                accumulated_messages.append(continuation_msg)
+
+            await araise_if_cancelled(run_response.run_id)  # type: ignore
+
+            model_response: ModelResponse = await team.model.aresponse(
+                messages=accumulated_messages,
+                response_format=response_format,
+                tools=_tools,
+                tool_choice=team.tool_choice,
+                tool_call_limit=team.tool_call_limit,
+                run_response=run_response,
+                send_media_to_model=team.send_media_to_model,
+                compression_manager=team.compression_manager if team.compress_tool_results else None,
+            )
+
+            await araise_if_cancelled(run_response.run_id)  # type: ignore
+
+            team._update_run_response(
+                model_response=model_response,
+                run_response=run_response,
+                run_messages=RunMessages(messages=accumulated_messages),
+                run_context=run_context,
+            )
+
+            # Check HITL pause
+            if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
+                from agno.team import _hooks
+
+                return await _hooks.ahandle_team_run_paused(team, run_response=run_response, session=team_session)
+
+            # Note: accumulated_messages is already up-to-date — model.aresponse() mutates the list in-place.
+
+            # Check termination: goal marked complete or all tasks in terminal state
+            task_list = load_task_list(run_context.session_state)
+            if task_list.goal_complete:
+                log_debug("Async tasks mode: goal marked complete by leader")
+                goal_reached = True
+                break
+
+            if task_list.tasks and task_list.all_terminal():
+                if any(t.status == TaskStatus.failed for t in task_list.tasks) and not task_list.goal_complete:
+                    log_debug("Async tasks mode: all tasks terminal but some failed — not marking as goal reached")
+                else:
+                    log_debug("Async tasks mode: all tasks in terminal state")
+                    goal_reached = True
+                break
+
+            await araise_if_cancelled(run_response.run_id)  # type: ignore
+        else:
+            log_warning(f"Async tasks mode reached max_iterations ({max_iterations}) without completion")
+
+        # Post-loop cleanup
+        team._convert_response_to_structured_format(run_response=run_response, run_context=run_context)
+
+        if team.post_hooks is not None:
+            async for _ in team._aexecute_post_hooks(
+                hooks=team.post_hooks,  # type: ignore
+                run_output=run_response,
+                run_context=run_context,
+                session=team_session,
+                user_id=user_id,
+                debug_mode=debug_mode,
+                background_tasks=background_tasks,
+                **kwargs,
+            ):
+                pass
+
+        await araise_if_cancelled(run_response.run_id)  # type: ignore
+        await await_for_open_threads(memory_task=memory_task)  # type: ignore
+        await araise_if_cancelled(run_response.run_id)  # type: ignore
+
+        if team.session_summary_manager is not None:
+            team_session.upsert_run(run_response=run_response)
+            try:
+                await team.session_summary_manager.acreate_session_summary(session=team_session)
+            except Exception as e:
+                log_warning(f"Error in session summary creation: {str(e)}")
+
+        await araise_if_cancelled(run_response.run_id)  # type: ignore
+
+        if goal_reached:
+            run_response.status = RunStatus.completed
+        else:
+            run_response.status = RunStatus.error
+            if not run_response.content:
+                run_response.content = (
+                    f"Tasks mode reached max iterations ({max_iterations}) without completing all tasks"
+                )
+
+        if team._has_async_db():
+            await team._acleanup_and_store(run_response=run_response, session=team_session)
+        else:
+            team._cleanup_and_store(run_response=run_response, session=team_session)
+
+        await team._alog_team_telemetry(session_id=team_session.session_id, run_id=run_response.run_id)
+        log_debug(f"Team Async Tasks Run End: {run_response.run_id}", center=True, symbol="*")
+
+        return run_response
+    except RunCancelledException as e:
+        log_info(f"Team async task run {run_response.run_id} was cancelled")
+        run_response.status = RunStatus.cancelled
+        run_response.content = str(e)
+        if team._has_async_db():
+            await team._acleanup_and_store(run_response=run_response, session=team_session)  # type: ignore
+        else:
+            team._cleanup_and_store(run_response=run_response, session=team_session)  # type: ignore
+        return run_response
+    except (InputCheckError, OutputCheckError) as e:
+        run_response.status = RunStatus.error
+        if run_response.content is None:
+            run_response.content = str(e)
+        log_error(f"Validation failed: {str(e)} | Check: {e.check_trigger}")
+        if team._has_async_db():
+            await team._acleanup_and_store(run_response=run_response, session=team_session)  # type: ignore
+        else:
+            team._cleanup_and_store(run_response=run_response, session=team_session)  # type: ignore
+        return run_response
+    except KeyboardInterrupt:
+        run_response = cast(TeamRunOutput, run_response)
+        run_response.status = RunStatus.cancelled
+        run_response.content = "Operation cancelled by user"
+        return run_response
+    except Exception as e:
+        run_response.status = RunStatus.error
+        if run_response.content is None:
+            run_response.content = str(e)
+        log_error(f"Error in Team async task run: {str(e)}")
+        try:
+            if team._has_async_db():
+                await team._acleanup_and_store(run_response=run_response, session=team_session)  # type: ignore
+            else:
+                team._cleanup_and_store(run_response=run_response, session=team_session)  # type: ignore
+        except Exception:
+            pass
+        return run_response
+    finally:
+        # Always disconnect connectable tools
+        team._disconnect_connectable_tools()
+        await team._disconnect_mcp_tools()
+
+        # Cancel background task on error (await_for_open_threads handles waiting on success)
+        if memory_task is not None and not memory_task.done():  # type: ignore
+            memory_task.cancel()  # type: ignore
+            try:
+                await memory_task  # type: ignore
+            except asyncio.CancelledError:
+                pass
+
+        # Always clean up the run tracking
+        await acleanup_run(run_response.run_id)  # type: ignore
+
+
 async def _arun(
     team: "Team",
     run_response: TeamRunOutput,
@@ -1034,6 +1593,25 @@ async def _arun(
     12. Create session summary
     13. Cleanup and store (scrub, add to session, calculate metrics, save session)
     """
+    # Dispatch to async tasks mode if enabled
+    from agno.team.mode import TeamMode
+
+    if team.mode == TeamMode.tasks:
+        return await _arun_tasks(
+            team,
+            run_response=run_response,
+            run_context=run_context,
+            session_id=session_id,
+            user_id=user_id,
+            response_format=response_format,
+            add_dependencies_to_context=add_dependencies_to_context,
+            add_session_state_to_context=add_session_state_to_context,
+            add_history_to_context=add_history_to_context,
+            debug_mode=debug_mode,
+            background_tasks=background_tasks,
+            **kwargs,
+        )
+
     await aregister_run(run_context.run_id)
     log_debug(f"Team Run Start: {run_response.run_id}", center=True)
     memory_task = None
@@ -1337,6 +1915,28 @@ async def _arun_stream(
     9. Create session summary
     10. Cleanup and store (scrub, add to session, calculate metrics, save session)
     """
+    # Tasks mode: fall back to non-streaming async for now
+    from agno.team.mode import TeamMode
+
+    if team.mode == TeamMode.tasks:
+        log_warning("Streaming is not yet supported in tasks mode; falling back to non-streaming.")
+        result = await _arun_tasks(
+            team,
+            run_response=run_response,
+            run_context=run_context,
+            session_id=session_id,
+            user_id=user_id,
+            response_format=response_format,
+            add_dependencies_to_context=add_dependencies_to_context,
+            add_session_state_to_context=add_session_state_to_context,
+            add_history_to_context=add_history_to_context,
+            debug_mode=debug_mode,
+            background_tasks=background_tasks,
+            **kwargs,
+        )
+        yield result  # type: ignore
+        return
+
     log_debug(f"Team Run Start: {run_response.run_id}", center=True)
 
     await aregister_run(run_context.run_id)
@@ -2201,7 +2801,6 @@ def continue_run_dispatch(
 
     if stream_events is None:
         stream_events = False if team.stream_events is None else team.stream_events
-
     log_debug(f"Team Run Continue: {run_response.run_id}", center=True, symbol="*")
 
     # Route requirements to member agents

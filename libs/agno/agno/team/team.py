@@ -54,6 +54,7 @@ from agno.run.team import (
 from agno.session import SessionSummaryManager, TeamSession, WorkflowSession
 from agno.session.summary import SessionSummary
 from agno.team import _api, _hooks, _init, _messages, _response, _run, _storage, _telemetry, _tools
+from agno.team.mode import TeamMode
 from agno.tools import Toolkit
 from agno.tools.function import Function
 from agno.utils.log import (
@@ -95,13 +96,20 @@ class Team:
     workflow_id: Optional[str] = None
 
     # --- Team execution settings ---
+    # Team execution mode. When set, overrides the boolean flags below.
+    mode: Optional["TeamMode"] = None
     # If True, the team leader won't process responses from the members and instead will return them directly
     # Should not be used in combination with delegate_to_all_members
     respond_directly: bool = False
     # If True, the team leader will delegate the task to all members, instead of deciding for a subset
     delegate_to_all_members: bool = False
+    # Set to True to send run input directly to member agents.
+    # Preferred over determine_input_for_members.
+    pass_user_input_to_members: Optional[bool] = None
     # Set to false if you want to send the run input directly to the member agents
     determine_input_for_members: bool = True
+    # Maximum number of iterations for autonomous task loop (mode=tasks)
+    max_iterations: int = 10
 
     # --- User settings ---
     # Default user ID for this team
@@ -383,9 +391,12 @@ class Team:
         model: Optional[Union[Model, str]] = None,
         name: Optional[str] = None,
         role: Optional[str] = None,
+        mode: Optional[TeamMode] = None,
         respond_directly: bool = False,
-        determine_input_for_members: bool = True,
+        pass_user_input_to_members: Optional[bool] = None,
+        determine_input_for_members: Optional[bool] = None,
         delegate_to_all_members: bool = False,
+        max_iterations: int = 10,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
@@ -487,9 +498,12 @@ class Team:
             model=model,
             name=name,
             role=role,
+            mode=mode,
             respond_directly=respond_directly,
+            pass_user_input_to_members=pass_user_input_to_members,
             determine_input_for_members=determine_input_for_members,
             delegate_to_all_members=delegate_to_all_members,
+            max_iterations=max_iterations,
             user_id=user_id,
             session_id=session_id,
             session_state=session_state,
@@ -592,6 +606,12 @@ class Team:
     @property
     def cached_session(self) -> Optional[TeamSession]:
         return _init.cached_session(self)
+
+    @property
+    def effective_pass_user_input_to_members(self) -> bool:
+        if self.pass_user_input_to_members is not None:
+            return self.pass_user_input_to_members
+        return not self.determine_input_for_members
 
     def set_id(self) -> None:
         return _init.set_id(self)
@@ -2137,7 +2157,8 @@ class Team:
         stream: bool = False,
         stream_events: bool = False,
         async_mode: bool = False,
-        input: Optional[str] = None,  # Used for determine_input_for_members=False
+        input: Optional[str] = None,  # Used when effective_pass_user_input_to_members=True
+        pass_user_input_to_members: Optional[bool] = None,
         images: Optional[List[Image]] = None,
         videos: Optional[List[Video]] = None,
         audio: Optional[List[Audio]] = None,
@@ -2158,6 +2179,7 @@ class Team:
             stream_events=stream_events,
             async_mode=async_mode,
             input=input,
+            pass_user_input_to_members=pass_user_input_to_members,
             images=images,
             videos=videos,
             audio=audio,
