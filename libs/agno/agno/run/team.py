@@ -740,9 +740,6 @@ class TeamRunOutput:
                 else:
                     _dict["tools"].append(tool)
 
-        if self.requirements is not None:
-            _dict["requirements"] = [req.to_dict() if hasattr(req, "to_dict") else req for req in self.requirements]
-
         if self.input is not None:
             _dict["input"] = self.input.to_dict()
 
@@ -813,11 +810,6 @@ class TeamRunOutput:
         tools = data.pop("tools", [])
         tools = [ToolExecution.from_dict(tool) for tool in tools] if tools else None
 
-        requirements_data = data.pop("requirements", None)
-        requirements = None
-        if requirements_data is not None:
-            requirements = [RunRequirement.from_dict(r) if isinstance(r, dict) else r for r in requirements_data]
-
         response_audio = reconstruct_response_audio(data.pop("response_audio", None))
 
         input_data = data.pop("input", None)
@@ -868,7 +860,6 @@ class TeamRunOutput:
             tools=tools,
             requirements=requirements,
             events=events,
-            requirements=requirements,
             **filtered_data,
         )
 
