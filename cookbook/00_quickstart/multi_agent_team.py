@@ -82,7 +82,7 @@ Be critical but fair. Use the tools to get real numbers to support your concerns
 )
 
 # ============================================================================
-# Team Leader — Synthesizes Both Views
+# Create Team
 # ============================================================================
 multi_agent_team = Team(
     name="Multi-Agent Team",
@@ -117,7 +117,7 @@ Be decisive but acknowledge uncertainty.\
 )
 
 # ============================================================================
-# Run the Team
+# Run Team
 # ============================================================================
 if __name__ == "__main__":
     # First analysis
