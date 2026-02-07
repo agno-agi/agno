@@ -241,7 +241,7 @@ def get_chat_history_function(agent: Agent, session: AgentSession) -> Callable:
         all_chats = session.get_messages()
 
         if len(all_chats) == 0:
-            return ""
+            return json.dumps([])
 
         for chat in all_chats:  # type: ignore
             history.append(chat.to_dict())  # type: ignore
@@ -273,7 +273,7 @@ def get_tool_call_history_function(agent: Agent, session: AgentSession) -> Calla
 
         tool_calls = session.get_tool_calls(num_calls=num_calls)
         if len(tool_calls) == 0:
-            return ""
+            return json.dumps([])
         return json.dumps(tool_calls)
 
     return get_tool_call_history

@@ -6,6 +6,7 @@ import pytest
 from agno.agent import _default_tools
 from agno.agent.agent import Agent
 from agno.db.base import SessionType
+from agno.session import AgentSession
 
 
 class _EmptySessionsDb:
@@ -36,4 +37,24 @@ async def test_aget_previous_sessions_messages_returns_valid_json_when_empty(db)
     get_previous_session_messages_function = await _default_tools.aget_previous_sessions_messages_function(agent)
 
     result = await get_previous_session_messages_function.entrypoint()  # type: ignore[misc]
+    assert json.loads(result) == []
+
+
+def test_get_chat_history_returns_valid_json_when_empty():
+    agent = Agent(name="test-agent")
+    session = AgentSession(session_id="session-1")
+
+    get_chat_history = _default_tools.get_chat_history_function(agent, session)
+    result = get_chat_history()
+
+    assert json.loads(result) == []
+
+
+def test_get_tool_call_history_returns_valid_json_when_empty():
+    agent = Agent(name="test-agent")
+    session = AgentSession(session_id="session-1")
+
+    get_tool_call_history = _default_tools.get_tool_call_history_function(agent, session)
+    result = get_tool_call_history()
+
     assert json.loads(result) == []
