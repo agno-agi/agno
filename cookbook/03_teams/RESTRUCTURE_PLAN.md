@@ -20,7 +20,7 @@
 
 1. **Sync/async duplication.** Eight confirmed duplication pairs across `async_flows/` ↔ `basic_flows/`, `streaming/`, `structured_input_output/`, `reasoning/`, and `context_compression/`. These should be consolidated into single files showing both patterns.
 
-2. **Zero section banner compliance.** No file uses the `# ============================================================================` format required by STYLE_GUIDE.md. Docstring and main gate coverage are much better than `02_agents/` but still incomplete.
+2. **Zero section banner compliance.** No file uses the `# ---------------------------------------------------------------------------` format required by STYLE_GUIDE.md. Docstring and main gate coverage are much better than `02_agents/` but still incomplete.
 
 3. **Catch-all directory.** `other/` (10 files) mixes input formats, CLI apps, cancellation, retries, model inheritance, and few-shot learning — unrelated concerns that belong in their respective feature directories.
 
@@ -450,17 +450,17 @@ Key concepts:
 - <concept 2>
 """
 
-# ============================================================================
+# ---------------------------------------------------------------------------
 # Setup
-# ============================================================================
+# ---------------------------------------------------------------------------
 
 from agno.agent import Agent
 from agno.team import Team
 from agno.models.openai import OpenAIChat
 
-# ============================================================================
+# ---------------------------------------------------------------------------
 # Create Members
-# ============================================================================
+# ---------------------------------------------------------------------------
 
 researcher = Agent(
     name="Researcher",
@@ -474,9 +474,9 @@ writer = Agent(
     role="Write clear summaries",
 )
 
-# ============================================================================
+# ---------------------------------------------------------------------------
 # Create Team
-# ============================================================================
+# ---------------------------------------------------------------------------
 
 team = Team(
     name="Research Team",
@@ -484,9 +484,9 @@ team = Team(
     model=OpenAIChat(id="gpt-4o"),
 )
 
-# ============================================================================
+# ---------------------------------------------------------------------------
 # Run Team
-# ============================================================================
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     # Sync usage
@@ -500,7 +500,7 @@ if __name__ == "__main__":
 ### Template Rules
 
 1. **Module docstring** — Title with `=====` underline, then what it demonstrates and key concepts
-2. **Section banners** — `# ============================================================================` with section name on next line
+2. **Section banners** — `# ---------------------------------------------------------------------------` with section name on next line
 3. **Section flow** — Setup → Create Members → Create Team → Run Team
 4. **Main gate** — All runnable code inside `if __name__ == "__main__":`
 5. **No emoji** — No emoji characters anywhere

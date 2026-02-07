@@ -20,7 +20,7 @@
 
 1. **Massive redundancy.** Sync/async/stream/stream_async variants are split into separate files with >95% code duplication. The worst offender is `human_in_the_loop/` (23 files for 3 concepts). `caching/` has 4 files for 1 concept.
 
-2. **Near-zero style compliance.** No file follows the full STYLE_GUIDE.md pattern (module docstring + section banners + Create/Run flow + main gate + no emoji). The best-structured files (culture/) use non-standard `# ---` banners instead of the required `# ============================================================================` format.
+2. **Near-zero style compliance.** No file follows the full STYLE_GUIDE.md pattern (module docstring + section banners + Create/Run flow + main gate + no emoji). The best-structured files (culture/) use non-standard `# ---` banners instead of the required `# ---------------------------------------------------------------------------` format.
 
 3. **Catch-all directories.** `other/` (14 files) and `async/` (9 files) are dumping grounds. `async/` duplicates features covered in other directories. `other/` mixes metrics, debugging, cancellation, testing, and miscellany.
 
@@ -32,14 +32,14 @@
 
 ### Overall Assessment
 
-The directory needs aggressive consolidation. The current 164 files can be reduced to ~77 without losing feature coverage, while adding ~6 new files for undocumented capabilities. Every surviving file needs style guide remediation.
+The directory needs aggressive consolidation. The current 164 files can be reduced to ~79 without losing feature coverage, while adding ~11 new files for undocumented capabilities. Every surviving file needs style guide remediation.
 
 ### Proposed Target
 
 | Metric | Current | Target |
 |--------|---------|--------|
-| Files | 164 | ~77 |
-| Directories | 19 | 19 (3 removed, 3 added) |
+| Files | 164 | ~79 |
+| Directories | 19 | 20 (3 removed, 4 added) |
 | Style compliance | 0% | 100% |
 | README coverage | 4/19 | 19/19 |
 | TEST_LOG coverage | 0/19 | 19/19 |
@@ -48,10 +48,11 @@ The directory needs aggressive consolidation. The current 164 files can be reduc
 
 ## 2. Proposed Directory Structure
 
-Remove `async/`, `other/`, and `agentic_search/`. Add `learning/`, `reasoning/`, and `run_control/`. Rename `custom_logging/` to `logging/`.
+Remove `async/`, `other/`, and `agentic_search/`. Add `_01_quickstart/`, `learning/`, `reasoning/`, and `run_control/`. Rename `custom_logging/` to `logging/`.
 
 ```
 cookbook/02_agents/
+├── _01_quickstart/             # [NEW] Entry point: minimal agent examples to get started
 ├── caching/                    # Model response caching strategies
 ├── context_compression/        # Tool call result compression and token management
 ├── context_management/         # Agent instructions, context injection, few-shot learning
@@ -81,6 +82,7 @@ cookbook/02_agents/
 | **REMOVE** `other/` | Dissolved. Files redistributed to `run_control/`, `events/`, or cut. |
 | **REMOVE** `agentic_search/` | Merged into `rag/`. Both directories cover RAG patterns. |
 | **RENAME** `custom_logging/` → `logging/` | Shorter, clearer name. |
+| **ADD** `_01_quickstart/` | Entry point for new users. Minimal examples: basic agent, agent with tools, agent with instructions. Gives users a clear "start here" when opening the folder. |
 | **ADD** `learning/` | Covers LearningMachine, a major agent feature with no cookbook example. |
 | **ADD** `reasoning/` | Covers extended reasoning, a major agent feature with only a trivial 19-line example buried in `async/`. |
 | **ADD** `run_control/` | Groups operational concerns: cancel, retry, debug, limits, metrics, serialization, concurrent execution. |
@@ -100,9 +102,9 @@ Style fixes needed on virtually all files: add section banners, add/improve modu
 | File | Disposition | New Name/Location | Rationale |
 |------|------------|-------------------|-----------|
 | `agentic_rag.py` | **CUT** | — | Duplicate of `rag/agentic_rag_lancedb.py` (both use LanceDB + Cohere for agentic RAG) |
-| `agentic_rag_infinity_reranker.py` | **MERGE INTO** `rag/agentic_rag_with_reranking.py` | `rag/agentic_rag_with_reranking.py` | Infinity reranker is a reranking variant; merge with existing reranking example to show multiple reranker options |
+| `agentic_rag_infinity_reranker.py` | **RELOCATE** | → `cookbook/integrations/` | Infinity reranker is a third-party integration, not a core agent pattern. See Section 7. |
 | `agentic_rag_with_reasoning.py` | **KEEP + MOVE + FIX** | `rag/agentic_rag_with_reasoning.py` | Unique: combines RAG with extended reasoning. Add banners, docstring, main gate |
-| `lightrag/agentic_rag_with_lightrag.py` | **KEEP + MOVE + FIX** | `rag/agentic_rag_lightrag.py` | Unique: LightRag vector DB backend. Add docstring, banners, main gate |
+| `lightrag/agentic_rag_with_lightrag.py` | **RELOCATE** | → `cookbook/integrations/` | LightRAG is a third-party integration, not a core agent pattern. See Section 7. |
 
 ---
 
@@ -158,13 +160,13 @@ Style fixes needed on virtually all files: add section banners, add/improve modu
 | `location_instructions.py` | **MERGE INTO** `context_management/instructions.py` | — | 12 lines. Location in instructions — trivial variant |
 | `dynamic_instructions.py` | **MERGE INTO** `context_management/instructions.py` | — | 15 lines. Dynamic instructions via RunContext — same concept |
 | `instructions_via_function.py` | **MERGE INTO** `context_management/instructions.py` | — | 20 lines. Callable instructions — same concept |
-| `instruction_tags.py` | **KEEP + FIX** | `context_management/instruction_tags.py` | Unique: XML tag formatting for structured instructions. Add banners, main gate |
+| `instruction_tags.py` | **CUT** | — | XML tag formatting for structured instructions — niche pattern, not worth a standalone cookbook |
 | `few_shot_learning.py` | **KEEP + FIX** | `context_management/few_shot_learning.py` | Unique: `additional_input` for few-shot examples. Already has main gate; add banners |
 | `filter_tool_calls_from_history.py` | **KEEP + FIX** | `context_management/filter_tool_calls_from_history.py` | Unique: post-hook to filter tool calls from history. Add banners, main gate |
 
 **Also add** `input_and_output/instructions.py` → **MOVE** to `context_management/instructions_with_state.py` (demonstrates instructions built from RunContext and session state — belongs here, not in I/O).
 
-**Result: 8 → 4 files (+ 1 moved in = 5 files)**
+**Result: 8 → 3 files (+ 1 moved in = 4 files)**
 
 ---
 
@@ -172,7 +174,7 @@ Style fixes needed on virtually all files: add section banners, add/improve modu
 
 | File | Disposition | New Name/Location | Rationale |
 |------|------------|-------------------|-----------|
-| `01_create_cultural_knowledge.py` | **KEEP + FIX** | `culture/01_create_cultural_knowledge.py` | Best-structured file in entire cookbook. Fix: replace `# ---` banners with standard `# ====` format, add main gate |
+| `01_create_cultural_knowledge.py` | **KEEP + FIX** | `culture/01_create_cultural_knowledge.py` | Best-structured file in entire cookbook. Already uses `# ---` banner style. Fix: add main gate |
 | `02_use_cultural_knowledge_in_agent.py` | **KEEP + FIX** | `culture/02_use_cultural_knowledge_in_agent.py` | Well structured. Fix: standard banners, main gate |
 | `03_automatic_cultural_management.py` | **KEEP + FIX** | `culture/03_automatic_cultural_management.py` | Unique: autonomous culture discovery. Fix: standard banners, main gate |
 | `04_manually_add_culture.py` | **KEEP + FIX** | `culture/04_manually_add_culture.py` | Unique: explicit manual culture entry. Fix: standard banners, main gate |
@@ -226,8 +228,10 @@ Style fixes needed on virtually all files: add section banners, add/improve modu
 | `openai_moderation.py` | **KEEP + FIX** | `guardrails/openai_moderation.py` | Unique: OpenAI text + image moderation. Add banners, main gate |
 | `pii_detection.py` | **KEEP + FIX** | `guardrails/pii_detection.py` | Unique: PII detection + anonymization. Add docstring, banners, main gate |
 | `prompt_injection.py` | **KEEP + FIX** | `guardrails/prompt_injection.py` | Unique: prompt injection blocking. Add docstring, banners, main gate |
+| *(new)* `custom_guardrail.py` | **NEW** | `guardrails/custom_guardrail.py` | Subclass `BaseGuardrail` to build a custom input guardrail (e.g., topic filtering, input length limit). Show `InputCheckError` with `CheckTrigger` |
+| *(new)* `output_guardrail.py` | **NEW** | `guardrails/output_guardrail.py` | Post-hook guardrail that validates LLM output (e.g., blocks empty responses, enforces format). Show `OutputCheckError` and `post_hooks` usage |
 
-**Result: 3 → 3 files (no change, all unique guardrail types)**
+**Result: 3 → 5 files (+2 new)**
 
 ---
 
@@ -358,25 +362,26 @@ Style fixes needed on virtually all files: add section banners, add/improve modu
 
 ### `rag/` (absorbs `agentic_search/` files)
 
+> **Vector store preference:** pgvector and ChromaDB are the preferred backends for cookbook examples. LanceDB examples are cut in favor of pgvector equivalents.
+
 | File | Disposition | New Name/Location | Rationale |
 |------|------------|-------------------|-----------|
-| `traditional_rag_lancedb.py` | **KEEP + RENAME + FIX** | `rag/traditional_rag.py` | Core: traditional RAG with knowledge in context. Rename to drop backend suffix; note pgvector alternative in comments. Add docstring, banners, main gate |
-| `traditional_rag_pgvector.py` | **CUT** | — | Near-identical to LanceDB version. Only differs in vector DB initialization. Note pgvector option in the kept file |
-| `agentic_rag_lancedb.py` | **KEEP + RENAME + FIX** | `rag/agentic_rag.py` | Core: agentic RAG with knowledge as tool. Rename to drop backend suffix. Add docstring, banners, main gate |
-| `agentic_rag_pgvector.py` | **CUT** | — | Near-identical to LanceDB version. Only differs in vector DB init |
-| `agentic_rag_with_reranking.py` | **REWRITE** | `rag/agentic_rag_with_reranking.py` | Merge with `agentic_search/agentic_rag_infinity_reranker.py`. Show Cohere reranker + note Infinity reranker alternative |
+| `traditional_rag_lancedb.py` | **CUT** | — | Near-identical to pgvector version. Only differs in vector DB initialization. Prefer pgvector as primary backend |
+| `traditional_rag_pgvector.py` | **KEEP + RENAME + FIX** | `rag/traditional_rag.py` | Core: traditional RAG with knowledge in context. Rename to drop backend suffix. Add docstring, banners, main gate |
+| `agentic_rag_lancedb.py` | **CUT** | — | Near-identical to pgvector version. Only differs in vector DB init. Prefer pgvector as primary backend |
+| `agentic_rag_pgvector.py` | **KEEP + RENAME + FIX** | `rag/agentic_rag.py` | Core: agentic RAG with knowledge as tool. Rename to drop backend suffix. Add docstring, banners, main gate |
+| `agentic_rag_with_reranking.py` | **KEEP + FIX** | `rag/agentic_rag_with_reranking.py` | Cohere reranker example. Add docstring, banners, main gate |
 | `rag_sentence_transformer.py` | **KEEP + RENAME + FIX** | `rag/rag_custom_embeddings.py` | Unique: custom embeddings with SentenceTransformer. Rename for clarity. Add docstring, banners, main gate |
 | `rag_with_lance_db_and_sqlite.py` | **CUT** | — | Hybrid LanceDB + SQLite storage. Not a distinct enough RAG pattern to justify a separate file |
-| `local_rag_langchain_qdrant.py` | **KEEP + RENAME + FIX** | `rag/rag_langchain_qdrant.py` | Unique: third-party LangChain + Qdrant integration. Drop "local_" prefix. Add docstring, banners, main gate |
+| `local_rag_langchain_qdrant.py` | **RELOCATE** | → `cookbook/integrations/` | Third-party LangChain + Qdrant integration. See Section 7. |
 
 **Plus from `agentic_search/`:**
 
 | File | Disposition | New Name/Location | Rationale |
 |------|------------|-------------------|-----------|
 | `agentic_rag_with_reasoning.py` | **KEEP + MOVE + FIX** | `rag/agentic_rag_with_reasoning.py` | (Listed in agentic_search section above) |
-| `agentic_rag_with_lightrag.py` | **KEEP + MOVE + FIX** | `rag/agentic_rag_lightrag.py` | (Listed in agentic_search section above) |
 
-**Result: 8 rag/ + 4 agentic_search/ = 12 total → 7 files**
+**Result: 8 rag/ + 4 agentic_search/ = 12 total → 6 files (+ 2 relocated to integrations)**
 
 ---
 
@@ -441,12 +446,17 @@ These agent features lack cookbook coverage:
 
 | Suggested File | Directory | Feature | Description |
 |----------------|-----------|---------|-------------|
+| `basic_agent.py` | `_01_quickstart/` | Getting Started | Minimal agent: create, run, print response. The simplest possible example |
+| `agent_with_tools.py` | `_01_quickstart/` | Tools Quickstart | Basic agent with a tool (e.g., WebSearch). Shows tool usage in 20 lines |
+| `agent_with_instructions.py` | `_01_quickstart/` | Instructions Quickstart | Agent with custom instructions showing personality/behavior control |
 | `learning_machine.py` | `learning/` | LearningMachine | Demonstrate the unified learning system: agent learns from outcomes, retrieves learnings in context, continuous improvement |
 | `basic_reasoning.py` | `reasoning/` | Extended Reasoning | Demonstrate step-by-step reasoning with configurable min/max steps, show_full_reasoning, and reasoning model selection |
 | `agent_serialization.py` | `run_control/` | Agent save/load | Demonstrate `to_dict()`, `from_dict()`, `save()`, `load()` for agent persistence and configuration sharing |
 | `concurrent_execution.py` | `run_control/` | asyncio.gather | (Moved from `async/gather_agents.py`) Concurrent agent execution with timing |
 | `dynamic_tools.py` | `dependencies/` | Dynamic tool factories | Demonstrate callable factory functions that generate tools at runtime based on context |
 | `tool_choice.py` | `run_control/` | Tool choice control | Demonstrate `tool_choice` parameter: "none", "auto", and specific tool enforcement |
+| `custom_guardrail.py` | `guardrails/` | Custom guardrails | Subclass `BaseGuardrail` for custom input validation: topic filtering, length limits, domain-specific rules. Show `InputCheckError` + `CheckTrigger` |
+| `output_guardrail.py` | `guardrails/` | Output guardrails | Post-hook guardrail validating LLM output: empty response check, format enforcement. Show `OutputCheckError` + `post_hooks` |
 
 ---
 
@@ -481,7 +491,21 @@ After restructuring, every surviving directory needs both files created.
 
 ---
 
-## 6. Recommended Cookbook Template
+## 6. Files to Relocate to Other Cookbook Sections
+
+These files currently live in `cookbook/02_agents/` but belong in other top-level cookbook sections because they demonstrate third-party integrations rather than core agent patterns.
+
+| Current Location | Relocate To | Rationale |
+|-----------------|-------------|-----------|
+| `agentic_search/agentic_rag_infinity_reranker.py` | `cookbook/integrations/` | Infinity reranker is a third-party reranking service integration |
+| `agentic_search/lightrag/agentic_rag_with_lightrag.py` | `cookbook/integrations/` | LightRAG is a third-party vector DB / RAG framework |
+| `rag/local_rag_langchain_qdrant.py` | `cookbook/integrations/` | LangChain + Qdrant are third-party tools, not core Agno patterns |
+
+**Note:** The exact target directory (`cookbook/integrations/` or similar) depends on the overall cookbook structure. These files should be tracked and moved during the cross-section restructuring pass.
+
+---
+
+## 7. Recommended Cookbook Template
 
 Based on `cookbook/STYLE_GUIDE.md` and the best examples found during review.
 
@@ -499,25 +523,25 @@ Key concepts:
 - <concept 2>
 """
 
-# ============================================================================
+# ---------------------------------------------------------------------------
 # Setup
-# ============================================================================
+# ---------------------------------------------------------------------------
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 
-# ============================================================================
+# ---------------------------------------------------------------------------
 # Agent Instructions
-# ============================================================================
+# ---------------------------------------------------------------------------
 
 instructions = [
     "You are a helpful assistant.",
     "Respond concisely and accurately.",
 ]
 
-# ============================================================================
+# ---------------------------------------------------------------------------
 # Create Agent
-# ============================================================================
+# ---------------------------------------------------------------------------
 
 agent = Agent(
     name="Example Agent",
@@ -525,9 +549,9 @@ agent = Agent(
     instructions=instructions,
 )
 
-# ============================================================================
+# ---------------------------------------------------------------------------
 # Run Agent
-# ============================================================================
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     # Sync usage
@@ -541,7 +565,7 @@ if __name__ == "__main__":
 ### Template Rules
 
 1. **Module docstring** — Title with `=====` underline, then what it demonstrates and key concepts
-2. **Section banners** — `# ============================================================================` with section name on next line
+2. **Section banners** — `# ---------------------------------------------------------------------------` with section name on next line
 3. **Section flow** — Setup → Instructions (if applicable) → Create → Run
 4. **Main gate** — All runnable code inside `if __name__ == "__main__":`
 5. **No emoji** — No emoji characters anywhere in the file

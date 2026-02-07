@@ -86,7 +86,7 @@ Each cookbook folder should have the following files:
 
 For runnable cookbook `.py` examples, follow `cookbook/STYLE_GUIDE.md`:
 - Module docstring at top
-- Section banner flow (`# ============================================================================`)
+- Section banner flow (`# ---------------------------------------------------------------------------`)
 - `Create ...` section before `Run ...` section
 - `if __name__ == "__main__":` main execution gate
 - No emojis in Python examples or print output
