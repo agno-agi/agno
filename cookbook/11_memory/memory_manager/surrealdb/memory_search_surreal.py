@@ -6,16 +6,21 @@ How to search for user memories using different retrieval methods
 - semantic: Retrieves memories using semantic search
 """
 
-from agno.db.postgres import PostgresDb
+from agno.db.surrealdb import SurrealDb
 from agno.memory import MemoryManager, UserMemory
 from agno.models.openai import OpenAIChat
 from rich.pretty import pprint
 
-db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
+SURREALDB_URL = "ws://localhost:8000"
+SURREALDB_USER = "root"
+SURREALDB_PASSWORD = "root"
+SURREALDB_NAMESPACE = "agno"
+SURREALDB_DATABASE = "memories"
 
-memory_db = PostgresDb(db_url=db_url)
+creds = {"username": SURREALDB_USER, "password": SURREALDB_PASSWORD}
+db = SurrealDb(None, SURREALDB_URL, creds, SURREALDB_NAMESPACE, SURREALDB_DATABASE)
 
-memory = MemoryManager(model=OpenAIChat(id="gpt-4o"), db=memory_db)
+memory = MemoryManager(model=OpenAIChat(id="gpt-4o"), db=db)
 
 john_doe_id = "john_doe@example.com"
 memory.add_user_memory(

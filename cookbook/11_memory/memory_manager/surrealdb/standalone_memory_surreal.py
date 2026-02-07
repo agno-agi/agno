@@ -2,13 +2,20 @@
 How to add, get, delete, and replace user memories manually
 """
 
-from agno.db.postgres import PostgresDb
+from agno.db.surrealdb import SurrealDb
 from agno.memory import MemoryManager, UserMemory
 from rich.pretty import pprint
 
-db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
+SURREALDB_URL = "ws://localhost:8000"
+SURREALDB_USER = "root"
+SURREALDB_PASSWORD = "root"
+SURREALDB_NAMESPACE = "agno"
+SURREALDB_DATABASE = "memories"
 
-memory = MemoryManager(db=PostgresDb(db_url=db_url))
+creds = {"username": SURREALDB_USER, "password": SURREALDB_PASSWORD}
+db = SurrealDb(None, SURREALDB_URL, creds, SURREALDB_NAMESPACE, SURREALDB_DATABASE)
+
+memory = MemoryManager(db=db)
 
 # Add a memory for the default user
 memory.add_user_memory(
