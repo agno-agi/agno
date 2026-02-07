@@ -1459,6 +1459,127 @@ class Team:
             **kwargs,
         )
 
+    # ---------------------------------------------------------------------------
+    # continue_run / acontinue_run
+    # ---------------------------------------------------------------------------
+
+    @overload
+    def continue_run(
+        self,
+        run_response: Optional[TeamRunOutput] = None,
+        *,
+        run_id: Optional[str] = None,
+        requirements: Optional[List[RunRequirement]] = None,
+        stream: Literal[False] = False,
+        stream_events: Optional[bool] = None,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        debug_mode: Optional[bool] = None,
+        yield_run_output: bool = False,
+    ) -> TeamRunOutput: ...
+
+    @overload
+    def continue_run(
+        self,
+        run_response: Optional[TeamRunOutput] = None,
+        *,
+        run_id: Optional[str] = None,
+        requirements: Optional[List[RunRequirement]] = None,
+        stream: Literal[True] = True,
+        stream_events: Optional[bool] = None,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        debug_mode: Optional[bool] = None,
+        yield_run_output: bool = False,
+    ) -> Iterator[Union[RunOutputEvent, TeamRunOutputEvent]]: ...
+
+    def continue_run(
+        self,
+        run_response: Optional[TeamRunOutput] = None,
+        *,
+        run_id: Optional[str] = None,
+        requirements: Optional[List[RunRequirement]] = None,
+        stream: Optional[bool] = None,
+        stream_events: Optional[bool] = None,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        debug_mode: Optional[bool] = None,
+        yield_run_output: bool = False,
+        **kwargs: Any,
+    ) -> Union[TeamRunOutput, Iterator[Union[RunOutputEvent, TeamRunOutputEvent]]]:
+        return _run.continue_run_dispatch(
+            self,
+            run_response=run_response,
+            run_id=run_id,
+            requirements=requirements,
+            stream=stream,
+            stream_events=stream_events,
+            user_id=user_id,
+            session_id=session_id,
+            debug_mode=debug_mode,
+            yield_run_output=yield_run_output,
+            **kwargs,
+        )
+
+    @overload
+    async def acontinue_run(
+        self,
+        run_response: Optional[TeamRunOutput] = None,
+        *,
+        run_id: Optional[str] = None,
+        requirements: Optional[List[RunRequirement]] = None,
+        stream: Literal[False] = False,
+        stream_events: Optional[bool] = None,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        debug_mode: Optional[bool] = None,
+        **kwargs: Any,
+    ) -> TeamRunOutput: ...
+
+    @overload
+    def acontinue_run(
+        self,
+        run_response: Optional[TeamRunOutput] = None,
+        *,
+        run_id: Optional[str] = None,
+        requirements: Optional[List[RunRequirement]] = None,
+        stream: Literal[True] = True,
+        stream_events: Optional[bool] = None,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        debug_mode: Optional[bool] = None,
+        yield_run_output: bool = False,
+        **kwargs: Any,
+    ) -> AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent]]: ...
+
+    def acontinue_run(  # type: ignore
+        self,
+        run_response: Optional[TeamRunOutput] = None,
+        *,
+        run_id: Optional[str] = None,
+        requirements: Optional[List[RunRequirement]] = None,
+        stream: Optional[bool] = None,
+        stream_events: Optional[bool] = None,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        debug_mode: Optional[bool] = None,
+        yield_run_output: bool = False,
+        **kwargs: Any,
+    ) -> Union[TeamRunOutput, AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent]]]:
+        return _run.acontinue_run_dispatch(
+            self,
+            run_response=run_response,
+            run_id=run_id,
+            requirements=requirements,
+            stream=stream,
+            stream_events=stream_events,
+            user_id=user_id,
+            session_id=session_id,
+            debug_mode=debug_mode,
+            yield_run_output=yield_run_output,
+            **kwargs,
+        )
+
     def _update_run_response(
         self,
         model_response: ModelResponse,
