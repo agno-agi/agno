@@ -34,6 +34,7 @@ def get_telemetry_data(team: "Team") -> Dict[str, Any]:
         "member_count": len(team.members) if team.members else 0,
         "has_knowledge": team.knowledge is not None,
         "has_tools": team.tools is not None,
+        "has_learnings": team._learning is not None,
     }
 
 
