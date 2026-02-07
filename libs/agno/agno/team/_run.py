@@ -1377,6 +1377,9 @@ async def _arun_tasks(
             # Resolve callable factories asynchronously before determining tools
             await team._aresolve_callable_resources(run_context=run_context)
 
+            # Resolve callable factories asynchronously before determining tools
+            await team._aresolve_callable_resources(run_context=run_context)
+
             _tools = team._determine_tools_for_model(
                 model=team.model,
                 run_response=run_response,
