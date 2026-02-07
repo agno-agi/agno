@@ -318,8 +318,6 @@ def attach_routes(
         agent = get_agent_by_id(id, agents, create_fresh=True)
         if not agent:
             raise HTTPException(status_code=404, detail="Agent not found")
-        if isinstance(agent, RemoteAgent):
-            raise HTTPException(status_code=400, detail="Task cancellation is not supported for remote agents")
 
         params = request_body.get("params", {})
         task_id = params.get("id")  # = run_id
@@ -331,7 +329,7 @@ def attach_routes(
                 "error": {"code": -32602, "message": "Missing required parameter: id (task_id)"},
             }
 
-        cancelled = await agent.acancel_run(task_id)
+        cancelled = await Agent.acancel_run(task_id)
         task_state = TaskState.canceled if cancelled else TaskState.failed
         return {
             "jsonrpc": "2.0",
@@ -428,10 +426,6 @@ def attach_routes(
         if not user_id:
             user_id = request_body.get("params", {}).get("message", {}).get("metadata", {}).get("userId")
 
-        # Check if non-blocking mode is requested
-        configuration = request_body.get("params", {}).get("configuration", {})
-        is_blocking = configuration.get("blocking", True) if configuration else True
-
         # 3. Run the Team
         try:
             response = await team.arun(
@@ -442,7 +436,6 @@ def attach_routes(
                 files=run_input.files,
                 session_id=context_id,
                 user_id=user_id,
-                background=not is_blocking,
                 **kwargs,
             )
 
@@ -617,7 +610,7 @@ def attach_routes(
         kwargs = await get_request_kwargs(request, a2a_run_workflow)
 
         # 1. Get the Workflow to run
-        workflow = get_workflow_by_id(id, workflows, create_fresh=True)
+        workflow = get_workflow_by_id(id, workflows)
         if not workflow:
             raise HTTPException(status_code=404, detail="Workflow not found")
 
@@ -627,10 +620,6 @@ def attach_routes(
         user_id = request.headers.get("X-User-ID")
         if not user_id:
             user_id = request_body.get("params", {}).get("message", {}).get("metadata", {}).get("userId")
-
-        # Check if non-blocking mode is requested
-        configuration = request_body.get("params", {}).get("configuration", {})
-        is_blocking = configuration.get("blocking", True) if configuration else True
 
         # 3. Run the Workflow
         try:
@@ -642,7 +631,6 @@ def attach_routes(
                 files=list(run_input.files) if run_input.files else None,
                 session_id=context_id,
                 user_id=user_id,
-                background=not is_blocking,
                 **kwargs,
             )
 
@@ -707,7 +695,7 @@ def attach_routes(
         kwargs = await get_request_kwargs(request, a2a_stream_workflow)
 
         # 1. Get the Workflow to run
-        workflow = get_workflow_by_id(id, workflows, create_fresh=True)
+        workflow = get_workflow_by_id(id, workflows)
         if not workflow:
             raise HTTPException(status_code=404, detail="Workflow not found")
 
