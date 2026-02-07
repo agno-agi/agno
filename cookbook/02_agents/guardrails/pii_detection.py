@@ -1,10 +1,8 @@
 """
-Example demonstrating how to use PII detection guardrails with Agno Agent.
+Pii Detection
+=============================
 
-This example shows how to:
-1. Detect and block personally identifiable information (PII) in input
-2. Protect sensitive data like SSNs, credit cards, emails, and phone numbers
-3. Handle different types of PII violations with appropriate error messages
+Example demonstrating how to use PII detection guardrails with Agno Agent.
 """
 
 import asyncio
@@ -14,7 +12,9 @@ from agno.exceptions import InputCheckError
 from agno.guardrails import PIIDetectionGuardrail
 from agno.models.openai import OpenAIChat
 
-
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 async def main():
     """Demonstrate PII detection guardrails functionality."""
     print("PII Detection Guardrails Demo")
@@ -133,5 +133,8 @@ async def main():
     )
 
 
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     asyncio.run(main())
