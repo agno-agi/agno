@@ -2253,8 +2253,13 @@ class Team:
             self, team_run_context=team_run_context, images=images, videos=videos, audio=audio, files=files
         )
 
-    def _find_member_by_id(self, member_id: str) -> Optional[Tuple[int, Union[Agent, "Team"]]]:
-        return _tools._find_member_by_id(self, member_id=member_id)
+    async def _aresolve_callable_resources(self, run_context: RunContext) -> None:
+        return await _tools._aresolve_callable_resources(self, run_context=run_context)
+
+    def _find_member_by_id(
+        self, member_id: str, run_context: Optional[RunContext] = None
+    ) -> Optional[Tuple[int, Union[Agent, "Team"]]]:
+        return _tools._find_member_by_id(self, member_id=member_id, run_context=run_context)
 
     def _get_delegate_task_function(
         self,
