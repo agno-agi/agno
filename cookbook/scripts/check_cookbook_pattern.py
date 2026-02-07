@@ -19,7 +19,6 @@ import re
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-
 EMOJI_RE = re.compile(r"[\U0001F300-\U0001FAFF]")
 MAIN_GATE_RE = re.compile(r'if __name__ == ["\']__main__["\']:')
 SECTION_RE = re.compile(r"^# =+\n# (?P<title>.+?)\n# =+$", re.MULTILINE)

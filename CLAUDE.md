@@ -56,8 +56,6 @@ This project uses two virtual environments:
 
 Apart from implementing features, your most important task will be to test and maintain the cookbooks in `cookbook/` directory.
 
-> See `cookbook/08_learning/` for the golden standard.
-
 ### Quick Reference
 
 **Test Environment:**
@@ -82,12 +80,9 @@ Apart from implementing features, your most important task will be to test and m
 
 Each cookbook folder should have the following files:
 - `README.md` — The README for the cookbook.
-- `CLAUDE.md` — Project-specific instructions (most cookbooks won't have this yet).
 - `TEST_LOG.md` — Test results log.
 
-When testing a cookbook folder, first check for the `CLAUDE.md` file. If it doesn't exist, ask the user if they'd like you to create it. Use `cookbook/08_learning/CLAUDE.md` as a reference.
-
-### Cookbook Python Structure Standard (v2.5)
+### Cookbook Python Structure Standard
 
 For runnable cookbook `.py` examples, follow `cookbook/STYLE_GUIDE.md`:
 - Module docstring at top
@@ -99,17 +94,17 @@ For runnable cookbook `.py` examples, follow `cookbook/STYLE_GUIDE.md`:
 Validation commands:
 
 ```bash
-# Structure checker (currently enforced on quickstart)
-python3 cookbook/scripts/check_cookbook_pattern.py --base-dir cookbook/00_quickstart
+# Structure checker
+.venvs/demo/bin/python cookbook/scripts/check_cookbook_pattern.py --base-dir cookbook/00_quickstart
 
 # Metadata audit for README.md / TEST_LOG.md coverage
-python3 cookbook/scripts/audit_cookbook_metadata.py --scope direct
+.venvs/demo/bin/python cookbook/scripts/audit_cookbook_metadata.py --scope direct
 ```
 
 Non-interactive cookbook runs:
 
 ```bash
-python3 cookbook/scripts/cookbook_runner.py cookbook/<folder> --batch --python-bin .venvs/demo/bin/python
+.venvs/demo/bin/python cookbook/scripts/cookbook_runner.py cookbook/<folder> --batch --python-bin .venvs/demo/bin/python
 ```
 
 ### Testing Workflow
@@ -147,34 +142,6 @@ Format:
 
 ---
 ```
-
----
-
-## Design Documents
-
-The `specs/` folder contains design documents for ongoing initiatives. If you're working on one of the following:
-- `specs/learning-machine/` — Unified learning system for agents
-
-**Always read the design document first**.
-
-Each spec follows this structure:
-```
-specs/<spec-name>/
-├── CLAUDE.md           # Spec-specific instructions (read this first)
-├── design.md           # The specification
-├── implementation.md   # Current status and what's done
-├── decisions.md        # Why decisions were made
-└── future-work.md      # What's deferred
-```
-
-**Workflow:**
-1. Read the spec's `CLAUDE.md` for specific instructions
-2. Read `design.md` to understand what we're building
-3. Check `implementation.md` for current status
-4. Find the relevant code in `libs/agno`
-5. Create/update cookbooks to test patterns
-
----
 
 ## Code Locations
 
@@ -252,10 +219,8 @@ Both scripts must pass with no errors before code review.
 
 **PR Title Format:**
 
-PR titles must follow one of these formats:
-- `[type] description` — e.g., `[feat] add workflow serialization`
+PR titles must follow one this format:
 - `type: description` — e.g., `feat: add workflow serialization`
-- `type-kebab-case` — e.g., `feat-workflow-serialization`
 
 Valid types: `feat`, `fix`, `cookbook`, `test`, `refactor`, `chore`, `style`, `revert`, `release`
 

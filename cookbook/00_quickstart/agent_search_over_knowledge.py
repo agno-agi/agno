@@ -23,13 +23,10 @@ from agno.vectordb.chroma import ChromaDb
 from agno.vectordb.search import SearchType
 
 # ============================================================================
-# Storage Configuration
+# Setup
 # ============================================================================
 agent_db = SqliteDb(db_file="tmp/agents.db")
 
-# ============================================================================
-# Knowledge Configuration
-# ============================================================================
 knowledge = Knowledge(
     name="Agno Documentation",
     vector_db=ChromaDb(
@@ -81,7 +78,7 @@ You are an expert on the Agno framework and building AI agents.
 """
 
 # ============================================================================
-# Create the Agent
+# Create Agent
 # ============================================================================
 agent_with_knowledge = Agent(
     name="Agent with Knowledge",
@@ -97,7 +94,7 @@ agent_with_knowledge = Agent(
 )
 
 # ============================================================================
-# Load Knowledge and Run the Agent
+# Run Agent
 # ============================================================================
 if __name__ == "__main__":
     # Load the introduction from the Agno documentation into the knowledge base
