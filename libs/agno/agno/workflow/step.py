@@ -72,6 +72,23 @@ class Step:
     add_workflow_history: Optional[bool] = None
     num_history_runs: int = 3
 
+    # Human-in-the-loop (HITL) configuration
+    # If True, the step will pause before execution and require user confirmation
+    requires_confirmation: bool = False
+    # Message to display to the user when requesting confirmation
+    confirmation_message: Optional[str] = None
+    # What to do when step is rejected: "skip" (skip step, continue workflow) or "cancel" (cancel workflow)
+    on_reject: str = "cancel"
+    # If True, the step will pause before execution and require user input
+    requires_user_input: bool = False
+    # Message to display to the user when requesting input
+    user_input_message: Optional[str] = None
+    # Schema for user input fields (list of dicts with name, field_type, description, required)
+    user_input_schema: Optional[List[Dict[str, Any]]] = None
+    # What to do when step encounters an error: "fail" (default), "skip", "pause" (HITL)
+    # "pause" triggers HITL allowing user to retry or skip the failed step
+    on_error: str = "fail"
+
     _retry_count: int = 0
 
     def __init__(
@@ -87,7 +104,34 @@ class Step:
         strict_input_validation: bool = False,
         add_workflow_history: Optional[bool] = None,
         num_history_runs: int = 3,
+        requires_confirmation: bool = False,
+        confirmation_message: Optional[str] = None,
+        on_reject: str = "cancel",
+        requires_user_input: bool = False,
+        user_input_message: Optional[str] = None,
+        user_input_schema: Optional[List[Dict[str, Any]]] = None,
+        on_error: str = "fail",
     ):
+        # Auto-detect HITL metadata from @hitl decorator on executor function
+        if executor is not None:
+            from agno.workflow.decorators import get_hitl_metadata
+
+            hitl_metadata = get_hitl_metadata(executor)
+            if hitl_metadata:
+                # Use decorator values as defaults, but allow explicit params to override
+                if name is None and hitl_metadata.get("name"):
+                    name = hitl_metadata["name"]
+                if not requires_confirmation and hitl_metadata.get("requires_confirmation"):
+                    requires_confirmation = hitl_metadata["requires_confirmation"]
+                if confirmation_message is None and hitl_metadata.get("confirmation_message"):
+                    confirmation_message = hitl_metadata["confirmation_message"]
+                if not requires_user_input and hitl_metadata.get("requires_user_input"):
+                    requires_user_input = hitl_metadata["requires_user_input"]
+                if user_input_message is None and hitl_metadata.get("user_input_message"):
+                    user_input_message = hitl_metadata["user_input_message"]
+                if user_input_schema is None and hitl_metadata.get("user_input_schema"):
+                    user_input_schema = hitl_metadata["user_input_schema"]
+
         # Auto-detect name for function executors if not provided
         if name is None and executor is not None:
             name = getattr(executor, "__name__", None)
@@ -107,6 +151,13 @@ class Step:
         self.strict_input_validation = strict_input_validation
         self.add_workflow_history = add_workflow_history
         self.num_history_runs = num_history_runs
+        self.requires_confirmation = requires_confirmation
+        self.confirmation_message = confirmation_message
+        self.on_reject = on_reject
+        self.requires_user_input = requires_user_input
+        self.user_input_message = user_input_message
+        self.user_input_schema = user_input_schema
+        self.on_error = on_error
         self.step_id = step_id
 
         if step_id is None:
@@ -127,6 +178,13 @@ class Step:
             "strict_input_validation": self.strict_input_validation,
             "add_workflow_history": self.add_workflow_history,
             "num_history_runs": self.num_history_runs,
+            "requires_confirmation": self.requires_confirmation,
+            "confirmation_message": self.confirmation_message,
+            "requires_user_input": self.requires_user_input,
+            "user_input_message": self.user_input_message,
+            "user_input_schema": self.user_input_schema,
+            "on_reject": self.on_reject,
+            "on_error": self.on_error,
         }
 
         if self.agent is not None:
@@ -193,6 +251,13 @@ class Step:
             strict_input_validation=config.get("strict_input_validation", False),
             add_workflow_history=config.get("add_workflow_history"),
             num_history_runs=config.get("num_history_runs", 3),
+            requires_confirmation=config.get("requires_confirmation", False),
+            confirmation_message=config.get("confirmation_message"),
+            on_reject=config.get("on_reject", "cancel"),
+            requires_user_input=config.get("requires_user_input", False),
+            user_input_message=config.get("user_input_message"),
+            user_input_schema=config.get("user_input_schema"),
+            on_error=config.get("on_error", "fail"),
             agent=agent,
             team=team,
             executor=executor,
@@ -484,6 +549,15 @@ class Step:
                             if history_messages:
                                 final_message = f"{history_messages}{message}"
 
+                        # Append user input context if available (from HITL)
+                        if step_input.additional_data and step_input.additional_data.get("user_input"):
+                            user_input = step_input.additional_data["user_input"]
+                            user_input_str = "\n".join(f"- {k}: {v}" for k, v in user_input.items())
+                            if final_message:
+                                final_message = f"{final_message}\n\nUser preferences:\n{user_input_str}"
+                            else:
+                                final_message = f"User preferences:\n{user_input_str}"
+
                         response = self.active_executor.run(  # type: ignore
                             input=final_message,  # type: ignore
                             images=images,
@@ -742,6 +816,15 @@ class Step:
                             history_messages = workflow_session.get_workflow_history_context(num_runs=num_history_runs)
                             if history_messages:
                                 final_message = f"{history_messages}{message}"
+
+                        # Append user input context if available (from HITL)
+                        if step_input.additional_data and step_input.additional_data.get("user_input"):
+                            user_input = step_input.additional_data["user_input"]
+                            user_input_str = "\n".join(f"- {k}: {v}" for k, v in user_input.items())
+                            if final_message:
+                                final_message = f"{final_message}\n\nUser preferences:\n{user_input_str}"
+                            else:
+                                final_message = f"User preferences:\n{user_input_str}"
 
                         response_stream = self.active_executor.run(  # type: ignore[call-overload, misc]
                             input=final_message,
@@ -1009,6 +1092,15 @@ class Step:
                             if history_messages:
                                 final_message = f"{history_messages}{message}"
 
+                        # Append user input context if available (from HITL)
+                        if step_input.additional_data and step_input.additional_data.get("user_input"):
+                            user_input = step_input.additional_data["user_input"]
+                            user_input_str = "\n".join(f"- {k}: {v}" for k, v in user_input.items())
+                            if final_message:
+                                final_message = f"{final_message}\n\nUser preferences:\n{user_input_str}"
+                            else:
+                                final_message = f"User preferences:\n{user_input_str}"
+
                         response = await self.active_executor.arun(  # type: ignore
                             input=final_message,  # type: ignore
                             images=images,
@@ -1261,6 +1353,15 @@ class Step:
                             history_messages = workflow_session.get_workflow_history_context(num_runs=num_history_runs)
                             if history_messages:
                                 final_message = f"{history_messages}{message}"
+
+                        # Append user input context if available (from HITL)
+                        if step_input.additional_data and step_input.additional_data.get("user_input"):
+                            user_input = step_input.additional_data["user_input"]
+                            user_input_str = "\n".join(f"- {k}: {v}" for k, v in user_input.items())
+                            if final_message:
+                                final_message = f"{final_message}\n\nUser preferences:\n{user_input_str}"
+                            else:
+                                final_message = f"User preferences:\n{user_input_str}"
 
                         response_stream = self.active_executor.arun(  # type: ignore
                             input=final_message,

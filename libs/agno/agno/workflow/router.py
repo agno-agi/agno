@@ -1,5 +1,5 @@
 import inspect
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union
 from uuid import uuid4
 
@@ -17,7 +17,7 @@ from agno.session.workflow import WorkflowSession
 from agno.utils.log import log_debug, logger
 from agno.workflow.cel import CEL_AVAILABLE, evaluate_cel_router_selector, is_cel_expression
 from agno.workflow.step import Step
-from agno.workflow.types import StepInput, StepOutput, StepType
+from agno.workflow.types import RouterRequirement, StepInput, StepOutput, StepType, UserInputField
 
 WorkflowSteps = List[
     Union[
@@ -38,6 +38,11 @@ WorkflowSteps = List[
 class Router:
     """A router that dynamically selects which step(s) to execute based on input.
 
+    The Router can operate in three modes:
+    1. Programmatic selection: Use a `selector` function to determine which steps to execute
+    2. CEL expression: Use a CEL expression string that returns a step name
+    3. HITL selection: Set `requires_user_input=True` to pause and let the user choose
+
     The selector can be:
         - A callable function that takes StepInput and returns step(s)
         - A CEL (Common Expression Language) expression string that returns a step name
@@ -56,18 +61,35 @@ class Router:
         - 'input.contains("video") ? "video_step" : "image_step"'
         - 'additional_data.route'
         - 'previous_step_outputs.classifier.contains("billing") ? "Billing" : "Support"'
+
+    When using HITL mode:
+    - Set `requires_user_input=True`
+    - Optionally provide `user_input_message` for the prompt
+    - The workflow will pause and present the user with the available `choices`
+    - User selects one or more choices by name
+    - The Router then executes the selected steps
     """
 
-    # Router function or CEL expression that selects step(s) to execute
-    selector: Union[
-        Callable[[StepInput], Union[WorkflowSteps, List[WorkflowSteps]]],
-        Callable[[StepInput], Awaitable[Union[WorkflowSteps, List[WorkflowSteps]]]],
-        str,  # CEL expression returning step name
-    ]
-    choices: WorkflowSteps  # Available steps that can be selected
+    # Available steps that can be selected
+    choices: WorkflowSteps
+
+    # Router function or CEL expression that selects step(s) to execute (optional if using HITL)
+    selector: Optional[
+        Union[
+            Callable[[StepInput], Union[WorkflowSteps, List[WorkflowSteps]]],
+            Callable[[StepInput], Awaitable[Union[WorkflowSteps, List[WorkflowSteps]]]],
+            str,  # CEL expression returning step name
+        ]
+    ] = None
 
     name: Optional[str] = None
     description: Optional[str] = None
+
+    # HITL parameters for user-driven routing
+    requires_user_input: bool = False
+    user_input_message: Optional[str] = None
+    allow_multiple_selections: bool = False  # If True, user can select multiple choices
+    user_input_schema: Optional[List[Dict[str, Any]]] = field(default=None)  # Custom schema if needed
 
     def to_dict(self) -> Dict[str, Any]:
         result: Dict[str, Any] = {
@@ -75,9 +97,15 @@ class Router:
             "name": self.name,
             "description": self.description,
             "choices": [step.to_dict() for step in self.choices if hasattr(step, "to_dict")],
+            "requires_user_input": self.requires_user_input,
+            "user_input_message": self.user_input_message,
+            "allow_multiple_selections": self.allow_multiple_selections,
         }
         # Serialize selector
-        if callable(self.selector):
+        if self.selector is None:
+            result["selector"] = None
+            result["selector_type"] = None
+        elif callable(self.selector):
             result["selector"] = self.selector.__name__
             result["selector_type"] = "function"
         elif isinstance(self.selector, str):
@@ -85,6 +113,9 @@ class Router:
             result["selector_type"] = "cel"
         else:
             raise ValueError(f"Invalid selector type: {type(self.selector).__name__}")
+
+        if self.user_input_schema:
+            result["user_input_schema"] = self.user_input_schema
 
         return result
 
@@ -122,7 +153,8 @@ class Router:
 
         selector: Any = None
         if selector_data is None:
-            raise ValueError("Router requires a selector")
+            # Selector is optional when using HITL
+            selector = None
         elif isinstance(selector_data, str):
             # Determine if this is a CEL expression or a function name
             if selector_type == "cel" or (selector_type is None and is_cel_expression(selector_data)):
@@ -145,6 +177,10 @@ class Router:
             choices=[deserialize_step(step) for step in data.get("choices", [])],
             name=data.get("name"),
             description=data.get("description"),
+            requires_user_input=data.get("requires_user_input", False),
+            user_input_message=data.get("user_input_message"),
+            allow_multiple_selections=data.get("allow_multiple_selections", False),
+            user_input_schema=data.get("user_input_schema"),
         )
 
     def _prepare_single_step(self, step: Any) -> Any:
@@ -192,6 +228,84 @@ class Router:
         for step in self.steps:
             if hasattr(step, "name") and step.name:
                 self._step_name_map[step.name] = step
+
+    def _get_choice_names(self) -> List[str]:
+        """Get the names of all available choices for HITL display."""
+        if not hasattr(self, "steps"):
+            self._prepare_steps()
+        names = []
+        for step in self.steps:
+            name = getattr(step, "name", None)
+            if name:
+                names.append(name)
+        return names
+
+    def _get_step_by_name(self, name: str) -> Optional[Step]:
+        """Get a step by its name."""
+        if not hasattr(self, "steps"):
+            self._prepare_steps()
+        for step in self.steps:
+            if getattr(step, "name", None) == name:
+                return step  # type: ignore[return-value]
+        return None
+
+    def _get_steps_from_user_selection(self, selection: Union[str, List[str]]) -> List[Step]:
+        """Get steps based on user selection (by name)."""
+        if isinstance(selection, str):
+            selection = [selection]
+
+        selected_steps = []
+        for name in selection:
+            step = self._get_step_by_name(name.strip())
+            if step:
+                selected_steps.append(step)
+            else:
+                logger.warning(f"Router: Unknown choice '{name}', skipping")
+
+        return selected_steps
+
+    def create_router_requirement(self, router_id: str, step_input: StepInput) -> RouterRequirement:
+        """Create a RouterRequirement for HITL pause."""
+        choice_names = self._get_choice_names()
+
+        # Build user input schema for selection
+        if self.user_input_schema:
+            schema = [UserInputField.from_dict(f) if isinstance(f, dict) else f for f in self.user_input_schema]
+        else:
+            # Default schema: single selection field
+            schema = [
+                UserInputField(
+                    name="selected_choice",
+                    field_type="str",
+                    description=f"Select from: {', '.join(choice_names)}",
+                    required=True,
+                )
+            ]
+            if self.allow_multiple_selections:
+                schema = [
+                    UserInputField(
+                        name="selected_choices",
+                        field_type="list",
+                        description=f"Select one or more from: {', '.join(choice_names)} (comma-separated)",
+                        required=True,
+                    )
+                ]
+
+        return RouterRequirement(
+            router_id=router_id,
+            router_name=self.name,
+            requires_user_input=True,
+            user_input_message=self.user_input_message or f"Select a route from: {', '.join(choice_names)}",
+            user_input_schema=schema,
+            available_choices=choice_names,
+            allow_multiple_selections=self.allow_multiple_selections,
+            step_input=step_input,
+        )
+
+    @property
+    def requires_hitl(self) -> bool:
+        """Check if this router requires any form of HITL."""
+        return self.requires_user_input
 
     def _update_step_input_from_outputs(
         self,
