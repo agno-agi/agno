@@ -70,13 +70,14 @@ async def _acleanup_and_store(team: "Team", run_response: TeamRunOutput, session
 def _get_member_name(team: "Team", entity_id: str) -> str:
     from agno.team.team import Team
 
-    for member in team.members:
-        if isinstance(member, Agent):
-            if member.id == entity_id:
-                return member.name or entity_id
-        elif isinstance(member, Team):
-            if member.id == entity_id:
-                return member.name or entity_id
+    if isinstance(team.members, list):
+        for member in team.members:
+            if isinstance(member, Agent):
+                if member.id == entity_id:
+                    return member.name or entity_id
+            elif isinstance(member, Team):
+                if member.id == entity_id:
+                    return member.name or entity_id
     return entity_id
 
 
@@ -153,7 +154,7 @@ def cli_app(
     from rich.prompt import Prompt
 
     # Ensuring the team is not using async tools
-    if team.tools is not None:
+    if team.tools is not None and isinstance(team.tools, list):
         for tool in team.tools:
             if isawaitable(tool):
                 raise NotImplementedError("Use `acli_app` to use async tools.")
