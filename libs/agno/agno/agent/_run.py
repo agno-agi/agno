@@ -930,12 +930,23 @@ def run_dispatch(
             metadata=opts.metadata,
             output_schema=opts.output_schema,
         )
-        # Apply resolved options to run_context (covers both new and caller-provided contexts)
+        # Apply options with precedence: explicit args > existing run_context > resolved defaults.
         if dependencies is not None:
             run_context.dependencies = opts.dependencies
-        run_context.knowledge_filters = opts.knowledge_filters
-        run_context.metadata = opts.metadata
-        run_context.output_schema = opts.output_schema
+        elif run_context.dependencies is None:
+            run_context.dependencies = opts.dependencies
+        if knowledge_filters is not None:
+            run_context.knowledge_filters = opts.knowledge_filters
+        elif run_context.knowledge_filters is None:
+            run_context.knowledge_filters = opts.knowledge_filters
+        if metadata is not None:
+            run_context.metadata = opts.metadata
+        elif run_context.metadata is None:
+            run_context.metadata = opts.metadata
+        if output_schema is not None:
+            run_context.output_schema = opts.output_schema
+        elif run_context.output_schema is None:
+            run_context.output_schema = opts.output_schema
 
         # Resolve dependencies
         if run_context.dependencies is not None:
@@ -1943,12 +1954,23 @@ def arun_dispatch(  # type: ignore
         metadata=opts.metadata,
         output_schema=opts.output_schema,
     )
-    # Apply resolved options to run_context (covers both new and caller-provided contexts)
+    # Apply options with precedence: explicit args > existing run_context > resolved defaults.
     if dependencies is not None:
         run_context.dependencies = opts.dependencies
-    run_context.knowledge_filters = opts.knowledge_filters
-    run_context.metadata = opts.metadata
-    run_context.output_schema = opts.output_schema
+    elif run_context.dependencies is None:
+        run_context.dependencies = opts.dependencies
+    if knowledge_filters is not None:
+        run_context.knowledge_filters = opts.knowledge_filters
+    elif run_context.knowledge_filters is None:
+        run_context.knowledge_filters = opts.knowledge_filters
+    if metadata is not None:
+        run_context.metadata = opts.metadata
+    elif run_context.metadata is None:
+        run_context.metadata = opts.metadata
+    if output_schema is not None:
+        run_context.output_schema = opts.output_schema
+    elif run_context.output_schema is None:
+        run_context.output_schema = opts.output_schema
 
     # Prepare arguments for the model (must be after run_context is fully initialized)
     response_format = agent._get_response_format(run_context=run_context) if agent.parser_model is None else None
@@ -2096,11 +2118,19 @@ def continue_run_dispatch(
         knowledge_filters=opts.knowledge_filters,
         metadata=opts.metadata,
     )
-    # Apply resolved options to run_context (covers both new and caller-provided contexts)
+    # Apply options with precedence: explicit args > existing run_context > resolved defaults.
     if dependencies is not None:
         run_context.dependencies = opts.dependencies
-    run_context.knowledge_filters = opts.knowledge_filters
-    run_context.metadata = opts.metadata
+    elif run_context.dependencies is None:
+        run_context.dependencies = opts.dependencies
+    if knowledge_filters is not None:
+        run_context.knowledge_filters = opts.knowledge_filters
+    elif run_context.knowledge_filters is None:
+        run_context.knowledge_filters = opts.knowledge_filters
+    if metadata is not None:
+        run_context.metadata = opts.metadata
+    elif run_context.metadata is None:
+        run_context.metadata = opts.metadata
 
     # Resolve dependencies
     if run_context.dependencies is not None:
@@ -2744,11 +2774,19 @@ def acontinue_run_dispatch(  # type: ignore
         knowledge_filters=opts.knowledge_filters,
         metadata=opts.metadata,
     )
-    # Apply resolved options to run_context (covers both new and caller-provided contexts)
+    # Apply options with precedence: explicit args > existing run_context > resolved defaults.
     if dependencies is not None:
         run_context.dependencies = opts.dependencies
-    run_context.knowledge_filters = opts.knowledge_filters
-    run_context.metadata = opts.metadata
+    elif run_context.dependencies is None:
+        run_context.dependencies = opts.dependencies
+    if knowledge_filters is not None:
+        run_context.knowledge_filters = opts.knowledge_filters
+    elif run_context.knowledge_filters is None:
+        run_context.knowledge_filters = opts.knowledge_filters
+    if metadata is not None:
+        run_context.metadata = opts.metadata
+    elif run_context.metadata is None:
+        run_context.metadata = opts.metadata
 
     if opts.stream:
         return acontinue_run_stream_impl(
