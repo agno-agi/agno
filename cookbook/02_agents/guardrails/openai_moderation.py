@@ -1,15 +1,12 @@
 """
-Example demonstrating how to use OpenAI moderation guardrails with Agno Agent.
+Openai Moderation
+=============================
 
-This example shows how to:
-1. Detect and block content that violates OpenAI's content policy
-2. Handle both text and image content moderation
-3. Configure moderation for specific categories
-4. Use both sync and async moderation checks
-5. Customize moderation models and sensitivity settings
+Example demonstrating how to use OpenAI moderation guardrails with Agno Agent.
 """
 
 import asyncio
+import json
 
 from agno.agent import Agent
 from agno.exceptions import InputCheckError
@@ -17,11 +14,17 @@ from agno.guardrails import OpenAIModerationGuardrail
 from agno.media import Image
 from agno.models.openai import OpenAIChat
 
-
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 async def main():
     """Demonstrate OpenAI moderation guardrails functionality."""
     print("OpenAI Moderation Guardrails Demo")
     print("=" * 50)
+
+    # ---------------------------------------------------------------------------
+    # Create Agent
+    # ---------------------------------------------------------------------------
 
     basic_agent = Agent(
         name="Basic Moderated Agent",
@@ -96,13 +99,14 @@ async def main():
             input="What do you see in this image?", images=[unsafe_image]
         )
     except InputCheckError as e:
-        import json
-
         print(f"[BLOCKED] Violence blocked: {e.message[:100]}...")
         print(f"   {json.dumps(e.additional_data, indent=2)}")
         print(f"   Trigger: {e.check_trigger}")
 
 
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     # Run async main demo
     asyncio.run(main())
