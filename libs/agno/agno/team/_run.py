@@ -1813,13 +1813,13 @@ async def _arun(
                     run_context=run_context,
                 )
 
-                # 7b. Check if delegation propagated member HITL requirements
+                # 9b. Check if delegation propagated member HITL requirements
                 if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
                     from agno.team import _hooks
 
                     return await _hooks.ahandle_team_run_paused(team, run_response=run_response, session=team_session)
 
-                # 8. Store media if enabled
+                # 10. Store media if enabled
                 if team.store_media:
                     store_media_util(run_response, model_response)
 
@@ -2183,7 +2183,7 @@ async def _arun_stream(
                 # Check for cancellation after model processing
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 
-                # 6b. Check if delegation propagated member HITL requirements
+                # 9b. Check if delegation propagated member HITL requirements
                 if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
                     from agno.team import _hooks
 
@@ -2195,7 +2195,7 @@ async def _arun_stream(
                         yield run_response
                     return
 
-                # 7. Parse response with parser model if provided
+                # 10. Parse response with parser model if provided
                 async for event in team._aparse_response_with_parser_model_stream(
                     session=team_session,
                     run_response=run_response,
