@@ -30,7 +30,7 @@ def main():
             "name": "hourly-greeting",
             "cron_expr": "0 * * * *",
             "endpoint": "/agents/greeter/runs",
-            "payload": {"message": "Hourly check-in", "stream": False},
+            "payload": {"message": "Hourly check-in"},
             "timezone": "UTC",
             "max_retries": 2,
             "retry_delay_seconds": 30,
