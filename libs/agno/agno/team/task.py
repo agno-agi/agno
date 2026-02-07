@@ -72,6 +72,7 @@ class Task:
 
 
 TERMINAL_STATUSES = {TaskStatus.completed, TaskStatus.failed}
+DEPENDENCY_SATISFIED_STATUSES = {TaskStatus.completed}
 
 
 @dataclass
@@ -181,14 +182,14 @@ class TaskList:
     # --- Dependency management ---
 
     def _is_blocked(self, task: Task) -> bool:
-        """Check if a task has unfinished dependencies."""
+        """Check if a task has unfinished or failed dependencies."""
         if not task.dependencies:
             return False
         for dep_id in task.dependencies:
             dep = self.get_task(dep_id)
             if dep is None:
                 return True  # Unknown dependency ID — treat as blocked (fail-closed)
-            if dep.status not in TERMINAL_STATUSES:
+            if dep.status not in DEPENDENCY_SATISFIED_STATUSES:
                 return True
         return False
 

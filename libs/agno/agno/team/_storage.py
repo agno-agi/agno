@@ -337,8 +337,11 @@ def to_dict(team: "Team") -> Dict[str, Any]:
         config["respond_directly"] = team.respond_directly
     if team.delegate_to_all_members:
         config["delegate_to_all_members"] = team.delegate_to_all_members
-    if not team.determine_input_for_members:  # default is True
-        config["determine_input_for_members"] = team.determine_input_for_members
+    effective_pass_user_input_to_members = team.effective_pass_user_input_to_members
+    if team.pass_user_input_to_members is not None or effective_pass_user_input_to_members:
+        config["pass_user_input_to_members"] = effective_pass_user_input_to_members
+        # Keep legacy key during transition for backwards compatibility.
+        config["determine_input_for_members"] = not effective_pass_user_input_to_members
     if team.max_iterations != 10:
         config["max_iterations"] = team.max_iterations
 
@@ -737,6 +740,11 @@ def from_dict(
     #     from agno.compression.manager import CompressionManager
     #     config["compression_manager"] = CompressionManager.from_dict(config["compression_manager"])
 
+    has_pass_user_input_to_members = "pass_user_input_to_members" in config
+    has_determine_input_for_members = "determine_input_for_members" in config
+    pass_user_input_to_members = config.get("pass_user_input_to_members") if has_pass_user_input_to_members else None
+    determine_input_for_members = config.get("determine_input_for_members") if has_determine_input_for_members else None
+
     team = cast(
         "Team",
         cls(
@@ -753,7 +761,8 @@ def from_dict(
             mode=_parse_team_mode(config.get("mode")),
             respond_directly=config.get("respond_directly", False),
             delegate_to_all_members=config.get("delegate_to_all_members", False),
-            determine_input_for_members=config.get("determine_input_for_members", True),
+            pass_user_input_to_members=pass_user_input_to_members,
+            determine_input_for_members=determine_input_for_members,
             max_iterations=config.get("max_iterations", 10),
             # --- User settings ---
             user_id=config.get("user_id"),

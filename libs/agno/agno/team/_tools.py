@@ -273,75 +273,76 @@ def _determine_tools_for_model(
     if team.knowledge is not None and team.update_knowledge:
         _tools.append(team.add_to_knowledge)
 
-    if team.members:
-        from agno.team.mode import TeamMode
+    from agno.team.mode import TeamMode
 
-        if team.mode == TeamMode.tasks:
-            # Tasks mode: provide task management tools instead of delegation tools
-            from agno.team._task_tools import _get_task_management_tools
-            from agno.team.task import load_task_list
+    if team.mode == TeamMode.tasks:
+        # Tasks mode: provide task management tools regardless of whether members exist
+        from agno.team._task_tools import _get_task_management_tools
+        from agno.team.task import load_task_list
 
-            _task_list = load_task_list(run_context.session_state)
-            task_tools = _get_task_management_tools(
-                team=team,
-                task_list=_task_list,
+        _task_list = load_task_list(run_context.session_state)
+        task_tools = _get_task_management_tools(
+            team=team,
+            task_list=_task_list,
+            run_response=run_response,
+            run_context=run_context,
+            session=session,
+            team_run_context=team_run_context,
+            user_id=user_id,
+            stream=stream or False,
+            stream_events=stream_events or False,
+            async_mode=async_mode,
+            images=images,  # type: ignore
+            videos=videos,  # type: ignore
+            audio=audio,  # type: ignore
+            files=files,  # type: ignore
+            add_history_to_context=add_history_to_context,
+            add_dependencies_to_context=add_dependencies_to_context,
+            add_session_state_to_context=add_session_state_to_context,
+            debug_mode=debug_mode,
+        )
+        _tools.extend(task_tools)
+    elif team.members:
+        # Standard modes: provide delegation tools
+        effective_pass_user_input_to_members = team.effective_pass_user_input_to_members
+        # Get the user message if we are using the input directly
+        user_message_content = None
+        if effective_pass_user_input_to_members:
+            user_message = team._get_user_message(
                 run_response=run_response,
                 run_context=run_context,
-                session=session,
-                team_run_context=team_run_context,
+                input_message=input_message,
                 user_id=user_id,
-                stream=stream or False,
-                stream_events=stream_events or False,
-                async_mode=async_mode,
-                images=images,  # type: ignore
-                videos=videos,  # type: ignore
-                audio=audio,  # type: ignore
-                files=files,  # type: ignore
-                add_history_to_context=add_history_to_context,
+                audio=audio,
+                images=images,
+                videos=videos,
+                files=files,
                 add_dependencies_to_context=add_dependencies_to_context,
-                add_session_state_to_context=add_session_state_to_context,
-                debug_mode=debug_mode,
             )
-            _tools.extend(task_tools)
-        else:
-            # Standard modes: provide delegation tools
-            # Get the user message if we are using the input directly
-            user_message_content = None
-            if team.determine_input_for_members is False:
-                user_message = team._get_user_message(
-                    run_response=run_response,
-                    run_context=run_context,
-                    input_message=input_message,
-                    user_id=user_id,
-                    audio=audio,
-                    images=images,
-                    videos=videos,
-                    files=files,
-                    add_dependencies_to_context=add_dependencies_to_context,
-                )
-                user_message_content = user_message.content if user_message is not None else None
+            user_message_content = user_message.content if user_message is not None else None
 
-            delegate_task_func = team._get_delegate_task_function(
-                run_response=run_response,
-                run_context=run_context,
-                session=session,
-                team_run_context=team_run_context,
-                input=user_message_content,
-                user_id=user_id,
-                stream=stream or False,
-                stream_events=stream_events or False,
-                async_mode=async_mode,
-                images=images,  # type: ignore
-                videos=videos,  # type: ignore
-                audio=audio,  # type: ignore
-                files=files,  # type: ignore
-                add_history_to_context=add_history_to_context,
-                add_dependencies_to_context=add_dependencies_to_context,
-                add_session_state_to_context=add_session_state_to_context,
-                debug_mode=debug_mode,
-            )
+        delegate_task_func = team._get_delegate_task_function(
+            run_response=run_response,
+            run_context=run_context,
+            session=session,
+            team_run_context=team_run_context,
+            input=user_message_content,
+            pass_user_input_to_members=effective_pass_user_input_to_members,
+            user_id=user_id,
+            stream=stream or False,
+            stream_events=stream_events or False,
+            async_mode=async_mode,
+            images=images,  # type: ignore
+            videos=videos,  # type: ignore
+            audio=audio,  # type: ignore
+            files=files,  # type: ignore
+            add_history_to_context=add_history_to_context,
+            add_dependencies_to_context=add_dependencies_to_context,
+            add_session_state_to_context=add_session_state_to_context,
+            debug_mode=debug_mode,
+        )
 
-            _tools.append(delegate_task_func)
+        _tools.append(delegate_task_func)
 
         if team.get_member_information_tool:
             _tools.append(team.get_member_information)
@@ -855,7 +856,8 @@ def _get_delegate_task_function(
     stream: bool = False,
     stream_events: bool = False,
     async_mode: bool = False,
-    input: Optional[str] = None,  # Used for determine_input_for_members=False
+    input: Optional[str] = None,  # Used when pass_user_input_to_members=True
+    pass_user_input_to_members: Optional[bool] = None,
     images: Optional[List[Image]] = None,
     videos: Optional[List[Video]] = None,
     audio: Optional[List[Audio]] = None,
@@ -873,6 +875,11 @@ def _get_delegate_task_function(
         audio = []
     if not files:
         files = []
+    effective_pass_user_input_to_members = (
+        pass_user_input_to_members
+        if pass_user_input_to_members is not None
+        else team.effective_pass_user_input_to_members
+    )
 
     def _setup_delegate_task_to_member(member_agent: Union[Agent, "Team"], task: str):
         # 1. Initialize the member agent
@@ -910,7 +917,7 @@ def _get_delegate_task_function(
             team_history_str = session.get_team_history_context(num_runs=team.num_team_history_runs)
 
         # 6. Create the member agent task or use the input directly
-        if team.determine_input_for_members is False:
+        if effective_pass_user_input_to_members:
             member_agent_task = input  # type: ignore
         else:
             member_agent_task = task
