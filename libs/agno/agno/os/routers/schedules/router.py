@@ -48,9 +48,12 @@ def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
         fn = getattr(os_db, method_name, None)
         if fn is None:
             raise HTTPException(status_code=503, detail="Scheduler not supported by the configured database")
-        if asyncio.iscoroutinefunction(fn):
-            return await fn(*args, **kwargs)
-        return fn(*args, **kwargs)
+        try:
+            if asyncio.iscoroutinefunction(fn):
+                return await fn(*args, **kwargs)
+            return fn(*args, **kwargs)
+        except NotImplementedError:
+            raise HTTPException(status_code=503, detail="Scheduler not supported by the configured database")
 
     # ------------------------------------------------------------------
     # Endpoints

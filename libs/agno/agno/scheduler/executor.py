@@ -80,112 +80,133 @@ class ScheduleExecutor:
         last_status = "failed"
         last_status_code: Optional[int] = None
         last_error: Optional[str] = None
+        run_record_id: Optional[str] = None
+        run_dict: Dict[str, Any] = {}
 
-        for attempt in range(1, max_attempts + 1):
-            run_record_id = str(uuid4())
-            now = int(time.time())
+        try:
+            for attempt in range(1, max_attempts + 1):
+                run_record_id = str(uuid4())
+                now = int(time.time())
 
-            run_dict: Dict[str, Any] = {
-                "id": run_record_id,
-                "schedule_id": schedule_id,
-                "attempt": attempt,
-                "triggered_at": now,
-                "completed_at": None,
-                "status": "running",
-                "status_code": None,
-                "run_id": None,
-                "session_id": None,
-                "error": None,
-                "created_at": now,
-            }
-
-            if asyncio.iscoroutinefunction(getattr(db, "create_schedule_run", None)):
-                await db.create_schedule_run(run_dict)
-            else:
-                db.create_schedule_run(run_dict)
-
-            try:
-                result = await self._call_endpoint(schedule)
-                last_status = result.get("status", "success")
-                last_status_code = result.get("status_code")
-                last_error = result.get("error")
-                run_id_value = result.get("run_id") or run_id_value
-                session_id_value = result.get("session_id") or session_id_value
-
-                updates: Dict[str, Any] = {
-                    "completed_at": int(time.time()),
-                    "status": last_status,
-                    "status_code": last_status_code,
-                    "run_id": run_id_value,
-                    "session_id": session_id_value,
-                    "error": last_error,
+                run_dict = {
+                    "id": run_record_id,
+                    "schedule_id": schedule_id,
+                    "attempt": attempt,
+                    "triggered_at": now,
+                    "completed_at": None,
+                    "status": "running",
+                    "status_code": None,
+                    "run_id": None,
+                    "session_id": None,
+                    "error": None,
+                    "created_at": now,
                 }
-                if asyncio.iscoroutinefunction(getattr(db, "update_schedule_run", None)):
-                    await db.update_schedule_run(run_record_id, **updates)
+
+                if asyncio.iscoroutinefunction(getattr(db, "create_schedule_run", None)):
+                    await db.create_schedule_run(run_dict)
                 else:
-                    db.update_schedule_run(run_record_id, **updates)
+                    db.create_schedule_run(run_dict)
 
-                if last_status == "success":
-                    break
-
-            except Exception as exc:
-                last_status = "failed"
-                last_error = str(exc)
-                log_error(f"Schedule {schedule_id} attempt {attempt} failed: {exc}")
-
-                updates = {
-                    "completed_at": int(time.time()),
-                    "status": "failed",
-                    "error": last_error,
-                }
-                if asyncio.iscoroutinefunction(getattr(db, "update_schedule_run", None)):
-                    await db.update_schedule_run(run_record_id, **updates)
-                else:
-                    db.update_schedule_run(run_record_id, **updates)
-
-            if attempt < max_attempts:
-                log_info(f"Schedule {schedule_id}: retrying in {retry_delay}s (attempt {attempt}/{max_attempts})")
-                await asyncio.sleep(retry_delay)
-
-        # Build final snapshot for the caller (don't mutate the DB-stored run_dict)
-        final_run = dict(run_dict)
-        final_run["status"] = last_status
-        final_run["status_code"] = last_status_code
-        final_run["error"] = last_error
-        final_run["run_id"] = run_id_value
-        final_run["session_id"] = session_id_value
-        final_run["completed_at"] = int(time.time())
-
-        # Release schedule lock and compute next run
-        if release_schedule:
-            try:
-                next_run_at = compute_next_run(
-                    schedule["cron_expr"],
-                    schedule.get("timezone", "UTC"),
-                )
-            except Exception:
-                log_warning(
-                    f"Failed to compute next_run_at for schedule {schedule_id}; "
-                    "disabling schedule to prevent it from becoming stuck"
-                )
-                next_run_at = None
                 try:
-                    if asyncio.iscoroutinefunction(getattr(db, "update_schedule", None)):
-                        await db.update_schedule(schedule_id, enabled=False)
+                    result = await self._call_endpoint(schedule)
+                    last_status = result.get("status", "success")
+                    last_status_code = result.get("status_code")
+                    last_error = result.get("error")
+                    run_id_value = result.get("run_id") or run_id_value
+                    session_id_value = result.get("session_id") or session_id_value
+
+                    updates: Dict[str, Any] = {
+                        "completed_at": int(time.time()),
+                        "status": last_status,
+                        "status_code": last_status_code,
+                        "run_id": run_id_value,
+                        "session_id": session_id_value,
+                        "error": last_error,
+                    }
+                    if asyncio.iscoroutinefunction(getattr(db, "update_schedule_run", None)):
+                        await db.update_schedule_run(run_record_id, **updates)
                     else:
-                        db.update_schedule(schedule_id, enabled=False)
+                        db.update_schedule_run(run_record_id, **updates)
+
+                    if last_status == "success":
+                        break
+
                 except Exception as exc:
-                    log_error(f"Failed to disable schedule {schedule_id} after cron failure: {exc}")
+                    last_status = "failed"
+                    last_error = str(exc)
+                    log_error(f"Schedule {schedule_id} attempt {attempt} failed: {exc}")
 
-            try:
-                if asyncio.iscoroutinefunction(getattr(db, "release_schedule", None)):
-                    await db.release_schedule(schedule_id, next_run_at=next_run_at)
-                else:
-                    db.release_schedule(schedule_id, next_run_at=next_run_at)
-            except Exception as exc:
-                log_error(f"Failed to release schedule {schedule_id}: {exc}")
+                    updates = {
+                        "completed_at": int(time.time()),
+                        "status": "failed",
+                        "error": last_error,
+                    }
+                    if asyncio.iscoroutinefunction(getattr(db, "update_schedule_run", None)):
+                        await db.update_schedule_run(run_record_id, **updates)
+                    else:
+                        db.update_schedule_run(run_record_id, **updates)
 
-        return final_run
+                if attempt < max_attempts:
+                    log_info(f"Schedule {schedule_id}: retrying in {retry_delay}s (attempt {attempt}/{max_attempts})")
+                    await asyncio.sleep(retry_delay)
+
+            # Build final snapshot for the caller (don't mutate the DB-stored run_dict)
+            final_run = dict(run_dict)
+            final_run["status"] = last_status
+            final_run["status_code"] = last_status_code
+            final_run["error"] = last_error
+            final_run["run_id"] = run_id_value
+            final_run["session_id"] = session_id_value
+            final_run["completed_at"] = int(time.time())
+
+            return final_run
+
+        except asyncio.CancelledError:
+            log_warning(f"Schedule {schedule_id} execution cancelled")
+            if run_record_id is not None:
+                cancel_updates: Dict[str, Any] = {
+                    "completed_at": int(time.time()),
+                    "status": "cancelled",
+                    "error": "Execution cancelled during shutdown",
+                }
+                try:
+                    if asyncio.iscoroutinefunction(getattr(db, "update_schedule_run", None)):
+                        await db.update_schedule_run(run_record_id, **cancel_updates)
+                    else:
+                        db.update_schedule_run(run_record_id, **cancel_updates)
+                except Exception:
+                    pass
+            raise
+
+        finally:
+            # Always release the schedule lock so it doesn't stay stuck
+            if release_schedule:
+                try:
+                    next_run_at = compute_next_run(
+                        schedule["cron_expr"],
+                        schedule.get("timezone", "UTC"),
+                    )
+                except Exception:
+                    log_warning(
+                        f"Failed to compute next_run_at for schedule {schedule_id}; "
+                        "disabling schedule to prevent it from becoming stuck"
+                    )
+                    next_run_at = None
+                    try:
+                        if asyncio.iscoroutinefunction(getattr(db, "update_schedule", None)):
+                            await db.update_schedule(schedule_id, enabled=False)
+                        else:
+                            db.update_schedule(schedule_id, enabled=False)
+                    except Exception as exc:
+                        log_error(f"Failed to disable schedule {schedule_id} after cron failure: {exc}")
+
+                try:
+                    if asyncio.iscoroutinefunction(getattr(db, "release_schedule", None)):
+                        await db.release_schedule(schedule_id, next_run_at=next_run_at)
+                    else:
+                        db.release_schedule(schedule_id, next_run_at=next_run_at)
+                except Exception as exc:
+                    log_error(f"Failed to release schedule {schedule_id}: {exc}")
 
     # ------------------------------------------------------------------
     async def _call_endpoint(self, schedule: Dict[str, Any]) -> Dict[str, Any]:
