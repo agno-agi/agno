@@ -33,6 +33,7 @@ from agno.eval.base import BaseEval
 from agno.filters import FilterExpr
 from agno.guardrails import BaseGuardrail
 from agno.knowledge.protocol import KnowledgeProtocol
+from agno.learn.machine import LearningMachine
 from agno.media import Audio, File, Image, Video
 from agno.memory import MemoryManager
 from agno.models.base import Model
@@ -297,6 +298,12 @@ class Team:
     # If True, the team adds session summaries to the context
     add_session_summary_to_context: Optional[bool] = None
 
+    # --- Learning Machine ---
+    # LearningMachine for unified learning capabilities
+    learning: Optional[Union[bool, LearningMachine]] = None
+    # Add learnings context to system prompt
+    add_learnings_to_context: bool = True
+
     # --- Context Compression ---
     # If True, compress tool call results to save context
     compress_tool_results: bool = False
@@ -381,6 +388,8 @@ class Team:
     _mcp_tools_initialized_on_run: Optional[List[Any]] = None
     # Connectable tools initialized on the last run
     _connectable_tools_initialized_on_run: Optional[List[Any]] = None
+    # Internal resolved LearningMachine instance
+    _learning: Optional[LearningMachine] = None
     # Lazy-initialized shared thread pool executor for background tasks
     _background_executor: Optional[Any] = None
 
@@ -469,6 +478,8 @@ class Team:
         enable_session_summaries: bool = False,
         session_summary_manager: Optional[SessionSummaryManager] = None,
         add_session_summary_to_context: Optional[bool] = None,
+        learning: Optional[Union[bool, LearningMachine]] = None,
+        add_learnings_to_context: bool = True,
         compress_tool_results: bool = False,
         compression_manager: Optional["CompressionManager"] = None,
         metadata: Optional[Dict[str, Any]] = None,
@@ -576,6 +587,8 @@ class Team:
             enable_session_summaries=enable_session_summaries,
             session_summary_manager=session_summary_manager,
             add_session_summary_to_context=add_session_summary_to_context,
+            learning=learning,
+            add_learnings_to_context=add_learnings_to_context,
             compress_tool_results=compress_tool_results,
             compression_manager=compression_manager,
             metadata=metadata,
@@ -642,6 +655,12 @@ class Team:
 
     def _set_compression_manager(self) -> None:
         return _init._set_compression_manager(self)
+
+    def _set_learning_machine(self) -> None:
+        return _init._set_learning_machine(self)
+
+    def get_learning_machine(self) -> Optional[LearningMachine]:
+        return _init.get_learning_machine(self)
 
     def _initialize_session(
         self,
@@ -1397,6 +1416,44 @@ class Team:
     ) -> Optional[Future[None]]:
         return _hooks._start_memory_future(
             self, run_messages=run_messages, user_id=user_id, existing_future=existing_future
+        )
+
+    def _process_learnings(
+        self,
+        run_messages: RunMessages,
+        session: TeamSession,
+        user_id: Optional[str],
+    ) -> None:
+        return _hooks._process_learnings(self, run_messages=run_messages, session=session, user_id=user_id)
+
+    async def _aprocess_learnings(
+        self,
+        run_messages: RunMessages,
+        session: TeamSession,
+        user_id: Optional[str],
+    ) -> None:
+        return await _hooks._aprocess_learnings(self, run_messages=run_messages, session=session, user_id=user_id)
+
+    def _start_learning_future(
+        self,
+        run_messages: RunMessages,
+        session: TeamSession,
+        user_id: Optional[str],
+        existing_future: Optional[Future[None]] = None,
+    ) -> Optional[Future[None]]:
+        return _hooks._start_learning_future(
+            self, run_messages=run_messages, session=session, user_id=user_id, existing_future=existing_future
+        )
+
+    async def _astart_learning_task(
+        self,
+        run_messages: RunMessages,
+        session: TeamSession,
+        user_id: Optional[str],
+        existing_task: Optional[asyncio.Task[None]] = None,
+    ) -> Optional[asyncio.Task[None]]:
+        return await _hooks._astart_learning_task(
+            self, run_messages=run_messages, session=session, user_id=user_id, existing_task=existing_task
         )
 
     def _get_response_format(

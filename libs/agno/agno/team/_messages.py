@@ -337,6 +337,16 @@ def get_system_message(
             "You should ALWAYS prefer information from this conversation over the past summary.\n\n"
         )
 
+    # Then add learnings to the system prompt
+    if team._learning is not None and team.add_learnings_to_context:
+        learning_context = team._learning.build_context(
+            user_id=user_id,
+            session_id=session.session_id if session else None,
+            team_id=team.id,
+        )
+        if learning_context:
+            system_message_content += learning_context + "\n"
+
     # Add search_knowledge instructions to the system prompt
     if team.knowledge is not None and team.search_knowledge and team.add_search_knowledge_instructions:
         build_context_fn = getattr(team.knowledge, "build_context", None)
@@ -654,6 +664,16 @@ async def aget_system_message(
             "Note: this information is from previous interactions and may be outdated. "
             "You should ALWAYS prefer information from this conversation over the past summary.\n\n"
         )
+
+    # Then add learnings to the system prompt
+    if team._learning is not None and team.add_learnings_to_context:
+        learning_context = await team._learning.abuild_context(
+            user_id=user_id,
+            session_id=session.session_id if session else None,
+            team_id=team.id,
+        )
+        if learning_context:
+            system_message_content += learning_context + "\n"
 
     # Add search_knowledge instructions to the system prompt
     if team.knowledge is not None and team.search_knowledge and team.add_search_knowledge_instructions:
@@ -1637,6 +1657,7 @@ def _deep_copy_field(team: "Team", field_name: str, field_value: Any) -> Any:
         "output_model",
         "session_summary_manager",
         "compression_manager",
+        "learning",
     ):
         return field_value
 
