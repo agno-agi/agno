@@ -1883,6 +1883,28 @@ def _handle_event(
 # ---------------------------------------------------------------------------
 
 
+def _normalize_requirements_payload(requirements: Optional[list]) -> Optional[list]:
+    """Normalize requirement payloads to RunRequirement objects."""
+    from agno.run.requirement import RunRequirement
+
+    if requirements is None:
+        return None
+
+    normalized_requirements = []
+    for req in requirements:
+        if isinstance(req, RunRequirement):
+            normalized_requirements.append(req)
+        elif isinstance(req, dict):
+            normalized_requirements.append(RunRequirement.from_dict(req))
+        else:
+            raise TypeError(
+                "Invalid requirement type in continue_run(..., requirements=...). "
+                f"Expected RunRequirement or dict, got {type(req).__name__}."
+            )
+
+    return normalized_requirements
+
+
 def _route_requirements_to_members(
     team: "Team",
     run_response: TeamRunOutput,
@@ -2039,9 +2061,12 @@ def _propagate_still_paused_member_requirements(
         log_debug(f"Re-propagating {len(result.requirements)} requirement(s) from still-paused member '{member_name}'")
         for req in result.requirements:
             req_copy = deepcopy(req)
-            req_copy.member_agent_id = member_id
-            req_copy.member_agent_name = member_name
-            req_copy.member_run_id = result.run_id
+            if req_copy.member_agent_id is None:
+                req_copy.member_agent_id = member_id
+            if req_copy.member_agent_name is None:
+                req_copy.member_agent_name = member_name
+            if req_copy.member_run_id is None:
+                req_copy.member_run_id = result.run_id
             run_response.requirements.append(req_copy)
 
 
@@ -2107,9 +2132,10 @@ def continue_run_dispatch(
         if run_response is None:
             raise RuntimeError(f"No runs found for run ID {run_id}")
 
-        run_response.requirements = requirements
+        run_response.requirements = _normalize_requirements_payload(requirements)
 
     run_response = cast(TeamRunOutput, run_response)
+    run_response.requirements = _normalize_requirements_payload(run_response.requirements)
 
     log_debug(f"Team Run Continue: {run_response.run_id}", center=True, symbol="*")
 
@@ -2301,9 +2327,10 @@ async def _acontinue_run_impl(
         if run_response is None:
             raise RuntimeError(f"No runs found for run ID {run_id}")
 
-        run_response.requirements = requirements
+        run_response.requirements = _normalize_requirements_payload(requirements)
 
     run_response = cast(TeamRunOutput, run_response)
+    run_response.requirements = _normalize_requirements_payload(run_response.requirements)
 
     log_debug(f"Team Run Continue: {run_response.run_id}", center=True, symbol="*")
 
@@ -2378,9 +2405,10 @@ async def _acontinue_run_stream_impl(
         if run_response is None:
             raise RuntimeError(f"No runs found for run ID {run_id}")
 
-        run_response.requirements = requirements
+        run_response.requirements = _normalize_requirements_payload(requirements)
 
     run_response = cast(TeamRunOutput, run_response)
+    run_response.requirements = _normalize_requirements_payload(run_response.requirements)
 
     log_debug(f"Team Run Continue: {run_response.run_id}", center=True, symbol="*")
 
