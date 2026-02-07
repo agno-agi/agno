@@ -761,16 +761,16 @@ def _determine_team_member_interactions(
 
 
 def _find_member_by_id(team: "Team", member_id: str) -> Optional[Tuple[int, Union[Agent, "Team"]]]:
-    """
-    Recursively search through team members and subteams to find an agent by name.
+    """Find a member (agent or team) by its URL-safe ID, searching recursively.
 
     Args:
-        member_id (str): ID of the agent to find
+        team: The team to search in.
+        member_id (str): URL-safe ID of the member to find.
 
     Returns:
-        Optional[Tuple[int, Union[Agent, "Team"], Optional[str]]]: Tuple containing:
-            - Index of the member in its immediate parent team
-            - The top-level leader agent
+        Optional[Tuple[int, Union[Agent, "Team"]]]: Tuple containing:
+            - Index of the member in its immediate parent's members list
+            - The matched member (Agent or Team)
     """
     from agno.team.team import Team
 
@@ -1373,7 +1373,7 @@ def _get_delegate_task_function(
                         t.cancel()
                 # Await cancellation to suppress warnings
                 for t in tasks:
-                    with contextlib.suppress(Exception):
+                    with contextlib.suppress(Exception, asyncio.CancelledError):
                         await t
         else:
             # Non-streaming concurrent run of members; collect results when done
