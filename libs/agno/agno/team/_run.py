@@ -169,6 +169,7 @@ def _run_tasks(
             )
             deque(pre_hook_iterator, maxlen=0)
 
+        goal_reached = False
         for iteration in range(1, max_iterations + 1):
             log_debug(f"Tasks iteration {iteration}/{max_iterations}")
 
@@ -280,10 +281,12 @@ def _run_tasks(
             # Check termination: goal marked complete or all tasks in terminal state
             if task_list.goal_complete:
                 log_debug("Tasks mode: goal marked complete by leader")
+                goal_reached = True
                 break
 
             if task_list.tasks and task_list.all_terminal():
                 log_debug("Tasks mode: all tasks in terminal state")
+                goal_reached = True
                 break
 
             raise_if_cancelled(run_response.run_id)  # type: ignore
@@ -322,7 +325,14 @@ def _run_tasks(
 
         raise_if_cancelled(run_response.run_id)  # type: ignore
 
-        run_response.status = RunStatus.completed
+        if goal_reached:
+            run_response.status = RunStatus.completed
+        else:
+            run_response.status = RunStatus.error
+            if not run_response.content:
+                run_response.content = (
+                    f"Tasks mode reached max iterations ({max_iterations}) without completing all tasks"
+                )
         team._cleanup_and_store(run_response=run_response, session=session)
         team._log_team_telemetry(session_id=session.session_id, run_id=run_response.run_id)
 
@@ -1337,6 +1347,7 @@ async def _arun_tasks(
         # Check and refresh MCP tools
         await team._check_and_refresh_mcp_tools()
 
+        goal_reached = False
         for iteration in range(1, max_iterations + 1):
             log_debug(f"Async tasks iteration {iteration}/{max_iterations}")
 
@@ -1440,10 +1451,12 @@ async def _arun_tasks(
 
             if task_list.goal_complete:
                 log_debug("Async tasks mode: goal marked complete by leader")
+                goal_reached = True
                 break
 
             if task_list.tasks and task_list.all_terminal():
                 log_debug("Async tasks mode: all tasks in terminal state")
+                goal_reached = True
                 break
 
             await araise_if_cancelled(run_response.run_id)  # type: ignore
@@ -1479,7 +1492,14 @@ async def _arun_tasks(
 
         await araise_if_cancelled(run_response.run_id)  # type: ignore
 
-        run_response.status = RunStatus.completed
+        if goal_reached:
+            run_response.status = RunStatus.completed
+        else:
+            run_response.status = RunStatus.error
+            if not run_response.content:
+                run_response.content = (
+                    f"Tasks mode reached max iterations ({max_iterations}) without completing all tasks"
+                )
 
         if team._has_async_db():
             await team._acleanup_and_store(run_response=run_response, session=team_session)
