@@ -241,6 +241,28 @@ class TestAgentDeepCopy:
         assert copy.name == "updated"
         assert agent.name == "original"
 
+    def test_deep_copy_with_team_id(self):
+        """deep_copy works when team_id (a non-init field) is set."""
+        agent = Agent(name="test-agent", id="test-id")
+        agent.team_id = "team-123"
+
+        copy = agent.deep_copy()
+
+        assert copy is not agent
+        assert copy.team_id == "team-123"
+        assert copy.name == "test-agent"
+
+    def test_deep_copy_with_workflow_id(self):
+        """deep_copy works when workflow_id (a non-init field) is set."""
+        agent = Agent(name="test-agent", id="test-id")
+        agent.workflow_id = "workflow-456"
+
+        copy = agent.deep_copy()
+
+        assert copy is not agent
+        assert copy.workflow_id == "workflow-456"
+        assert copy.name == "test-agent"
+
 
 # ============================================================================
 # Team Deep Copy Tests
@@ -274,6 +296,40 @@ class TestTeamDeepCopy:
         assert copy.members[0].id == member1.id
         assert copy.members[1].id == member2.id
 
+    def test_deep_copy_with_parent_team_id(self):
+        """deep_copy works when parent_team_id (a non-init field) is set."""
+        member = Agent(name="member", id="member-id")
+        team = Team(name="test-team", id="test-id", members=[member])
+        team.parent_team_id = "parent-team-123"
+
+        copy = team.deep_copy()
+
+        assert copy is not team
+        assert copy.parent_team_id == "parent-team-123"
+        assert copy.name == "test-team"
+
+    def test_deep_copy_nested_team(self):
+        """deep_copy works for nested teams where members have team_id/parent_team_id set."""
+        member1 = Agent(name="member1", id="member1-id")
+        member1.team_id = "inner-team-id"
+
+        inner_team = Team(name="inner-team", id="inner-team-id", members=[member1])
+        inner_team.parent_team_id = "outer-team-id"
+
+        outer_team = Team(name="outer-team", id="outer-team-id", members=[inner_team])
+
+        copy = outer_team.deep_copy()
+
+        assert copy is not outer_team
+        assert copy.name == "outer-team"
+        # The inner team should be deep copied and preserve its parent_team_id
+        copied_inner = copy.members[0]
+        assert copied_inner is not inner_team
+        assert copied_inner.parent_team_id == "outer-team-id"
+        # The member agent should also be deep copied
+        copied_member = copied_inner.members[0]
+        assert copied_member is not member1
+
 
 # ============================================================================
 # Workflow Deep Copy - Basic Tests
@@ -306,6 +362,20 @@ class TestWorkflowDeepCopy:
         assert copy.name == workflow.name
         assert copy.description == workflow.description
         assert copy.debug_mode == workflow.debug_mode
+
+    def test_deep_copy_with_websocket_handler(self):
+        """deep_copy works when websocket_handler (a non-init field) is set."""
+        from unittest.mock import MagicMock
+
+        workflow = Workflow(name="test-workflow", id="test-id")
+        mock_handler = MagicMock()
+        workflow.websocket_handler = mock_handler
+
+        copy = workflow.deep_copy()
+
+        assert copy is not workflow
+        assert copy.websocket_handler is not None
+        assert copy.name == "test-workflow"
 
 
 # ============================================================================

@@ -4845,63 +4845,80 @@ class Workflow:
         from copy import copy, deepcopy
         from dataclasses import fields
 
+        from agno.utils.deep_copy import get_init_params
         from agno.utils.log import log_debug, log_warning
 
-        # Extract the fields to set for the new Workflow
+        init_params = get_init_params(self.__class__)
+
         fields_for_new_workflow: Dict[str, Any] = {}
+        non_init_fields: Dict[str, Any] = {}
 
         for f in fields(self):
-            # Skip private fields (not part of __init__ signature)
             if f.name.startswith("_"):
                 continue
 
             field_value = getattr(self, f.name)
+            is_init = f.name in init_params
+
             if field_value is not None:
-                # Special handling for steps that may contain agents/teams
-                if f.name == "steps" and field_value is not None:
-                    fields_for_new_workflow[f.name] = self._deep_copy_steps(field_value)
-                # Special handling for workflow agent
-                elif f.name == "agent" and field_value is not None:
+                if f.name == "steps":
+                    copied = self._deep_copy_steps(field_value)
+                elif f.name == "agent":
                     if hasattr(field_value, "deep_copy"):
-                        fields_for_new_workflow[f.name] = field_value.deep_copy()
+                        copied = field_value.deep_copy()
                     else:
-                        fields_for_new_workflow[f.name] = field_value
+                        copied = field_value
                 # Share heavy resources - these maintain connections/pools that shouldn't be duplicated
                 elif f.name == "db":
-                    fields_for_new_workflow[f.name] = field_value
+                    copied = field_value
                 # For compound types, attempt a deep copy
                 elif isinstance(field_value, (list, dict, set)):
                     try:
-                        fields_for_new_workflow[f.name] = deepcopy(field_value)
+                        copied = deepcopy(field_value)
                     except Exception:
                         try:
-                            fields_for_new_workflow[f.name] = copy(field_value)
+                            copied = copy(field_value)
                         except Exception as e:
                             log_warning(f"Failed to copy field: {f.name} - {e}")
-                            fields_for_new_workflow[f.name] = field_value
+                            copied = field_value
                 # For pydantic models, attempt a model_copy
                 elif isinstance(field_value, BaseModel):
                     try:
-                        fields_for_new_workflow[f.name] = field_value.model_copy(deep=True)
+                        copied = field_value.model_copy(deep=True)
                     except Exception:
                         try:
-                            fields_for_new_workflow[f.name] = field_value.model_copy(deep=False)
+                            copied = field_value.model_copy(deep=False)
                         except Exception:
-                            fields_for_new_workflow[f.name] = field_value
+                            copied = field_value
                 # For other types, attempt a shallow copy
                 else:
                     try:
-                        fields_for_new_workflow[f.name] = copy(field_value)
+                        copied = copy(field_value)
                     except Exception:
-                        fields_for_new_workflow[f.name] = field_value
+                        copied = field_value
+            elif is_init:
+                # Preserve explicit None for init fields (avoids inheriting non-None defaults)
+                copied = None
+            else:
+                # Non-init fields default to None on new instances, no need to copy
+                continue
 
-        # Update fields if provided
+            if is_init:
+                fields_for_new_workflow[f.name] = copied
+            else:
+                non_init_fields[f.name] = copied
+
         if update:
-            fields_for_new_workflow.update(update)
+            for key, value in update.items():
+                if key in init_params:
+                    fields_for_new_workflow[key] = value
+                else:
+                    non_init_fields[key] = value
 
-        # Create a new Workflow
         try:
             new_workflow = self.__class__(**fields_for_new_workflow)
+            for field_name, field_value in non_init_fields.items():
+                setattr(new_workflow, field_name, field_value)
             log_debug(f"Created new {self.__class__.__name__}")
             return new_workflow
         except Exception as e:
