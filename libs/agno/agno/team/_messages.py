@@ -68,10 +68,9 @@ def get_members_system_message_content(team: "Team", indent: int = 0, run_contex
             system_message_content += f"{indent * ' '} - Team: {member.name}\n"
             system_message_content += f"{indent * ' '} - ID: {url_safe_member_id}\n"
             if member.members is not None:
-                # Don't pass run_context to subteams: run_context.members belongs to the
-                # parent team and would cause the subteam to iterate the parent's members,
-                # leading to infinite recursion.
-                system_message_content += member.get_members_system_message_content(indent=indent + 2)
+                system_message_content += member.get_members_system_message_content(
+                    indent=indent + 2, run_context=run_context
+                )
         else:
             system_message_content += f"{indent * ' '} - Agent {idx + 1}:\n"
             if url_safe_member_id is not None:
@@ -1638,9 +1637,6 @@ def _deep_copy_field(team: "Team", field_name: str, field_value: Any) -> Any:
 
     # For members, deep copy each agent/team
     if field_name == "members" and field_value is not None:
-        # Callable factories are not iterable — share by reference
-        if callable(field_value) and not isinstance(field_value, type):
-            return field_value
         copied_members = []
         for member in field_value:
             if hasattr(member, "deep_copy"):
@@ -1651,9 +1647,6 @@ def _deep_copy_field(team: "Team", field_name: str, field_value: Any) -> Any:
 
     # For tools, share MCP tools but copy others
     if field_name == "tools" and field_value is not None:
-        # Callable factories are not iterable — share by reference
-        if callable(field_value) and not isinstance(field_value, type):
-            return field_value
         try:
             copied_tools = []
             for tool in field_value:
