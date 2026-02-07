@@ -199,6 +199,22 @@ async def _check_and_refresh_mcp_tools(team: "Team") -> None:
                         continue
 
 
+async def _aresolve_callable_resources(team: "Team", run_context: RunContext) -> None:
+    """Async resolution of callable factories for tools, knowledge, and members.
+
+    Must be called from async run paths before _determine_tools_for_model.
+    """
+    from agno.utils.callables import (
+        aresolve_callable_knowledge,
+        aresolve_callable_members,
+        aresolve_callable_tools,
+    )
+
+    await aresolve_callable_tools(team, run_context)
+    await aresolve_callable_knowledge(team, run_context)
+    await aresolve_callable_members(team, run_context)
+
+
 def _determine_tools_for_model(
     team: "Team",
     model: Model,
@@ -230,10 +246,11 @@ def _determine_tools_for_model(
         resolve_callable_tools,
     )
 
-    # Resolve callable factories for tools, knowledge, and members
-    resolve_callable_tools(team, run_context)
-    resolve_callable_knowledge(team, run_context)
-    resolve_callable_members(team, run_context)
+    # Resolve callable factories (sync only — async paths pre-resolve via _aresolve_callable_resources)
+    if not async_mode:
+        resolve_callable_tools(team, run_context)
+        resolve_callable_knowledge(team, run_context)
+        resolve_callable_members(team, run_context)
 
     # Initialize members that were resolved from a callable factory
     resolved_members = get_resolved_members(team, run_context)
@@ -853,12 +870,15 @@ def _determine_team_member_interactions(
     return team_member_interactions_str
 
 
-def _find_member_by_id(team: "Team", member_id: str) -> Optional[Tuple[int, Union[Agent, "Team"]]]:
-    """Find a member (agent or team) by its URL-safe ID, searching recursively.
+def _find_member_by_id(
+    team: "Team", member_id: str, run_context: Optional[RunContext] = None
+) -> Optional[Tuple[int, Union[Agent, "Team"]]]:
+    """Find a member (agent or team) by URL-safe ID, searching recursively.
 
     Args:
         team: The team to search in.
         member_id (str): URL-safe ID of the member to find.
+        run_context: Optional run context containing resolved callable members.
 
     Returns:
         Optional[Tuple[int, Union[Agent, "Team"]]]: Tuple containing:
@@ -866,9 +886,10 @@ def _find_member_by_id(team: "Team", member_id: str) -> Optional[Tuple[int, Unio
             - The matched member (Agent or Team)
     """
     from agno.team.team import Team
+    from agno.utils.callables import get_resolved_members
 
-    # Use resolved members if available, otherwise fall back to static members
-    members = team.members if isinstance(team.members, list) else []
+    # Use resolved members (from run_context or static list)
+    members = get_resolved_members(team, run_context) or []
 
     # First check direct members
     for i, member in enumerate(members):
@@ -1068,7 +1089,7 @@ def _get_delegate_task_function(
         """
 
         # Find the member agent using the helper function
-        result = team._find_member_by_id(member_id)
+        result = team._find_member_by_id(member_id, run_context=run_context)
         if result is None:
             yield f"Member with ID {member_id} not found in the team or any subteams. Please choose the correct member from the list of members:\n\n{team.get_members_system_message_content(indent=0)}"
             return
@@ -1208,7 +1229,7 @@ def _get_delegate_task_function(
         """
 
         # Find the member agent using the helper function
-        result = team._find_member_by_id(member_id)
+        result = team._find_member_by_id(member_id, run_context=run_context)
         if result is None:
             yield f"Member with ID {member_id} not found in the team or any subteams. Please choose the correct member from the list of members:\n\n{team.get_members_system_message_content(indent=0)}"
             return

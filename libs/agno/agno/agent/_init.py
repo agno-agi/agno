@@ -371,6 +371,9 @@ def deep_copy_field(agent: Agent, field_name: str, field_value: Any) -> Any:
 
     # For tools, share MCP tools but copy others
     if field_name == "tools" and field_value is not None:
+        # Callable factories are not iterable — share by reference
+        if callable(field_value) and not isinstance(field_value, type):
+            return field_value
         try:
             copied_tools = []
             for tool in field_value:  # type: ignore

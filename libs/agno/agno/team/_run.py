@@ -1361,6 +1361,9 @@ async def _arun_tasks(
 
             team_run_context: Dict[str, Any] = {}
 
+            # Resolve callable factories asynchronously before determining tools
+            await team._aresolve_callable_resources(run_context=run_context)
+
             _tools = team._determine_tools_for_model(
                 model=team.model,
                 run_response=run_response,
@@ -1664,6 +1667,10 @@ async def _arun(
                 team_run_context: Dict[str, Any] = {}
                 team.model = cast(Model, team.model)
                 await team._check_and_refresh_mcp_tools()
+
+                # Resolve callable factories asynchronously before determining tools
+                await team._aresolve_callable_resources(run_context=run_context)
+
                 _tools = team._determine_tools_for_model(
                     model=team.model,
                     run_response=run_response,
@@ -2003,6 +2010,10 @@ async def _arun_stream(
                 team_run_context: Dict[str, Any] = {}
                 team.model = cast(Model, team.model)
                 await team._check_and_refresh_mcp_tools()
+
+                # Resolve callable factories asynchronously before determining tools
+                await team._aresolve_callable_resources(run_context=run_context)
+
                 _tools = team._determine_tools_for_model(
                     model=team.model,
                     run_response=run_response,
