@@ -465,6 +465,18 @@ def handle_agent_run_paused(
 
     _storage.cleanup_and_store(agent, run_response=run_response, session=session, user_id=user_id)
 
+    # Create approval record if any tool has requires_approval=True
+    if agent.db is not None:
+        from agno.run.approval import create_approval_from_pause
+
+        create_approval_from_pause(
+            agent.db,
+            run_response,
+            agent_id=agent.id,
+            agent_name=agent.name,
+            user_id=user_id,
+        )
+
     log_debug(f"Agent Run Paused: {run_response.run_id}", center=True, symbol="*")
 
     # We return and await confirmation/completion for the tools that require it
@@ -499,6 +511,18 @@ def handle_agent_run_paused_stream(
 
     _storage.cleanup_and_store(agent, run_response=run_response, session=session, user_id=user_id)
 
+    # Create approval record if any tool has requires_approval=True
+    if agent.db is not None:
+        from agno.run.approval import create_approval_from_pause
+
+        create_approval_from_pause(
+            agent.db,
+            run_response,
+            agent_id=agent.id,
+            agent_name=agent.name,
+            user_id=user_id,
+        )
+
     yield pause_event  # type: ignore
 
     log_debug(f"Agent Run Paused: {run_response.run_id}", center=True, symbol="*")
@@ -519,6 +543,18 @@ async def ahandle_agent_run_paused(
         run_response.content = get_paused_content(run_response)
 
     await _storage.acleanup_and_store(agent, run_response=run_response, session=session, user_id=user_id)
+
+    # Create approval record if any tool has requires_approval=True
+    if agent.db is not None:
+        from agno.run.approval import acreate_approval_from_pause
+
+        await acreate_approval_from_pause(
+            agent.db,
+            run_response,
+            agent_id=agent.id,
+            agent_name=agent.name,
+            user_id=user_id,
+        )
 
     log_debug(f"Agent Run Paused: {run_response.run_id}", center=True, symbol="*")
 
@@ -553,6 +589,18 @@ async def ahandle_agent_run_paused_stream(
     )
 
     await _storage.acleanup_and_store(agent, run_response=run_response, session=session, user_id=user_id)
+
+    # Create approval record if any tool has requires_approval=True
+    if agent.db is not None:
+        from agno.run.approval import acreate_approval_from_pause
+
+        await acreate_approval_from_pause(
+            agent.db,
+            run_response,
+            agent_id=agent.id,
+            agent_name=agent.name,
+            user_id=user_id,
+        )
 
     yield pause_event  # type: ignore
 
