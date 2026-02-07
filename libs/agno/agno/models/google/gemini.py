@@ -77,6 +77,7 @@ class Gemini(Model):
     provider: str = "Google"
 
     supports_native_structured_outputs: bool = True
+    is_cumulative_usage: bool = True
 
     # Request parameters
     function_declarations: Optional[List[Any]] = None
