@@ -2679,6 +2679,11 @@ async def arun_background_impl(
                 await team.asave_session(session=error_session)
             except Exception as persist_err:
                 log_error(f"Failed to persist error state for team run {run_response.run_id}: {persist_err}")
+            # Clean up cancellation tracking so the run_id doesn't leak
+            try:
+                await acleanup_run(run_context.run_id)
+            except Exception:
+                pass
 
     # 5. Spawn background task
     loop = asyncio.get_running_loop()
