@@ -3,11 +3,19 @@
 from agno.agent import Agent
 from agno.db.in_memory import InMemoryDb
 
-# Setup the in-memory database
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
 db = InMemoryDb()
 
-# Setup the agent and pass the database
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 agent = Agent(db=db)
 
-# The Agent sessions will now be stored in the in-memory database
-agent.print_response("Give me an easy and healthy dinner recipe")
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    # The Agent sessions will now be stored in the in-memory database
+    agent.print_response("Give me an easy and healthy dinner recipe")
