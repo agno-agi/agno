@@ -1,5 +1,9 @@
 """
-Create user memories with an Agent by providing a either text or a list of messages.
+Custom Memory Capture Instructions
+==================================
+
+This example shows how to customize memory capture instructions and compare the
+results with a default memory manager.
 """
 
 from agno.db.postgres import PostgresDb
@@ -9,10 +13,15 @@ from agno.models.message import Message
 from agno.models.openai import OpenAIChat
 from rich.pretty import pprint
 
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
-
 memory_db = PostgresDb(db_url=db_url)
 
+# ---------------------------------------------------------------------------
+# Create Memory Managers
+# ---------------------------------------------------------------------------
 memory = MemoryManager(
     model=OpenAIChat(id="gpt-4o"),
     memory_capture_instructions="""\
@@ -23,10 +32,13 @@ memory = MemoryManager(
     db=memory_db,
 )
 
-john_doe_id = "john_doe@example.com"
-
-memory.create_user_memories(
-    message="""\
+# ---------------------------------------------------------------------------
+# Run Memory Manager
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    john_doe_id = "john_doe@example.com"
+    memory.create_user_memories(
+        message="""\
 My name is John Doe.
 
 I enjoy hiking in the mountains on weekends,
@@ -36,48 +48,44 @@ playing chess with friends.
 
 I am interested to learn about the history of the universe and other astronomical topics.
 """,
-    user_id=john_doe_id,
-)
+        user_id=john_doe_id,
+    )
 
+    memories = memory.get_user_memories(user_id=john_doe_id)
+    print("John Doe's memories:")
+    pprint(memories)
 
-memories = memory.get_user_memories(user_id=john_doe_id)
-print("John Doe's memories:")
-pprint(memories)
+    memory = MemoryManager(model=Claude(id="claude-3-5-sonnet-latest"), db=memory_db)
+    jane_doe_id = "jane_doe@example.com"
 
+    memory.create_user_memories(
+        messages=[
+            Message(role="user", content="Hi, how are you?"),
+            Message(role="assistant", content="I'm good, thank you!"),
+            Message(role="user", content="What are you capable of?"),
+            Message(
+                role="assistant",
+                content="I can help you with your homework and answer questions about the universe.",
+            ),
+            Message(role="user", content="My name is Jane Doe"),
+            Message(role="user", content="I like to play chess"),
+            Message(
+                role="user",
+                content="Actually, forget that I like to play chess. I more enjoy playing table top games like dungeons and dragons",
+            ),
+            Message(
+                role="user",
+                content="I'm also interested in learning about the history of the universe and other astronomical topics.",
+            ),
+            Message(role="assistant", content="That is great!"),
+            Message(
+                role="user",
+                content="I am really interested in physics. Tell me about quantum mechanics?",
+            ),
+        ],
+        user_id=jane_doe_id,
+    )
 
-# Use default memory manager
-memory = MemoryManager(model=Claude(id="claude-3-5-sonnet-latest"), db=memory_db)
-jane_doe_id = "jane_doe@example.com"
-
-# Send a history of messages and add memories
-memory.create_user_memories(
-    messages=[
-        Message(role="user", content="Hi, how are you?"),
-        Message(role="assistant", content="I'm good, thank you!"),
-        Message(role="user", content="What are you capable of?"),
-        Message(
-            role="assistant",
-            content="I can help you with your homework and answer questions about the universe.",
-        ),
-        Message(role="user", content="My name is Jane Doe"),
-        Message(role="user", content="I like to play chess"),
-        Message(
-            role="user",
-            content="Actually, forget that I like to play chess. I more enjoy playing table top games like dungeons and dragons",
-        ),
-        Message(
-            role="user",
-            content="I'm also interested in learning about the history of the universe and other astronomical topics.",
-        ),
-        Message(role="assistant", content="That is great!"),
-        Message(
-            role="user",
-            content="I am really interested in physics. Tell me about quantum mechanics?",
-        ),
-    ],
-    user_id=jane_doe_id,
-)
-
-memories = memory.get_user_memories(user_id=jane_doe_id)
-print("Jane Doe's memories:")
-pprint(memories)
+    memories = memory.get_user_memories(user_id=jane_doe_id)
+    print("Jane Doe's memories:")
+    pprint(memories)
