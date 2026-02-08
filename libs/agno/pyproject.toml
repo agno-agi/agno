@@ -443,6 +443,7 @@ module = [
   "clickhouse_connect.*",
   "clip.*",
   "cohere.*",
+  "croniter.*",
   "crawl4ai.*",
   "daytona.*",
   "daytona_api_client.*",

@@ -18,7 +18,7 @@ except ImportError:
 _RUN_ENDPOINT_RE = re.compile(r"^/(agents|teams|workflows)/([^/]+)/runs/?$")
 
 # Terminal run statuses (RunStatus enum values from agno.run.base)
-_TERMINAL_STATUSES = {"COMPLETED", "CANCELLED", "ERROR"}
+_TERMINAL_STATUSES = {"COMPLETED", "CANCELLED", "ERROR", "PAUSED"}
 
 # Default polling interval in seconds for background run status checks
 _DEFAULT_POLL_INTERVAL = 30
@@ -354,8 +354,6 @@ class ScheduleExecutor:
         deadline = time.monotonic() + timeout_seconds
 
         while True:
-            await asyncio.sleep(self.poll_interval)
-
             if time.monotonic() >= deadline:
                 return {
                     "status": "failed",
@@ -364,6 +362,8 @@ class ScheduleExecutor:
                     "run_id": run_id,
                     "session_id": session_id,
                 }
+
+            await asyncio.sleep(self.poll_interval)
 
             try:
                 resp = await client.request(
@@ -399,6 +399,9 @@ class ScheduleExecutor:
             if run_status in _TERMINAL_STATUSES:
                 if run_status == "COMPLETED":
                     status = "success"
+                    error = None
+                elif run_status == "PAUSED":
+                    status = "paused"
                     error = None
                 elif run_status == "CANCELLED":
                     status = "failed"
