@@ -17,9 +17,9 @@ from agno.db.postgres import PostgresDb
 from agno.learn import LearningMachine, LearningMode, UserProfileConfig
 from agno.models.openai import OpenAIResponses
 
-# ============================================================================
-# Setup
-# ============================================================================
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 
@@ -34,9 +34,9 @@ agent = Agent(
     markdown=True,
 )
 
-# ============================================================================
-# Demo: Gradual Profile Building
-# ============================================================================
+# ---------------------------------------------------------------------------
+# Run: Gradual Profile Building
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     user_id = "marcus@example.com"
