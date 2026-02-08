@@ -1,4 +1,5 @@
 """Loop with CEL end condition: stop when agent signals completion.
+================================================================
 
 Uses last_step_content.contains() to detect a keyword in the output
 that signals the loop should stop.
@@ -11,6 +12,9 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.workflow import CEL_AVAILABLE, Loop, Step, Workflow
 
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
 if not CEL_AVAILABLE:
     print("CEL is not available. Install with: pip install cel-python")
     exit(1)

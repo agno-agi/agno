@@ -1,23 +1,16 @@
-# TEST_LOG
-Generated: 2026-02-07 23:53:42
+# TEST LOG
 
-### check_cookbook_pattern.py
+Generated: 2026-02-08 15:41 UTC
 
-**Status:** PASS
-
-**Description:** Ran `.venvs/demo/bin/python cookbook/scripts/check_cookbook_pattern.py --base-dir cookbook/02_agents/rag`.
-
-**Result:** Structure validation passed with no violations (checked 5 file(s)).
-
----
+Pattern Check: Checked 5 file(s) in /Users/ab/conductor/workspaces/agno/colombo/cookbook/02_agents/rag. Violations: 0
 
 ### agentic_rag.py
 
 **Status:** PASS
 
-**Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/rag/agentic_rag.py`.
+**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
 
-**Result:** Example completed successfully. (exit code 0, ~9.49s).
+**Result:** Completed successfully in 13s.
 
 ---
 
@@ -25,9 +18,9 @@ Generated: 2026-02-07 23:53:42
 
 **Status:** FAIL
 
-**Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/rag/agentic_rag_with_reasoning.py`.
+**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
 
-**Result:** Failed with exit code 1. ImportError: `cohere` not installed. Please install using `pip install cohere`.
+**Result:** Failed with import dependency error: `cohere` not installed. Please install using `pip install cohere`.
 
 ---
 
@@ -35,9 +28,9 @@ Generated: 2026-02-07 23:53:42
 
 **Status:** FAIL
 
-**Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/rag/agentic_rag_with_reranking.py`.
+**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
 
-**Result:** Failed with exit code 1. ImportError: cohere not installed, please run pip install cohere
+**Result:** Failed with import dependency error: cohere not installed, please run pip install cohere
 
 ---
 
@@ -45,9 +38,9 @@ Generated: 2026-02-07 23:53:42
 
 **Status:** FAIL
 
-**Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/rag/rag_custom_embeddings.py`.
+**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
 
-**Result:** Failed with exit code 1. ImportError: `sentence-transformers` not installed, please run `pip install sentence-transformers`
+**Result:** Failed with import dependency error: `sentence-transformers` not installed, please run `pip install sentence-transformers`
 
 ---
 
@@ -55,8 +48,9 @@ Generated: 2026-02-07 23:53:42
 
 **Status:** PASS
 
-**Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/rag/traditional_rag.py`.
+**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
 
-**Result:** Example completed successfully. (exit code 0, ~10.94s).
+**Result:** Completed successfully in 17s.
 
 ---
+

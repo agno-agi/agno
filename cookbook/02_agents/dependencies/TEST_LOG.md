@@ -1,23 +1,16 @@
-# TEST_LOG
-Generated: 2026-02-07 23:53:42
+# TEST LOG
 
-### check_cookbook_pattern.py
+Generated: 2026-02-08 15:41 UTC
 
-**Status:** PASS
-
-**Description:** Ran `.venvs/demo/bin/python cookbook/scripts/check_cookbook_pattern.py --base-dir cookbook/02_agents/dependencies`.
-
-**Result:** Structure validation passed with no violations (checked 3 file(s)).
-
----
+Pattern Check: Checked 3 file(s) in /Users/ab/conductor/workspaces/agno/colombo/cookbook/02_agents/dependencies. Violations: 0
 
 ### dependencies_in_context.py
 
 **Status:** PASS
 
-**Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/dependencies/dependencies_in_context.py`.
+**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
 
-**Result:** Example completed successfully. (exit code 0, ~9.24s).
+**Result:** Completed successfully in 27s.
 
 ---
 
@@ -25,9 +18,9 @@ Generated: 2026-02-07 23:53:42
 
 **Status:** PASS
 
-**Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/dependencies/dependencies_in_tools.py`.
+**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
 
-**Result:** Example completed successfully. (exit code 0, ~6.59s).
+**Result:** Completed successfully in 19s.
 
 ---
 
@@ -35,8 +28,9 @@ Generated: 2026-02-07 23:53:42
 
 **Status:** PASS
 
-**Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/dependencies/dynamic_tools.py`.
+**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
 
-**Result:** Example completed successfully. (exit code 0, ~3.31s).
+**Result:** Completed successfully in 3s.
 
 ---
+

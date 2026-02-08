@@ -9,6 +9,9 @@ import asyncio
 import json
 from typing import Optional
 
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
 try:
     import websockets
 except ImportError:

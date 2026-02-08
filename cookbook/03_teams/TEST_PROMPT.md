@@ -1,9 +1,3 @@
-# Prompt to test: `cookbook/03_teams`
-
-Use this prompt with an AI coding agent to test and validate the teams cookbook.
-
----
-
 Goal: Thoroughly test and validate `cookbook/03_teams` so it aligns with our cookbook standards.
 
 Context files (read these first):

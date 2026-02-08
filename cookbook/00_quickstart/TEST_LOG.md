@@ -1,32 +1,11 @@
 # TEST_LOG.md - Quick Start Cookbook
 
-Test results for `cookbook/00_quickstart/` cookbooks.
+Test results for `cookbook/00_quickstart/` examples.
 
-**Test Date:** 2026-02-07  
-**Environment:** `direnv exec . .venvs/demo/bin/python`  
-**Model:** Gemini (`gemini-3-flash-preview`)
-
----
-
-## Summary
-
-| Phase | Test | Status |
-|:------|:-----|:-------|
-| Phase 1: Basic | agent_with_tools.py | PASS |
-| Phase 1: Basic | agent_with_structured_output.py | PASS |
-| Phase 1: Basic | agent_with_typed_input_output.py | PASS |
-| Phase 2: Persistence | agent_with_storage.py | PASS |
-| Phase 2: Persistence | agent_with_memory.py | PASS |
-| Phase 2: Persistence | agent_with_state_management.py | PASS |
-| Phase 3: Knowledge | agent_search_over_knowledge.py | PASS |
-| Phase 3: Knowledge | custom_tool_for_self_learning.py | PASS |
-| Phase 4: Safety | agent_with_guardrails.py | PASS |
-| Phase 4: Safety | human_in_the_loop.py | PASS |
-| Phase 5: Multi-Agent | multi_agent_team.py | PASS |
-| Phase 5: Multi-Agent | sequential_workflow.py | PASS |
-| Phase 6: AgentOS | run.py | PASS (startup validated) |
-
-**Overall: 13 PASS**
+**Test Date:** 2026-02-08  
+**Environment:** `.venvs/demo/bin/python` with `direnv` exports loaded  
+**Database:** `pgvector` container running (`pgvector`, port `5532`)  
+**Execution Artifacts:** `.context/quickstart_results.json`, `.context/quickstart_logs/*.log`
 
 ---
 
@@ -36,53 +15,41 @@ Test results for `cookbook/00_quickstart/` cookbooks.
 
 **Status:** PASS
 
-**Description:** Verified cookbook Python structure against `cookbook/STYLE_GUIDE.md` rules.
+**Description:** Validates cookbook structure and formatting pattern for quickstart examples.
 
-**Result:** Ran `.venvs/demo/bin/python cookbook/scripts/check_cookbook_pattern.py --base-dir cookbook/00_quickstart` and got `Violations: 0`.
-
----
-
-## Phase 1: Basic
-
-### agent_with_tools.py
-
-**Status:** PASS
-
-**Description:** Finance agent with YFinance tools for live market analysis.
-
-**Result:** Agent called finance tools and produced an investment brief for NVDA, including valuation, drivers, risks, and recommendation.
+**Result:** `.venvs/demo/bin/python cookbook/scripts/check_cookbook_pattern.py --base-dir cookbook/00_quickstart` reported `Checked 13 file(s) ... Violations: 0`.
 
 ---
 
-### agent_with_structured_output.py
+### style_guide_compliance_scan
 
 **Status:** PASS
 
-**Description:** Agent returning typed `StockAnalysis` output schema.
+**Description:** Validates module docstring with `=====` underline, section banners, import placement, `if __name__ == "__main__":` gate, and no emoji characters.
 
-**Result:** Run completed with structured analysis output populated with expected fields (ticker/company/price/summary/drivers/risks/recommendation).
+**Result:** Custom style scan over all 13 runnable files reported `STYLE_OK` with no issues.
 
 ---
 
-### agent_with_typed_input_output.py
+## Runtime Validation
+
+### agent_search_over_knowledge.py
 
 **Status:** PASS
 
-**Description:** Agent with both typed input schema and typed output schema.
+**Description:** Validates knowledge-base loading/search and response generation.
 
-**Result:** Completed both example analyses (`NVDA` and `AAPL`) and returned typed outputs with valid recommendations.
+**Result:** Exited `0` in 8.74s; completed the knowledge-search flow.
 
 ---
 
-## Phase 2: Persistence
-
-### agent_with_storage.py
+### agent_with_guardrails.py
 
 **Status:** PASS
 
-**Description:** Agent session persistence via SQLite storage.
+**Description:** Validates guardrails for PII, prompt-injection, and spam-like input.
 
-**Result:** Multi-turn session completed and preserved conversational context across follow-up prompts within the same `session_id`.
+**Result:** Exited `0` in 13.18s; guardrail validation errors were emitted as expected for blocked inputs and valid input was processed.
 
 ---
 
@@ -90,9 +57,9 @@ Test results for `cookbook/00_quickstart/` cookbooks.
 
 **Status:** PASS
 
-**Description:** Agent memory extraction and retrieval with `MemoryManager`.
+**Description:** Validates memory extraction and recall behavior.
 
-**Result:** Captured user preference/risk memories and successfully retrieved saved memories for `investor@example.com`.
+**Result:** Exited `0` in 25.43s; memory operations completed successfully.
 
 ---
 
@@ -100,21 +67,49 @@ Test results for `cookbook/00_quickstart/` cookbooks.
 
 **Status:** PASS
 
-**Description:** Agent-managed session state using custom watchlist tools.
+**Description:** Validates stateful tool interactions and session watchlist behavior.
 
-**Result:** Added symbols to watchlist, reported performance, and showed persisted state with `['NVDA', 'AAPL', 'GOOGL']`.
+**Result:** Exited `0` in 15.95s; session state flow completed.
 
 ---
 
-## Phase 3: Knowledge
-
-### agent_search_over_knowledge.py
+### agent_with_storage.py
 
 **Status:** PASS
 
-**Description:** Agentic knowledge-base search with Chroma hybrid retrieval.
+**Description:** Validates persisted session storage and response generation.
 
-**Result:** Inserted Agno documentation URL into KB and answered "What is Agno?" using retrieved knowledge.
+**Result:** Exited `0` in 26.65s; completed end-to-end persisted-session flow.
+
+---
+
+### agent_with_structured_output.py
+
+**Status:** PASS
+
+**Description:** Validates schema-constrained output generation.
+
+**Result:** Exited `0` in 14.34s; structured output returned. Non-fatal warning observed about non-text response parts (`function_call` parts concatenated to text).
+
+---
+
+### agent_with_tools.py
+
+**Status:** PASS
+
+**Description:** Validates tool-using agent behavior with market-data tools.
+
+**Result:** Exited `0` in 10.52s; tool-driven analysis flow completed.
+
+---
+
+### agent_with_typed_input_output.py
+
+**Status:** PASS
+
+**Description:** Validates typed request input and typed response output flow.
+
+**Result:** Exited `0` in 18.10s; typed I/O flow completed. Non-fatal warning observed about non-text response parts (`function_call` parts concatenated to text).
 
 ---
 
@@ -122,21 +117,9 @@ Test results for `cookbook/00_quickstart/` cookbooks.
 
 **Status:** PASS
 
-**Description:** Self-learning agent with custom `save_learning` tool.
+**Description:** Validates custom learning tool save/search behavior.
 
-**Result:** Saved a reusable valuation learning and later retrieved it from the knowledge base.
-
----
-
-## Phase 4: Safety
-
-### agent_with_guardrails.py
-
-**Status:** PASS
-
-**Description:** Built-in and custom guardrails (PII, prompt injection, spam).
-
-**Result:** Normal prompt processed; PII, injection, and spam prompts were blocked as expected by guardrails.
+**Result:** Exited `0` in 24.48s; learning retrieval worked.
 
 ---
 
@@ -144,21 +127,29 @@ Test results for `cookbook/00_quickstart/` cookbooks.
 
 **Status:** PASS
 
-**Description:** Confirmation-required tool flow with manual approval checkpoint.
+**Description:** Validates confirmation-required tool execution.
 
-**Result:** Confirmation prompt appeared for `save_learning`; automated test approved (`y`) and run resumed via `continue_run`, then saved the learning.
+**Result:** Exited `0` in 10.79s; confirmation path exercised with stdin `y` and execution completed.
 
 ---
-
-## Phase 5: Multi-Agent
 
 ### multi_agent_team.py
 
 **Status:** PASS
 
-**Description:** Team collaboration between bull analyst, bear analyst, and lead analyst.
+**Description:** Validates team collaboration, delegation, and synthesis flow.
 
-**Result:** Team delegated analysis, synthesized opposing views, and handled follow-up comparison (`AMD`) successfully.
+**Result:** Exited `0` in 94.08s; multi-agent team run completed successfully in this environment.
+
+---
+
+### run.py
+
+**Status:** PASS
+
+**Description:** Startup-only validation for long-running AgentOS server.
+
+**Result:** Ran for 25s and intentionally timed out (`exit 124`) after startup checks; observed `Uvicorn running on` and `Application startup complete`.
 
 ---
 
@@ -166,26 +157,28 @@ Test results for `cookbook/00_quickstart/` cookbooks.
 
 **Status:** PASS
 
-**Description:** Three-step workflow (Data Gathering -> Analysis -> Report Writing).
+**Description:** Validates sequential multi-step workflow execution.
 
-**Result:** All three steps completed in order with final report output; run completed in ~33s.
-
----
-
-## Phase 6: AgentOS
-
-### run.py
-
-**Status:** PASS (startup validated)
-
-**Description:** AgentOS server bootstrap for all quickstart agents/teams/workflows.
-
-**Result:** Server started successfully (`Uvicorn running on http://localhost:7777`, `Application startup complete`). Process was intentionally timeout-stopped after startup validation.
+**Result:** Exited `0` in 37.27s; workflow completed all steps.
 
 ---
 
-## Notes
+## Summary
 
-1. Test logs captured in `.context/quickstart_run_20260207_195859/`.
-2. `run.py` is long-running by design; startup-only validation was performed.
-3. Output and metrics vary by market data/API responses and run time.
+| File | Status | Notes |
+|------|--------|-------|
+| `agent_search_over_knowledge.py` | PASS | Exited `0`; knowledge-search flow completed |
+| `agent_with_guardrails.py` | PASS | Exited `0`; guardrails blocked invalid inputs and allowed valid input |
+| `agent_with_memory.py` | PASS | Exited `0`; memory flow completed |
+| `agent_with_state_management.py` | PASS | Exited `0`; session state flow completed |
+| `agent_with_storage.py` | PASS | Exited `0`; persisted-session response completed |
+| `agent_with_structured_output.py` | PASS | Exited `0`; structured output returned with non-fatal non-text-parts warning |
+| `agent_with_tools.py` | PASS | Exited `0`; tool-driven analysis completed |
+| `agent_with_typed_input_output.py` | PASS | Exited `0`; typed I/O completed with non-fatal non-text-parts warning |
+| `custom_tool_for_self_learning.py` | PASS | Exited `0`; learning save/search completed |
+| `human_in_the_loop.py` | PASS | Exited `0`; approval path completed with stdin `y` |
+| `multi_agent_team.py` | PASS | Exited `0`; team collaboration flow completed |
+| `run.py` | PASS | Startup markers observed; intentionally timed out after 25s |
+| `sequential_workflow.py` | PASS | Exited `0`; sequential workflow completed |
+
+**Overall:** 13 PASS, 0 FAIL

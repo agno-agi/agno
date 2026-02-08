@@ -1,4 +1,5 @@
 """Router with CEL expression: route from session_state.
+=====================================================
 
 Uses session_state.preferred_handler to persist routing preferences
 across workflow runs.
@@ -12,6 +13,9 @@ from agno.models.openai import OpenAIChat
 from agno.workflow import CEL_AVAILABLE, Step, Workflow
 from agno.workflow.router import Router
 
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
 if not CEL_AVAILABLE:
     print("CEL is not available. Install with: pip install cel-python")
     exit(1)

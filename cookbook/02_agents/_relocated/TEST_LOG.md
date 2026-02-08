@@ -1,23 +1,16 @@
-# TEST_LOG
-Generated: 2026-02-07 23:53:42
+# TEST LOG
 
-### check_cookbook_pattern.py
+Generated: 2026-02-08 15:41 UTC
 
-**Status:** PASS
-
-**Description:** Ran `.venvs/demo/bin/python cookbook/scripts/check_cookbook_pattern.py --base-dir cookbook/02_agents/_relocated`.
-
-**Result:** Structure validation passed with no violations (checked 3 file(s)).
-
----
+Pattern Check: Checked 3 file(s) in /Users/ab/conductor/workspaces/agno/colombo/cookbook/02_agents/_relocated. Violations: 0
 
 ### agentic_rag_infinity_reranker.py
 
 **Status:** FAIL
 
-**Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/_relocated/agentic_rag_infinity_reranker.py`.
+**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
 
-**Result:** Failed with exit code 1. ImportError: `cohere` not installed. Please install using `pip install cohere`.
+**Result:** Failed with import dependency error: `cohere` not installed. Please install using `pip install cohere`.
 
 ---
 
@@ -25,9 +18,9 @@ Generated: 2026-02-07 23:53:42
 
 **Status:** FAIL
 
-**Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/_relocated/agentic_rag_with_lightrag.py`.
+**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
 
-**Result:** Failed with exit code 1. ImportError: The `wikipedia` package is not installed. Please install it via `pip install wikipedia`.
+**Result:** Failed with import dependency error: The `wikipedia` package is not installed. Please install it via `pip install wikipedia`.
 
 ---
 
@@ -35,8 +28,9 @@ Generated: 2026-02-07 23:53:42
 
 **Status:** FAIL
 
-**Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/_relocated/local_rag_langchain_qdrant.py`.
+**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
 
-**Result:** Failed with exit code 1. ImportError: `ollama` not installed. Please install using `pip install ollama`
+**Result:** Failed with import dependency error: `ollama` not installed. Please install using `pip install ollama`
 
 ---
+

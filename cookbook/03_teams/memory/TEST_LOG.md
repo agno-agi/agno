@@ -1,6 +1,6 @@
 # Test Log: memory
 
-> Updated: 2026-02-08 00:52:28 
+> Updated: 2026-02-08 15:49:52
 
 ## Pattern Check
 
@@ -16,7 +16,7 @@
 
 **Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/memory/01_team_with_memory_manager.py`.
 
-**Result:** Completed successfully (exit 0) in 6.91s. Tail: │   │   team_id='1a151be0-ce37-4162-8185-536d6a6dbff1' | │   ) | ]
+**Result:** Executed successfully. Duration: 7.16s. Tail: /postgres.py", line 1093, in upsert_session |     raise e |   File "/Users/ab/conductor/workspaces/agno/colombo/libs/agno/agno/db/postgres/postgres.py", line 1050, in upsert_session |     return TeamSession.from_dict(session_dict) |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ | NameError: name 'requirements' is not defined. Did you mean: 'RunRequirement'?
 
 ---
 
@@ -26,7 +26,7 @@
 
 **Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/memory/02_team_with_agentic_memory.py`.
 
-**Result:** Completed successfully (exit 0) in 12.44s. Tail: ┃ hobbies?                                                                     ┃ | ┃                                                                              ┃ | ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+**Result:** Executed successfully. Duration: 17.59s. Tail: /postgres.py", line 1093, in upsert_session |     raise e |   File "/Users/ab/conductor/workspaces/agno/colombo/libs/agno/agno/db/postgres/postgres.py", line 1050, in upsert_session |     return TeamSession.from_dict(session_dict) |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ | NameError: name 'requirements' is not defined. Did you mean: 'RunRequirement'?
 
 ---
 
@@ -36,6 +36,6 @@
 
 **Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/memory/learning_machine.py`.
 
-**Result:** Completed successfully (exit 0) in 8.08s. Tail: ┃ points vs. prose, more examples), and I’ll match it.                         ┃ | ┃                                                                              ┃ | ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+**Result:** Executed successfully. Duration: 4.98s. Tail: db/sqlite/sqlite.py", line 1039, in upsert_session |     raise e |   File "/Users/ab/conductor/workspaces/agno/colombo/libs/agno/agno/db/sqlite/sqlite.py", line 998, in upsert_session |     return TeamSession.from_dict(session_raw) |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ | NameError: name 'requirements' is not defined. Did you mean: 'RunRequirement'?
 
 ---

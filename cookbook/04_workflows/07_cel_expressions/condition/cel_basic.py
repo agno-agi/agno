@@ -1,4 +1,5 @@
 """Condition with CEL expression: route based on input content.
+============================================================
 
 Uses input.contains() to check whether the request is urgent,
 branching to different agents via if/else steps.
@@ -11,6 +12,9 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.workflow import CEL_AVAILABLE, Condition, Step, Workflow
 
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
 if not CEL_AVAILABLE:
     print("CEL is not available. Install with: pip install cel-python")
     exit(1)
