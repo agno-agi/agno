@@ -64,6 +64,7 @@ research_team = Team(
     instructions="Analyze content and create comprehensive social media strategy",
 )
 
+
 # ---------------------------------------------------------------------------
 # Define Function Executors
 # ---------------------------------------------------------------------------
@@ -144,7 +145,9 @@ def custom_content_planning_function(
 
 def content_summary_function(step_input: StepInput, session_state: dict) -> StepOutput:
     if "content_plans" not in session_state or not session_state["content_plans"]:
-        return StepOutput(content="No content plans found in session state.", success=False)
+        return StepOutput(
+            content="No content plans found in session state.", success=False
+        )
 
     plans = session_state["content_plans"]
     summary = f"""
@@ -285,6 +288,7 @@ def content_summary_function_stream(
 
     yield StepOutput(content=summary.strip())
 
+
 # ---------------------------------------------------------------------------
 # Define Steps
 # ---------------------------------------------------------------------------
@@ -347,7 +351,9 @@ if __name__ == "__main__":
         input="AI trends in 2024",
         markdown=True,
     )
-    print(f"\nSession State After First Run: {content_creation_workflow.get_session_state()}")
+    print(
+        f"\nSession State After First Run: {content_creation_workflow.get_session_state()}"
+    )
 
     print("\n" + "=" * 60 + "\n")
 
@@ -364,7 +370,9 @@ if __name__ == "__main__":
         markdown=True,
         stream=True,
     )
-    print(f"\nSession State After First Run: {streaming_content_workflow.get_session_state()}")
+    print(
+        f"\nSession State After First Run: {streaming_content_workflow.get_session_state()}"
+    )
 
     print("\n" + "=" * 60 + "\n")
 

@@ -25,7 +25,6 @@ from agno.os import AgentOS
 from agno.run.agent import RunOutput
 from pydantic import BaseModel
 
-
 # ---------------------------------------------------------------------------
 # Create Example
 # ---------------------------------------------------------------------------
