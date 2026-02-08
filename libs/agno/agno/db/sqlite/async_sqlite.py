@@ -31,7 +31,7 @@ from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
 
 try:
-    from sqlalchemy import Column, ForeignKey, MetaData, String, Table, func, select, text
+    from sqlalchemy import Column, ForeignKey, MetaData, String, Table, func, or_, select, text
     from sqlalchemy.dialects import sqlite
     from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
     from sqlalchemy.schema import Index, UniqueConstraint
@@ -55,6 +55,8 @@ class AsyncSqliteDb(AsyncBaseDb):
         spans_table: Optional[str] = None,
         versions_table: Optional[str] = None,
         learnings_table: Optional[str] = None,
+        schedule_table: Optional[str] = None,
+        schedule_runs_table: Optional[str] = None,
         id: Optional[str] = None,
     ):
         """
@@ -101,6 +103,8 @@ class AsyncSqliteDb(AsyncBaseDb):
             spans_table=spans_table,
             versions_table=versions_table,
             learnings_table=learnings_table,
+            schedule_table=schedule_table,
+            schedule_runs_table=schedule_runs_table,
         )
 
         _engine: Optional[AsyncEngine] = db_engine
@@ -159,6 +163,8 @@ class AsyncSqliteDb(AsyncBaseDb):
             (self.knowledge_table_name, "knowledge"),
             (self.versions_table_name, "versions"),
             (self.learnings_table_name, "learnings"),
+            (self.schedule_table_name, "schedules"),
+            (self.schedule_runs_table_name, "schedule_runs"),
         ]
 
         for table_name, table_type in tables_to_create:
@@ -344,6 +350,22 @@ class AsyncSqliteDb(AsyncBaseDb):
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.learnings_table
+
+        elif table_type == "schedules":
+            self.schedule_table = await self._get_or_create_table(
+                table_name=self.schedule_table_name,
+                table_type="schedules",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.schedule_table
+
+        elif table_type == "schedule_runs":
+            self.schedule_runs_table = await self._get_or_create_table(
+                table_name=self.schedule_runs_table_name,
+                table_type="schedule_runs",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.schedule_runs_table
 
         else:
             raise ValueError(f"Unknown table type: '{table_type}'")
@@ -3271,3 +3293,241 @@ class AsyncSqliteDb(AsyncBaseDb):
         label: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         raise NotImplementedError("Component methods not yet supported for async databases")
+
+    # -- Scheduler methods --
+
+    async def get_schedule(self, schedule_id: str) -> Optional[Dict[str, Any]]:
+        try:
+            table = await self._get_table(table_type="schedules")
+            if table is None:
+                return None
+            async with self.async_session_factory() as sess:
+                stmt = select(table).where(table.c.id == schedule_id)
+                result = await sess.execute(stmt)
+                row = result.fetchone()
+                if row is None:
+                    return None
+                return dict(row._mapping)
+        except Exception as e:
+            log_debug(f"Error getting schedule: {e}")
+            return None
+
+    async def get_schedule_by_name(self, name: str) -> Optional[Dict[str, Any]]:
+        try:
+            table = await self._get_table(table_type="schedules")
+            if table is None:
+                return None
+            async with self.async_session_factory() as sess:
+                stmt = select(table).where(table.c.name == name)
+                result = await sess.execute(stmt)
+                row = result.fetchone()
+                if row is None:
+                    return None
+                return dict(row._mapping)
+        except Exception as e:
+            log_debug(f"Error getting schedule by name: {e}")
+            return None
+
+    async def get_schedules(
+        self,
+        enabled: Optional[bool] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        try:
+            table = await self._get_table(table_type="schedules")
+            if table is None:
+                return []
+            async with self.async_session_factory() as sess:
+                stmt = select(table)
+                if enabled is not None:
+                    stmt = stmt.where(table.c.enabled == enabled)
+                stmt = stmt.order_by(table.c.created_at.desc())
+                if limit is not None:
+                    stmt = stmt.limit(limit)
+                if offset is not None:
+                    stmt = stmt.offset(offset)
+                result = await sess.execute(stmt)
+                rows = result.fetchall()
+                return [dict(row._mapping) for row in rows]
+        except Exception as e:
+            log_debug(f"Error getting schedules: {e}")
+            return []
+
+    async def create_schedule(self, schedule: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        try:
+            table = await self._get_table(table_type="schedules", create_table_if_not_found=True)
+            if table is None:
+                return None
+            async with self.async_session_factory() as sess:
+                async with sess.begin():
+                    stmt = sqlite.insert(table).values(**schedule)
+                    await sess.execute(stmt)
+            return schedule
+        except Exception as e:
+            log_debug(f"Error creating schedule: {e}")
+            return None
+
+    async def update_schedule(self, schedule_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        try:
+            table = await self._get_table(table_type="schedules")
+            if table is None:
+                return None
+            kwargs["updated_at"] = int(time.time())
+            async with self.async_session_factory() as sess:
+                async with sess.begin():
+                    stmt = table.update().where(table.c.id == schedule_id).values(**kwargs)
+                    result = await sess.execute(stmt)
+                    if result.rowcount == 0:  # type: ignore
+                        return None
+            return await self.get_schedule(schedule_id)
+        except Exception as e:
+            log_debug(f"Error updating schedule: {e}")
+            return None
+
+    async def delete_schedule(self, schedule_id: str) -> bool:
+        try:
+            runs_table = await self._get_table(table_type="schedule_runs")
+            schedule_table = await self._get_table(table_type="schedules")
+            if schedule_table is None:
+                return False
+            async with self.async_session_factory() as sess:
+                async with sess.begin():
+                    if runs_table is not None:
+                        await sess.execute(runs_table.delete().where(runs_table.c.schedule_id == schedule_id))
+                    result = await sess.execute(schedule_table.delete().where(schedule_table.c.id == schedule_id))
+                    return result.rowcount > 0  # type: ignore
+        except Exception as e:
+            log_debug(f"Error deleting schedule: {e}")
+            return False
+
+    async def claim_due_schedule(self, worker_id: str, lock_grace_seconds: int = 300) -> Optional[Dict[str, Any]]:
+        """Claim a due schedule (best-effort for SQLite, not multi-process safe)."""
+        try:
+            table = await self._get_table(table_type="schedules")
+            if table is None:
+                return None
+            now = int(time.time())
+            stale_threshold = now - lock_grace_seconds
+            async with self.async_session_factory() as sess:
+                async with sess.begin():
+                    stmt = (
+                        select(table)
+                        .where(table.c.enabled == True)  # noqa: E712
+                        .where(table.c.next_run_at <= now)
+                        .where(
+                            or_(
+                                table.c.locked_by == None,  # noqa: E711
+                                table.c.locked_at < stale_threshold,
+                            )
+                        )
+                        .order_by(table.c.next_run_at.asc())
+                        .limit(1)
+                    )
+                    result = await sess.execute(stmt)
+                    row = result.fetchone()
+                    if row is None:
+                        return None
+                    row_dict = dict(row._mapping)
+                    schedule_id = row_dict["id"]
+                    update_stmt = (
+                        table.update().where(table.c.id == schedule_id).values(locked_by=worker_id, locked_at=now)
+                    )
+                    await sess.execute(update_stmt)
+                    row_dict["locked_by"] = worker_id
+                    row_dict["locked_at"] = now
+            return row_dict
+        except Exception as e:
+            log_debug(f"Error claiming due schedule: {e}")
+            return None
+
+    async def release_schedule(self, schedule_id: str, next_run_at: Optional[int] = None) -> bool:
+        try:
+            table = await self._get_table(table_type="schedules")
+            if table is None:
+                return False
+            updates: Dict[str, Any] = {
+                "locked_by": None,
+                "locked_at": None,
+                "updated_at": int(time.time()),
+            }
+            if next_run_at is not None:
+                updates["next_run_at"] = next_run_at
+            async with self.async_session_factory() as sess:
+                async with sess.begin():
+                    stmt = table.update().where(table.c.id == schedule_id).values(**updates)
+                    result = await sess.execute(stmt)
+                    return result.rowcount > 0  # type: ignore
+        except Exception as e:
+            log_debug(f"Error releasing schedule: {e}")
+            return False
+
+    async def create_schedule_run(self, run: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        try:
+            table = await self._get_table(table_type="schedule_runs", create_table_if_not_found=True)
+            if table is None:
+                return None
+            async with self.async_session_factory() as sess:
+                async with sess.begin():
+                    stmt = sqlite.insert(table).values(**run)
+                    await sess.execute(stmt)
+            return run
+        except Exception as e:
+            log_debug(f"Error creating schedule run: {e}")
+            return None
+
+    async def update_schedule_run(self, run_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        try:
+            table = await self._get_table(table_type="schedule_runs")
+            if table is None:
+                return None
+            async with self.async_session_factory() as sess:
+                async with sess.begin():
+                    stmt = table.update().where(table.c.id == run_id).values(**kwargs)
+                    result = await sess.execute(stmt)
+                    if result.rowcount == 0:  # type: ignore
+                        return None
+            return await self.get_schedule_run(run_id)
+        except Exception as e:
+            log_debug(f"Error updating schedule run: {e}")
+            return None
+
+    async def get_schedule_run(self, run_id: str) -> Optional[Dict[str, Any]]:
+        try:
+            table = await self._get_table(table_type="schedule_runs")
+            if table is None:
+                return None
+            async with self.async_session_factory() as sess:
+                stmt = select(table).where(table.c.id == run_id)
+                result = await sess.execute(stmt)
+                row = result.fetchone()
+                if row is None:
+                    return None
+                return dict(row._mapping)
+        except Exception as e:
+            log_debug(f"Error getting schedule run: {e}")
+            return None
+
+    async def get_schedule_runs(
+        self,
+        schedule_id: str,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        try:
+            table = await self._get_table(table_type="schedule_runs")
+            if table is None:
+                return []
+            async with self.async_session_factory() as sess:
+                stmt = select(table).where(table.c.schedule_id == schedule_id)
+                stmt = stmt.order_by(table.c.created_at.desc())
+                if limit is not None:
+                    stmt = stmt.limit(limit)
+                if offset is not None:
+                    stmt = stmt.offset(offset)
+                result = await sess.execute(stmt)
+                rows = result.fetchall()
+                return [dict(row._mapping) for row in rows]
+        except Exception as e:
+            log_debug(f"Error getting schedule runs: {e}")
+            return []
