@@ -291,8 +291,6 @@ class ScheduleExecutor:
         timeout_seconds: int,
     ) -> Dict[str, Any]:
         """Submit a background run and poll until completion."""
-        import json
-
         kwargs: Dict[str, Any] = {"headers": headers}
         if payload is not None:
             kwargs["data"] = payload
@@ -352,8 +350,6 @@ class ScheduleExecutor:
         timeout_seconds: int,
     ) -> Dict[str, Any]:
         """Poll a run status endpoint until the run reaches a terminal state."""
-        import json
-
         poll_url = f"{self.base_url}/{resource_type}/{resource_id}/runs/{run_id}"
         deadline = time.monotonic() + timeout_seconds
 

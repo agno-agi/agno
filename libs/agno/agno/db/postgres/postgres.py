@@ -4522,7 +4522,7 @@ class PostgresDb(BaseDb):
                     return None
                 return dict(result._mapping)
         except Exception as e:
-            log_debug(f"Error getting schedule: {e}")
+            log_warning(f"Error getting schedule: {e}")
             return None
 
     def get_schedule_by_name(self, name: str) -> Optional[Dict[str, Any]]:
@@ -4537,7 +4537,7 @@ class PostgresDb(BaseDb):
                     return None
                 return dict(result._mapping)
         except Exception as e:
-            log_debug(f"Error getting schedule by name: {e}")
+            log_warning(f"Error getting schedule by name: {e}")
             return None
 
     def get_schedules(
@@ -4562,7 +4562,7 @@ class PostgresDb(BaseDb):
                 results = sess.execute(stmt).fetchall()
                 return [dict(row._mapping) for row in results]
         except Exception as e:
-            log_debug(f"Error getting schedules: {e}")
+            log_warning(f"Error getting schedules: {e}")
             return []
 
     def create_schedule(self, schedule: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -4575,7 +4575,7 @@ class PostgresDb(BaseDb):
                 sess.execute(stmt)
             return schedule
         except Exception as e:
-            log_debug(f"Error creating schedule: {e}")
+            log_warning(f"Error creating schedule: {e}")
             return None
 
     def update_schedule(self, schedule_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
@@ -4591,7 +4591,7 @@ class PostgresDb(BaseDb):
                     return None
             return self.get_schedule(schedule_id)
         except Exception as e:
-            log_debug(f"Error updating schedule: {e}")
+            log_warning(f"Error updating schedule: {e}")
             return None
 
     def delete_schedule(self, schedule_id: str) -> bool:
@@ -4606,7 +4606,7 @@ class PostgresDb(BaseDb):
                 result = sess.execute(schedule_table.delete().where(schedule_table.c.id == schedule_id))
                 return result.rowcount > 0
         except Exception as e:
-            log_debug(f"Error deleting schedule: {e}")
+            log_warning(f"Error deleting schedule: {e}")
             return False
 
     def claim_due_schedule(self, worker_id: str, lock_grace_seconds: int = 300) -> Optional[Dict[str, Any]]:
@@ -4642,7 +4642,7 @@ class PostgresDb(BaseDb):
                 row["locked_at"] = now
             return row
         except Exception as e:
-            log_debug(f"Error claiming due schedule: {e}")
+            log_warning(f"Error claiming due schedule: {e}")
             return None
 
     def release_schedule(self, schedule_id: str, next_run_at: Optional[int] = None) -> bool:
@@ -4662,7 +4662,7 @@ class PostgresDb(BaseDb):
                 result = sess.execute(stmt)
                 return result.rowcount > 0
         except Exception as e:
-            log_debug(f"Error releasing schedule: {e}")
+            log_warning(f"Error releasing schedule: {e}")
             return False
 
     def create_schedule_run(self, run: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -4675,7 +4675,7 @@ class PostgresDb(BaseDb):
                 sess.execute(stmt)
             return run
         except Exception as e:
-            log_debug(f"Error creating schedule run: {e}")
+            log_warning(f"Error creating schedule run: {e}")
             return None
 
     def update_schedule_run(self, run_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
@@ -4690,7 +4690,7 @@ class PostgresDb(BaseDb):
                     return None
             return self.get_schedule_run(run_id)
         except Exception as e:
-            log_debug(f"Error updating schedule run: {e}")
+            log_warning(f"Error updating schedule run: {e}")
             return None
 
     def get_schedule_run(self, run_id: str) -> Optional[Dict[str, Any]]:
@@ -4705,7 +4705,7 @@ class PostgresDb(BaseDb):
                     return None
                 return dict(result._mapping)
         except Exception as e:
-            log_debug(f"Error getting schedule run: {e}")
+            log_warning(f"Error getting schedule run: {e}")
             return None
 
     def get_schedule_runs(
@@ -4728,5 +4728,5 @@ class PostgresDb(BaseDb):
                 results = sess.execute(stmt).fetchall()
                 return [dict(row._mapping) for row in results]
         except Exception as e:
-            log_debug(f"Error getting schedule runs: {e}")
+            log_warning(f"Error getting schedule runs: {e}")
             return []
