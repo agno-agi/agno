@@ -35,7 +35,7 @@ from agno.workflow.workflow import Workflow
 # A function that randomly fails to simulate an unreliable operation
 def unreliable_api_call(step_input: StepInput) -> StepOutput:
     """Simulates an API call that may fail randomly."""
-    if random.random() < 0.7:  # 70% chance of failure
+    if random.random() < 0.99:  # 99% chance of failure
         raise Exception("API call failed: Connection timeout")
 
     return StepOutput(
