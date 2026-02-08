@@ -6,7 +6,7 @@ You are restructuring the `cookbook/11_memory/` directory of the Agno AI agent f
 
 - **Agno** is a Python AI agent framework. The `cookbook/` directory contains runnable example scripts.
 - Memory scripts demonstrate memory persistence, sharing, and management using Agno's `MemoryManager` API.
-- The goal is to consolidate 20 files down to 15 by flattening the `memory_manager/surrealdb/` subdirectory, achieving 100% style compliance, and adding documentation.
+- The goal is to consolidate 20 files down to 15 by moving 5 SurrealDB files to `cookbook/92_integrations/surrealdb/`, achieving 100% style compliance, and adding documentation.
 - The virtual environment for running cookbooks is at `.venvs/demo/bin/python`.
 - The style checker is at `cookbook/scripts/check_cookbook_pattern.py`.
 
@@ -19,22 +19,9 @@ You are restructuring the `cookbook/11_memory/` directory of the Agno AI agent f
 3. **Preserve the existing logic exactly** — only restructure the layout (add banners, docstring, main gate).
 4. **For MERGE operations**, read ALL source files first, then combine thoughtfully.
 
-## CRITICAL: SurrealDB Uses Different DB Setup
+## CRITICAL: SurrealDB Files Move to Integrations
 
-SurrealDB files use a completely different connection pattern from PostgreSQL:
-
-```python
-# PostgreSQL
-from agno.db.postgres import PostgresDb
-db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
-
-# SurrealDB
-from agno.db.surrealdb import SurrealDb
-creds = {"username": "root", "password": "root"}
-db = SurrealDb(None, "ws://localhost:8000", creds, "agno", "memory")
-```
-
-Both patterns must be preserved when merging. Show PostgreSQL as the primary example with SurrealDB as a commented alternative.
+The `memory_manager/surrealdb/` directory does NOT belong in the memory section. These files demonstrate SurrealDB as a database integration, not a core memory feature. Move all 5 SurrealDB files to `cookbook/92_integrations/surrealdb/`. Do NOT merge them into the parent memory_manager files.
 
 ## Style Guide Template
 
@@ -87,34 +74,21 @@ if __name__ == "__main__":
 
 ## Execution Plan
 
-### Phase 1: Merge 5 SurrealDB Files into Parent Counterparts
+### Phase 1: Move 5 SurrealDB Files to Integrations
 
-For each pair, read BOTH files first, then merge:
+Move all files from `memory_manager/surrealdb/` to `cookbook/92_integrations/surrealdb/`:
 
-| Parent File | SurrealDB File |
-|-------------|----------------|
-| `memory_manager/01_standalone_memory.py` | `memory_manager/surrealdb/standalone_memory_surreal.py` |
-| `memory_manager/02_memory_creation.py` | `memory_manager/surrealdb/memory_creation.py` |
-| `memory_manager/03_custom_memory_instructions.py` | `memory_manager/surrealdb/custom_memory_instructions.py` |
-| `memory_manager/04_memory_search.py` | `memory_manager/surrealdb/memory_search_surreal.py` |
-| `memory_manager/05_db_tools_control.py` | `memory_manager/surrealdb/db_tools_control.py` |
-
-**Merge pattern:** Show PostgreSQL as primary, SurrealDB as commented alternative in Setup:
-
-```python
-# ---------------------------------------------------------------------------
-# Setup
-# ---------------------------------------------------------------------------
-# --- PostgreSQL (default) ---
-db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
-
-# --- SurrealDB (alternative) ---
-# from agno.db.surrealdb import SurrealDb
-# creds = {"username": "root", "password": "root"}
-# db = SurrealDb(None, "ws://localhost:8000", creds, "agno", "memory")
+```bash
+mkdir -p cookbook/92_integrations/surrealdb
+mv cookbook/11_memory/memory_manager/surrealdb/standalone_memory_surreal.py cookbook/92_integrations/surrealdb/
+mv cookbook/11_memory/memory_manager/surrealdb/memory_creation.py cookbook/92_integrations/surrealdb/
+mv cookbook/11_memory/memory_manager/surrealdb/custom_memory_instructions.py cookbook/92_integrations/surrealdb/
+mv cookbook/11_memory/memory_manager/surrealdb/memory_search_surreal.py cookbook/92_integrations/surrealdb/
+mv cookbook/11_memory/memory_manager/surrealdb/db_tools_control.py cookbook/92_integrations/surrealdb/
+rmdir cookbook/11_memory/memory_manager/surrealdb
 ```
 
-After merging, delete the 5 SurrealDB source files and remove the `memory_manager/surrealdb/` directory.
+The moved files will be style-fixed as part of the `cookbook/92_integrations/` restructuring. Do NOT style-fix them here.
 
 ### Phase 2: Style Fixes (all 15 surviving files)
 
@@ -155,8 +129,9 @@ Update existing READMEs to reflect SurrealDB merge. Create TEST_LOG.md for all d
 
 1. **Read before writing** — Do not apply changes to files you haven't read.
 2. **Preserve memory configs** — Do not change `update_memory_on_run`, `add_history_to_context`, memory strategies, or test message sequences.
-3. **Preserve DB connection details** — Do not change PostgreSQL URLs or SurrealDB credentials.
+3. **Preserve DB connection details** — Do not change PostgreSQL URLs.
 4. **MemoryManager files are different** — Files in `memory_manager/` use the MemoryManager API directly (not through Agent). They have different patterns from root-level files.
+5. **SurrealDB goes to integrations** — Do NOT merge SurrealDB files into memory_manager. Move them to `cookbook/92_integrations/surrealdb/`.
 5. **No `__init__.py` files** — Cookbook directories don't use `__init__.py`.
 6. **75 dashes** — `# ---------------------------------------------------------------------------` (75 dashes after `# `).
 7. **Read the plan carefully** — Follow the RESTRUCTURE_PLAN.md for every decision.
