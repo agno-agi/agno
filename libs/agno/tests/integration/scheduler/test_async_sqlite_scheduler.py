@@ -170,6 +170,34 @@ class TestAsyncClaimRelease:
         assert claimed2 is None
 
     @pytest.mark.asyncio
+    async def test_concurrent_claim_only_one_wins(self, tmp_path):
+        """Two concurrent coroutines claiming the same schedule — only one should succeed."""
+        import asyncio
+
+        db_file = str(tmp_path / "concurrent.db")
+        table_name = f"sessions_{uuid4().hex[:8]}"
+
+        # Two independent adapter instances sharing the same DB file
+        db1 = AsyncSqliteDb(session_table=table_name, db_file=db_file)
+        await db1._create_all_tables()
+        db2 = AsyncSqliteDb(session_table=table_name, db_file=db_file)
+
+        now = int(time.time())
+        schedule = _make_schedule(next_run_at=now - 10, enabled=True)
+        await db1.create_schedule(schedule)
+
+        results = await asyncio.gather(
+            db1.claim_due_schedule("worker-1"),
+            db2.claim_due_schedule("worker-2"),
+        )
+
+        claimed = [r for r in results if r is not None]
+        assert len(claimed) == 1, f"Expected exactly 1 claim, got {len(claimed)}: {claimed}"
+
+        await db1.close()
+        await db2.close()
+
+    @pytest.mark.asyncio
     async def test_release_schedule(self, db):
         now = int(time.time())
         schedule = _make_schedule(next_run_at=now - 10, enabled=True)
