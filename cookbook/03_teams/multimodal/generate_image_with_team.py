@@ -1,3 +1,10 @@
+"""
+Generate Image With Team
+========================
+
+Demonstrates collaborative prompt optimization and DALL-E image generation.
+"""
+
 from typing import Iterator
 
 from agno.agent import Agent, RunOutputEvent
@@ -7,6 +14,9 @@ from agno.tools.dalle import DalleTools
 from agno.utils.common import dataclass_to_dict
 from rich.pretty import pprint
 
+# ---------------------------------------------------------------------------
+# Create Members
+# ---------------------------------------------------------------------------
 image_generator = Agent(
     name="Image Creator",
     role="Generate images using DALL-E",
@@ -28,7 +38,9 @@ prompt_engineer = Agent(
     ],
 )
 
-# Create a team for collaborative image generation
+# ---------------------------------------------------------------------------
+# Create Team
+# ---------------------------------------------------------------------------
 image_team = Team(
     name="Image Generation Team",
     model=OpenAIChat(id="gpt-4o"),
@@ -41,11 +53,15 @@ image_team = Team(
     markdown=True,
 )
 
-run_stream: Iterator[RunOutputEvent] = image_team.run(
-    "Create an image of a yellow siamese cat",
-    stream=True,
-    stream_events=True,
-)
-for chunk in run_stream:
-    pprint(dataclass_to_dict(chunk, exclude={"messages"}))
-    print("---" * 20)
+# ---------------------------------------------------------------------------
+# Run Team
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    run_stream: Iterator[RunOutputEvent] = image_team.run(
+        "Create an image of a yellow siamese cat",
+        stream=True,
+        stream_events=True,
+    )
+    for chunk in run_stream:
+        pprint(dataclass_to_dict(chunk, exclude={"messages"}))
+        print("---" * 20)

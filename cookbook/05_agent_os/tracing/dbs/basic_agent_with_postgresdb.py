@@ -10,6 +10,10 @@ from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.tools.hackernews import HackerNewsTools
 
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
+
 # Set up database
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 
@@ -29,6 +33,10 @@ agent_os = AgentOS(
     tracing=True,
 )
 app = agent_os.get_app()
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     agent_os.serve(app="basic_agent_with_postgresdb:app", reload=True)

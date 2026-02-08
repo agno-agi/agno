@@ -19,6 +19,11 @@ from agno.learn import LearnedKnowledgeConfig, LearningMachine, LearningMode
 from agno.models.openai import OpenAIResponses
 from agno.vectordb.chroma import ChromaDb, SearchType
 
+# ---------------------------------------------------------------------------
+# Create Knowledge and Agent
+# ---------------------------------------------------------------------------
+db = SqliteDb(db_file="tmp/agents.db")
+
 knowledge = Knowledge(
     name="Agent Learnings",
     vector_db=ChromaDb(
@@ -32,7 +37,7 @@ knowledge = Knowledge(
 
 agent = Agent(
     model=OpenAIResponses(id="gpt-5.2"),
-    db=SqliteDb(db_file="tmp/agents.db"),
+    db=db,
     learning=LearningMachine(
         knowledge=knowledge,
         learned_knowledge=LearnedKnowledgeConfig(mode=LearningMode.AGENTIC),
@@ -40,6 +45,9 @@ agent = Agent(
     markdown=True,
 )
 
+# ---------------------------------------------------------------------------
+# Run Demo
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     # Session 1: User 1 teaches the agent
     print("\n--- Session 1: User 1 saves a learning ---\n")

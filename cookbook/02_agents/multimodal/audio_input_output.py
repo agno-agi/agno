@@ -1,3 +1,10 @@
+"""
+Audio Input Output
+=============================
+
+Audio Input Output.
+"""
+
 import requests
 from agno.agent import Agent
 from agno.media import Audio
@@ -11,6 +18,9 @@ response = requests.get(url)
 response.raise_for_status()
 wav_data = response.content
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 agent = Agent(
     model=OpenAIChat(
         id="gpt-4o-audio-preview",
@@ -20,13 +30,17 @@ agent = Agent(
     markdown=True,
 )
 
-run_response = agent.run(
-    "What's in these recording?",
-    audio=[Audio(content=wav_data, format="wav")],
-)
-
-if run_response.response_audio is not None:
-    pprint(run_response.content)
-    write_audio_to_file(
-        audio=run_response.response_audio.content, filename="tmp/result.wav"
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    run_response = agent.run(
+        "What's in these recording?",
+        audio=[Audio(content=wav_data, format="wav")],
     )
+
+    if run_response.response_audio is not None:
+        pprint(run_response.content)
+        write_audio_to_file(
+            audio=run_response.response_audio.content, filename="tmp/result.wav"
+        )

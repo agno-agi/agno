@@ -1,11 +1,8 @@
 """
+Session State Multiple Users
+=============================
+
 This example demonstrates how to maintain state for each user in a multi-user environment.
-
-The shopping list is stored in a dictionary, organized by user ID and session ID.
-
-Agno automatically creates the "current_user_id" and "current_session_id" variables in the session state.
-
-You can access these variables in your functions using the `agent.get_session_state()` dictionary.
 """
 
 import json
@@ -63,6 +60,9 @@ def get_shopping_list(run_context: RunContext) -> str:
 
 
 # Create an Agent that maintains state
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
     db=SqliteDb(db_file="tmp/data.db"),
@@ -79,52 +79,56 @@ user_id_1 = "john_doe"
 user_id_2 = "mark_smith"
 user_id_3 = "carmen_sandiago"
 
-# Example usage
-agent.print_response(
-    "Add milk, eggs, and bread to the shopping list",
-    stream=True,
-    user_id=user_id_1,
-    session_id="user_1_session_1",
-)
-agent.print_response(
-    "Add tacos to the shopping list",
-    stream=True,
-    user_id=user_id_2,
-    session_id="user_2_session_1",
-)
-agent.print_response(
-    "Add apples and grapes to the shopping list",
-    stream=True,
-    user_id=user_id_3,
-    session_id="user_3_session_1",
-)
-agent.print_response(
-    "Remove milk from the shopping list",
-    stream=True,
-    user_id=user_id_1,
-    session_id="user_1_session_1",
-)
-agent.print_response(
-    "Add minced beef to the shopping list",
-    stream=True,
-    user_id=user_id_2,
-    session_id="user_2_session_1",
-)
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    # Example usage
+    agent.print_response(
+        "Add milk, eggs, and bread to the shopping list",
+        stream=True,
+        user_id=user_id_1,
+        session_id="user_1_session_1",
+    )
+    agent.print_response(
+        "Add tacos to the shopping list",
+        stream=True,
+        user_id=user_id_2,
+        session_id="user_2_session_1",
+    )
+    agent.print_response(
+        "Add apples and grapes to the shopping list",
+        stream=True,
+        user_id=user_id_3,
+        session_id="user_3_session_1",
+    )
+    agent.print_response(
+        "Remove milk from the shopping list",
+        stream=True,
+        user_id=user_id_1,
+        session_id="user_1_session_1",
+    )
+    agent.print_response(
+        "Add minced beef to the shopping list",
+        stream=True,
+        user_id=user_id_2,
+        session_id="user_2_session_1",
+    )
 
-# What is on Mark Smith's shopping list?
-agent.print_response(
-    "What is on Mark Smith's shopping list?",
-    stream=True,
-    user_id=user_id_2,
-    session_id="user_2_session_1",
-)
+    # What is on Mark Smith's shopping list?
+    agent.print_response(
+        "What is on Mark Smith's shopping list?",
+        stream=True,
+        user_id=user_id_2,
+        session_id="user_2_session_1",
+    )
 
-# New session, so new shopping list
-agent.print_response(
-    "Add chicken and soup to my list.",
-    stream=True,
-    user_id=user_id_2,
-    session_id="user_3_session_2",
-)
+    # New session, so new shopping list
+    agent.print_response(
+        "Add chicken and soup to my list.",
+        stream=True,
+        user_id=user_id_2,
+        session_id="user_3_session_2",
+    )
 
-print(f"Final shopping lists: \n{json.dumps(shopping_list, indent=2)}")
+    print(f"Final shopping lists: \n{json.dumps(shopping_list, indent=2)}")

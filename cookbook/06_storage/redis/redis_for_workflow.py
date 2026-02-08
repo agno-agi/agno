@@ -1,3 +1,10 @@
+"""
+Redis Storage for Workflow
+==========================
+
+Demonstrates using RedisDb as the session storage backend for a workflow.
+"""
+
 from agno.agent import Agent
 from agno.db.redis import RedisDb
 from agno.models.openai import OpenAIChat
@@ -7,7 +14,14 @@ from agno.tools.websearch import WebSearchTools
 from agno.workflow.step import Step
 from agno.workflow.workflow import Workflow
 
-# Define agents
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
+db_url = "redis://localhost:6379"
+
+# ---------------------------------------------------------------------------
+# Create Workflow
+# ---------------------------------------------------------------------------
 hackernews_agent = Agent(
     name="Hackernews Agent",
     model=OpenAIChat(id="gpt-4o-mini"),
@@ -48,14 +62,16 @@ content_planning_step = Step(
     agent=content_planner,
 )
 
-# Create and use workflow
+# ---------------------------------------------------------------------------
+# Run Workflow
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     content_creation_workflow = Workflow(
         name="Content Creation Workflow",
         description="Automated content creation from blog posts to social media",
         db=RedisDb(
             session_table="workflow_session",
-            db_url="redis://localhost:6379",
+            db_url=db_url,
         ),
         steps=[research_step, content_planning_step],
     )

@@ -1,8 +1,18 @@
+"""
+Image To Image Transformation
+=============================
+
+Demonstrates collaborative style planning and image transformation.
+"""
+
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.team import Team
 from agno.tools.fal import FalTools
 
+# ---------------------------------------------------------------------------
+# Create Members
+# ---------------------------------------------------------------------------
 style_advisor = Agent(
     name="Style Advisor",
     role="Analyze and recommend artistic styles and transformations",
@@ -26,7 +36,9 @@ image_transformer = Agent(
     ],
 )
 
-# Create a team for collaborative image transformation
+# ---------------------------------------------------------------------------
+# Create Team
+# ---------------------------------------------------------------------------
 transformation_team = Team(
     name="Image Transformation Team",
     model=OpenAIChat(id="gpt-4o"),
@@ -39,7 +51,11 @@ transformation_team = Team(
     markdown=True,
 )
 
-transformation_team.print_response(
-    "a cat dressed as a wizard with a background of a mystic forest. Make it look like 'https://fal.media/files/koala/Chls9L2ZnvuipUTEwlnJC.png'",
-    stream=True,
-)
+# ---------------------------------------------------------------------------
+# Run Team
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    transformation_team.print_response(
+        "a cat dressed as a wizard with a background of a mystic forest. Make it look like 'https://fal.media/files/koala/Chls9L2ZnvuipUTEwlnJC.png'",
+        stream=True,
+    )

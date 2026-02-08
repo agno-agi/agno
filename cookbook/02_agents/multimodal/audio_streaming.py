@@ -1,3 +1,10 @@
+"""
+Audio Streaming
+=============================
+
+Audio Streaming.
+"""
+
 import base64
 import wave
 from typing import Iterator
@@ -11,6 +18,9 @@ CHANNELS = 1  # Mono (Change to 2 if Stereo)
 SAMPLE_WIDTH = 2  # Bytes (16 bits)
 
 # Provide the agent with the audio file and audio configuration and get result as text + audio
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 agent = Agent(
     model=OpenAIChat(
         id="gpt-4o-audio-preview",
@@ -21,28 +31,33 @@ agent = Agent(
         },  # Only pcm16 is supported with streaming
     ),
 )
-output_stream: Iterator[RunOutputEvent] = agent.run(
-    "Tell me a 10 second story", stream=True
-)
 
-filename = "tmp/response_stream.wav"
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    output_stream: Iterator[RunOutputEvent] = agent.run(
+        "Tell me a 10 second story", stream=True
+    )
 
-# Open the file once in append-binary mode
-with wave.open(str(filename), "wb") as wav_file:
-    wav_file.setnchannels(CHANNELS)
-    wav_file.setsampwidth(SAMPLE_WIDTH)
-    wav_file.setframerate(SAMPLE_RATE)
+    filename = "tmp/response_stream.wav"
 
-    # Iterate over generated audio
-    for response in output_stream:
-        response_audio = response.response_audio  # type: ignore
-        if response_audio:
-            if response_audio.transcript:
-                print(response_audio.transcript, end="", flush=True)
-            if response_audio.content:
-                try:
-                    pcm_bytes = base64.b64decode(response_audio.content)
-                    wav_file.writeframes(pcm_bytes)
-                except Exception as e:
-                    print(f"Error decoding audio: {e}")
-print()
+    # Open the file once in append-binary mode
+    with wave.open(str(filename), "wb") as wav_file:
+        wav_file.setnchannels(CHANNELS)
+        wav_file.setsampwidth(SAMPLE_WIDTH)
+        wav_file.setframerate(SAMPLE_RATE)
+
+        # Iterate over generated audio
+        for response in output_stream:
+            response_audio = response.response_audio  # type: ignore
+            if response_audio:
+                if response_audio.transcript:
+                    print(response_audio.transcript, end="", flush=True)
+                if response_audio.content:
+                    try:
+                        pcm_bytes = base64.b64decode(response_audio.content)
+                        wav_file.writeframes(pcm_bytes)
+                    except Exception as e:
+                        print(f"Error decoding audio: {e}")
+    print()

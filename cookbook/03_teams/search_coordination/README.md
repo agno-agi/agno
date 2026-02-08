@@ -1,23 +1,15 @@
-# Search Coordination
+# search coordination
 
-Coordinated search across multiple agents and knowledge sources.
+Examples for team workflows in search_coordination.
 
-## Setup
+## Prerequisites
 
-```bash
-uv pip install agno openai anthropic cohere lancedb tantivy sqlalchemy
-```
+- Load environment variables (for example, OPENAI_API_KEY) via direnv allow.
+- Use .venvs/demo/bin/python to run cookbook examples.
+- Some examples require additional services (for example PostgreSQL, LanceDB, or Infinity server) as noted in file docstrings.
 
-Set your API key based on your provider:
-```bash
-export OPENAI_API_KEY=xxx
-export ANTHROPIC_API_KEY=xxx
-export CO_API_KEY=xxx
-```
+## Files
 
-
-## Examples
-
-- **[01_coordinated_agentic_rag.py](./01_coordinated_agentic_rag.py)** - Coordinated agentic RAG
-- **[02_coordinated_reasoning_rag.py](./02_coordinated_reasoning_rag.py)** - RAG with reasoning coordination
-- **[03_distributed_infinity_search.py](./03_distributed_infinity_search.py)** - Distributed infinity search
+- 01_coordinated_agentic_rag.py - Demonstrates coordinated agentic rag.
+- 02_coordinated_reasoning_rag.py - Demonstrates coordinated reasoning rag.
+- 03_distributed_infinity_search.py - Demonstrates distributed infinity search.

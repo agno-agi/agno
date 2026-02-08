@@ -1,7 +1,18 @@
+"""
+Openai Basic Stream Metrics
+===========================
+
+Cookbook example for `openai/chat/basic_stream_metrics.py`.
+"""
+
 from typing import Iterator  # noqa
 from agno.agent import Agent, RunOutputEvent  # noqa
 from agno.models.openai import OpenAIChat
 from agno.db.in_memory import InMemoryDb
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 agent = Agent(model=OpenAIChat(id="gpt-4o"), db=InMemoryDb(), markdown=True)
 
@@ -22,3 +33,10 @@ for message in run_output.messages:
     if message.role == "assistant":
         print(message.role)
         print(message.metrics)
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

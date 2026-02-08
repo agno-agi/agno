@@ -1,3 +1,10 @@
+"""
+Session State Advanced
+=============================
+
+Session State Advanced.
+"""
+
 from textwrap import dedent
 
 from agno.agent import Agent
@@ -51,6 +58,9 @@ def list_items(run_context: RunContext) -> str:
 
 
 # Create a Shopping List Manager Agent that maintains state
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 agent = Agent(
     model=OpenAIChat(id="o3-mini"),
     # Initialize the session state with an empty shopping list (default session state for all sessions)
@@ -68,21 +78,25 @@ agent = Agent(
     markdown=True,
 )
 
-# Example usage
-agent.print_response("Add milk, eggs, and bread to the shopping list", stream=True)
-print(f"Session state: {agent.get_session_state()}")
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    # Example usage
+    agent.print_response("Add milk, eggs, and bread to the shopping list", stream=True)
+    print(f"Session state: {agent.get_session_state()}")
 
-agent.print_response("I got bread", stream=True)
-print(f"Session state: {agent.get_session_state()}")
+    agent.print_response("I got bread", stream=True)
+    print(f"Session state: {agent.get_session_state()}")
 
-agent.print_response("I need apples and oranges", stream=True)
-print(f"Session state: {agent.get_session_state()}")
+    agent.print_response("I need apples and oranges", stream=True)
+    print(f"Session state: {agent.get_session_state()}")
 
-agent.print_response("whats on my list?", stream=True)
-print(f"Session state: {agent.get_session_state()}")
+    agent.print_response("whats on my list?", stream=True)
+    print(f"Session state: {agent.get_session_state()}")
 
-agent.print_response(
-    "Clear everything from my list and start over with just bananas and yogurt",
-    stream=True,
-)
-print(f"Session state: {agent.get_session_state()}")
+    agent.print_response(
+        "Clear everything from my list and start over with just bananas and yogurt",
+        stream=True,
+    )
+    print(f"Session state: {agent.get_session_state()}")

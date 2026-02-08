@@ -20,6 +20,10 @@ from agno.agent import Agent
 from agno.media import File
 from agno.models.google import Gemini
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 agent = Agent(
     model=Gemini(id="gemini-3-flash-preview"),
     markdown=True,
@@ -35,3 +39,10 @@ agent.print_response(
         )
     ],
 )
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

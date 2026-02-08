@@ -14,9 +14,14 @@ from agno.tools.websearch import WebSearchTools
 from agno.workflow.step import Step
 from agno.workflow.workflow import Workflow
 
-# Initialize AsyncSqliteDb with a database file
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
 db = AsyncSqliteDb(db_file="workflow_storage.db")
 
+# ---------------------------------------------------------------------------
+# Create Workflow
+# ---------------------------------------------------------------------------
 hackernews_agent = Agent(
     name="Hackernews Agent",
     model=OpenAIChat(id="gpt-4o-mini"),
@@ -59,6 +64,9 @@ content_creation_workflow = Workflow(
     steps=[research_step, content_planning_step],
 )
 
+# ---------------------------------------------------------------------------
+# Run Workflow
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     asyncio.run(
         content_creation_workflow.aprint_response(

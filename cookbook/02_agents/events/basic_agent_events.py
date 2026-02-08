@@ -1,3 +1,10 @@
+"""
+Basic Agent Events
+=============================
+
+Basic Agent Events.
+"""
+
 import asyncio
 
 from agno.agent import RunEvent
@@ -5,6 +12,9 @@ from agno.agent.agent import Agent
 from agno.models.openai.chat import OpenAIChat
 from agno.tools.yfinance import YFinanceTools
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 finance_agent = Agent(
     id="finance-agent",
     name="Finance Agent",
@@ -41,6 +51,9 @@ async def run_agent_with_events(prompt: str):
                 print(run_output_event.content, end="")
 
 
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     asyncio.run(
         run_agent_with_events(

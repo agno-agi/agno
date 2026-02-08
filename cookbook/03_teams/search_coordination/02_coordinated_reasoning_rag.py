@@ -1,18 +1,8 @@
 """
-This example demonstrates how multiple specialized agents coordinate to provide
-comprehensive RAG responses with distributed reasoning capabilities. Each agent
-has specific reasoning responsibilities to ensure thorough analysis.
+Coordinated Reasoning RAG
+=========================
 
-Team Composition:
-- Information Gatherer: Searches knowledge base and gathers raw information
-- Reasoning Analyst: Applies logical reasoning to analyze gathered information
-- Evidence Evaluator: Evaluates evidence quality and identifies gaps
-- Response Coordinator: Synthesizes everything into a final reasoned response
-
-Setup:
-1. Run: `uv pip install agno anthropic cohere lancedb tantivy sqlalchemy`
-2. Export your ANTHROPIC_API_KEY and CO_API_KEY
-3. Run this script to see coordinated reasoning RAG in action
+Demonstrates distributed reasoning roles for coordinated RAG responses.
 """
 
 from agno.agent import Agent
@@ -20,11 +10,13 @@ from agno.knowledge.embedder.cohere import CohereEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reranker.cohere import CohereReranker
 from agno.models.anthropic import Claude
-from agno.team.team import Team
+from agno.team import Team
 from agno.tools.reasoning import ReasoningTools
 from agno.vectordb.lancedb import LanceDb, SearchType
 
-# Shared knowledge base for the reasoning team
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
 knowledge = Knowledge(
     vector_db=LanceDb(
         uri="tmp/lancedb",
@@ -35,7 +27,9 @@ knowledge = Knowledge(
     ),
 )
 
-# Information Gatherer Agent - Specialized in comprehensive information retrieval
+# ---------------------------------------------------------------------------
+# Create Members
+# ---------------------------------------------------------------------------
 information_gatherer = Agent(
     name="Information Gatherer",
     model=Claude(id="claude-sonnet-4-20250514"),
@@ -52,7 +46,6 @@ information_gatherer = Agent(
     markdown=True,
 )
 
-# Reasoning Analyst Agent - Specialized in logical analysis
 reasoning_analyst = Agent(
     name="Reasoning Analyst",
     model=Claude(id="claude-sonnet-4-20250514"),
@@ -68,7 +61,6 @@ reasoning_analyst = Agent(
     markdown=True,
 )
 
-# Evidence Evaluator Agent - Specialized in evidence assessment
 evidence_evaluator = Agent(
     name="Evidence Evaluator",
     model=Claude(id="claude-sonnet-4-20250514"),
@@ -84,7 +76,6 @@ evidence_evaluator = Agent(
     markdown=True,
 )
 
-# Response Coordinator Agent - Specialized in synthesis and coordination
 response_coordinator = Agent(
     name="Response Coordinator",
     model=Claude(id="claude-sonnet-4-20250514"),
@@ -100,7 +91,9 @@ response_coordinator = Agent(
     markdown=True,
 )
 
-# Create coordinated reasoning RAG team
+# ---------------------------------------------------------------------------
+# Create Team
+# ---------------------------------------------------------------------------
 coordinated_reasoning_team = Team(
     name="Coordinated Reasoning RAG Team",
     model=Claude(id="claude-sonnet-4-20250514"),
@@ -124,42 +117,39 @@ coordinated_reasoning_team = Team(
 )
 
 
-async def async_reasoning_demo():
-    """Demonstrate async coordinated reasoning RAG with streaming."""
-    print(" Async Coordinated Reasoning RAG Team Demo")
+# ---------------------------------------------------------------------------
+# Run Team
+# ---------------------------------------------------------------------------
+async def async_reasoning_demo() -> None:
+    print("Async Coordinated Reasoning RAG Team Demo")
     print("=" * 60)
 
     query = "What are Agents and how do they work with tools? Explain the reasoning behind their design."
-
-    # Add documentation content
     await knowledge.ainsert_many(
         urls=["https://docs.agno.com/basics/agents/overview.md"]
     )
 
-    # Run async with streaming and reasoning
     await coordinated_reasoning_team.aprint_response(
-        query, stream=True, show_full_reasoning=True
+        query,
+        stream=True,
+        show_full_reasoning=True,
     )
 
 
-def sync_reasoning_demo():
-    """Demonstrate sync coordinated reasoning RAG."""
-    print(" Coordinated Reasoning RAG Team Demo")
+def sync_reasoning_demo() -> None:
+    print("Coordinated Reasoning RAG Team Demo")
     print("=" * 50)
 
     query = "What are Agents and how do they work with tools? Explain the reasoning behind their design."
-
-    # Add documentation content
     knowledge.insert_many(urls=["https://docs.agno.com/basics/agents/overview.md"])
 
-    # Run with detailed reasoning output
     coordinated_reasoning_team.print_response(
-        query, stream=True, show_full_reasoning=True
+        query,
+        stream=True,
+        show_full_reasoning=True,
     )
 
 
 if __name__ == "__main__":
-    # Choose which demo to run
     # asyncio.run(async_reasoning_demo())
-
     sync_reasoning_demo()

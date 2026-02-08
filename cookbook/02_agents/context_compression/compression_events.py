@@ -1,7 +1,8 @@
 """
-Test script to verify compression events are working correctly.
+Compression Events
+=============================
 
-Run: `python cookbook/03_agents/context_compression/compression_events.py`
+Test script to verify compression events are working correctly.
 """
 
 import asyncio
@@ -11,6 +12,9 @@ from agno.models.openai import OpenAIChat
 from agno.run.agent import RunEvent
 from agno.tools.duckduckgo import DuckDuckGoTools
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 agent = Agent(
     model=OpenAIChat(id="gpt-5-mini"),
     tools=[DuckDuckGoTools()],
@@ -70,5 +74,8 @@ async def main():
             print("[RunCompleted]")
 
 
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     asyncio.run(main())

@@ -1,4 +1,4 @@
-"""🤝 Human-in-the-Loop: Adding User Confirmation to Tool Calls
+"""Human-in-the-Loop: Adding User Confirmation to Tool Calls
 
 This example shows how to implement human-in-the-loop functionality in your Agno tools.
 It shows how to:
@@ -25,6 +25,11 @@ from agno.models.openai import OpenAIChat
 from agno.tools import FunctionCall, tool
 from rich.console import Console
 from rich.prompt import Prompt
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 
 # This is the console instance used by the print_response method
 # We can use this to stop and restart the live display and ask for user confirmation
@@ -89,6 +94,10 @@ agent = Agent(
     markdown=True,
 )
 
-agent.print_response(
-    "Fetch the top 2 hackernews stories?", stream=True, console=console
-)
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    agent.print_response(
+        "Fetch the top 2 hackernews stories?", stream=True, console=console
+    )

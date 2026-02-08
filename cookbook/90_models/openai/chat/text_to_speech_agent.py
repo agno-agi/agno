@@ -1,4 +1,4 @@
-"""🔊 Example: Using the OpenAITools Toolkit for Text-to-Speech
+"""Example: Using the OpenAITools Toolkit for Text-to-Speech
 
 This script demonstrates how to use an agent to generate speech from a given text input and optionally save it to a specified audio file.
 
@@ -12,6 +12,10 @@ from agno.agent import Agent
 from agno.models.google import Gemini
 from agno.tools.openai import OpenAITools
 from agno.utils.media import save_base64_data
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 output_file: str = str(Path("tmp/speech_output.mp3"))
 
@@ -32,3 +36,10 @@ if response.audio:
     base64_audio = base64.b64encode(response.audio[0].content).decode("utf-8")
     save_base64_data(base64_audio, output_file)
     print(f"Successfully saved generated speech to{output_file}")
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

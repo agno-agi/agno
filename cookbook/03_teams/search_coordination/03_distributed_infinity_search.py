@@ -1,22 +1,8 @@
 """
-This example demonstrates how multiple agents coordinate to perform distributed
-search using Infinity reranker for high-performance ranking across team members.
+Distributed Infinity Search
+===========================
 
-Team Composition:
-- Primary Searcher: Performs initial broad search with infinity reranking
-- Secondary Searcher: Performs targeted search on specific topics
-- Cross-Reference Validator: Validates information across different sources
-- Result Synthesizer: Combines and ranks all results for final response
-
-Setup:
-1. Install dependencies: `uv pip install agno anthropic infinity-client lancedb`
-2. Set up Infinity Server:
-   ```bash
-   pip install "infinity-emb[all]"
-   infinity_emb v2 --model-id BAAI/bge-reranker-base --port 7997
-   ```
-3. Export ANTHROPIC_API_KEY
-4. Run this script
+Demonstrates distributed search coordination with Infinity reranking.
 """
 
 from agno.agent import Agent
@@ -24,10 +10,12 @@ from agno.knowledge.embedder.cohere import CohereEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reranker.infinity import InfinityReranker
 from agno.models.anthropic import Claude
-from agno.team.team import Team
+from agno.team import Team
 from agno.vectordb.lancedb import LanceDb, SearchType
 
-# Knowledge base with Infinity reranker for high performance
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
 knowledge_primary = Knowledge(
     vector_db=LanceDb(
         uri="tmp/lancedb",
@@ -40,7 +28,6 @@ knowledge_primary = Knowledge(
     ),
 )
 
-# Secondary knowledge base for targeted search
 knowledge_secondary = Knowledge(
     vector_db=LanceDb(
         uri="tmp/lancedb",
@@ -53,7 +40,9 @@ knowledge_secondary = Knowledge(
     ),
 )
 
-# Primary Searcher Agent - Broad search with infinity reranking
+# ---------------------------------------------------------------------------
+# Create Members
+# ---------------------------------------------------------------------------
 primary_searcher = Agent(
     name="Primary Searcher",
     model=Claude(id="claude-3-7-sonnet-latest"),
@@ -69,7 +58,6 @@ primary_searcher = Agent(
     markdown=True,
 )
 
-# Secondary Searcher Agent - Targeted and specialized search
 secondary_searcher = Agent(
     name="Secondary Searcher",
     model=Claude(id="claude-3-7-sonnet-latest"),
@@ -85,7 +73,6 @@ secondary_searcher = Agent(
     markdown=True,
 )
 
-# Cross-Reference Validator Agent - Validates across sources
 cross_reference_validator = Agent(
     name="Cross-Reference Validator",
     model=Claude(id="claude-3-7-sonnet-latest"),
@@ -99,7 +86,6 @@ cross_reference_validator = Agent(
     markdown=True,
 )
 
-# Result Synthesizer Agent - Combines and ranks all findings
 result_synthesizer = Agent(
     name="Result Synthesizer",
     model=Claude(id="claude-3-7-sonnet-latest"),
@@ -113,7 +99,9 @@ result_synthesizer = Agent(
     markdown=True,
 )
 
-# Create distributed search team
+# ---------------------------------------------------------------------------
+# Create Team
+# ---------------------------------------------------------------------------
 distributed_search_team = Team(
     name="Distributed Search Team with Infinity Reranker",
     model=Claude(id="claude-3-7-sonnet-latest"),
@@ -137,14 +125,15 @@ distributed_search_team = Team(
 )
 
 
-async def async_distributed_search():
-    """Demonstrate async distributed search with infinity reranking."""
+# ---------------------------------------------------------------------------
+# Run Team
+# ---------------------------------------------------------------------------
+async def async_distributed_search() -> None:
     print("Async Distributed Search with Infinity Reranker Demo")
     print("=" * 65)
 
     query = "How do Agents work with tools and what are the performance considerations?"
 
-    # Add content to both knowledge bases
     await knowledge_primary.ainsert_many(
         urls=["https://docs.agno.com/basics/agents/overview.md"]
     )
@@ -152,18 +141,15 @@ async def async_distributed_search():
         urls=["https://docs.agno.com/basics/agents/overview.md"]
     )
 
-    # Run async distributed search
     await distributed_search_team.aprint_response(query, stream=True)
 
 
-def sync_distributed_search():
-    """Demonstrate sync distributed search with infinity reranking."""
+def sync_distributed_search() -> None:
     print("Distributed Search with Infinity Reranker Demo")
     print("=" * 55)
 
     query = "How do Agents work with tools and what are the performance considerations?"
 
-    # Add content to both knowledge bases
     knowledge_primary.insert_many(
         urls=["https://docs.agno.com/basics/agents/overview.md"]
     )
@@ -171,16 +157,12 @@ def sync_distributed_search():
         urls=["https://docs.agno.com/basics/agents/overview.md"]
     )
 
-    # Run distributed search
     distributed_search_team.print_response(query, stream=True)
 
 
 if __name__ == "__main__":
-    # Choose which demo to run
-
     try:
         # asyncio.run(async_distributed_search())
-
         sync_distributed_search()
     except Exception as e:
         print(f"Error: {e}")

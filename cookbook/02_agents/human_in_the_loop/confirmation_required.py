@@ -1,17 +1,8 @@
-"""🤝 Human-in-the-Loop (HITL): Adding User Confirmation to Tool Calls
+"""
+Confirmation Required
+=============================
 
-This example shows how to implement human-in-the-loop functionality in your Agno tools.
-It shows how to:
-- Handle user confirmation during tool execution
-- Gracefully cancel operations based on user choice
-
-Some practical applications:
-- Confirming sensitive operations before execution
-- Reviewing API calls before they're made
-- Validating data transformations
-- Approving automated actions in critical systems
-
-Run `uv pip install openai httpx rich agno` to install dependencies.
+Human-in-the-Loop (HITL): Adding User Confirmation to Tool Calls.
 """
 
 import json
@@ -56,6 +47,9 @@ def get_top_hackernews_stories(num_stories: int) -> str:
     return json.dumps(all_stories)
 
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
     tools=[get_top_hackernews_stories],
@@ -63,36 +57,39 @@ agent = Agent(
     db=SqliteDb(session_table="test_session", db_file="tmp/example.db"),
 )
 
-run_response = agent.run("Fetch the top 2 hackernews stories.")
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    run_response = agent.run("Fetch the top 2 hackernews stories.")
 
-for requirement in run_response.active_requirements:
-    if requirement.needs_confirmation:
-        # Ask for confirmation
-        console.print(
-            f"Tool name [bold blue]{requirement.tool_execution.tool_name}({requirement.tool_execution.tool_args})[/] requires confirmation."
-        )
-        message = (
-            Prompt.ask("Do you want to continue?", choices=["y", "n"], default="y")
-            .strip()
-            .lower()
-        )
+    for requirement in run_response.active_requirements:
+        if requirement.needs_confirmation:
+            # Ask for confirmation
+            console.print(
+                f"Tool name [bold blue]{requirement.tool_execution.tool_name}({requirement.tool_execution.tool_args})[/] requires confirmation."
+            )
+            message = (
+                Prompt.ask("Do you want to continue?", choices=["y", "n"], default="y")
+                .strip()
+                .lower()
+            )
 
-        # Confirm or reject the requirement
-        if message == "n":
-            requirement.reject()
-        else:
-            requirement.confirm()
+            # Confirm or reject the requirement
+            if message == "n":
+                requirement.reject()
+            else:
+                requirement.confirm()
 
+    run_response = agent.continue_run(
+        run_id=run_response.run_id,
+        requirements=run_response.requirements,
+    )
 
-run_response = agent.continue_run(
-    run_id=run_response.run_id,
-    requirements=run_response.requirements,
-)
+    # You can also pass the updated tools when continuing the run:
+    # run_response = agent.continue_run(
+    #     run_id=run_response.run_id,
+    #     updated_tools=run_response.tools,
+    # )
 
-# You can also pass the updated tools when continuing the run:
-# run_response = agent.continue_run(
-#     run_id=run_response.run_id,
-#     updated_tools=run_response.tools,
-# )
-
-pprint.pprint_run_response(run_response)
+    pprint.pprint_run_response(run_response)

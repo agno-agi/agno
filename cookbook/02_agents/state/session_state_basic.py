@@ -1,3 +1,10 @@
+"""
+Session State Basic
+=============================
+
+Session State Basic.
+"""
+
 from agno.agent import Agent, RunOutput  # noqa
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
@@ -14,6 +21,9 @@ def add_item(run_context: RunContext, item: str) -> str:
 
 
 # Create an Agent that maintains state
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
     # Initialize the session state with a counter starting at 0 (this is the default session state for all users)
@@ -25,10 +35,14 @@ agent = Agent(
     markdown=True,
 )
 
-# Example usage
-agent.print_response("Add milk, eggs, and bread to the shopping list", stream=True)
-print(f"Final session state: {agent.get_session_state()}")
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    # Example usage
+    agent.print_response("Add milk, eggs, and bread to the shopping list", stream=True)
+    print(f"Final session state: {agent.get_session_state()}")
 
-# Alternatively,
-# response: RunOutput = agent.run("Add milk, eggs, and bread to the shopping list")
-# print(f"Final session state: {response.session_state}")
+    # Alternatively,
+    # response: RunOutput = agent.run("Add milk, eggs, and bread to the shopping list")
+    # print(f"Final session state: {response.session_state}")

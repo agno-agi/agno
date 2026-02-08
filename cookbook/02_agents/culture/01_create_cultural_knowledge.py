@@ -1,15 +1,13 @@
-"""Create cultural knowledge to use with your Agents.
+"""
+01 Create Cultural Knowledge
+=============================
 
-This minimal example demonstrates how to use Agno's `CultureManager`
-to create and persist shared cultural knowledge that can be used with your Agents.
-
-Cultural knowledge represents reusable insights, rules, and values that
-Agents can reference to stay consistent in tone, reasoning, and best practices.
+Create cultural knowledge to use with your Agents.
 """
 
 from agno.culture.manager import CultureManager
 from agno.db.sqlite import SqliteDb
-from agno.models.anthropic import Claude
+from agno.models.openai import OpenAIResponses
 from rich.pretty import pprint
 
 # ---------------------------------------------------------------------------
@@ -24,7 +22,7 @@ db = SqliteDb(db_file="tmp/demo.db")
 # that your Agents can access for consistent reasoning and behavior.
 culture_manager = CultureManager(
     db=db,
-    model=Claude(id="claude-sonnet-4-5"),
+    model=OpenAIResponses(id="gpt-5.2"),
 )
 
 # ---------------------------------------------------------------------------
@@ -60,5 +58,9 @@ culture_manager.create_cultural_knowledge(message=message)
 # ---------------------------------------------------------------------------
 cultural_knowledge = culture_manager.get_all_knowledge()
 
-print("\n=== Cultural Knowledge Entries ===")
-pprint(cultural_knowledge)
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    print("\n=== Cultural Knowledge Entries ===")
+    pprint(cultural_knowledge)

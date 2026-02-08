@@ -1,54 +1,16 @@
-# Team Knowledge
+# knowledge
 
-Teams with shared knowledge bases for decision making and responses.
+Examples for team workflows in knowledge.
 
-## Setup
+## Prerequisites
 
-```bash
-uv pip install agno openai pgvector "psycopg[binary]" sqlalchemy
-```
+- Load environment variables (for example, OPENAI_API_KEY) via direnv allow.
+- Use .venvs/demo/bin/python to run cookbook examples.
+- Some examples require additional services (for example PostgreSQL, LanceDB, or Infinity server) as noted in file docstrings.
 
-Set your API key:
-```bash
-export OPENAI_API_KEY=xxx
-```
+## Files
 
-### Start PgVector Database
-
-```bash
-docker run -d \
-  -e POSTGRES_DB=ai \
-  -e POSTGRES_USER=ai \
-  -e POSTGRES_PASSWORD=ai \
-  -p 5532:5432 \
-  --name pgvector \
-  agnohq/pgvector:16
-```
-
-## Basic Integration
-
-Teams can share knowledge bases for enhanced responses:
-
-```python
-from agno.team import Team
-from agno.knowledge.knowledge import Knowledge
-from agno.vectordb.pgvector import PgVector
-
-knowledge = Knowledge(
-    vector_db=PgVector(
-        table_name="team_knowledge",
-        db_url="postgresql+psycopg://ai:ai@localhost:5532/ai"
-    )
-)
-
-team = Team(
-    members=[agent1, agent2],
-    knowledge=knowledge,
-    search_knowledge=True,
-)
-```
-
-## Examples
-
-- **[01_team_with_knowledge.py](./01_team_with_knowledge.py)** - Teams with shared knowledge bases
-- **[02_knowledge_with_agents.py](./02_knowledge_with_agents.py)** - Agent-specific knowledge integration
+- 01_team_with_knowledge.py - Demonstrates team with knowledge.
+- 02_team_with_knowledge_filters.py - Demonstrates team with knowledge filters.
+- 03_team_with_agentic_knowledge_filters.py - Demonstrates team with agentic knowledge filters.
+- 04_team_with_custom_retriever.py - Demonstrates team with custom retriever.

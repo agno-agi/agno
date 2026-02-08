@@ -1,7 +1,8 @@
 """
-1. Run: `uv pip install openai agno cohere lancedb tantivy sqlalchemy` to install the dependencies
-2. Export your OPENAI_API_KEY and CO_API_KEY
-3. Run: `python cookbook/agent_concepts/rag/agentic_rag_with_reranking.py` to run the agent
+Agentic Rag With Reranking
+=============================
+
+1. Run: `uv pip install openai agno cohere lancedb tantivy sqlalchemy` to install the dependencies.
 """
 
 from agno.agent import Agent
@@ -28,6 +29,10 @@ knowledge = Knowledge(
 
 knowledge.insert(name="Agno Docs", url="https://docs.agno.com/introduction.md")
 
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     # Agentic RAG is enabled by default when `knowledge` is provided to the Agent.
@@ -35,6 +40,10 @@ agent = Agent(
     markdown=True,
 )
 
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     # Load the knowledge base, comment after first run
     agent.print_response("What are Agno's key features?")

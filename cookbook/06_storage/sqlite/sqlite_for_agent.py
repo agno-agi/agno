@@ -7,10 +7,14 @@ from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.tools.websearch import WebSearchTools
 
-# Setup the SQLite database
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
 db = SqliteDb(db_file="tmp/data.db")
 
-# Setup a basic agent with the SQLite database
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 agent = Agent(
     db=db,
     tools=[WebSearchTools()],
@@ -18,7 +22,11 @@ agent = Agent(
     add_datetime_to_context=True,
 )
 
-# The Agent sessions and runs will now be stored in SQLite
-agent.print_response("How many people live in Canada?")
-agent.print_response("What is their national anthem?")
-agent.print_response("List my messages one by one")
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    # The Agent sessions and runs will now be stored in SQLite
+    agent.print_response("How many people live in Canada?")
+    agent.print_response("What is their national anthem?")
+    agent.print_response("List my messages one by one")

@@ -1,3 +1,10 @@
+"""
+Image To Structured Output
+==========================
+
+Demonstrates collaborative visual analysis with structured movie script output.
+"""
+
 from typing import List
 
 from agno.agent import Agent
@@ -19,6 +26,9 @@ class MovieScript(BaseModel):
     )
 
 
+# ---------------------------------------------------------------------------
+# Create Members
+# ---------------------------------------------------------------------------
 image_analyst = Agent(
     name="Image Analyst",
     role="Analyze visual content and extract key elements",
@@ -39,7 +49,9 @@ script_writer = Agent(
     ],
 )
 
-# Create a team for collaborative structured output generation
+# ---------------------------------------------------------------------------
+# Create Team
+# ---------------------------------------------------------------------------
 movie_team = Team(
     name="Movie Script Team",
     members=[image_analyst, script_writer],
@@ -53,15 +65,19 @@ movie_team = Team(
     output_schema=MovieScript,
 )
 
-response = movie_team.run(
-    "Write a movie about this image",
-    images=[
-        Image(
-            url="https://upload.wikimedia.org/wikipedia/commons/0/0c/GoldenGateBridge-001.jpg"
-        )
-    ],
-    stream=True,
-)
+# ---------------------------------------------------------------------------
+# Run Team
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    response = movie_team.run(
+        "Write a movie about this image",
+        images=[
+            Image(
+                url="https://upload.wikimedia.org/wikipedia/commons/0/0c/GoldenGateBridge-001.jpg"
+            )
+        ],
+        stream=True,
+    )
 
-for event in response:
-    pprint(event.content)
+    for event in response:
+        pprint(event.content)

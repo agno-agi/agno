@@ -1,9 +1,19 @@
+"""
+Reasoning Agent Events
+=============================
+
+Reasoning Agent Events.
+"""
+
 import asyncio
 
 from agno.agent import RunEvent
 from agno.agent.agent import Agent
 from agno.models.openai.chat import OpenAIChat
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 finance_agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     reasoning=True,
@@ -38,6 +48,9 @@ async def run_agent_with_events(prompt: str):
                 print(run_output_event.content, end="")
 
 
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     task = (
         "Analyze the key factors that led to the signing of the Treaty of Versailles in 1919. "

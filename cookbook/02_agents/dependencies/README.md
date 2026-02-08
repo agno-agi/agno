@@ -1,10 +1,16 @@
-# Agent Dependencies
+# dependencies
 
-Agent dependency management for injecting context and runtime dependencies.
+Examples for runtime dependency injection and dynamic runtime inputs.
 
+## Files
+- `dependencies_in_context.py` - Demonstrates dependencies in context.
+- `dependencies_in_tools.py` - Demonstrates dependencies in tools.
+- `dynamic_tools.py` - Demonstrates dynamic tools.
 
-## Examples
+## Prerequisites
+- Load environment variables with `direnv allow` (including `OPENAI_API_KEY`).
+- Create the demo environment with `./scripts/demo_setup.sh`, then run cookbooks with `.venvs/demo/bin/python`.
+- Some examples require optional local services (for example pgvector) or provider-specific API keys.
 
-- **[reference_dependencies.py](./reference_dependencies.py)** - Reference dependencies in instructions
-- **[add_dependencies_to_context.py](./add_dependencies_to_context.py)** - Automatically add dependencies to the agent context
-- **[add_dependencies_on_run.py](./add_dependencies_on_run.py)** - Runtime dependency injection
+## Run
+- `.venvs/demo/bin/python cookbook/02_agents/<directory>/<file>.py`

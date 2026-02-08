@@ -1,9 +1,12 @@
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 #!/usr/bin/env python3
-"""Check Python code for style issues.
+"""
+Check Style
+=============================
 
-Usage:
-    echo "code here" | ./check_style.py
-    ./check_style.py "def foo(): pass"
+Check Python code for style issues.
 """
 
 import json
@@ -59,6 +62,9 @@ def check_style(code: str) -> dict:
     }
 
 
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     try:
         if len(sys.argv) > 1:
