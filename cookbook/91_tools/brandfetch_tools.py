@@ -25,6 +25,11 @@ import asyncio
 from agno.agent import Agent
 from agno.tools.brandfetch import BrandfetchTools
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
+
 # Brand API
 
 # agent = Agent(
@@ -40,6 +45,11 @@ agent = Agent(
     tools=[BrandfetchTools(async_tools=True)],
     description="You are a Brand research agent. Given a company name or company domain, you will use the Brandfetch API to retrieve the company's brand information.",
 )
-asyncio.run(
-    agent.aprint_response("What is the brand information of Agno?", markdown=True)
-)
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    asyncio.run(
+        agent.aprint_response("What is the brand information of Agno?", markdown=True)
+    )

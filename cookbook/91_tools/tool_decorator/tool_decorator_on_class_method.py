@@ -1,7 +1,18 @@
+"""
+Tool Decorator On Class Method
+=============================
+
+Demonstrates tool decorator on class method.
+"""
+
 from typing import Generator
 
 from agno.agent import Agent
 from agno.tools import Toolkit, tool
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 
 class MyToolkit(Toolkit):
@@ -63,6 +74,10 @@ class ToolkitWithGenerator(Toolkit):
         for i in range(1, count + 1):
             yield f"Number: {i}"
 
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     # Create toolkit with custom multiplier
