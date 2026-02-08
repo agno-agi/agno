@@ -692,8 +692,11 @@ class JWTMiddleware(BaseHTTPMiddleware):
             request.state.user_id = "__scheduler__"
             request.state.session_id = None
             internal_scopes = [
+                "agents:read",
                 "agents:run",
+                "teams:read",
                 "teams:run",
+                "workflows:read",
                 "workflows:run",
                 "schedules:read",
                 "schedules:write",

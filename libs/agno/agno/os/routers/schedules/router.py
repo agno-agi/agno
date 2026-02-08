@@ -220,6 +220,9 @@ def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
         if existing is None:
             raise HTTPException(status_code=404, detail="Schedule not found")
 
+        if not existing.get("enabled", True):
+            raise HTTPException(status_code=409, detail="Schedule is disabled")
+
         # Use executor directly for synchronous result with persisted run record
         executor = getattr(request.app.state, "scheduler_executor", None)
         if executor is not None:

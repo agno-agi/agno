@@ -88,8 +88,11 @@ def get_authentication_dependency(settings: AgnoAPISettings):
         if internal_token and hmac.compare_digest(token, internal_token):
             request.state.authenticated = True
             request.state.scopes = [
+                "agents:read",
                 "agents:run",
+                "teams:read",
                 "teams:run",
+                "workflows:read",
                 "workflows:run",
                 "schedules:read",
                 "schedules:write",
