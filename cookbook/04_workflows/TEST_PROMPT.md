@@ -1,9 +1,3 @@
-# Prompt to test: `cookbook/04_workflows`
-
-Use this prompt with an AI coding agent to test and validate the workflows cookbook.
-
----
-
 Goal: Thoroughly test and validate `cookbook/04_workflows` so it aligns with our cookbook standards.
 
 Context files (read these first):

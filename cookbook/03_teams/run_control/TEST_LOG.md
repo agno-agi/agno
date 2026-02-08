@@ -1,6 +1,6 @@
 # Test Log: run_control
 
-> Updated: 2026-02-08 00:52:28 
+> Updated: 2026-02-08 15:49:52
 
 ## Pattern Check
 
@@ -16,7 +16,7 @@
 
 **Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/run_control/cancel_run.py`.
 
-**Result:** Completed successfully (exit 0) in 35.54s. Tail: Content Preview: Once upon a time in the vast, enchanted realm of Auroria—a land where magic and modernity coexisted—there lived a dragon named Zephyr. Zephyr was no ordinary dragon. His scales shimmered in hues of tw... | WARNING: Team run completed before cancellation | Team cancellation example completed!
+**Result:** Executed successfully. Duration: 88.48s. Tail: d-ae21-e53ca1b3caad | Was Cancelled: False | Content Preview: In the misty realm of Emberland, where the mountains shimmered with the heat of ancient magma and lush valleys cradled verdant forests, there lived a dragon named Pyraxus. Pyraxus was not like the oth... |  | WARNING: Team run completed before cancellation |  | Team cancellation example completed!
 
 ---
 
@@ -26,7 +26,7 @@
 
 **Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/run_control/model_inheritance.py`.
 
-**Result:** Completed successfully (exit 0) in 26.49s. Tail: ┃ content is suitable for publication.                                         ┃ | ┃                                                                              ┃ | ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+**Result:** Executed successfully. Duration: 46.53s. Tail: periences, foster trust,   ┃ | ┃ and contribute positively to society, ensuring innovations are both          ┃ | ┃ ground-breaking and responsible.                                             ┃ | ┃                                                                              ┃ | ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
 ---
 
@@ -36,7 +36,7 @@
 
 **Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/run_control/remote_team.py`.
 
-**Result:** Exited with code 1 in 0.45s. Tail: File "/Users/ab/conductor/workspaces/agno/colombo/libs/agno/agno/client/os.py", line 201, in _arequest | raise RemoteServerUnavailableError( | agno.exceptions.RemoteServerUnavailableError: Failed to connect to remote server at http://localhost:7778
+**Result:** Exited with code 1. Tail:      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ |   File "/Users/ab/conductor/workspaces/agno/colombo/libs/agno/agno/client/os.py", line 201, in _arequest |     raise RemoteServerUnavailableError( | agno.exceptions.RemoteServerUnavailableError: Failed to connect to remote server at http://localhost:7778
 
 ---
 
@@ -46,6 +46,6 @@
 
 **Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/run_control/retries.py`.
 
-**Result:** Completed successfully (exit 0) in 12.32s. Tail: ┃ technology in our lives.                                                     ┃ | ┃                                                                              ┃ | ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+**Result:** Executed successfully. Duration: 16.11s. Tail:                            ┃ | ┃ These advancements highlight the progress in AI across domains like          ┃ | ┃ cybersecurity, healthcare, and research.                                     ┃ | ┃                                                                              ┃ | ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
 ---

@@ -1,23 +1,16 @@
-# TEST_LOG
-Generated: 2026-02-07 23:53:42
+# TEST LOG
 
-### check_cookbook_pattern.py
+Generated: 2026-02-08 15:41 UTC
 
-**Status:** PASS
-
-**Description:** Ran `.venvs/demo/bin/python cookbook/scripts/check_cookbook_pattern.py --base-dir cookbook/02_agents/culture`.
-
-**Result:** Structure validation passed with no violations (checked 4 file(s)).
-
----
+Pattern Check: Checked 4 file(s) in /Users/ab/conductor/workspaces/agno/colombo/cookbook/02_agents/culture. Violations: 0
 
 ### 01_create_cultural_knowledge.py
 
 **Status:** PASS
 
-**Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/culture/01_create_cultural_knowledge.py`.
+**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
 
-**Result:** Example completed successfully. (exit code 0, ~6.51s).
+**Result:** Completed successfully in 2s.
 
 ---
 
@@ -25,9 +18,9 @@ Generated: 2026-02-07 23:53:42
 
 **Status:** PASS
 
-**Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/culture/02_use_cultural_knowledge_in_agent.py`.
+**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
 
-**Result:** Example completed successfully. (exit code 0, ~0.67s).
+**Result:** Completed successfully in 0s.
 
 ---
 
@@ -35,9 +28,9 @@ Generated: 2026-02-07 23:53:42
 
 **Status:** PASS
 
-**Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/culture/03_automatic_cultural_management.py`.
+**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
 
-**Result:** Example completed successfully. (exit code 0, ~0.71s).
+**Result:** Completed successfully in 1s.
 
 ---
 
@@ -45,8 +38,9 @@ Generated: 2026-02-07 23:53:42
 
 **Status:** PASS
 
-**Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/culture/04_manually_add_culture.py`.
+**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
 
-**Result:** Example completed successfully. (exit code 0, ~0.65s).
+**Result:** Completed successfully in 1s.
 
 ---
+

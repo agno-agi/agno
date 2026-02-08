@@ -1,9 +1,3 @@
-# Prompt to test: `cookbook/02_agents`
-
-Use this prompt with an AI coding agent to test and validate the agents cookbook.
-
----
-
 Goal: Thoroughly test and validate `cookbook/02_agents` so it aligns with our cookbook standards.
 
 Context files (read these first):

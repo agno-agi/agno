@@ -1,13 +1,7 @@
-# Prompt to test: `cookbook/11_memory`
-
-Use this prompt with an AI coding agent to test and validate the memory cookbook.
-
----
-
 Goal: Thoroughly test and validate `cookbook/11_memory` so it aligns with our cookbook standards.
 
 Context files (read these first):
-- `CLAUDE.md` — Project conventions, virtual environments, testing workflow
+- `AGENTS.md` — Project conventions, virtual environments, testing workflow
 - `cookbook/STYLE_GUIDE.md` — Python file structure rules
 
 Environment:

@@ -1,20 +1,23 @@
-# Test Log: 04_workflows/04_parallel_execution
+# TEST_LOG for cookbook/04_workflows/04_parallel_execution
 
-> Tests not yet run. Run each file and update this log.
+Generated: 2026-02-08 16:39:09
 
 ### parallel_basic.py
 
-**Status:** PENDING
+**Status:** FAIL
 
-**Description:** Runs parallel_basic.py and validates expected behavior.
+**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
+
+**Result:** Timed out after 35s. DEBUG Added RunOutput to Agent Session
 
 ---
 
 ### parallel_with_condition.py
 
-**Status:** PENDING
+**Status:** FAIL
 
-**Description:** Runs parallel_with_condition.py and validates expected behavior.
+**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
+
+**Result:** Exited with code 1. ImportError: `exa_py` not installed. Please install using `pip install exa_py`
 
 ---
-

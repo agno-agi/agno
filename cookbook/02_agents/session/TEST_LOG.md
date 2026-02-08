@@ -1,23 +1,16 @@
-# TEST_LOG
-Generated: 2026-02-07 23:53:42
+# TEST LOG
 
-### check_cookbook_pattern.py
+Generated: 2026-02-08 15:41 UTC
 
-**Status:** PASS
-
-**Description:** Ran `.venvs/demo/bin/python cookbook/scripts/check_cookbook_pattern.py --base-dir cookbook/02_agents/session`.
-
-**Result:** Structure validation passed with no violations (checked 5 file(s)).
-
----
+Pattern Check: Checked 5 file(s) in /Users/ab/conductor/workspaces/agno/colombo/cookbook/02_agents/session. Violations: 0
 
 ### chat_history.py
 
 **Status:** PASS
 
-**Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/session/chat_history.py`.
+**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
 
-**Result:** Example completed successfully. (exit code 0, ~5.13s).
+**Result:** Completed successfully in 7s.
 
 ---
 
@@ -25,9 +18,9 @@ Generated: 2026-02-07 23:53:42
 
 **Status:** FAIL
 
-**Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/session/last_n_session_messages.py`.
+**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
 
-**Result:** Failed with exit code 1. ModuleNotFoundError: No module named 'aiosqlite'
+**Result:** Failed with missing module: No module named 'aiosqlite'
 
 ---
 
@@ -35,9 +28,9 @@ Generated: 2026-02-07 23:53:42
 
 **Status:** PASS
 
-**Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/session/persistent_session.py`.
+**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
 
-**Result:** Example completed successfully. (exit code 0, ~2.91s).
+**Result:** Completed successfully in 3s.
 
 ---
 
@@ -45,9 +38,9 @@ Generated: 2026-02-07 23:53:42
 
 **Status:** PASS
 
-**Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/session/session_options.py`.
+**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
 
-**Result:** Example completed successfully. (exit code 0, ~2.5s).
+**Result:** Completed successfully in 3s.
 
 ---
 
@@ -55,8 +48,9 @@ Generated: 2026-02-07 23:53:42
 
 **Status:** PASS
 
-**Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/session/session_summary.py`.
+**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
 
-**Result:** Example completed successfully. (exit code 0, ~4.55s).
+**Result:** Completed successfully in 4s.
 
 ---
+

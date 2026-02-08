@@ -1,4 +1,5 @@
 """Router with CEL: route based on a named previous step's output.
+===============================================================
 
 Uses previous_step_outputs map to access the classifier step by name,
 then routes to the appropriate handler based on the classification.
@@ -12,6 +13,9 @@ from agno.models.openai import OpenAIChat
 from agno.workflow import CEL_AVAILABLE, Step, Workflow
 from agno.workflow.router import Router
 
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
 if not CEL_AVAILABLE:
     print("CEL is not available. Install with: pip install cel-python")
     exit(1)

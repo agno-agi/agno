@@ -1,23 +1,16 @@
-# TEST_LOG
-Generated: 2026-02-07 23:53:42
+# TEST LOG
 
-### check_cookbook_pattern.py
+Generated: 2026-02-08 15:41 UTC
 
-**Status:** PASS
-
-**Description:** Ran `.venvs/demo/bin/python cookbook/scripts/check_cookbook_pattern.py --base-dir cookbook/02_agents/guardrails`.
-
-**Result:** Structure validation passed with no violations (checked 5 file(s)).
-
----
+Pattern Check: Checked 5 file(s) in /Users/ab/conductor/workspaces/agno/colombo/cookbook/02_agents/guardrails. Violations: 0
 
 ### custom_guardrail.py
 
 **Status:** PASS
 
-**Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/guardrails/custom_guardrail.py`.
+**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
 
-**Result:** Example completed successfully. (exit code 0, ~18.39s).
+**Result:** Completed successfully in 18s.
 
 ---
 
@@ -25,9 +18,9 @@ Generated: 2026-02-07 23:53:42
 
 **Status:** PASS
 
-**Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/guardrails/openai_moderation.py`.
+**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
 
-**Result:** Example completed successfully. (exit code 0, ~10.21s).
+**Result:** Completed successfully in 9s.
 
 ---
 
@@ -35,9 +28,9 @@ Generated: 2026-02-07 23:53:42
 
 **Status:** PASS
 
-**Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/guardrails/output_guardrail.py`.
+**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
 
-**Result:** Example completed successfully. (exit code 0, ~14.32s).
+**Result:** Completed successfully in 13s.
 
 ---
 
@@ -45,9 +38,9 @@ Generated: 2026-02-07 23:53:42
 
 **Status:** PASS
 
-**Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/guardrails/pii_detection.py`.
+**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
 
-**Result:** Example completed successfully. (exit code 0, ~3.51s).
+**Result:** Completed successfully in 4s.
 
 ---
 
@@ -55,8 +48,9 @@ Generated: 2026-02-07 23:53:42
 
 **Status:** PASS
 
-**Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/guardrails/prompt_injection.py`.
+**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
 
-**Result:** Example completed successfully. (exit code 0, ~1.63s).
+**Result:** Completed successfully in 2s.
 
 ---
+

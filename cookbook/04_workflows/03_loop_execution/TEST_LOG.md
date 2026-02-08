@@ -1,20 +1,23 @@
-# Test Log: 04_workflows/03_loop_execution
+# TEST_LOG for cookbook/04_workflows/03_loop_execution
 
-> Tests not yet run. Run each file and update this log.
+Generated: 2026-02-08 16:39:09
 
 ### loop_basic.py
 
-**Status:** PENDING
+**Status:** FAIL
 
-**Description:** Runs loop_basic.py and validates expected behavior.
+**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
+
+**Result:** Timed out after 35s. DEBUG Creating new sync OpenAI client for model gpt-4o
 
 ---
 
 ### loop_with_parallel.py
 
-**Status:** PENDING
+**Status:** FAIL
 
-**Description:** Runs loop_with_parallel.py and validates expected behavior.
+**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
+
+**Result:** Timed out after 35s. DEBUG Creating new sync OpenAI client for model gpt-4o
 
 ---
-

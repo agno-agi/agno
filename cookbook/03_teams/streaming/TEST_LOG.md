@@ -1,6 +1,6 @@
 # Test Log: streaming
 
-> Updated: 2026-02-08 00:52:28 
+> Updated: 2026-02-08 15:49:52
 
 ## Pattern Check
 
@@ -16,7 +16,7 @@
 
 **Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/streaming/team_events.py`.
 
-**Result:** Completed successfully (exit 0) in 1.3s. Tail: {'type': 'authentication_error', 'message': 'invalid x-api-key'}, | 'request_id': 'req_011CXug75SR5TemUdZjjw1k4'} | DEBUG Added RunOutput to Team Session
+**Result:** Executed successfully. Duration: 1.15s. Tail: x-api-key'}, 'request_id': 'req_011CXvqoznZfhPkABjd3fmCJ'}              | ERROR    Error in Team run: Error code: 401 - {'type': 'error', 'error':         |          {'type': 'authentication_error', 'message': 'invalid x-api-key'},       |          'request_id': 'req_011CXvqoznZfhPkABjd3fmCJ'}                           | DEBUG Added RunOutput to Team Session
 
 ---
 
@@ -26,6 +26,6 @@
 
 **Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/streaming/team_streaming.py`.
 
-**Result:** Completed successfully (exit 0) in 40.53s. Tail: │ per share.According to the latest information, the current stock price for   │ | │ NVDA (NVIDIA Corporation) is approximately **$185.41 per share**.            │ | ╰──────────────────────────────────────────────────────────────────────────────╯
+**Result:** Executed successfully. Duration: 41.62s. Tail: tely $185.41. Please note  │ | │ that stock prices can fluctuate frequently throughout the trading day, so    │ | │ you may want to check again for the most up-to-date information if you're    │ | │ making time-sensitive decisions.                                             │ | ╰──────────────────────────────────────────────────────────────────────────────╯
 
 ---

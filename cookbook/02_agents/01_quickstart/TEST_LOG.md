@@ -1,23 +1,16 @@
-# TEST_LOG
-Generated: 2026-02-07 23:53:42
+# TEST LOG
 
-### check_cookbook_pattern.py
+Generated: 2026-02-08 15:41 UTC
 
-**Status:** PASS
-
-**Description:** Ran `.venvs/demo/bin/python cookbook/scripts/check_cookbook_pattern.py --base-dir cookbook/02_agents/01_quickstart`.
-
-**Result:** Structure validation passed with no violations (checked 3 file(s)).
-
----
+Pattern Check: Checked 3 file(s) in /Users/ab/conductor/workspaces/agno/colombo/cookbook/02_agents/01_quickstart. Violations: 0
 
 ### agent_with_instructions.py
 
 **Status:** PASS
 
-**Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/01_quickstart/agent_with_instructions.py`.
+**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
 
-**Result:** Example completed successfully. (exit code 0, ~6.93s).
+**Result:** Completed successfully in 9s.
 
 ---
 
@@ -25,9 +18,9 @@ Generated: 2026-02-07 23:53:42
 
 **Status:** PASS
 
-**Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/01_quickstart/agent_with_tools.py`.
+**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
 
-**Result:** Example completed successfully. (exit code 0, ~5.4s).
+**Result:** Completed successfully in 6s.
 
 ---
 
@@ -35,8 +28,9 @@ Generated: 2026-02-07 23:53:42
 
 **Status:** PASS
 
-**Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/01_quickstart/basic_agent.py`.
+**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
 
-**Result:** Example completed successfully. (exit code 0, ~2.18s).
+**Result:** Completed successfully in 2s.
 
 ---
+

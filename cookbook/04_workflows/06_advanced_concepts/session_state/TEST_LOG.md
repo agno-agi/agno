@@ -1,52 +1,63 @@
-# Test Log: 04_workflows/06_advanced_concepts/session_state
+# TEST_LOG for cookbook/04_workflows/06_advanced_concepts/session_state
 
-> Tests not yet run. Run each file and update this log.
+Generated: 2026-02-08 16:39:09
 
 ### rename_session.py
 
-**Status:** PENDING
+**Status:** FAIL
 
-**Description:** Runs rename_session.py and validates expected behavior.
+**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
+
+**Result:** Exited with code 1. AttributeError: 'NoneType' object has no attribute 'session_data'
 
 ---
 
 ### state_in_condition.py
 
-**Status:** PENDING
+**Status:** PASS
 
-**Description:** Runs state_in_condition.py and validates expected behavior.
+**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
+
+**Result:** Executed successfully. Completed in 3.2s
 
 ---
 
 ### state_in_function.py
 
-**Status:** PENDING
+**Status:** FAIL
 
-**Description:** Runs state_in_function.py and validates expected behavior.
+**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
+
+**Result:** Timed out after 35s. DEBUG Creating new sync OpenAI client for model gpt-4o
 
 ---
 
 ### state_in_router.py
 
-**Status:** PENDING
+**Status:** FAIL
 
-**Description:** Runs state_in_router.py and validates expected behavior.
+**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
+
+**Result:** Timed out after 35s. - Useful large-scale quantum computing likely requires **quantum error
 
 ---
 
 ### state_with_agent.py
 
-**Status:** PENDING
+**Status:** PASS
 
-**Description:** Runs state_with_agent.py and validates expected behavior.
+**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
+
+**Result:** Executed successfully. Final workflow session state: {'shopping_list': []}
 
 ---
 
 ### state_with_team.py
 
-**Status:** PENDING
+**Status:** FAIL
 
-**Description:** Runs state_with_team.py and validates expected behavior.
+**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
+
+**Result:** Timed out after 35s. DEBUG [ERROR] Step 'Write Tests' not found in the list
 
 ---
-

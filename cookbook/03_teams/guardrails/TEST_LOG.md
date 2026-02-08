@@ -1,6 +1,6 @@
 # Test Log: guardrails
 
-> Updated: 2026-02-08 00:52:28 
+> Updated: 2026-02-08 15:49:52
 
 ## Pattern Check
 
@@ -16,7 +16,7 @@
 
 **Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/guardrails/openai_moderation.py`.
 
-**Result:** Completed successfully (exit 0) in 15.54s. Tail: ┃ OpenAI moderation violation detected.                                        ┃ | ┃                                                                              ┃ | ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+**Result:** Executed successfully. Duration: 17.34s. Tail: ━━━━━━━━━━━━━━━━━━━━━━━━━━━┓ | ┃                                                                              ┃ | ┃ OpenAI moderation violation detected.                                        ┃ | ┃                                                                              ┃ | ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
 ---
 
@@ -26,7 +26,7 @@
 
 **Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/guardrails/pii_detection.py`.
 
-**Result:** Completed successfully (exit 0) in 12.18s. Tail: ┃ via the **official phone number or in-app support**, not via chat.           ┃ | ┃                                                                              ┃ | ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+**Result:** Executed successfully. Duration: 14.63s. Tail: t or form, I recommend you ┃ | ┃ **remove/redact it if possible** and use the company’s official secure       ┃ | ┃ verification process (phone or in-app verification) instead.                 ┃ | ┃                                                                              ┃ | ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
 ---
 
@@ -36,6 +36,6 @@
 
 **Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/guardrails/prompt_injection.py`.
 
-**Result:** Completed successfully (exit 0) in 2.0s. Tail: ┃ Potential jailbreaking or prompt injection detected.                         ┃ | ┃                                                                              ┃ | ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛[WARNING] This should have been blocked!
+**Result:** Executed successfully. Duration: 1.64s. Tail:                                                                       ┃ | ┃ Potential jailbreaking or prompt injection detected.                         ┃ | ┃                                                                              ┃ | ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛[WARNING] This should have been blocked!
 
 ---

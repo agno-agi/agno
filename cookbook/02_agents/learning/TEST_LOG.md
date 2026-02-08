@@ -1,22 +1,16 @@
-# TEST_LOG
-Generated: 2026-02-07 23:53:42
+# TEST LOG
 
-### check_cookbook_pattern.py
+Generated: 2026-02-08 15:41 UTC
 
-**Status:** PASS
-
-**Description:** Ran `.venvs/demo/bin/python cookbook/scripts/check_cookbook_pattern.py --base-dir cookbook/02_agents/learning`.
-
-**Result:** Structure validation passed with no violations (checked 1 file(s)).
-
----
+Pattern Check: Checked 1 file(s) in /Users/ab/conductor/workspaces/agno/colombo/cookbook/02_agents/learning. Violations: 0
 
 ### learning_machine.py
 
 **Status:** PASS
 
-**Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/learning/learning_machine.py`.
+**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
 
-**Result:** Example completed successfully. (exit code 0, ~5.68s).
+**Result:** Completed successfully in 6s.
 
 ---
+

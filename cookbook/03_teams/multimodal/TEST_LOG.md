@@ -1,6 +1,6 @@
 # Test Log: multimodal
 
-> Updated: 2026-02-08 00:52:28 
+> Updated: 2026-02-08 15:49:52
 
 ## Pattern Check
 
@@ -12,11 +12,11 @@
 
 ### audio_sentiment_analysis.py
 
-**Status:** FAIL
+**Status:** PASS
 
 **Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/multimodal/audio_sentiment_analysis.py`.
 
-**Result:** Timed out after 90.02s. Tail: DEBUG **********************  TOOL METRICS  ********************** | DEBUG * Duration:                    0.0005s | DEBUG **********************  TOOL METRICS  **********************
+**Result:** Executed successfully. Duration: 44.01s. Tail: db/sqlite/sqlite.py", line 1039, in upsert_session |     raise e |   File "/Users/ab/conductor/workspaces/agno/colombo/libs/agno/agno/db/sqlite/sqlite.py", line 998, in upsert_session |     return TeamSession.from_dict(session_raw) |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ | NameError: name 'requirements' is not defined. Did you mean: 'RunRequirement'?
 
 ---
 
@@ -26,7 +26,7 @@
 
 **Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/multimodal/audio_to_text.py`.
 
-**Result:** Completed successfully (exit 0) in 5.01s. Tail: ┃ Let me know if you need anything else!                                       ┃ | ┃                                                                              ┃ | ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+**Result:** Executed successfully. Duration: 16.55s. Tail: gether?                    ┃ | ┃                                                                              ┃ | ┃ Speaker B: Yes, we do. My mom always prepares delicious meals for us.        ┃ | ┃                                                                              ┃ | ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
 ---
 
@@ -36,7 +36,7 @@
 
 **Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/multimodal/generate_image_with_team.py`.
 
-**Result:** Completed successfully (exit 0) in 22.1s. Tail: } | ------------------------------------------------------------ | DEBUG **** Team Run End: 05e87cbf-4379-40d1-9ffb-f505270a5bec ****
+**Result:** Executed successfully. Duration: 26.94s. Tail:  None, | │   │   'additional_metrics': None | │   }, | │   'session_state': { | │   │   'current_session_id': '0591d68c-2d11-4802-b413-b55ab7cf0eb8', | │   │   'current_run_id': '64a46b30-ed80-4d3e-a9ff-5e93d404f4b1' | │   } | } | ------------------------------------------------------------ | DEBUG **** Team Run End: 64a46b30-ed80-4d3e-a9ff-5e93d404f4b1 ****
 
 ---
 
@@ -46,7 +46,7 @@
 
 **Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/multimodal/image_to_image_transformation.py`.
 
-**Result:** Exited with code 1 in 0.38s. Tail: File "/Users/ab/conductor/workspaces/agno/colombo/libs/agno/agno/tools/fal.py", line 19, in <module> | raise ImportError("`fal_client` not installed. Please install using `pip install fal-client`") | ImportError: `fal_client` not installed. Please install using `pip install fal-client`
+**Result:** Exited with code 1. Tail: ", line 11, in <module> |     from agno.tools.fal import FalTools |   File "/Users/ab/conductor/workspaces/agno/colombo/libs/agno/agno/tools/fal.py", line 19, in <module> |     raise ImportError("`fal_client` not installed. Please install using `pip install fal-client`") | ImportError: `fal_client` not installed. Please install using `pip install fal-client`
 
 ---
 
@@ -56,7 +56,7 @@
 
 **Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/multimodal/image_to_structured_output.py`.
 
-**Result:** Completed successfully (exit 0) in 33.21s. Tail: DEBUG ---------------- OpenAI Response Stream End ---------------- | DEBUG Added RunOutput to Team Session | DEBUG **** Team Run End: 16dada8d-64ce-482a-b277-a1dd18aa4329 ****
+**Result:** Executed successfully. Duration: 36.66s. Tail: 2.8962 tokens/s                            | DEBUG ************************  METRICS  *************************               | DEBUG ---------------- OpenAI Response Stream End ----------------               | DEBUG Added RunOutput to Team Session                                            | DEBUG **** Team Run End: 7b4daca9-8437-4d9d-ac96-1c99978deb51 ****
 
 ---
 
@@ -66,7 +66,7 @@
 
 **Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/multimodal/image_to_text.py`.
 
-**Result:** Completed successfully (exit 0) in 4.09s. Tail: ┃ fiction story?                                                               ┃ | ┃                                                                              ┃ | ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+**Result:** Executed successfully. Duration: 4.36s. Tail: ge for analysis. Could you ┃ | ┃ please provide a brief description of the image, so my team can assist you   ┃ | ┃ more effectively?                                                            ┃ | ┃                                                                              ┃ | ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
 ---
 
@@ -76,7 +76,7 @@
 
 **Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/multimodal/media_input_for_tool.py`.
 
-**Result:** Completed successfully (exit 0) in 16.85s. Tail: *   However, the growth from Q2 to Q3 is approximately 16.7% (a $25,000 increase on a $150,000 base). | In summary, the company shows strong, consistent revenue growth quarter over quarter, though the percentage growth rate is declining slightly as the base revenue increases. | ==================================================
+**Result:** Executed successfully. Duration: 14.6s. Tail: 0 - $125,000) / $125,000). |     *   However, the growth from Q2 to Q3 is approximately 16.7% (($175,000 - $150,000) / $150,000), not 20%. |  | In summary, the company shows strong revenue growth, though the stated 20% quarter-over-quarter growth rate is not consistently maintained in the provided data. |  | ==================================================
 
 ---
 
@@ -86,6 +86,6 @@
 
 **Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/multimodal/video_caption_generation.py`.
 
-**Result:** Exited with code 1 in 0.43s. Tail: File "/Users/ab/conductor/workspaces/agno/colombo/libs/agno/agno/tools/moviepy_video.py", line 9, in <module> | raise ImportError("`moviepy` not installed. Please install using `pip install moviepy ffmpeg`") | ImportError: `moviepy` not installed. Please install using `pip install moviepy ffmpeg`
+**Result:** Exited with code 1. Tail: from agno.tools.moviepy_video import MoviePyVideoTools |   File "/Users/ab/conductor/workspaces/agno/colombo/libs/agno/agno/tools/moviepy_video.py", line 9, in <module> |     raise ImportError("`moviepy` not installed. Please install using `pip install moviepy ffmpeg`") | ImportError: `moviepy` not installed. Please install using `pip install moviepy ffmpeg`
 
 ---

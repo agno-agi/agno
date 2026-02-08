@@ -1,12 +1,13 @@
-# Test Log: 04_workflows/06_advanced_concepts/guardrails
+# TEST_LOG for cookbook/04_workflows/06_advanced_concepts/guardrails
 
-> Tests not yet run. Run each file and update this log.
+Generated: 2026-02-08 16:39:09
 
 ### prompt_injection.py
 
-**Status:** PENDING
+**Status:** PASS
 
-**Description:** Runs prompt_injection.py and validates expected behavior.
+**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
+
+**Result:** Executed successfully. ERROR Validation failed: Potential jailbreaking or prompt injection detected.
 
 ---
-

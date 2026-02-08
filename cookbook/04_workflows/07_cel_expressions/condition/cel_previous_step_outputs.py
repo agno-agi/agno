@@ -1,4 +1,5 @@
 """Condition with CEL: branch based on a named step's output.
+==========================================================
 
 Uses previous_step_outputs map to check the output of a specific
 step by name, enabling multi-step pipelines with conditional logic.
@@ -11,6 +12,9 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.workflow import CEL_AVAILABLE, Condition, Step, Workflow
 
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
 if not CEL_AVAILABLE:
     print("CEL is not available. Install with: pip install cel-python")
     exit(1)

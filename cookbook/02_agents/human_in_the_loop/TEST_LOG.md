@@ -1,23 +1,16 @@
-# TEST_LOG
-Generated: 2026-02-07 23:53:42
+# TEST LOG
 
-### check_cookbook_pattern.py
+Generated: 2026-02-08 15:41 UTC
 
-**Status:** PASS
-
-**Description:** Ran `.venvs/demo/bin/python cookbook/scripts/check_cookbook_pattern.py --base-dir cookbook/02_agents/human_in_the_loop`.
-
-**Result:** Structure validation passed with no violations (checked 6 file(s)).
-
----
+Pattern Check: Checked 6 file(s) in /Users/ab/conductor/workspaces/agno/colombo/cookbook/02_agents/human_in_the_loop. Violations: 0
 
 ### agentic_user_input.py
 
 **Status:** PASS
 
-**Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/human_in_the_loop/agentic_user_input.py`.
+**Description:** Interactive smoke validation (startup and first tool flow) in non-interactive terminal.
 
-**Result:** Example completed successfully. (exit code 0, ~5.91s).
+**Result:** Startup and initial tool call validated; process reached interactive prompt and stopped due EOF in non-interactive execution (5s).
 
 ---
 
@@ -25,9 +18,9 @@ Generated: 2026-02-07 23:53:42
 
 **Status:** FAIL
 
-**Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/human_in_the_loop/confirmation_advanced.py`.
+**Description:** Interactive smoke validation (startup and first tool flow) in non-interactive terminal.
 
-**Result:** Failed with exit code 1. ImportError: The `wikipedia` package is not installed. Please install it via `pip install wikipedia`.
+**Result:** Failed during interactive startup: The `wikipedia` package is not installed. Please install it via `pip install wikipedia`.
 
 ---
 
@@ -35,9 +28,9 @@ Generated: 2026-02-07 23:53:42
 
 **Status:** PASS
 
-**Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/human_in_the_loop/confirmation_required.py`.
+**Description:** Interactive smoke validation (startup and first tool flow) in non-interactive terminal.
 
-**Result:** Execution reached expected interactive boundary. Interactive confirmation prompt reached; terminated after input stream exhaustion.
+**Result:** Startup and initial tool call validated; process reached interactive prompt and stopped due EOF in non-interactive execution (2s).
 
 ---
 
@@ -45,9 +38,9 @@ Generated: 2026-02-07 23:53:42
 
 **Status:** PASS
 
-**Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/human_in_the_loop/confirmation_toolkit.py`.
+**Description:** Interactive smoke validation (startup and first tool flow) in non-interactive terminal.
 
-**Result:** Execution reached expected interactive boundary. Interactive confirmation prompt reached; terminated after input stream exhaustion.
+**Result:** Startup and initial tool call validated; process reached interactive prompt and stopped due EOF in non-interactive execution (1s).
 
 ---
 
@@ -55,9 +48,9 @@ Generated: 2026-02-07 23:53:42
 
 **Status:** PASS
 
-**Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/human_in_the_loop/external_tool_execution.py`.
+**Description:** Interactive smoke validation (startup and first tool flow) in non-interactive terminal.
 
-**Result:** Example completed successfully. (exit code 0, ~2.44s).
+**Result:** Interactive flow completed in 3s.
 
 ---
 
@@ -65,8 +58,9 @@ Generated: 2026-02-07 23:53:42
 
 **Status:** PASS
 
-**Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/human_in_the_loop/user_input_required.py`.
+**Description:** Interactive smoke validation (startup and first tool flow) in non-interactive terminal.
 
-**Result:** Example completed successfully. (exit code 0, ~2.15s).
+**Result:** Interactive flow completed in 3s.
 
 ---
+
