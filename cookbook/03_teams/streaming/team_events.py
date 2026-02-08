@@ -8,12 +8,14 @@ Demonstrates monitoring team and member events in sync-like and async event stre
 import asyncio
 from uuid import uuid4
 
-from agno.agent import Agent, RunEvent
+from agno.agent import RunEvent
+from agno.agent import Agent
 from agno.models.anthropic.claude import Claude
 from agno.models.openai import OpenAIChat
 from agno.team import Team, TeamRunEvent
 from agno.tools.hackernews import HackerNewsTools
 from agno.tools.websearch import WebSearchTools
+
 
 # ---------------------------------------------------------------------------
 # Create Members

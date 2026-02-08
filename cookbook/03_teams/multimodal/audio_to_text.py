@@ -6,10 +6,12 @@ Demonstrates team-based audio transcription and follow-up content analysis.
 """
 
 import requests
+
 from agno.agent import Agent
 from agno.media import Audio
 from agno.models.google import Gemini
 from agno.team import Team
+
 
 # ---------------------------------------------------------------------------
 # Create Members

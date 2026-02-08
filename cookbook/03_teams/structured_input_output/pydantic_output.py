@@ -5,12 +5,13 @@ Pydantic Output
 Demonstrates team-level typed output using Pydantic schemas.
 """
 
+from pydantic import BaseModel
+
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.team import Team
 from agno.tools.websearch import WebSearchTools
 from agno.utils.pprint import pprint_run_response
-from pydantic import BaseModel
 
 
 class StockAnalysis(BaseModel):

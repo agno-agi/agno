@@ -53,7 +53,6 @@ research_team = Team(
     instructions="Analyze content and create comprehensive social media strategy",
 )
 
-
 # ---------------------------------------------------------------------------
 # Define Function Executors
 # ---------------------------------------------------------------------------
@@ -191,7 +190,6 @@ async def custom_content_planning_function_async(
             content=f"Custom content planning failed: {str(e)}",
             success=False,
         )
-
 
 # ---------------------------------------------------------------------------
 # Define Steps

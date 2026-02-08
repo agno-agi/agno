@@ -39,7 +39,6 @@ story_formatter = Agent(
     instructions="Break down the story into prologue, body, and epilogue sections",
 )
 
-
 # ---------------------------------------------------------------------------
 # Define Functions
 # ---------------------------------------------------------------------------
@@ -53,7 +52,6 @@ def add_references(step_input: StepInput):
     previous_output = step_input.previous_step_content
     if isinstance(previous_output, str):
         return previous_output + "\n\nReferences: https://www.agno.com"
-
 
 # ---------------------------------------------------------------------------
 # Define Steps
@@ -98,7 +96,6 @@ workflow = Workflow(
     ],
     db=PostgresDb(db_url),
 )
-
 
 # ---------------------------------------------------------------------------
 # Run Workflow

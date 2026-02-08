@@ -30,7 +30,6 @@ reviewer = Agent(
     instructions="Review and improve the written content.",
 )
 
-
 # ---------------------------------------------------------------------------
 # Define Functions
 # ---------------------------------------------------------------------------
@@ -64,7 +63,6 @@ def should_run_compliance_check(step_input: StepInput) -> bool:
     content = step_input.input or ""
     sensitive_keywords = ["legal", "financial", "medical", "violation", "illegal"]
     return any(keyword in content.lower() for keyword in sensitive_keywords)
-
 
 # ---------------------------------------------------------------------------
 # Define Steps
@@ -101,12 +99,8 @@ workflow = Workflow(
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     print("=== Testing Condition Early Termination with Compliance Check ===")
-    print(
-        "Expected: Compliance check should detect 'violation' and stop the entire workflow"
-    )
-    print(
-        "Note: Condition will evaluate to True (sensitive content), then compliance check will stop"
-    )
+    print("Expected: Compliance check should detect 'violation' and stop the entire workflow")
+    print("Note: Condition will evaluate to True (sensitive content), then compliance check will stop")
     print()
 
     workflow.print_response(

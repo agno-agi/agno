@@ -17,7 +17,6 @@ from agno.workflow.workflow import Workflow
 # ---------------------------------------------------------------------------
 db = SqliteDb(db_file="tmp/workflow.db")
 
-
 # ---------------------------------------------------------------------------
 # Define Session-State Tools
 # ---------------------------------------------------------------------------
@@ -69,7 +68,6 @@ def list_items(run_context: RunContext) -> str:
     items = run_context.session_state["shopping_list"]
     items_str = "\n".join([f"- {item}" for item in items])
     return f"Shopping list:\n{items_str}"
-
 
 # ---------------------------------------------------------------------------
 # Create Agents

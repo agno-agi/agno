@@ -57,7 +57,6 @@ writer_agent = Agent(
     instructions="Write a blog post on the topic",
 )
 
-
 # ---------------------------------------------------------------------------
 # Define Function Steps
 # ---------------------------------------------------------------------------
@@ -101,7 +100,6 @@ def prepare_input_for_writer(step_input: StepInput) -> StepOutput:
             """
         )
     )
-
 
 # ---------------------------------------------------------------------------
 # Create Team

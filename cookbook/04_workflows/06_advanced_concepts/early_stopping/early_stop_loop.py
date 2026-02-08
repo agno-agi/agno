@@ -31,7 +31,6 @@ content_agent = Agent(
     markdown=True,
 )
 
-
 # ---------------------------------------------------------------------------
 # Define Functions
 # ---------------------------------------------------------------------------
@@ -65,7 +64,6 @@ def research_evaluator(outputs: List[StepOutput]) -> bool:
 
     print("[FAIL] Research evaluation failed - need more substantial research")
     return False
-
 
 # ---------------------------------------------------------------------------
 # Define Steps

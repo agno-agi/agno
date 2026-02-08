@@ -21,7 +21,6 @@ step_a = Agent(name="step_a", model=OpenAIChat(id="gpt-4o-mini"), instructions="
 step_b = Agent(name="step_b", model=OpenAIChat(id="gpt-4o-mini"), instructions="Step B")
 step_c = Agent(name="step_c", model=OpenAIChat(id="gpt-4o-mini"), instructions="Step C")
 
-
 # ---------------------------------------------------------------------------
 # Define Router Selector
 # ---------------------------------------------------------------------------
@@ -34,7 +33,6 @@ def nested_selector(
     if "single" in user_input:
         return step_choices[0]
     return step_choices[1]
-
 
 # ---------------------------------------------------------------------------
 # Create Workflow

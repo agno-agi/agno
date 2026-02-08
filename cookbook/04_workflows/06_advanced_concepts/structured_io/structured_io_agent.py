@@ -7,14 +7,14 @@ Demonstrates structured output schemas at each agent step in a multi-step workfl
 
 from typing import List
 
+from pydantic import BaseModel, Field
+
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.hackernews import HackerNewsTools
 from agno.tools.websearch import WebSearchTools
 from agno.workflow.step import Step
 from agno.workflow.workflow import Workflow
-from pydantic import BaseModel, Field
-
 
 # ---------------------------------------------------------------------------
 # Define Structured Models
@@ -66,7 +66,6 @@ class FinalContentPlan(BaseModel):
         description="Potential risks and mitigation",
         min_items=2,
     )
-
 
 # ---------------------------------------------------------------------------
 # Create Agents

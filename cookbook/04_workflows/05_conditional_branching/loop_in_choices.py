@@ -44,7 +44,6 @@ refinement_loop = Loop(
     max_iterations=2,
 )
 
-
 # ---------------------------------------------------------------------------
 # Define Router Selector
 # ---------------------------------------------------------------------------
@@ -59,7 +58,6 @@ def loop_selector(
     if "refine" in user_input or "polish" in user_input:
         return [step_choices[1], step_choices[2]]
     return step_choices[1]
-
 
 # ---------------------------------------------------------------------------
 # Create Workflow

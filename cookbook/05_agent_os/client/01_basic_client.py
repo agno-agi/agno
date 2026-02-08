@@ -32,6 +32,11 @@ from agno.client import AgentOSClient
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
+
+
 async def main():
     # Connect to AgentOS using async context manager
     client = AgentOSClient(base_url="http://localhost:7777")

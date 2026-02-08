@@ -12,6 +12,7 @@ from agno.models.openai import OpenAIChat
 from agno.team import Team
 from agno.vectordb.pgvector import PgVector, SearchType
 
+
 # ---------------------------------------------------------------------------
 # Setup
 # ---------------------------------------------------------------------------

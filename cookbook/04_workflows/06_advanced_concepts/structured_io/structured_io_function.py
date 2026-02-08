@@ -7,14 +7,14 @@ Demonstrates custom function steps in structured workflows, including string and
 
 from typing import List
 
+from pydantic import BaseModel, Field
+
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.hackernews import HackerNewsTools
 from agno.tools.websearch import WebSearchTools
 from agno.workflow.step import Step, StepInput, StepOutput
 from agno.workflow.workflow import Workflow
-from pydantic import BaseModel, Field
-
 
 # ---------------------------------------------------------------------------
 # Define Structured Models
@@ -53,9 +53,7 @@ class ContentStrategy(BaseModel):
 class AnalysisReport(BaseModel):
     analysis_type: str = Field(description="Type of analysis performed")
     input_data_type: str = Field(description="Type of input data received")
-    structured_data_detected: bool = Field(
-        description="Whether structured data was found"
-    )
+    structured_data_detected: bool = Field(description="Whether structured data was found")
     key_findings: List[str] = Field(description="Key findings from the analysis")
     recommendations: List[str] = Field(description="Recommendations for next steps")
     confidence_score: float = Field(
@@ -87,7 +85,6 @@ class FinalContentPlan(BaseModel):
         min_items=2,
     )
 
-
 # ---------------------------------------------------------------------------
 # Define Function Executors
 # ---------------------------------------------------------------------------
@@ -110,14 +107,10 @@ def data_analysis_function(step_input: StepInput) -> StepOutput:
         print("\nPrevious Step Content Preview:")
         print("Topic: ", previous_step_content.topic, "\n")
         print("Key Insights: ", previous_step_content.key_insights, "\n")
-        print(
-            "Trending Technologies: ", previous_step_content.trending_technologies, "\n"
-        )
+        print("Trending Technologies: ", previous_step_content.trending_technologies, "\n")
 
         analysis_results.append("[PASS] Received structured data (BaseModel)")
-        analysis_results.append(
-            f"[PASS] BaseModel type: {type(previous_step_content).__name__}"
-        )
+        analysis_results.append(f"[PASS] BaseModel type: {type(previous_step_content).__name__}")
         try:
             model_dict = previous_step_content.model_dump()
             analysis_results.append(f"[PASS] Model fields: {list(model_dict.keys())}")
@@ -181,9 +174,7 @@ def enhanced_analysis_function(step_input: StepInput) -> StepOutput:
             structured_data_detected = True
             print("[PASS] Detected ResearchFindings BaseModel")
             print(f"   Topic: {previous_step_content.topic}")
-            print(
-                f"   Key Insights: {len(previous_step_content.key_insights)} insights"
-            )
+            print(f"   Key Insights: {len(previous_step_content.key_insights)} insights")
             print(f"   Confidence: {previous_step_content.confidence_score}")
 
             key_findings.extend(
@@ -209,9 +200,7 @@ def enhanced_analysis_function(step_input: StepInput) -> StepOutput:
             data_quality_score = 0.95
 
         else:
-            key_findings.append(
-                "Received unstructured data - converted to string format"
-            )
+            key_findings.append("Received unstructured data - converted to string format")
             recommendations.append(
                 "Consider implementing structured data models for better processing"
             )
@@ -263,10 +252,7 @@ def simple_data_processor(step_input: StepInput) -> StepOutput:
 
         return StepOutput(content=summary, success=True)
 
-    return StepOutput(
-        content="Unable to process - expected AnalysisReport", success=False
-    )
-
+    return StepOutput(content="Unable to process - expected AnalysisReport", success=False)
 
 # ---------------------------------------------------------------------------
 # Create Agents
@@ -356,13 +342,7 @@ structured_workflow = Workflow(
 enhanced_workflow = Workflow(
     name="Enhanced Structured Content Creation Pipeline",
     description="AI-powered content creation with BaseModel outputs from custom functions",
-    steps=[
-        research_step,
-        enhanced_analysis_step,
-        processor_step,
-        strategy_step,
-        planning_step,
-    ],
+    steps=[research_step, enhanced_analysis_step, processor_step, strategy_step, planning_step],
 )
 
 # ---------------------------------------------------------------------------

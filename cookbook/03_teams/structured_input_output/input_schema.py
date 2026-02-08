@@ -7,12 +7,13 @@ Demonstrates team-level automatic input validation using input_schema.
 
 from typing import List
 
+from pydantic import BaseModel, Field
+
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.team import Team
 from agno.tools.hackernews import HackerNewsTools
 from agno.tools.websearch import WebSearchTools
-from pydantic import BaseModel, Field
 
 
 class ResearchProject(BaseModel):

@@ -18,6 +18,11 @@ from pydantic import BaseModel, Field
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
+
+
 class MovieScript(BaseModel):
     setting: str = Field(
         ..., description="Provide a nice setting for a blockbuster movie."

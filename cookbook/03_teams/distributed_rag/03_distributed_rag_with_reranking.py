@@ -16,6 +16,7 @@ from agno.team import Team
 from agno.utils.print_response.team import aprint_response, print_response
 from agno.vectordb.lancedb import LanceDb, SearchType
 
+
 # ---------------------------------------------------------------------------
 # Setup
 # ---------------------------------------------------------------------------

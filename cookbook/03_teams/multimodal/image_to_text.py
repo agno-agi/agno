@@ -12,6 +12,7 @@ from agno.media import Image
 from agno.models.openai import OpenAIChat
 from agno.team import Team
 
+
 # ---------------------------------------------------------------------------
 # Create Members
 # ---------------------------------------------------------------------------

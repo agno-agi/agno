@@ -9,6 +9,7 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIResponses
 from agno.team import Team
 
+
 # ---------------------------------------------------------------------------
 # Create Members
 # ---------------------------------------------------------------------------

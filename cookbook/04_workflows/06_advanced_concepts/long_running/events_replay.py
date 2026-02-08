@@ -12,9 +12,7 @@ from typing import Optional
 try:
     import websockets
 except ImportError:
-    print(
-        "[ERROR] websockets library not installed. Install with: uv pip install websockets"
-    )
+    print("[ERROR] websockets library not installed. Install with: uv pip install websockets")
     exit(1)
 
 
@@ -154,18 +152,12 @@ async def test_replay() -> None:
                 if first_index == 0:
                     print("[OK] Replay started from event 0 (correct)")
                 else:
-                    print(
-                        f"[ERROR] Replay started from event {first_index} (should be 0)"
-                    )
+                    print(f"[ERROR] Replay started from event {first_index} (should be 0)")
 
                 if len(replay_events) == total_events:
-                    print(
-                        f"[OK] Received all {total_events} events (last_event_index was ignored)"
-                    )
+                    print(f"[OK] Received all {total_events} events (last_event_index was ignored)")
                 else:
-                    print(
-                        f"[ERROR] Received {len(replay_events)} events, expected {total_events}"
-                    )
+                    print(f"[ERROR] Received {len(replay_events)} events, expected {total_events}")
 
                 event_indices = [e.get("event_index") for e in replay_events]
                 expected = set(range(min(event_indices), max(event_indices) + 1))

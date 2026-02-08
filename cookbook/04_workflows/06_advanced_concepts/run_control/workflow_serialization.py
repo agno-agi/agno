@@ -37,9 +37,7 @@ write_step = Step(name="Write", agent=writer_agent)
 # ---------------------------------------------------------------------------
 # Create Workflow
 # ---------------------------------------------------------------------------
-workflow_db = SqliteDb(
-    db_file="tmp/workflow_serialization.db", session_table="workflow_serialization"
-)
+workflow_db = SqliteDb(db_file="tmp/workflow_serialization.db", session_table="workflow_serialization")
 
 workflow = Workflow(
     id="serialization-demo-workflow",
@@ -72,9 +70,7 @@ if __name__ == "__main__":
     else:
         step_names = []
         if isinstance(loaded_workflow.steps, list):
-            step_names = [
-                step.name for step in loaded_workflow.steps if hasattr(step, "name")
-            ]
+            step_names = [step.name for step in loaded_workflow.steps if hasattr(step, "name")]
 
         print("\nLoaded workflow summary")
         print(f"  Name: {loaded_workflow.name}")

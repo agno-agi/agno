@@ -9,6 +9,7 @@ from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.team import Team
 
+
 # ---------------------------------------------------------------------------
 # Create Team
 # ---------------------------------------------------------------------------

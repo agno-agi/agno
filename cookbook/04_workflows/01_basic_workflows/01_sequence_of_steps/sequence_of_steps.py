@@ -75,9 +75,7 @@ content_planning_step = Step(
 )
 
 
-async def prepare_input_for_web_search(
-    step_input: StepInput,
-) -> AsyncIterator[StepOutput]:
+async def prepare_input_for_web_search(step_input: StepInput) -> AsyncIterator[StepOutput]:
     topic = step_input.input
     content = dedent(
         f"""\
@@ -109,7 +107,6 @@ async def prepare_input_for_writer(step_input: StepInput) -> AsyncIterator[StepO
         """
     )
     yield StepOutput(content=content)
-
 
 # ---------------------------------------------------------------------------
 # Create Workflows
@@ -166,7 +163,6 @@ async def stream_run_events() -> None:
         elif event.event == WorkflowRunEvent.workflow_completed.value:
             print(event)
             print()
-
 
 # ---------------------------------------------------------------------------
 # Run Workflow

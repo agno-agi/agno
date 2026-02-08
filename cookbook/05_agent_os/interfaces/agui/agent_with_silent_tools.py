@@ -19,6 +19,11 @@ from agno.tools.duckduckgo import DuckDuckGoTools
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
+
+
 # external_execution_silent=True suppresses "I have tools to execute..." verbose messages
 @tool(external_execution=True, external_execution_silent=True)
 def generate_haiku(topic: str) -> str:

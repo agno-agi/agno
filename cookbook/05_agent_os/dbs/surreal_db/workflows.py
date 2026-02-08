@@ -22,6 +22,11 @@ from pydantic import BaseModel, Field
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
+
+
 # ************* Input Schema *************
 class ResearchTopic(BaseModel):
     """Structured research topic with specific requirements"""

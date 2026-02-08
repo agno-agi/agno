@@ -18,7 +18,7 @@
 
 ### Key Problems
 
-1. **Sync/async directory split in `01_quickstart/`.** 16 sync files + 15 async files — near-identical pairs that differ only in `insert()` vs `ainsert()` and `print_response()` vs `aprint_response()`. Should be flattened like we did for workflows.
+1. **Sync/async directory split in `basic_operations/`.** 16 sync files + 15 async files — near-identical pairs that differ only in `insert()` vs `ainsert()` and `print_response()` vs `aprint_response()`. Should be flattened like we did for workflows.
 
 2. **Embedder batching pairs.** Many embedders have a base file and a `_batching` variant that only adds `enable_batch=True, batch_size=100`. These should be merged.
 
@@ -32,7 +32,7 @@
 
 ### Overall Assessment
 
-The largest cookbook section at 187 files. Well-organized by topic (01_quickstart, chunking, embedders, filters, readers, vector_db, etc.). The main redundancy comes from three patterns: (1) the sync/async split in 01_quickstart, (2) embedder base/batching pairs, and (3) vector_db sync/async pairs. Flattening these will significantly reduce file count.
+The largest cookbook section at 187 files. Well-organized by topic (basic_operations, chunking, embedders, filters, readers, vector_db, etc.). The main redundancy comes from three patterns: (1) the sync/async split in basic_operations, (2) embedder base/batching pairs, and (3) vector_db sync/async pairs. Flattening these will significantly reduce file count.
 
 ### Proposed Target
 
@@ -47,11 +47,11 @@ The largest cookbook section at 187 files. Well-organized by topic (01_quickstar
 
 ## 2. Proposed Directory Structure
 
-Flatten `01_quickstart/sync/` and `01_quickstart/async/` into `01_quickstart/`. Merge embedder batching pairs. Merge vector_db sync/async pairs.
+Flatten `basic_operations/sync/` and `basic_operations/async/` into `basic_operations/`. Merge embedder batching pairs. Merge vector_db sync/async pairs.
 
 ```
 cookbook/07_knowledge/
-├── 01_quickstart/            # Getting started with knowledge (merged from sync/async)
+├── basic_operations/            # Core knowledge operations (merged from sync/async)
 ├── chunking/                    # Chunking strategies (12 files, no change)
 ├── cloud/                       # Cloud knowledge patterns (4 files, no change)
 ├── custom_retriever/            # Custom retriever implementations (3 files, no change)
@@ -87,7 +87,7 @@ cookbook/07_knowledge/
 
 | Change | Details |
 |--------|---------|
-| **RENAME + FLATTEN** `basic_operations/` → `01_quickstart/` | Rename directory. Merge ~15 sync/async pairs into parent. Remove sync/ and async/ subdirectories |
+| **FLATTEN** `basic_operations/sync/` + `async/` | Merge ~15 pairs into parent. Remove sync/ and async/ subdirectories |
 | **MERGE** embedder batching pairs | ~12 base+batching pairs → ~12 files (batching shown as variant in same file) |
 | **MERGE** vector_db sync/async pairs | Per-DB: merge async variants into sync base files |
 
@@ -95,7 +95,7 @@ cookbook/07_knowledge/
 
 ## 3. File Disposition Table
 
-### `01_quickstart/` (31 → ~16, flatten sync/async)
+### `basic_operations/` (31 → ~16, flatten sync/async)
 
 The sync/ and async/ subdirectories contain near-identical files. Merge each pair into a single file in the parent directory.
 
@@ -103,22 +103,22 @@ The sync/ and async/ subdirectories contain near-identical files. Merge each pai
 
 | File | Disposition | New Location | Rationale |
 |------|------------|-------------|-----------|
-| `sync/01_from_path.py` | **REWRITE** | `01_quickstart/01_from_path.py` | Merge with async. Add banners, main gate |
-| `sync/02_from_url.py` | **REWRITE** | `01_quickstart/02_from_url.py` | Merge with async |
-| `sync/03_from_topic.py` | **REWRITE** | `01_quickstart/03_from_topic.py` | Merge with async |
-| `sync/04_from_multiple_sources.py` | **REWRITE** | `01_quickstart/04_from_multiple_sources.py` | Merge with async |
-| `sync/05_from_youtube_url.py` | **REWRITE** | `01_quickstart/05_from_youtube_url.py` | Merge with async |
-| `sync/06_from_s3_path.py` | **REWRITE** | `01_quickstart/06_from_s3_path.py` | Merge with async |
-| `sync/07_from_gcs_path.py` | **REWRITE** | `01_quickstart/07_from_gcs_path.py` | Merge with async |
-| `sync/08_include_files.py` | **REWRITE** | `01_quickstart/08_include_files.py` | Merge with async |
-| `sync/09_exclude_files.py` | **REWRITE** | `01_quickstart/09_exclude_files.py` | Merge with async |
-| `sync/10_remove_contents.py` | **REWRITE** | `01_quickstart/10_remove_contents.py` | Merge with async |
-| `sync/11_remove_vectors.py` | **REWRITE** | `01_quickstart/11_remove_vectors.py` | Merge with async |
-| `sync/12_skip_if_exists.py` | **REWRITE** | `01_quickstart/12_skip_if_exists.py` | Merge with async |
-| `sync/13_specify_reader.py` | **REWRITE** | `01_quickstart/13_specify_reader.py` | Merge with async |
-| `sync/14_text_content.py` | **REWRITE** | `01_quickstart/14_text_content.py` | Merge with async |
-| `sync/15_batching.py` | **REWRITE** | `01_quickstart/15_batching.py` | Merge with async |
-| `sync/16_knowledge_instructions.py` | **KEEP + MOVE + FIX** | `01_quickstart/16_knowledge_instructions.py` | No async counterpart. Move, add banners, main gate |
+| `sync/01_from_path.py` | **REWRITE** | `basic_operations/01_from_path.py` | Merge with async. Add banners, main gate |
+| `sync/02_from_url.py` | **REWRITE** | `basic_operations/02_from_url.py` | Merge with async |
+| `sync/03_from_topic.py` | **REWRITE** | `basic_operations/03_from_topic.py` | Merge with async |
+| `sync/04_from_multiple_sources.py` | **REWRITE** | `basic_operations/04_from_multiple_sources.py` | Merge with async |
+| `sync/05_from_youtube_url.py` | **REWRITE** | `basic_operations/05_from_youtube_url.py` | Merge with async |
+| `sync/06_from_s3_path.py` | **REWRITE** | `basic_operations/06_from_s3_path.py` | Merge with async |
+| `sync/07_from_gcs_path.py` | **REWRITE** | `basic_operations/07_from_gcs_path.py` | Merge with async |
+| `sync/08_include_files.py` | **REWRITE** | `basic_operations/08_include_files.py` | Merge with async |
+| `sync/09_exclude_files.py` | **REWRITE** | `basic_operations/09_exclude_files.py` | Merge with async |
+| `sync/10_remove_contents.py` | **REWRITE** | `basic_operations/10_remove_contents.py` | Merge with async |
+| `sync/11_remove_vectors.py` | **REWRITE** | `basic_operations/11_remove_vectors.py` | Merge with async |
+| `sync/12_skip_if_exists.py` | **REWRITE** | `basic_operations/12_skip_if_exists.py` | Merge with async |
+| `sync/13_specify_reader.py` | **REWRITE** | `basic_operations/13_specify_reader.py` | Merge with async |
+| `sync/14_text_content.py` | **REWRITE** | `basic_operations/14_text_content.py` | Merge with async |
+| `sync/15_batching.py` | **REWRITE** | `basic_operations/15_batching.py` | Merge with async |
+| `sync/16_knowledge_instructions.py` | **KEEP + MOVE + FIX** | `basic_operations/16_knowledge_instructions.py` | No async counterpart. Move, add banners, main gate |
 
 **Async files (15) — merge into sync counterparts:**
 
@@ -301,7 +301,7 @@ No new files needed. The knowledge section has comprehensive coverage.
 | Directory | README.md | TEST_LOG.md |
 |-----------|-----------|-------------|
 | `07_knowledge/` (root) | EXISTS | **MISSING** |
-| `01_quickstart/` | **MISSING** | **MISSING** |
+| `basic_operations/` | **MISSING** | **MISSING** |
 | `chunking/` | EXISTS | **MISSING** |
 | `cloud/` | **MISSING** | **MISSING** |
 | `custom_retriever/` | EXISTS | **MISSING** |

@@ -5,12 +5,13 @@ Response As Variable
 Demonstrates capturing typed team responses as variables for downstream logic.
 """
 
+from pydantic import BaseModel
+
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.team import Team
 from agno.tools.yfinance import YFinanceTools
 from agno.utils.pprint import pprint_run_response
-from pydantic import BaseModel
 
 
 class StockAnalysis(BaseModel):

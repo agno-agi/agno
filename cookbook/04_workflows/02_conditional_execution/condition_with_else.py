@@ -48,7 +48,6 @@ followup_agent = Agent(
     ),
 )
 
-
 # ---------------------------------------------------------------------------
 # Define Condition Evaluator
 # ---------------------------------------------------------------------------
@@ -71,7 +70,6 @@ def is_technical_issue(step_input: StepInput) -> bool:
         "debug",
     ]
     return any(kw in text for kw in tech_keywords)
-
 
 # ---------------------------------------------------------------------------
 # Define Steps
@@ -146,7 +144,9 @@ if __name__ == "__main__":
     print("=" * 60)
     print("Test 2: General query (expects else-branch)")
     print("=" * 60)
-    workflow_2.print_response("How do I change my shipping address for order #12345?")
+    workflow_2.print_response(
+        "How do I change my shipping address for order #12345?"
+    )
 
     print()
     print("=" * 60)

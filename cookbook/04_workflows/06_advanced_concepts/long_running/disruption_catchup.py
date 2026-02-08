@@ -73,9 +73,7 @@ async def test_full_catchup() -> None:
                     run_id = data["run_id"]
 
                 event_count += 1
-                print(
-                    f"  [{event_count}] event_index={event_index}, event={event_type}"
-                )
+                print(f"  [{event_count}] event_index={event_index}, event={event_type}")
 
                 if event_count >= max_events:
                     print(f"\nDisconnecting after {event_count} events...")

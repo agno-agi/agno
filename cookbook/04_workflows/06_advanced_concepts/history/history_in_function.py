@@ -14,7 +14,6 @@ from agno.workflow.step import Step
 from agno.workflow.types import StepInput, StepOutput
 from agno.workflow.workflow import Workflow
 
-
 # ---------------------------------------------------------------------------
 # Define Analysis Function
 # ---------------------------------------------------------------------------
@@ -83,13 +82,9 @@ def analyze_content_strategy(step_input: StepInput) -> StepOutput:
             "HIGH OVERLAP detected - consider a fresh angle or advanced perspective"
         )
     elif overlap_percentage > 30:
-        recommendations.append(
-            "MODERATE OVERLAP detected - differentiate your approach"
-        )
+        recommendations.append("MODERATE OVERLAP detected - differentiate your approach")
     if diversity_score < 0.6:
-        recommendations.append(
-            "Low content diversity - explore different aspects of the topic"
-        )
+        recommendations.append("Low content diversity - explore different aspects of the topic")
     if len(history_data) > 0:
         recommendations.append(
             f"Building on {len(history_data)} previous content pieces - ensure progression"
@@ -104,21 +99,15 @@ def analyze_content_strategy(step_input: StepInput) -> StepOutput:
             "content_diversity": diversity_score,
         },
         "strategic_recommendations": recommendations,
-        "research_summary": research_data[:500] + "..."
-        if len(research_data) > 500
-        else research_data,
-        "suggested_angle": "unique perspective"
-        if overlap_percentage > 30
-        else "comprehensive overview",
+        "research_summary": research_data[:500] + "..." if len(research_data) > 500 else research_data,
+        "suggested_angle": "unique perspective" if overlap_percentage > 30 else "comprehensive overview",
         "content_gap_analysis": {
             "avoid_repeating": [
                 topic
                 for topic in covered_topics
                 if any(word in current_topic.lower() for word in topic.split()[:2])
             ],
-            "build_upon": "previous insights"
-            if len(history_data) > 0
-            else "foundational knowledge",
+            "build_upon": "previous insights" if len(history_data) > 0 else "foundational knowledge",
         },
     }
 
@@ -150,7 +139,6 @@ def analyze_content_strategy(step_input: StepInput) -> StepOutput:
     """
 
     return StepOutput(content=formatted_analysis.strip())
-
 
 # ---------------------------------------------------------------------------
 # Create Workflow
@@ -202,7 +190,6 @@ def create_content_workflow() -> Workflow:
         steps=[research_step, strategy_step, writer_step],
         add_workflow_history_to_steps=True,
     )
-
 
 # ---------------------------------------------------------------------------
 # Run Workflow

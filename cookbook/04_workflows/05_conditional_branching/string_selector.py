@@ -42,7 +42,6 @@ tech_step = Step(name="Tech Research", agent=tech_expert)
 business_step = Step(name="Business Research", agent=biz_expert)
 general_step = Step(name="General Research", agent=generalist)
 
-
 # ---------------------------------------------------------------------------
 # Define Router Selector
 # ---------------------------------------------------------------------------
@@ -54,7 +53,6 @@ def route_by_topic(step_input: StepInput) -> Union[str, Step, List[Step]]:
     if "business" in topic or "market" in topic or "finance" in topic:
         return "Business Research"
     return "General Research"
-
 
 # ---------------------------------------------------------------------------
 # Create Workflow

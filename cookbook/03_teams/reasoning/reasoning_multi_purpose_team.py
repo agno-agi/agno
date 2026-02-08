@@ -28,6 +28,7 @@ from agno.tools.yfinance import YFinanceTools
 from agno.vectordb.lancedb.lance_db import LanceDb
 from agno.vectordb.search import SearchType
 
+
 # ---------------------------------------------------------------------------
 # Setup
 # ---------------------------------------------------------------------------

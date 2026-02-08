@@ -19,7 +19,6 @@ researcher = Agent(name="Researcher", tools=[HackerNewsTools(), WebSearchTools()
 writer = Agent(name="Writer")
 reviewer = Agent(name="Reviewer")
 
-
 # ---------------------------------------------------------------------------
 # Define Functions
 # ---------------------------------------------------------------------------
@@ -53,7 +52,6 @@ def quality_checker(step_input: StepInput) -> StepOutput:
         content="[PASS] Quality check passed. Content meets processing standards.",
         stop=False,
     )
-
 
 # ---------------------------------------------------------------------------
 # Define Steps
@@ -90,9 +88,7 @@ workflow = Workflow(
 if __name__ == "__main__":
     print("=== Testing Parallel Early Termination with Safety Check ===")
     print("Expected: Safety check should detect 'unsafe' and stop the entire workflow")
-    print(
-        "Note: All parallel steps run concurrently, but safety check will stop the workflow"
-    )
+    print("Note: All parallel steps run concurrently, but safety check will stop the workflow")
     print()
 
     workflow.print_response(

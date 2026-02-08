@@ -54,7 +54,6 @@ summary_agent = Agent(
 research_step = Step(name="Research Step", agent=news_agent)
 search_step = Step(name="Search Step", agent=search_agent)
 
-
 # ---------------------------------------------------------------------------
 # Helper
 # ---------------------------------------------------------------------------
@@ -67,7 +66,6 @@ def print_stored_events(run_response: WorkflowRunOutput, example_name: str) -> N
     else:
         print("No events stored")
     print()
-
 
 # ---------------------------------------------------------------------------
 # Run Examples
@@ -95,18 +93,12 @@ if __name__ == "__main__":
         stream=True,
         stream_events=True,
     ):
-        if not isinstance(
-            event, (RunContentEvent, ToolCallStartedEvent, ToolCallCompletedEvent)
-        ):
-            print(
-                f"Event: {event.event if hasattr(event, 'event') else type(event).__name__}"
-            )
+        if not isinstance(event, (RunContentEvent, ToolCallStartedEvent, ToolCallCompletedEvent)):
+            print(f"Event: {event.event if hasattr(event, 'event') else type(event).__name__}")
     run_response = step_workflow.get_last_run_output()
 
     print("\nStep workflow completed")
-    print(
-        f"Total events stored: {len(run_response.events) if run_response and run_response.events else 0}"
-    )
+    print(f"Total events stored: {len(run_response.events) if run_response and run_response.events else 0}")
     print_stored_events(run_response, "Simple Step Workflow")
 
     print("=== Parallel Example ===")
@@ -121,9 +113,7 @@ if __name__ == "__main__":
             Step(name="Combine Results", agent=analysis_agent),
             Step(name="Summarize", agent=summary_agent),
         ],
-        db=SqliteDb(
-            session_table="workflow_parallel", db_file="tmp/workflow_parallel.db"
-        ),
+        db=SqliteDb(session_table="workflow_parallel", db_file="tmp/workflow_parallel.db"),
         store_events=True,
         events_to_skip=[
             WorkflowRunEvent.parallel_execution_started,
@@ -138,9 +128,7 @@ if __name__ == "__main__":
         stream_events=True,
     ):
         if not isinstance(event, RunContentEvent):
-            print(
-                f"Event: {event.event if hasattr(event, 'event') else type(event).__name__}"
-            )
+            print(f"Event: {event.event if hasattr(event, 'event') else type(event).__name__}")
 
     run_response = parallel_workflow.get_last_run_output()
     print(f"Parallel workflow stored {len(run_response.events)} events")

@@ -7,12 +7,13 @@ Demonstrates per-run output_schema overrides across sync/async and streaming mod
 
 import asyncio
 
+from pydantic import BaseModel
+from rich.pretty import pprint
+
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.team import Team
 from agno.tools.websearch import WebSearchTools
-from pydantic import BaseModel
-from rich.pretty import pprint
 
 
 class PersonSchema(BaseModel):

@@ -11,7 +11,6 @@ from agno.workflow.condition import Condition
 from agno.workflow.step import Step, StepInput, StepOutput
 from agno.workflow.workflow import Workflow
 
-
 # ---------------------------------------------------------------------------
 # Define Session-State Functions
 # ---------------------------------------------------------------------------
@@ -32,7 +31,6 @@ def mark_user_as_greeted(step_input: StepInput, session_state: dict) -> StepOutp
     return StepOutput(
         content=f"User has been greeted. Total greetings: {session_state['greeting_count']}"
     )
-
 
 # ---------------------------------------------------------------------------
 # Create Agents
@@ -88,7 +86,6 @@ workflow = Workflow(
         "greeting_count": 0,
     },
 )
-
 
 # ---------------------------------------------------------------------------
 # Run Workflow

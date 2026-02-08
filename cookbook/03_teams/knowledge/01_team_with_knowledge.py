@@ -15,6 +15,7 @@ from agno.team import Team
 from agno.tools.websearch import WebSearchTools
 from agno.vectordb.lancedb import LanceDb, SearchType
 
+
 # ---------------------------------------------------------------------------
 # Setup
 # ---------------------------------------------------------------------------

@@ -98,14 +98,10 @@ class WorkflowWebSocketTester:
                     event_count += 1
 
                     event_index = data.get("event_index", "N/A")
-                    print(
-                        f"  [{event_count}] event_index={event_index}, event={event_type}"
-                    )
+                    print(f"  [{event_count}] event_index={event_index}, event={event_type}")
 
                     if event_type in ["WorkflowCompleted", "WorkflowError"]:
-                        print(
-                            f"\nWorkflow finished during initial connection: {event_type}"
-                        )
+                        print(f"\nWorkflow finished during initial connection: {event_type}")
                         break
 
                     if event_count >= max_initial_events:

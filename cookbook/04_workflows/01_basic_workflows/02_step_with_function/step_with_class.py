@@ -64,7 +64,6 @@ research_team = Team(
     instructions="Analyze content and create comprehensive social media strategy",
 )
 
-
 # ---------------------------------------------------------------------------
 # Define Class Executors
 # ---------------------------------------------------------------------------
@@ -169,7 +168,6 @@ class AsyncCustomContentPlanning:
                 content=f"Custom content planning failed: {str(e)}",
                 success=False,
             )
-
 
 # ---------------------------------------------------------------------------
 # Define Steps

@@ -81,9 +81,7 @@ def create_comprehensive_report(step_input: StepInput) -> StepOutput:
         {web_data[:500]}...
     """
 
-    return StepOutput(
-        step_name="comprehensive_report", content=report.strip(), success=True
-    )
+    return StepOutput(step_name="comprehensive_report", content=report.strip(), success=True)
 
 
 comprehensive_report_step = Step(
@@ -97,7 +95,6 @@ reasoning_step = Step(
     agent=reasoning_agent,
     description="Apply reasoning to create final insights and recommendations",
 )
-
 
 # ---------------------------------------------------------------------------
 # Define Functions For Implicit Step-Key Access
@@ -143,7 +140,6 @@ def print_final_report(step_input: StepInput) -> StepOutput:
         content=f"Printed comprehensive report ({len(comprehensive_report)} characters)",
         success=True,
     )
-
 
 # ---------------------------------------------------------------------------
 # Create Workflows

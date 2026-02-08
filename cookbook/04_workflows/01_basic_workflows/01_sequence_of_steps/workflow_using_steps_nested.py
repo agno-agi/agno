@@ -115,7 +115,6 @@ def is_tech_topic(step_input) -> bool:
     ]
     return any(keyword in message for keyword in tech_keywords)
 
-
 # ---------------------------------------------------------------------------
 # Create Workflow
 # ---------------------------------------------------------------------------

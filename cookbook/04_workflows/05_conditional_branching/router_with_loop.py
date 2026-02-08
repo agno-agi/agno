@@ -58,7 +58,6 @@ publish_content = Step(
     description="Create and format final content for publication",
 )
 
-
 # ---------------------------------------------------------------------------
 # Define Loop Evaluator
 # ---------------------------------------------------------------------------
@@ -75,7 +74,6 @@ def research_quality_check(outputs: List[StepOutput]) -> bool:
 
     print("[FAIL] Research quality check failed - need more substantial research")
     return False
-
 
 # ---------------------------------------------------------------------------
 # Define Loop And Router
@@ -117,7 +115,6 @@ def research_strategy_router(step_input: StepInput) -> List[Step]:
 
     print(f"Simple topic detected: Using basic web research for '{topic}'")
     return [research_web]
-
 
 # ---------------------------------------------------------------------------
 # Create Workflow

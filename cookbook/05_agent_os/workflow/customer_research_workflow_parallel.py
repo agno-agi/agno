@@ -29,6 +29,11 @@ from pydantic import BaseModel, Field
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
+
+
 # Define structured output models for each research phase
 class CustomerProfileResearch(BaseModel):
     """Structured customer profile research findings"""

@@ -50,7 +50,6 @@ research_team = Team(
     instructions="Research tech topics from Hackernews and the web",
 )
 
-
 # ---------------------------------------------------------------------------
 # Define Function Steps
 # ---------------------------------------------------------------------------
@@ -90,9 +89,7 @@ def prepare_input_for_writer_sync(step_input: StepInput) -> StepOutput:
     )
 
 
-def prepare_input_for_web_search_sync_stream(
-    step_input: StepInput,
-) -> Iterator[StepOutput]:
+def prepare_input_for_web_search_sync_stream(step_input: StepInput) -> Iterator[StepOutput]:
     topic = step_input.input
     content = dedent(
         f"""\
@@ -179,9 +176,7 @@ async def prepare_input_for_web_search_async_stream(
     yield StepOutput(content=content)
 
 
-async def prepare_input_for_writer_async_stream(
-    step_input: StepInput,
-) -> AsyncIterator[StepOutput]:
+async def prepare_input_for_writer_async_stream(step_input: StepInput) -> AsyncIterator[StepOutput]:
     topic = step_input.input
     research_team_output = step_input.previous_step_content
     content = dedent(
@@ -198,7 +193,6 @@ async def prepare_input_for_writer_async_stream(
         """
     )
     yield StepOutput(content=content)
-
 
 # ---------------------------------------------------------------------------
 # Create Workflows

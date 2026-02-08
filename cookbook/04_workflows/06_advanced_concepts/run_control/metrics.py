@@ -68,9 +68,7 @@ if __name__ == "__main__":
         db=SqliteDb(session_table="workflow_session", db_file="tmp/workflow.db"),
         steps=[research_step, content_planning_step],
     )
-    workflow_run_response: WorkflowRunOutput = content_creation_workflow.run(
-        input="AI trends in 2024"
-    )
+    workflow_run_response: WorkflowRunOutput = content_creation_workflow.run(input="AI trends in 2024")
 
     if workflow_run_response.metrics:
         print("\n" + "-" * 60)
@@ -80,9 +78,7 @@ if __name__ == "__main__":
 
         print("\nWORKFLOW DURATION")
         if workflow_run_response.metrics.duration:
-            print(
-                f"Total execution time: {workflow_run_response.metrics.duration:.2f} seconds"
-            )
+            print(f"Total execution time: {workflow_run_response.metrics.duration:.2f} seconds")
 
         print("\nSTEP-LEVEL METRICS")
         for step_name, step_metrics in workflow_run_response.metrics.steps.items():
