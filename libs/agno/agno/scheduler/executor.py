@@ -1,6 +1,7 @@
 """Schedule executor — fires HTTP requests for due schedules."""
 
 import asyncio
+import json
 import re
 import time
 from typing import Any, Dict, Optional
@@ -21,6 +22,15 @@ _TERMINAL_STATUSES = {"COMPLETED", "CANCELLED", "ERROR"}
 
 # Default polling interval in seconds for background run status checks
 _DEFAULT_POLL_INTERVAL = 30
+
+
+def _to_form_value(v: Any) -> str:
+    """Convert a payload value to a JSON-safe form string."""
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, (dict, list)):
+        return json.dumps(v)
+    return str(v)
 
 
 class ScheduleExecutor:
@@ -223,7 +233,7 @@ class ScheduleExecutor:
             assert match is not None  # for type narrowing
             # Run endpoints expect Form(...) inputs, not JSON.
             # Force background=true and stream=false for polling-based execution.
-            form_payload = {k: str(v) for k, v in payload.items() if k not in ("stream", "background")}
+            form_payload = {k: _to_form_value(v) for k, v in payload.items() if k not in ("stream", "background")}
             form_payload["stream"] = "false"
             form_payload["background"] = "true"
 
