@@ -16,6 +16,9 @@ External memory service integrations (Mem0, Memori, and Zep).
 ### [observability](./observability/)
 Tracing and monitoring integrations for agent and workflow execution.
 
+### [rag](./rag/)
+Third-party RAG and retrieval-stack integrations (Infinity reranker, LightRAG, LangChain + Qdrant).
+
 ### [surrealdb](./surrealdb/)
 SurrealDB-backed memory manager integration examples.
 
