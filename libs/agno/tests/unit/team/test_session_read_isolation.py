@@ -121,3 +121,17 @@ def test_cached_session_returned_when_user_id_none():
 
     result2 = team._read_or_create_session(session_id="s1", user_id=None)
     assert result2 is result1
+
+
+def test_save_session_warns_on_upsert_rejection():
+    team = Team(model=OpenAIChat(id="gpt-4o"), members=[])
+    team.db = MagicMock()
+    team.db.upsert_session = MagicMock(return_value=None)
+
+    session = _make_team_session("s1", user_id="alice")
+    session.session_data = {"session_state": {}}
+
+    with patch("agno.team.team.log_warning") as mock_warn:
+        team.save_session(session=session)
+        mock_warn.assert_called_once()
+        assert "not persisted" in mock_warn.call_args[0][0]

@@ -9149,8 +9149,11 @@ class Team:
                         else:
                             # Scrub individual member responses based on their storage flags
                             self._scrub_member_responses(run.member_responses)
-            self._upsert_session(session=session)
-            log_debug(f"Created or updated TeamSession record: {session.session_id}")
+            result = self._upsert_session(session=session)
+            if result is None:
+                log_warning(f"TeamSession not persisted (ownership mismatch): {session.session_id}")
+            else:
+                log_debug(f"Created or updated TeamSession record: {session.session_id}")
 
     async def asave_session(self, session: TeamSession) -> None:
         """
@@ -9172,10 +9175,13 @@ class Team:
                         run.member_responses = []
 
             if self._has_async_db():
-                await self._aupsert_session(session=session)
+                result = await self._aupsert_session(session=session)
             else:
-                self._upsert_session(session=session)
-            log_debug(f"Created or updated TeamSession record: {session.session_id}")
+                result = self._upsert_session(session=session)
+            if result is None:
+                log_warning(f"TeamSession not persisted (ownership mismatch): {session.session_id}")
+            else:
+                log_debug(f"Created or updated TeamSession record: {session.session_id}")
 
     def generate_session_name(self, session: TeamSession) -> str:
         """

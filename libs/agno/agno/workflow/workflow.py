@@ -1127,8 +1127,11 @@ class Workflow:
                 session.session_data["session_state"].pop("session_id", None)
                 session.session_data["session_state"].pop("workflow_name", None)
 
-            await self._aupsert_session(session=session)  # type: ignore
-            log_debug(f"Created or updated WorkflowSession record: {session.session_id}")
+            result = await self._aupsert_session(session=session)  # type: ignore
+            if result is None:
+                log_warning(f"WorkflowSession not persisted (ownership mismatch): {session.session_id}")
+            else:
+                log_debug(f"Created or updated WorkflowSession record: {session.session_id}")
 
     def save_session(self, session: WorkflowSession) -> None:
         """Save the WorkflowSession to storage
@@ -1146,8 +1149,11 @@ class Workflow:
                 session.session_data["session_state"].pop("session_id", None)
                 session.session_data["session_state"].pop("workflow_name", None)
 
-            self._upsert_session(session=session)
-            log_debug(f"Created or updated WorkflowSession record: {session.session_id}")
+            result = self._upsert_session(session=session)
+            if result is None:
+                log_warning(f"WorkflowSession not persisted (ownership mismatch): {session.session_id}")
+            else:
+                log_debug(f"Created or updated WorkflowSession record: {session.session_id}")
 
     def get_chat_history(
         self, session_id: Optional[str] = None, last_n_runs: Optional[int] = None

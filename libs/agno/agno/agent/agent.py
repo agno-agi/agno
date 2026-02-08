@@ -8199,8 +8199,11 @@ class Agent:
                 session.session_data["session_state"].pop("current_user_id", None)
                 session.session_data["session_state"].pop("current_run_id", None)
 
-            self._upsert_session(session=session)
-            log_debug(f"Created or updated AgentSession record: {session.session_id}")
+            result = self._upsert_session(session=session)
+            if result is None:
+                log_warning(f"AgentSession not persisted (ownership mismatch): {session.session_id}")
+            else:
+                log_debug(f"Created or updated AgentSession record: {session.session_id}")
 
     async def asave_session(self, session: Union[AgentSession, TeamSession, WorkflowSession]) -> None:
         """
@@ -8218,10 +8221,13 @@ class Agent:
                 session.session_data["session_state"].pop("current_user_id", None)
                 session.session_data["session_state"].pop("current_run_id", None)
             if self._has_async_db():
-                await self._aupsert_session(session=session)
+                result = await self._aupsert_session(session=session)
             else:
-                self._upsert_session(session=session)
-            log_debug(f"Created or updated AgentSession record: {session.session_id}")
+                result = self._upsert_session(session=session)
+            if result is None:
+                log_warning(f"AgentSession not persisted (ownership mismatch): {session.session_id}")
+            else:
+                log_debug(f"Created or updated AgentSession record: {session.session_id}")
 
     # -*- Session Management Functions
     def rename(self, name: str, session_id: Optional[str] = None) -> None:

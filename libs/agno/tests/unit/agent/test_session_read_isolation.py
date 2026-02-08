@@ -126,3 +126,31 @@ def test_cached_session_returned_when_user_id_none():
     # Second call with user_id=None should return cached session
     result2 = agent._read_or_create_session(session_id="s1", user_id=None)
     assert result2 is result1
+
+
+def test_save_session_warns_on_upsert_rejection():
+    agent = Agent(model=OpenAIChat(id="gpt-4o"))
+    agent.db = MagicMock()
+    agent.db.upsert_session = MagicMock(return_value=None)
+
+    session = _make_session("s1", user_id="alice")
+    session.session_data = {"session_state": {}}
+
+    with patch("agno.agent.agent.log_warning") as mock_warn:
+        agent.save_session(session=session)
+        mock_warn.assert_called_once()
+        assert "not persisted" in mock_warn.call_args[0][0]
+
+
+def test_save_session_logs_debug_on_success():
+    agent = Agent(model=OpenAIChat(id="gpt-4o"))
+    agent.db = MagicMock()
+    agent.db.upsert_session = MagicMock(return_value=_make_session("s1", user_id="alice"))
+
+    session = _make_session("s1", user_id="alice")
+    session.session_data = {"session_state": {}}
+
+    with patch("agno.agent.agent.log_warning") as mock_warn, patch("agno.agent.agent.log_debug") as mock_debug:
+        agent.save_session(session=session)
+        mock_warn.assert_not_called()
+        assert any("Created or updated" in str(c) for c in mock_debug.call_args_list)

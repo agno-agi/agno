@@ -1,5 +1,5 @@
 from typing import Optional
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -108,3 +108,17 @@ def test_cached_workflow_session_returned_when_user_id_none():
 
     result2 = wf.read_or_create_session(session_id="s1", user_id=None)
     assert result2 is result1
+
+
+def test_save_session_warns_on_upsert_rejection():
+    wf = Workflow()
+    wf.db = MagicMock()
+    wf.db.upsert_session = MagicMock(return_value=None)
+
+    session = _make_workflow_session("s1", user_id="alice")
+    session.session_data = {"session_state": {}}
+
+    with patch("agno.workflow.workflow.log_warning") as mock_warn:
+        wf.save_session(session=session)
+        mock_warn.assert_called_once()
+        assert "not persisted" in mock_warn.call_args[0][0]
