@@ -6,8 +6,8 @@
 
 | Metric | Value |
 |--------|-------|
-| Directories | 4 (root, memory_manager, memory_manager/surrealdb, optimize_memories) |
-| Total `.py` files (non-`__init__`) | 20 |
+| Directories | 3 (root, memory_manager, optimize_memories) |
+| Total `.py` files (non-`__init__`) | 20 (including 5 SurrealDB files to relocate) |
 | Fully style-compliant | 0 (~0%) |
 | Have module docstring | 18 (~90%) |
 | Have section banners | 0 (0%) |
@@ -18,7 +18,7 @@
 
 ### Key Problems
 
-1. **SurrealDB duplication.** `memory_manager/surrealdb/` contains 5 files that are near-identical copies of the 5 files in `memory_manager/` — same logic, same variable names, same test sequences. Only the DB import and connection setup differ.
+1. **SurrealDB misplacement.** `memory_manager/surrealdb/` contains 5 files demonstrating SurrealDB as a MemoryManager backend. These are integration examples, not core memory features — they belong in `cookbook/92_integrations/surrealdb/`.
 
 2. **No section banners.** Zero files use any form of section banner.
 
@@ -30,7 +30,7 @@
 
 ### Overall Assessment
 
-Small, well-organized section. The main redundancy is the SurrealDB mirror of the memory_manager examples. These should be merged into the parent files showing both backends. Otherwise, this is a style compliance task.
+Small, well-organized section. The SurrealDB examples are integration demos and should be relocated to `cookbook/92_integrations/surrealdb/`. Otherwise, this is a style compliance task.
 
 ### Proposed Target
 
@@ -45,7 +45,7 @@ Small, well-organized section. The main redundancy is the SurrealDB mirror of th
 
 ## 2. Proposed Directory Structure
 
-Flatten the SurrealDB subdirectory by merging its files into their parent counterparts.
+Move the SurrealDB subdirectory to `cookbook/92_integrations/surrealdb/`. Keep memory_manager/ files as PostgreSQL-only.
 
 ```
 cookbook/11_memory/
@@ -57,12 +57,12 @@ cookbook/11_memory/
 ├── 06_multi_user_multi_session_chat_concurrent.py  # Concurrent multi-user
 ├── 07_share_memory_and_history_between_agents.py   # Memory + history sharing
 ├── 08_memory_tools.py                       # Memory tools integration
-├── memory_manager/                          # Direct MemoryManager API (merged with SurrealDB)
-│   ├── 01_standalone_memory.py              # CRUD operations (Postgres + SurrealDB)
-│   ├── 02_memory_creation.py                # Memory from messages (Postgres + SurrealDB)
-│   ├── 03_custom_memory_instructions.py     # Custom capture instructions (merged)
-│   ├── 04_memory_search.py                  # Memory retrieval (merged)
-│   └── 05_db_tools_control.py               # Fine-grained operation control (merged)
+├── memory_manager/                          # Direct MemoryManager API (PostgreSQL)
+│   ├── 01_standalone_memory.py              # CRUD operations
+│   ├── 02_memory_creation.py                # Memory from messages
+│   ├── 03_custom_memory_instructions.py     # Custom capture instructions
+│   ├── 04_memory_search.py                  # Memory retrieval
+│   └── 05_db_tools_control.py               # Fine-grained operation control
 └── optimize_memories/                       # Memory optimization strategies
     ├── 01_memory_summarize_strategy.py      # Summarize strategy
     └── 02_custom_memory_strategy.py         # Custom strategy
@@ -72,7 +72,7 @@ cookbook/11_memory/
 
 | Change | Details |
 |--------|---------|
-| **FLATTEN** `memory_manager/surrealdb/` | Merge 5 SurrealDB files into 5 parent files. Remove subdirectory |
+| **MOVE** `memory_manager/surrealdb/` | Move 5 SurrealDB files to `cookbook/92_integrations/surrealdb/`. Remove subdirectory from 11_memory |
 
 ---
 
@@ -93,22 +93,22 @@ cookbook/11_memory/
 
 ---
 
-### `memory_manager/` (10 → 5, flatten SurrealDB)
+### `memory_manager/` (10 → 5, relocate SurrealDB)
 
-| File | Disposition | New Name | Rationale |
-|------|------------|----------|-----------|
-| `01_standalone_memory.py` | **REWRITE** | `01_standalone_memory.py` | Add docstring. Merge with SurrealDB variant. Show both backends |
-| `02_memory_creation.py` | **REWRITE** | `02_memory_creation.py` | Merge with SurrealDB variant |
-| `03_custom_memory_instructions.py` | **REWRITE** | `03_custom_memory_instructions.py` | Merge with SurrealDB variant |
-| `04_memory_search.py` | **REWRITE** | `04_memory_search.py` | Merge with SurrealDB variant |
-| `05_db_tools_control.py` | **REWRITE** | `05_db_tools_control.py` | Merge with SurrealDB variant |
-| `surrealdb/standalone_memory_surreal.py` | **MERGE INTO** `01_standalone_memory.py` | — | Near-identical to parent. Only DB setup differs |
-| `surrealdb/memory_creation.py` | **MERGE INTO** `02_memory_creation.py` | — | Near-identical |
-| `surrealdb/custom_memory_instructions.py` | **MERGE INTO** `03_custom_memory_instructions.py` | — | Near-identical |
-| `surrealdb/memory_search_surreal.py` | **MERGE INTO** `04_memory_search.py` | — | Near-identical |
-| `surrealdb/db_tools_control.py` | **MERGE INTO** `05_db_tools_control.py` | — | Near-identical |
+| File | Disposition | Rationale |
+|------|------------|-----------|
+| `01_standalone_memory.py` | **KEEP + FIX** | Add docstring, banners, main gate |
+| `02_memory_creation.py` | **KEEP + FIX** | Add banners, main gate |
+| `03_custom_memory_instructions.py` | **KEEP + FIX** | Add banners, main gate |
+| `04_memory_search.py` | **KEEP + FIX** | Add banners, main gate |
+| `05_db_tools_control.py` | **KEEP + FIX** | Add banners, main gate |
+| `surrealdb/standalone_memory_surreal.py` | **MOVE TO** `92_integrations/surrealdb/` | SurrealDB is an integration, not a core memory feature |
+| `surrealdb/memory_creation.py` | **MOVE TO** `92_integrations/surrealdb/` | Same |
+| `surrealdb/custom_memory_instructions.py` | **MOVE TO** `92_integrations/surrealdb/` | Same |
+| `surrealdb/memory_search_surreal.py` | **MOVE TO** `92_integrations/surrealdb/` | Same |
+| `surrealdb/db_tools_control.py` | **MOVE TO** `92_integrations/surrealdb/` | Same |
 
-**Merge pattern:** Show PostgreSQL as the primary example with SurrealDB as a commented alternative in the Setup section, or as a separate labeled section in the `if __name__` block.
+After moving, delete the `memory_manager/surrealdb/` directory. The moved files will be style-fixed as part of `cookbook/92_integrations/` restructuring.
 
 ---
 
@@ -132,7 +132,7 @@ No new files needed.
 | Directory | README.md | TEST_LOG.md |
 |-----------|-----------|-------------|
 | `11_memory/` (root) | EXISTS (update) | **MISSING** |
-| `memory_manager/` | EXISTS (update after flatten) | **MISSING** |
+| `memory_manager/` | EXISTS (update after SurrealDB move) | **MISSING** |
 | `optimize_memories/` | **MISSING** | **MISSING** |
 
 ---
