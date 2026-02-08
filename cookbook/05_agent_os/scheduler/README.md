@@ -1,12 +1,15 @@
 # Scheduler Cookbook
 
-Examples for configuring and managing the AgentOS cron-like scheduler.
+Examples for `scheduler` in AgentOS.
 
-## Overview
-
-The scheduler lets you define cron-based schedules that automatically call AgentOS endpoints (agent runs, team runs, etc.) at specified intervals.
+## Files
+- `basic_schedule.py` — Basic scheduled agent run.
+- `schedule_management.py` — Schedule management via REST API.
 
 ## Prerequisites
+- Load environment variables with `direnv allow` (requires `.envrc`).
+- Run examples with `.venvs/demo/bin/python <path-to-file>.py`.
+- Some examples require local services (for example Postgres, Redis, Slack, or MCP servers).
 
 Install scheduler dependencies:
 

@@ -9,15 +9,13 @@ from agno.agent import Agent
 from agno.db.sqlite.sqlite import SqliteDb
 from agno.os import AgentOS
 from fastapi import Request, Response
-from starlette.middleware.base import (
-    BaseHTTPMiddleware,
-)
-from starlette.middleware.base import (
-    _StreamingResponse as StreamingResponse,
-)
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.base import _StreamingResponse as StreamingResponse
 
 
-# Setup Middleware
+# ---------------------------------------------------------------------------
+# Create Middleware
+# ---------------------------------------------------------------------------
 class ContentExtractionMiddleware(BaseHTTPMiddleware):
     """
     Middleware that extracts content from the response body for /runs endpoints
@@ -114,7 +112,7 @@ class ContentExtractionMiddleware(BaseHTTPMiddleware):
     ):
         """Send notification with the response body."""
         print(f"\n{'=' * 60}")
-        print(f"📲 Sending notification for app: {app_uuid}")
+        print(f" Sending notification for app: {app_uuid}")
         print(f"{'=' * 60}")
 
         if is_streaming:
@@ -164,6 +162,10 @@ app = agent_os.get_app()
 # Add the metadata extraction middleware
 app.add_middleware(ContentExtractionMiddleware)
 
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     """Run your AgentOS.

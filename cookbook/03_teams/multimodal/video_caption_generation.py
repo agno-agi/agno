@@ -1,5 +1,8 @@
-"""Please install dependencies using:
-uv pip install openai moviepy ffmpeg
+"""
+Video Caption Generation
+========================
+
+Demonstrates team-based video caption generation and embedding workflow.
 """
 
 from agno.agent import Agent
@@ -8,6 +11,10 @@ from agno.team import Team
 from agno.tools.moviepy_video import MoviePyVideoTools
 from agno.tools.openai import OpenAITools
 
+
+# ---------------------------------------------------------------------------
+# Create Members
+# ---------------------------------------------------------------------------
 video_processor = Agent(
     name="Video Processor",
     role="Handle video processing and audio extraction",
@@ -31,7 +38,9 @@ caption_generator = Agent(
     ],
 )
 
-# Create a team for collaborative video caption generation
+# ---------------------------------------------------------------------------
+# Create Team
+# ---------------------------------------------------------------------------
 caption_team = Team(
     name="Video Caption Team",
     members=[video_processor, caption_generator],
@@ -47,6 +56,10 @@ caption_team = Team(
     markdown=True,
 )
 
-caption_team.print_response(
-    "Generate captions for {video with location} and embed them in the video"
-)
+# ---------------------------------------------------------------------------
+# Run Team
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    caption_team.print_response(
+        "Generate captions for {video with location} and embed them in the video"
+    )

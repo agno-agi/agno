@@ -1,41 +1,20 @@
-# Multimodal Teams
+# multimodal
 
-Teams handling text, images, audio, and video for comprehensive multimedia processing.
+Examples for team workflows in multimodal.
 
-## Setup
+## Prerequisites
 
-```bash
-uv pip install agno openai
-```
+- Load environment variables (for example, OPENAI_API_KEY) via direnv allow.
+- Use .venvs/demo/bin/python to run cookbook examples.
+- Some examples require additional services (for example PostgreSQL, LanceDB, or Infinity server) as noted in file docstrings.
 
-Set your OpenAI API key:
-```bash
-export OPENAI_API_KEY=xxx
-```
+## Files
 
-## Basic Integration
-
-```python
-from agno.team import Team
-from agno.media import Audio
-
-team = Team(
-    members=[transcript_agent, audio_agent, text_agent],
-    model=OpenAIChat(id="gpt-4o"),
-)
-
-team.print_response(
-    "Give a transcript of this audio conversation",
-    audio=[Audio(content=audio_content)],
-)
-```
-
-## Examples
-
-- **[audio_sentiment_analysis.py](./audio_sentiment_analysis.py)** - Audio sentiment analysis with teams
-- **[audio_to_text.py](./audio_to_text.py)** - Audio transcription and processing
-- **[generate_image_with_team.py](./generate_image_with_team.py)** - Collaborative image generation
-- **[image_to_image_transformation.py](./image_to_image_transformation.py)** - Image transformation workflows
-- **[image_to_structured_output.py](./image_to_structured_output.py)** - Structured data from images
-- **[image_to_text.py](./image_to_text.py)** - Image description and storytelling
-- **[video_caption_generation.py](./video_caption_generation.py)** - Video analysis and captioning
+- audio_sentiment_analysis.py - Demonstrates audio sentiment analysis.
+- audio_to_text.py - Demonstrates audio to text.
+- generate_image_with_team.py - Demonstrates generate image with team.
+- image_to_image_transformation.py - Demonstrates image to image transformation.
+- image_to_structured_output.py - Demonstrates image to structured output.
+- image_to_text.py - Demonstrates image to text.
+- media_input_for_tool.py - Demonstrates media input for tool.
+- video_caption_generation.py - Demonstrates video caption generation.
