@@ -1034,9 +1034,9 @@ class OpenAIResponses(Model):
         elif stream_event.type == "response.output_text.delta":
             model_response.content = stream_event.delta
 
-            # Treat the output_text deltas as reasoning content if the reasoning summary is not requested.
-            if self.reasoning is not None and self.reasoning_summary is None:
-                model_response.reasoning_content = stream_event.delta
+        # 3.5. Add reasoning content from reasoning_text events
+        elif stream_event.type == "response.reasoning_text.delta":
+            model_response.reasoning_content = stream_event.delta
 
         # 4. Add tool calls information
 
