@@ -926,3 +926,332 @@ class TestMultipleHITLPauses:
         # Continue - completes
         final_response = workflow.continue_run(response)
         assert final_response.status == RunStatus.completed
+
+
+# =============================================================================
+# Test Step Immutability (Regression tests for step mutation bug)
+# =============================================================================
+
+
+class TestStepImmutability:
+    """Tests to ensure step configuration is not mutated after HITL resolution.
+
+    These tests verify that the workflow step definitions remain unchanged after
+    HITL pauses are resolved. This is critical for workflow reusability - the same
+    workflow instance should work correctly for multiple runs.
+
+    Bug context: Previously, continue_run() would mutate step.requires_confirmation
+    and step.requires_user_input to False after resolution, breaking subsequent runs.
+    """
+
+    def test_step_confirmation_not_mutated_after_continue(self, shared_db):
+        """Verify step.requires_confirmation is not mutated after continue_run."""
+        # Create workflow with confirmation step
+        confirm_step = Step(
+            name="confirm_step",
+            executor=process_data,
+            requires_confirmation=True,
+            confirmation_message="Please confirm",
+        )
+        workflow = Workflow(
+            name="test_confirmation_immutable",
+            db=shared_db,
+            steps=[
+                Step(name="fetch", executor=fetch_data),
+                confirm_step,
+                Step(name="save", executor=save_data),
+            ],
+        )
+
+        # Verify initial state
+        assert confirm_step.requires_confirmation is True
+
+        # First run - pauses at confirmation
+        run1 = workflow.run(input="first run")
+        assert run1.is_paused is True
+
+        # Confirm and continue
+        run1.step_requirements[0].confirm()
+        result1 = workflow.continue_run(run1)
+        assert result1.status == RunStatus.completed
+
+        # CRITICAL: Step configuration should NOT be mutated
+        assert confirm_step.requires_confirmation is True, (
+            "Step.requires_confirmation was mutated after continue_run! "
+            "This breaks workflow reusability."
+        )
+
+    def test_step_user_input_not_mutated_after_continue(self, shared_db):
+        """Verify step.requires_user_input is not mutated after continue_run."""
+        # Create workflow with user input step
+        input_step = Step(
+            name="input_step",
+            executor=process_data,
+            requires_user_input=True,
+            user_input_message="Enter preference",
+        )
+        workflow = Workflow(
+            name="test_user_input_immutable",
+            db=shared_db,
+            steps=[
+                Step(name="fetch", executor=fetch_data),
+                input_step,
+                Step(name="save", executor=save_data),
+            ],
+        )
+
+        # Verify initial state
+        assert input_step.requires_user_input is True
+
+        # First run - pauses at user input
+        run1 = workflow.run(input="first run")
+        assert run1.is_paused is True
+
+        # Provide input and continue
+        run1.step_requirements[0].set_user_input(preference="test")
+        result1 = workflow.continue_run(run1)
+        assert result1.status == RunStatus.completed
+
+        # CRITICAL: Step configuration should NOT be mutated
+        assert input_step.requires_user_input is True, (
+            "Step.requires_user_input was mutated after continue_run! "
+            "This breaks workflow reusability."
+        )
+
+    def test_workflow_reusable_after_hitl_confirmation(self, shared_db):
+        """Verify workflow can be reused after HITL confirmation is resolved.
+
+        This is the primary regression test for the step mutation bug.
+        """
+        # Create workflow with confirmation step
+        confirm_step = Step(
+            name="confirm_step",
+            executor=process_data,
+            requires_confirmation=True,
+            confirmation_message="Please confirm",
+        )
+        workflow = Workflow(
+            name="test_reusable_confirmation",
+            db=shared_db,
+            steps=[
+                Step(name="fetch", executor=fetch_data),
+                confirm_step,
+                Step(name="save", executor=save_data),
+            ],
+        )
+
+        # === First run ===
+        run1 = workflow.run(input="first run data")
+        assert run1.is_paused is True, "First run should pause at confirmation step"
+
+        run1.step_requirements[0].confirm()
+        result1 = workflow.continue_run(run1)
+        assert result1.status == RunStatus.completed
+
+        # === Second run with same workflow instance ===
+        run2 = workflow.run(input="second run data")
+
+        # CRITICAL: Second run should ALSO pause at confirmation
+        assert run2.is_paused is True, (
+            "Second run should pause at confirmation step! "
+            "If this fails, step.requires_confirmation was mutated."
+        )
+        assert len(run2.step_requirements) == 1
+        assert run2.step_requirements[0].step_name == "confirm_step"
+
+        # Complete second run
+        run2.step_requirements[0].confirm()
+        result2 = workflow.continue_run(run2)
+        assert result2.status == RunStatus.completed
+
+    def test_workflow_reusable_after_hitl_user_input(self, shared_db):
+        """Verify workflow can be reused after HITL user input is resolved."""
+        # Create workflow with user input step
+        input_step = Step(
+            name="input_step",
+            executor=process_data,
+            requires_user_input=True,
+            user_input_message="Enter preference",
+        )
+        workflow = Workflow(
+            name="test_reusable_user_input",
+            db=shared_db,
+            steps=[
+                Step(name="fetch", executor=fetch_data),
+                input_step,
+                Step(name="save", executor=save_data),
+            ],
+        )
+
+        # === First run ===
+        run1 = workflow.run(input="first run data")
+        assert run1.is_paused is True
+
+        run1.step_requirements[0].set_user_input(preference="first")
+        result1 = workflow.continue_run(run1)
+        assert result1.status == RunStatus.completed
+
+        # === Second run with same workflow instance ===
+        run2 = workflow.run(input="second run data")
+
+        # CRITICAL: Second run should ALSO pause at user input
+        assert run2.is_paused is True, (
+            "Second run should pause at user input step! "
+            "If this fails, step.requires_user_input was mutated."
+        )
+        assert run2.step_requirements[0].step_name == "input_step"
+
+        # Complete second run
+        run2.step_requirements[0].set_user_input(preference="second")
+        result2 = workflow.continue_run(run2)
+        assert result2.status == RunStatus.completed
+
+    def test_router_not_mutated_after_continue(self, shared_db):
+        """Verify Router.requires_user_input is not mutated after continue_run."""
+        # Create router with user input
+        router = Router(
+            name="test_router",
+            choices=[
+                Step(name="option_a", executor=process_data),
+                Step(name="option_b", executor=save_data),
+            ],
+            requires_user_input=True,
+            user_input_message="Select option",
+        )
+        workflow = Workflow(
+            name="test_router_immutable",
+            db=shared_db,
+            steps=[
+                Step(name="fetch", executor=fetch_data),
+                router,
+                Step(name="final", executor=save_data),
+            ],
+        )
+
+        # Verify initial state
+        assert router.requires_user_input is True
+
+        # First run - pauses at router
+        run1 = workflow.run(input="first run")
+        assert run1.is_paused is True
+
+        # Select and continue
+        run1.router_requirements[0].select("option_a")
+        result1 = workflow.continue_run(run1)
+        assert result1.status == RunStatus.completed
+
+        # CRITICAL: Router configuration should NOT be mutated
+        assert router.requires_user_input is True, (
+            "Router.requires_user_input was mutated after continue_run! "
+            "This breaks workflow reusability."
+        )
+
+    def test_workflow_reusable_after_router_selection(self, shared_db):
+        """Verify workflow can be reused after Router HITL selection."""
+        router = Router(
+            name="test_router",
+            choices=[
+                Step(name="option_a", executor=process_data),
+                Step(name="option_b", executor=save_data),
+            ],
+            requires_user_input=True,
+            user_input_message="Select option",
+        )
+        workflow = Workflow(
+            name="test_reusable_router",
+            db=shared_db,
+            steps=[
+                Step(name="fetch", executor=fetch_data),
+                router,
+                Step(name="final", executor=save_data),
+            ],
+        )
+
+        # === First run ===
+        run1 = workflow.run(input="first run")
+        assert run1.is_paused is True
+
+        run1.router_requirements[0].select("option_a")
+        result1 = workflow.continue_run(run1)
+        assert result1.status == RunStatus.completed
+
+        # === Second run with same workflow instance ===
+        run2 = workflow.run(input="second run")
+
+        # CRITICAL: Second run should ALSO pause at router
+        assert run2.is_paused is True, (
+            "Second run should pause at router! "
+            "If this fails, Router.requires_user_input was mutated."
+        )
+        assert len(run2.router_requirements) == 1
+
+        # Complete second run
+        run2.router_requirements[0].select("option_b")
+        result2 = workflow.continue_run(run2)
+        assert result2.status == RunStatus.completed
+
+    @pytest.mark.asyncio
+    async def test_workflow_reusable_after_hitl_async(self, async_shared_db):
+        """Verify workflow reusability works with async continue_run."""
+        confirm_step = Step(
+            name="confirm_step",
+            executor=process_data,
+            requires_confirmation=True,
+            confirmation_message="Please confirm",
+        )
+        workflow = Workflow(
+            name="test_reusable_async",
+            db=async_shared_db,
+            steps=[
+                Step(name="fetch", executor=fetch_data),
+                confirm_step,
+                Step(name="save", executor=save_data),
+            ],
+        )
+
+        # === First run ===
+        run1 = await workflow.arun(input="first run")
+        assert run1.is_paused is True
+
+        run1.step_requirements[0].confirm()
+        result1 = await workflow.acontinue_run(run1)
+        assert result1.status == RunStatus.completed
+
+        # Step should NOT be mutated
+        assert confirm_step.requires_confirmation is True
+
+        # === Second run ===
+        run2 = await workflow.arun(input="second run")
+        assert run2.is_paused is True, "Second async run should also pause"
+
+        run2.step_requirements[0].confirm()
+        result2 = await workflow.acontinue_run(run2)
+        assert result2.status == RunStatus.completed
+
+    def test_multiple_runs_sequential(self, shared_db):
+        """Verify workflow works correctly for many sequential runs."""
+        confirm_step = Step(
+            name="confirm_step",
+            executor=process_data,
+            requires_confirmation=True,
+        )
+        workflow = Workflow(
+            name="test_many_runs",
+            db=shared_db,
+            steps=[confirm_step],
+        )
+
+        # Run the workflow 5 times sequentially
+        for i in range(5):
+            run = workflow.run(input=f"run {i}")
+            assert run.is_paused is True, f"Run {i} should pause"
+            assert confirm_step.requires_confirmation is True, f"Step mutated on run {i}"
+
+            run.step_requirements[0].confirm()
+            result = workflow.continue_run(run)
+            assert result.status == RunStatus.completed, f"Run {i} should complete"
+
+            # Verify step still has correct configuration
+            assert confirm_step.requires_confirmation is True, (
+                f"Step was mutated after run {i}"
+            )

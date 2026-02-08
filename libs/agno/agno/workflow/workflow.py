@@ -4616,15 +4616,11 @@ class Workflow:
                     error_should_retry = True
                     log_debug(f"Step '{error_req.step_name}' error - user chose to retry")
 
-        # Clear the HITL requirements since they're now resolved
-        # This allows the step to execute on resume
-        if isinstance(self.steps, list) and paused_step_index < len(self.steps):
-            step = self.steps[paused_step_index]
-            if isinstance(step, Step):
-                step.requires_confirmation = False
-                step.requires_user_input = False
-            elif isinstance(step, Router):
-                step.requires_user_input = False
+        # Track that this step's HITL has been resolved for this run
+        # We pass this info via kwargs so _continue_execute knows to skip the HITL check
+        # Note: We do NOT modify step.requires_confirmation directly as that would
+        # mutate the workflow definition and affect future runs
+        kwargs["hitl_resolved_for_step"] = paused_step_index
 
         # Resume execution
         session_id = run_response.session_id or self.session_id
@@ -5637,15 +5633,11 @@ class Workflow:
                     error_should_retry = True
                     log_debug(f"Step '{error_req.step_name}' error - user chose to retry")
 
-        # Clear the HITL requirements since they're now resolved
-        # This allows the step to execute on resume
-        if isinstance(self.steps, list) and paused_step_index < len(self.steps):
-            step = self.steps[paused_step_index]
-            if isinstance(step, Step):
-                step.requires_confirmation = False
-                step.requires_user_input = False
-            elif isinstance(step, Router):
-                step.requires_user_input = False
+        # Track that this step's HITL has been resolved for this run
+        # We pass this info via kwargs so _acontinue_execute knows to skip the HITL check
+        # Note: We do NOT modify step.requires_confirmation directly as that would
+        # mutate the workflow definition and affect future runs
+        kwargs["hitl_resolved_for_step"] = paused_step_index
 
         # Resume execution
         session_id = run_response.session_id or self.session_id
