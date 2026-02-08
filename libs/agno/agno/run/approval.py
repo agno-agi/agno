@@ -59,9 +59,11 @@ def _build_approval_dict(
     tool_names: List[str] = []
     if run_response.tools:
         for tool in run_response.tools:
-            name = getattr(tool, "function_name", None) or getattr(tool, "name", None)
+            name = (
+                getattr(tool, "tool_name", None) or getattr(tool, "function_name", None) or getattr(tool, "name", None)
+            )
             if isinstance(tool, dict):
-                name = tool.get("function_name") or tool.get("name")
+                name = tool.get("tool_name") or tool.get("function_name") or tool.get("name")
             if name:
                 tool_names.append(name)
 
@@ -135,8 +137,11 @@ def create_approval_from_pause(
         return
 
     try:
-        fn(approval_dict)
-        log_debug(f"Created approval {approval_dict['id']} for run {approval_dict['run_id']}")
+        result = fn(approval_dict)
+        if result is not None:
+            log_debug(f"Created approval {approval_dict['id']} for run {approval_dict['run_id']}")
+        else:
+            log_debug(f"Approval creation returned None for run {approval_dict['run_id']}")
     except NotImplementedError:
         pass
     except Exception as exc:
@@ -182,10 +187,13 @@ async def acreate_approval_from_pause(
 
     try:
         if asyncio.iscoroutinefunction(fn):
-            await fn(approval_dict)
+            result = await fn(approval_dict)
         else:
-            fn(approval_dict)
-        log_debug(f"Created approval {approval_dict['id']} for run {approval_dict['run_id']}")
+            result = fn(approval_dict)
+        if result is not None:
+            log_debug(f"Created approval {approval_dict['id']} for run {approval_dict['run_id']}")
+        else:
+            log_debug(f"Approval creation returned None for run {approval_dict['run_id']}")
     except NotImplementedError:
         pass
     except Exception as exc:
