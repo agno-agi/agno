@@ -978,7 +978,11 @@ class Workflow:
         from time import time
 
         # Returning cached session if we have one
-        if self._workflow_session is not None and self._workflow_session.session_id == session_id:
+        if (
+            self._workflow_session is not None
+            and self._workflow_session.session_id == session_id
+            and (user_id is None or self._workflow_session.user_id == user_id)
+        ):
             return self._workflow_session
 
         # Try to load from database
@@ -986,7 +990,7 @@ class Workflow:
         if self.db is not None:
             log_debug(f"Reading WorkflowSession: {session_id}")
 
-            workflow_session = cast(WorkflowSession, self._read_session(session_id=session_id))
+            workflow_session = cast(WorkflowSession, self._read_session(session_id=session_id, user_id=user_id))
 
         if workflow_session is None:
             # Creating new session if none found
@@ -1020,7 +1024,11 @@ class Workflow:
         from time import time
 
         # Returning cached session if we have one
-        if self._workflow_session is not None and self._workflow_session.session_id == session_id:
+        if (
+            self._workflow_session is not None
+            and self._workflow_session.session_id == session_id
+            and (user_id is None or self._workflow_session.user_id == user_id)
+        ):
             return self._workflow_session
 
         # Try to load from database
@@ -1028,7 +1036,7 @@ class Workflow:
         if self.db is not None:
             log_debug(f"Reading WorkflowSession: {session_id}")
 
-            workflow_session = cast(WorkflowSession, await self._aread_session(session_id=session_id))
+            workflow_session = cast(WorkflowSession, await self._aread_session(session_id=session_id, user_id=user_id))
 
         if workflow_session is None:
             # Creating new session if none found
@@ -1190,23 +1198,25 @@ class Workflow:
         return session.get_chat_history(last_n_runs=last_n_runs)
 
     # -*- Session Database Functions
-    async def _aread_session(self, session_id: str) -> Optional[WorkflowSession]:
+    async def _aread_session(self, session_id: str, user_id: Optional[str] = None) -> Optional[WorkflowSession]:
         """Get a Session from the database."""
         try:
             if not self.db:
                 raise ValueError("Db not initialized")
-            session = await self.db.get_session(session_id=session_id, session_type=SessionType.WORKFLOW)  # type: ignore
+            session = await self.db.get_session(
+                session_id=session_id, session_type=SessionType.WORKFLOW, user_id=user_id
+            )  # type: ignore
             return session if isinstance(session, (WorkflowSession, type(None))) else None
         except Exception as e:
             log_warning(f"Error getting session from db: {e}")
             return None
 
-    def _read_session(self, session_id: str) -> Optional[WorkflowSession]:
+    def _read_session(self, session_id: str, user_id: Optional[str] = None) -> Optional[WorkflowSession]:
         """Get a Session from the database."""
         try:
             if not self.db:
                 raise ValueError("Db not initialized")
-            session = self.db.get_session(session_id=session_id, session_type=SessionType.WORKFLOW)
+            session = self.db.get_session(session_id=session_id, session_type=SessionType.WORKFLOW, user_id=user_id)
             return session if isinstance(session, (WorkflowSession, type(None))) else None
         except Exception as e:
             log_warning(f"Error getting session from db: {e}")

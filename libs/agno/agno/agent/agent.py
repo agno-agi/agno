@@ -7124,13 +7124,13 @@ class Agent:
 
     # -*- Session Database Functions
     def _read_session(
-        self, session_id: str, session_type: SessionType = SessionType.AGENT
+        self, session_id: str, session_type: SessionType = SessionType.AGENT, user_id: Optional[str] = None
     ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession]]:
         """Get a Session from the database."""
         try:
             if not self.db:
                 raise ValueError("Db not initialized")
-            return self.db.get_session(session_id=session_id, session_type=session_type)  # type: ignore
+            return self.db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)  # type: ignore
         except Exception as e:
             import traceback
 
@@ -7139,13 +7139,13 @@ class Agent:
             return None
 
     async def _aread_session(
-        self, session_id: str, session_type: SessionType = SessionType.AGENT
+        self, session_id: str, session_type: SessionType = SessionType.AGENT, user_id: Optional[str] = None
     ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession]]:
         """Get a Session from the database."""
         try:
             if not self.db:
                 raise ValueError("Db not initialized")
-            return await self.db.get_session(session_id=session_id, session_type=session_type)  # type: ignore
+            return await self.db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)  # type: ignore
         except Exception as e:
             import traceback
 
@@ -7241,7 +7241,11 @@ class Agent:
         from time import time
 
         # Returning cached session if we have one
-        if self._cached_session is not None and self._cached_session.session_id == session_id:
+        if (
+            self._cached_session is not None
+            and self._cached_session.session_id == session_id
+            and (user_id is None or self._cached_session.user_id == user_id)
+        ):
             return self._cached_session
 
         # Try to load from database
@@ -7249,7 +7253,7 @@ class Agent:
         if self.db is not None and self.team_id is None and self.workflow_id is None:
             log_debug(f"Reading AgentSession: {session_id}")
 
-            agent_session = cast(AgentSession, self._read_session(session_id=session_id))
+            agent_session = cast(AgentSession, self._read_session(session_id=session_id, user_id=user_id))
 
         if agent_session is None:
             # Creating new session if none found
@@ -7296,7 +7300,11 @@ class Agent:
         from time import time
 
         # Returning cached session if we have one
-        if self._cached_session is not None and self._cached_session.session_id == session_id:
+        if (
+            self._cached_session is not None
+            and self._cached_session.session_id == session_id
+            and (user_id is None or self._cached_session.user_id == user_id)
+        ):
             return self._cached_session
 
         # Try to load from database
@@ -7304,9 +7312,9 @@ class Agent:
         if self.db is not None and self.team_id is None and self.workflow_id is None:
             log_debug(f"Reading AgentSession: {session_id}")
             if self._has_async_db():
-                agent_session = cast(AgentSession, await self._aread_session(session_id=session_id))
+                agent_session = cast(AgentSession, await self._aread_session(session_id=session_id, user_id=user_id))
             else:
-                agent_session = cast(AgentSession, self._read_session(session_id=session_id))
+                agent_session = cast(AgentSession, self._read_session(session_id=session_id, user_id=user_id))
 
         if agent_session is None:
             # Creating new session if none found
