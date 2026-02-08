@@ -1,10 +1,8 @@
 """
-This example shows how to instrument your agno agent and send traces to LangWatch.
+LangWatch Integration
+=====================
 
-1. Install dependencies: uv pip install openai langwatch openinference-instrumentation-agno
-2. Sign up for an account at https://app.langwatch.ai/
-3. Set your LangWatch API key as an environment variables:
-  - export LANGWATCH_API_KEY=<your-key>
+Demonstrates instrumenting an Agno agent and sending traces to LangWatch.
 """
 
 import langwatch
@@ -13,10 +11,16 @@ from agno.models.openai import OpenAIChat
 from agno.tools.yfinance import YFinanceTools
 from openinference.instrumentation.agno import AgnoInstrumentor
 
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
 # Initialize LangWatch and instrument Agno
 langwatch.setup(instrumentors=[AgnoInstrumentor()])
 
-# Create and configure your Agno agent
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 agent = Agent(
     name="Stock Price Agent",
     model=OpenAIChat(id="gpt-5.2"),
@@ -25,4 +29,9 @@ agent = Agent(
     debug_mode=True,
 )
 
-agent.print_response("What is the current price of Tesla?")
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    agent.print_response("What is the current price of Tesla?")
