@@ -3402,7 +3402,12 @@ class AsyncSqliteDb(AsyncBaseDb):
             return False
 
     async def claim_due_schedule(self, worker_id: str, lock_grace_seconds: int = 300) -> Optional[Dict[str, Any]]:
-        """Claim a due schedule (best-effort for SQLite, not multi-process safe)."""
+        """Claim a due schedule (best-effort for SQLite, not multi-process safe).
+
+        Uses atomic UPDATE-first to avoid TOCTOU races: the eligible-row
+        lookup and the lock write happen in a single UPDATE statement so
+        concurrent callers cannot both claim the same row.
+        """
         try:
             table = await self._get_table(table_type="schedules")
             if table is None:
@@ -3411,8 +3416,9 @@ class AsyncSqliteDb(AsyncBaseDb):
             stale_threshold = now - lock_grace_seconds
             async with self.async_session_factory() as sess:
                 async with sess.begin():
-                    stmt = (
-                        select(table)
+                    # Subquery picks the single best candidate row
+                    candidate = (
+                        select(table.c.id)
                         .where(table.c.enabled == True)  # noqa: E712
                         .where(table.c.next_run_at <= now)
                         .where(
@@ -3423,20 +3429,25 @@ class AsyncSqliteDb(AsyncBaseDb):
                         )
                         .order_by(table.c.next_run_at.asc())
                         .limit(1)
+                    ).scalar_subquery()
+
+                    # Atomic UPDATE — only one writer can match this row
+                    update_stmt = (
+                        table.update().where(table.c.id == candidate).values(locked_by=worker_id, locked_at=now)
                     )
-                    result = await sess.execute(stmt)
-                    row = result.fetchone()
+                    result = await sess.execute(update_stmt)
+                    if result.rowcount == 0:  # type: ignore
+                        return None
+
+                    # Fetch the claimed row back
+                    row = (
+                        await sess.execute(
+                            select(table).where(table.c.locked_by == worker_id).where(table.c.locked_at == now)
+                        )
+                    ).fetchone()
                     if row is None:
                         return None
-                    row_dict = dict(row._mapping)
-                    schedule_id = row_dict["id"]
-                    update_stmt = (
-                        table.update().where(table.c.id == schedule_id).values(locked_by=worker_id, locked_at=now)
-                    )
-                    await sess.execute(update_stmt)
-                    row_dict["locked_by"] = worker_id
-                    row_dict["locked_at"] = now
-            return row_dict
+                    return dict(row._mapping)
         except Exception as e:
             log_debug(f"Error claiming due schedule: {e}")
             return None
