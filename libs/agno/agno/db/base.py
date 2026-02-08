@@ -47,7 +47,7 @@ class BaseDb(ABC):
         component_configs_table: Optional[str] = None,
         component_links_table: Optional[str] = None,
         learnings_table: Optional[str] = None,
-        schedule_table: Optional[str] = None,
+        schedules_table: Optional[str] = None,
         schedule_runs_table: Optional[str] = None,
         id: Optional[str] = None,
     ):
@@ -65,7 +65,7 @@ class BaseDb(ABC):
         self.component_configs_table_name = component_configs_table or "agno_component_configs"
         self.component_links_table_name = component_links_table or "agno_component_links"
         self.learnings_table_name = learnings_table or "agno_learnings"
-        self.schedule_table_name = schedule_table or "agno_schedules"
+        self.schedules_table_name = schedules_table or "agno_schedules"
         self.schedule_runs_table_name = schedule_runs_table or "agno_schedule_runs"
 
     def to_dict(self) -> Dict[str, Any]:
@@ -86,7 +86,7 @@ class BaseDb(ABC):
             "components_table": self.components_table_name,
             "component_configs_table": self.component_configs_table_name,
             "component_links_table": self.component_links_table_name,
-            "schedule_table": self.schedule_table_name,
+            "schedules_table": self.schedules_table_name,
             "schedule_runs_table": self.schedule_runs_table_name,
         }
 
@@ -108,7 +108,7 @@ class BaseDb(ABC):
             components_table=data.get("components_table"),
             component_configs_table=data.get("component_configs_table"),
             component_links_table=data.get("component_links_table"),
-            schedule_table=data.get("schedule_table"),
+            schedules_table=data.get("schedules_table"),
             schedule_runs_table=data.get("schedule_runs_table"),
             id=data.get("id"),
         )
@@ -1033,7 +1033,7 @@ class AsyncBaseDb(ABC):
         culture_table: Optional[str] = None,
         versions_table: Optional[str] = None,
         learnings_table: Optional[str] = None,
-        schedule_table: Optional[str] = None,
+        schedules_table: Optional[str] = None,
         schedule_runs_table: Optional[str] = None,
     ):
         self.id = id or str(uuid4())
@@ -1047,7 +1047,7 @@ class AsyncBaseDb(ABC):
         self.culture_table_name = culture_table or "agno_culture"
         self.versions_table_name = versions_table or "agno_schema_versions"
         self.learnings_table_name = learnings_table or "agno_learnings"
-        self.schedule_table_name = schedule_table or "agno_schedules"
+        self.schedules_table_name = schedules_table or "agno_schedules"
         self.schedule_runs_table_name = schedule_runs_table or "agno_schedule_runs"
 
     async def _create_all_tables(self) -> None:

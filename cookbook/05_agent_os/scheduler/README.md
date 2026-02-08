@@ -40,7 +40,7 @@ Demonstrates full CRUD lifecycle: creating, listing, updating, enabling/disablin
 AgentOS(
     agents=[my_agent],
     db=db,
-    enable_scheduler=True,           # Enable the scheduler
+    scheduler=True,                  # Enable the scheduler
     scheduler_poll_interval=15,      # Poll every 15 seconds (default)
     scheduler_base_url="http://127.0.0.1:7777",  # AgentOS base URL
 )

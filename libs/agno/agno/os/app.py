@@ -182,7 +182,7 @@ class AgentOS:
         run_hooks_in_background: bool = False,
         telemetry: bool = True,
         registry: Optional[Registry] = None,
-        enable_scheduler: bool = False,
+        scheduler: bool = False,
         scheduler_poll_interval: int = 15,
         scheduler_base_url: Optional[str] = None,
         internal_service_token: Optional[str] = None,
@@ -215,7 +215,7 @@ class AgentOS:
             run_hooks_in_background: If True, run agent/team pre/post hooks as FastAPI background tasks (non-blocking)
             telemetry: Whether to enable telemetry
             registry: Optional registry to use for the AgentOS
-            enable_scheduler: Whether to enable the cron scheduler
+            scheduler: Whether to enable the cron scheduler
             scheduler_poll_interval: Seconds between scheduler poll cycles (default: 15)
             scheduler_base_url: Base URL for scheduler HTTP calls (default: http://127.0.0.1:7777)
             internal_service_token: Token for scheduler-to-OS auth (auto-generated if not provided)
@@ -276,10 +276,10 @@ class AgentOS:
         self.run_hooks_in_background = run_hooks_in_background
 
         # Scheduler configuration
-        self.enable_scheduler = enable_scheduler
+        self.scheduler = scheduler
         self._scheduler_poll_interval = scheduler_poll_interval
         self._scheduler_base_url = scheduler_base_url
-        if enable_scheduler and not internal_service_token:
+        if scheduler and not internal_service_token:
             import secrets
 
             internal_service_token = secrets.token_urlsafe(32)
@@ -370,7 +370,7 @@ class AgentOS:
             updated_routers.append(get_registry_router(registry=self.registry))
 
         # Add schedule router if scheduler is enabled
-        if self.enable_scheduler and self.db is not None:
+        if self.scheduler and self.db is not None:
             updated_routers.append(get_schedule_router(os_db=self.db, settings=self.settings))
 
         # Clear all previously existing routes
@@ -633,7 +633,7 @@ class AgentOS:
             lifespans.append(partial(db_lifespan, agent_os=self))
 
             # The scheduler lifespan (after db so tables exist)
-            if self.enable_scheduler and self.db is not None:
+            if self.scheduler and self.db is not None:
                 lifespans.append(partial(scheduler_lifespan, agent_os=self))
 
             # The httpx client cleanup lifespan (should be last to close after other lifespans)
@@ -665,7 +665,7 @@ class AgentOS:
             lifespans.append(partial(db_lifespan, agent_os=self))  # type: ignore
 
             # The scheduler lifespan (after db so tables exist)
-            if self.enable_scheduler and self.db is not None:
+            if self.scheduler and self.db is not None:
                 lifespans.append(partial(scheduler_lifespan, agent_os=self))
 
             # The httpx client cleanup lifespan (should be last to close after other lifespans)
@@ -696,7 +696,7 @@ class AgentOS:
             routers.append(get_registry_router(registry=self.registry))
 
         # Add schedule router if scheduler is enabled and db is available
-        if self.enable_scheduler and self.db is not None:
+        if self.scheduler and self.db is not None:
             routers.append(get_schedule_router(os_db=self.db, settings=self.settings))
 
         for router in routers:

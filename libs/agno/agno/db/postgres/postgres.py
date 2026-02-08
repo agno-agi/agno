@@ -74,7 +74,7 @@ class PostgresDb(BaseDb):
         component_configs_table: Optional[str] = None,
         component_links_table: Optional[str] = None,
         learnings_table: Optional[str] = None,
-        schedule_table: Optional[str] = None,
+        schedules_table: Optional[str] = None,
         schedule_runs_table: Optional[str] = None,
         id: Optional[str] = None,
         create_schema: bool = True,
@@ -146,7 +146,7 @@ class PostgresDb(BaseDb):
             component_configs_table=component_configs_table,
             component_links_table=component_links_table,
             learnings_table=learnings_table,
-            schedule_table=schedule_table,
+            schedules_table=schedules_table,
             schedule_runs_table=schedule_runs_table,
         )
 
@@ -186,7 +186,7 @@ class PostgresDb(BaseDb):
             components_table=data.get("components_table"),
             component_configs_table=data.get("component_configs_table"),
             component_links_table=data.get("component_links_table"),
-            schedule_table=data.get("schedule_table"),
+            schedules_table=data.get("schedules_table"),
             schedule_runs_table=data.get("schedule_runs_table"),
             id=data.get("id"),
         )
@@ -226,7 +226,7 @@ class PostgresDb(BaseDb):
             (self.component_configs_table_name, "component_configs"),
             (self.component_links_table_name, "component_links"),
             (self.learnings_table_name, "learnings"),
-            (self.schedule_table_name, "schedules"),
+            (self.schedules_table_name, "schedules"),
             (self.schedule_runs_table_name, "schedule_runs"),
         ]
 
@@ -423,7 +423,7 @@ class PostgresDb(BaseDb):
             "components": self.components_table_name,
             "component_configs": self.component_configs_table_name,
             "component_links": self.component_links_table_name,
-            "schedules": self.schedule_table_name,
+            "schedules": self.schedules_table_name,
             "schedule_runs": self.schedule_runs_table_name,
         }
         return table_map.get(logical_name, logical_name)
@@ -537,12 +537,12 @@ class PostgresDb(BaseDb):
             return self.learnings_table
 
         if table_type == "schedules":
-            self.schedule_table = self._get_or_create_table(
-                table_name=self.schedule_table_name,
+            self.schedules_table = self._get_or_create_table(
+                table_name=self.schedules_table_name,
                 table_type="schedules",
                 create_table_if_not_found=create_table_if_not_found,
             )
-            return self.schedule_table
+            return self.schedules_table
 
         if table_type == "schedule_runs":
             self.schedule_runs_table = self._get_or_create_table(
@@ -4597,13 +4597,13 @@ class PostgresDb(BaseDb):
     def delete_schedule(self, schedule_id: str) -> bool:
         try:
             runs_table = self._get_table(table_type="schedule_runs")
-            schedule_table = self._get_table(table_type="schedules")
-            if schedule_table is None:
+            schedules_table = self._get_table(table_type="schedules")
+            if schedules_table is None:
                 return False
             with self.Session() as sess, sess.begin():
                 if runs_table is not None:
                     sess.execute(runs_table.delete().where(runs_table.c.schedule_id == schedule_id))
-                result = sess.execute(schedule_table.delete().where(schedule_table.c.id == schedule_id))
+                result = sess.execute(schedules_table.delete().where(schedules_table.c.id == schedule_id))
                 return result.rowcount > 0
         except Exception as e:
             log_warning(f"Error deleting schedule: {e}")

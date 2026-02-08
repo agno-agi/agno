@@ -45,7 +45,7 @@ greeter = Agent(
 app = AgentOS(
     agents=[greeter],
     db=db,
-    enable_scheduler=True,
+    scheduler=True,
     scheduler_poll_interval=15,
 ).get_app()
 
