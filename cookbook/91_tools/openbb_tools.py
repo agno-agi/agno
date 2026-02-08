@@ -1,5 +1,17 @@
+"""
+Openbb Tools
+=============================
+
+Demonstrates openbb tools.
+"""
+
 from agno.agent import Agent
 from agno.tools.openbb import OpenBBTools
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 
 # Example 1: Enable all OpenBB functions
 agent_all = Agent(
@@ -40,27 +52,32 @@ agent = Agent(
 )
 
 # Example usage with all functions enabled
-print("=== Example 1: Using all OpenBB functions ===")
-agent_all.print_response(
-    "Provide a comprehensive analysis of Apple (AAPL) including current price, historical data, news, and ratios"
-)
 
-# Example usage with specific functions only
-print(
-    "\n=== Example 2: Using specific OpenBB functions (company info + historical data) ==="
-)
-agent_specific.print_response(
-    "Get company information and historical stock data for Tesla (TSLA)"
-)
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    print("=== Example 1: Using all OpenBB functions ===")
+    agent_all.print_response(
+        "Provide a comprehensive analysis of Apple (AAPL) including current price, historical data, news, and ratios"
+    )
 
-# Example usage with default configuration
-print("\n=== Example 3: Default OpenBB agent usage ===")
-agent.print_response(
-    "Get me the current stock price and key information for Apple (AAPL)"
-)
+    # Example usage with specific functions only
+    print(
+        "\n=== Example 2: Using specific OpenBB functions (company info + historical data) ==="
+    )
+    agent_specific.print_response(
+        "Get company information and historical stock data for Tesla (TSLA)"
+    )
 
-agent.print_response("What are the top gainers in the market today?")
+    # Example usage with default configuration
+    print("\n=== Example 3: Default OpenBB agent usage ===")
+    agent.print_response(
+        "Get me the current stock price and key information for Apple (AAPL)"
+    )
 
-agent.print_response(
-    "Show me the latest GDP growth rate and inflation numbers for the US"
-)
+    agent.print_response("What are the top gainers in the market today?")
+
+    agent.print_response(
+        "Show me the latest GDP growth rate and inflation numbers for the US"
+    )

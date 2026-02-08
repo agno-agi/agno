@@ -8,6 +8,10 @@ the Toolkit class uses multiple inheritance.
 from agno.agent import Agent
 from agno.tools import Toolkit
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 
 class BaseConfig:
     """Base configuration class for dual inheritance."""
@@ -54,6 +58,10 @@ class DualInheritanceToolkit(Toolkit, BaseConfig):
         """
         return f"Current render type: {self._render_type}"
 
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     toolkit = DualInheritanceToolkit(render_type="CUSTOM")
