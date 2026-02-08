@@ -8019,13 +8019,13 @@ class Team:
     # Session Management
     ###########################################################################
     def _read_session(
-        self, session_id: str, session_type: SessionType = SessionType.TEAM
+        self, session_id: str, session_type: SessionType = SessionType.TEAM, user_id: Optional[str] = None
     ) -> Optional[Union[TeamSession, WorkflowSession]]:
         """Get a Session from the database."""
         try:
             if not self.db:
                 raise ValueError("Db not initialized")
-            session = self.db.get_session(session_id=session_id, session_type=session_type)
+            session = self.db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)
             return session  # type: ignore
         except Exception as e:
             import traceback
@@ -8035,14 +8035,14 @@ class Team:
             return None
 
     async def _aread_session(
-        self, session_id: str, session_type: SessionType = SessionType.TEAM
+        self, session_id: str, session_type: SessionType = SessionType.TEAM, user_id: Optional[str] = None
     ) -> Optional[Union[TeamSession, WorkflowSession]]:
         """Get a Session from the database."""
         try:
             if not self.db:
                 raise ValueError("Db not initialized")
             self.db = cast(AsyncBaseDb, self.db)
-            session = await self.db.get_session(session_id=session_id, session_type=session_type)
+            session = await self.db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)
             return session  # type: ignore
         except Exception as e:
             import traceback
@@ -8090,13 +8090,17 @@ class Team:
         from agno.session.team import TeamSession
 
         # Return existing session if we have one
-        if self._cached_session is not None and self._cached_session.session_id == session_id:
+        if (
+            self._cached_session is not None
+            and self._cached_session.session_id == session_id
+            and (user_id is None or self._cached_session.user_id == user_id)
+        ):
             return self._cached_session
 
         # Try to load from database
         team_session = None
         if self.db is not None and self.parent_team_id is None and self.workflow_id is None:
-            team_session = cast(TeamSession, self._read_session(session_id=session_id))
+            team_session = cast(TeamSession, self._read_session(session_id=session_id, user_id=user_id))
 
         # Create new session if none found
         if team_session is None:
@@ -8147,16 +8151,20 @@ class Team:
         from agno.session.team import TeamSession
 
         # Return existing session if we have one
-        if self._cached_session is not None and self._cached_session.session_id == session_id:
+        if (
+            self._cached_session is not None
+            and self._cached_session.session_id == session_id
+            and (user_id is None or self._cached_session.user_id == user_id)
+        ):
             return self._cached_session
 
         # Try to load from database
         team_session = None
         if self.db is not None and self.parent_team_id is None and self.workflow_id is None:
             if self._has_async_db():
-                team_session = cast(TeamSession, await self._aread_session(session_id=session_id))
+                team_session = cast(TeamSession, await self._aread_session(session_id=session_id, user_id=user_id))
             else:
-                team_session = cast(TeamSession, self._read_session(session_id=session_id))
+                team_session = cast(TeamSession, self._read_session(session_id=session_id, user_id=user_id))
 
         # Create new session if none found
         if team_session is None:
@@ -9141,8 +9149,11 @@ class Team:
                         else:
                             # Scrub individual member responses based on their storage flags
                             self._scrub_member_responses(run.member_responses)
-            self._upsert_session(session=session)
-            log_debug(f"Created or updated TeamSession record: {session.session_id}")
+            result = self._upsert_session(session=session)
+            if result is None:
+                log_warning(f"TeamSession not persisted (ownership mismatch): {session.session_id}")
+            else:
+                log_debug(f"Created or updated TeamSession record: {session.session_id}")
 
     async def asave_session(self, session: TeamSession) -> None:
         """
@@ -9164,10 +9175,13 @@ class Team:
                         run.member_responses = []
 
             if self._has_async_db():
-                await self._aupsert_session(session=session)
+                result = await self._aupsert_session(session=session)
             else:
-                self._upsert_session(session=session)
-            log_debug(f"Created or updated TeamSession record: {session.session_id}")
+                result = self._upsert_session(session=session)
+            if result is None:
+                log_warning(f"TeamSession not persisted (ownership mismatch): {session.session_id}")
+            else:
+                log_debug(f"Created or updated TeamSession record: {session.session_id}")
 
     def generate_session_name(self, session: TeamSession) -> str:
         """
