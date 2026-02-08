@@ -20,34 +20,34 @@
 
 1. **Zero section banner compliance.** No file uses the `# ---------------------------------------------------------------------------` format.
 
-2. **Async subdirectory sprawl.** Four backends (postgres, sqlite, mongo, mysql) have separate `async_*` subdirectories that duplicate their sync counterparts with minimal differences (DB class import and `asyncio.run()` wrapper).
+2. **No main gate on most files.** Only 12/45 files (27%) have `if __name__ == "__main__":`. Workflow files consistently have it; agent and team files almost never do.
 
-3. **No main gate on most files.** Only 12/45 files (27%) have `if __name__ == "__main__":`. Workflow files consistently have it; agent and team files almost never do.
+3. **Highly templated content across backends.** Team files across all backends use the identical HackerNews Team example (same agents, same `Article` schema, same prompt) — only the DB import differs. Same for workflow files (Content Creation Workflow). This is by design (showing each backend works the same way) but worth noting.
 
-4. **Highly templated content across backends.** Team files across all backends use the identical HackerNews Team example (same agents, same `Article` schema, same prompt) — only the DB import differs. Same for workflow files (Content Creation Workflow). This is by design (showing each backend works the same way) but worth noting.
+4. **No TEST_LOG.md anywhere.** Zero directories have test logs.
 
-5. **No TEST_LOG.md anywhere.** Zero directories have test logs.
-
-6. **Missing docstrings on root files.** The 3 root concept files (`01_persistent_session_storage.py`, `02_session_summary.py`, `03_chat_history.py`) and `examples/multi_user_multi_session.py` lack docstrings.
+5. **Missing docstrings on root files.** The 3 root concept files (`01_persistent_session_storage.py`, `02_session_summary.py`, `03_chat_history.py`) and `examples/multi_user_multi_session.py` lack docstrings.
 
 ### Overall Assessment
 
-Storage has a clean, well-organized structure. Each database backend gets its own directory with agent/team/workflow examples. The main structural issue is the 4 async subdirectories that should be flattened into their parents. Otherwise, this is primarily a style compliance task.
+Storage has a clean, well-organized structure. Each database backend gets its own directory with agent/team/workflow examples. The async subdirectories use genuinely different database classes (`AsyncPostgresDb`, `AsyncSqliteDb`, etc.) with different connection schemes, so they are kept as separate directories. This is primarily a style compliance task.
 
 ### Proposed Target
 
 | Metric | Current | Target |
 |--------|---------|--------|
-| Files | 45 | ~35 |
+| Files | 45 | 45 (no change) |
 | Style compliance | 0% | 100% |
-| README coverage | 14/18 | All surviving directories |
-| TEST_LOG coverage | 0/18 | All surviving directories |
+| README coverage | 14/18 | All directories |
+| TEST_LOG coverage | 0/18 | All directories |
+
+**No file merges, cuts, or moves needed.**
 
 ---
 
 ## 2. Proposed Directory Structure
 
-Flatten all async subdirectories into their parent directories.
+No structural changes needed. The directory is already well-organized. Async subdirectories are kept separate because they use different database classes.
 
 ```
 cookbook/06_storage/
@@ -60,23 +60,18 @@ cookbook/06_storage/
 ├── gcs/                               # GCS JSON backend (1 file)
 ├── in_memory/                         # In-memory backend (3 files)
 ├── json_db/                           # JSON file backend (3 files)
-├── mongo/                             # MongoDB backend (3 files, merged from 5)
-├── mysql/                             # MySQL backend (3 files, merged from 5)
-├── postgres/                          # PostgreSQL backend (3 files, merged from 6)
+├── mongo/                             # MongoDB backend (2 files)
+│   └── async_mongo/                   # Async MongoDB (3 files)
+├── mysql/                             # MySQL backend (2 files)
+│   └── async_mysql/                   # Async MySQL (3 files)
+├── postgres/                          # PostgreSQL backend (3 files)
+│   └── async_postgres/                # Async PostgreSQL (3 files)
 ├── redis/                             # Redis backend (3 files)
 ├── singlestore/                       # SingleStore backend (2 files)
-├── sqlite/                            # SQLite backend (3 files, merged from 6)
+├── sqlite/                            # SQLite backend (3 files)
+│   └── async_sqlite/                  # Async SQLite (3 files)
 └── surrealdb/                         # SurrealDB backend (3 files)
 ```
-
-### Changes from Current
-
-| Change | Details |
-|--------|---------|
-| **FLATTEN** `postgres/async_postgres/` | Merge 3 async files into 3 sync files. Remove subdirectory |
-| **FLATTEN** `sqlite/async_sqlite/` | Merge 3 async files into 3 sync files. Remove subdirectory |
-| **FLATTEN** `mongo/async_mongo/` | Merge 3 async files into 2 sync files + 1 new workflow file. Remove subdirectory |
-| **FLATTEN** `mysql/async_mysql/` | Merge 3 async files into 2 sync files + 1 new workflow file. Remove subdirectory |
 
 ---
 
@@ -146,44 +141,65 @@ cookbook/06_storage/
 
 ---
 
-### `mongo/` (5 → 3, flatten async)
+### `mongo/` (2 → 2, no change)
 
-| File | Disposition | New Name | Rationale |
-|------|------------|----------|-----------|
-| `mongodb_for_agent.py` | **REWRITE** | `mongodb_for_agent.py` | Merge with async variant. Show both sync `MongoDb` and async `AsyncMongoDb` patterns |
-| `mongodb_for_team.py` | **REWRITE** | `mongodb_for_team.py` | Merge with async variant |
-| `async_mongo/async_mongodb_for_agent.py` | **MERGE INTO** `mongodb_for_agent.py` | — | Async variant — same concept |
-| `async_mongo/async_mongodb_for_team.py` | **MERGE INTO** `mongodb_for_team.py` | — | Async variant — same concept |
-| `async_mongo/async_mongodb_for_workflow.py` | **KEEP + MOVE + FIX** | `mongodb_for_workflow.py` | No sync counterpart exists. Move to parent, rename, add banners |
+| File | Disposition | Rationale |
+|------|------------|-----------|
+| `mongodb_for_agent.py` | **KEEP + FIX** | Add banners, main gate |
+| `mongodb_for_team.py` | **KEEP + FIX** | Add banners, main gate |
 
 ---
 
-### `mysql/` (5 → 3, flatten async)
+### `mongo/async_mongo/` (3 → 3, no change)
 
-| File | Disposition | New Name | Rationale |
-|------|------------|----------|-----------|
-| `mysql_for_agent.py` | **REWRITE** | `mysql_for_agent.py` | Merge with async variant. Note: async has richer content (uuid, SessionType, `async def main()`) — use async as the richer base |
-| `mysql_for_team.py` | **REWRITE** | `mysql_for_team.py` | Merge with async variant |
-| `async_mysql/async_mysql_for_agent.py` | **MERGE INTO** `mysql_for_agent.py` | — | Has richer async pattern with session inspection |
-| `async_mysql/async_mysql_for_team.py` | **MERGE INTO** `mysql_for_team.py` | — | Async variant |
-| `async_mysql/async_mysql_for_workflow.py` | **KEEP + MOVE + FIX** | `mysql_for_workflow.py` | No sync counterpart. Unique content (function-based workflow with `WorkflowExecutionInput`, `ResearchTopic` schema). Move to parent, rename, add banners |
-
-**Note:** The mysql async workflow (`async_mysql_for_workflow.py`) uses a completely different workflow pattern from all other backends — it has a function-based workflow with `WorkflowExecutionInput`, `ResearchTopic` schema, and `blog_workflow` function. This is unique content that must be preserved carefully.
+| File | Disposition | Rationale |
+|------|------------|-----------|
+| `async_mongodb_for_agent.py` | **KEEP + FIX** | Add banners, main gate |
+| `async_mongodb_for_team.py` | **KEEP + FIX** | Add banners, main gate |
+| `async_mongodb_for_workflow.py` | **KEEP + FIX** | Add banners. Unique workflow content |
 
 ---
 
-### `postgres/` (6 → 3, flatten async)
+### `mysql/` (2 → 2, no change)
 
-| File | Disposition | New Name | Rationale |
-|------|------------|----------|-----------|
-| `postgres_for_agent.py` | **REWRITE** | `postgres_for_agent.py` | Merge with async variant. Show both `PostgresDb` and `AsyncPostgresDb` |
-| `postgres_for_team.py` | **REWRITE** | `postgres_for_team.py` | Merge with async variant |
-| `postgres_for_workflow.py` | **REWRITE** | `postgres_for_workflow.py` | Merge with async variant |
-| `async_postgres/async_postgres_for_agent.py` | **MERGE INTO** `postgres_for_agent.py` | — | Async variant. Note: uses different db_url scheme (`psycopg_async` vs `psycopg`) |
-| `async_postgres/async_postgres_for_team.py` | **MERGE INTO** `postgres_for_team.py` | — | Async variant |
-| `async_postgres/async_postgres_for_workflow.py` | **MERGE INTO** `postgres_for_workflow.py` | — | Async variant |
+| File | Disposition | Rationale |
+|------|------------|-----------|
+| `mysql_for_agent.py` | **KEEP + FIX** | Add banners, main gate |
+| `mysql_for_team.py` | **KEEP + FIX** | Add banners, main gate |
 
-**Note:** PostgreSQL async uses a different connection URL scheme: `postgresql+psycopg_async://` vs `postgresql+psycopg://`. Both URLs must be preserved in the merged file.
+---
+
+### `mysql/async_mysql/` (3 → 3, no change)
+
+| File | Disposition | Rationale |
+|------|------------|-----------|
+| `async_mysql_for_agent.py` | **KEEP + FIX** | Add banners, main gate. Has richer async pattern with session inspection |
+| `async_mysql_for_team.py` | **KEEP + FIX** | Add banners, main gate |
+| `async_mysql_for_workflow.py` | **KEEP + FIX** | Add banners. Unique function-based workflow with `WorkflowExecutionInput`, `ResearchTopic` schema, `blog_workflow` function |
+
+**Note:** The mysql async workflow (`async_mysql_for_workflow.py`) uses a completely different workflow pattern from all other backends. This is unique content that must be preserved carefully.
+
+---
+
+### `postgres/` (3 → 3, no change)
+
+| File | Disposition | Rationale |
+|------|------------|-----------|
+| `postgres_for_agent.py` | **KEEP + FIX** | Add banners, main gate |
+| `postgres_for_team.py` | **KEEP + FIX** | Add banners, main gate |
+| `postgres_for_workflow.py` | **KEEP + FIX** | Add banners. Already has main gate |
+
+---
+
+### `postgres/async_postgres/` (3 → 3, no change)
+
+| File | Disposition | Rationale |
+|------|------------|-----------|
+| `async_postgres_for_agent.py` | **KEEP + FIX** | Add banners, main gate. Uses `AsyncPostgresDb` with `psycopg_async` URL |
+| `async_postgres_for_team.py` | **KEEP + FIX** | Add banners, main gate |
+| `async_postgres_for_workflow.py` | **KEEP + FIX** | Add banners. Already has main gate |
+
+**Note:** PostgreSQL async uses a different connection URL scheme: `postgresql+psycopg_async://` vs `postgresql+psycopg://`.
 
 ---
 
@@ -206,16 +222,23 @@ cookbook/06_storage/
 
 ---
 
-### `sqlite/` (6 → 3, flatten async)
+### `sqlite/` (3 → 3, no change)
 
-| File | Disposition | New Name | Rationale |
-|------|------------|----------|-----------|
-| `sqlite_for_agent.py` | **REWRITE** | `sqlite_for_agent.py` | Merge with async variant. Show both `SqliteDb` and `AsyncSqliteDb` |
-| `sqlite_for_team.py` | **REWRITE** | `sqlite_for_team.py` | Merge with async variant |
-| `sqlite_for_workflow.py` | **REWRITE** | `sqlite_for_workflow.py` | Merge with async variant |
-| `async_sqlite/async_sqlite_for_agent.py` | **MERGE INTO** `sqlite_for_agent.py` | — | Async variant |
-| `async_sqlite/async_sqlite_for_team.py` | **MERGE INTO** `sqlite_for_team.py` | — | Async variant |
-| `async_sqlite/async_sqlite_for_workflow.py` | **MERGE INTO** `sqlite_for_workflow.py` | — | Async variant |
+| File | Disposition | Rationale |
+|------|------------|-----------|
+| `sqlite_for_agent.py` | **KEEP + FIX** | Add banners, main gate |
+| `sqlite_for_team.py` | **KEEP + FIX** | Add banners, main gate |
+| `sqlite_for_workflow.py` | **KEEP + FIX** | Add banners. Already has main gate |
+
+---
+
+### `sqlite/async_sqlite/` (3 → 3, no change)
+
+| File | Disposition | Rationale |
+|------|------------|-----------|
+| `async_sqlite_for_agent.py` | **KEEP + FIX** | Add banners, main gate. Uses `AsyncSqliteDb` |
+| `async_sqlite_for_team.py` | **KEEP + FIX** | Add banners, main gate |
+| `async_sqlite_for_workflow.py` | **KEEP + FIX** | Add banners. Already has main gate |
 
 ---
 
@@ -246,15 +269,17 @@ No new files needed. The storage section has good coverage across 12 database ba
 | `gcs/` | EXISTS | **MISSING** |
 | `in_memory/` | EXISTS | **MISSING** |
 | `json_db/` | EXISTS | **MISSING** |
-| `mongo/` | EXISTS (update after flatten) | **MISSING** |
-| `mysql/` | EXISTS (update after flatten) | **MISSING** |
-| `postgres/` | EXISTS (update after flatten) | **MISSING** |
+| `mongo/` | EXISTS | **MISSING** |
+| `mongo/async_mongo/` | **MISSING** | **MISSING** |
+| `mysql/` | EXISTS | **MISSING** |
+| `mysql/async_mysql/` | **MISSING** | **MISSING** |
+| `postgres/` | EXISTS | **MISSING** |
+| `postgres/async_postgres/` | **MISSING** | **MISSING** |
 | `redis/` | EXISTS | **MISSING** |
 | `singlestore/` | EXISTS | **MISSING** |
-| `sqlite/` | EXISTS (update after flatten) | **MISSING** |
+| `sqlite/` | EXISTS | **MISSING** |
+| `sqlite/async_sqlite/` | **MISSING** | **MISSING** |
 | `surrealdb/` | EXISTS | **MISSING** |
-
-**Summary:** All 14 main directories have README.md (update 4 after flattening). None have TEST_LOG.md. After restructuring, the 4 async subdirectories are removed, so they no longer need documentation.
 
 ---
 
@@ -307,51 +332,7 @@ if __name__ == "__main__":
 4. **Section flow** — Setup (DB connection) → Create Agent/Team/Workflow → Run
 5. **Main gate** — All runnable code inside `if __name__ == "__main__":`
 6. **No emoji** — No emoji characters anywhere
-7. **Sync + async together** — When merging sync/async variants, show both patterns in the same file using labeled sections within the `if __name__` block
-8. **Self-contained** — Each file must be independently runnable
-
-### Merge Pattern for Sync/Async Pairs
-
-When merging sync and async variants, use this pattern in the `if __name__` block:
-
-```python
-if __name__ == "__main__":
-    # --- Sync ---
-    agent.print_response("How many people live in Canada?")
-    agent.print_response("What is their national anthem called?")
-
-    # --- Async ---
-    import asyncio
-    asyncio.run(agent.aprint_response("How many people live in Canada?"))
-    asyncio.run(agent.aprint_response("What is their national anthem called?"))
-```
-
-When the sync and async variants use **different DB classes** (e.g., `PostgresDb` vs `AsyncPostgresDb`), create separate agents for each:
-
-```python
-# ---------------------------------------------------------------------------
-# Setup
-# ---------------------------------------------------------------------------
-sync_db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
-async_db = AsyncPostgresDb(db_url="postgresql+psycopg_async://ai:ai@localhost:5532/ai")
-
-# ---------------------------------------------------------------------------
-# Create Agents
-# ---------------------------------------------------------------------------
-sync_agent = Agent(db=sync_db, ...)
-async_agent = Agent(db=async_db, ...)
-
-# ---------------------------------------------------------------------------
-# Run Agent
-# ---------------------------------------------------------------------------
-if __name__ == "__main__":
-    # --- Sync ---
-    sync_agent.print_response("How many people live in Canada?")
-
-    # --- Async ---
-    import asyncio
-    asyncio.run(async_agent.aprint_response("How many people live in Canada?"))
-```
+7. **Self-contained** — Each file must be independently runnable
 
 ### Best Current Examples (reference)
 
