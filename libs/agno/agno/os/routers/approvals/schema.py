@@ -35,8 +35,6 @@ class ApprovalResolveRequest(BaseModel):
     """Request body for resolving an approval."""
 
     action: str = Field(..., pattern="^(approve|reject)$")
-    updated_tools: Optional[List[Dict[str, Any]]] = None
-    resolved_by: Optional[str] = None
 
 
 class ApprovalCountResponse(BaseModel):

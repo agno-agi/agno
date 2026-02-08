@@ -188,7 +188,12 @@ class AsyncSqliteDb(AsyncBaseDb):
         """
         try:
             # Pass traces_table_name for spans table foreign key resolution
-            table_schema = get_table_schema_definition(table_type, traces_table_name=self.trace_table_name).copy()
+            table_schema = get_table_schema_definition(
+                table_type,
+                traces_table_name=self.trace_table_name,
+                schedule_table_name=self.schedule_table_name,
+                schedule_runs_table_name=self.schedule_runs_table_name,
+            ).copy()
 
             columns: List[Column] = []
             indexes: List[str] = []

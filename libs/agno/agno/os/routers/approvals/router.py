@@ -4,7 +4,7 @@ import asyncio
 import time
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from agno.os.routers.approvals.schema import (
     ApprovalCountResponse,
@@ -99,6 +99,7 @@ def get_approvals_router(os_db: Any, settings: Any) -> APIRouter:
     async def resolve_approval(
         approval_id: str,
         body: ApprovalResolveRequest,
+        request: Request,
         _: bool = Depends(auth_dependency),
     ) -> Dict[str, Any]:
         approval = await _db_call("get_approval", approval_id)
@@ -109,12 +110,13 @@ def get_approvals_router(os_db: Any, settings: Any) -> APIRouter:
 
         now = int(time.time())
         new_status = "approved" if body.action == "approve" else "rejected"
+        resolved_by = getattr(request.state, "user_id", None) or getattr(request.state, "sub", None)
         result = await _db_call(
             "update_approval",
             approval_id,
             expected_status="pending",
             status=new_status,
-            resolved_by=body.resolved_by,
+            resolved_by=resolved_by,
             resolved_at=now,
             updated_at=now,
         )
