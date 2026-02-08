@@ -198,7 +198,11 @@ class AsyncPostgresDb(AsyncBaseDb):
         try:
             # Pass traces_table_name and db_schema for spans table foreign key resolution
             table_schema = get_table_schema_definition(
-                table_type, traces_table_name=self.trace_table_name, db_schema=self.db_schema
+                table_type,
+                traces_table_name=self.trace_table_name,
+                db_schema=self.db_schema,
+                schedule_table_name=self.schedule_table_name,
+                schedule_runs_table_name=self.schedule_runs_table_name,
             ).copy()
 
             columns: List[Column] = []
