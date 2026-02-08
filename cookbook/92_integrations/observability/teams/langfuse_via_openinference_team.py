@@ -1,3 +1,11 @@
+"""
+Langfuse Team Tracing Via OpenInference
+=======================================
+
+Demonstrates sync and async team tracing with Langfuse.
+"""
+
+import asyncio
 import base64
 import os
 from uuid import uuid4
@@ -12,17 +20,19 @@ from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExport
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
 LANGFUSE_AUTH = base64.b64encode(
     f"{os.getenv('LANGFUSE_PUBLIC_KEY')}:{os.getenv('LANGFUSE_SECRET_KEY')}".encode()
 ).decode()
 os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = (
-    "https://us.cloud.langfuse.com/api/public/otel"  # 🇺🇸 US data region
+    "https://us.cloud.langfuse.com/api/public/otel"  # US data region
 )
-# os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"]="https://cloud.langfuse.com/api/public/otel" # 🇪🇺 EU data region
-# os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"]="http://localhost:3000/api/public/otel" # 🏠 Local deployment (>= v3.22.0)
+# os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = "https://cloud.langfuse.com/api/public/otel"  # EU data region
+# os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = "http://localhost:3000/api/public/otel"  # Local deployment (>= v3.22.0)
 
 os.environ["OTEL_EXPORTER_OTLP_HEADERS"] = f"Authorization=Basic {LANGFUSE_AUTH}"
-
 
 tracer_provider = TracerProvider()
 tracer_provider.add_span_processor(SimpleSpanProcessor(OTLPSpanExporter()))
@@ -30,6 +40,10 @@ tracer_provider.add_span_processor(SimpleSpanProcessor(OTLPSpanExporter()))
 # Start instrumenting agno
 AgnoInstrumentor().instrument(tracer_provider=tracer_provider)
 
+
+# ---------------------------------------------------------------------------
+# Create Team
+# ---------------------------------------------------------------------------
 # First agent for market data
 market_data_agent = Agent(
     name="Market Data Agent",
@@ -77,8 +91,28 @@ financial_team = Team(
     markdown=True,
 )
 
-if __name__ == "__main__":
+
+# ---------------------------------------------------------------------------
+# Run Team
+# ---------------------------------------------------------------------------
+def run_sync_example() -> None:
     financial_team.print_response(
         "Analyze Tesla (TSLA) stock - provide both current market data and recent significant news.",
         stream=True,
     )
+
+
+async def run_async_example() -> None:
+    await financial_team.aprint_response(
+        "Analyze Tesla (TSLA) stock - provide both current market data and recent significant news.",
+        stream=True,
+    )
+
+
+if __name__ == "__main__":
+    run_mode = "sync"
+
+    if run_mode == "async":
+        asyncio.run(run_async_example())
+    else:
+        run_sync_example()
