@@ -13,29 +13,22 @@ try:
 except ImportError:
     httpx = None  # type: ignore[assignment]
 
-# Regex to detect streaming run endpoints
-_RUN_ENDPOINT_RE = re.compile(r"^/(agents|teams|workflows)/[^/]+/runs/?$")
+# Regex to detect run endpoints and capture resource type + ID
+_RUN_ENDPOINT_RE = re.compile(r"^/(agents|teams|workflows)/([^/]+)/runs/?$")
 
-# Terminal SSE event types that signal completion
-_TERMINAL_EVENTS = {
-    "RunCompleted",
-    "RunError",
-    "RunCancelled",
-    "TeamRunCompleted",
-    "TeamRunError",
-    "TeamRunCancelled",
-    "WorkflowCompleted",
-    "WorkflowError",
-    "WorkflowCancelled",
-}
+# Terminal run statuses (RunStatus enum values from agno.run.base)
+_TERMINAL_STATUSES = {"COMPLETED", "CANCELLED", "ERROR"}
+
+# Default polling interval in seconds for background run status checks
+_DEFAULT_POLL_INTERVAL = 30
 
 
 class ScheduleExecutor:
     """Execute a schedule by calling its endpoint on the AgentOS server.
 
     For run endpoints (``/agents/*/runs``, ``/teams/*/runs``, etc.) the executor
-    consumes the SSE stream, captures ``run_id`` / ``session_id`` from the data,
-    and waits for a terminal event before marking the run as complete.
+    submits a background run (``background=true``), then polls the run status
+    endpoint until it reaches a terminal state (COMPLETED, ERROR, CANCELLED).
 
     For all other endpoints a simple request/response cycle is used.
     """
@@ -45,12 +38,14 @@ class ScheduleExecutor:
         base_url: str,
         internal_service_token: str,
         timeout: int = 3600,
+        poll_interval: int = _DEFAULT_POLL_INTERVAL,
     ) -> None:
         if httpx is None:
             raise ImportError("`httpx` not installed. Please install it using `pip install httpx`")
         self.base_url = base_url.rstrip("/")
         self.internal_service_token = internal_service_token
         self.timeout = timeout
+        self.poll_interval = poll_interval
 
     # ------------------------------------------------------------------
     async def execute(
@@ -217,19 +212,34 @@ class ScheduleExecutor:
         timeout_seconds = schedule.get("timeout_seconds") or self.timeout
         url = f"{self.base_url}{endpoint}"
 
-        is_run_endpoint = _RUN_ENDPOINT_RE.match(endpoint) is not None and method == "POST"
+        match = _RUN_ENDPOINT_RE.match(endpoint)
+        is_run_endpoint = match is not None and method == "POST"
 
         headers: Dict[str, str] = {
             "Authorization": f"Bearer {self.internal_service_token}",
         }
 
         if is_run_endpoint:
+            assert match is not None  # for type narrowing
             # Run endpoints expect Form(...) inputs, not JSON.
-            # Always force stream=true — the executor relies on SSE terminal events.
-            form_payload = {k: str(v) for k, v in payload.items() if k != "stream"}
-            form_payload["stream"] = "true"
+            # Force background=true and stream=false for polling-based execution.
+            form_payload = {k: str(v) for k, v in payload.items() if k not in ("stream", "background")}
+            form_payload["stream"] = "false"
+            form_payload["background"] = "true"
+
+            resource_type = match.group(1)
+            resource_id = match.group(2)
+
             async with httpx.AsyncClient(timeout=httpx.Timeout(timeout_seconds)) as client:
-                return await self._stream_sse(client, url, headers, form_payload)
+                return await self._background_run(
+                    client,
+                    url,
+                    headers,
+                    form_payload,
+                    resource_type,
+                    resource_id,
+                    timeout_seconds,
+                )
         else:
             headers["Content-Type"] = "application/json"
             async with httpx.AsyncClient(timeout=httpx.Timeout(timeout_seconds)) as client:
@@ -260,71 +270,141 @@ class ScheduleExecutor:
             "session_id": None,
         }
 
-    async def _stream_sse(
+    async def _background_run(
         self,
         client: Any,
         url: str,
         headers: Dict[str, str],
-        payload: Optional[Dict[str, str]],
+        payload: Dict[str, str],
+        resource_type: str,
+        resource_id: str,
+        timeout_seconds: int,
     ) -> Dict[str, Any]:
-        """Stream SSE from a run endpoint and capture run_id/session_id."""
+        """Submit a background run and poll until completion."""
         import json
-
-        run_id: Optional[str] = None
-        session_id: Optional[str] = None
-        status = "failed"
-        error: Optional[str] = None
-        status_code: Optional[int] = None
 
         kwargs: Dict[str, Any] = {"headers": headers}
         if payload is not None:
             kwargs["data"] = payload
 
-        async with client.stream("POST", url, **kwargs) as resp:
-            status_code = resp.status_code
+        resp = await client.request("POST", url, **kwargs)
+
+        if resp.status_code >= 400:
+            return {
+                "status": "failed",
+                "status_code": resp.status_code,
+                "error": resp.text,
+                "run_id": None,
+                "session_id": None,
+            }
+
+        try:
+            body = resp.json()
+        except (json.JSONDecodeError, ValueError):
+            return {
+                "status": "failed",
+                "status_code": resp.status_code,
+                "error": f"Invalid JSON in background run response: {resp.text[:500]}",
+                "run_id": None,
+                "session_id": None,
+            }
+
+        run_id = body.get("run_id")
+        session_id = body.get("session_id")
+
+        if not run_id or not session_id:
+            return {
+                "status": "failed",
+                "status_code": resp.status_code,
+                "error": f"Missing run_id or session_id in background run response: {body}",
+                "run_id": run_id,
+                "session_id": session_id,
+            }
+
+        return await self._poll_run(
+            client,
+            headers,
+            resource_type,
+            resource_id,
+            run_id,
+            session_id,
+            timeout_seconds,
+        )
+
+    async def _poll_run(
+        self,
+        client: Any,
+        headers: Dict[str, str],
+        resource_type: str,
+        resource_id: str,
+        run_id: str,
+        session_id: str,
+        timeout_seconds: int,
+    ) -> Dict[str, Any]:
+        """Poll a run status endpoint until the run reaches a terminal state."""
+        import json
+
+        poll_url = f"{self.base_url}/{resource_type}/{resource_id}/runs/{run_id}"
+        deadline = time.monotonic() + timeout_seconds
+
+        while True:
+            await asyncio.sleep(self.poll_interval)
+
+            if time.monotonic() >= deadline:
+                return {
+                    "status": "failed",
+                    "status_code": None,
+                    "error": f"Polling timed out after {timeout_seconds}s for run {run_id}",
+                    "run_id": run_id,
+                    "session_id": session_id,
+                }
+
+            try:
+                resp = await client.request(
+                    "GET",
+                    poll_url,
+                    headers=headers,
+                    params={"session_id": session_id},
+                )
+            except Exception as exc:
+                log_warning(f"Poll request failed for run {run_id}: {exc}")
+                continue
+
+            if resp.status_code == 404:
+                continue
+
             if resp.status_code >= 400:
-                body = await resp.aread()
                 return {
                     "status": "failed",
                     "status_code": resp.status_code,
-                    "error": body.decode("utf-8", errors="replace"),
-                    "run_id": None,
-                    "session_id": None,
+                    "error": resp.text,
+                    "run_id": run_id,
+                    "session_id": session_id,
                 }
 
-            event_type: Optional[str] = None
-            async for line in resp.aiter_lines():
-                line = line.strip()
-                if not line:
-                    event_type = None
-                    continue
-                if line.startswith("event:"):
-                    event_type = line[6:].strip()
-                    continue
-                if line.startswith("data:"):
-                    data_str = line[5:].strip()
-                    try:
-                        data = json.loads(data_str)
-                    except (json.JSONDecodeError, TypeError):
-                        log_warning(f"SSE: failed to parse data line: {data_str[:200]}")
-                        continue
+            try:
+                data = resp.json()
+            except (json.JSONDecodeError, ValueError):
+                log_warning(f"Invalid JSON in poll response for run {run_id}")
+                continue
 
-                    if isinstance(data, dict):
-                        run_id = data.get("run_id") or run_id
-                        session_id = data.get("session_id") or session_id
+            run_status = data.get("status")
 
-                    if event_type in _TERMINAL_EVENTS:
-                        if "Error" in (event_type or "") or "Cancelled" in (event_type or ""):
-                            if isinstance(data, dict):
-                                error = data.get("error") or data.get("message")
-                        else:
-                            status = "success"
-                        break
+            if run_status in _TERMINAL_STATUSES:
+                if run_status == "COMPLETED":
+                    status = "success"
+                    error = None
+                elif run_status == "CANCELLED":
+                    status = "failed"
+                    error = data.get("error") or "Run was cancelled"
+                else:
+                    status = "failed"
+                    error = data.get("error") or f"Run failed with status {run_status}"
 
-        return {
-            "status": status,
-            "status_code": status_code,
-            "error": error,
-            "run_id": run_id,
-            "session_id": session_id,
-        }
+                return {
+                    "status": status,
+                    "status_code": resp.status_code,
+                    "error": error,
+                    "run_id": run_id,
+                    "session_id": session_id,
+                }
