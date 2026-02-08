@@ -149,6 +149,30 @@ class TestClaimRelease:
         claimed = db.claim_due_schedule("worker-1")
         assert claimed is None
 
+    def test_concurrent_claim_only_one_wins(self, tmp_path):
+        """Two threads claiming the same schedule — only one should succeed."""
+        from concurrent.futures import ThreadPoolExecutor
+
+        db_file = str(tmp_path / "concurrent.db")
+        table_name = f"sessions_{uuid4().hex[:8]}"
+
+        # Two independent adapter instances sharing the same DB file
+        db1 = SqliteDb(session_table=table_name, db_file=db_file)
+        db1._create_all_tables()
+        db2 = SqliteDb(session_table=table_name, db_file=db_file)
+
+        now = int(time.time())
+        schedule = _make_schedule(next_run_at=now - 10, enabled=True)
+        db1.create_schedule(schedule)
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            f1 = pool.submit(db1.claim_due_schedule, "worker-1")
+            f2 = pool.submit(db2.claim_due_schedule, "worker-2")
+            results = [f1.result(), f2.result()]
+
+        claimed = [r for r in results if r is not None]
+        assert len(claimed) == 1, f"Expected exactly 1 claim, got {len(claimed)}: {claimed}"
+
     def test_release_schedule(self, db):
         now = int(time.time())
         schedule = _make_schedule(next_run_at=now - 10, enabled=True)
