@@ -59,6 +59,7 @@ research_team = Team(
     instructions="Research tech topics from Hackernews and the web",
 )
 
+
 # ---------------------------------------------------------------------------
 # Define Execution Functions
 # ---------------------------------------------------------------------------
@@ -190,6 +191,7 @@ async def custom_execution_function_async_stream(
         stream_events=True,
     ):
         yield response
+
 
 # ---------------------------------------------------------------------------
 # Create Workflows

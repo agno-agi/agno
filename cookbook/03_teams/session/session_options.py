@@ -12,7 +12,6 @@ from agno.models.openai import OpenAIChat
 from agno.team import Team
 from rich.pretty import pprint
 
-
 # ---------------------------------------------------------------------------
 # Setup
 # ---------------------------------------------------------------------------

@@ -38,6 +38,7 @@ monitoring_agent = Agent(
     instructions="Set up monitoring and alerts for the deployed application.",
 )
 
+
 # ---------------------------------------------------------------------------
 # Define Security Gate
 # ---------------------------------------------------------------------------
@@ -54,6 +55,7 @@ def security_gate(step_input: StepInput) -> StepOutput:
         content="[OK] Security check passed. Proceeding with deployment...",
         stop=False,
     )
+
 
 # ---------------------------------------------------------------------------
 # Create Security Workflow
@@ -97,6 +99,7 @@ publisher = Agent(
     instructions="Prepare content for publication and handle final formatting.",
 )
 
+
 # ---------------------------------------------------------------------------
 # Define Quality Gate
 # ---------------------------------------------------------------------------
@@ -123,6 +126,7 @@ def content_quality_gate(step_input: StepInput) -> StepOutput:
         content="[PASS] QUALITY CHECK PASSED: Content meets quality standards.",
         stop=False,
     )
+
 
 # ---------------------------------------------------------------------------
 # Create Content Workflow
@@ -178,6 +182,7 @@ report_generator = Agent(
     instructions="Generate a final report from processed data.",
 )
 
+
 # ---------------------------------------------------------------------------
 # Define Validation Gate
 # ---------------------------------------------------------------------------
@@ -193,6 +198,7 @@ def early_exit_validator(step_input: StepInput) -> StepOutput:
         content="[PASS] Data validation passed. Continuing with processing...",
         stop=False,
     )
+
 
 # ---------------------------------------------------------------------------
 # Create Data Workflow
@@ -213,10 +219,14 @@ data_workflow = Workflow(
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     print("\n=== Testing VULNERABLE code deployment ===")
-    security_workflow.print_response(input="Scan this code: exec(input('Enter command: '))")
+    security_workflow.print_response(
+        input="Scan this code: exec(input('Enter command: '))"
+    )
 
     print("=== Testing SECURE code deployment ===")
-    security_workflow.print_response(input="Scan this code: def hello(): return 'Hello World'")
+    security_workflow.print_response(
+        input="Scan this code: def hello(): return 'Hello World'"
+    )
 
     print("\n=== Test: Short content (should stop early) ===")
     content_workflow.print_response(

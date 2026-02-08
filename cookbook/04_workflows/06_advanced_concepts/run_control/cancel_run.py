@@ -17,6 +17,7 @@ from agno.tools.websearch import WebSearchTools
 from agno.workflow.step import Step
 from agno.workflow.workflow import Workflow
 
+
 # ---------------------------------------------------------------------------
 # Define Helpers
 # ---------------------------------------------------------------------------
@@ -44,7 +45,9 @@ def long_running_task(workflow: Workflow, run_id_container: dict) -> None:
                     "status": "cancelled",
                     "run_id": chunk.run_id,
                     "cancelled": True,
-                    "content": "".join(content_pieces)[:200] + "..." if content_pieces else "No content before cancellation",
+                    "content": "".join(content_pieces)[:200] + "..."
+                    if content_pieces
+                    else "No content before cancellation",
                 }
                 return
             elif chunk.event == WorkflowRunEvent.workflow_cancelled:
@@ -53,7 +56,9 @@ def long_running_task(workflow: Workflow, run_id_container: dict) -> None:
                     "status": "cancelled",
                     "run_id": chunk.run_id,
                     "cancelled": True,
-                    "content": "".join(content_pieces)[:200] + "..." if content_pieces else "No content before cancellation",
+                    "content": "".join(content_pieces)[:200] + "..."
+                    if content_pieces
+                    else "No content before cancellation",
                 }
                 return
             elif hasattr(chunk, "status") and chunk.status == RunStatus.completed:
@@ -61,17 +66,23 @@ def long_running_task(workflow: Workflow, run_id_container: dict) -> None:
 
         if final_response:
             run_id_container["result"] = {
-                "status": final_response.status.value if final_response.status else "completed",
+                "status": final_response.status.value
+                if final_response.status
+                else "completed",
                 "run_id": final_response.run_id,
                 "cancelled": final_response.status == RunStatus.cancelled,
-                "content": ("".join(content_pieces)[:200] + "...") if content_pieces else "No content",
+                "content": ("".join(content_pieces)[:200] + "...")
+                if content_pieces
+                else "No content",
             }
         else:
             run_id_container["result"] = {
                 "status": "unknown",
                 "run_id": run_id_container.get("run_id"),
                 "cancelled": False,
-                "content": ("".join(content_pieces)[:200] + "...") if content_pieces else "No content",
+                "content": ("".join(content_pieces)[:200] + "...")
+                if content_pieces
+                else "No content",
             }
 
     except Exception as e:
@@ -85,7 +96,9 @@ def long_running_task(workflow: Workflow, run_id_container: dict) -> None:
         }
 
 
-def cancel_after_delay(workflow: Workflow, run_id_container: dict, delay_seconds: int = 3) -> None:
+def cancel_after_delay(
+    workflow: Workflow, run_id_container: dict, delay_seconds: int = 3
+) -> None:
     print(f"[WAIT] Will cancel workflow run in {delay_seconds} seconds...")
     time.sleep(delay_seconds)
 
@@ -96,9 +109,12 @@ def cancel_after_delay(workflow: Workflow, run_id_container: dict, delay_seconds
         if success:
             print(f"[OK] Workflow run {run_id} marked for cancellation")
         else:
-            print(f"[ERROR] Failed to cancel workflow run {run_id} (may not exist or already completed)")
+            print(
+                f"[ERROR] Failed to cancel workflow run {run_id} (may not exist or already completed)"
+            )
     else:
         print("[WARN] No run_id found to cancel")
+
 
 # ---------------------------------------------------------------------------
 # Create Workflow
@@ -181,9 +197,12 @@ def main() -> None:
         else:
             print("\n[WARN] Workflow run completed before cancellation")
     else:
-        print("[ERROR] No result obtained - check if cancellation happened during streaming")
+        print(
+            "[ERROR] No result obtained - check if cancellation happened during streaming"
+        )
 
     print("\nWorkflow cancellation example completed")
+
 
 # ---------------------------------------------------------------------------
 # Run Workflow

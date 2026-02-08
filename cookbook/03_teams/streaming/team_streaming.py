@@ -13,7 +13,6 @@ from agno.team import Team
 from agno.tools.yfinance import YFinanceTools
 from agno.utils.pprint import apprint_run_response
 
-
 # ---------------------------------------------------------------------------
 # Create Members
 # ---------------------------------------------------------------------------

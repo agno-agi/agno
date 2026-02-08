@@ -14,7 +14,6 @@ from agno.tools.dalle import DalleTools
 from agno.utils.common import dataclass_to_dict
 from rich.pretty import pprint
 
-
 # ---------------------------------------------------------------------------
 # Create Members
 # ---------------------------------------------------------------------------

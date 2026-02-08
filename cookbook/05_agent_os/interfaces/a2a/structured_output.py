@@ -12,7 +12,6 @@ from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from pydantic import BaseModel, Field
 
-
 # ---------------------------------------------------------------------------
 # Create Example
 # ---------------------------------------------------------------------------

@@ -8,8 +8,6 @@ Demonstrates routing between image and video generation pipelines using a router
 import asyncio
 from typing import List, Optional
 
-from pydantic import BaseModel
-
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.models.gemini import GeminiTools
@@ -19,6 +17,8 @@ from agno.workflow.step import Step
 from agno.workflow.steps import Steps
 from agno.workflow.types import StepInput
 from agno.workflow.workflow import Workflow
+from pydantic import BaseModel
+
 
 # ---------------------------------------------------------------------------
 # Define Input Model
@@ -30,6 +30,7 @@ class MediaRequest(BaseModel):
     style: Optional[str] = "realistic"
     duration: Optional[int] = None
     resolution: Optional[str] = "1024x1024"
+
 
 # ---------------------------------------------------------------------------
 # Create Agents
@@ -124,6 +125,7 @@ video_sequence = Steps(
     steps=[generate_video_step, describe_video_step],
 )
 
+
 # ---------------------------------------------------------------------------
 # Define Router Selector
 # ---------------------------------------------------------------------------
@@ -137,6 +139,7 @@ def media_sequence_selector(step_input: StepInput) -> List[Step]:
     if "image" in message_lower:
         return [image_sequence]
     return [image_sequence]
+
 
 # ---------------------------------------------------------------------------
 # Create Workflow

@@ -12,7 +12,6 @@ from agno.models.openai import OpenAIChat
 from agno.team import Team
 from agno.tools.websearch import WebSearchTools
 
-
 # ---------------------------------------------------------------------------
 # Create Members
 # ---------------------------------------------------------------------------

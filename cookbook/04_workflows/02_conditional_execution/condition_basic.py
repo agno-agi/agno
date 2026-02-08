@@ -39,6 +39,7 @@ writer = Agent(
     instructions="Write a comprehensive article based on all available research and verification.",
 )
 
+
 # ---------------------------------------------------------------------------
 # Define Condition Evaluator
 # ---------------------------------------------------------------------------
@@ -60,6 +61,7 @@ def needs_fact_checking(step_input: StepInput) -> bool:
         "decrease",
     ]
     return any(indicator in summary.lower() for indicator in fact_indicators)
+
 
 # ---------------------------------------------------------------------------
 # Define Steps

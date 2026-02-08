@@ -10,7 +10,6 @@ from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIChat
 from agno.team import Team
 
-
 # ---------------------------------------------------------------------------
 # Setup
 # ---------------------------------------------------------------------------

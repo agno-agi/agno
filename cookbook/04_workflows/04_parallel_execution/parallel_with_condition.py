@@ -82,6 +82,7 @@ tech_analysis_step = Step(
     agent=content_agent,
 )
 
+
 # ---------------------------------------------------------------------------
 # Define Condition Evaluators
 # ---------------------------------------------------------------------------
@@ -124,6 +125,7 @@ def is_tech_related(step_input: StepInput) -> bool:
         "coding",
     ]
     return any(keyword in topic.lower() for keyword in tech_keywords)
+
 
 # ---------------------------------------------------------------------------
 # Create Workflow

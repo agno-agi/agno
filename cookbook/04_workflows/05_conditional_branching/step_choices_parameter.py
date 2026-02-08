@@ -35,6 +35,7 @@ reviewer = Agent(
     instructions="You are a reviewer.",
 )
 
+
 # ---------------------------------------------------------------------------
 # Define Router Selector
 # ---------------------------------------------------------------------------
@@ -54,6 +55,7 @@ def dynamic_selector(
     if "full" in user_input:
         return [step_map["researcher"], step_map["writer"], step_map["reviewer"]]
     return step_choices[0]
+
 
 # ---------------------------------------------------------------------------
 # Create Workflow

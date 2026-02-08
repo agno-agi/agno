@@ -14,7 +14,6 @@ from agno.os.interfaces.agui import AGUI
 from agno.tools import tool
 from agno.tools.duckduckgo import DuckDuckGoTools
 
-
 # ---------------------------------------------------------------------------
 # Create Example
 # ---------------------------------------------------------------------------
