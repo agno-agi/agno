@@ -15,6 +15,11 @@ from agno.run.agent import RunOutput
 from agno.workflow import Workflow
 
 
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
+
+
 async def log_step_completion(run_output: RunOutput, agent: Agent) -> None:
     """
     Background post-hook on the agent that runs after each step completes.
@@ -63,6 +68,10 @@ app = agent_os.get_app()
 # curl -X POST http://localhost:7777/workflows/analysis-workflow/runs \
 #   -F "message=Explain the benefits of exercise" \
 #   -F "stream=false"
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     agent_os.serve(app="background_hooks_workflow:app", port=7777, reload=True)
