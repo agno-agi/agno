@@ -8,6 +8,10 @@ from fastmcp import FastMCP
 from fastmcp.server import Context
 from fastmcp.server.dependencies import get_http_request
 
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
+
 mcp = FastMCP("Dynamic Headers Demo Server")
 
 
@@ -30,6 +34,10 @@ async def greet(name: str, ctx: Context) -> str:
 
     return f"Hello, {name}! (User: {user_id}, Agent: {agent_name}, Team: {team_name})"
 
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     mcp.run(transport="streamable-http", port=8000)

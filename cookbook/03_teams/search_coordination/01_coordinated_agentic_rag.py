@@ -1,17 +1,8 @@
 """
-This example demonstrates how multiple specialized agents can coordinate to provide
-comprehensive RAG (Retrieval-Augmented Generation) responses by dividing search
-and analysis tasks across team members.
+Coordinated Agentic RAG
+=======================
 
-Team Composition:
-- Knowledge Searcher: Searches knowledge base for relevant information
-- Content Analyzer: Analyzes and synthesizes retrieved content
-- Response Synthesizer: Creates final comprehensive response with sources
-
-Setup:
-1. Run: `uv pip install agno anthropic cohere lancedb tantivy sqlalchemy`
-2. Export your ANTHROPIC_API_KEY and CO_API_KEY
-3. Run this script to see coordinated RAG in action
+Demonstrates coordinated team search, analysis, and synthesis over shared knowledge.
 """
 
 from agno.agent import Agent
@@ -19,10 +10,13 @@ from agno.knowledge.embedder.cohere import CohereEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reranker.cohere import CohereReranker
 from agno.models.anthropic import Claude
-from agno.team.team import Team
+from agno.team import Team
 from agno.vectordb.lancedb import LanceDb, SearchType
 
-# Shared knowledge base for the team
+
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
 knowledge = Knowledge(
     vector_db=LanceDb(
         uri="tmp/lancedb",
@@ -33,10 +27,11 @@ knowledge = Knowledge(
     ),
 )
 
-# Add documentation content
 knowledge.insert_many(urls=["https://docs.agno.com/basics/agents/overview.md"])
 
-# Knowledge Searcher Agent - Specialized in finding relevant information
+# ---------------------------------------------------------------------------
+# Create Members
+# ---------------------------------------------------------------------------
 knowledge_searcher = Agent(
     name="Knowledge Searcher",
     model=Claude(id="claude-3-7-sonnet-latest"),
@@ -52,11 +47,10 @@ knowledge_searcher = Agent(
     markdown=True,
 )
 
-# Content Analyzer Agent - Specialized in analyzing retrieved content
 content_analyzer = Agent(
     name="Content Analyzer",
     model=Claude(id="claude-3-7-sonnet-latest"),
-    role="Analyze and extract key insights from retrieved content",
+    role="Analyze and synthesize retrieved content",
     instructions=[
         "Analyze the content provided by the Knowledge Searcher.",
         "Extract key concepts, relationships, and important details.",
@@ -66,11 +60,10 @@ content_analyzer = Agent(
     markdown=True,
 )
 
-# Response Synthesizer Agent - Specialized in creating comprehensive responses
 response_synthesizer = Agent(
     name="Response Synthesizer",
     model=Claude(id="claude-3-7-sonnet-latest"),
-    role="Create comprehensive final response with proper citations",
+    role="Create final comprehensive response with proper citations",
     instructions=[
         "Synthesize information from team members into a comprehensive response.",
         "Include proper source citations and references.",
@@ -80,7 +73,9 @@ response_synthesizer = Agent(
     markdown=True,
 )
 
-# Create coordinated RAG team
+# ---------------------------------------------------------------------------
+# Create Team
+# ---------------------------------------------------------------------------
 coordinated_rag_team = Team(
     name="Coordinated RAG Team",
     model=Claude(id="claude-3-7-sonnet-latest"),
@@ -97,15 +92,14 @@ coordinated_rag_team = Team(
 )
 
 
-def main():
-    """Run the coordinated agentic RAG team example."""
-    print("🤖 Coordinated Agentic RAG Team Demo")
+# ---------------------------------------------------------------------------
+# Run Team
+# ---------------------------------------------------------------------------
+def main() -> None:
+    print("Coordinated Agentic RAG Team Demo")
     print("=" * 50)
 
-    # Example query that benefits from coordinated search and analysis
     query = "What are Agents and how do they work with tools and knowledge?"
-
-    # Run the coordinated team
     coordinated_rag_team.print_response(query, stream=True)
 
 

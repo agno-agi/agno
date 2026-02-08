@@ -26,6 +26,10 @@ from agno.os.middleware import JWTMiddleware
 from agno.tools.websearch import WebSearchTools
 from agno.utils.cryptography import generate_rsa_keys
 
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
+
 # Keys file path for persistence across reloads
 _KEYS_FILE = "/tmp/agno_rbac_demo_keys.json"
 
@@ -104,6 +108,10 @@ app.add_middleware(
     scope_mappings=custom_scopes,  # Providing scope_mappings enables RBAC
     admin_scope="foo:bar",  # Admin can bypass all checks with this scope
 )
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     """

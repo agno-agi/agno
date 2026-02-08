@@ -1,3 +1,10 @@
+"""
+Teams Demo
+==========
+
+Demonstrates teams demo.
+"""
+
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.anthropic import Claude
@@ -8,6 +15,10 @@ from agno.team.team import Team
 from agno.tools.exa import ExaTools
 from agno.tools.websearch import WebSearchTools
 from agno.tools.yfinance import YFinanceTools
+
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 db = PostgresDb(db_url)
@@ -177,6 +188,10 @@ agent_os = AgentOS(
 )
 app = agent_os.get_app()
 
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     agent_os.serve(app="teams_demo:app", reload=True)

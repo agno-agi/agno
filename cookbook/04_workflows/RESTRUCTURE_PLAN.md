@@ -382,48 +382,37 @@ Workflows have unique structure (Step definitions, Workflow wrapping), so the te
 =============================
 
 Demonstrates <what this file teaches> using Agno Workflows.
-
-Key concepts:
-- <concept 1>
-- <concept 2>
 """
 
-# ---------------------------------------------------------------------------
-# Setup
-# ---------------------------------------------------------------------------
-
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.workflow import Workflow
 from agno.workflow.step import Step
 
 # ---------------------------------------------------------------------------
 # Create Agents
 # ---------------------------------------------------------------------------
-
 researcher = Agent(
     name="Researcher",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.2"),
     instructions=["Research the topic thoroughly."],
 )
 
 writer = Agent(
     name="Writer",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.2"),
     instructions=["Write a clear summary."],
 )
 
 # ---------------------------------------------------------------------------
 # Define Steps
 # ---------------------------------------------------------------------------
-
 research_step = Step(agent=researcher, name="Research")
 write_step = Step(agent=writer, name="Write")
 
 # ---------------------------------------------------------------------------
 # Create Workflow
 # ---------------------------------------------------------------------------
-
 workflow = Workflow(
     name="Research Pipeline",
     steps=[research_step, write_step],
@@ -432,7 +421,6 @@ workflow = Workflow(
 # ---------------------------------------------------------------------------
 # Run Workflow
 # ---------------------------------------------------------------------------
-
 if __name__ == "__main__":
     # Sync execution
     workflow.print_response("Explain quantum computing", stream=True)
@@ -444,13 +432,14 @@ if __name__ == "__main__":
 
 ### Template Rules
 
-1. **Module docstring** — Title with `=====` underline, key concepts listed
-2. **Section banners** — `# ---------------------------------------------------------------------------`
-3. **Section flow** — Setup → Create Agents/Teams → Define Steps → Create Workflow → Run Workflow
-4. **Main gate** — All runnable code inside `if __name__ == "__main__":`
-5. **No emoji** — No emoji characters anywhere
-6. **Sync + async together** — Show both execution modes in sections
-7. **Stream + non-stream together** — Show `stream=True` as default, note non-streaming option
+1. **Module docstring** — Title with `=====` underline, then what it demonstrates. No "Key concepts" section
+2. **Imports before first banner** — `from` imports go between the docstring and the first `# ---` banner
+3. **Section banners** — `# ---------------------------------------------------------------------------` (75 dashes) above section name, no blank line between banner and content
+4. **Section flow** — Create Agents/Teams (if needed) → Define Steps → Create Workflow → Run Workflow
+5. **Main gate** — All runnable code inside `if __name__ == "__main__":`
+6. **No emoji** — No emoji characters anywhere
+8. **Sync + async together** — When merging sync/async variants, show both in the same file using labeled sections within the `if __name__` block
+9. **Self-contained** — Each file must be independently runnable
 
 ### Best Current Examples (reference)
 
