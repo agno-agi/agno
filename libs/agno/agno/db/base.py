@@ -1047,8 +1047,10 @@ class BaseDb(ABC):
         """List approvals with filtering and pagination. Returns (approvals, total_count)."""
         raise NotImplementedError
 
-    def update_approval(self, approval_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
-        """Update an approval record."""
+    def update_approval(
+        self, approval_id: str, expected_status: Optional[str] = None, **kwargs: Any
+    ) -> Optional[Dict[str, Any]]:
+        """Update an approval record. If expected_status is set, only updates when current status matches (atomic guard)."""
         raise NotImplementedError
 
     def delete_approval(self, approval_id: str) -> bool:
@@ -1729,8 +1731,10 @@ class AsyncBaseDb(ABC):
         """List approvals with filtering and pagination. Returns (approvals, total_count)."""
         raise NotImplementedError
 
-    async def update_approval(self, approval_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
-        """Update an approval record."""
+    async def update_approval(
+        self, approval_id: str, expected_status: Optional[str] = None, **kwargs: Any
+    ) -> Optional[Dict[str, Any]]:
+        """Update an approval record. If expected_status is set, only updates when current status matches (atomic guard)."""
         raise NotImplementedError
 
     async def delete_approval(self, approval_id: str) -> bool:

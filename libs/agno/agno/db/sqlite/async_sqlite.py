@@ -57,6 +57,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         learnings_table: Optional[str] = None,
         schedules_table: Optional[str] = None,
         schedule_runs_table: Optional[str] = None,
+        approvals_table: Optional[str] = None,
         id: Optional[str] = None,
     ):
         """
@@ -105,6 +106,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             learnings_table=learnings_table,
             schedules_table=schedules_table,
             schedule_runs_table=schedule_runs_table,
+            approvals_table=approvals_table,
         )
 
         _engine: Optional[AsyncEngine] = db_engine
@@ -3629,14 +3631,21 @@ class AsyncSqliteDb(AsyncBaseDb):
             log_debug(f"Error getting approvals: {e}")
             return [], 0
 
-    async def update_approval(self, approval_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+    async def update_approval(
+        self, approval_id: str, expected_status: Optional[str] = None, **kwargs: Any
+    ) -> Optional[Dict[str, Any]]:
+        from sqlalchemy import and_
+
         try:
             table = await self._get_table(table_type="approvals")
             if table is None:
                 return None
             async with self.async_session_factory() as sess:
                 async with sess.begin():
-                    stmt = table.update().where(table.c.id == approval_id).values(**kwargs)
+                    conditions = [table.c.id == approval_id]
+                    if expected_status is not None:
+                        conditions.append(table.c.status == expected_status)
+                    stmt = table.update().where(and_(*conditions)).values(**kwargs)
                     result = await sess.execute(stmt)
                     if result.rowcount == 0:
                         return None
