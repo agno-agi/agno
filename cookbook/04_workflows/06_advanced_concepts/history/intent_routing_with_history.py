@@ -75,6 +75,7 @@ general_support_step = Step(
     add_workflow_history=True,
 )
 
+
 # ---------------------------------------------------------------------------
 # Define Router
 # ---------------------------------------------------------------------------
@@ -112,6 +113,7 @@ def simple_intent_router(step_input: StepInput) -> List[Step]:
     print("Routing to General Support")
     return [general_support_step]
 
+
 # ---------------------------------------------------------------------------
 # Create Workflow
 # ---------------------------------------------------------------------------
@@ -130,6 +132,7 @@ def create_smart_customer_service_workflow() -> Workflow:
         ],
         add_workflow_history_to_steps=True,
     )
+
 
 # ---------------------------------------------------------------------------
 # Run Workflow

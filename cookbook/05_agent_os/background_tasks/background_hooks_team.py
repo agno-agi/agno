@@ -15,7 +15,6 @@ from agno.os import AgentOS
 from agno.run.team import TeamRunOutput
 from agno.team import Team
 
-
 # ---------------------------------------------------------------------------
 # Create Example
 # ---------------------------------------------------------------------------

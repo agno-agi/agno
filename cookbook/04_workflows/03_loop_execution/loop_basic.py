@@ -53,6 +53,7 @@ content_step = Step(
     description="Create content based on research findings",
 )
 
+
 # ---------------------------------------------------------------------------
 # Define Loop Evaluator
 # ---------------------------------------------------------------------------
@@ -69,6 +70,7 @@ def research_evaluator(outputs: List[StepOutput]) -> bool:
 
     print("[FAIL] Research evaluation failed - need more substantial research")
     return False
+
 
 # ---------------------------------------------------------------------------
 # Create Workflow
@@ -91,7 +93,9 @@ workflow = Workflow(
 # Run Workflow
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    input_text = "Research the latest trends in AI and machine learning, then create a summary"
+    input_text = (
+        "Research the latest trends in AI and machine learning, then create a summary"
+    )
 
     # Sync
     workflow.print_response(

@@ -9,7 +9,6 @@ from agno.agent import Agent
 from agno.team import Team
 from agno.tools.websearch import WebSearchTools
 
-
 # ---------------------------------------------------------------------------
 # Create Members
 # ---------------------------------------------------------------------------
