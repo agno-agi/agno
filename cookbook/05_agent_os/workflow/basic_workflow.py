@@ -1,4 +1,15 @@
+"""
+Basic Workflow
+==============
+
+Demonstrates basic workflow.
+"""
+
 from agno.agent.agent import Agent
+
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
 
 # Import the workflows
 from agno.db.sqlite import SqliteDb
@@ -53,6 +64,10 @@ agent_os = AgentOS(
     workflows=[content_creation_workflow],
 )
 app = agent_os.get_app()
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     agent_os.serve(app="basic_workflow:app", reload=True)

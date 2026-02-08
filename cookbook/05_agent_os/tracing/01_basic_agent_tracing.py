@@ -10,6 +10,10 @@ from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.tools.hackernews import HackerNewsTools
 
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
+
 # Set up database
 db = SqliteDb(db_file="tmp/traces.db")
 
@@ -29,6 +33,10 @@ agent_os = AgentOS(
     tracing=True,
 )
 app = agent_os.get_app()
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     agent_os.serve(app="01_basic_agent_tracing:app", reload=True)

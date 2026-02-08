@@ -1,47 +1,22 @@
-# Structured Input Output
+# structured input output
 
-Structured data processing with teams using Pydantic models and schemas.
+Examples for team workflows in structured_input_output.
 
-## Setup
+## Prerequisites
 
-```bash
-uv pip install agno openai pydantic
-```
+- Load environment variables (for example, OPENAI_API_KEY) via direnv allow.
+- Use .venvs/demo/bin/python to run cookbook examples.
+- Some examples require additional services (for example PostgreSQL, LanceDB, or Infinity server) as noted in file docstrings.
 
-Set your API key:
-```bash
-export OPENAI_API_KEY=xxx
-```
+## Files
 
-## Basic Integration
-
-Teams can process and return structured data using Pydantic models:
-
-```python
-from agno.team import Team
-from pydantic import BaseModel
-
-class TaskInput(BaseModel):
-    query: str
-    priority: int
-
-class TaskOutput(BaseModel):
-    result: str
-    confidence: float
-
-team = Team(
-    members=[agent1, agent2],
-    output_schema=TaskOutput,
-)
-
-response = team.run(TaskInput(query="Analyze data", priority=1))
-```
-
-## Examples
-
-- **[01_pydantic_model_as_input.py](./01_pydantic_model_as_input.py)** - Pydantic models as team input
-- **[02_team_with_parser_model.py](./02_team_with_parser_model.py)** - Response parsing with models
-- **[03_team_with_output_model.py](./03_team_with_output_model.py)** - Structured output models
-- **[04_structured_output_streaming.py](./04_structured_output_streaming.py)** - Streaming structured output
-- **[05_async_structured_output_streaming.py](./05_async_structured_output_streaming.py)** - Async structured streaming
-- **[06_input_schema_on_team.py](./06_input_schema_on_team.py)** - Input schema validation
+- input_formats.py - Demonstrates input formats.
+- input_schema.py - Demonstrates input schema.
+- json_schema_output.py - Demonstrates json schema output.
+- output_model.py - Demonstrates output model.
+- output_schema_override.py - Demonstrates output schema override.
+- parser_model.py - Demonstrates parser model.
+- pydantic_input.py - Demonstrates pydantic input.
+- pydantic_output.py - Demonstrates pydantic output.
+- response_as_variable.py - Demonstrates response as variable.
+- structured_output_streaming.py - Demonstrates structured output streaming.

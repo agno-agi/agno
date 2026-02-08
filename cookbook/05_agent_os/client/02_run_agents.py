@@ -14,6 +14,11 @@ import asyncio
 from agno.client import AgentOSClient
 
 
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
+
+
 async def run_agent_non_streaming():
     """Execute a non-streaming agent run."""
     print("=" * 60)
@@ -81,6 +86,10 @@ async def main():
     await run_agent_non_streaming()
     await run_agent_streaming()
 
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     asyncio.run(main())

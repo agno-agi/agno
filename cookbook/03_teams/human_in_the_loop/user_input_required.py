@@ -1,24 +1,23 @@
-"""Human-in-the-Loop for Teams: User Input Required
+"""
+User Input Required
+=============================
 
-This example shows how to collect user input when a member agent's tool
-needs additional information before it can execute.
-
-The tool defines which fields need user input via user_input_fields.
-When the tool is called, the agent pauses and presents the input schema
-to the user for completion.
-
-Run `pip install openai agno` to install dependencies.
+Demonstrates collecting required user input during paused team tool execution.
 """
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
-from agno.team.team import Team
+from agno.team import Team
 from agno.tools import tool
 from agno.utils import pprint
 from rich.console import Console
 from rich.prompt import Prompt
 
+
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
 console = Console()
 
 db = SqliteDb(session_table="team_user_input_sessions", db_file="tmp/team_hitl.db")
@@ -27,10 +26,15 @@ db = SqliteDb(session_table="team_user_input_sessions", db_file="tmp/team_hitl.d
 @tool(requires_user_input=True, user_input_fields=["destination", "budget"])
 def plan_trip(destination: str = "", budget: str = "") -> str:
     """Plan a trip based on user preferences."""
-    return f"Trip planned to {destination} with a budget of {budget}. Includes flights, hotel, and activities."
+    return (
+        f"Trip planned to {destination} with a budget of {budget}. "
+        "Includes flights, hotel, and activities."
+    )
 
 
-# Create the member agent
+# ---------------------------------------------------------------------------
+# Create Members
+# ---------------------------------------------------------------------------
 travel_agent = Agent(
     name="TravelAgent",
     model=OpenAIChat(id="gpt-4o-mini"),
@@ -39,7 +43,9 @@ travel_agent = Agent(
     telemetry=False,
 )
 
-# Create the team
+# ---------------------------------------------------------------------------
+# Create Team
+# ---------------------------------------------------------------------------
 team = Team(
     name="TravelTeam",
     model=OpenAIChat(id="gpt-4o-mini"),
@@ -49,8 +55,10 @@ team = Team(
     add_history_to_context=True,
 )
 
+# ---------------------------------------------------------------------------
+# Run Team
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    # Run the team
     session_id = "team_travel_session"
     run_response = team.run("Help me plan a vacation", session_id=session_id)
 
@@ -64,7 +72,6 @@ if __name__ == "__main__":
                     f"[bold blue]{requirement.tool_execution.tool_name}[/]"
                 )
 
-                # Collect user input values
                 values = {}
                 for field in requirement.user_input_schema or []:
                     values[field.name] = Prompt.ask(
@@ -72,7 +79,6 @@ if __name__ == "__main__":
                     )
                 requirement.provide_user_input(values)
 
-        # Continue the team run with the user input
         run_response = team.continue_run(run_response)
 
     pprint.pprint_run_response(run_response)

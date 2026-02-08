@@ -1,6 +1,17 @@
+"""
+Workflow With Steps
+===================
+
+Demonstrates workflow with steps.
+"""
+
 from agno.agent.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai.chat import OpenAIChat
+
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
 
 # Import the workflows
 from agno.os import AgentOS
@@ -71,6 +82,10 @@ agent_os = AgentOS(
     workflows=[article_workflow],
 )
 app = agent_os.get_app()
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     agent_os.serve(app="workflow_with_steps:app", reload=True)
