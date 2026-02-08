@@ -319,7 +319,14 @@ def _determine_tools_for_model(
             _tools.extend(knowledge_tools)
 
     if resolved_knowledge is not None and team.update_knowledge:
-        _tools.append(team.add_to_knowledge)
+        _run_ctx = run_context
+
+        def _add_to_knowledge_tool(query: str, result: str) -> str:
+            return add_to_knowledge(team, query=query, result=result, run_context=_run_ctx)
+
+        _add_to_knowledge_tool.__name__ = "add_to_knowledge"
+        _add_to_knowledge_tool.__doc__ = add_to_knowledge.__doc__
+        _tools.append(_add_to_knowledge_tool)
 
     if team.members:
         from agno.team.mode import TeamMode
@@ -1364,7 +1371,9 @@ def _get_delegate_task_function(
         """
 
         # Run all the members sequentially
-        _members = team.members if isinstance(team.members, list) else []
+        from agno.utils.callables import get_resolved_members
+
+        _members = get_resolved_members(team, run_context) or []
         for _, member_agent in enumerate(_members):
             member_agent_task, history = _setup_delegate_task_to_member(member_agent=member_agent, task=task)
 
@@ -1487,6 +1496,7 @@ def _get_delegate_task_function(
         Returns:
             str: The result of the delegated task.
         """
+        from agno.utils.callables import get_resolved_members as _get_resolved_members
 
         if stream:
             # Concurrent streaming: launch each member as a streaming worker and merge events.
@@ -1561,7 +1571,7 @@ def _get_delegate_task_function(
 
             # Initialize and launch all members
             tasks: List[asyncio.Task[None]] = []
-            _members = team.members if isinstance(team.members, list) else []
+            _members = _get_resolved_members(team, run_context) or []
             for member_agent in _members:
                 current_agent = member_agent
                 team._initialize_member(current_agent)
@@ -1593,7 +1603,7 @@ def _get_delegate_task_function(
         else:
             # Non-streaming concurrent run of members; collect results when done
             tasks = []
-            _members = team.members if isinstance(team.members, list) else []
+            _members = _get_resolved_members(team, run_context) or []
             for member_agent_index, member_agent in enumerate(_members):
                 current_agent = member_agent
                 member_agent_task, history = _setup_delegate_task_to_member(member_agent=current_agent, task=task)
@@ -1716,7 +1726,7 @@ def _get_delegate_task_function(
     return delegate_func
 
 
-def add_to_knowledge(team: "Team", query: str, result: str) -> str:
+def add_to_knowledge(team: "Team", query: str, result: str, run_context: Optional[RunContext] = None) -> str:
     """Use this function to add information to the knowledge base for future use.
 
     Args:
@@ -1726,11 +1736,14 @@ def add_to_knowledge(team: "Team", query: str, result: str) -> str:
     Returns:
         str: A string indicating the status of the addition.
     """
-    if team.knowledge is None:
+    from agno.utils.callables import get_resolved_knowledge
+
+    _knowledge = get_resolved_knowledge(team, run_context)
+    if _knowledge is None:
         log_warning("Knowledge is not set, cannot add to knowledge")
         return "Knowledge is not set, cannot add to knowledge"
 
-    insert_method = getattr(team.knowledge, "insert", None)
+    insert_method = getattr(_knowledge, "insert", None)
     if not callable(insert_method):
         log_warning("Knowledge base does not support adding content")
         return "Knowledge base does not support adding content"
@@ -1754,16 +1767,19 @@ def get_relevant_docs_from_knowledge(
 ) -> Optional[List[Union[Dict[str, Any], str]]]:
     """Return a list of references from the knowledge base"""
     from agno.knowledge.document import Document
+    from agno.utils.callables import get_resolved_knowledge
+
+    _knowledge = get_resolved_knowledge(team, run_context)
 
     # Extract dependencies from run_context if available
     dependencies = run_context.dependencies if run_context else None
 
-    if num_documents is None and team.knowledge is not None:
-        num_documents = getattr(team.knowledge, "max_results", None)
+    if num_documents is None and _knowledge is not None:
+        num_documents = getattr(_knowledge, "max_results", None)
 
     # Validate the filters against known valid filter keys
-    if team.knowledge is not None and filters is not None:
-        validate_filters_method = getattr(team.knowledge, "validate_filters", None)
+    if _knowledge is not None and filters is not None:
+        validate_filters_method = getattr(_knowledge, "validate_filters", None)
         if callable(validate_filters_method):
             valid_filters, invalid_keys = validate_filters_method(filters)
 
@@ -1802,17 +1818,17 @@ def get_relevant_docs_from_knowledge(
             raise e
     # Use knowledge protocol's retrieve method
     try:
-        if team.knowledge is None:
+        if _knowledge is None:
             return None
 
         # Use protocol retrieve() method if available
-        retrieve_fn = getattr(team.knowledge, "retrieve", None)
+        retrieve_fn = getattr(_knowledge, "retrieve", None)
         if not callable(retrieve_fn):
             log_debug("Knowledge does not implement retrieve()")
             return None
 
         if num_documents is None:
-            num_documents = getattr(team.knowledge, "max_results", 10)
+            num_documents = getattr(_knowledge, "max_results", 10)
 
         log_debug(f"Retrieving from knowledge base with filters: {filters}")
         relevant_docs: List[Document] = retrieve_fn(query=query, max_results=num_documents, filters=filters)
@@ -1837,16 +1853,19 @@ async def aget_relevant_docs_from_knowledge(
 ) -> Optional[List[Union[Dict[str, Any], str]]]:
     """Get relevant documents from knowledge base asynchronously."""
     from agno.knowledge.document import Document
+    from agno.utils.callables import get_resolved_knowledge
+
+    _knowledge = get_resolved_knowledge(team, run_context)
 
     # Extract dependencies from run_context if available
     dependencies = run_context.dependencies if run_context else None
 
-    if num_documents is None and team.knowledge is not None:
-        num_documents = getattr(team.knowledge, "max_results", None)
+    if num_documents is None and _knowledge is not None:
+        num_documents = getattr(_knowledge, "max_results", None)
 
     # Validate the filters against known valid filter keys
-    if team.knowledge is not None and filters is not None:
-        avalidate_filters_method = getattr(team.knowledge, "avalidate_filters", None)
+    if _knowledge is not None and filters is not None:
+        avalidate_filters_method = getattr(_knowledge, "avalidate_filters", None)
         if callable(avalidate_filters_method):
             valid_filters, invalid_keys = await avalidate_filters_method(filters)
 
@@ -1892,19 +1911,19 @@ async def aget_relevant_docs_from_knowledge(
 
     # Use knowledge protocol's retrieve method
     try:
-        if team.knowledge is None:
+        if _knowledge is None:
             return None
 
         # Use protocol aretrieve() or retrieve() method if available
-        aretrieve_fn = getattr(team.knowledge, "aretrieve", None)
-        retrieve_fn = getattr(team.knowledge, "retrieve", None)
+        aretrieve_fn = getattr(_knowledge, "aretrieve", None)
+        retrieve_fn = getattr(_knowledge, "retrieve", None)
 
         if not callable(aretrieve_fn) and not callable(retrieve_fn):
             log_debug("Knowledge does not implement retrieve()")
             return None
 
         if num_documents is None:
-            num_documents = getattr(team.knowledge, "max_results", 10)
+            num_documents = getattr(_knowledge, "max_results", 10)
 
         log_debug(f"Retrieving from knowledge base with filters: {filters}")
 

@@ -832,18 +832,6 @@ class TeamRunOutput:
         citations = data.pop("citations", None)
         citations = Citations.model_validate(citations) if citations else None
 
-        # Handle requirements
-        requirements_data = data.pop("requirements", None)
-        requirements: Optional[list[RunRequirement]] = None
-        if requirements_data is not None:
-            requirements_list: list[RunRequirement] = []
-            for item in requirements_data:
-                if isinstance(item, RunRequirement):
-                    requirements_list.append(item)
-                elif isinstance(item, dict):
-                    requirements_list.append(RunRequirement.from_dict(item))
-            requirements = requirements_list if requirements_list else None
-
         # Filter data to only include fields that are actually defined in the TeamRunOutput dataclass
         from dataclasses import fields
 
