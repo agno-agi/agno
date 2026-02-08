@@ -1,9 +1,9 @@
 """
-Here is a tool with reasoning capabilities to allow agents to manage user memories.
+Memory Tools With Web Search
+============================
 
-1. Run: `pip install openai agno lancedb tantivy sqlalchemy` to install the dependencies
-2. Export your OPENAI_API_KEY
-3. Run: `python cookbook/80_memory/08_memory_tools.py` to run the agent
+This example shows how to use MemoryTools alongside WebSearchTools so an agent
+can store and use user memory while planning a trip.
 """
 
 import asyncio
@@ -14,14 +14,19 @@ from agno.models.openai import OpenAIChat
 from agno.tools.memory import MemoryTools
 from agno.tools.websearch import WebSearchTools
 
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
 db = SqliteDb(db_file="tmp/memory.db")
-
 john_doe_id = "john_doe@example.com"
 
 memory_tools = MemoryTools(
     db=db,
 )
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 agent = Agent(
     model=OpenAIChat(id="gpt-5-mini"),
     tools=[memory_tools, WebSearchTools()],
@@ -34,6 +39,9 @@ agent = Agent(
     markdown=True,
 )
 
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     asyncio.run(
         agent.aprint_response(
