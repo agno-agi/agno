@@ -1,7 +1,18 @@
+"""
+Xai Image Agent
+===============
+
+Cookbook example for `xai/image_agent.py`.
+"""
+
 from agno.agent import Agent
 from agno.media import Image
 from agno.models.xai import xAI
 from agno.tools.websearch import WebSearchTools
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 agent = Agent(
     model=xAI(id="grok-2-vision-latest"),
@@ -18,3 +29,10 @@ agent.print_response(
     ],
     stream=True,
 )
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

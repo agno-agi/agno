@@ -16,6 +16,7 @@ from agno.workflow.router import Router
 from agno.workflow.step import Step, StepInput, StepOutput
 from agno.workflow.workflow import Workflow
 
+
 # ---------------------------------------------------------------------------
 # Define Router Functions (Preference-Based Routing)
 # ---------------------------------------------------------------------------
@@ -63,6 +64,7 @@ def set_user_preference(step_input: StepInput, session_state: dict) -> StepOutpu
 
     print(f"Set preference to: {preference}")
     return StepOutput(content=f"Preference set to: {preference}")
+
 
 # ---------------------------------------------------------------------------
 # Create Agents (Preference-Based Routing)
@@ -159,6 +161,7 @@ adaptive_assistant_workflow = Workflow(
         "interaction_count": 0,
     },
 )
+
 
 # ---------------------------------------------------------------------------
 # Define Task Tools (Task Routing)
@@ -270,6 +273,7 @@ def clear_completed_tasks(run_context: RunContext) -> str:
     completed_count = original_count - len(run_context.session_state["task_list"])
 
     return f"Removed {completed_count} completed tasks from the list."
+
 
 # ---------------------------------------------------------------------------
 # Create Agents (Task Routing)
@@ -389,6 +393,7 @@ def task_router(step_input: StepInput) -> List[Step]:
     print("[INFO] Ambiguous request: Defaulting to Task Manager")
     return [manage_tasks_step]
 
+
 # ---------------------------------------------------------------------------
 # Create Workflow (Task Routing)
 # ---------------------------------------------------------------------------
@@ -406,6 +411,7 @@ task_workflow = Workflow(
     session_state={"task_list": []},
     db=SqliteDb(db_file="tmp/workflow.db"),
 )
+
 
 # ---------------------------------------------------------------------------
 # Run Workflow
@@ -447,7 +453,9 @@ def run_task_workflow_example() -> None:
     print("Workflow session state:", task_workflow.get_session_state())
 
     print("\n=== Example 4: Organizing Tasks ===")
-    task_workflow.print_response(input="Clean up my completed tasks and show me what's left")
+    task_workflow.print_response(
+        input="Clean up my completed tasks and show me what's left"
+    )
     print("Workflow session state:", task_workflow.get_session_state())
 
     print("\n=== Example 5: Filtered View ===")

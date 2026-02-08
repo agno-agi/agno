@@ -7,12 +7,11 @@ Demonstrates passing validated Pydantic models as team inputs.
 
 from typing import List
 
-from pydantic import BaseModel, Field
-
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.team import Team
 from agno.tools.hackernews import HackerNewsTools
+from pydantic import BaseModel, Field
 
 
 class ResearchTopic(BaseModel):

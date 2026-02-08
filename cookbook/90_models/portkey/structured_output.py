@@ -1,8 +1,19 @@
+"""
+Portkey Structured Output
+=========================
+
+Cookbook example for `portkey/structured_output.py`.
+"""
+
 from typing import List
 
 from agno.agent import Agent, RunOutput  # noqa
 from agno.models.portkey import Portkey
 from pydantic import BaseModel, Field
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 
 class MovieScript(BaseModel):
@@ -35,3 +46,10 @@ agent = Agent(
 # print(run.content)
 
 agent.print_response("New York")
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

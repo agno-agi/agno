@@ -13,7 +13,6 @@ from agno.os import AgentOS
 from agno.os.interfaces.agui import AGUI
 from pydantic import BaseModel, Field
 
-
 # ---------------------------------------------------------------------------
 # Create Example
 # ---------------------------------------------------------------------------

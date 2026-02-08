@@ -85,6 +85,7 @@ write_step = Step(
     agent=content_agent,
 )
 
+
 # ---------------------------------------------------------------------------
 # Define Condition Evaluators
 # ---------------------------------------------------------------------------
@@ -114,6 +115,7 @@ def check_if_comprehensive_research_needed(step_input: StepInput) -> bool:
         "extensive research",
     ]
     return any(keyword in topic.lower() for keyword in comprehensive_keywords)
+
 
 # ---------------------------------------------------------------------------
 # Create Workflow

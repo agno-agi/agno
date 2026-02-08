@@ -1,6 +1,17 @@
+"""
+Dashscope Thinking Agent
+========================
+
+Cookbook example for `dashscope/thinking_agent.py`.
+"""
+
 from agno.agent import Agent
 from agno.media import Image
 from agno.models.dashscope import DashScope
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 agent = Agent(
     model=DashScope(id="qvq-max", enable_thinking=True),
@@ -13,3 +24,10 @@ agent.print_response(
     images=[Image(url=image_url)],
     stream=True,
 )
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

@@ -12,7 +12,6 @@ from agno.models.openai.chat import OpenAIChat
 # ---------------------------------------------------------------------------
 # Create Example
 # ---------------------------------------------------------------------------
-
 # Import the workflows
 from agno.os import AgentOS
 from agno.tools.websearch import WebSearchTools
