@@ -2531,6 +2531,7 @@ class Agent:
         output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
         yield_run_output: Optional[bool] = None,
         debug_mode: Optional[bool] = None,
+        background: bool = False,
         **kwargs: Any,
     ) -> AsyncIterator[Union[RunOutputEvent, RunOutput]]: ...
 
