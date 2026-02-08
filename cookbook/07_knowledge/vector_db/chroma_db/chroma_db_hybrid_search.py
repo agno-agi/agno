@@ -23,9 +23,9 @@ from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIChat
 from agno.vectordb.chroma import ChromaDb, SearchType
 
-# ============================================================================
-# Setup knowledge base with ChromaDB for storing Agno documentation
-# ============================================================================
+# ---------------------------------------------------------------------------
+# Create Knowledge Base
+# ---------------------------------------------------------------------------
 knowledge = Knowledge(
     name="Agno Documentation",
     description="Knowledge base for Agno framework documentation",
@@ -44,9 +44,9 @@ knowledge = Knowledge(
     max_results=10,
 )
 
-# ============================================================================
-# Description & Instructions for the agent
-# ============================================================================
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 description = dedent(
     """\
     You are AgnoAssist — an AI Agent built to help developers learn and master the Agno framework.
@@ -102,7 +102,9 @@ agent = Agent(
     description=description,
 )
 
-
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     # Load Agno documentation into the knowledge base
     asyncio.run(
