@@ -14,7 +14,6 @@ from agno.team import Team
 from agno.tools.hackernews import HackerNewsTools
 from agno.tools.websearch import WebSearchTools
 
-
 # ---------------------------------------------------------------------------
 # Create Members
 # ---------------------------------------------------------------------------

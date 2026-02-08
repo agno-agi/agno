@@ -1,7 +1,18 @@
+"""
+Litellm Audio Input Agent
+=========================
+
+Cookbook example for `litellm/audio_input_agent.py`.
+"""
+
 import requests
 from agno.agent import Agent
 from agno.media import Audio
 from agno.models.litellm import LiteLLM
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 # Fetch the QA audio file and convert it to a base64 encoded string
 url = "https://agno-public.s3.us-east-1.amazonaws.com/demo_data/QA-01.mp3"
@@ -19,3 +30,10 @@ agent.print_response(
     audio=[Audio(content=mp3_data, format="mp3")],
     stream=True,
 )
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

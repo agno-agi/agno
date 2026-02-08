@@ -18,6 +18,7 @@ from agno.workflow.workflow import Workflow
 # ---------------------------------------------------------------------------
 db = SqliteDb(db_file="tmp/workflow.db")
 
+
 # ---------------------------------------------------------------------------
 # Define Team Tools
 # ---------------------------------------------------------------------------
@@ -56,6 +57,7 @@ def delete_step(run_context: RunContext, step_name: str) -> str:
             return f"[OK] Successfully deleted step '{step_name}' (was assigned to {deleted_step['assignee']}). Remaining steps: {len(steps)}"
 
     return f"[ERROR] Step '{step_name}' not found in the list"
+
 
 # ---------------------------------------------------------------------------
 # Define Agent Tools
@@ -99,6 +101,7 @@ def assign_step(run_context: RunContext, step_name: str, new_assignee: str) -> s
             return f"[OK] Reassigned step '{step_name}' from {old_assignee} to {new_assignee}"
 
     return f"[ERROR] Step '{step_name}' not found in the list"
+
 
 # ---------------------------------------------------------------------------
 # Create Agents
@@ -183,6 +186,7 @@ project_workflow = Workflow(
     session_state={"steps": []},
 )
 
+
 # ---------------------------------------------------------------------------
 # Helper
 # ---------------------------------------------------------------------------
@@ -218,6 +222,7 @@ def print_current_steps(workflow) -> None:
         if "notes" in step:
             print(f"     Notes: {step['notes']}")
     print()
+
 
 # ---------------------------------------------------------------------------
 # Run Workflow

@@ -17,7 +17,6 @@ from agno.workflow.workflow import Workflow
 from db import db
 from pydantic import BaseModel, Field
 
-
 # ---------------------------------------------------------------------------
 # Create Example
 # ---------------------------------------------------------------------------

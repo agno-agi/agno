@@ -12,7 +12,6 @@ from agno.agent.agent import Agent
 # ---------------------------------------------------------------------------
 # Create Example
 # ---------------------------------------------------------------------------
-
 # Import the workflows
 from agno.db.sqlite import SqliteDb
 from agno.models.openai.chat import OpenAIChat

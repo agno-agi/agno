@@ -13,7 +13,6 @@ from agno.models.anthropic import Claude
 from agno.team import Team
 from agno.vectordb.lancedb import LanceDb, SearchType
 
-
 # ---------------------------------------------------------------------------
 # Setup
 # ---------------------------------------------------------------------------

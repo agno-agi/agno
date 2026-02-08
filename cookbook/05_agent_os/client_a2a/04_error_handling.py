@@ -18,7 +18,6 @@ from agno.client.a2a import A2AClient
 from agno.exceptions import RemoteServerUnavailableError
 from httpx import HTTPStatusError
 
-
 # ---------------------------------------------------------------------------
 # Create Example
 # ---------------------------------------------------------------------------

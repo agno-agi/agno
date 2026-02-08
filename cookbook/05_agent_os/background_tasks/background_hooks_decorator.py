@@ -14,7 +14,6 @@ from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.run.agent import RunInput
 
-
 # ---------------------------------------------------------------------------
 # Create Example
 # ---------------------------------------------------------------------------

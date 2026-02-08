@@ -10,7 +10,6 @@ from agno.models.message import Message
 from agno.models.openai.chat import OpenAIChat
 from agno.team import Team
 
-
 # ---------------------------------------------------------------------------
 # Setup
 # ---------------------------------------------------------------------------

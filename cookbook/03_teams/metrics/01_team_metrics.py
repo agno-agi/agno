@@ -14,7 +14,6 @@ from agno.tools.yfinance import YFinanceTools
 from agno.utils.pprint import pprint_run_response
 from rich.pretty import pprint
 
-
 # ---------------------------------------------------------------------------
 # Setup
 # ---------------------------------------------------------------------------

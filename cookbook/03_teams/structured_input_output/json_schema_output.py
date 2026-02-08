@@ -11,7 +11,6 @@ from agno.team import Team
 from agno.tools.websearch import WebSearchTools
 from agno.utils.pprint import pprint_run_response
 
-
 # ---------------------------------------------------------------------------
 # Setup
 # ---------------------------------------------------------------------------

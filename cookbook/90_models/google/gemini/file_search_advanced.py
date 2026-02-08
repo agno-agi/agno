@@ -1,7 +1,18 @@
+"""
+Google File Search Advanced
+===========================
+
+Cookbook example for `google/gemini/file_search_advanced.py`.
+"""
+
 from pathlib import Path
 
 from agno.agent import Agent
 from agno.models.google import Gemini
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 # Create Gemini model
 model = Gemini(id="gemini-2.5-flash")
@@ -177,3 +188,10 @@ model.delete_file_search_store(marketing_store.name)
 print(f"[OK] Deleted {marketing_store.name}")
 
 print("\n[OK] Example completed successfully!")
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

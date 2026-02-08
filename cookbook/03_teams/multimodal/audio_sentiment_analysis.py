@@ -6,13 +6,11 @@ Demonstrates team-based transcription and sentiment analysis for audio conversat
 """
 
 import requests
-
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.media import Audio
 from agno.models.google import Gemini
 from agno.team import Team
-
 
 # ---------------------------------------------------------------------------
 # Create Members

@@ -57,6 +57,7 @@ publish_content = Step(
     description="Create and format final content for publication",
 )
 
+
 # ---------------------------------------------------------------------------
 # Define Router Selector
 # ---------------------------------------------------------------------------
@@ -87,6 +88,7 @@ def research_router(step_input: StepInput) -> List[Step]:
 
     print(f"General topic detected: Using web research for '{topic}'")
     return [research_web]
+
 
 # ---------------------------------------------------------------------------
 # Create Workflow
