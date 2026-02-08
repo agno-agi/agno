@@ -1,9 +1,9 @@
 """
-This example shows how you can configure the Memory Manager and Summarizer models individually.
+Custom Memory Manager Configuration
+===================================
 
-In this example, we use OpenRouter and LLama 3.3-70b-instruct for the memory manager and Claude 3.5 Sonnet for the summarizer. And we use Gemini for the Agent.
-
-We also set custom system prompts for the memory manager and summarizer. You can either override the entire system prompt or add additional instructions which is added to the end of the system prompt.
+This example shows how to configure a MemoryManager separately from the Agent
+and apply custom memory capture instructions.
 """
 
 from agno.agent.agent import Agent
@@ -12,11 +12,15 @@ from agno.memory import MemoryManager
 from agno.models.openai import OpenAIChat
 from rich.pretty import pprint
 
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
-
 db = PostgresDb(db_url=db_url)
 
-# You can also override the entire `system_message` for the memory manager
+# ---------------------------------------------------------------------------
+# Create Memory Manager
+# ---------------------------------------------------------------------------
 memory_manager = MemoryManager(
     model=OpenAIChat(id="gpt-4o"),
     additional_instructions="""
@@ -25,24 +29,29 @@ memory_manager = MemoryManager(
     db=db,
 )
 
-john_doe_id = "john_doe@example.com"
-
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     db=db,
     memory_manager=memory_manager,
     update_memory_on_run=True,
-    user_id=john_doe_id,
+    user_id="john_doe@example.com",
 )
 
-agent.print_response(
-    "My name is John Doe and I like to swim and play soccer.", stream=True
-)
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    john_doe_id = "john_doe@example.com"
 
-agent.print_response("I dont like to swim", stream=True)
+    agent.print_response(
+        "My name is John Doe and I like to swim and play soccer.", stream=True
+    )
 
+    agent.print_response("I dont like to swim", stream=True)
 
-memories = agent.get_user_memories(user_id=john_doe_id)
-
-print("John Doe's memories:")
-pprint(memories)
+    memories = agent.get_user_memories(user_id=john_doe_id)
+    print("John Doe's memories:")
+    pprint(memories)
