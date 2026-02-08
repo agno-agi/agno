@@ -61,6 +61,7 @@ class SqliteDb(BaseDb):
         learnings_table: Optional[str] = None,
         schedule_table: Optional[str] = None,
         schedule_runs_table: Optional[str] = None,
+        approvals_table: Optional[str] = None,
         id: Optional[str] = None,
     ):
         """
@@ -89,6 +90,7 @@ class SqliteDb(BaseDb):
             component_configs_table (Optional[str]): Name of the table to store component configurations.
             component_links_table (Optional[str]): Name of the table to store component links.
             learnings_table (Optional[str]): Name of the table to store learning records.
+            approvals_table (Optional[str]): Name of the table to store approval records.
             id (Optional[str]): ID of the database.
 
         Raises:
@@ -115,6 +117,7 @@ class SqliteDb(BaseDb):
             learnings_table=learnings_table,
             schedule_table=schedule_table,
             schedule_runs_table=schedule_runs_table,
+            approvals_table=approvals_table,
         )
 
         _engine: Optional[Engine] = db_engine
@@ -172,6 +175,7 @@ class SqliteDb(BaseDb):
             component_links_table=data.get("component_links_table"),
             schedule_table=data.get("schedule_table"),
             schedule_runs_table=data.get("schedule_runs_table"),
+            approvals_table=data.get("approvals_table"),
             id=data.get("id"),
         )
 
@@ -4674,13 +4678,20 @@ class SqliteDb(BaseDb):
             log_debug(f"Error getting approvals: {e}")
             return [], 0
 
-    def update_approval(self, approval_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+    def update_approval(
+        self, approval_id: str, expected_status: Optional[str] = None, **kwargs: Any
+    ) -> Optional[Dict[str, Any]]:
+        from sqlalchemy import and_
+
         try:
             table = self._get_table(table_type="approvals")
             if table is None:
                 return None
             with self.Session() as sess, sess.begin():
-                stmt = table.update().where(table.c.id == approval_id).values(**kwargs)
+                conditions = [table.c.id == approval_id]
+                if expected_status is not None:
+                    conditions.append(table.c.status == expected_status)
+                stmt = table.update().where(and_(*conditions)).values(**kwargs)
                 result = sess.execute(stmt)
                 if result.rowcount == 0:
                     return None

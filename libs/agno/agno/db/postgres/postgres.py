@@ -76,6 +76,7 @@ class PostgresDb(BaseDb):
         learnings_table: Optional[str] = None,
         schedule_table: Optional[str] = None,
         schedule_runs_table: Optional[str] = None,
+        approvals_table: Optional[str] = None,
         id: Optional[str] = None,
         create_schema: bool = True,
     ):
@@ -104,6 +105,7 @@ class PostgresDb(BaseDb):
             component_configs_table (Optional[str]): Name of the table to store component configurations.
             component_links_table (Optional[str]): Name of the table to store component references.
             learnings_table (Optional[str]): Name of the table to store learnings.
+            approvals_table (Optional[str]): Name of the table to store approval records.
             id (Optional[str]): ID of the database.
             create_schema (bool): Whether to automatically create the database schema if it doesn't exist.
                 Set to False if schema is managed externally (e.g., via migrations). Defaults to True.
@@ -148,6 +150,7 @@ class PostgresDb(BaseDb):
             learnings_table=learnings_table,
             schedule_table=schedule_table,
             schedule_runs_table=schedule_runs_table,
+            approvals_table=approvals_table,
         )
 
         self.db_schema: str = db_schema if db_schema is not None else "ai"
@@ -188,6 +191,7 @@ class PostgresDb(BaseDb):
             component_links_table=data.get("component_links_table"),
             schedule_table=data.get("schedule_table"),
             schedule_runs_table=data.get("schedule_runs_table"),
+            approvals_table=data.get("approvals_table"),
             id=data.get("id"),
         )
 
@@ -4819,13 +4823,18 @@ class PostgresDb(BaseDb):
             log_debug(f"Error getting approvals: {e}")
             return [], 0
 
-    def update_approval(self, approval_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+    def update_approval(
+        self, approval_id: str, expected_status: Optional[str] = None, **kwargs: Any
+    ) -> Optional[Dict[str, Any]]:
         try:
             table = self._get_table(table_type="approvals")
             if table is None:
                 return None
             with self.Session() as sess, sess.begin():
-                stmt = table.update().where(table.c.id == approval_id).values(**kwargs)
+                conditions = [table.c.id == approval_id]
+                if expected_status is not None:
+                    conditions.append(table.c.status == expected_status)
+                stmt = table.update().where(and_(*conditions)).values(**kwargs)
                 result = sess.execute(stmt)
                 if result.rowcount == 0:
                     return None
