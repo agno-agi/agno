@@ -445,6 +445,12 @@ def get_default_scope_mappings() -> Dict[str, List[str]]:
         "POST /schedules/*/trigger": ["schedules:write"],
         "GET /schedules/*/runs": ["schedules:read"],
         "GET /schedules/*/runs/*": ["schedules:read"],
+        # Approval endpoints
+        "GET /approvals": ["approvals:read"],
+        "GET /approvals/count": ["approvals:read"],
+        "GET /approvals/*": ["approvals:read"],
+        "POST /approvals/*/resolve": ["approvals:write"],
+        "DELETE /approvals/*": ["approvals:delete"],
     }
 
 

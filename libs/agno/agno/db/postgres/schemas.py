@@ -239,40 +239,66 @@ SCHEDULE_TABLE_SCHEMA = {
     ],
 }
 
-SCHEDULE_RUNS_TABLE_SCHEMA = {
-    "id": {"type": String, "primary_key": True, "nullable": False},
-    "schedule_id": {"type": String, "nullable": False, "index": True},
-    "attempt": {"type": BigInteger, "nullable": False, "default": 1},
-    "triggered_at": {"type": BigInteger, "nullable": True},
-    "completed_at": {"type": BigInteger, "nullable": True},
-    "status": {"type": String, "nullable": False, "default": "running", "index": True},
-    "status_code": {"type": BigInteger, "nullable": True},
-    "run_id": {"type": String, "nullable": True},
-    "session_id": {"type": String, "nullable": True},
-    "error": {"type": Text, "nullable": True},
-    "created_at": {"type": BigInteger, "nullable": False, "index": True},
-}
 
-APPROVAL_TABLE_SCHEMA = {
-    "id": {"type": String, "primary_key": True, "nullable": False},
-    "run_id": {"type": String, "nullable": False, "index": True},
-    "session_id": {"type": String, "nullable": False, "index": True},
-    "status": {"type": String, "nullable": False, "index": True},
-    "source_type": {"type": String, "nullable": False, "index": True},
-    "agent_id": {"type": String, "nullable": True, "index": True},
-    "team_id": {"type": String, "nullable": True, "index": True},
-    "workflow_id": {"type": String, "nullable": True, "index": True},
-    "user_id": {"type": String, "nullable": True, "index": True},
-    "schedule_id": {"type": String, "nullable": True, "index": True},
-    "schedule_run_id": {"type": String, "nullable": True},
-    "source_name": {"type": String, "nullable": True},
-    "requirements": {"type": JSONB, "nullable": True},
-    "context": {"type": JSONB, "nullable": True},
-    "resolved_by": {"type": String, "nullable": True},
-    "resolved_at": {"type": BigInteger, "nullable": True},
-    "created_at": {"type": BigInteger, "nullable": False, "index": True},
-    "updated_at": {"type": BigInteger, "nullable": True},
-}
+def _get_schedule_runs_table_schema(
+    schedule_table_name: str = "agno_schedules", db_schema: str = "agno"
+) -> dict[str, Any]:
+    return {
+        "id": {"type": String, "primary_key": True, "nullable": False},
+        "schedule_id": {
+            "type": String,
+            "nullable": False,
+            "index": True,
+            "foreign_key": f"{db_schema}.{schedule_table_name}.id",
+        },
+        "attempt": {"type": BigInteger, "nullable": False, "default": 1},
+        "triggered_at": {"type": BigInteger, "nullable": True},
+        "completed_at": {"type": BigInteger, "nullable": True},
+        "status": {"type": String, "nullable": False, "default": "running", "index": True},
+        "status_code": {"type": BigInteger, "nullable": True},
+        "run_id": {"type": String, "nullable": True},
+        "session_id": {"type": String, "nullable": True},
+        "error": {"type": Text, "nullable": True},
+        "created_at": {"type": BigInteger, "nullable": False, "index": True},
+    }
+
+
+def _get_approval_table_schema(
+    schedule_table_name: str = "agno_schedules",
+    schedule_runs_table_name: str = "agno_schedule_runs",
+    db_schema: str = "agno",
+) -> dict[str, Any]:
+    return {
+        "id": {"type": String, "primary_key": True, "nullable": False},
+        "run_id": {"type": String, "nullable": False, "index": True},
+        "session_id": {"type": String, "nullable": False, "index": True},
+        "status": {"type": String, "nullable": False, "index": True},
+        "source_type": {"type": String, "nullable": False, "index": True},
+        "agent_id": {"type": String, "nullable": True, "index": True},
+        "team_id": {"type": String, "nullable": True, "index": True},
+        "workflow_id": {"type": String, "nullable": True, "index": True},
+        "user_id": {"type": String, "nullable": True, "index": True},
+        "schedule_id": {
+            "type": String,
+            "nullable": True,
+            "index": True,
+            "foreign_key": f"{db_schema}.{schedule_table_name}.id",
+        },
+        "schedule_run_id": {
+            "type": String,
+            "nullable": True,
+            "index": True,
+            "foreign_key": f"{db_schema}.{schedule_runs_table_name}.id",
+        },
+        "source_name": {"type": String, "nullable": True},
+        "requirements": {"type": JSONB, "nullable": True},
+        "context": {"type": JSONB, "nullable": True},
+        "resolved_by": {"type": String, "nullable": True},
+        "resolved_at": {"type": BigInteger, "nullable": True},
+        "created_at": {"type": BigInteger, "nullable": False, "index": True},
+        "updated_at": {"type": BigInteger, "nullable": True},
+    }
+
 
 LEARNINGS_TABLE_SCHEMA = {
     "learning_id": {"type": String, "primary_key": True, "nullable": False},
@@ -293,7 +319,11 @@ LEARNINGS_TABLE_SCHEMA = {
 
 
 def get_table_schema_definition(
-    table_type: str, traces_table_name: str = "agno_traces", db_schema: str = "agno"
+    table_type: str,
+    traces_table_name: str = "agno_traces",
+    db_schema: str = "agno",
+    schedule_table_name: str = "agno_schedules",
+    schedule_runs_table_name: str = "agno_schedule_runs",
 ) -> dict[str, Any]:
     """
     Get the expected schema definition for the given table.
@@ -301,14 +331,20 @@ def get_table_schema_definition(
     Args:
         table_type (str): The type of table to get the schema for.
         traces_table_name (str): The name of the traces table (used for spans foreign key).
-        db_schema (str): The database schema name (used for spans foreign key).
+        db_schema (str): The database schema name (used for foreign keys).
+        schedule_table_name (str): The name of the schedules table (used for foreign keys).
+        schedule_runs_table_name (str): The name of the schedule_runs table (used for foreign keys).
 
     Returns:
         Dict[str, Any]: Dictionary containing column definitions for the table
     """
-    # Handle spans table specially to resolve the foreign key reference
+    # Handle tables with dynamic foreign key references
     if table_type == "spans":
         return _get_span_table_schema(traces_table_name, db_schema)
+    if table_type == "schedule_runs":
+        return _get_schedule_runs_table_schema(schedule_table_name, db_schema)
+    if table_type == "approvals":
+        return _get_approval_table_schema(schedule_table_name, schedule_runs_table_name, db_schema)
 
     schemas = {
         "sessions": SESSION_TABLE_SCHEMA,
@@ -324,8 +360,6 @@ def get_table_schema_definition(
         "component_links": COMPONENT_LINKS_TABLE_SCHEMA,
         "learnings": LEARNINGS_TABLE_SCHEMA,
         "schedules": SCHEDULE_TABLE_SCHEMA,
-        "schedule_runs": SCHEDULE_RUNS_TABLE_SCHEMA,
-        "approvals": APPROVAL_TABLE_SCHEMA,
     }
 
     schema = schemas.get(table_type, {})
