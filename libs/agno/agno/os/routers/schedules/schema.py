@@ -3,7 +3,7 @@
 import re
 from typing import Any, Dict, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 _NAME_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$")
 
@@ -82,6 +82,15 @@ class ScheduleUpdate(BaseModel):
             if "://" in v:
                 raise ValueError("Endpoint must be a path, not a full URL")
         return v
+
+    @model_validator(mode="after")
+    def reject_null_required_fields(self) -> "ScheduleUpdate":
+        non_nullable = ("name", "cron_expr", "endpoint", "method")
+        data = self.model_dump(exclude_unset=True)
+        for field_name in non_nullable:
+            if field_name in data and data[field_name] is None:
+                raise ValueError(f"'{field_name}' cannot be set to null")
+        return self
 
 
 class ScheduleResponse(BaseModel):

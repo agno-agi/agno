@@ -138,8 +138,6 @@ def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
         if not updates:
             return existing
 
-        updates["updated_at"] = int(time.time())
-
         # Validate cron/timezone if changing
         cron_changed = "cron_expr" in updates or "timezone" in updates
         if cron_changed:
