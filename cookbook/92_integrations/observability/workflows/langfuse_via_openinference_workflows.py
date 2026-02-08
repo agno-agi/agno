@@ -1,11 +1,8 @@
 """
-This example shows how to instrument your agno agent with OpenInference and send traces to Langfuse.
+Langfuse Workflows Via OpenInference
+====================================
 
-1. Install dependencies: uv pip install openai langfuse opentelemetry-sdk opentelemetry-exporter-otlp openinference-instrumentation-agno
-2. Either self-host or sign up for an account at https://us.cloud.langfuse.com
-3. Set your Langfuse API key as an environment variables:
-  - export LANGFUSE_PUBLIC_KEY=<your-key>
-  - export LANGFUSE_SECRET_KEY=<your-key>
+Demonstrates tracing a multi-step Agno workflow in Langfuse.
 """
 
 import base64
@@ -22,19 +19,21 @@ from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExport
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
 LANGFUSE_AUTH = base64.b64encode(
     f"{os.getenv('LANGFUSE_PUBLIC_KEY')}:{os.getenv('LANGFUSE_SECRET_KEY')}".encode()
 ).decode()
 # os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = (
-#     "https://us.cloud.langfuse.com/api/public/otel"  # 🇺🇸 US data region
+#     "https://us.cloud.langfuse.com/api/public/otel"  # US data region
 # )
 os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = (
-    "https://cloud.langfuse.com/api/public/otel"  # 🇪🇺 EU data region
+    "https://cloud.langfuse.com/api/public/otel"  # EU data region
 )
-# os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"]="http://localhost:3000/api/public/otel" # 🏠 Local deployment (>= v3.22.0)
+# os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = "http://localhost:3000/api/public/otel"  # Local deployment (>= v3.22.0)
 
 os.environ["OTEL_EXPORTER_OTLP_HEADERS"] = f"Authorization=Basic {LANGFUSE_AUTH}"
-
 
 tracer_provider = TracerProvider()
 tracer_provider.add_span_processor(SimpleSpanProcessor(OTLPSpanExporter()))
@@ -43,7 +42,10 @@ tracer_provider.add_span_processor(SimpleSpanProcessor(OTLPSpanExporter()))
 AgnoInstrumentor().instrument(tracer_provider=tracer_provider)
 
 
-# === BASIC AGENTS ===
+# ---------------------------------------------------------------------------
+# Create Workflow
+# ---------------------------------------------------------------------------
+# Basic agents
 researcher = Agent(
     name="Researcher",
     instructions="Research the given topic and provide detailed findings.",
@@ -66,15 +68,14 @@ writer = Agent(
     instructions="Write a comprehensive article based on all available research and verification.",
 )
 
-# === CONDITION EVALUATOR ===
 
-
+# Condition evaluator
 def needs_fact_checking(step_input: StepInput) -> bool:
-    """Determine if the research contains claims that need fact-checking"""
+    """Determine if the research contains claims that need fact-checking."""
     return True
 
 
-# === WORKFLOW STEPS ===
+# Workflow steps
 research_step = Step(
     name="research",
     description="Research the topic",
@@ -87,7 +88,6 @@ summarize_step = Step(
     agent=summarizer,
 )
 
-# Conditional fact-checking step
 fact_check_step = Step(
     name="fact_check",
     description="Verify facts and claims",
@@ -100,7 +100,6 @@ write_article = Step(
     agent=writer,
 )
 
-# === BASIC LINEAR WORKFLOW ===
 basic_workflow = Workflow(
     name="Basic Linear Workflow",
     description="Research -> Summarize -> Condition(Fact Check) -> Write Article",
@@ -117,6 +116,10 @@ basic_workflow = Workflow(
     ],
 )
 
+
+# ---------------------------------------------------------------------------
+# Run Workflow
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     print("Running Basic Linear Workflow Example")
     print("=" * 50)
