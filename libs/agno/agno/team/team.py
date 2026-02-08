@@ -52,17 +52,11 @@ from agno.run.team import (
 )
 from agno.session import SessionSummaryManager, TeamSession, WorkflowSession
 from agno.session.summary import SessionSummary
-from agno.team import _api, _hooks, _init, _messages, _response, _run, _storage, _telemetry, _tools
+from agno.team import _cli, _hooks, _init, _messages, _response, _run, _storage, _telemetry, _tools
 from agno.tools import Toolkit
 from agno.tools.function import Function
 from agno.utils.log import (
     log_error,
-)
-from agno.utils.print_response.team import (
-    aprint_response,
-    aprint_response_stream,
-    print_response,
-    print_response_stream,
 )
 
 
@@ -1217,11 +1211,11 @@ class Team:
 
     def _cleanup_and_store(self, run_response: TeamRunOutput, session: TeamSession) -> None:
         #  Scrub the stored run based on storage flags
-        return _api._cleanup_and_store(self, run_response=run_response, session=session)
+        return _storage._cleanup_and_store(self, run_response=run_response, session=session)
 
     async def _acleanup_and_store(self, run_response: TeamRunOutput, session: TeamSession) -> None:
         #  Scrub the stored run based on storage flags
-        return await _api._acleanup_and_store(self, run_response=run_response, session=session)
+        return await _storage._acleanup_and_store(self, run_response=run_response, session=session)
 
     def _make_memories(
         self,
@@ -1378,86 +1372,34 @@ class Team:
         tags_to_include_in_markdown: Optional[Set[str]] = None,
         **kwargs: Any,
     ) -> None:
-        if self._has_async_db():
-            raise Exception(
-                "This method is not supported with an async DB. Please use the async version of this method."
-            )
-
-        if not tags_to_include_in_markdown:
-            tags_to_include_in_markdown = {"think", "thinking"}
-
-        if markdown is None:
-            markdown = self.markdown
-
-        if self.output_schema is not None:
-            markdown = False
-
-        if stream is None:
-            stream = self.stream or False
-
-        if "stream_events" in kwargs:
-            kwargs.pop("stream_events")
-
-        if show_member_responses is None:
-            show_member_responses = self.show_members_responses
-
-        if stream:
-            print_response_stream(
-                team=self,
-                input=input,
-                console=console,
-                show_message=show_message,
-                show_reasoning=show_reasoning,
-                show_full_reasoning=show_full_reasoning,
-                show_member_responses=show_member_responses,
-                tags_to_include_in_markdown=tags_to_include_in_markdown,
-                session_id=session_id,
-                session_state=session_state,
-                user_id=user_id,
-                run_id=run_id,
-                audio=audio,
-                images=images,
-                videos=videos,
-                files=files,
-                markdown=markdown,
-                stream_events=True,
-                knowledge_filters=knowledge_filters,
-                add_history_to_context=add_history_to_context,
-                dependencies=dependencies,
-                add_dependencies_to_context=add_dependencies_to_context,
-                add_session_state_to_context=add_session_state_to_context,
-                metadata=metadata,
-                debug_mode=debug_mode,
-                **kwargs,
-            )
-        else:
-            print_response(
-                team=self,
-                input=input,
-                console=console,
-                show_message=show_message,
-                show_reasoning=show_reasoning,
-                show_full_reasoning=show_full_reasoning,
-                show_member_responses=show_member_responses,
-                tags_to_include_in_markdown=tags_to_include_in_markdown,
-                session_id=session_id,
-                session_state=session_state,
-                user_id=user_id,
-                run_id=run_id,
-                audio=audio,
-                images=images,
-                videos=videos,
-                files=files,
-                markdown=markdown,
-                knowledge_filters=knowledge_filters,
-                add_history_to_context=add_history_to_context,
-                dependencies=dependencies,
-                add_dependencies_to_context=add_dependencies_to_context,
-                add_session_state_to_context=add_session_state_to_context,
-                metadata=metadata,
-                debug_mode=debug_mode,
-                **kwargs,
-            )
+        return _cli.team_print_response(
+            self,
+            input=input,
+            stream=stream,
+            session_id=session_id,
+            session_state=session_state,
+            user_id=user_id,
+            run_id=run_id,
+            audio=audio,
+            images=images,
+            videos=videos,
+            files=files,
+            markdown=markdown,
+            knowledge_filters=knowledge_filters,
+            add_history_to_context=add_history_to_context,
+            add_dependencies_to_context=add_dependencies_to_context,
+            add_session_state_to_context=add_session_state_to_context,
+            dependencies=dependencies,
+            metadata=metadata,
+            debug_mode=debug_mode,
+            show_message=show_message,
+            show_reasoning=show_reasoning,
+            show_full_reasoning=show_full_reasoning,
+            show_member_responses=show_member_responses,
+            console=console,
+            tags_to_include_in_markdown=tags_to_include_in_markdown,
+            **kwargs,
+        )
 
     async def aprint_response(
         self,
@@ -1488,90 +1430,43 @@ class Team:
         tags_to_include_in_markdown: Optional[Set[str]] = None,
         **kwargs: Any,
     ) -> None:
-        if not tags_to_include_in_markdown:
-            tags_to_include_in_markdown = {"think", "thinking"}
-
-        if markdown is None:
-            markdown = self.markdown
-
-        if self.output_schema is not None:
-            markdown = False
-
-        if stream is None:
-            stream = self.stream or False
-
-        if "stream_events" in kwargs:
-            kwargs.pop("stream_events")
-
-        if show_member_responses is None:
-            show_member_responses = self.show_members_responses
-
-        if stream:
-            await aprint_response_stream(
-                team=self,
-                input=input,
-                console=console,
-                show_message=show_message,
-                show_reasoning=show_reasoning,
-                show_full_reasoning=show_full_reasoning,
-                show_member_responses=show_member_responses,
-                tags_to_include_in_markdown=tags_to_include_in_markdown,
-                session_id=session_id,
-                session_state=session_state,
-                user_id=user_id,
-                run_id=run_id,
-                audio=audio,
-                images=images,
-                videos=videos,
-                files=files,
-                markdown=markdown,
-                stream_events=True,
-                knowledge_filters=knowledge_filters,
-                add_history_to_context=add_history_to_context,
-                dependencies=dependencies,
-                add_dependencies_to_context=add_dependencies_to_context,
-                add_session_state_to_context=add_session_state_to_context,
-                metadata=metadata,
-                debug_mode=debug_mode,
-                **kwargs,
-            )
-        else:
-            await aprint_response(
-                team=self,
-                input=input,
-                console=console,
-                show_message=show_message,
-                show_reasoning=show_reasoning,
-                show_full_reasoning=show_full_reasoning,
-                show_member_responses=show_member_responses,
-                tags_to_include_in_markdown=tags_to_include_in_markdown,
-                session_id=session_id,
-                session_state=session_state,
-                user_id=user_id,
-                run_id=run_id,
-                audio=audio,
-                images=images,
-                videos=videos,
-                files=files,
-                markdown=markdown,
-                knowledge_filters=knowledge_filters,
-                add_history_to_context=add_history_to_context,
-                dependencies=dependencies,
-                add_dependencies_to_context=add_dependencies_to_context,
-                add_session_state_to_context=add_session_state_to_context,
-                metadata=metadata,
-                debug_mode=debug_mode,
-                **kwargs,
-            )
+        return await _cli.team_aprint_response(
+            self,
+            input=input,
+            stream=stream,
+            session_id=session_id,
+            session_state=session_state,
+            user_id=user_id,
+            run_id=run_id,
+            audio=audio,
+            images=images,
+            videos=videos,
+            files=files,
+            markdown=markdown,
+            knowledge_filters=knowledge_filters,
+            add_history_to_context=add_history_to_context,
+            dependencies=dependencies,
+            add_dependencies_to_context=add_dependencies_to_context,
+            add_session_state_to_context=add_session_state_to_context,
+            metadata=metadata,
+            debug_mode=debug_mode,
+            show_message=show_message,
+            show_reasoning=show_reasoning,
+            show_full_reasoning=show_full_reasoning,
+            show_member_responses=show_member_responses,
+            console=console,
+            tags_to_include_in_markdown=tags_to_include_in_markdown,
+            **kwargs,
+        )
 
     def _get_member_name(self, entity_id: str) -> str:
-        return _api._get_member_name(self, entity_id=entity_id)
+        return _cli._get_member_name(self, entity_id=entity_id)
 
     def _scrub_run_output_for_storage(self, run_response: TeamRunOutput) -> bool:
-        return _api._scrub_run_output_for_storage(self, run_response=run_response)
+        return _storage._scrub_run_output_for_storage(self, run_response=run_response)
 
     def _scrub_member_responses(self, member_responses: List[Union[TeamRunOutput, RunOutput]]) -> None:
-        return _api._scrub_member_responses(self, member_responses=member_responses)
+        return _storage._scrub_member_responses(self, member_responses=member_responses)
 
     def cli_app(
         self,
@@ -1583,7 +1478,7 @@ class Team:
         exit_on: Optional[List[str]] = None,
         **kwargs: Any,
     ) -> None:
-        return _api.cli_app(
+        return _cli.cli_app(
             self, input=input, user=user, emoji=emoji, stream=stream, markdown=markdown, exit_on=exit_on, **kwargs
         )
 
@@ -1599,7 +1494,7 @@ class Team:
         exit_on: Optional[List[str]] = None,
         **kwargs: Any,
     ) -> None:
-        return await _api.acli_app(
+        return await _cli.acli_app(
             self,
             input=input,
             session_id=session_id,
@@ -1960,7 +1855,7 @@ class Team:
         return _messages._get_json_output_prompt(self, output_schema=output_schema)
 
     def _update_team_media(self, run_response: Union[TeamRunOutput, RunOutput]) -> None:
-        return _api._update_team_media(self, run_response=run_response)
+        return _run._update_team_media(self, run_response=run_response)
 
     ###########################################################################
     # Built-in Tools

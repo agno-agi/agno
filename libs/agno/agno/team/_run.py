@@ -34,7 +34,7 @@ from agno.models.message import Message
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
 from agno.run import RunContext, RunStatus
-from agno.run.agent import RunOutputEvent
+from agno.run.agent import RunOutput, RunOutputEvent
 from agno.run.cancel import (
     acleanup_run,
     araise_if_cancelled,
@@ -1882,3 +1882,19 @@ def _handle_event(
             run_response.events = []
         run_response.events.append(event)
     return event
+
+
+def _update_team_media(team: "Team", run_response: Union[TeamRunOutput, RunOutput]) -> None:
+    """Update the team state with the run response."""
+    if run_response.images is not None:
+        if team.images is None:
+            team.images = []
+        team.images.extend(run_response.images)
+    if run_response.videos is not None:
+        if team.videos is None:
+            team.videos = []
+        team.videos.extend(run_response.videos)
+    if run_response.audio is not None:
+        if team.audio is None:
+            team.audio = []
+        team.audio.extend(run_response.audio)
