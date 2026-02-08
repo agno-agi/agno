@@ -231,6 +231,11 @@ def _run_tasks(
                     user_id=user_id,
                     existing_future=learning_future,
                 )
+                learning_future = team._start_learning_future(
+                    run_messages=run_messages,
+                    session=session,
+                    user_id=user_id,
+                )
 
                 # Reasoning on first iteration
                 team._handle_reasoning(run_response=run_response, run_messages=run_messages, run_context=run_context)
@@ -1430,6 +1435,12 @@ async def _arun_tasks(
                     user_id=user_id,
                     existing_task=learning_task,
                 )
+                learning_task = await team._astart_learning_task(
+                    run_messages=run_messages,
+                    session=team_session,
+                    user_id=user_id,
+                    existing_task=learning_task,
+                )
 
                 await team._ahandle_reasoning(
                     run_response=run_response, run_messages=run_messages, run_context=run_context
@@ -1802,13 +1813,13 @@ async def _arun(
                     run_context=run_context,
                 )
 
-                # 7b. Check if delegation propagated member HITL requirements
+                # 9b. Check if delegation propagated member HITL requirements
                 if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
                     from agno.team import _hooks
 
                     return await _hooks.ahandle_team_run_paused(team, run_response=run_response, session=team_session)
 
-                # 8. Store media if enabled
+                # 10. Store media if enabled
                 if team.store_media:
                     store_media_util(run_response, model_response)
 
@@ -2172,7 +2183,7 @@ async def _arun_stream(
                 # Check for cancellation after model processing
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 
-                # 6b. Check if delegation propagated member HITL requirements
+                # 9b. Check if delegation propagated member HITL requirements
                 if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
                     from agno.team import _hooks
 
@@ -2184,7 +2195,7 @@ async def _arun_stream(
                         yield run_response
                     return
 
-                # 7. Parse response with parser model if provided
+                # 10. Parse response with parser model if provided
                 async for event in team._aparse_response_with_parser_model_stream(
                     session=team_session,
                     run_response=run_response,
@@ -2408,11 +2419,12 @@ def arun(  # type: ignore
     debug_mode: Optional[bool] = None,
     yield_run_output: bool = False,
     output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
+    background: bool = False,
     **kwargs: Any,
 ) -> Union[TeamRunOutput, AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent]]]:
     """Run the Team asynchronously and return the response."""
 
-    # Set the id for the run and register it immediately for cancellation tracking
+    # Set the id for the run (cancellation registration happens in _arun or arun_background_impl)
     run_id = run_id or str(uuid4())
 
     if (add_history_to_context or team.add_history_to_context) and not team.db and not team.parent_team_id:
@@ -2551,6 +2563,23 @@ def arun(  # type: ignore
     run_response.metrics = Metrics()
     run_response.metrics.start_timer()
 
+    # Background execution: pre-persist PENDING run, spawn task, return immediately
+    if background:
+        return arun_background_impl(  # type: ignore
+            team,
+            run_response=run_response,
+            run_context=run_context,
+            session_id=session_id,
+            user_id=user_id,
+            response_format=response_format,
+            add_history_to_context=add_history,
+            add_dependencies_to_context=add_dependencies,
+            add_session_state_to_context=add_session_state,
+            debug_mode=debug_mode,
+            background_tasks=background_tasks,
+            **kwargs,
+        )
+
     if stream:
         return team._arun_stream(  # type: ignore
             run_response=run_response,
@@ -2581,6 +2610,95 @@ def arun(  # type: ignore
             background_tasks=background_tasks,
             **kwargs,
         )
+
+
+async def arun_background_impl(
+    team: "Team",
+    run_response: TeamRunOutput,
+    run_context: RunContext,
+    session_id: str,
+    user_id: Optional[str] = None,
+    add_history_to_context: Optional[bool] = None,
+    add_dependencies_to_context: Optional[bool] = None,
+    add_session_state_to_context: Optional[bool] = None,
+    response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+    debug_mode: Optional[bool] = None,
+    background_tasks: Optional[Any] = None,
+    **kwargs: Any,
+) -> TeamRunOutput:
+    """Execute team run in background, return PENDING TeamRunOutput immediately.
+
+    Follows the pattern established by Agent.arun_background_impl():
+    1. Validate that team has a database configured
+    2. Register run for cancellation tracking (before returning PENDING)
+    3. Set run status to PENDING and pre-persist to DB
+    4. Spawn asyncio.create_task (transitions to RUNNING, then executes)
+    5. Return the PENDING TeamRunOutput immediately
+    """
+    # 1. Validate DB is configured (required for polling)
+    if team.db is None:
+        raise ValueError("Background runs require a database to be configured on the team (team.db)")
+
+    # 2. Register for cancellation tracking before returning PENDING,
+    #    so cancel requests that arrive immediately are not lost.
+    await aregister_run(run_context.run_id)
+
+    # 3. Set PENDING status and pre-persist
+    run_response.status = RunStatus.pending
+    team_session = await team._aread_or_create_session(session_id=session_id, user_id=user_id)
+    team_session.upsert_run(run_response)
+    await team.asave_session(session=team_session)
+
+    log_debug(f"Background team run {run_response.run_id} created with status PENDING")
+
+    # 4. Define background coroutine
+    async def execute_team_background() -> None:
+        try:
+            # Transition to RUNNING and persist before executing
+            run_response.status = RunStatus.running
+            running_session = await team._aread_or_create_session(session_id=session_id, user_id=user_id)
+            running_session.upsert_run(run_response)
+            await team.asave_session(session=running_session)
+
+            await _arun(
+                team,
+                run_response=run_response,
+                run_context=run_context,
+                session_id=session_id,
+                user_id=user_id,
+                response_format=response_format,
+                add_history_to_context=add_history_to_context,
+                add_dependencies_to_context=add_dependencies_to_context,
+                add_session_state_to_context=add_session_state_to_context,
+                debug_mode=debug_mode,
+                background_tasks=background_tasks,
+                **kwargs,
+            )
+        except Exception as e:
+            # Safety net: catch errors that escape _arun's own error handling
+            log_error(f"Background team execution failed for run {run_response.run_id}: {e}")
+            run_response.status = RunStatus.error
+            run_response.content = f"Background execution failed: {str(e)}"
+            try:
+                error_session = await team._aread_or_create_session(session_id=session_id, user_id=user_id)
+                error_session.upsert_run(run_response)
+                await team.asave_session(session=error_session)
+            except Exception as persist_err:
+                log_error(f"Failed to persist error state for team run {run_response.run_id}: {persist_err}")
+            # Clean up cancellation tracking so the run_id doesn't leak
+            try:
+                await acleanup_run(run_context.run_id)
+            except Exception:
+                pass
+
+    # 5. Spawn background task
+    loop = asyncio.get_running_loop()
+    task = loop.create_task(execute_team_background())
+    # Ensure exceptions don't go silently unhandled
+    task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
+
+    # 6. Return PENDING response immediately
+    return run_response
 
 
 def _handle_event(

@@ -1882,11 +1882,12 @@ def arun_dispatch(  # type: ignore
     output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
     yield_run_output: Optional[bool] = None,
     debug_mode: Optional[bool] = None,
+    background: bool = False,
     **kwargs: Any,
 ) -> Union[RunOutput, AsyncIterator[RunOutputEvent]]:
     """Async Run the Agent and return the response."""
 
-    # Set the id for the run and register it immediately for cancellation tracking
+    # Set the id for the run (cancellation registration happens in arun_impl or arun_background_impl)
     run_id = run_id or str(uuid4())
 
     if (add_history_to_context or agent.add_history_to_context) and not agent.db and not agent.team_id:
@@ -1998,6 +1999,23 @@ def arun_dispatch(  # type: ignore
     run_response.metrics = Metrics()
     run_response.metrics.start_timer()
 
+    # Background execution: pre-persist PENDING run, spawn task, return immediately
+    if background:
+        return arun_background_impl(  # type: ignore
+            agent,
+            run_response=run_response,
+            run_context=run_context,
+            user_id=user_id,
+            response_format=response_format,
+            session_id=session_id,
+            add_history_to_context=opts.add_history_to_context,
+            add_dependencies_to_context=opts.add_dependencies_to_context,
+            add_session_state_to_context=opts.add_session_state_to_context,
+            debug_mode=debug_mode,
+            background_tasks=background_tasks,
+            **kwargs,
+        )
+
     # Pass the new run_response to _arun
     if opts.stream:
         return arun_stream_impl(  # type: ignore
@@ -2031,6 +2049,95 @@ def arun_dispatch(  # type: ignore
             background_tasks=background_tasks,
             **kwargs,
         )
+
+
+async def arun_background_impl(
+    agent: Agent,
+    run_response: RunOutput,
+    run_context: RunContext,
+    session_id: str,
+    user_id: Optional[str] = None,
+    add_history_to_context: Optional[bool] = None,
+    add_dependencies_to_context: Optional[bool] = None,
+    add_session_state_to_context: Optional[bool] = None,
+    response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+    debug_mode: Optional[bool] = None,
+    background_tasks: Optional[Any] = None,
+    **kwargs: Any,
+) -> RunOutput:
+    """Execute agent run in background, return PENDING RunOutput immediately.
+
+    Follows the pattern established by Workflow._arun_background():
+    1. Validate that agent has a database configured
+    2. Register run for cancellation tracking (before returning PENDING)
+    3. Set run status to PENDING and pre-persist to DB
+    4. Spawn asyncio.create_task (transitions to RUNNING, then executes)
+    5. Return the PENDING RunOutput immediately
+    """
+    # 1. Validate DB is configured (required for polling)
+    if agent.db is None:
+        raise ValueError("Background runs require a database to be configured on the agent (agent.db)")
+
+    # 2. Register for cancellation tracking before returning PENDING,
+    #    so cancel requests that arrive immediately are not lost.
+    await aregister_run(run_context.run_id)
+
+    # 3. Set PENDING status and pre-persist
+    run_response.status = RunStatus.pending
+    agent_session = await agent._aread_or_create_session(session_id=session_id, user_id=user_id)
+    agent_session.upsert_run(run=run_response)
+    await agent.asave_session(session=agent_session)
+
+    log_debug(f"Background run {run_response.run_id} created with status PENDING")
+
+    # 4. Define background coroutine
+    async def execute_agent_background() -> None:
+        try:
+            # Transition to RUNNING and persist before executing
+            run_response.status = RunStatus.running
+            running_session = await agent._aread_or_create_session(session_id=session_id, user_id=user_id)
+            running_session.upsert_run(run=run_response)
+            await agent.asave_session(session=running_session)
+
+            await arun_impl(
+                agent,
+                run_response=run_response,
+                run_context=run_context,
+                user_id=user_id,
+                response_format=response_format,
+                session_id=session_id,
+                add_history_to_context=add_history_to_context,
+                add_dependencies_to_context=add_dependencies_to_context,
+                add_session_state_to_context=add_session_state_to_context,
+                debug_mode=debug_mode,
+                background_tasks=background_tasks,
+                **kwargs,
+            )
+        except Exception as e:
+            # Safety net: catch errors that escape arun_impl's own error handling
+            log_error(f"Background agent execution failed for run {run_response.run_id}: {e}")
+            run_response.status = RunStatus.error
+            run_response.content = f"Background execution failed: {str(e)}"
+            try:
+                error_session = await agent._aread_or_create_session(session_id=session_id, user_id=user_id)
+                error_session.upsert_run(run=run_response)
+                await agent.asave_session(session=error_session)
+            except Exception as persist_err:
+                log_error(f"Failed to persist error state for run {run_response.run_id}: {persist_err}")
+            # Clean up cancellation tracking so the run_id doesn't leak
+            try:
+                await acleanup_run(run_context.run_id)
+            except Exception:
+                pass
+
+    # 5. Spawn background task
+    loop = asyncio.get_running_loop()
+    task = loop.create_task(execute_agent_background())
+    # Ensure exceptions don't go silently unhandled
+    task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
+
+    # 6. Return PENDING response immediately
+    return run_response
 
 
 def continue_run_dispatch(
