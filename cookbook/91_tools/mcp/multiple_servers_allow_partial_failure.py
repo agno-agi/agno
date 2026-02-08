@@ -15,6 +15,10 @@ from os import getenv
 from agno.agent import Agent
 from agno.tools.mcp import MultiMCPTools
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 
 async def run_agent(message: str) -> None:
     # Initialize the MCP tools
@@ -46,6 +50,10 @@ async def run_agent(message: str) -> None:
 
 
 # Example usage
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
 if __name__ == "__main__":
     asyncio.run(run_agent("What listings are available in Barcelona tonight?"))
     asyncio.run(run_agent("What's the fastest way to get to Barcelona from London?"))

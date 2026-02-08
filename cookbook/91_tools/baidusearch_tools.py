@@ -1,5 +1,17 @@
+"""
+Baidusearch Tools
+=============================
+
+Demonstrates baidusearch tools.
+"""
+
 from agno.agent import Agent
 from agno.tools.baidusearch import BaiduSearchTools
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 
 agent = Agent(
     tools=[BaiduSearchTools()],
@@ -10,4 +22,9 @@ agent = Agent(
         "Search in both English and Chinese.",
     ],
 )
-agent.print_response("What are the latest advancements in AI?", markdown=True)
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    agent.print_response("What are the latest advancements in AI?", markdown=True)

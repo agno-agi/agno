@@ -6,6 +6,11 @@ from textwrap import dedent
 from agno.agent import Agent
 from agno.tools.mcp_toolbox import MCPToolbox
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
+
 url = "http://127.0.0.1:5001"
 
 
@@ -115,6 +120,10 @@ async def run_agent_no_ctx_manager(message: str = None) -> None:
 
     await agent.acli_app(message=message, stream=True)
 
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     asyncio.run(run_agent(message=None))

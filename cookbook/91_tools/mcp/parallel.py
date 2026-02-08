@@ -24,6 +24,11 @@ from agno.tools.mcp import MCPTools
 from agno.tools.mcp.params import StreamableHTTPClientParams
 from agno.utils.pprint import apprint_run_response
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
+
 server_params = StreamableHTTPClientParams(
     url="https://search-mcp.parallel.ai/mcp",
     headers={
@@ -44,6 +49,10 @@ async def run_agent(message: str) -> None:
         response_stream = await agent.arun(message)
         await apprint_run_response(response_stream)
 
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     asyncio.run(run_agent("What is the weather in Tokyo?"))

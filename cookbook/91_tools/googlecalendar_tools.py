@@ -43,6 +43,11 @@ Steps to get the Google OAuth Credentials (Reference : https://developers.google
 from agno.agent import Agent
 from agno.tools.googlecalendar import GoogleCalendarTools
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
+
 agent = Agent(
     tools=[
         GoogleCalendarTools(
@@ -67,42 +72,47 @@ agent = Agent(
 )
 
 # Example 1: List calendar events
-agent.print_response("Give me the list of tomorrow's events", markdown=True)
 
-# Example 2: Create an event
-# agent.print_response(
-#     "create an event tomorrow from 9am to 10am, make the title as 'Team Meeting' and description as 'Weekly team sync'",
-#     markdown=True,
-# )
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    agent.print_response("Give me the list of tomorrow's events", markdown=True)
 
-# Example 3: Find available time slots
-# agent.print_response(
-#     "Find available 1-hour time slots for tomorrow between 9 AM and 5 PM",
-#     markdown=True,
-# )
+    # Example 2: Create an event
+    # agent.print_response(
+    #     "create an event tomorrow from 9am to 10am, make the title as 'Team Meeting' and description as 'Weekly team sync'",
+    #     markdown=True,
+    # )
 
-# Example 4: List available calendars
-# agent.print_response(
-#     "List all my calendars",
-#     markdown=True,
-# )
+    # Example 3: Find available time slots
+    # agent.print_response(
+    #     "Find available 1-hour time slots for tomorrow between 9 AM and 5 PM",
+    #     markdown=True,
+    # )
 
-# Example 5: Update an event
-# agent.print_response(
-#     "update the 'Team Meeting' event to run from 5pm to 7pm and change description to 'Extended team sync'",
-#     markdown=True,
-# )
+    # Example 4: List available calendars
+    # agent.print_response(
+    #     "List all my calendars",
+    #     markdown=True,
+    # )
 
-# Example 6: Delete an event
-# agent.print_response("delete the 'Team Meeting' event", markdown=True)
+    # Example 5: Update an event
+    # agent.print_response(
+    #     "update the 'Team Meeting' event to run from 5pm to 7pm and change description to 'Extended team sync'",
+    #     markdown=True,
+    # )
 
-# # Example 7: Find available time slots for a specific calendar
-# agent.print_response(
-#     "Find available 1-hour time slots for this week between 9 AM and 5 PM in the Appointments calendar",
-#     markdown=True,
-# )
+    # Example 6: Delete an event
+    # agent.print_response("delete the 'Team Meeting' event", markdown=True)
 
-# Example 9: Find available slots using locale-based working hours
-# agent.print_response(
-#     "Find available 60-minute slots for the next 3 days", markdown=True
-# )
+    # # Example 7: Find available time slots for a specific calendar
+    # agent.print_response(
+    #     "Find available 1-hour time slots for this week between 9 AM and 5 PM in the Appointments calendar",
+    #     markdown=True,
+    # )
+
+    # Example 9: Find available slots using locale-based working hours
+    # agent.print_response(
+    #     "Find available 60-minute slots for the next 3 days", markdown=True
+    # )
