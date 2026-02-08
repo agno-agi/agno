@@ -3080,7 +3080,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                     return None
                 return dict(row._mapping)
         except Exception as e:
-            log_debug(f"Error getting schedule: {e}")
+            log_warning(f"Error getting schedule: {e}")
             return None
 
     async def get_schedule_by_name(self, name: str) -> Optional[Dict[str, Any]]:
@@ -3096,7 +3096,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                     return None
                 return dict(row._mapping)
         except Exception as e:
-            log_debug(f"Error getting schedule by name: {e}")
+            log_warning(f"Error getting schedule by name: {e}")
             return None
 
     async def get_schedules(
@@ -3122,7 +3122,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 rows = result.fetchall()
                 return [dict(row._mapping) for row in rows]
         except Exception as e:
-            log_debug(f"Error getting schedules: {e}")
+            log_warning(f"Error getting schedules: {e}")
             return []
 
     async def create_schedule(self, schedule: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -3136,7 +3136,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                     await sess.execute(stmt)
             return schedule
         except Exception as e:
-            log_debug(f"Error creating schedule: {e}")
+            log_warning(f"Error creating schedule: {e}")
             return None
 
     async def update_schedule(self, schedule_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
@@ -3153,7 +3153,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                         return None
             return await self.get_schedule(schedule_id)
         except Exception as e:
-            log_debug(f"Error updating schedule: {e}")
+            log_warning(f"Error updating schedule: {e}")
             return None
 
     async def delete_schedule(self, schedule_id: str) -> bool:
@@ -3169,7 +3169,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                     result = await sess.execute(schedule_table.delete().where(schedule_table.c.id == schedule_id))
                     return result.rowcount > 0  # type: ignore
         except Exception as e:
-            log_debug(f"Error deleting schedule: {e}")
+            log_warning(f"Error deleting schedule: {e}")
             return False
 
     async def claim_due_schedule(self, worker_id: str, lock_grace_seconds: int = 300) -> Optional[Dict[str, Any]]:
@@ -3209,7 +3209,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                     row_dict["locked_at"] = now
             return row_dict
         except Exception as e:
-            log_debug(f"Error claiming due schedule: {e}")
+            log_warning(f"Error claiming due schedule: {e}")
             return None
 
     async def release_schedule(self, schedule_id: str, next_run_at: Optional[int] = None) -> bool:
@@ -3230,7 +3230,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                     result = await sess.execute(stmt)
                     return result.rowcount > 0  # type: ignore
         except Exception as e:
-            log_debug(f"Error releasing schedule: {e}")
+            log_warning(f"Error releasing schedule: {e}")
             return False
 
     async def create_schedule_run(self, run: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -3244,7 +3244,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                     await sess.execute(stmt)
             return run
         except Exception as e:
-            log_debug(f"Error creating schedule run: {e}")
+            log_warning(f"Error creating schedule run: {e}")
             return None
 
     async def update_schedule_run(self, run_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
@@ -3260,7 +3260,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                         return None
             return await self.get_schedule_run(run_id)
         except Exception as e:
-            log_debug(f"Error updating schedule run: {e}")
+            log_warning(f"Error updating schedule run: {e}")
             return None
 
     async def get_schedule_run(self, run_id: str) -> Optional[Dict[str, Any]]:
@@ -3276,7 +3276,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                     return None
                 return dict(row._mapping)
         except Exception as e:
-            log_debug(f"Error getting schedule run: {e}")
+            log_warning(f"Error getting schedule run: {e}")
             return None
 
     async def get_schedule_runs(
@@ -3300,5 +3300,5 @@ class AsyncPostgresDb(AsyncBaseDb):
                 rows = result.fetchall()
                 return [dict(row._mapping) for row in rows]
         except Exception as e:
-            log_debug(f"Error getting schedule runs: {e}")
+            log_warning(f"Error getting schedule runs: {e}")
             return []
