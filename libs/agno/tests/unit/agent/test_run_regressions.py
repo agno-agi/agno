@@ -227,8 +227,15 @@ async def test_arun_stream_impl_cleans_up_registered_run_on_session_read_failure
         session_id="session-1",
     )
 
-    with pytest.raises(RuntimeError, match="session read failed"):
-        await response_stream.__anext__()
+    # Consume the error event yielded by the stream
+    events = []
+    async for event in response_stream:
+        events.append(event)
+
+    # Verify an error event was yielded with the session read failure
+    assert len(events) == 1
+    assert isinstance(events[0], RunErrorEvent)
+    assert "session read failed" in events[0].content
 
     assert run_id not in get_active_runs()
 

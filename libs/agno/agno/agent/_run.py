@@ -1414,6 +1414,7 @@ async def arun_stream_impl(
     memory_task = None
     cultural_knowledge_task = None
     learning_task = None
+    agent_session: Optional[AgentSession] = None
 
     # Set up retry logic
     num_attempts = agent.retries + 1
@@ -1739,12 +1740,13 @@ async def arun_stream_impl(
                 )
 
                 # Cleanup and store the run response and session
-                await agent._acleanup_and_store(
-                    run_response=run_response,
-                    session=agent_session,
-                    run_context=run_context,
-                    user_id=user_id,
-                )
+                if agent_session is not None:
+                    await agent._acleanup_and_store(
+                        run_response=run_response,
+                        session=agent_session,
+                        run_context=run_context,
+                        user_id=user_id,
+                    )
                 break
 
             except (InputCheckError, OutputCheckError) as e:
@@ -1767,12 +1769,13 @@ async def arun_stream_impl(
                 log_error(f"Validation failed: {str(e)} | Check trigger: {e.check_trigger}")
 
                 # Cleanup and store the run response and session
-                await agent._acleanup_and_store(
-                    run_response=run_response,
-                    session=agent_session,
-                    run_context=run_context,
-                    user_id=user_id,
-                )
+                if agent_session is not None:
+                    await agent._acleanup_and_store(
+                        run_response=run_response,
+                        session=agent_session,
+                        run_context=run_context,
+                        user_id=user_id,
+                    )
 
                 # Yield the error event
                 yield run_error
@@ -1813,12 +1816,13 @@ async def arun_stream_impl(
                 log_error(f"Error in Agent run: {str(e)}")
 
                 # Cleanup and store the run response and session
-                await agent._acleanup_and_store(
-                    run_response=run_response,
-                    session=agent_session,
-                    run_context=run_context,
-                    user_id=user_id,
-                )
+                if agent_session is not None:
+                    await agent._acleanup_and_store(
+                        run_response=run_response,
+                        session=agent_session,
+                        run_context=run_context,
+                        user_id=user_id,
+                    )
 
                 # Yield the error event
                 yield run_error
