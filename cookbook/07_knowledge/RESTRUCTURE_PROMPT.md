@@ -25,8 +25,8 @@ You are restructuring the `cookbook/07_knowledge/` directory of the Agno AI agen
 
 This section has three distinct categories of merges. Each requires different handling:
 
-### Pattern 1: 01_quickstart/ sync/async flatten (15 pairs)
-The `01_quickstart/sync/` and `01_quickstart/async/` directories contain near-identical files. The only differences are `insert()` vs `ainsert()` and `print_response()` vs `aprint_response()`. Use the sync version as the base and add an async section in the main gate.
+### Pattern 1: basic_operations/ sync/async flatten (15 pairs)
+The `basic_operations/sync/` and `basic_operations/async/` directories contain near-identical files. The only differences are `insert()` vs `ainsert()` and `print_response()` vs `aprint_response()`. Use the sync version as the base and add an async section in the main gate.
 
 ### Pattern 2: Embedder batching pairs (12 pairs)
 Each embedder has a base file (`openai_embedder.py`) and a batching variant (`openai_embedder_batching.py`). The batching variant only adds `enable_batch=True, batch_size=100` to the embedder config. Merge by showing both standard and batching modes in the same file.
@@ -108,14 +108,14 @@ if __name__ == "__main__":
 
 ## Execution Plan
 
-### Phase 1: Flatten 01_quickstart/ (31 → ~16 files)
+### Phase 1: Flatten basic_operations/ (31 → ~16 files)
 
-1. For each of the 15 sync/async pairs in `01_quickstart/`:
+1. For each of the 15 sync/async pairs in `basic_operations/`:
    - Read both `sync/<file>.py` and `async/<file>.py`
    - Use sync as base, add async section in main gate
-   - Write merged file to `01_quickstart/<file>.py`
+   - Write merged file to `basic_operations/<file>.py`
    - Delete source files from sync/ and async/
-2. Move `sync/16_knowledge_instructions.py` to `01_quickstart/` (no async counterpart)
+2. Move `sync/16_knowledge_instructions.py` to `basic_operations/` (no async counterpart)
 3. Remove empty `sync/` and `async/` directories
 
 ### Phase 2: Merge Embedder Batching Pairs (29 → ~17 files)
@@ -154,7 +154,7 @@ For all files not already processed in Phases 1-3:
 
 ### Phase 5: Clean Up Empty Directories
 
-Remove `01_quickstart/sync/` and `01_quickstart/async/` after flattening.
+Remove `basic_operations/sync/` and `basic_operations/async/` after flattening.
 
 ### Phase 6: Create README.md and TEST_LOG.md
 
@@ -168,11 +168,11 @@ For every directory and subdirectory. See RESTRUCTURE_PLAN.md Section 5 for the 
 
 ## Key Merge Examples
 
-### Example: 01_quickstart sync/async pair
+### Example: basic_operations sync/async pair
 
 Before: `sync/01_from_path.py` + `async/01_from_path.py`
 
-After: `01_quickstart/01_from_path.py`:
+After: `basic_operations/01_from_path.py`:
 ```python
 if __name__ == "__main__":
     # --- Sync ---
