@@ -349,6 +349,52 @@ def test_workflow_custom_event_subclass_serialization():
     assert restored.data["key"] == "value"
 
 
+def test_team_run_output_from_dict_with_requirements():
+    """Regression: TeamRunOutput.from_dict() must not raise NameError when requirements are present."""
+    from agno.models.response import ToolExecution
+    from agno.run.requirement import RunRequirement
+    from agno.run.team import TeamRunOutput
+
+    tool_exec = ToolExecution(
+        tool_call_id="call_abc",
+        tool_name="search_web",
+        tool_args={"query": "hello"},
+        requires_confirmation=True,
+    )
+    req = RunRequirement(tool_execution=tool_exec)
+
+    # Build a dict payload that includes requirements
+    output = TeamRunOutput(
+        run_id="run_1",
+        team_id="team_1",
+        team_name="TestTeam",
+        requirements=[req],
+    )
+    data = output.to_dict()
+    assert "requirements" in data
+
+    # from_dict must not raise
+    restored = TeamRunOutput.from_dict(data)
+
+    assert restored.requirements is not None
+    assert len(restored.requirements) == 1
+    assert isinstance(restored.requirements[0], RunRequirement)
+    assert restored.requirements[0].tool_execution.tool_name == "search_web"
+    assert restored.requirements[0].tool_execution.requires_confirmation is True
+
+
+def test_team_run_output_from_dict_without_requirements():
+    """TeamRunOutput.from_dict() works fine when requirements is absent."""
+    from agno.run.team import TeamRunOutput
+
+    output = TeamRunOutput(run_id="run_2", team_id="team_2", team_name="NoReqs")
+    data = output.to_dict()
+    assert "requirements" not in data
+
+    restored = TeamRunOutput.from_dict(data)
+    assert restored.requirements is None
+
+
 def test_requirements_in_run_paused_event():
     """Test that RunPausedEvent includes requirements field and serializes/deserializes properly."""
     from agno.models.response import ToolExecution
