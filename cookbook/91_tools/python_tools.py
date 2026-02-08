@@ -1,7 +1,19 @@
+"""
+Python Tools
+=============================
+
+Demonstrates python tools.
+"""
+
 from pathlib import Path
 
 from agno.agent import Agent
 from agno.tools.python import PythonTools
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 
 # Example 1: All functions available (default behavior)
 agent_all = Agent(
@@ -40,6 +52,10 @@ agent_safe = Agent(
 # Use the default agent for examples
 agent = agent_all
 
-agent.print_response(
-    "Write a python script for fibonacci series and display the result till the 10th number"
-)
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    agent.print_response(
+        "Write a python script for fibonacci series and display the result till the 10th number"
+    )
