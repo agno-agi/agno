@@ -1,9 +1,3 @@
-# Prompt to test: `cookbook/00_quickstart`
-
-Use this prompt with an AI coding agent to test and validate the quickstart cookbook.
-
----
-
 Goal: Thoroughly test and validate `cookbook/00_quickstart` so it aligns with our cookbook standards.
 
 Context files (read these first):
