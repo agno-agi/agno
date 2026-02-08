@@ -555,7 +555,13 @@ def get_workflow_router(
             db_workflows = get_workflows(db=os.db, registry=os.registry)
             if db_workflows:
                 for db_workflow in db_workflows:
-                    workflows.append(WorkflowSummaryResponse.from_workflow(workflow=db_workflow))
+                    try:
+                        workflows.append(WorkflowSummaryResponse.from_workflow(workflow=db_workflow))
+                    except Exception as e:
+                        workflow_id = getattr(db_workflow, "id", "unknown")
+                        logger.error(f"Error converting workflow {workflow_id} to response: {e}")
+                        # Continue processing other workflows even if this one fails
+                        continue
 
         return workflows
 
