@@ -1,23 +1,16 @@
-# TEST_LOG
-Generated: 2026-02-07 23:53:42
+# TEST LOG
 
-### check_cookbook_pattern.py
+Generated: 2026-02-08 15:41 UTC
 
-**Status:** PASS
-
-**Description:** Ran `.venvs/demo/bin/python cookbook/scripts/check_cookbook_pattern.py --base-dir cookbook/02_agents/events`.
-
-**Result:** Structure validation passed with no violations (checked 2 file(s)).
-
----
+Pattern Check: Checked 2 file(s) in /Users/ab/conductor/workspaces/agno/colombo/cookbook/02_agents/events. Violations: 0
 
 ### basic_agent_events.py
 
 **Status:** PASS
 
-**Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/events/basic_agent_events.py`.
+**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
 
-**Result:** Example completed successfully. (exit code 0, ~3.15s).
+**Result:** Completed successfully in 4s.
 
 ---
 
@@ -25,8 +18,9 @@ Generated: 2026-02-07 23:53:42
 
 **Status:** PASS
 
-**Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/events/reasoning_agent_events.py`.
+**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
 
-**Result:** Example completed successfully. (exit code 0, ~20.31s).
+**Result:** Completed successfully in 41s.
 
 ---
+

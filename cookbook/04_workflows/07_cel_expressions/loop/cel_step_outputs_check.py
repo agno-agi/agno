@@ -1,4 +1,5 @@
 """Loop with CEL end condition: check a named step's output.
+=========================================================
 
 Uses step_outputs map to access a specific step by name and
 check its content before deciding to stop the loop.
@@ -11,6 +12,9 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.workflow import CEL_AVAILABLE, Loop, Step, Workflow
 
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
 if not CEL_AVAILABLE:
     print("CEL is not available. Install with: pip install cel-python")
     exit(1)

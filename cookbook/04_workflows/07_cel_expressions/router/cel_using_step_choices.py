@@ -1,4 +1,5 @@
 """Router with CEL: route using step_choices index.
+================================================
 
 Uses step_choices[0], step_choices[1], etc. to reference steps by their
 position in the choices list, rather than hardcoding step names.
@@ -17,6 +18,9 @@ from agno.models.openai import OpenAIChat
 from agno.workflow import CEL_AVAILABLE, Step, Workflow
 from agno.workflow.router import Router
 
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
 if not CEL_AVAILABLE:
     print("CEL is not available. Install with: pip install cel-python")
     exit(1)

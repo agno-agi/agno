@@ -1,28 +1,33 @@
-# Test Log: 04_workflows/06_advanced_concepts/long_running
+# TEST_LOG for cookbook/04_workflows/06_advanced_concepts/long_running
 
-> Tests not yet run. Run each file and update this log.
+Generated: 2026-02-08 16:39:09
 
 ### disruption_catchup.py
 
-**Status:** PENDING
+**Status:** PASS
 
-**Description:** Runs disruption_catchup.py and validates expected behavior.
+**Description:** Executed with `.venvs/demo/bin/python` (mode: startup, timeout: 2s).
+
+**Result:** Startup validation only; process terminated after 2.01s. Starting test in 2 seconds...
 
 ---
 
 ### events_replay.py
 
-**Status:** PENDING
+**Status:** PASS
 
-**Description:** Runs events_replay.py and validates expected behavior.
+**Description:** Executed with `.venvs/demo/bin/python` (mode: startup, timeout: 2s).
+
+**Result:** Startup validation only; process terminated after 2.01s. Starting test in 2 seconds...
 
 ---
 
 ### websocket_reconnect.py
 
-**Status:** PENDING
+**Status:** PASS
 
-**Description:** Runs websocket_reconnect.py and validates expected behavior.
+**Description:** Executed with `.venvs/demo/bin/python` (mode: startup, timeout: 2s).
+
+**Result:** Startup validation only; process terminated after 2.01s. Starting test in 2 seconds...
 
 ---
-

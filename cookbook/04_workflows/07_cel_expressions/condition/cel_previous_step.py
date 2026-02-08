@@ -1,4 +1,5 @@
 """Condition with CEL expression: branching on previous step output.
+=================================================================
 
 Runs a classifier step first, then uses previous_step_content.contains()
 to decide the next step.
@@ -11,6 +12,9 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.workflow import CEL_AVAILABLE, Condition, Step, Workflow
 
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
 if not CEL_AVAILABLE:
     print("CEL is not available. Install with: pip install cel-python")
     exit(1)

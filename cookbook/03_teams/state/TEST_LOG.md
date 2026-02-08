@@ -1,6 +1,6 @@
 # Test Log: state
 
-> Updated: 2026-02-08 00:52:28 
+> Updated: 2026-02-08 15:49:52
 
 ## Pattern Check
 
@@ -12,11 +12,11 @@
 
 ### agentic_session_state.py
 
-**Status:** PASS
+**Status:** FAIL
 
 **Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/state/agentic_session_state.py`.
 
-**Result:** Completed successfully (exit 0) in 12.1s. Tail: ┃ The updated shopping list is: milk, bread. 🛒                                ┃ | ┃                                                                              ┃ | ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛Session state: {'shopping_list': ['milk', 'bread']}
+**Result:** Exited with code 1. Tail: ession_state |     return get_session_state_util(cast(Any, team), session_id=session_id) |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ |   File "/Users/ab/conductor/workspaces/agno/colombo/libs/agno/agno/utils/agent.py", line 760, in get_session_state_util |     raise Exception("Session not found") | Exception: Session not found
 
 ---
 
@@ -26,7 +26,7 @@
 
 **Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/state/change_state_on_run.py`.
 
-**Result:** Completed successfully (exit 0) in 5.52s. Tail: ┃ You’re 25 years old, Jane.                                                   ┃ | ┃                                                                              ┃ | ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+**Result:** Executed successfully. Duration: 6.42s. Tail: , line 314, in upsert_session |     raise e |   File "/Users/ab/conductor/workspaces/agno/colombo/libs/agno/agno/db/in_memory/in_memory_db.py", line 308, in upsert_session |     return TeamSession.from_dict(session_dict_copy) |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ | NameError: name 'requirements' is not defined. Did you mean: 'RunRequirement'?
 
 ---
 
@@ -36,17 +36,17 @@
 
 **Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/state/nested_shared_state.py`.
 
-**Result:** Timed out after 90.0s. Tail: DEBUG **********************  TOOL METRICS  ********************** | DEBUG * Duration:                    0.0004s | DEBUG **********************  TOOL METRICS  **********************
+**Result:** Exited with code 1. Tail: ession_state |     return get_session_state_util(cast(Any, team), session_id=session_id) |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ |   File "/Users/ab/conductor/workspaces/agno/colombo/libs/agno/agno/utils/agent.py", line 760, in get_session_state_util |     raise Exception("Session not found") | Exception: Session not found
 
 ---
 
 ### overwrite_stored_session_state.py
 
-**Status:** PASS
+**Status:** FAIL
 
 **Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/state/overwrite_stored_session_state.py`.
 
-**Result:** Completed successfully (exit 0) in 5.37s. Tail: ┃                                                                              ┃ | ┃                                                                              ┃ | ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛Stored session state: {'secret_number': 43}
+**Result:** Exited with code 1. Tail: ession_state |     return get_session_state_util(cast(Any, team), session_id=session_id) |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ |   File "/Users/ab/conductor/workspaces/agno/colombo/libs/agno/agno/utils/agent.py", line 760, in get_session_state_util |     raise Exception("Session not found") | Exception: Session not found
 
 ---
 
@@ -56,6 +56,6 @@
 
 **Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/state/state_sharing.py`.
 
-**Result:** Completed successfully (exit 0) in 36.96s. Tail: ┃ today.                                                                       ┃ | ┃                                                                              ┃ | ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+**Result:** Executed successfully. Duration: 54.48s. Tail: db/sqlite/sqlite.py", line 1039, in upsert_session |     raise e |   File "/Users/ab/conductor/workspaces/agno/colombo/libs/agno/agno/db/sqlite/sqlite.py", line 998, in upsert_session |     return TeamSession.from_dict(session_raw) |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ | NameError: name 'requirements' is not defined. Did you mean: 'RunRequirement'?
 
 ---

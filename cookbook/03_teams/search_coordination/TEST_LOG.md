@@ -1,6 +1,6 @@
 # Test Log: search_coordination
 
-> Updated: 2026-02-08 00:52:28 
+> Updated: 2026-02-08 15:49:52
 
 ## Pattern Check
 
@@ -16,7 +16,7 @@
 
 **Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/search_coordination/01_coordinated_agentic_rag.py`.
 
-**Result:** Exited with code 1 in 0.55s. Tail: File "/Users/ab/conductor/workspaces/agno/colombo/libs/agno/agno/knowledge/embedder/cohere.py", line 13, in <module> | raise ImportError("`cohere` not installed. Please install using `pip install cohere`.") | ImportError: `cohere` not installed. Please install using `pip install cohere`.
+**Result:** Exited with code 1. Tail: |     from agno.knowledge.embedder.cohere import CohereEmbedder |   File "/Users/ab/conductor/workspaces/agno/colombo/libs/agno/agno/knowledge/embedder/cohere.py", line 13, in <module> |     raise ImportError("`cohere` not installed. Please install using `pip install cohere`.") | ImportError: `cohere` not installed. Please install using `pip install cohere`.
 
 ---
 
@@ -26,7 +26,7 @@
 
 **Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/search_coordination/02_coordinated_reasoning_rag.py`.
 
-**Result:** Exited with code 1 in 0.42s. Tail: File "/Users/ab/conductor/workspaces/agno/colombo/libs/agno/agno/knowledge/embedder/cohere.py", line 13, in <module> | raise ImportError("`cohere` not installed. Please install using `pip install cohere`.") | ImportError: `cohere` not installed. Please install using `pip install cohere`.
+**Result:** Exited with code 1. Tail: |     from agno.knowledge.embedder.cohere import CohereEmbedder |   File "/Users/ab/conductor/workspaces/agno/colombo/libs/agno/agno/knowledge/embedder/cohere.py", line 13, in <module> |     raise ImportError("`cohere` not installed. Please install using `pip install cohere`.") | ImportError: `cohere` not installed. Please install using `pip install cohere`.
 
 ---
 
@@ -36,6 +36,6 @@
 
 **Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/search_coordination/03_distributed_infinity_search.py`.
 
-**Result:** Exited with code 1 in 0.32s. Tail: File "/Users/ab/conductor/workspaces/agno/colombo/libs/agno/agno/knowledge/embedder/cohere.py", line 13, in <module> | raise ImportError("`cohere` not installed. Please install using `pip install cohere`.") | ImportError: `cohere` not installed. Please install using `pip install cohere`.
+**Result:** Exited with code 1. Tail: |     from agno.knowledge.embedder.cohere import CohereEmbedder |   File "/Users/ab/conductor/workspaces/agno/colombo/libs/agno/agno/knowledge/embedder/cohere.py", line 13, in <module> |     raise ImportError("`cohere` not installed. Please install using `pip install cohere`.") | ImportError: `cohere` not installed. Please install using `pip install cohere`.
 
 ---

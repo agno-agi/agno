@@ -1,20 +1,23 @@
-# Test Log: 04_workflows/06_advanced_concepts/workflow_agent
+# TEST_LOG for cookbook/04_workflows/06_advanced_concepts/workflow_agent
 
-> Tests not yet run. Run each file and update this log.
+Generated: 2026-02-08 16:39:09
 
 ### basic_workflow_agent.py
 
-**Status:** PENDING
+**Status:** FAIL
 
-**Description:** Runs basic_workflow_agent.py and validates expected behavior.
+**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 120s).
+
+**Result:** Timed out after 120s. DEBUG ********************** TOOL METRICS **********************
 
 ---
 
 ### workflow_agent_with_condition.py
 
-**Status:** PENDING
+**Status:** PASS
 
-**Description:** Runs workflow_agent_with_condition.py and validates expected behavior.
+**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 120s).
+
+**Result:** Executed successfully. Completed in 13.5s
 
 ---
-

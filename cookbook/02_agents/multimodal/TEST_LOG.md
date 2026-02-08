@@ -1,23 +1,16 @@
-# TEST_LOG
-Generated: 2026-02-07 23:53:42
+# TEST LOG
 
-### check_cookbook_pattern.py
+Generated: 2026-02-08 15:41 UTC
 
-**Status:** PASS
-
-**Description:** Ran `.venvs/demo/bin/python cookbook/scripts/check_cookbook_pattern.py --base-dir cookbook/02_agents/multimodal`.
-
-**Result:** Structure validation passed with no violations (checked 10 file(s)).
-
----
+Pattern Check: Checked 10 file(s) in /Users/ab/conductor/workspaces/agno/colombo/cookbook/02_agents/multimodal. Violations: 0
 
 ### audio_input_output.py
 
 **Status:** PASS
 
-**Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/multimodal/audio_input_output.py`.
+**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
 
-**Result:** Example completed successfully. (exit code 0, ~7.23s).
+**Result:** Completed successfully in 7s.
 
 ---
 
@@ -25,9 +18,9 @@ Generated: 2026-02-07 23:53:42
 
 **Status:** PASS
 
-**Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/multimodal/audio_sentiment_analysis.py`.
+**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
 
-**Result:** Example completed successfully. (exit code 0, ~16.11s).
+**Result:** Completed successfully in 18s.
 
 ---
 
@@ -35,9 +28,9 @@ Generated: 2026-02-07 23:53:42
 
 **Status:** PASS
 
-**Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/multimodal/audio_streaming.py`.
+**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
 
-**Result:** Example completed successfully. (exit code 0, ~4.28s).
+**Result:** Completed successfully in 4s.
 
 ---
 
@@ -45,9 +38,9 @@ Generated: 2026-02-07 23:53:42
 
 **Status:** PASS
 
-**Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/multimodal/audio_to_text.py`.
+**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
 
-**Result:** Example completed successfully. (exit code 0, ~6.69s).
+**Result:** Completed successfully in 9s.
 
 ---
 
@@ -55,9 +48,9 @@ Generated: 2026-02-07 23:53:42
 
 **Status:** PASS
 
-**Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/multimodal/image_to_audio.py`.
+**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
 
-**Result:** Example completed successfully. (exit code 0, ~6.02s).
+**Result:** Completed successfully in 12s.
 
 ---
 
@@ -65,9 +58,9 @@ Generated: 2026-02-07 23:53:42
 
 **Status:** FAIL
 
-**Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/multimodal/image_to_image.py`.
+**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
 
-**Result:** Failed with exit code 1. ImportError: `fal_client` not installed. Please install using `pip install fal-client`
+**Result:** Failed with import dependency error: `fal_client` not installed. Please install using `pip install fal-client`
 
 ---
 
@@ -75,9 +68,9 @@ Generated: 2026-02-07 23:53:42
 
 **Status:** PASS
 
-**Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/multimodal/image_to_structured_output.py`.
+**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
 
-**Result:** Example completed successfully. (exit code 0, ~6.27s).
+**Result:** Completed successfully in 8s.
 
 ---
 
@@ -85,9 +78,9 @@ Generated: 2026-02-07 23:53:42
 
 **Status:** PASS
 
-**Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/multimodal/image_to_text.py`.
+**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
 
-**Result:** Example completed successfully. (exit code 0, ~1.52s).
+**Result:** Completed successfully in 2s.
 
 ---
 
@@ -95,9 +88,9 @@ Generated: 2026-02-07 23:53:42
 
 **Status:** PASS
 
-**Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/multimodal/media_input_for_tool.py`.
+**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
 
-**Result:** Example completed successfully. (exit code 0, ~8.49s).
+**Result:** Completed successfully in 9s.
 
 ---
 
@@ -105,8 +98,9 @@ Generated: 2026-02-07 23:53:42
 
 **Status:** FAIL
 
-**Description:** Ran `.venvs/demo/bin/python cookbook/02_agents/multimodal/video_caption.py`.
+**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
 
-**Result:** Failed with exit code 1. ImportError: `moviepy` not installed. Please install using `pip install moviepy ffmpeg`
+**Result:** Failed with import dependency error: `moviepy` not installed. Please install using `pip install moviepy ffmpeg`
 
 ---
+

@@ -1,4 +1,5 @@
 """Router with CEL expression: route from additional_data field.
+=============================================================
 
 Uses additional_data.route to let the caller specify which step
 to run, useful when the routing decision is made upstream (e.g. UI).
@@ -12,6 +13,9 @@ from agno.models.openai import OpenAIChat
 from agno.workflow import CEL_AVAILABLE, Step, Workflow
 from agno.workflow.router import Router
 
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
 if not CEL_AVAILABLE:
     print("CEL is not available. Install with: pip install cel-python")
     exit(1)

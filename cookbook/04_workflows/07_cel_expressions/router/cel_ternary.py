@@ -1,4 +1,5 @@
 """Router with CEL expression: ternary operator on input content.
+==============================================================
 
 Uses a CEL ternary to pick between two steps based on whether
 the input mentions "video" or not.
@@ -12,6 +13,9 @@ from agno.models.openai import OpenAIChat
 from agno.workflow import CEL_AVAILABLE, Step, Workflow
 from agno.workflow.router import Router
 
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
 if not CEL_AVAILABLE:
     print("CEL is not available. Install with: pip install cel-python")
     exit(1)

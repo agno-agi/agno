@@ -1,4 +1,5 @@
 """Condition with CEL expression: branching on session_state.
+==========================================================
 
 Uses session_state.retry_count to implement retry logic.
 Runs the workflow multiple times to show the counter incrementing
@@ -19,6 +20,9 @@ from agno.workflow import (
     Workflow,
 )
 
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
 if not CEL_AVAILABLE:
     print("CEL is not available. Install with: pip install cel-python")
     exit(1)

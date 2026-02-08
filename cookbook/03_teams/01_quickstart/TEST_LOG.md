@@ -1,6 +1,6 @@
 # Test Log: 01_quickstart
 
-> Updated: 2026-02-08 00:52:28 
+> Updated: 2026-02-08 15:49:52
 
 ## Pattern Check
 
@@ -16,7 +16,7 @@
 
 **Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/01_quickstart/01_basic_coordination.py`.
 
-**Result:** Exited with code 1 in 0.83s. Tail: File "/Users/ab/conductor/workspaces/agno/colombo/libs/agno/agno/tools/newspaper4k.py", line 10, in <module> | raise ImportError("`newspaper4k` not installed. Please run `pip install newspaper4k lxml_html_clean`.") | ImportError: `newspaper4k` not installed. Please run `pip install newspaper4k lxml_html_clean`.
+**Result:** Exited with code 1. Tail: ols.newspaper4k import Newspaper4kTools |   File "/Users/ab/conductor/workspaces/agno/colombo/libs/agno/agno/tools/newspaper4k.py", line 10, in <module> |     raise ImportError("`newspaper4k` not installed. Please run `pip install newspaper4k lxml_html_clean`.") | ImportError: `newspaper4k` not installed. Please run `pip install newspaper4k lxml_html_clean`.
 
 ---
 
@@ -26,7 +26,7 @@
 
 **Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/01_quickstart/02_respond_directly_router_team.py`.
 
-**Result:** Completed successfully (exit 0) in 24.67s. Tail: ┃ French and German. Please ask your question in one of these languages.       ┃ | ┃                                                                              ┃ | ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+**Result:** Executed successfully. Duration: 31.64s. Tail:                            ┃ | ┃ I can only answer in the following languages: English, Spanish, Japanese,    ┃ | ┃ French and German. Please ask your question in one of these languages.       ┃ | ┃                                                                              ┃ | ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
 ---
 
@@ -36,7 +36,7 @@
 
 **Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/01_quickstart/03_delegate_to_all_members.py`.
 
-**Result:** Completed successfully (exit 0) in 40.24s. Tail: ┃ community support.                                                           ┃ | ┃                                                                              ┃ | ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+**Result:** Executed successfully. Duration: 59.93s. Tail: you’re not only learning   ┃ | ┃ syntax but also developing the problem-solving abilities required in real    ┃ | ┃ coding scenarios. Happy coding!                                              ┃ | ┃                                                                              ┃ | ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
 ---
 
@@ -46,7 +46,7 @@
 
 **Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/01_quickstart/04_respond_directly_with_history.py`.
 
-**Result:** Completed successfully (exit 0) in 26.88s. Tail: ┃ regularly. Enjoy your exploration of Tokyo!                                  ┃ | ┃                                                                              ┃ | ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+**Result:** Executed successfully. Duration: 16.79s. Tail: db/sqlite/sqlite.py", line 1039, in upsert_session |     raise e |   File "/Users/ab/conductor/workspaces/agno/colombo/libs/agno/agno/db/sqlite/sqlite.py", line 998, in upsert_session |     return TeamSession.from_dict(session_raw) |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ | NameError: name 'requirements' is not defined. Did you mean: 'RunRequirement'?
 
 ---
 
@@ -56,7 +56,7 @@
 
 **Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/01_quickstart/05_team_history.py`.
 
-**Result:** Completed successfully (exit 0) in 25.31s. Tail: ┃ magia de cada experiencia vivida.                                            ┃ | ┃                                                                              ┃ | ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+**Result:** Executed successfully. Duration: 20.65s. Tail: db/sqlite/sqlite.py", line 1039, in upsert_session |     raise e |   File "/Users/ab/conductor/workspaces/agno/colombo/libs/agno/agno/db/sqlite/sqlite.py", line 998, in upsert_session |     return TeamSession.from_dict(session_raw) |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ | NameError: name 'requirements' is not defined. Did you mean: 'RunRequirement'?
 
 ---
 
@@ -66,7 +66,7 @@
 
 **Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/01_quickstart/06_history_of_members.py`.
 
-**Result:** Completed successfully (exit 0) in 14.62s. Tail: ┃ siguiente, la puerta ya no estaba, pero la llave seguía tibia en su mano.    ┃ | ┃                                                                              ┃ | ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+**Result:** Executed successfully. Duration: 14.79s. Tail: db/sqlite/sqlite.py", line 1039, in upsert_session |     raise e |   File "/Users/ab/conductor/workspaces/agno/colombo/libs/agno/agno/db/sqlite/sqlite.py", line 998, in upsert_session |     return TeamSession.from_dict(session_raw) |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ | NameError: name 'requirements' is not defined. Did you mean: 'RunRequirement'?
 
 ---
 
@@ -76,7 +76,7 @@
 
 **Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/01_quickstart/07_share_member_interactions.py`.
 
-**Result:** Completed successfully (exit 0) in 47.26s. Tail: ┃ using (SMS, authenticator app, or security key), feel free to ask!           ┃ | ┃                                                                              ┃ | ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+**Result:** Executed successfully. Duration: 35.33s. Tail: db/sqlite/sqlite.py", line 1039, in upsert_session |     raise e |   File "/Users/ab/conductor/workspaces/agno/colombo/libs/agno/agno/db/sqlite/sqlite.py", line 998, in upsert_session |     return TeamSession.from_dict(session_raw) |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ | NameError: name 'requirements' is not defined. Did you mean: 'RunRequirement'?
 
 ---
 
@@ -86,17 +86,17 @@
 
 **Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/01_quickstart/08_concurrent_member_agents.py`.
 
-**Result:** Completed successfully (exit 0) in 60.22s. Tail: DEBUG Added RunOutput to Team Session | DEBUG **** Team Run End: b37867ec-1704-4cc4-8ff8-a6b0e746868c **** | Total execution time: 59.81s
+**Result:** Executed successfully. Duration: 44.32s. Tail: DEBUG ************************  METRICS  *************************               | DEBUG ------------- OpenAI Async Response Stream End -------------               | DEBUG Added RunOutput to Team Session                                            | DEBUG **** Team Run End: 963de671-a676-44d2-b910-a0e2200106d0 ****               | Total execution time: 43.94s
 
 ---
 
 ### broadcast_mode.py
 
-**Status:** FAIL
+**Status:** PASS
 
 **Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/01_quickstart/broadcast_mode.py`.
 
-**Result:** Timed out after 90.01s. Tail: DEBUG Evaluate whether to ship a beta autopilot feature next month. Provide | recommendation (ship/delay/limited release) plus key risks, mitigations, | and tradeoffs from your perspective.
+**Result:** Executed successfully. Duration: 111.75s. Tail: agement rates, takeover    ┃ | ┃ latency outliers). Otherwise, delay until those controls are proven in       ┃ | ┃ drills (including kill-switch and incident response).                        ┃ | ┃                                                                              ┃ | ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
 ---
 
@@ -106,7 +106,7 @@
 
 **Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/01_quickstart/caching/cache_team_response.py`.
 
-**Result:** Completed successfully (exit 0) in 33.51s. Tail: ┃ practices, especially for systems requiring high performance and efficiency. ┃ | ┃                                                                              ┃ | ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+**Result:** Executed successfully. Duration: 0.8s. Tail: Completed successfully with cached team response output.
 
 ---
 
@@ -116,16 +116,16 @@
 
 **Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/01_quickstart/nested_teams.py`.
 
-**Result:** Timed out after 90.0s. Tail: assistants adoption (productivity, quality, security, licensing, privacy). | Highlight uncertainties, limitations, and contrasting results; propose | organized bullet structure.
+**Result:** Timed out before completion. Tail: e>                                                               | DEBUG =========================== user ===========================               | DEBUG Provide references/source material and best-practice bullets on startup    |       implications for adopting AI/tech initiative: benefits, risks, governance, |       metrics, rollout, security/compliance.
 
 ---
 
 ### task_mode.py
 
-**Status:** FAIL
+**Status:** PASS
 
 **Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/01_quickstart/task_mode.py`.
 
-**Result:** Timed out after 90.0s. Tail: DEBUG Create a phased checklist structure (dev complete, pre-launch, launch, | post-launch) with owners, gates, and dependencies between | engineering/QA/rollout tasks.
+**Result:** Executed successfully. Duration: 143.84s. Tail:                            ┃ | ┃     • Exit criteria: Outcome recorded (metrics, incidents, learnings);       ┃ | ┃       follow-up tickets created and prioritized.                             ┃ | ┃                                                                              ┃ | ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
 ---

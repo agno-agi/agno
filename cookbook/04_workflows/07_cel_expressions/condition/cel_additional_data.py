@@ -1,4 +1,5 @@
 """Condition with CEL expression: branching on additional_data.
+============================================================
 
 Uses additional_data.priority to route high-priority requests
 to a specialized agent.
@@ -11,6 +12,9 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.workflow import CEL_AVAILABLE, Condition, Step, Workflow
 
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
 if not CEL_AVAILABLE:
     print("CEL is not available. Install with: pip install cel-python")
     exit(1)

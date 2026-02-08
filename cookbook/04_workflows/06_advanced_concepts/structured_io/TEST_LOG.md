@@ -1,52 +1,63 @@
-# Test Log: 04_workflows/06_advanced_concepts/structured_io
+# TEST_LOG for cookbook/04_workflows/06_advanced_concepts/structured_io
 
-> Tests not yet run. Run each file and update this log.
+Generated: 2026-02-08 16:39:09
 
 ### image_input.py
 
-**Status:** PENDING
+**Status:** PASS
 
-**Description:** Runs image_input.py and validates expected behavior.
+**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
+
+**Result:** Executed successfully. Completed in 22.9s
 
 ---
 
 ### input_schema.py
 
-**Status:** PENDING
+**Status:** FAIL
 
-**Description:** Runs input_schema.py and validates expected behavior.
+**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
+
+**Result:** Timed out after 35s. DEBUG ********************** TOOL METRICS **********************
 
 ---
 
 ### pydantic_input.py
 
-**Status:** PENDING
+**Status:** FAIL
 
-**Description:** Runs pydantic_input.py and validates expected behavior.
+**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
+
+**Result:** Timed out after 35s. ddgs.exceptions.DDGSException: No results found.
 
 ---
 
 ### structured_io_agent.py
 
-**Status:** PENDING
+**Status:** PASS
 
-**Description:** Runs structured_io_agent.py and validates expected behavior.
+**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
+
+**Result:** Executed successfully. /Users/ab/conductor/workspaces/agno/colombo/cookbook/04_workflows/06_advanced_concepts/structured_io/structured_io_agent.py:65: PydanticDeprecatedSince20: `min_items` is deprecated and will be removed, use `min_length` i
 
 ---
 
 ### structured_io_function.py
 
-**Status:** PENDING
+**Status:** PASS
 
-**Description:** Runs structured_io_function.py and validates expected behavior.
+**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
+
+**Result:** Executed successfully. /Users/ab/conductor/workspaces/agno/colombo/cookbook/04_workflows/06_advanced_concepts/structured_io/structured_io_function.py:83: PydanticDeprecatedSince20: `min_items` is deprecated and will be removed, use `min_length
 
 ---
 
 ### structured_io_team.py
 
-**Status:** PENDING
+**Status:** FAIL
 
-**Description:** Runs structured_io_team.py and validates expected behavior.
+**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
+
+**Result:** Timed out after 35s. /Users/ab/conductor/workspaces/agno/colombo/cookbook/04_workflows/06_advanced_concepts/structured_io/structured_io_team.py:65: PydanticDeprecatedSince20: `min_items` is deprecated and will be removed, use `min_length` in
 
 ---
-

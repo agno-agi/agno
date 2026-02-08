@@ -1,4 +1,5 @@
 """Loop with CEL end condition: compound exit condition.
+=====================================================
 
 Combines all_success and current_iteration to stop when both
 conditions are met: all steps succeeded AND enough iterations ran.
@@ -11,6 +12,9 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.workflow import CEL_AVAILABLE, Loop, Step, Workflow
 
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
 if not CEL_AVAILABLE:
     print("CEL is not available. Install with: pip install cel-python")
     exit(1)

@@ -1,13 +1,7 @@
-# Prompt to test: `cookbook/09_evals`
-
-Use this prompt with an AI coding agent to test and validate the evals cookbook.
-
----
-
 Goal: Thoroughly test and validate `cookbook/09_evals` so it aligns with our cookbook standards.
 
 Context files (read these first):
-- `CLAUDE.md` — Project conventions, virtual environments, testing workflow
+- `AGENTS.md` — Project conventions, virtual environments, testing workflow
 - `cookbook/STYLE_GUIDE.md` — Python file structure rules
 
 Environment:

@@ -1,6 +1,6 @@
 # Test Log: context_compression
 
-> Updated: 2026-02-08 00:52:28 
+> Updated: 2026-02-08 15:49:52
 
 ## Pattern Check
 
@@ -16,7 +16,7 @@
 
 **Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/context_compression/tool_call_compression.py`.
 
-**Result:** Exited with code 1 in 0.7s. Tail: File "/Users/ab/conductor/workspaces/agno/colombo/libs/agno/agno/models/aws/bedrock.py", line 22, in <module> | raise ImportError("`boto3` not installed. Please install using `pip install boto3`") | ImportError: `boto3` not installed. Please install using `pip install boto3`
+**Result:** Exited with code 1. Tail: y", line 1, in <module> |     from agno.models.aws.bedrock import AwsBedrock |   File "/Users/ab/conductor/workspaces/agno/colombo/libs/agno/agno/models/aws/bedrock.py", line 22, in <module> |     raise ImportError("`boto3` not installed. Please install using `pip install boto3`") | ImportError: `boto3` not installed. Please install using `pip install boto3`
 
 ---
 
@@ -26,6 +26,6 @@
 
 **Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/context_compression/tool_call_compression_with_manager.py`.
 
-**Result:** Exited with code 1 in 0.48s. Tail: File "/Users/ab/conductor/workspaces/agno/colombo/libs/agno/agno/models/aws/bedrock.py", line 22, in <module> | raise ImportError("`boto3` not installed. Please install using `pip install boto3`") | ImportError: `boto3` not installed. Please install using `pip install boto3`
+**Result:** Exited with code 1. Tail: y", line 1, in <module> |     from agno.models.aws.bedrock import AwsBedrock |   File "/Users/ab/conductor/workspaces/agno/colombo/libs/agno/agno/models/aws/bedrock.py", line 22, in <module> |     raise ImportError("`boto3` not installed. Please install using `pip install boto3`") | ImportError: `boto3` not installed. Please install using `pip install boto3`
 
 ---
