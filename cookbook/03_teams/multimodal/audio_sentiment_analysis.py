@@ -1,10 +1,22 @@
+"""
+Audio Sentiment Analysis
+========================
+
+Demonstrates team-based transcription and sentiment analysis for audio conversations.
+"""
+
 import requests
+
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.media import Audio
 from agno.models.google import Gemini
 from agno.team import Team
 
+
+# ---------------------------------------------------------------------------
+# Create Members
+# ---------------------------------------------------------------------------
 transcription_agent = Agent(
     name="Audio Transcriber",
     role="Transcribe audio conversations accurately",
@@ -26,7 +38,9 @@ sentiment_analyst = Agent(
     ],
 )
 
-# Create a team for collaborative audio sentiment analysis
+# ---------------------------------------------------------------------------
+# Create Team
+# ---------------------------------------------------------------------------
 sentiment_team = Team(
     name="Audio Sentiment Team",
     members=[transcription_agent, sentiment_analyst],
@@ -44,18 +58,21 @@ sentiment_team = Team(
     ),
 )
 
-url = "https://agno-public.s3.amazonaws.com/demo_data/sample_conversation.wav"
+# ---------------------------------------------------------------------------
+# Run Team
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    url = "https://agno-public.s3.amazonaws.com/demo_data/sample_conversation.wav"
+    response = requests.get(url)
+    audio_content = response.content
 
-response = requests.get(url)
-audio_content = response.content
+    sentiment_team.print_response(
+        "Give a sentiment analysis of this audio conversation. Use speaker A, speaker B to identify speakers.",
+        audio=[Audio(content=audio_content)],
+        stream=True,
+    )
 
-sentiment_team.print_response(
-    "Give a sentiment analysis of this audio conversation. Use speaker A, speaker B to identify speakers.",
-    audio=[Audio(content=audio_content)],
-    stream=True,
-)
-
-sentiment_team.print_response(
-    "What else can you tell me about this audio conversation?",
-    stream=True,
-)
+    sentiment_team.print_response(
+        "What else can you tell me about this audio conversation?",
+        stream=True,
+    )

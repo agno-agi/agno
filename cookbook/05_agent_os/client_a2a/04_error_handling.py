@@ -19,6 +19,11 @@ from agno.exceptions import RemoteServerUnavailableError
 from httpx import HTTPStatusError
 
 
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
+
+
 async def handle_http_error():
     """Handle case when agent doesn't exist (404)."""
     print("=" * 60)
@@ -119,6 +124,10 @@ async def main():
     await handle_timeout()
     await comprehensive_error_handling()
 
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     asyncio.run(main())

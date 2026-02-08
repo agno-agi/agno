@@ -1,9 +1,20 @@
+"""
+File Analyst
+============
+
+Demonstrates file analyst.
+"""
+
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.anthropic import Claude
 from agno.os.app import AgentOS
 from agno.os.interfaces.slack import Slack
 from agno.tools.slack import SlackTools
+
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
 
 agent_db = SqliteDb(session_table="agent_sessions", db_file="tmp/file_analyst.db")
 
@@ -43,6 +54,10 @@ agent_os = AgentOS(
     ],
 )
 app = agent_os.get_app()
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     agent_os.serve(app="file_analyst:app", reload=True)

@@ -1,15 +1,19 @@
+# Test Log: scheduler
+
+> Tests not yet run. Run each file and update this log.
+
 ### basic_schedule.py
 
-**Status:** NOT TESTED (requires running AgentOS server + Postgres + OpenAI API key)
+**Status:** PENDING
 
-**Description:** Starts an AgentOS with scheduler enabled and a single agent. Schedules are managed via REST API.
+**Description:** Basic scheduled agent run.
 
 ---
 
 ### schedule_management.py
 
-**Status:** NOT TESTED (requires running basic_schedule.py server first)
+**Status:** PENDING
 
-**Description:** Demonstrates full CRUD lifecycle for schedules via the REST API: create, list, update, enable/disable, trigger, view runs, delete.
+**Description:** Schedule management via REST API.
 
 ---
