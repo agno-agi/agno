@@ -318,6 +318,8 @@ def attach_routes(
         agent = get_agent_by_id(id, agents, create_fresh=True)
         if not agent:
             raise HTTPException(status_code=404, detail="Agent not found")
+        if isinstance(agent, RemoteAgent):
+            raise HTTPException(status_code=400, detail="Task cancellation is not supported for remote agents")
 
         params = request_body.get("params", {})
         task_id = params.get("id")  # = run_id
@@ -329,7 +331,7 @@ def attach_routes(
                 "error": {"code": -32602, "message": "Missing required parameter: id (task_id)"},
             }
 
-        cancelled = await Agent.acancel_run(task_id)
+        cancelled = await agent.acancel_run(task_id)
         task_state = TaskState.canceled if cancelled else TaskState.failed
         return {
             "jsonrpc": "2.0",

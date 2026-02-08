@@ -455,11 +455,9 @@ def get_agent_router(
         run_id: str = Path(..., description="Run ID"),
         session_id: str = Query(..., description="Session ID (returned in the background run response)"),
         user_id: Optional[str] = Query(None, description="User ID"),
-        version: Optional[str] = Query(None, description="Agent version"),
+        version: Optional[int] = Query(None, description="Agent version"),
     ):
-        agent = get_agent_by_id(
-            agent_id, os.agents, os.db, registry, version=int(version) if version else None, create_fresh=True
-        )
+        agent = get_agent_by_id(agent_id, os.agents, os.db, registry, version=version, create_fresh=True)
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
         if isinstance(agent, RemoteAgent):
