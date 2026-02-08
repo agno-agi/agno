@@ -87,4 +87,4 @@ After each test, update `cookbook/05_agent_os/scheduler/TEST_LOG.md` with:
 ## Known Issues
 
 1. SQLite claim is best-effort, not multi-process safe (use PostgreSQL in production)
-2. The scheduler requires `enable_scheduler=True` on the `AgentOS` constructor
+2. The scheduler requires `scheduler=True` on the `AgentOS` constructor

@@ -58,7 +58,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         spans_table: Optional[str] = None,
         versions_table: Optional[str] = None,
         learnings_table: Optional[str] = None,
-        schedule_table: Optional[str] = None,
+        schedules_table: Optional[str] = None,
         schedule_runs_table: Optional[str] = None,
         create_schema: bool = True,
     ):
@@ -114,7 +114,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             spans_table=spans_table,
             versions_table=versions_table,
             learnings_table=learnings_table,
-            schedule_table=schedule_table,
+            schedules_table=schedules_table,
             schedule_runs_table=schedule_runs_table,
         )
 
@@ -172,7 +172,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             (self.knowledge_table_name, "knowledge"),
             (self.versions_table_name, "versions"),
             (self.learnings_table_name, "learnings"),
-            (self.schedule_table_name, "schedules"),
+            (self.schedules_table_name, "schedules"),
             (self.schedule_runs_table_name, "schedule_runs"),
         ]
 
@@ -374,12 +374,12 @@ class AsyncPostgresDb(AsyncBaseDb):
             return self.learnings_table
 
         if table_type == "schedules":
-            self.schedule_table = await self._get_or_create_table(
-                table_name=self.schedule_table_name,
+            self.schedules_table = await self._get_or_create_table(
+                table_name=self.schedules_table_name,
                 table_type="schedules",
                 create_table_if_not_found=create_table_if_not_found,
             )
-            return self.schedule_table
+            return self.schedules_table
 
         if table_type == "schedule_runs":
             self.schedule_runs_table = await self._get_or_create_table(
@@ -3159,14 +3159,14 @@ class AsyncPostgresDb(AsyncBaseDb):
     async def delete_schedule(self, schedule_id: str) -> bool:
         try:
             runs_table = await self._get_table(table_type="schedule_runs")
-            schedule_table = await self._get_table(table_type="schedules")
-            if schedule_table is None:
+            schedules_table = await self._get_table(table_type="schedules")
+            if schedules_table is None:
                 return False
             async with self.async_session_factory() as sess:
                 async with sess.begin():
                     if runs_table is not None:
                         await sess.execute(runs_table.delete().where(runs_table.c.schedule_id == schedule_id))
-                    result = await sess.execute(schedule_table.delete().where(schedule_table.c.id == schedule_id))
+                    result = await sess.execute(schedules_table.delete().where(schedules_table.c.id == schedule_id))
                     return result.rowcount > 0  # type: ignore
         except Exception as e:
             log_warning(f"Error deleting schedule: {e}")
