@@ -80,7 +80,7 @@ After each test, update `cookbook/05_agent_os/scheduler/TEST_LOG.md` with:
 - The scheduler polls the database at a configurable interval (default: 15s)
 - Schedules are claimed atomically to prevent duplicate execution
 - The executor calls endpoints on the AgentOS server using an internal service token
-- Run endpoints (`/agents/*/runs`, `/teams/*/runs`) are consumed as SSE streams
+- Run endpoints (`/agents/*/runs`, `/teams/*/runs`) are called with `background=true` and the executor polls for completion
 
 ---
 
