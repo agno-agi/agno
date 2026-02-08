@@ -39,9 +39,18 @@ def raise_if_async_tools(agent: Agent) -> None:
     if agent.tools is None:
         return
 
+    # Skip check if tools is a callable factory (not resolved yet)
+    if callable(agent.tools) and not isinstance(agent.tools, (Toolkit, Function)):
+        return
+
+    _raise_if_async_tools_in_list(agent.tools)  # type: ignore[arg-type]
+
+
+def _raise_if_async_tools_in_list(tools: List[Union[Toolkit, Callable, Function, Dict]]) -> None:
+    """Raise an exception if any tools in the list contain async functions."""
     from inspect import iscoroutinefunction
 
-    for tool in agent.tools:
+    for tool in tools:
         if isinstance(tool, Toolkit):
             for func in tool.functions:
                 if iscoroutinefunction(tool.functions[func].entrypoint):
@@ -71,17 +80,28 @@ def get_tools(
     user_id: Optional[str] = None,
 ) -> List[Union[Toolkit, Callable, Function, Dict]]:
     from agno.agent import _default_tools, _init
+    from agno.utils.callables import (
+        get_resolved_knowledge,
+        get_resolved_tools,
+        resolve_callable_knowledge,
+        resolve_callable_tools,
+    )
 
     agent_tools: List[Union[Toolkit, Callable, Function, Dict]] = []
+
+    # Resolve callable factories for tools and knowledge
+    resolve_callable_tools(agent, run_context)
+    resolve_callable_knowledge(agent, run_context)
 
     # Connect tools that require connection management
     _init.connect_connectable_tools(agent)
 
-    # Add provided tools
-    if agent.tools is not None:
+    # Add provided tools (resolved from factory or static)
+    resolved_tools = get_resolved_tools(agent, run_context)
+    if resolved_tools:
         # If not running in async mode, raise if any tool is async
-        raise_if_async_tools(agent)
-        agent_tools.extend(agent.tools)
+        _raise_if_async_tools_in_list(resolved_tools)
+        agent_tools.extend(resolved_tools)
 
     # Add tools for accessing memory
     if agent.read_chat_history:
@@ -118,10 +138,11 @@ def get_tools(
             )
         )
 
-    # Add tools for accessing knowledge
-    if agent.knowledge is not None and agent.search_knowledge:
+    # Add tools for accessing knowledge (use resolved knowledge if available)
+    resolved_knowledge = get_resolved_knowledge(agent, run_context)
+    if resolved_knowledge is not None and agent.search_knowledge:
         # Use knowledge protocol's get_tools method
-        get_tools_fn = getattr(agent.knowledge, "get_tools", None)
+        get_tools_fn = getattr(resolved_knowledge, "get_tools", None)
         if callable(get_tools_fn):
             knowledge_tools = get_tools_fn(
                 run_response=run_response,
@@ -143,7 +164,7 @@ def get_tools(
             )
         )
 
-    if agent.knowledge is not None and agent.update_knowledge:
+    if resolved_knowledge is not None and agent.update_knowledge:
         agent_tools.append(agent.add_to_knowledge)
 
     # Add tools for accessing skills
@@ -162,8 +183,18 @@ async def aget_tools(
     check_mcp_tools: bool = True,
 ) -> List[Union[Toolkit, Callable, Function, Dict]]:
     from agno.agent import _default_tools, _init
+    from agno.utils.callables import (
+        aresolve_callable_knowledge,
+        aresolve_callable_tools,
+        get_resolved_knowledge,
+        get_resolved_tools,
+    )
 
     agent_tools: List[Union[Toolkit, Callable, Function, Dict]] = []
+
+    # Resolve callable factories for tools and knowledge
+    await aresolve_callable_tools(agent, run_context)
+    await aresolve_callable_knowledge(agent, run_context)
 
     # Connect tools that require connection management
     _init.connect_connectable_tools(agent)
@@ -171,9 +202,10 @@ async def aget_tools(
     # Connect MCP tools
     await _init.connect_mcp_tools(agent)
 
-    # Add provided tools
-    if agent.tools is not None:
-        for tool in agent.tools:
+    # Add provided tools (resolved from factory or static)
+    resolved_tools = get_resolved_tools(agent, run_context)
+    if resolved_tools:
+        for tool in resolved_tools:
             # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
             is_mcp_tool = hasattr(type(tool), "__mro__") and any(
                 c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
@@ -237,11 +269,12 @@ async def aget_tools(
             )
         )
 
-    # Add tools for accessing knowledge
-    if agent.knowledge is not None and agent.search_knowledge:
+    # Add tools for accessing knowledge (use resolved knowledge if available)
+    resolved_knowledge = get_resolved_knowledge(agent, run_context)
+    if resolved_knowledge is not None and agent.search_knowledge:
         # Use knowledge protocol's get_tools method
-        aget_tools_fn = getattr(agent.knowledge, "aget_tools", None)
-        get_tools_fn = getattr(agent.knowledge, "get_tools", None)
+        aget_tools_fn = getattr(resolved_knowledge, "aget_tools", None)
+        _get_tools_fn = getattr(resolved_knowledge, "get_tools", None)
 
         if callable(aget_tools_fn):
             knowledge_tools = await aget_tools_fn(
@@ -253,8 +286,8 @@ async def aget_tools(
                 agent=agent,
             )
             agent_tools.extend(knowledge_tools)
-        elif callable(get_tools_fn):
-            knowledge_tools = get_tools_fn(
+        elif callable(_get_tools_fn):
+            knowledge_tools = _get_tools_fn(
                 run_response=run_response,
                 run_context=run_context,
                 knowledge_filters=run_context.knowledge_filters,
@@ -274,7 +307,7 @@ async def aget_tools(
             )
         )
 
-    if agent.knowledge is not None and agent.update_knowledge:
+    if resolved_knowledge is not None and agent.update_knowledge:
         agent_tools.append(agent.add_to_knowledge)
 
     # Add tools for accessing skills

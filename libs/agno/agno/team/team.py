@@ -75,7 +75,7 @@ class Team:
     A class representing a team of agents.
     """
 
-    members: List[Union[Agent, "Team"]]
+    members: Union[List[Union[Agent, "Team"]], Callable[..., List[Union[Agent, "Team"]]]]
 
     # Model for this Team
     model: Optional[Model] = None
@@ -200,7 +200,7 @@ class Team:
     add_dependencies_to_context: bool = False
 
     # --- Agent Knowledge ---
-    knowledge: Optional[KnowledgeProtocol] = None
+    knowledge: Optional[Union[KnowledgeProtocol, Callable[..., KnowledgeProtocol]]] = None
     # Add knowledge_filters to the Agent class attributes
     knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
     # Let the agent choose the knowledge filters
@@ -236,9 +236,14 @@ class Team:
     store_history_messages: bool = False
 
     # --- Team Tools ---
-    # A list of tools provided to the Model.
+    # A list of tools provided to the Model, or a callable factory that returns tools at runtime.
     # Tools are functions the model may generate JSON inputs for.
-    tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]] = None
+    tools: Optional[
+        Union[
+            List[Union[Toolkit, Callable, Function, Dict]],
+            Callable[..., List[Union[Toolkit, Callable, Function, Dict]]],
+        ]
+    ] = None
 
     # Controls which (if any) tool is called by the team model.
     # "none" means the model will not call a tool and instead generates a message.
@@ -251,6 +256,12 @@ class Team:
     tool_call_limit: Optional[int] = None
     # A list of hooks to be called before and after the tool call
     tool_hooks: Optional[List[Callable]] = None
+
+    # --- Runtime Callable Caching ---
+    cache_callables: bool = True
+    callable_tools_cache_key: Optional[Callable[..., Optional[str]]] = None
+    callable_knowledge_cache_key: Optional[Callable[..., Optional[str]]] = None
+    callable_members_cache_key: Optional[Callable[..., Optional[str]]] = None
 
     # --- Team Hooks ---
     # Functions called right after team session is loaded, before processing starts
@@ -392,10 +403,14 @@ class Team:
     _learning: Optional[LearningMachine] = None
     # Lazy-initialized shared thread pool executor for background tasks
     _background_executor: Optional[Any] = None
+    # Callable factory caches
+    _callable_tools_cache: Dict[str, List[Any]] = None  # type: ignore[assignment]
+    _callable_knowledge_cache: Dict[str, Any] = None  # type: ignore[assignment]
+    _callable_members_cache: Dict[str, List[Any]] = None  # type: ignore[assignment]
 
     def __init__(
         self,
-        members: List[Union[Agent, "Team"]],
+        members: Union[List[Union[Agent, "Team"]], Callable[..., List[Union[Agent, "Team"]]]],
         id: Optional[str] = None,
         model: Optional[Union[Model, str]] = None,
         name: Optional[str] = None,
@@ -435,7 +450,7 @@ class Team:
         additional_input: Optional[List[Union[str, Dict, BaseModel, Message]]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: bool = False,
-        knowledge: Optional[KnowledgeProtocol] = None,
+        knowledge: Optional[Union[KnowledgeProtocol, Callable[..., KnowledgeProtocol]]] = None,
         knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         add_knowledge_to_context: bool = False,
         enable_agentic_knowledge_filters: Optional[bool] = False,
@@ -455,10 +470,19 @@ class Team:
         num_history_runs: Optional[int] = None,
         num_history_messages: Optional[int] = None,
         max_tool_calls_from_history: Optional[int] = None,
-        tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]] = None,
+        tools: Optional[
+            Union[
+                List[Union[Toolkit, Callable, Function, Dict]],
+                Callable[..., List[Union[Toolkit, Callable, Function, Dict]]],
+            ]
+        ] = None,
         tool_call_limit: Optional[int] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_hooks: Optional[List[Callable]] = None,
+        cache_callables: bool = True,
+        callable_tools_cache_key: Optional[Callable[..., Optional[str]]] = None,
+        callable_knowledge_cache_key: Optional[Callable[..., Optional[str]]] = None,
+        callable_members_cache_key: Optional[Callable[..., Optional[str]]] = None,
         pre_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, BaseEval]]] = None,
         post_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, BaseEval]]] = None,
         input_schema: Optional[Type[BaseModel]] = None,
@@ -568,6 +592,10 @@ class Team:
             tool_call_limit=tool_call_limit,
             tool_choice=tool_choice,
             tool_hooks=tool_hooks,
+            cache_callables=cache_callables,
+            callable_tools_cache_key=callable_tools_cache_key,
+            callable_knowledge_cache_key=callable_knowledge_cache_key,
+            callable_members_cache_key=callable_members_cache_key,
             pre_hooks=pre_hooks,
             post_hooks=post_hooks,
             input_schema=input_schema,
@@ -693,8 +721,32 @@ class Team:
     def add_tool(self, tool: Union[Toolkit, Callable, Function, Dict]):
         return _init.add_tool(self, tool=tool)
 
-    def set_tools(self, tools: List[Union[Toolkit, Callable, Function, Dict]]):
+    def set_tools(
+        self,
+        tools: Union[
+            List[Union[Toolkit, Callable, Function, Dict]],
+            Callable[..., List[Union[Toolkit, Callable, Function, Dict]]],
+        ],
+    ):
         return _init.set_tools(self, tools=tools)
+
+    def clear_callable_cache(
+        self,
+        kind: Optional[Literal["tools", "knowledge", "members"]] = None,
+        close: bool = False,
+    ) -> None:
+        from agno.utils.callables import clear_callable_cache
+
+        clear_callable_cache(self, kind=kind, close=close)
+
+    async def aclear_callable_cache(
+        self,
+        kind: Optional[Literal["tools", "knowledge", "members"]] = None,
+        close: bool = False,
+    ) -> None:
+        from agno.utils.callables import aclear_callable_cache
+
+        await aclear_callable_cache(self, kind=kind, close=close)
 
     @staticmethod
     def cancel_run(run_id: str) -> bool:
@@ -1944,8 +1996,8 @@ class Team:
             check_mcp_tools=check_mcp_tools,
         )
 
-    def get_members_system_message_content(self, indent: int = 0) -> str:
-        return _messages.get_members_system_message_content(self, indent=indent)
+    def get_members_system_message_content(self, indent: int = 0, run_context: Optional[RunContext] = None) -> str:
+        return _messages.get_members_system_message_content(self, indent=indent, run_context=run_context)
 
     def get_system_message(
         self,
@@ -2201,8 +2253,13 @@ class Team:
             self, team_run_context=team_run_context, images=images, videos=videos, audio=audio, files=files
         )
 
-    def _find_member_by_id(self, member_id: str) -> Optional[Tuple[int, Union[Agent, "Team"]]]:
-        return _tools._find_member_by_id(self, member_id=member_id)
+    async def _aresolve_callable_resources(self, run_context: RunContext) -> None:
+        return await _tools._aresolve_callable_resources(self, run_context=run_context)
+
+    def _find_member_by_id(
+        self, member_id: str, run_context: Optional[RunContext] = None
+    ) -> Optional[Tuple[int, Union[Agent, "Team"]]]:
+        return _tools._find_member_by_id(self, member_id=member_id, run_context=run_context)
 
     def _get_delegate_task_function(
         self,
