@@ -195,6 +195,22 @@ class TestTeamToDict:
         assert "retries" not in config  # defaults to 0
         assert "respond_directly" not in config  # defaults to False
 
+    def test_to_dict_with_legacy_input_flag_includes_transition_keys(self):
+        """Legacy-only config should serialize both old and new input flags."""
+        team = Team(id="legacy-input-team", members=[], determine_input_for_members=False)
+        config = team.to_dict()
+
+        assert config["pass_user_input_to_members"] is True
+        assert config["determine_input_for_members"] is False
+
+    def test_to_dict_with_new_input_flag_includes_transition_keys(self):
+        """New config should serialize both new and legacy input flags during migration."""
+        team = Team(id="new-input-team", members=[], pass_user_input_to_members=False)
+        config = team.to_dict()
+
+        assert config["pass_user_input_to_members"] is False
+        assert config["determine_input_for_members"] is True
+
     def test_store_history_messages_default_is_false(self):
         """Test store_history_messages defaults to False and is omitted from config."""
         team = Team(id="history-default-team", members=[])
@@ -214,6 +230,7 @@ class TestTeamToDict:
         config = team.to_dict()
 
         assert config["add_search_knowledge_instructions"] is False
+
     def test_to_dict_with_db(self, basic_team, mock_db):
         """Test to_dict includes database configuration."""
         basic_team.db = mock_db
@@ -412,6 +429,73 @@ class TestTeamFromDict:
         assert reconstructed.markdown == team_with_settings.markdown
         assert reconstructed.debug_mode == team_with_settings.debug_mode
         assert reconstructed.retries == team_with_settings.retries
+
+    def test_from_dict_old_input_flag_only(self):
+        """Legacy determine_input_for_members should keep legacy behavior."""
+        team = Team.from_dict({"id": "legacy-only", "determine_input_for_members": False})
+
+        assert team.pass_user_input_to_members is None
+        assert team.determine_input_for_members is False
+        assert team.effective_pass_user_input_to_members is True
+
+    def test_from_dict_new_input_flag_only(self):
+        """New pass_user_input_to_members should work without legacy key."""
+        team = Team.from_dict({"id": "new-only", "pass_user_input_to_members": True})
+
+        assert team.pass_user_input_to_members is True
+        assert team.determine_input_for_members is True
+        assert team.effective_pass_user_input_to_members is True
+
+    def test_from_dict_both_input_flags_matching_no_warning(self):
+        with patch("agno.team._init.log_warning") as mock_log_warning:
+            team = Team.from_dict(
+                {
+                    "id": "matching-both",
+                    "pass_user_input_to_members": True,
+                    "determine_input_for_members": False,
+                }
+            )
+
+        assert team.effective_pass_user_input_to_members is True
+        mock_log_warning.assert_not_called()
+
+    def test_from_dict_both_input_flags_conflicting_new_wins_with_warning(self):
+        with patch("agno.team._init.log_warning") as mock_log_warning:
+            team = Team.from_dict(
+                {
+                    "id": "conflicting-both",
+                    "pass_user_input_to_members": True,
+                    "determine_input_for_members": True,
+                }
+            )
+
+        assert team.effective_pass_user_input_to_members is True
+        mock_log_warning.assert_called_once()
+        assert "`pass_user_input_to_members` takes precedence" in mock_log_warning.call_args.args[0]
+
+    @pytest.mark.parametrize(
+        "config,expected_effective",
+        [
+            ({"id": "roundtrip-old", "determine_input_for_members": False}, True),
+            ({"id": "roundtrip-new", "pass_user_input_to_members": True}, True),
+            (
+                {
+                    "id": "roundtrip-mixed",
+                    "pass_user_input_to_members": False,
+                    "determine_input_for_members": False,
+                },
+                False,
+            ),
+        ],
+    )
+    def test_from_dict_to_dict_roundtrip_input_flag_compatibility(self, config, expected_effective):
+        team = Team.from_dict(config)
+        serialized = team.to_dict()
+        reconstructed = Team.from_dict(serialized)
+
+        assert serialized["pass_user_input_to_members"] is expected_effective
+        assert serialized["determine_input_for_members"] is (not expected_effective)
+        assert reconstructed.effective_pass_user_input_to_members is expected_effective
 
 
 # =============================================================================
