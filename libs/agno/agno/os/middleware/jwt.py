@@ -1,6 +1,7 @@
 """JWT Middleware for AgentOS - JWT Authentication with optional RBAC."""
 
 import fnmatch
+import hmac
 import json
 import re
 from enum import Enum
@@ -683,6 +684,45 @@ class JWTMiddleware(BaseHTTPMiddleware):
         if not token:
             error_msg = self._get_missing_token_error_message()
             return self._create_error_response(401, error_msg, origin, cors_allowed_origins)
+
+        # Check for internal service token (used by scheduler executor)
+        internal_token = getattr(request.app.state, "internal_service_token", None)
+        if internal_token and hmac.compare_digest(token, internal_token):
+            request.state.authenticated = True
+            request.state.user_id = "__scheduler__"
+            request.state.session_id = None
+            internal_scopes = [
+                "agents:read",
+                "agents:run",
+                "teams:read",
+                "teams:run",
+                "workflows:read",
+                "workflows:run",
+                "schedules:read",
+                "schedules:write",
+                "schedules:delete",
+            ]
+            request.state.scopes = internal_scopes
+            request.state.authorization_enabled = self.authorization or False
+
+            # Enforce RBAC for internal token (do not skip scope checks)
+            if self.authorization:
+                required_scopes = self._get_required_scopes(method, path)
+                if required_scopes:
+                    if not has_required_scopes(
+                        internal_scopes,
+                        required_scopes,
+                        admin_scope=self.admin_scope,
+                    ):
+                        log_warning(
+                            f"Internal service token denied for {method} {path}. "
+                            f"Required: {required_scopes}, Token has: {internal_scopes}"
+                        )
+                        return self._create_error_response(
+                            403, "Insufficient permissions", origin, cors_allowed_origins
+                        )
+
+            return await call_next(request)
 
         try:
             # Validate token and extract claims (with audience verification if configured)

@@ -31,7 +31,7 @@ from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
 
 try:
-    from sqlalchemy import Column, MetaData, String, Table, func, select, text
+    from sqlalchemy import Column, MetaData, String, Table, func, or_, select, text
     from sqlalchemy.dialects import sqlite
     from sqlalchemy.engine import Engine, create_engine
     from sqlalchemy.orm import scoped_session, sessionmaker
@@ -59,6 +59,8 @@ class SqliteDb(BaseDb):
         component_configs_table: Optional[str] = None,
         component_links_table: Optional[str] = None,
         learnings_table: Optional[str] = None,
+        schedule_table: Optional[str] = None,
+        schedule_runs_table: Optional[str] = None,
         id: Optional[str] = None,
     ):
         """
@@ -111,6 +113,8 @@ class SqliteDb(BaseDb):
             component_configs_table=component_configs_table,
             component_links_table=component_links_table,
             learnings_table=learnings_table,
+            schedule_table=schedule_table,
+            schedule_runs_table=schedule_runs_table,
         )
 
         _engine: Optional[Engine] = db_engine
@@ -166,6 +170,8 @@ class SqliteDb(BaseDb):
             components_table=data.get("components_table"),
             component_configs_table=data.get("component_configs_table"),
             component_links_table=data.get("component_links_table"),
+            schedule_table=data.get("schedule_table"),
+            schedule_runs_table=data.get("schedule_runs_table"),
             id=data.get("id"),
         )
 
@@ -204,6 +210,8 @@ class SqliteDb(BaseDb):
             (self.component_configs_table_name, "component_configs"),
             (self.component_links_table_name, "component_links"),
             (self.learnings_table_name, "learnings"),
+            (self.schedule_table_name, "schedules"),
+            (self.schedule_runs_table_name, "schedule_runs"),
         ]
 
         for table_name, table_type in tables_to_create:
@@ -398,6 +406,8 @@ class SqliteDb(BaseDb):
             "knowledge": self.knowledge_table_name,
             "culture": self.culture_table_name,
             "versions": self.versions_table_name,
+            "schedules": self.schedule_table_name,
+            "schedule_runs": self.schedule_runs_table_name,
         }
         return table_map.get(logical_name, logical_name)
 
@@ -518,6 +528,22 @@ class SqliteDb(BaseDb):
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.learnings_table
+
+        elif table_type == "schedules":
+            self.schedule_table = self._get_or_create_table(
+                table_name=self.schedule_table_name,
+                table_type="schedules",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.schedule_table
+
+        elif table_type == "schedule_runs":
+            self.schedule_runs_table = self._get_or_create_table(
+                table_name=self.schedule_runs_table_name,
+                table_type="schedule_runs",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.schedule_runs_table
 
         else:
             raise ValueError(f"Unknown table type: '{table_type}'")
@@ -4323,4 +4349,237 @@ class SqliteDb(BaseDb):
 
         except Exception as e:
             log_debug(f"Error getting learnings: {e}")
+            return []
+
+    # -- Scheduler methods --
+
+    def get_schedule(self, schedule_id: str) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="schedules")
+            if table is None:
+                return None
+            with self.Session() as sess:
+                stmt = select(table).where(table.c.id == schedule_id)
+                result = sess.execute(stmt).fetchone()
+                if result is None:
+                    return None
+                return dict(result._mapping)
+        except Exception as e:
+            log_warning(f"Error getting schedule: {e}")
+            return None
+
+    def get_schedule_by_name(self, name: str) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="schedules")
+            if table is None:
+                return None
+            with self.Session() as sess:
+                stmt = select(table).where(table.c.name == name)
+                result = sess.execute(stmt).fetchone()
+                if result is None:
+                    return None
+                return dict(result._mapping)
+        except Exception as e:
+            log_warning(f"Error getting schedule by name: {e}")
+            return None
+
+    def get_schedules(
+        self,
+        enabled: Optional[bool] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="schedules")
+            if table is None:
+                return []
+            with self.Session() as sess:
+                stmt = select(table)
+                if enabled is not None:
+                    stmt = stmt.where(table.c.enabled == enabled)
+                stmt = stmt.order_by(table.c.created_at.desc())
+                if limit is not None:
+                    stmt = stmt.limit(limit)
+                if offset is not None:
+                    stmt = stmt.offset(offset)
+                results = sess.execute(stmt).fetchall()
+                return [dict(row._mapping) for row in results]
+        except Exception as e:
+            log_warning(f"Error getting schedules: {e}")
+            return []
+
+    def create_schedule(self, schedule: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="schedules", create_table_if_not_found=True)
+            if table is None:
+                return None
+            with self.Session() as sess, sess.begin():
+                stmt = sqlite.insert(table).values(**schedule)
+                sess.execute(stmt)
+            return schedule
+        except Exception as e:
+            log_warning(f"Error creating schedule: {e}")
+            return None
+
+    def update_schedule(self, schedule_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="schedules")
+            if table is None:
+                return None
+            kwargs["updated_at"] = int(time.time())
+            with self.Session() as sess, sess.begin():
+                stmt = table.update().where(table.c.id == schedule_id).values(**kwargs)
+                result = sess.execute(stmt)
+                if result.rowcount == 0:
+                    return None
+            return self.get_schedule(schedule_id)
+        except Exception as e:
+            log_warning(f"Error updating schedule: {e}")
+            return None
+
+    def delete_schedule(self, schedule_id: str) -> bool:
+        try:
+            runs_table = self._get_table(table_type="schedule_runs")
+            schedule_table = self._get_table(table_type="schedules")
+            if schedule_table is None:
+                return False
+            with self.Session() as sess, sess.begin():
+                if runs_table is not None:
+                    sess.execute(runs_table.delete().where(runs_table.c.schedule_id == schedule_id))
+                result = sess.execute(schedule_table.delete().where(schedule_table.c.id == schedule_id))
+                return result.rowcount > 0
+        except Exception as e:
+            log_warning(f"Error deleting schedule: {e}")
+            return False
+
+    def claim_due_schedule(self, worker_id: str, lock_grace_seconds: int = 300) -> Optional[Dict[str, Any]]:
+        """Claim a due schedule (best-effort for SQLite, not multi-process safe).
+
+        Uses atomic UPDATE-first to avoid TOCTOU races: the eligible-row
+        lookup and the lock write happen in a single UPDATE statement so
+        concurrent callers cannot both claim the same row.
+        """
+        try:
+            table = self._get_table(table_type="schedules")
+            if table is None:
+                return None
+            now = int(time.time())
+            stale_threshold = now - lock_grace_seconds
+            with self.Session() as sess, sess.begin():
+                # Subquery picks the single best candidate row
+                candidate = (
+                    select(table.c.id)
+                    .where(table.c.enabled == True)  # noqa: E712
+                    .where(table.c.next_run_at <= now)
+                    .where(
+                        or_(
+                            table.c.locked_by == None,  # noqa: E711
+                            table.c.locked_at < stale_threshold,
+                        )
+                    )
+                    .order_by(table.c.next_run_at.asc())
+                    .limit(1)
+                ).scalar_subquery()
+
+                # Atomic UPDATE — only one writer can match this row
+                update_stmt = table.update().where(table.c.id == candidate).values(locked_by=worker_id, locked_at=now)
+                result = sess.execute(update_stmt)
+                if result.rowcount == 0:
+                    return None
+
+                # Fetch the claimed row back
+                row = sess.execute(
+                    select(table).where(table.c.locked_by == worker_id).where(table.c.locked_at == now)
+                ).fetchone()
+                if row is None:
+                    return None
+                return dict(row._mapping)
+        except Exception as e:
+            log_warning(f"Error claiming due schedule: {e}")
+            return None
+
+    def release_schedule(self, schedule_id: str, next_run_at: Optional[int] = None) -> bool:
+        try:
+            table = self._get_table(table_type="schedules")
+            if table is None:
+                return False
+            updates: Dict[str, Any] = {
+                "locked_by": None,
+                "locked_at": None,
+                "updated_at": int(time.time()),
+            }
+            if next_run_at is not None:
+                updates["next_run_at"] = next_run_at
+            with self.Session() as sess, sess.begin():
+                stmt = table.update().where(table.c.id == schedule_id).values(**updates)
+                result = sess.execute(stmt)
+                return result.rowcount > 0
+        except Exception as e:
+            log_warning(f"Error releasing schedule: {e}")
+            return False
+
+    def create_schedule_run(self, run: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="schedule_runs", create_table_if_not_found=True)
+            if table is None:
+                return None
+            with self.Session() as sess, sess.begin():
+                stmt = sqlite.insert(table).values(**run)
+                sess.execute(stmt)
+            return run
+        except Exception as e:
+            log_warning(f"Error creating schedule run: {e}")
+            return None
+
+    def update_schedule_run(self, run_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="schedule_runs")
+            if table is None:
+                return None
+            with self.Session() as sess, sess.begin():
+                stmt = table.update().where(table.c.id == run_id).values(**kwargs)
+                result = sess.execute(stmt)
+                if result.rowcount == 0:
+                    return None
+            return self.get_schedule_run(run_id)
+        except Exception as e:
+            log_warning(f"Error updating schedule run: {e}")
+            return None
+
+    def get_schedule_run(self, run_id: str) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="schedule_runs")
+            if table is None:
+                return None
+            with self.Session() as sess:
+                stmt = select(table).where(table.c.id == run_id)
+                result = sess.execute(stmt).fetchone()
+                if result is None:
+                    return None
+                return dict(result._mapping)
+        except Exception as e:
+            log_warning(f"Error getting schedule run: {e}")
+            return None
+
+    def get_schedule_runs(
+        self,
+        schedule_id: str,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="schedule_runs")
+            if table is None:
+                return []
+            with self.Session() as sess:
+                stmt = select(table).where(table.c.schedule_id == schedule_id)
+                stmt = stmt.order_by(table.c.created_at.desc())
+                if limit is not None:
+                    stmt = stmt.limit(limit)
+                if offset is not None:
+                    stmt = stmt.offset(offset)
+                results = sess.execute(stmt).fetchall()
+                return [dict(row._mapping) for row in results]
+        except Exception as e:
+            log_warning(f"Error getting schedule runs: {e}")
             return []
