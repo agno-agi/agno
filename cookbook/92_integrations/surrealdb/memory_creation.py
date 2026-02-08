@@ -1,8 +1,5 @@
 """
 SurrealDB Memory Creation
-=========================
-
-Demonstrates creating user memories from text and message histories.
 """
 
 from agno.db.surrealdb import SurrealDb

@@ -52,6 +52,7 @@ def route_by_topic(step_input: StepInput) -> Union[str, Step, List[Step]]:
         return "Business Research"
     return "General Research"
 
+
 # ---------------------------------------------------------------------------
 # Create Workflow (String Selector)
 # ---------------------------------------------------------------------------
@@ -105,6 +106,7 @@ def dynamic_selector(
         return [step_map["researcher"], step_map["writer"], step_map["reviewer"]]
     return step_choices[0]
 
+
 # ---------------------------------------------------------------------------
 # Create Workflow (step_choices)
 # ---------------------------------------------------------------------------
@@ -136,6 +138,7 @@ def nested_selector(
     if "single" in user_input:
         return step_choices[0]
     return step_choices[1]
+
 
 # ---------------------------------------------------------------------------
 # Create Workflow (Nested Choices)

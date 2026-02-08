@@ -8,13 +8,12 @@ Demonstrates parser-model assisted team output parsing into rich schemas.
 import random
 from typing import List
 
-from pydantic import BaseModel, Field
-from rich.pretty import pprint
-
 from agno.agent import Agent, RunOutput
 from agno.models.anthropic import Claude
 from agno.models.openai import OpenAIChat
 from agno.team import Team
+from pydantic import BaseModel, Field
+from rich.pretty import pprint
 
 
 class NationalParkAdventure(BaseModel):

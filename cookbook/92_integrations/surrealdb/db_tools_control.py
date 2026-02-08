@@ -1,8 +1,5 @@
 """
 SurrealDB Memory DB Tools Control
-=================================
-
-Demonstrates controlling add, update, delete, and clear memory DB operations.
 """
 
 from agno.agent.agent import Agent

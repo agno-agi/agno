@@ -9,7 +9,6 @@ from agno.db.in_memory import InMemoryDb
 from agno.models.openai import OpenAIChat
 from agno.team import Team
 
-
 # ---------------------------------------------------------------------------
 # Create Team
 # ---------------------------------------------------------------------------

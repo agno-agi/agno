@@ -14,7 +14,6 @@ from agno.utils import pprint
 from rich.console import Console
 from rich.prompt import Prompt
 
-
 # ---------------------------------------------------------------------------
 # Setup
 # ---------------------------------------------------------------------------

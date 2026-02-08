@@ -5,8 +5,6 @@ Workflow With Session Metrics
 Demonstrates collecting and printing workflow session metrics after execution.
 """
 
-from rich.pretty import pprint
-
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
@@ -16,6 +14,7 @@ from agno.tools.websearch import WebSearchTools
 from agno.utils.pprint import pprint_run_response
 from agno.workflow.step import Step
 from agno.workflow.workflow import Workflow
+from rich.pretty import pprint
 
 # ---------------------------------------------------------------------------
 # Create Agents

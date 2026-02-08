@@ -1,3 +1,10 @@
+"""
+Retry Tool Call From Post Hook
+=============================
+
+Demonstrates retry tool call from post hook.
+"""
+
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.exceptions import RetryAgentRun
@@ -5,6 +12,10 @@ from agno.models.openai import OpenAIChat
 from agno.run import RunContext
 from agno.tools import FunctionCall, tool
 from agno.utils.log import logger
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 
 def post_hook(run_context: RunContext, fc: FunctionCall):
@@ -51,7 +62,12 @@ agent = Agent(
     tools=[add_item],
     markdown=True,
 )
-agent.print_response("Add milk", stream=True)
-print(
-    f"Final session state: {agent.get_session_state(session_id='retry_tool_call_from_post_hook_session')}"
-)
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    agent.print_response("Add milk", stream=True)
+    print(
+        f"Final session state: {agent.get_session_state(session_id='retry_tool_call_from_post_hook_session')}"
+    )

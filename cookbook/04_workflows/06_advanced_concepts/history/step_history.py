@@ -37,6 +37,7 @@ recipe_specialist = Agent(
     ],
 )
 
+
 # ---------------------------------------------------------------------------
 # Define Function (Meal Preference Analysis)
 # ---------------------------------------------------------------------------
@@ -62,9 +63,13 @@ def analyze_food_preferences(step_input: StepInput) -> StepOutput:
     if any(word in full_context for word in ["comfort", "hearty", "filling"]):
         preferences["cooking_style"] = "comfort"
 
-    if "italian" in full_context and ("had" in full_context or "yesterday" in full_context):
+    if "italian" in full_context and (
+        "had" in full_context or "yesterday" in full_context
+    ):
         preferences["avoid_list"].append("Italian")
-    if "chinese" in full_context and ("had" in full_context or "recently" in full_context):
+    if "chinese" in full_context and (
+        "had" in full_context or "recently" in full_context
+    ):
         preferences["avoid_list"].append("Chinese")
 
     if "love asian" in full_context or "like asian" in full_context:
@@ -74,13 +79,17 @@ def analyze_food_preferences(step_input: StepInput) -> StepOutput:
 
     guidance = []
     if preferences["dietary_restrictions"]:
-        guidance.append(f"Focus on {', '.join(preferences['dietary_restrictions'])} options")
+        guidance.append(
+            f"Focus on {', '.join(preferences['dietary_restrictions'])} options"
+        )
     if preferences["avoid_list"]:
         guidance.append(
             f"Avoid {', '.join(preferences['avoid_list'])} cuisine since user had it recently"
         )
     if preferences["cuisine_preferences"]:
-        guidance.append(f"Consider {', '.join(preferences['cuisine_preferences'])} options")
+        guidance.append(
+            f"Consider {', '.join(preferences['cuisine_preferences'])} options"
+        )
     if preferences["cooking_style"] != "any":
         guidance.append(f"Prefer {preferences['cooking_style']} cooking style")
 
@@ -98,11 +107,14 @@ def analyze_food_preferences(step_input: StepInput) -> StepOutput:
 
     return StepOutput(content=analysis_result)
 
+
 # ---------------------------------------------------------------------------
 # Define Steps (Meal Planning Workflow)
 # ---------------------------------------------------------------------------
 suggestion_step = Step(name="Meal Suggestion", agent=meal_suggester)
-preference_analysis_step = Step(name="Preference Analysis", executor=analyze_food_preferences)
+preference_analysis_step = Step(
+    name="Preference Analysis", executor=analyze_food_preferences
+)
 recipe_step = Step(name="Recipe Recommendations", agent=recipe_specialist)
 
 # ---------------------------------------------------------------------------
@@ -173,6 +185,7 @@ content_workflow = Workflow(
         Step(name="Content Publishing", agent=publisher_agent),
     ],
 )
+
 
 # ---------------------------------------------------------------------------
 # Run Workflows

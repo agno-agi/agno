@@ -1,8 +1,5 @@
 """
 Standalone SurrealDB Memory Operations
-======================================
-
-Demonstrates manual add, get, delete, and replace operations for user memories.
 """
 
 from agno.db.surrealdb import SurrealDb

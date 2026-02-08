@@ -1,8 +1,5 @@
 """
 SurrealDB Custom Memory Instructions
-====================================
-
-Demonstrates custom memory capture instructions with SurrealDB-backed memory.
 """
 
 from agno.db.surrealdb import SurrealDb

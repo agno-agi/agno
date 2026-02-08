@@ -1,15 +1,9 @@
 """
-Control Memory Database Tools - Add, Update, Delete, and Clear Operations
+Control Memory Database Tools
+=============================
 
-This cookbook demonstrates how to control which memory database operations
-are available to the AI model using the four DB tools parameters:
-- add_memories: Controls whether the AI can add new memories
-- update_memories: Controls whether the AI can update existing memories
-- delete_memories: Controls whether the AI can delete individual memories
-- clear_memories: Controls whether the AI can clear all memories
-
-These parameters provide fine-grained control over memory operations for security
-and functionality purposes.
+This example demonstrates how to control which memory database operations are
+available to the AI model using DB tool flags.
 """
 
 from agno.agent.agent import Agent
@@ -18,10 +12,15 @@ from agno.memory.manager import MemoryManager
 from agno.models.openai import OpenAIChat
 from rich.pretty import pprint
 
-# Setup database and user
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
 memory_db = SqliteDb(db_file="tmp/memory_control_demo.db")
 john_doe_id = "john_doe@example.com"
 
+# ---------------------------------------------------------------------------
+# Create Memory Manager and Agent
+# ---------------------------------------------------------------------------
 memory_manager_full = MemoryManager(
     model=OpenAIChat(id="gpt-4o"),
     db=memory_db,
@@ -36,23 +35,24 @@ agent_full = Agent(
     db=memory_db,
 )
 
-# Add initial memory
-agent_full.print_response(
-    "My name is John Doe and I like to hike in the mountains on weekends. I also enjoy photography.",
-    stream=True,
-    user_id=john_doe_id,
-)
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    agent_full.print_response(
+        "My name is John Doe and I like to hike in the mountains on weekends. I also enjoy photography.",
+        stream=True,
+        user_id=john_doe_id,
+    )
 
-# Test memory recall
-agent_full.print_response("What are my hobbies?", stream=True, user_id=john_doe_id)
+    agent_full.print_response("What are my hobbies?", stream=True, user_id=john_doe_id)
 
-# Test memory update
-agent_full.print_response(
-    "I no longer enjoy photography. Instead, I've taken up rock climbing.",
-    stream=True,
-    user_id=john_doe_id,
-)
+    agent_full.print_response(
+        "I no longer enjoy photography. Instead, I've taken up rock climbing.",
+        stream=True,
+        user_id=john_doe_id,
+    )
 
-print("\nMemories after update:")
-memories = memory_manager_full.get_user_memories(user_id=john_doe_id)
-pprint([m.memory for m in memories] if memories else [])
+    print("\nMemories after update:")
+    memories = memory_manager_full.get_user_memories(user_id=john_doe_id)
+    pprint([m.memory for m in memories] if memories else [])

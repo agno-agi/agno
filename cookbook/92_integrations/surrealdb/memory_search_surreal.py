@@ -1,8 +1,5 @@
 """
 SurrealDB Memory Search
-=======================
-
-Demonstrates retrieving user memories with different memory search methods.
 """
 
 from agno.db.surrealdb import SurrealDb
