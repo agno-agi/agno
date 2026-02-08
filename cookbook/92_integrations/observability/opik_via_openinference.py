@@ -1,15 +1,8 @@
 """
-Instrument your Agno agents with OpenTelemetry and stream traces to Opik for rich debugging, cost tracking, and production monitoring.
+Opik Via OpenInference
+======================
 
-1. Install dependencies:
-   uv pip install -U opik agno openai opentelemetry-sdk opentelemetry-exporter-otlp openinference-instrumentation-agno
-2. Point the OTLP exporter at the Opik collector:
-   - Opik Cloud:
-     export OTEL_EXPORTER_OTLP_ENDPOINT=https://www.comet.com/opik/api/v1/private/otel
-     export OTEL_EXPORTER_OTLP_HEADERS='Authorization=<your-api-key>,Comet-Workspace=<workspace>,projectName=<project>'
-   - Self-hosted:
-     export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:5173/api/v1/private/otel
-     export OTEL_EXPORTER_OTLP_HEADERS='projectName=<project>'
+Demonstrates instrumenting Agno with OpenTelemetry and exporting traces to Opik.
 """
 
 from agno.agent import Agent
@@ -21,6 +14,9 @@ from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExport
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
 # Configure OpenTelemetry to export spans to Opik
 tracer_provider = TracerProvider()
 tracer_provider.add_span_processor(SimpleSpanProcessor(OTLPSpanExporter()))
@@ -29,6 +25,10 @@ trace_api.set_tracer_provider(tracer_provider)
 # Enable automatic instrumentation for Agno
 AgnoInstrumentor().instrument()
 
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 agent = Agent(
     name="Stock Price Agent",
     model=OpenAIChat(id="gpt-5.2"),
@@ -41,8 +41,12 @@ agent = Agent(
     },
 )
 
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    # The span hierarchy (agent → model → tool) will appear in Opik for every request
+    # The span hierarchy (agent -> model -> tool) will appear in Opik for every request
     agent.print_response(
         "What is the current price of Apple and how did it move today?"
     )
