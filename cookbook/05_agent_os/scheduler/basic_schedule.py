@@ -26,6 +26,10 @@ from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
+
 db = PostgresDb(
     id="scheduler-demo-db",
     db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
@@ -48,6 +52,10 @@ app = AgentOS(
     enable_scheduler=True,
     scheduler_poll_interval=15,
 ).get_app()
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     import uvicorn

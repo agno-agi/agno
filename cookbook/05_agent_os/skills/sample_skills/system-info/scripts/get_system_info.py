@@ -6,6 +6,10 @@ import platform
 import sys
 from datetime import datetime
 
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
+
 try:
     info = {
         "os": platform.system(),
@@ -20,3 +24,10 @@ except Exception as e:
     info = {"error": str(e)}
 
 print(json.dumps(info, indent=2))
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    raise SystemExit("This module is intended to be imported.")

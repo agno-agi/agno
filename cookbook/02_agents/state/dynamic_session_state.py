@@ -1,3 +1,10 @@
+"""
+Dynamic Session State
+=============================
+
+Dynamic Session State.
+"""
+
 import json
 from typing import Any, Dict
 
@@ -52,7 +59,14 @@ def customer_management_hook(run_context: RunContext, arguments: Dict[str, Any])
     log_info(f"Session state: {run_context.session_state}")
 
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 def run_test():
+    # ---------------------------------------------------------------------------
+    # Create Agent
+    # ---------------------------------------------------------------------------
+
     agent = Agent(
         model=OpenAIChat(id="gpt-4o"),
         tools=[CustomerDBTools()],
@@ -64,7 +78,7 @@ def run_test():
     )
 
     prompt = "First, create customer 789 named 'Tom'. Then, retrieve Tom's profile. Step by step."
-    log_info(f"📝 Prompting: '{prompt}'")
+    log_info(f" Prompting: '{prompt}'")
     agent.print_response(prompt, stream=False)
 
     log_info("\n--- TEST ANALYSIS ---")
@@ -73,5 +87,8 @@ def run_test():
     )
 
 
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     run_test()

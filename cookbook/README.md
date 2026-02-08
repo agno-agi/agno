@@ -60,6 +60,49 @@ Hundreds of examples. Copy, paste, run.
 ### Integrations
 [92_integrations](./92_integrations) — Connect to Discord, observability tools (Langfuse, Arize Phoenix, AgentOps, LangSmith), memory providers, and A2A protocol.
 
+## Quality Standard
+
+For every cookbook folder that contains runnable Python examples, include:
+
+- `README.md` explaining intent, prerequisites, and run commands
+- `TEST_LOG.md` recording run status and observations
+
+Use templates:
+
+- `cookbook/templates/README.template.md`
+- `cookbook/templates/TEST_LOG.template.md`
+- `cookbook/STYLE_GUIDE.md`
+
+Run metadata audit:
+
+```bash
+python3 cookbook/scripts/audit_cookbook_metadata.py --scope direct
+```
+
+Enforce in checks (fails on missing metadata):
+
+```bash
+python3 cookbook/scripts/audit_cookbook_metadata.py --scope direct --fail-on-missing
+```
+
+Check cookbook Python structure pattern:
+
+```bash
+python3 cookbook/scripts/check_cookbook_pattern.py --base-dir cookbook/00_quickstart
+```
+
+Run cookbooks in non-interactive batch mode with demo environment defaults:
+
+```bash
+python3 cookbook/scripts/cookbook_runner.py cookbook/00_quickstart --batch --python-bin .venvs/demo/bin/python
+```
+
+Write machine-readable run report:
+
+```bash
+python3 cookbook/scripts/cookbook_runner.py cookbook/00_quickstart --batch --json-report .context/cookbook-run.json
+```
+
 ---
 
 ## Contributing

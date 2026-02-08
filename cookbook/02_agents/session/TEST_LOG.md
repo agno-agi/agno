@@ -1,0 +1,56 @@
+# TEST LOG
+
+Generated: 2026-02-08 15:41 UTC
+
+Pattern Check: Checked 5 file(s) in /Users/ab/conductor/workspaces/agno/colombo/cookbook/02_agents/session. Violations: 0
+
+### chat_history.py
+
+**Status:** PASS
+
+**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
+
+**Result:** Completed successfully in 7s.
+
+---
+
+### last_n_session_messages.py
+
+**Status:** FAIL
+
+**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
+
+**Result:** Failed with missing module: No module named 'aiosqlite'
+
+---
+
+### persistent_session.py
+
+**Status:** PASS
+
+**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
+
+**Result:** Completed successfully in 3s.
+
+---
+
+### session_options.py
+
+**Status:** PASS
+
+**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
+
+**Result:** Completed successfully in 3s.
+
+---
+
+### session_summary.py
+
+**Status:** PASS
+
+**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
+
+**Result:** Completed successfully in 4s.
+
+---
+
