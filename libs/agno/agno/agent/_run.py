@@ -868,10 +868,10 @@ def run_dispatch(
     # Validate input against input_schema if provided
     validated_input = validate_input(input, agent.input_schema)
 
-    # Register run for cancellation tracking after validation succeeds
-    register_run(run_id)
-
     try:
+        # Register run for cancellation tracking after validation succeeds
+        register_run(run_id)
+
         # Normalise hook & guardails
         if not agent._hooks_normalised:
             if agent.pre_hooks:
@@ -1418,14 +1418,14 @@ async def arun_stream_impl(
     # Set up retry logic
     num_attempts = agent.retries + 1
     try:
-        # 1. Read or create session. Reads from the database if provided.
-        agent_session = await agent._aread_or_create_session(session_id=session_id, user_id=user_id)
-
         for attempt in range(num_attempts):
             if num_attempts > 1:
                 log_debug(f"Retrying Agent run {run_response.run_id}. Attempt {attempt + 1} of {num_attempts}...")
 
             try:
+                # 1. Read or create session. Reads from the database if provided.
+                agent_session = await agent._aread_or_create_session(session_id=session_id, user_id=user_id)
+
                 # Start the Run by yielding a RunStarted event
                 if stream_events:
                     yield handle_event(  # type: ignore

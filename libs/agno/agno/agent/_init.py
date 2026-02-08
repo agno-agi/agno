@@ -71,10 +71,9 @@ def set_default_model(agent: Agent) -> None:
             from agno.models.openai import OpenAIChat
         except ModuleNotFoundError as e:
             log_exception(e)
-            log_error(
+            raise ImportError(
                 "Agno agents use `openai` as the default model provider. Please provide a `model` or install `openai`."
-            )
-            exit(1)
+            ) from e
 
         log_info("Setting default model to OpenAI Chat")
         agent.model = OpenAIChat(id="gpt-4o")

@@ -369,9 +369,9 @@ class Team:
     # Hooks normalised flag
     _hooks_normalised: bool = False
     # MCP tools initialized on the last run
-    _mcp_tools_initialized_on_run: List[Any] = None  # type: ignore[assignment]
+    _mcp_tools_initialized_on_run: Optional[List[Any]] = None
     # Connectable tools initialized on the last run
-    _connectable_tools_initialized_on_run: List[Any] = None  # type: ignore[assignment]
+    _connectable_tools_initialized_on_run: Optional[List[Any]] = None
     # Lazy-initialized shared thread pool executor for background tasks
     _background_executor: Optional[Any] = None
 
