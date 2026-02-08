@@ -207,7 +207,7 @@ def _get_task_management_tools(
             return
 
         # Find the member
-        result = team._find_member_by_id(member_id)
+        result = team._find_member_by_id(member_id, run_context=run_context)
         if result is None:
             yield f"Member with ID {member_id} not found. Available members:\n{team.get_members_system_message_content(indent=0)}"
             return
@@ -364,7 +364,7 @@ def _get_task_management_tools(
             yield f"Task [{task_id}] is {task.status.value} and cannot be executed."
             return
 
-        result = team._find_member_by_id(member_id)
+        result = team._find_member_by_id(member_id, run_context=run_context)
         if result is None:
             yield f"Member with ID {member_id} not found. Available members:\n{team.get_members_system_message_content(indent=0)}"
             return

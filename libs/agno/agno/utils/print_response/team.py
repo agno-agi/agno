@@ -121,7 +121,7 @@ def print_response(
         team_markdown = False
         member_markdown = {}
         if markdown:
-            for member in team.members:
+            for member in team.members if isinstance(team.members, list) else []:
                 if member.id is not None:
                     member_markdown[member.id] = True
             team_markdown = True
@@ -129,7 +129,7 @@ def print_response(
         if team.output_schema is not None:
             team_markdown = False
 
-        for member in team.members:
+        for member in team.members if isinstance(team.members, list) else []:
             if member.output_schema is not None and member.id is not None:
                 member_markdown[member.id] = False  # type: ignore
 
@@ -739,11 +739,11 @@ def print_response_stream(
         panels = [p for p in panels if not isinstance(p, Status)]
 
         if markdown:
-            for member in team.members:
+            for member in team.members if isinstance(team.members, list) else []:
                 if member.id is not None:
                     member_markdown[member.id] = True
 
-        for member in team.members:
+        for member in team.members if isinstance(team.members, list) else []:
             if member.output_schema is not None and member.id is not None:
                 member_markdown[member.id] = False  # type: ignore
 
@@ -1052,7 +1052,7 @@ async def aprint_response(
         team_markdown = False
         member_markdown = {}
         if markdown:
-            for member in team.members:
+            for member in team.members if isinstance(team.members, list) else []:
                 if member.id is not None:
                     member_markdown[member.id] = True
             team_markdown = True
@@ -1060,7 +1060,7 @@ async def aprint_response(
         if team.output_schema is not None:
             team_markdown = False
 
-        for member in team.members:
+        for member in team.members if isinstance(team.members, list) else []:
             if member.output_schema is not None and member.id is not None:
                 member_markdown[member.id] = False  # type: ignore
 
@@ -1667,11 +1667,11 @@ async def aprint_response_stream(
         panels = [p for p in panels if not isinstance(p, Status)]
 
         if markdown:
-            for member in team.members:
+            for member in team.members if isinstance(team.members, list) else []:
                 if member.id is not None:
                     member_markdown[member.id] = True  # type: ignore
 
-        for member in team.members:
+        for member in team.members if isinstance(team.members, list) else []:
             if member.output_schema is not None and member.id is not None:
                 member_markdown[member.id] = False  # type: ignore
 

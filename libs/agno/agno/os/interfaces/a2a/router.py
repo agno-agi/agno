@@ -119,7 +119,7 @@ def attach_routes(
         kwargs = await get_request_kwargs(request, a2a_run_agent)
 
         # 1. Get the Agent to run
-        agent = get_agent_by_id(id, agents)
+        agent = get_agent_by_id(id, agents, create_fresh=True)
         if not agent:
             raise HTTPException(status_code=404, detail="Agent not found")
 
@@ -129,6 +129,10 @@ def attach_routes(
         user_id = request.headers.get("X-User-ID")
         if not user_id:
             user_id = request_body.get("params", {}).get("message", {}).get("metadata", {}).get("userId")
+
+        # Check if non-blocking mode is requested
+        configuration = request_body.get("params", {}).get("configuration", {})
+        is_blocking = configuration.get("blocking", True) if configuration else True
 
         # 3. Run the Agent
         try:
@@ -140,6 +144,7 @@ def attach_routes(
                 files=run_input.files,
                 session_id=context_id,
                 user_id=user_id,
+                background=not is_blocking,
                 **kwargs,
             )
 
@@ -204,7 +209,7 @@ def attach_routes(
         kwargs = await get_request_kwargs(request, a2a_stream_agent)
 
         # 1. Get the Agent to run
-        agent = get_agent_by_id(id, agents)
+        agent = get_agent_by_id(id, agents, create_fresh=True)
         if not agent:
             raise HTTPException(status_code=404, detail="Agent not found")
 
@@ -238,6 +243,104 @@ def attach_routes(
 
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to start run: {str(e)}")
+
+    # ============= AGENT TASKS =============
+    @router.post(
+        "/agents/{id}/v1/tasks:get",
+        operation_id="get_agent_task",
+        name="get_agent_task",
+        description="Get the status and output of an agent task (A2A GetTask). Requires contextId for v1.",
+        responses={
+            200: {"description": "Task found"},
+            404: {"description": "Agent or task not found"},
+        },
+    )
+    async def a2a_get_agent_task(request: Request, id: str):
+        if not agents:
+            raise HTTPException(status_code=404, detail="Agent not found")
+
+        request_body = await request.json()
+
+        agent = get_agent_by_id(id, agents, create_fresh=True)
+        if not agent:
+            raise HTTPException(status_code=404, detail="Agent not found")
+        if isinstance(agent, RemoteAgent):
+            raise HTTPException(status_code=400, detail="Task polling is not supported for remote agents")
+
+        params = request_body.get("params", {})
+        task_id = params.get("id")  # = run_id
+        context_id = params.get("contextId")  # = session_id (required for v1)
+
+        if not task_id:
+            return {
+                "jsonrpc": "2.0",
+                "id": request_body.get("id", "unknown"),
+                "error": {"code": -32602, "message": "Missing required parameter: id (task_id)"},
+            }
+        if not context_id:
+            return {
+                "jsonrpc": "2.0",
+                "id": request_body.get("id", "unknown"),
+                "error": {"code": -32602, "message": "Missing required parameter: contextId (session_id)"},
+            }
+
+        run_output = await agent.aget_run_output(run_id=task_id, session_id=context_id)
+        if run_output is None:
+            return {
+                "jsonrpc": "2.0",
+                "id": request_body.get("id", "unknown"),
+                "error": {"code": -32001, "message": f"Task {task_id} not found"},
+            }
+
+        a2a_task = map_run_output_to_a2a_task(run_output)
+        return {
+            "jsonrpc": "2.0",
+            "id": request_body.get("id", "unknown"),
+            "result": a2a_task.model_dump(mode="json", exclude_none=True),
+        }
+
+    @router.post(
+        "/agents/{id}/v1/tasks:cancel",
+        operation_id="cancel_agent_task",
+        name="cancel_agent_task",
+        description="Cancel a running agent task (A2A CancelTask).",
+        responses={
+            200: {"description": "Task cancelled"},
+            404: {"description": "Agent not found"},
+        },
+    )
+    async def a2a_cancel_agent_task(request: Request, id: str):
+        if not agents:
+            raise HTTPException(status_code=404, detail="Agent not found")
+
+        request_body = await request.json()
+
+        agent = get_agent_by_id(id, agents, create_fresh=True)
+        if not agent:
+            raise HTTPException(status_code=404, detail="Agent not found")
+        if isinstance(agent, RemoteAgent):
+            raise HTTPException(status_code=400, detail="Task cancellation is not supported for remote agents")
+
+        params = request_body.get("params", {})
+        task_id = params.get("id")  # = run_id
+
+        if not task_id:
+            return {
+                "jsonrpc": "2.0",
+                "id": request_body.get("id", "unknown"),
+                "error": {"code": -32602, "message": "Missing required parameter: id (task_id)"},
+            }
+
+        cancelled = await agent.acancel_run(task_id)
+        task_state = TaskState.canceled if cancelled else TaskState.failed
+        return {
+            "jsonrpc": "2.0",
+            "id": request_body.get("id", "unknown"),
+            "result": {
+                "id": task_id,
+                "status": {"state": task_state.value},
+            },
+        }
 
     # ============= TEAMS =============
     @router.get("/teams/{id}/.well-known/agent-card.json")
@@ -314,7 +417,7 @@ def attach_routes(
         kwargs = await get_request_kwargs(request, a2a_run_team)
 
         # 1. Get the Team to run
-        team = get_team_by_id(id, teams)
+        team = get_team_by_id(id, teams, create_fresh=True)
         if not team:
             raise HTTPException(status_code=404, detail="Team not found")
 
@@ -324,6 +427,10 @@ def attach_routes(
         user_id = request.headers.get("X-User-ID")
         if not user_id:
             user_id = request_body.get("params", {}).get("message", {}).get("metadata", {}).get("userId")
+
+        # Check if non-blocking mode is requested
+        configuration = request_body.get("params", {}).get("configuration", {})
+        is_blocking = configuration.get("blocking", True) if configuration else True
 
         # 3. Run the Team
         try:
@@ -335,6 +442,7 @@ def attach_routes(
                 files=run_input.files,
                 session_id=context_id,
                 user_id=user_id,
+                background=not is_blocking,
                 **kwargs,
             )
 
@@ -399,7 +507,7 @@ def attach_routes(
         kwargs = await get_request_kwargs(request, a2a_stream_team)
 
         # 1. Get the Team to run
-        team = get_team_by_id(id, teams)
+        team = get_team_by_id(id, teams, create_fresh=True)
         if not team:
             raise HTTPException(status_code=404, detail="Team not found")
 
@@ -509,7 +617,7 @@ def attach_routes(
         kwargs = await get_request_kwargs(request, a2a_run_workflow)
 
         # 1. Get the Workflow to run
-        workflow = get_workflow_by_id(id, workflows)
+        workflow = get_workflow_by_id(id, workflows, create_fresh=True)
         if not workflow:
             raise HTTPException(status_code=404, detail="Workflow not found")
 
@@ -519,6 +627,10 @@ def attach_routes(
         user_id = request.headers.get("X-User-ID")
         if not user_id:
             user_id = request_body.get("params", {}).get("message", {}).get("metadata", {}).get("userId")
+
+        # Check if non-blocking mode is requested
+        configuration = request_body.get("params", {}).get("configuration", {})
+        is_blocking = configuration.get("blocking", True) if configuration else True
 
         # 3. Run the Workflow
         try:
@@ -530,6 +642,7 @@ def attach_routes(
                 files=list(run_input.files) if run_input.files else None,
                 session_id=context_id,
                 user_id=user_id,
+                background=not is_blocking,
                 **kwargs,
             )
 
@@ -594,7 +707,7 @@ def attach_routes(
         kwargs = await get_request_kwargs(request, a2a_stream_workflow)
 
         # 1. Get the Workflow to run
-        workflow = get_workflow_by_id(id, workflows)
+        workflow = get_workflow_by_id(id, workflows, create_fresh=True)
         if not workflow:
             raise HTTPException(status_code=404, detail="Workflow not found")
 

@@ -148,6 +148,7 @@ def _run_tasks(
 
     max_iterations = team.max_iterations
     memory_future = None
+    learning_future = None
     accumulated_messages: List[Message] = []
 
     try:
@@ -222,7 +223,13 @@ def _run_tasks(
                 memory_future = team._start_memory_future(
                     run_messages=run_messages,
                     user_id=user_id,
-                    existing_future=None,
+                    existing_future=memory_future,
+                )
+                learning_future = team._start_learning_future(
+                    run_messages=run_messages,
+                    session=session,
+                    user_id=user_id,
+                    existing_future=learning_future,
                 )
 
                 # Reasoning on first iteration
@@ -311,7 +318,7 @@ def _run_tasks(
 
         raise_if_cancelled(run_response.run_id)  # type: ignore
 
-        wait_for_open_threads(memory_future=memory_future)  # type: ignore
+        wait_for_open_threads(memory_future=memory_future, learning_future=learning_future)  # type: ignore
 
         raise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -366,6 +373,8 @@ def _run_tasks(
     finally:
         if memory_future is not None and not memory_future.done():
             memory_future.cancel()
+        if learning_future is not None and not learning_future.done():
+            learning_future.cancel()
         team._disconnect_connectable_tools()
         cleanup_run(run_response.run_id)  # type: ignore
 
@@ -422,6 +431,7 @@ def _run(
     log_debug(f"Team Run Start: {run_response.run_id}", center=True)
 
     memory_future = None
+    learning_future = None
     try:
         # Set up retry logic
         num_attempts = team.retries + 1
@@ -502,6 +512,12 @@ def _run(
                     user_id=user_id,
                     existing_future=memory_future,
                 )
+                learning_future = team._start_learning_future(
+                    run_messages=run_messages,
+                    session=session,
+                    user_id=user_id,
+                    existing_future=learning_future,
+                )
 
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -570,7 +586,7 @@ def _run(
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
                 # 11. Wait for background memory creation
-                wait_for_open_threads(memory_future=memory_future)  # type: ignore
+                wait_for_open_threads(memory_future=memory_future, learning_future=learning_future)  # type: ignore
 
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -663,6 +679,8 @@ def _run(
         # Cancel background futures on error (wait_for_open_threads handles waiting on success)
         if memory_future is not None and not memory_future.done():
             memory_future.cancel()
+        if learning_future is not None and not learning_future.done():
+            learning_future.cancel()
 
         # Always disconnect connectable tools
         team._disconnect_connectable_tools()
@@ -725,6 +743,7 @@ def _run_stream(
     log_debug(f"Team Run Start: {run_response.run_id}", center=True)
 
     memory_future = None
+    learning_future = None
     try:
         # Set up retry logic
         num_attempts = team.retries + 1
@@ -805,6 +824,12 @@ def _run_stream(
                     run_messages=run_messages,
                     user_id=user_id,
                     existing_future=memory_future,
+                )
+                learning_future = team._start_learning_future(
+                    run_messages=run_messages,
+                    session=session,
+                    user_id=user_id,
+                    existing_future=learning_future,
                 )
 
                 # Start the Run by yielding a RunStarted event
@@ -919,6 +944,7 @@ def _run_stream(
                 yield from wait_for_thread_tasks_stream(
                     run_response=run_response,
                     memory_future=memory_future,  # type: ignore
+                    learning_future=learning_future,  # type: ignore
                     stream_events=stream_events,
                     events_to_skip=team.events_to_skip,  # type: ignore
                     store_events=team.store_events,
@@ -1052,6 +1078,8 @@ def _run_stream(
         # Cancel background futures on error (wait_for_thread_tasks_stream handles waiting on success)
         if memory_future is not None and not memory_future.done():
             memory_future.cancel()
+        if learning_future is not None and not learning_future.done():
+            learning_future.cancel()
 
         # Always disconnect connectable tools
         team._disconnect_connectable_tools()
@@ -1306,6 +1334,7 @@ async def _arun_tasks(
 
     max_iterations = team.max_iterations
     memory_task = None
+    learning_task = None
     accumulated_messages: List[Message] = []
     team_session = None
 
@@ -1345,6 +1374,9 @@ async def _arun_tasks(
             log_debug(f"Async tasks iteration {iteration}/{max_iterations}")
 
             team_run_context: Dict[str, Any] = {}
+
+            # Resolve callable factories asynchronously before determining tools
+            await team._aresolve_callable_resources(run_context=run_context)
 
             _tools = team._determine_tools_for_model(
                 model=team.model,
@@ -1390,7 +1422,13 @@ async def _arun_tasks(
                 memory_task = await team._astart_memory_task(
                     run_messages=run_messages,
                     user_id=user_id,
-                    existing_task=None,
+                    existing_task=memory_task,
+                )
+                learning_task = await team._astart_learning_task(
+                    run_messages=run_messages,
+                    session=team_session,
+                    user_id=user_id,
+                    existing_task=learning_task,
                 )
 
                 await team._ahandle_reasoning(
@@ -1475,7 +1513,7 @@ async def _arun_tasks(
                 pass
 
         await araise_if_cancelled(run_response.run_id)  # type: ignore
-        await await_for_open_threads(memory_task=memory_task)  # type: ignore
+        await await_for_open_threads(memory_task=memory_task, learning_task=learning_task)  # type: ignore
         await araise_if_cancelled(run_response.run_id)  # type: ignore
 
         if team.session_summary_manager is not None:
@@ -1554,6 +1592,12 @@ async def _arun_tasks(
                 await memory_task  # type: ignore
             except asyncio.CancelledError:
                 pass
+        if learning_task is not None and not learning_task.done():
+            learning_task.cancel()
+            try:
+                await learning_task
+            except asyncio.CancelledError:
+                pass
 
         # Always clean up the run tracking
         await acleanup_run(run_response.run_id)  # type: ignore
@@ -1615,6 +1659,7 @@ async def _arun(
     await aregister_run(run_context.run_id)
     log_debug(f"Team Run Start: {run_response.run_id}", center=True)
     memory_task = None
+    learning_task = None
 
     try:
         # Setup session: read/create, load state, resolve dependencies
@@ -1657,6 +1702,10 @@ async def _arun(
                 team_run_context: Dict[str, Any] = {}
                 team.model = cast(Model, team.model)
                 await team._check_and_refresh_mcp_tools()
+
+                # Resolve callable factories asynchronously before determining tools
+                await team._aresolve_callable_resources(run_context=run_context)
+
                 _tools = team._determine_tools_for_model(
                     model=team.model,
                     run_response=run_response,
@@ -1704,6 +1753,12 @@ async def _arun(
                     user_id=user_id,
                     existing_task=memory_task,
                 )
+                learning_task = await team._astart_learning_task(
+                    run_messages=run_messages,
+                    session=team_session,
+                    user_id=user_id,
+                    existing_task=learning_task,
+                )
 
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
                 # 5. Reason about the task if reasoning is enabled
@@ -1747,13 +1802,13 @@ async def _arun(
                     run_context=run_context,
                 )
 
-                # 7b. Check if delegation propagated member HITL requirements
+                # 9b. Check if delegation propagated member HITL requirements
                 if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
                     from agno.team import _hooks
 
                     return await _hooks.ahandle_team_run_paused(team, run_response=run_response, session=team_session)
 
-                # 8. Store media if enabled
+                # 10. Store media if enabled
                 if team.store_media:
                     store_media_util(run_response, model_response)
 
@@ -1777,7 +1832,7 @@ async def _arun(
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 
                 # 11. Wait for background memory creation
-                await await_for_open_threads(memory_task=memory_task)
+                await await_for_open_threads(memory_task=memory_task, learning_task=learning_task)
 
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
                 # 12. Create session summary
@@ -1875,6 +1930,12 @@ async def _arun(
                 await memory_task
             except asyncio.CancelledError:
                 pass
+        if learning_task is not None and not learning_task.done():
+            learning_task.cancel()
+            try:
+                await learning_task
+            except asyncio.CancelledError:
+                pass
 
         # Always clean up the run tracking
         await acleanup_run(run_response.run_id)  # type: ignore
@@ -1942,6 +2003,7 @@ async def _arun_stream(
     await aregister_run(run_context.run_id)
 
     memory_task = None
+    learning_task = None
 
     try:
         # Setup session: read/create, load state, resolve dependencies
@@ -1983,6 +2045,10 @@ async def _arun_stream(
                 team_run_context: Dict[str, Any] = {}
                 team.model = cast(Model, team.model)
                 await team._check_and_refresh_mcp_tools()
+
+                # Resolve callable factories asynchronously before determining tools
+                await team._aresolve_callable_resources(run_context=run_context)
+
                 _tools = team._determine_tools_for_model(
                     model=team.model,
                     run_response=run_response,
@@ -2027,6 +2093,12 @@ async def _arun_stream(
                     run_messages=run_messages,
                     user_id=user_id,
                     existing_task=memory_task,
+                )
+                learning_task = await team._astart_learning_task(
+                    run_messages=run_messages,
+                    session=team_session,
+                    user_id=user_id,
+                    existing_task=learning_task,
                 )
 
                 # Yield the run started event
@@ -2100,7 +2172,7 @@ async def _arun_stream(
                 # Check for cancellation after model processing
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 
-                # 6b. Check if delegation propagated member HITL requirements
+                # 9b. Check if delegation propagated member HITL requirements
                 if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
                     from agno.team import _hooks
 
@@ -2112,7 +2184,7 @@ async def _arun_stream(
                         yield run_response
                     return
 
-                # 7. Parse response with parser model if provided
+                # 10. Parse response with parser model if provided
                 async for event in team._aparse_response_with_parser_model_stream(
                     session=team_session,
                     run_response=run_response,
@@ -2150,6 +2222,7 @@ async def _arun_stream(
                 async for event in await_for_thread_tasks_stream(
                     run_response=run_response,
                     memory_task=memory_task,
+                    learning_task=learning_task,
                     stream_events=stream_events,
                     events_to_skip=team.events_to_skip,  # type: ignore
                     store_events=team.store_events,
@@ -2300,6 +2373,12 @@ async def _arun_stream(
                 await memory_task
             except asyncio.CancelledError:
                 pass
+        if learning_task is not None and not learning_task.done():
+            learning_task.cancel()
+            try:
+                await learning_task
+            except asyncio.CancelledError:
+                pass
 
         # Always clean up the run tracking
         await acleanup_run(run_response.run_id)  # type: ignore
@@ -2329,11 +2408,12 @@ def arun(  # type: ignore
     debug_mode: Optional[bool] = None,
     yield_run_output: bool = False,
     output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
+    background: bool = False,
     **kwargs: Any,
 ) -> Union[TeamRunOutput, AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent]]]:
     """Run the Team asynchronously and return the response."""
 
-    # Set the id for the run and register it immediately for cancellation tracking
+    # Set the id for the run (cancellation registration happens in _arun or arun_background_impl)
     run_id = run_id or str(uuid4())
 
     if (add_history_to_context or team.add_history_to_context) and not team.db and not team.parent_team_id:
@@ -2472,6 +2552,23 @@ def arun(  # type: ignore
     run_response.metrics = Metrics()
     run_response.metrics.start_timer()
 
+    # Background execution: pre-persist PENDING run, spawn task, return immediately
+    if background:
+        return arun_background_impl(  # type: ignore
+            team,
+            run_response=run_response,
+            run_context=run_context,
+            session_id=session_id,
+            user_id=user_id,
+            response_format=response_format,
+            add_history_to_context=add_history,
+            add_dependencies_to_context=add_dependencies,
+            add_session_state_to_context=add_session_state,
+            debug_mode=debug_mode,
+            background_tasks=background_tasks,
+            **kwargs,
+        )
+
     if stream:
         return team._arun_stream(  # type: ignore
             run_response=run_response,
@@ -2502,6 +2599,95 @@ def arun(  # type: ignore
             background_tasks=background_tasks,
             **kwargs,
         )
+
+
+async def arun_background_impl(
+    team: "Team",
+    run_response: TeamRunOutput,
+    run_context: RunContext,
+    session_id: str,
+    user_id: Optional[str] = None,
+    add_history_to_context: Optional[bool] = None,
+    add_dependencies_to_context: Optional[bool] = None,
+    add_session_state_to_context: Optional[bool] = None,
+    response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+    debug_mode: Optional[bool] = None,
+    background_tasks: Optional[Any] = None,
+    **kwargs: Any,
+) -> TeamRunOutput:
+    """Execute team run in background, return PENDING TeamRunOutput immediately.
+
+    Follows the pattern established by Agent.arun_background_impl():
+    1. Validate that team has a database configured
+    2. Register run for cancellation tracking (before returning PENDING)
+    3. Set run status to PENDING and pre-persist to DB
+    4. Spawn asyncio.create_task (transitions to RUNNING, then executes)
+    5. Return the PENDING TeamRunOutput immediately
+    """
+    # 1. Validate DB is configured (required for polling)
+    if team.db is None:
+        raise ValueError("Background runs require a database to be configured on the team (team.db)")
+
+    # 2. Register for cancellation tracking before returning PENDING,
+    #    so cancel requests that arrive immediately are not lost.
+    await aregister_run(run_context.run_id)
+
+    # 3. Set PENDING status and pre-persist
+    run_response.status = RunStatus.pending
+    team_session = await team._aread_or_create_session(session_id=session_id, user_id=user_id)
+    team_session.upsert_run(run_response)
+    await team.asave_session(session=team_session)
+
+    log_debug(f"Background team run {run_response.run_id} created with status PENDING")
+
+    # 4. Define background coroutine
+    async def execute_team_background() -> None:
+        try:
+            # Transition to RUNNING and persist before executing
+            run_response.status = RunStatus.running
+            running_session = await team._aread_or_create_session(session_id=session_id, user_id=user_id)
+            running_session.upsert_run(run_response)
+            await team.asave_session(session=running_session)
+
+            await _arun(
+                team,
+                run_response=run_response,
+                run_context=run_context,
+                session_id=session_id,
+                user_id=user_id,
+                response_format=response_format,
+                add_history_to_context=add_history_to_context,
+                add_dependencies_to_context=add_dependencies_to_context,
+                add_session_state_to_context=add_session_state_to_context,
+                debug_mode=debug_mode,
+                background_tasks=background_tasks,
+                **kwargs,
+            )
+        except Exception as e:
+            # Safety net: catch errors that escape _arun's own error handling
+            log_error(f"Background team execution failed for run {run_response.run_id}: {e}")
+            run_response.status = RunStatus.error
+            run_response.content = f"Background execution failed: {str(e)}"
+            try:
+                error_session = await team._aread_or_create_session(session_id=session_id, user_id=user_id)
+                error_session.upsert_run(run_response)
+                await team.asave_session(session=error_session)
+            except Exception as persist_err:
+                log_error(f"Failed to persist error state for team run {run_response.run_id}: {persist_err}")
+            # Clean up cancellation tracking so the run_id doesn't leak
+            try:
+                await acleanup_run(run_context.run_id)
+            except Exception:
+                pass
+
+    # 5. Spawn background task
+    loop = asyncio.get_running_loop()
+    task = loop.create_task(execute_team_background())
+    # Ensure exceptions don't go silently unhandled
+    task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
+
+    # 6. Return PENDING response immediately
+    return run_response
 
 
 def _handle_event(
