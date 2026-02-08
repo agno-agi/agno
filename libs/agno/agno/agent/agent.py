@@ -139,7 +139,7 @@ class Agent:
     max_tool_calls_from_history: Optional[int] = None
 
     # --- Knowledge ---
-    knowledge: Optional[KnowledgeProtocol] = None
+    knowledge: Optional[Union[KnowledgeProtocol, Callable[..., KnowledgeProtocol]]] = None
     # Enable RAG by adding references from Knowledge to the user prompt.
     # Add knowledge_filters to the Agent class attributes
     knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
@@ -159,9 +159,14 @@ class Agent:
     skills: Optional[Skills] = None
 
     # --- Agent Tools ---
-    # A list of tools provided to the Model.
+    # A list of tools provided to the Model, or a callable factory that returns tools at runtime.
     # Tools are functions the model may generate JSON inputs for.
-    tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]] = None
+    tools: Optional[
+        Union[
+            List[Union[Toolkit, Callable, Function, Dict]],
+            Callable[..., List[Union[Toolkit, Callable, Function, Dict]]],
+        ]
+    ] = None
 
     # Maximum number of tool calls allowed.
     tool_call_limit: Optional[int] = None
@@ -175,6 +180,14 @@ class Agent:
 
     # A function that acts as middleware and is called around tool calls.
     tool_hooks: Optional[List[Callable]] = None
+
+    # --- Runtime Callable Caching ---
+    # If True (default), cache results from callable tools/knowledge factories per cache key.
+    cache_callables: bool = True
+    # Custom cache key functions for tools and knowledge callable factories.
+    # Signature: (run_context) -> Optional[str]
+    callable_tools_cache_key: Optional[Callable[..., Optional[str]]] = None
+    callable_knowledge_cache_key: Optional[Callable[..., Optional[str]]] = None
 
     # --- Agent Hooks ---
     # Functions called right after agent-session is loaded, before processing starts
@@ -387,7 +400,7 @@ class Agent:
         store_media: bool = True,
         store_tool_messages: bool = True,
         store_history_messages: bool = False,
-        knowledge: Optional[KnowledgeProtocol] = None,
+        knowledge: Optional[Union[KnowledgeProtocol, Callable[..., KnowledgeProtocol]]] = None,
         knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         enable_agentic_knowledge_filters: Optional[bool] = None,
         add_knowledge_to_context: bool = False,
@@ -395,10 +408,18 @@ class Agent:
         references_format: Literal["json", "yaml"] = "json",
         skills: Optional[Skills] = None,
         metadata: Optional[Dict[str, Any]] = None,
-        tools: Optional[Sequence[Union[Toolkit, Callable, Function, Dict]]] = None,
+        tools: Optional[
+            Union[
+                Sequence[Union[Toolkit, Callable, Function, Dict]],
+                Callable[..., List[Union[Toolkit, Callable, Function, Dict]]],
+            ]
+        ] = None,
         tool_call_limit: Optional[int] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_hooks: Optional[List[Callable]] = None,
+        cache_callables: bool = True,
+        callable_tools_cache_key: Optional[Callable[..., Optional[str]]] = None,
+        callable_knowledge_cache_key: Optional[Callable[..., Optional[str]]] = None,
         pre_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, BaseEval]]] = None,
         post_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, BaseEval]]] = None,
         reasoning: bool = False,
@@ -530,10 +551,19 @@ class Agent:
 
         self.metadata = metadata
 
-        self.tools = list(tools) if tools else []
+        if tools is None:
+            self.tools = []  # type: ignore[assignment]
+        elif callable(tools) and not isinstance(tools, (Toolkit, Function)):
+            self.tools = tools  # type: ignore[assignment]
+        else:
+            self.tools = list(tools)  # type: ignore[assignment]
         self.tool_call_limit = tool_call_limit
         self.tool_choice = tool_choice
         self.tool_hooks = tool_hooks
+
+        self.cache_callables = cache_callables
+        self.callable_tools_cache_key = callable_tools_cache_key
+        self.callable_knowledge_cache_key = callable_knowledge_cache_key
 
         self.pre_hooks = pre_hooks
         self.post_hooks = post_hooks
@@ -624,6 +654,10 @@ class Agent:
         self._mcp_tools_initialized_on_run: List[Any] = []
         self._connectable_tools_initialized_on_run: List[Any] = []
 
+        # Callable factory caches
+        self._callable_tools_cache: Dict[str, List[Any]] = {}
+        self._callable_knowledge_cache: Dict[str, Any] = {}
+
         # Lazy-initialized shared thread pool executor for background tasks (memory, cultural knowledge, etc.)
         self._background_executor: Optional[Any] = None
 
@@ -691,8 +725,32 @@ class Agent:
     def add_tool(self, tool: Union[Toolkit, Callable, Function, Dict]) -> None:
         return _init.add_tool(self, tool)
 
-    def set_tools(self, tools: Sequence[Union[Toolkit, Callable, Function, Dict]]) -> None:
+    def set_tools(
+        self,
+        tools: Union[
+            Sequence[Union[Toolkit, Callable, Function, Dict]],
+            Callable[..., List[Union[Toolkit, Callable, Function, Dict]]],
+        ],
+    ) -> None:
         return _init.set_tools(self, tools)
+
+    def clear_callable_cache(
+        self,
+        kind: Optional[Literal["tools", "knowledge"]] = None,
+        close: bool = False,
+    ) -> None:
+        from agno.utils.callables import clear_callable_cache
+
+        clear_callable_cache(self, kind=kind, close=close)
+
+    async def aclear_callable_cache(
+        self,
+        kind: Optional[Literal["tools", "knowledge"]] = None,
+        close: bool = False,
+    ) -> None:
+        from agno.utils.callables import aclear_callable_cache
+
+        await aclear_callable_cache(self, kind=kind, close=close)
 
     async def _connect_mcp_tools(self) -> None:
         return await _init.connect_mcp_tools(self)

@@ -434,7 +434,7 @@ class AgentOS:
             if self.db is not None and agent.db is None:
                 agent.db = self.db
             # Track all MCP tools to later handle their connection
-            if agent.tools:
+            if agent.tools and isinstance(agent.tools, list):
                 for tool in agent.tools:
                     # Checking if the tool is an instance of MCPTools, MultiMCPTools, or a subclass of those
                     if hasattr(type(tool), "__mro__"):
@@ -469,12 +469,13 @@ class AgentOS:
 
             team.initialize_team()
 
-            for member in team.members:
-                if isinstance(member, Agent):
-                    member.team_id = None
-                    member.initialize_agent()
-                elif isinstance(member, Team):
-                    member.initialize_team()
+            if isinstance(team.members, list):
+                for member in team.members:
+                    if isinstance(member, Agent):
+                        member.team_id = None
+                        member.initialize_agent()
+                    elif isinstance(member, Team):
+                        member.initialize_team()
 
             # Required for the built-in routes to work
             team.store_events = True
