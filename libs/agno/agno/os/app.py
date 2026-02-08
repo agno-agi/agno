@@ -36,6 +36,7 @@ from agno.os.config import (
 from agno.os.interfaces.base import BaseInterface
 from agno.os.router import get_base_router, get_websocket_router
 from agno.os.routers.agents import get_agent_router
+from agno.os.routers.approvals import get_approvals_router
 from agno.os.routers.components import get_components_router
 from agno.os.routers.database import get_database_router
 from agno.os.routers.evals import get_eval_router
@@ -373,6 +374,10 @@ class AgentOS:
         if self.enable_scheduler and self.db is not None:
             updated_routers.append(get_schedule_router(os_db=self.db, settings=self.settings))
 
+        # Add approvals router if db is available
+        if self.db is not None:
+            updated_routers.append(get_approvals_router(os_db=self.db, settings=self.settings))
+
         # Clear all previously existing routes
         app.router.routes = [
             route
@@ -698,6 +703,10 @@ class AgentOS:
         # Add schedule router if scheduler is enabled and db is available
         if self.enable_scheduler and self.db is not None:
             routers.append(get_schedule_router(os_db=self.db, settings=self.settings))
+
+        # Add approvals router if db is available
+        if self.db is not None:
+            routers.append(get_approvals_router(os_db=self.db, settings=self.settings))
 
         for router in routers:
             self._add_router(fastapi_app, router)
