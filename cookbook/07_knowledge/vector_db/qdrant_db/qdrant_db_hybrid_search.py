@@ -6,11 +6,12 @@ Demonstrates Qdrant hybrid retrieval in an interactive loop.
 """
 
 import typer
+from rich.prompt import Prompt
+
 from agno.agent import Agent
 from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.qdrant import Qdrant
 from agno.vectordb.search import SearchType
-from rich.prompt import Prompt
 
 # ---------------------------------------------------------------------------
 # Setup
