@@ -25,7 +25,8 @@ agent = Agent(model=model, debug_mode=True)
 # The beta features are now activated, the model will have access to use them.
 if __name__ == "__main__":
     print("\n=== All available Anthropic beta features ===")
-    print(f"- {'\n- '.join(all_betas.__args__[1].__args__)}")
+    beta_lines = "\n- ".join(str(b) for b in all_betas.__args__[1].__args__)
+    print(f"- {beta_lines}")
     print("=============================================\n")
 
     agent.print_response("What is the weather in Tokyo?")
