@@ -68,9 +68,10 @@ def get_members_system_message_content(team: "Team", indent: int = 0, run_contex
             system_message_content += f"{indent * ' '} - Team: {member.name}\n"
             system_message_content += f"{indent * ' '} - ID: {url_safe_member_id}\n"
             if member.members is not None:
-                system_message_content += member.get_members_system_message_content(
-                    indent=indent + 2, run_context=run_context
-                )
+                # Don't pass run_context to subteams: run_context.members belongs to the
+                # parent team and would cause the subteam to iterate the parent's members,
+                # leading to infinite recursion.
+                system_message_content += member.get_members_system_message_content(indent=indent + 2)
         else:
             system_message_content += f"{indent * ' '} - Agent {idx + 1}:\n"
             if url_safe_member_id is not None:
