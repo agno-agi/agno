@@ -11,7 +11,6 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.team import Team
 
-
 # ---------------------------------------------------------------------------
 # Create Members
 # ---------------------------------------------------------------------------

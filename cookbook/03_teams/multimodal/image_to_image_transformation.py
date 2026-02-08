@@ -10,7 +10,6 @@ from agno.models.openai import OpenAIChat
 from agno.team import Team
 from agno.tools.fal import FalTools
 
-
 # ---------------------------------------------------------------------------
 # Create Members
 # ---------------------------------------------------------------------------

@@ -1,8 +1,14 @@
 """Run `pip install ddgs` to install dependencies."""
 
+import asyncio
+
 from agno.agent import Agent
 from agno.models.aimlapi import AIMLAPI
 from agno.tools.websearch import WebSearchTools
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 agent = Agent(
     model=AIMLAPI(id="gpt-4o-mini"),
@@ -10,4 +16,12 @@ agent = Agent(
     markdown=True,
 )
 
-agent.print_response("Whats happening in France?")
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    # --- Sync ---
+    agent.print_response("Whats happening in France?")
+
+    # --- Async + Streaming ---
+    asyncio.run(agent.aprint_response("Whats happening in France?", stream=True))

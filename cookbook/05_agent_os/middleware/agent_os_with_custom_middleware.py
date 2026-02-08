@@ -19,7 +19,6 @@ from fastapi import Request, Response
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
-
 # ---------------------------------------------------------------------------
 # Create Example
 # ---------------------------------------------------------------------------

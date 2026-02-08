@@ -15,7 +15,6 @@ from agno.run import RunContext
 from agno.team import Team
 from agno.vectordb.pgvector import PgVector
 
-
 # ---------------------------------------------------------------------------
 # Setup
 # ---------------------------------------------------------------------------

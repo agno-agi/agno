@@ -76,6 +76,7 @@ write_step = Step(
     agent=content_agent,
 )
 
+
 # ---------------------------------------------------------------------------
 # Define Condition Evaluators
 # ---------------------------------------------------------------------------
@@ -117,6 +118,7 @@ def check_if_we_should_search_exa(step_input: StepInput) -> bool:
     topic = step_input.input or step_input.previous_step_content or ""
     advanced_keywords = ["deep", "academic", "research", "analysis", "comprehensive"]
     return any(keyword in topic.lower() for keyword in advanced_keywords)
+
 
 # ---------------------------------------------------------------------------
 # Create Workflow
