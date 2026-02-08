@@ -5,8 +5,9 @@ Pre And Post Hooks
 Demonstrates pre and post hooks.
 """
 
+import asyncio
 import json
-from typing import Iterator
+from typing import AsyncIterator, Iterator
 
 import httpx
 from agno.agent import Agent
@@ -55,32 +56,23 @@ agent = Agent(
     tools=[get_top_hackernews_stories],
     markdown=True,
 )
-agent.print_response("What are the top hackernews stories?", stream=True)
 
 
 # ---------------------------------------------------------------------------
 # Async Variant
 # ---------------------------------------------------------------------------
 
-import asyncio
-import json
-from typing import AsyncIterator
 
-import httpx
-from agno.agent import Agent
-from agno.tools import FunctionCall, tool
-
-
-async def pre_hook(fc: FunctionCall):
+async def pre_hook_async(fc: FunctionCall):
     print(f"About to run: {fc.function.name}")
 
 
-async def post_hook(fc: FunctionCall):
+async def post_hook_async(fc: FunctionCall):
     print("After running: ", fc.function.name)
 
 
-@tool(show_result=True, pre_hook=pre_hook, post_hook=post_hook)
-async def get_top_hackernews_stories(agent: Agent) -> AsyncIterator[str]:
+@tool(show_result=True, pre_hook=pre_hook_async, post_hook=post_hook_async)
+async def get_top_hackernews_stories_async(agent: Agent) -> AsyncIterator[str]:
     num_stories = agent.dependencies.get("num_stories", 5) if agent.dependencies else 5
 
     async with httpx.AsyncClient() as client:
@@ -101,11 +93,11 @@ async def get_top_hackernews_stories(agent: Agent) -> AsyncIterator[str]:
             yield json.dumps(story)
 
 
-agent = Agent(
+async_agent = Agent(
     dependencies={
         "num_stories": 2,
     },
-    tools=[get_top_hackernews_stories],
+    tools=[get_top_hackernews_stories_async],
     markdown=True,
 )
 # ---------------------------------------------------------------------------
@@ -113,4 +105,5 @@ agent = Agent(
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    asyncio.run(agent.aprint_response("What are the top hackernews stories?"))
+    agent.print_response("What are the top hackernews stories?", stream=True)
+    asyncio.run(async_agent.aprint_response("What are the top hackernews stories?"))

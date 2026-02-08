@@ -1,6 +1,8 @@
 """Show how to use multiple tool execution hooks, to run logic before and after a tool is called."""
 
+import asyncio
 import json
+from inspect import iscoroutinefunction
 from typing import Any, Callable, Dict
 
 from agno.agent import Agent
@@ -76,37 +78,19 @@ def logger_hook(name: str, func: Callable, arguments: Dict[str, Any]):
     return result
 
 
-agent = Agent(
+sync_agent = Agent(
     tools=[CustomerDBTools()],
     # Hooks are executed in order of the list
     tool_hooks=[validation_hook, logger_hook],
 )
-
-# ---------------------------------------------------------------------------
-# Run Agent
-# ---------------------------------------------------------------------------
-
-if __name__ == "__main__":
-    agent.print_response("I am customer 456, please retrieve my profile.")
 
 
 # ---------------------------------------------------------------------------
 # Async Variant
 # ---------------------------------------------------------------------------
 
-"""Show how to use multiple tool execution hooks with async functions, to run logic before and after a tool is called."""
 
-import asyncio
-import json
-from inspect import iscoroutinefunction
-from typing import Any, Callable, Dict
-
-from agno.agent import Agent
-from agno.tools import Toolkit
-from agno.utils.log import logger
-
-
-class CustomerDBTools(Toolkit):
+class CustomerDBToolsAsync(Toolkit):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
@@ -143,7 +127,7 @@ class CustomerDBTools(Toolkit):
         return f"Customer profile for {customer_id}"
 
 
-async def validation_hook(name: str, func: Callable, arguments: Dict[str, Any]):
+async def validation_hook_async(name: str, func: Callable, arguments: Dict[str, Any]):
     if name == "retrieve_customer_profile":
         cust_id = arguments.get("customer_id")
         if cust_id == "123":
@@ -168,7 +152,7 @@ async def validation_hook(name: str, func: Callable, arguments: Dict[str, Any]):
     return result
 
 
-async def logger_hook(name: str, func: Callable, arguments: Dict[str, Any]):
+async def logger_hook_async(name: str, func: Callable, arguments: Dict[str, Any]):
     logger.info("Before Logger Hook")
     if iscoroutinefunction(func):
         result = await func(**arguments)
@@ -178,20 +162,26 @@ async def logger_hook(name: str, func: Callable, arguments: Dict[str, Any]):
     return result
 
 
-agent = Agent(
-    tools=[CustomerDBTools()],
+async_agent = Agent(
+    tools=[CustomerDBToolsAsync()],
     # Hooks are executed in order of the list
-    tool_hooks=[validation_hook, logger_hook],
+    tool_hooks=[validation_hook_async, logger_hook_async],
 )
 
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
 if __name__ == "__main__":
+    sync_agent.print_response("I am customer 456, please retrieve my profile.")
     asyncio.run(
-        agent.aprint_response(
+        async_agent.aprint_response(
             "I am customer 456, please retrieve my profile.", stream=True
         )
     )
     asyncio.run(
-        agent.aprint_response(
+        async_agent.aprint_response(
             "I am customer 456, please delete my profile.", stream=True
         )
     )

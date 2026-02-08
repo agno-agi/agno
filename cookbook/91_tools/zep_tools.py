@@ -6,43 +6,48 @@ To get started, please export your Zep API key as an environment variable. You c
 export ZEP_API_KEY=<your-zep-api-key>
 """
 
+import asyncio
 import time
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
-from agno.tools.zep import ZepTools
+from agno.tools.zep import ZepAsyncTools, ZepTools
 
 # ---------------------------------------------------------------------------
 # Create Agent
 # ---------------------------------------------------------------------------
 
 
-# Initialize the ZepTools
-zep_tools = ZepTools(user_id="agno", session_id="agno-session", add_instructions=True)
+def run_sync() -> None:
+    # Initialize the ZepTools
+    sync_zep_tools = ZepTools(
+        user_id="agno", session_id="agno-session", add_instructions=True
+    )
 
-# Initialize the Agent
-agent = Agent(
-    model=OpenAIChat(),
-    tools=[zep_tools],
-    dependencies={"memory": zep_tools.get_zep_memory(memory_type="context")},
-    add_dependencies_to_context=True,
-)
+    # Initialize the Agent
+    sync_agent = Agent(
+        model=OpenAIChat(),
+        tools=[sync_zep_tools],
+        dependencies={"memory": sync_zep_tools.get_zep_memory(memory_type="context")},
+        add_dependencies_to_context=True,
+    )
 
-# Interact with the Agent so that it can learn about the user
-agent.print_response("My name is John Billings")
-agent.print_response("I live in NYC")
-agent.print_response("I'm going to a concert tomorrow")
+    # Interact with the Agent so that it can learn about the user
+    sync_agent.print_response("My name is John Billings")
+    sync_agent.print_response("I live in NYC")
+    sync_agent.print_response("I'm going to a concert tomorrow")
 
-# Allow the memories to sync with Zep database
-time.sleep(10)
+    # Allow the memories to sync with Zep database
+    time.sleep(10)
 
+    if sync_agent.dependencies:
+        # Refresh the context
+        sync_agent.dependencies["memory"] = sync_zep_tools.get_zep_memory(
+            memory_type="context"
+        )
 
-if agent.dependencies:
-    # Refresh the context
-    agent.dependencies["memory"] = zep_tools.get_zep_memory(memory_type="context")
-
-    # Ask the Agent about the user
-    agent.print_response("What do you know about me?")
+        # Ask the Agent about the user
+        sync_agent.print_response("What do you know about me?")
 
 
 # ---------------------------------------------------------------------------
@@ -57,43 +62,38 @@ To get started, please export your Zep API key as an environment variable. You c
 export ZEP_API_KEY=<your-zep-api-key>
 """
 
-import asyncio
-import time
 
-from agno.agent import Agent
-from agno.models.openai import OpenAIChat
-from agno.tools.zep import ZepAsyncTools
-
-
-async def main():
+async def run_async() -> None:
     # Initialize the ZepAsyncTools
-    zep_tools = ZepAsyncTools(
+    async_zep_tools = ZepAsyncTools(
         user_id="agno", session_id="agno-async-session", add_instructions=True
     )
 
     # Initialize the Agent
-    agent = Agent(
+    async_agent = Agent(
         model=OpenAIChat(),
-        tools=[zep_tools],
+        tools=[async_zep_tools],
         dependencies={
-            "memory": lambda: zep_tools.get_zep_memory(memory_type="context"),
+            "memory": lambda: async_zep_tools.get_zep_memory(memory_type="context"),
         },
         add_dependencies_to_context=True,
     )
 
     # Interact with the Agent
-    await agent.aprint_response("My name is John Billings")
-    await agent.aprint_response("I live in NYC")
-    await agent.aprint_response("I'm going to a concert tomorrow")
+    await async_agent.aprint_response("My name is John Billings")
+    await async_agent.aprint_response("I live in NYC")
+    await async_agent.aprint_response("I'm going to a concert tomorrow")
 
     # Allow the memories to sync with Zep database
     time.sleep(10)
 
     # Refresh the context
-    agent.dependencies["memory"] = await zep_tools.get_zep_memory(memory_type="context")
+    async_agent.dependencies["memory"] = await async_zep_tools.get_zep_memory(
+        memory_type="context"
+    )
 
     # Ask the Agent about the user
-    await agent.aprint_response("What do you know about me?")
+    await async_agent.aprint_response("What do you know about me?")
 
 
 # ---------------------------------------------------------------------------
@@ -101,4 +101,5 @@ async def main():
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    run_sync()
+    asyncio.run(run_async())
