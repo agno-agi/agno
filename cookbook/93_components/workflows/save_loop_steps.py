@@ -1,10 +1,9 @@
 """
-Example: Saving and Loading a Workflow with Loop
+Save Loop Workflow Steps
+========================
 
-This example demonstrates how to:
-1. Create a workflow with a Loop that has an end_condition
-2. Save the workflow to a database
-3. Load the workflow back using a registry to restore the end_condition function
+Demonstrates creating a workflow with loop steps, saving it to the database,
+and loading it back with a Registry.
 """
 
 from typing import List
@@ -19,10 +18,16 @@ from agno.workflow.step import Step
 from agno.workflow.types import StepOutput
 from agno.workflow.workflow import Workflow, get_workflow_by_id
 
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
 # Database
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 db = PostgresDb(db_url=db_url)
 
+# ---------------------------------------------------------------------------
+# Create Agents
+# ---------------------------------------------------------------------------
 # Agents
 research_agent = Agent(
     name="Research Agent",
@@ -36,6 +41,9 @@ summary_agent = Agent(
 )
 
 
+# ---------------------------------------------------------------------------
+# Create Registry Components
+# ---------------------------------------------------------------------------
 # End condition function (will be serialized by name and restored via registry)
 def check_research_complete(outputs: List[StepOutput]) -> bool:
     """Returns True to break the loop, False to continue."""
@@ -57,6 +65,9 @@ registry = Registry(
     functions=[check_research_complete],
 )
 
+# ---------------------------------------------------------------------------
+# Create Workflow Steps
+# ---------------------------------------------------------------------------
 # Steps
 research_step = Step(
     name="ResearchStep",
@@ -70,6 +81,9 @@ summarize_step = Step(
     agent=summary_agent,
 )
 
+# ---------------------------------------------------------------------------
+# Create Workflow
+# ---------------------------------------------------------------------------
 # Workflow
 workflow = Workflow(
     name="Loop Research Workflow",
@@ -87,6 +101,9 @@ workflow = Workflow(
     db=db,
 )
 
+# ---------------------------------------------------------------------------
+# Run Workflow Example
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     # Save
     print("Saving workflow...")
