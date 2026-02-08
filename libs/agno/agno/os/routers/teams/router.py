@@ -8,6 +8,8 @@ from fastapi import (
     File,
     Form,
     HTTPException,
+    Path,
+    Query,
     Request,
     UploadFile,
 )
@@ -377,6 +379,43 @@ def get_team_router(
             raise HTTPException(status_code=404, detail="Run not found or already completed")
 
         return JSONResponse(content={}, status_code=200)
+
+    @router.get(
+        "/teams/{team_id}/runs/{run_id}",
+        tags=["Teams"],
+        operation_id="get_team_run",
+        response_model_exclude_none=True,
+        summary="Get Team Run Status",
+        description=(
+            "Get the status and output of a team run. Use this to poll for results of background runs.\n\n"
+            "The `session_id` is required and was returned in the initial background run response."
+        ),
+        responses={
+            200: {"description": "Run found"},
+            404: {"description": "Team or run not found", "model": NotFoundResponse},
+        },
+        dependencies=[Depends(require_resource_access("teams", "run", "team_id"))],
+    )
+    async def get_team_run(
+        team_id: str = Path(..., description="Team ID"),
+        run_id: str = Path(..., description="Run ID"),
+        session_id: str = Query(..., description="Session ID (returned in the background run response)"),
+        user_id: Optional[str] = Query(None, description="User ID"),
+        version: Optional[int] = Query(None, description="Team version"),
+    ):
+        team = get_team_by_id(
+            team_id=team_id, teams=os.teams, db=os.db, version=version, registry=registry, create_fresh=True
+        )
+        if team is None:
+            raise HTTPException(status_code=404, detail="Team not found")
+        if isinstance(team, RemoteTeam):
+            raise HTTPException(status_code=400, detail="Run polling is not supported for remote teams")
+
+        run_output = await team.aget_run_output(run_id=run_id, session_id=session_id)
+        if run_output is None:
+            raise HTTPException(status_code=404, detail="Run not found")
+
+        return run_output.to_dict()
 
     @router.get(
         "/teams",
