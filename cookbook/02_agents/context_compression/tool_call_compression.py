@@ -7,14 +7,14 @@ Tool Call Compression.
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.tools.websearch import WebSearchTools
 
 # ---------------------------------------------------------------------------
 # Create Agent
 # ---------------------------------------------------------------------------
 agent = Agent(
-    model=OpenAIChat(id="gpt-5-mini"),
+    model=OpenAIResponses(id="gpt-5-nano"),
     tools=[WebSearchTools()],
     description="Specialized in tracking competitor activities",
     instructions="Use the search tools and always use the latest information and data.",
@@ -30,12 +30,12 @@ if __name__ == "__main__":
         """
         Use the search tools and always for the latest information and data.
         Research recent activities (last 3 months) for these AI companies:
-        
+
         1. OpenAI - product launches, partnerships, pricing
         2. Anthropic - new features, enterprise deals, funding
         3. Google DeepMind - research breakthroughs, product releases
         4. Meta AI - open source releases, research papers
-       
+
         For each, find specific actions with dates and numbers.""",
         stream=True,
     )
