@@ -1,8 +1,14 @@
 # Agent Memory
 
-Your Agents can store insights and facts about the user that it learns through conversation. This helps the agents personalize its response to the user it is interacting with. Think of this as adding “ChatGPT like memory” to your agent. This is called `Memory` in Agno.
+This section demonstrates how Agno agents persist and use user memories across runs, sessions, and agents.
 
-In this section you will find a comprehensive guide showcasing what can be achieved with Memory. The examples are ordered and build on each other.
+## Directory Layout
+
+- `01_agent_with_memory.py` to `08_memory_tools.py`: Core memory patterns with agents.
+- `memory_manager/`: Direct `MemoryManager` API examples using PostgreSQL.
+- `optimize_memories/`: Memory optimization strategy examples.
+
+> SurrealDB memory manager examples are now located in `cookbook/92_integrations/surrealdb/`.
 
 ## Setup
 
@@ -19,8 +25,8 @@ source ~/.venvs/aienv/bin/activate
 pip install -U psycopg sqlalchemy openai agno
 ```
 
-### 3. Run a cookbook
+### 3. Run an example
 
 ```shell
-python cookbook/80_memory/memory_manager/01_standalone_memory.py
+python cookbook/11_memory/01_agent_with_memory.py
 ```
