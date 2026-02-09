@@ -1,6 +1,6 @@
 """Tests for knowledge instance isolation features.
 
-Tests the isolate_vector_search flag and linked_to metadata filtering.
+Tests that knowledge instances with names automatically filter by linked_to.
 """
 
 from typing import Any, Dict, List
@@ -94,30 +94,15 @@ class MockVectorDb(VectorDb):
         return ["vector"]
 
 
-class TestIsolateVectorSearch:
-    """Tests for isolate_vector_search flag."""
+class TestKnowledgeIsolation:
+    """Tests for automatic knowledge isolation based on name."""
 
-    def test_search_without_isolation_no_filter(self):
-        """Test that search without isolation does not inject linked_to filter."""
+    def test_search_with_name_injects_filter(self):
+        """Test that search with a named knowledge injects linked_to filter."""
         mock_db = MockVectorDb()
         knowledge = Knowledge(
             name="Test KB",
             vector_db=mock_db,
-            isolate_vector_search=False,  # Default
-        )
-
-        knowledge.search("test query")
-
-        assert len(mock_db.search_calls) == 1
-        assert mock_db.search_calls[0]["filters"] is None
-
-    def test_search_with_isolation_injects_filter(self):
-        """Test that search with isolation injects linked_to filter."""
-        mock_db = MockVectorDb()
-        knowledge = Knowledge(
-            name="Test KB",
-            vector_db=mock_db,
-            isolate_vector_search=True,
         )
 
         knowledge.search("test query")
@@ -125,13 +110,22 @@ class TestIsolateVectorSearch:
         assert len(mock_db.search_calls) == 1
         assert mock_db.search_calls[0]["filters"] == {"linked_to": "Test KB"}
 
-    def test_search_with_isolation_merges_existing_dict_filters(self):
-        """Test that isolation filter merges with existing dict filters."""
+    def test_search_without_name_no_filter(self):
+        """Test that search without name does not inject filter."""
+        mock_db = MockVectorDb()
+        knowledge = Knowledge(vector_db=mock_db)
+
+        knowledge.search("test query")
+
+        assert len(mock_db.search_calls) == 1
+        assert mock_db.search_calls[0]["filters"] is None
+
+    def test_search_with_name_merges_existing_dict_filters(self):
+        """Test that linked_to filter merges with existing dict filters."""
         mock_db = MockVectorDb()
         knowledge = Knowledge(
             name="Test KB",
             vector_db=mock_db,
-            isolate_vector_search=True,
         )
 
         knowledge.search("test query", filters={"category": "docs"})
@@ -139,28 +133,32 @@ class TestIsolateVectorSearch:
         assert len(mock_db.search_calls) == 1
         assert mock_db.search_calls[0]["filters"] == {"category": "docs", "linked_to": "Test KB"}
 
-    def test_search_with_isolation_no_name_no_filter(self):
-        """Test that isolation without knowledge name does not inject filter."""
+    def test_search_with_name_list_filters_passed_through(self):
+        """Test that list filters are passed through without modification."""
+        from agno.filters import EQ
+
         mock_db = MockVectorDb()
         knowledge = Knowledge(
+            name="Test KB",
             vector_db=mock_db,
-            isolate_vector_search=True,
         )
-        # Knowledge has no name
 
-        knowledge.search("test query")
+        # Use list-based filters (user must add linked_to manually)
+        list_filters = [EQ("category", "docs")]
 
+        knowledge.search("test query", filters=list_filters)
+
+        # List filters passed through unchanged (user responsibility to add linked_to)
         assert len(mock_db.search_calls) == 1
-        assert mock_db.search_calls[0]["filters"] is None
+        assert mock_db.search_calls[0]["filters"] == list_filters
 
     @pytest.mark.asyncio
-    async def test_async_search_with_isolation_injects_filter(self):
-        """Test that async search with isolation injects linked_to filter."""
+    async def test_async_search_with_name_injects_filter(self):
+        """Test that async search with name injects linked_to filter."""
         mock_db = MockVectorDb()
         knowledge = Knowledge(
             name="Async Test KB",
             vector_db=mock_db,
-            isolate_vector_search=True,
         )
 
         await knowledge.asearch("test query")
@@ -169,67 +167,15 @@ class TestIsolateVectorSearch:
         assert mock_db.search_calls[0]["filters"] == {"linked_to": "Async Test KB"}
 
     @pytest.mark.asyncio
-    async def test_async_search_without_isolation_no_filter(self):
-        """Test that async search without isolation does not inject filter."""
+    async def test_async_search_without_name_no_filter(self):
+        """Test that async search without name does not inject filter."""
         mock_db = MockVectorDb()
-        knowledge = Knowledge(
-            name="Async Test KB",
-            vector_db=mock_db,
-            isolate_vector_search=False,
-        )
+        knowledge = Knowledge(vector_db=mock_db)
 
         await knowledge.asearch("test query")
 
         assert len(mock_db.search_calls) == 1
         assert mock_db.search_calls[0]["filters"] is None
-
-    def test_search_with_isolation_no_name_logs_warning(self):
-        """Test that isolation without name logs a warning and doesn't inject filter."""
-        from unittest.mock import patch
-
-        mock_db = MockVectorDb()
-        knowledge = Knowledge(
-            vector_db=mock_db,
-            isolate_vector_search=True,
-        )
-
-        with patch("agno.knowledge.knowledge.log_warning") as mock_warning:
-            knowledge.search("test query")
-
-        # Verify warning was called
-        mock_warning.assert_called_once()
-        assert "isolate_vector_search is enabled but knowledge instance has no name" in mock_warning.call_args[0][0]
-
-        # Verify no filter was injected
-        assert len(mock_db.search_calls) == 1
-        assert mock_db.search_calls[0]["filters"] is None
-
-    def test_search_with_isolation_list_filters_logs_warning(self):
-        """Test that isolation with list filters logs a warning."""
-        from unittest.mock import patch
-
-        from agno.filters import EQ
-
-        mock_db = MockVectorDb()
-        knowledge = Knowledge(
-            name="Test KB",
-            vector_db=mock_db,
-            isolate_vector_search=True,
-        )
-
-        # Use list-based filters (list of FilterExpr objects)
-        list_filters = [EQ("category", "docs")]
-
-        with patch("agno.knowledge.knowledge.log_warning") as mock_warning:
-            knowledge.search("test query", filters=list_filters)
-
-        # Verify warning was called
-        mock_warning.assert_called_once()
-        assert "isolate_vector_search is enabled but filters are list-based" in mock_warning.call_args[0][0]
-
-        # Verify original list filters were passed through unchanged
-        assert len(mock_db.search_calls) == 1
-        assert mock_db.search_calls[0]["filters"] == list_filters
 
 
 class TestLinkedToMetadata:
