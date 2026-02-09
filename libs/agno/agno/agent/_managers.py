@@ -18,30 +18,7 @@ from agno.session import AgentSession
 from agno.utils.log import log_debug, log_warning
 
 # ---------------------------------------------------------------------------
-# Cultural knowledge
-# ---------------------------------------------------------------------------
-
-
-def make_cultural_knowledge(
-    agent: Agent,
-    run_messages: RunMessages,
-):
-    if run_messages.user_message is not None and agent.culture_manager is not None and agent.update_cultural_knowledge:
-        log_debug("Creating cultural knowledge.")
-        agent.culture_manager.create_cultural_knowledge(message=run_messages.user_message.get_content_string())
-
-
-async def acreate_cultural_knowledge(
-    agent: Agent,
-    run_messages: RunMessages,
-):
-    if run_messages.user_message is not None and agent.culture_manager is not None and agent.update_cultural_knowledge:
-        log_debug("Creating cultural knowledge.")
-        await agent.culture_manager.acreate_cultural_knowledge(message=run_messages.user_message.get_content_string())
-
-
-# ---------------------------------------------------------------------------
-# User memories
+# Memory
 # ---------------------------------------------------------------------------
 
 
@@ -137,11 +114,6 @@ async def amake_memories(
             log_warning("Unable to add messages to memory")
 
 
-# ---------------------------------------------------------------------------
-# Async task starters
-# ---------------------------------------------------------------------------
-
-
 async def astart_memory_task(
     agent: Agent,
     run_messages: RunMessages,
@@ -180,6 +152,64 @@ async def astart_memory_task(
     return None
 
 
+def start_memory_future(
+    agent: Agent,
+    run_messages: RunMessages,
+    user_id: Optional[str],
+    existing_future: Optional[Future] = None,
+) -> Optional[Future]:
+    """Cancel any existing memory future and start a new one if conditions are met.
+
+    Args:
+        agent: The Agent instance.
+        run_messages: The run messages containing the user message.
+        user_id: The user ID for memory creation.
+        existing_future: An existing memory future to cancel before starting a new one.
+
+    Returns:
+        A new memory future if conditions are met, None otherwise.
+    """
+    # Cancel any existing future from a previous retry attempt
+    # Note: cancel() only works if the future hasn't started yet
+    if existing_future is not None and not existing_future.done():
+        existing_future.cancel()
+
+    # Create new future if conditions are met
+    if (
+        run_messages.user_message is not None
+        and agent.memory_manager is not None
+        and agent.update_memory_on_run
+        and not agent.enable_agentic_memory
+    ):
+        log_debug("Starting memory creation in background thread.")
+        return agent.background_executor.submit(make_memories, agent, run_messages=run_messages, user_id=user_id)
+
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Cultural knowledge
+# ---------------------------------------------------------------------------
+
+
+def make_cultural_knowledge(
+    agent: Agent,
+    run_messages: RunMessages,
+):
+    if run_messages.user_message is not None and agent.culture_manager is not None and agent.update_cultural_knowledge:
+        log_debug("Creating cultural knowledge.")
+        agent.culture_manager.create_cultural_knowledge(message=run_messages.user_message.get_content_string())
+
+
+async def acreate_cultural_knowledge(
+    agent: Agent,
+    run_messages: RunMessages,
+):
+    if run_messages.user_message is not None and agent.culture_manager is not None and agent.update_cultural_knowledge:
+        log_debug("Creating cultural knowledge.")
+        await agent.culture_manager.acreate_cultural_knowledge(message=run_messages.user_message.get_content_string())
+
+
 async def astart_cultural_knowledge_task(
     agent: Agent,
     run_messages: RunMessages,
@@ -211,6 +241,34 @@ async def astart_cultural_knowledge_task(
     return None
 
 
+def start_cultural_knowledge_future(
+    agent: Agent,
+    run_messages: RunMessages,
+    existing_future: Optional[Future] = None,
+) -> Optional[Future]:
+    """Cancel any existing cultural knowledge future and start a new one if conditions are met.
+
+    Args:
+        agent: The Agent instance.
+        run_messages: The run messages containing the user message.
+        existing_future: An existing cultural knowledge future to cancel before starting a new one.
+
+    Returns:
+        A new cultural knowledge future if conditions are met, None otherwise.
+    """
+    # Cancel any existing future from a previous retry attempt
+    # Note: cancel() only works if the future hasn't started yet
+    if existing_future is not None and not existing_future.done():
+        existing_future.cancel()
+
+    # Create new future if conditions are met
+    if run_messages.user_message is not None and agent.culture_manager is not None and agent.update_cultural_knowledge:
+        log_debug("Starting cultural knowledge creation in background thread.")
+        return agent.background_executor.submit(make_cultural_knowledge, agent, run_messages=run_messages)
+
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Learning
 # ---------------------------------------------------------------------------
@@ -231,6 +289,30 @@ def process_learnings(
         messages = run_messages.messages if run_messages else []
 
         agent._learning.process(
+            messages=messages,
+            user_id=user_id,
+            session_id=session.session_id if session else None,
+            agent_id=agent.id,
+            team_id=agent.team_id,
+        )
+        log_debug("Learning extraction completed.")
+    except Exception as e:
+        log_warning(f"Error processing learnings: {e}")
+
+
+async def aprocess_learnings(
+    agent: Agent,
+    run_messages: RunMessages,
+    session: AgentSession,
+    user_id: Optional[str],
+) -> None:
+    """Async process learnings from conversation."""
+    if agent._learning is None:
+        return
+
+    try:
+        messages = run_messages.messages if run_messages else []
+        await agent._learning.aprocess(
             messages=messages,
             user_id=user_id,
             session_id=session.session_id if session else None,
@@ -284,70 +366,6 @@ async def astart_learning_task(
     return None
 
 
-async def aprocess_learnings(
-    agent: Agent,
-    run_messages: RunMessages,
-    session: AgentSession,
-    user_id: Optional[str],
-) -> None:
-    """Async process learnings from conversation."""
-    if agent._learning is None:
-        return
-
-    try:
-        messages = run_messages.messages if run_messages else []
-        await agent._learning.aprocess(
-            messages=messages,
-            user_id=user_id,
-            session_id=session.session_id if session else None,
-            agent_id=agent.id,
-            team_id=agent.team_id,
-        )
-        log_debug("Learning extraction completed.")
-    except Exception as e:
-        log_warning(f"Error processing learnings: {e}")
-
-
-# ---------------------------------------------------------------------------
-# Sync future starters (thread pool)
-# ---------------------------------------------------------------------------
-
-
-def start_memory_future(
-    agent: Agent,
-    run_messages: RunMessages,
-    user_id: Optional[str],
-    existing_future: Optional[Future] = None,
-) -> Optional[Future]:
-    """Cancel any existing memory future and start a new one if conditions are met.
-
-    Args:
-        agent: The Agent instance.
-        run_messages: The run messages containing the user message.
-        user_id: The user ID for memory creation.
-        existing_future: An existing memory future to cancel before starting a new one.
-
-    Returns:
-        A new memory future if conditions are met, None otherwise.
-    """
-    # Cancel any existing future from a previous retry attempt
-    # Note: cancel() only works if the future hasn't started yet
-    if existing_future is not None and not existing_future.done():
-        existing_future.cancel()
-
-    # Create new future if conditions are met
-    if (
-        run_messages.user_message is not None
-        and agent.memory_manager is not None
-        and agent.update_memory_on_run
-        and not agent.enable_agentic_memory
-    ):
-        log_debug("Starting memory creation in background thread.")
-        return agent.background_executor.submit(make_memories, agent, run_messages=run_messages, user_id=user_id)
-
-    return None
-
-
 def start_learning_future(
     agent: Agent,
     run_messages: RunMessages,
@@ -381,33 +399,5 @@ def start_learning_future(
             session=session,
             user_id=user_id,
         )
-
-    return None
-
-
-def start_cultural_knowledge_future(
-    agent: Agent,
-    run_messages: RunMessages,
-    existing_future: Optional[Future] = None,
-) -> Optional[Future]:
-    """Cancel any existing cultural knowledge future and start a new one if conditions are met.
-
-    Args:
-        agent: The Agent instance.
-        run_messages: The run messages containing the user message.
-        existing_future: An existing cultural knowledge future to cancel before starting a new one.
-
-    Returns:
-        A new cultural knowledge future if conditions are met, None otherwise.
-    """
-    # Cancel any existing future from a previous retry attempt
-    # Note: cancel() only works if the future hasn't started yet
-    if existing_future is not None and not existing_future.done():
-        existing_future.cancel()
-
-    # Create new future if conditions are met
-    if run_messages.user_message is not None and agent.culture_manager is not None and agent.update_cultural_knowledge:
-        log_debug("Starting cultural knowledge creation in background thread.")
-        return agent.background_executor.submit(make_cultural_knowledge, agent, run_messages=run_messages)
 
     return None
