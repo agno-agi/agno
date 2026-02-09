@@ -49,7 +49,7 @@ curl -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/setWebhook" \
 # Agent with memory
 .venvs/demo/bin/python cookbook/05_agent_os/interfaces/telegram/agent_with_user_memory.py
 
-# Media-capable agent (handles photos)
+# Media-capable agent (photos, audio, video, documents)
 .venvs/demo/bin/python cookbook/05_agent_os/interfaces/telegram/agent_with_media.py
 
 # Finance agent with reasoning
@@ -62,10 +62,12 @@ curl -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/setWebhook" \
 ## Features
 
 - Text messages with conversation history
-- Photo messages with captions (multimodal)
+- Full media support: photos, stickers, voice, audio, video, video notes, animations, documents
+- Outbound media: images (URL + bytes), audio, video, files from agent responses
 - Typing indicators while processing
 - Long message splitting (Telegram 4096 char limit)
 - Per-user session tracking (`tg:{chat_id}`)
+- Works with Agent, Team, and Workflow
 - Webhook secret token validation in production
 - Development mode bypasses security for local testing
 

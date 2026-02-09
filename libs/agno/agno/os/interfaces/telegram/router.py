@@ -5,15 +5,12 @@ from typing import Any, List, Optional, Union
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 
-from agno.agent.agent import Agent
-from agno.agent.remote import RemoteAgent
+from agno.agent import Agent, RemoteAgent
 from agno.media import Audio, File, Image, Video
-from agno.team.remote import RemoteTeam
-from agno.team.team import Team
+from agno.os.interfaces.telegram.security import validate_webhook_secret_token
+from agno.team import RemoteTeam, Team
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.workflow import RemoteWorkflow, Workflow
-
-from .security import validate_webhook_secret_token
 
 AsyncTeleBot: Any = None
 try:
@@ -45,6 +42,8 @@ def attach_routes(
 ) -> APIRouter:
     if agent is None and team is None and workflow is None:
         raise ValueError("Either agent, team, or workflow must be provided.")
+
+    entity_type = "agent" if agent else "team" if team else "workflow"
 
     # Validate token is available at startup
     _get_bot_token()
@@ -100,11 +99,25 @@ def attach_routes(
         bot = AsyncTeleBot(_get_bot_token())
         await bot.send_document(chat_id, document, caption=caption)
 
-    @router.get("/status")
+    @router.get(
+        "/status",
+        operation_id=f"telegram_status_{entity_type}",
+        name="telegram_status",
+        description="Check Telegram interface status",
+    )
     async def status():
         return {"status": "available"}
 
-    @router.post("/webhook")
+    @router.post(
+        "/webhook",
+        operation_id=f"telegram_webhook_{entity_type}",
+        name="telegram_webhook",
+        description="Process incoming Telegram webhook events",
+        responses={
+            200: {"description": "Event processed successfully"},
+            403: {"description": "Invalid webhook secret token"},
+        },
+    )
     async def webhook(request: Request, background_tasks: BackgroundTasks):
         try:
             secret_token = request.headers.get("X-Telegram-Bot-Api-Secret-Token")
@@ -118,7 +131,7 @@ def attach_routes(
             if not message:
                 return {"status": "ignored"}
 
-            background_tasks.add_task(process_message, message, agent, team, workflow)
+            background_tasks.add_task(_process_message, message, agent, team, workflow)
             return {"status": "processing"}
 
         except HTTPException:
@@ -127,7 +140,7 @@ def attach_routes(
             log_error(f"Error processing webhook: {str(e)}")
             raise HTTPException(status_code=500, detail=str(e))
 
-    async def process_message(
+    async def _process_message(
         message: dict,
         agent: Optional[Union[Agent, RemoteAgent]],
         team: Optional[Union[Team, RemoteTeam]],
