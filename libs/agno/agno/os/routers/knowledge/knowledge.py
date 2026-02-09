@@ -1306,13 +1306,11 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
         if config is None:
             raise HTTPException(status_code=404, detail=f"Content source not found: {source_id}")
 
-        # Import S3Config to check type
-        from agno.knowledge.remote_content.config import S3Config
-
-        if not isinstance(config, S3Config):
+        # Check if this config type supports list_files
+        if not hasattr(config, "list_files"):
             raise HTTPException(
                 status_code=400,
-                detail=f"Source type '{type(config).__name__}' does not support file listing yet. Only S3 is supported.",
+                detail=f"Source type '{type(config).__name__}' does not support file listing.",
             )
 
         try:
@@ -1325,7 +1323,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
         except ImportError as e:
             raise HTTPException(status_code=500, detail=str(e))
         except Exception as e:
-            log_error(f"Error listing S3 files: {e}")
+            log_error(f"Error listing files from {type(config).__name__}: {e}")
             raise HTTPException(status_code=500, detail=f"Failed to list files: {str(e)}")
 
         return SourceFilesResponseSchema(

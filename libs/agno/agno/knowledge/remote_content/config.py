@@ -15,8 +15,8 @@ if TYPE_CHECKING:
     )
 
 
-class S3ListFilesResult:
-    """Result of listing files from S3."""
+class ListFilesResult:
+    """Result of listing files from a remote source."""
 
     def __init__(
         self,
@@ -33,6 +33,10 @@ class S3ListFilesResult:
         self.limit = limit
         self.total_count = total_count
         self.total_pages = total_pages
+
+
+# Alias for backward compatibility
+S3ListFilesResult = ListFilesResult
 
 
 class RemoteContentConfig(BaseModel):
@@ -342,6 +346,147 @@ class SharePointConfig(RemoteContentConfig):
             site_path=site_path or self.site_path,
         )
 
+    def _get_access_token(self) -> Optional[str]:
+        """Get an access token for Microsoft Graph API."""
+        try:
+            from msal import ConfidentialClientApplication  # type: ignore
+        except ImportError:
+            raise ImportError("The `msal` package is not installed. Please install it via `pip install msal`.")
+
+        authority = f"https://login.microsoftonline.com/{self.tenant_id}"
+        app = ConfidentialClientApplication(
+            self.client_id,
+            authority=authority,
+            client_credential=self.client_secret,
+        )
+
+        scopes = ["https://graph.microsoft.com/.default"]
+        result = app.acquire_token_for_client(scopes=scopes)
+
+        if "access_token" in result:
+            return result["access_token"]
+        return None
+
+    def _get_site_id(self, access_token: str) -> Optional[str]:
+        """Get the SharePoint site ID."""
+        import httpx
+
+        if self.site_id:
+            return self.site_id
+
+        if self.site_path:
+            url = f"https://graph.microsoft.com/v1.0/sites/{self.hostname}:/{self.site_path}"
+        else:
+            url = f"https://graph.microsoft.com/v1.0/sites/{self.hostname}"
+
+        response = httpx.get(url, headers={"Authorization": f"Bearer {access_token}"})
+        if response.status_code == 200:
+            return response.json().get("id")
+        return None
+
+    def list_files(
+        self,
+        prefix: Optional[str] = None,
+        delimiter: str = "/",
+        limit: int = 100,
+        page: int = 1,
+    ) -> ListFilesResult:
+        """List files and folders in SharePoint with pagination.
+
+        Args:
+            prefix: Path within the document library (e.g., "Shared Documents/Reports/")
+            delimiter: Folder delimiter (default "/")
+            limit: Max files to return per request
+            page: Page number (1-indexed)
+
+        Returns:
+            ListFilesResult with files, folders, and pagination info
+        """
+        import httpx
+
+        access_token = self._get_access_token()
+        if not access_token:
+            raise ValueError("Failed to acquire SharePoint access token")
+
+        site_id = self._get_site_id(access_token)
+        if not site_id:
+            raise ValueError("Failed to get SharePoint site ID")
+
+        # Use provided prefix or fall back to config folder_path
+        folder_path = prefix if prefix is not None else (self.folder_path or "")
+
+        # Build the Graph API URL for listing drive items
+        headers = {"Authorization": f"Bearer {access_token}"}
+
+        if folder_path:
+            # List items in a specific folder
+            encoded_path = folder_path.strip("/")
+            url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/drive/root:/{encoded_path}:/children"
+        else:
+            # List items at root
+            url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/drive/root/children"
+
+        all_files = []
+        folders = []
+
+        # Fetch all items (Graph API paging)
+        while url:
+            response = httpx.get(url, headers=headers)
+            if response.status_code != 200:
+                raise ValueError(f"SharePoint API error: {response.status_code} - {response.text}")
+
+            data = response.json()
+            for item in data.get("value", []):
+                if "folder" in item:
+                    # It's a folder
+                    folder_name = item.get("name", "")
+                    folder_prefix = f"{folder_path.rstrip('/')}/{folder_name}/" if folder_path else f"{folder_name}/"
+                    folders.append(
+                        {
+                            "prefix": folder_prefix,
+                            "name": folder_name,
+                            "is_empty": item.get("folder", {}).get("childCount", 0) == 0,
+                        }
+                    )
+                elif "file" in item:
+                    # It's a file
+                    name = item.get("name", "")
+                    key = f"{folder_path.rstrip('/')}/{name}" if folder_path else name
+                    all_files.append(
+                        {
+                            "key": key,
+                            "name": name,
+                            "size": item.get("size"),
+                            "last_modified": item.get("lastModifiedDateTime"),
+                            "content_type": item.get("file", {}).get("mimeType") or mimetypes.guess_type(name)[0],
+                        }
+                    )
+
+            # Check for next page
+            url = data.get("@odata.nextLink")
+
+        # Calculate pagination
+        total_count = len(all_files)
+        total_pages = (total_count + limit - 1) // limit if limit > 0 else 0
+
+        # Get files for the requested page
+        start_idx = (page - 1) * limit
+        end_idx = start_idx + limit
+        page_files = all_files[start_idx:end_idx]
+
+        # Only include folders on first page
+        if page > 1:
+            folders = []
+
+        return ListFilesResult(
+            files=page_files,
+            folders=folders,
+            page=page,
+            limit=limit,
+            total_count=total_count,
+            total_pages=total_pages,
+        )
+
 
 class GitHubConfig(RemoteContentConfig):
     """Configuration for GitHub content source."""
@@ -385,6 +530,104 @@ class GitHubConfig(RemoteContentConfig):
             config_id=self.id,
             folder_path=folder_path,
             branch=branch or self.branch,
+        )
+
+    def list_files(
+        self,
+        prefix: Optional[str] = None,
+        delimiter: str = "/",
+        limit: int = 100,
+        page: int = 1,
+    ) -> ListFilesResult:
+        """List files and folders in a GitHub repository with pagination.
+
+        Args:
+            prefix: Path within the repository (e.g., "docs/api/")
+            delimiter: Folder delimiter (default "/")
+            limit: Max files to return per request
+            page: Page number (1-indexed)
+
+        Returns:
+            ListFilesResult with files, folders, and pagination info
+        """
+        import httpx
+
+        headers = {"Accept": "application/vnd.github.v3+json"}
+        if self.token:
+            headers["Authorization"] = f"token {self.token}"
+
+        # Get the branch (default to main)
+        branch = self.branch or "main"
+
+        # Use provided prefix or fall back to config path
+        path = prefix.rstrip("/") if prefix else (self.path.rstrip("/") if self.path else "")
+
+        # Build the GitHub API URL
+        url = f"https://api.github.com/repos/{self.repo}/contents/{path}"
+        if branch:
+            url += f"?ref={branch}"
+
+        response = httpx.get(url, headers=headers)
+
+        if response.status_code == 404:
+            return ListFilesResult(files=[], folders=[], page=page, limit=limit, total_count=0, total_pages=0)
+
+        if response.status_code != 200:
+            raise ValueError(f"GitHub API error: {response.status_code} - {response.text}")
+
+        items = response.json()
+        if not isinstance(items, list):
+            # Single file was returned
+            items = [items]
+
+        all_files = []
+        folders = []
+
+        for item in items:
+            item_type = item.get("type")
+            name = item.get("name", "")
+            item_path = item.get("path", "")
+
+            if item_type == "dir":
+                folder_prefix = f"{item_path}/"
+                folders.append(
+                    {
+                        "prefix": folder_prefix,
+                        "name": name,
+                        "is_empty": False,  # GitHub doesn't tell us this
+                    }
+                )
+            elif item_type == "file":
+                all_files.append(
+                    {
+                        "key": item_path,
+                        "name": name,
+                        "size": item.get("size"),
+                        "last_modified": None,  # GitHub contents API doesn't return this
+                        "content_type": mimetypes.guess_type(name)[0],
+                    }
+                )
+
+        # Calculate pagination
+        total_count = len(all_files)
+        total_pages = (total_count + limit - 1) // limit if limit > 0 else 0
+
+        # Get files for the requested page
+        start_idx = (page - 1) * limit
+        end_idx = start_idx + limit
+        page_files = all_files[start_idx:end_idx]
+
+        # Only include folders on first page
+        if page > 1:
+            folders = []
+
+        return ListFilesResult(
+            files=page_files,
+            folders=folders,
+            page=page,
+            limit=limit,
+            total_count=total_count,
+            total_pages=total_pages,
         )
 
 
@@ -447,4 +690,108 @@ class AzureBlobConfig(RemoteContentConfig):
         return AzureBlobContent(
             config_id=self.id,
             prefix=prefix,
+        )
+
+    def list_files(
+        self,
+        prefix: Optional[str] = None,
+        delimiter: str = "/",
+        limit: int = 100,
+        page: int = 1,
+    ) -> ListFilesResult:
+        """List files and folders in this Azure Blob container with pagination.
+
+        Args:
+            prefix: Path prefix to filter blobs (e.g., "reports/2024/")
+            delimiter: Folder delimiter (default "/")
+            limit: Max files to return per request (1-1000)
+            page: Page number (1-indexed)
+
+        Returns:
+            ListFilesResult with files, folders, and pagination info
+        """
+        try:
+            from azure.identity import ClientSecretCredential  # type: ignore
+            from azure.storage.blob import BlobServiceClient  # type: ignore
+        except ImportError:
+            raise ImportError(
+                "The `azure-identity` and `azure-storage-blob` packages are not installed. "
+                "Please install them via `pip install azure-identity azure-storage-blob`."
+            )
+
+        credential = ClientSecretCredential(
+            tenant_id=self.tenant_id,
+            client_id=self.client_id,
+            client_secret=self.client_secret,
+        )
+
+        blob_service = BlobServiceClient(
+            account_url=f"https://{self.storage_account}.blob.core.windows.net",
+            credential=credential,
+        )
+
+        container_client = blob_service.get_container_client(self.container)
+
+        # Use provided prefix or fall back to config prefix
+        effective_prefix = prefix if prefix is not None else (self.prefix or "")
+
+        # List all blobs to count and paginate
+        all_files = []
+        folders_set: set = set()
+
+        blobs = container_client.walk_blobs(name_starts_with=effective_prefix, delimiter=delimiter)
+
+        for blob in blobs:
+            if hasattr(blob, "prefix"):
+                # This is a virtual folder (BlobPrefix)
+                folder_prefix = blob.prefix
+                folder_name = folder_prefix.rstrip("/").rsplit("/", 1)[-1]
+                if folder_name:
+                    folders_set.add((folder_prefix, folder_name))
+            else:
+                # This is a blob (file)
+                key = blob.name
+                if key == effective_prefix:
+                    continue
+                name = key.rsplit("/", 1)[-1] if "/" in key else key
+                if not name:
+                    continue
+                all_files.append(
+                    {
+                        "key": key,
+                        "name": name,
+                        "size": blob.size,
+                        "last_modified": blob.last_modified,
+                        "content_type": mimetypes.guess_type(name)[0],
+                    }
+                )
+
+        # Calculate pagination
+        total_count = len(all_files)
+        total_pages = (total_count + limit - 1) // limit if limit > 0 else 0
+
+        # Get files for the requested page
+        start_idx = (page - 1) * limit
+        end_idx = start_idx + limit
+        page_files = all_files[start_idx:end_idx]
+
+        # Build folders list (only on first page)
+        folders = []
+        if page == 1:
+            for folder_prefix, folder_name in sorted(folders_set):
+                folders.append(
+                    {
+                        "prefix": folder_prefix,
+                        "name": folder_name,
+                        "is_empty": False,  # Azure doesn't have cheap empty check
+                    }
+                )
+
+        return ListFilesResult(
+            files=page_files,
+            folders=folders,
+            page=page,
+            limit=limit,
+            total_count=total_count,
+            total_pages=total_pages,
         )
