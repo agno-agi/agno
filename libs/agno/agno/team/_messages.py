@@ -9,7 +9,6 @@ if TYPE_CHECKING:
 
 import json
 from collections import ChainMap
-from copy import copy
 from typing import (
     Any,
     Dict,
@@ -44,7 +43,6 @@ from agno.utils.agent import (
 from agno.utils.common import is_typed_dict
 from agno.utils.log import (
     log_debug,
-    log_error,
     log_warning,
 )
 from agno.utils.message import filter_tool_calls, get_text_from_message
@@ -1389,42 +1387,6 @@ def _format_message_with_state_variables(
         return message
 
 
-def _convert_dependencies_to_string(team: "Team", context: Dict[str, Any]) -> str:
-    """Convert the context dictionary to a string representation.
-
-    Args:
-        context: Dictionary containing context data
-
-    Returns:
-        String representation of the context, or empty string if conversion fails
-    """
-
-    if context is None:
-        return ""
-
-    try:
-        return json.dumps(context, indent=2, default=str)
-    except (TypeError, ValueError, OverflowError) as e:
-        log_warning(f"Failed to convert context to JSON: {e}")
-        # Attempt a fallback conversion for non-serializable objects
-        sanitized_context = {}
-        for key, value in context.items():
-            try:
-                # Try to serialize each value individually
-                json.dumps({key: value}, default=str)
-                sanitized_context[key] = value
-            except Exception as e:
-                log_error(f"Failed to serialize to JSON: {e}")
-                # If serialization fails, convert to string representation
-                sanitized_context[key] = str(value)
-
-        try:
-            return json.dumps(sanitized_context, indent=2)
-        except Exception as e:
-            log_error(f"Failed to convert sanitized context to JSON: {e}")
-            return str(context)
-
-
 def _get_json_output_prompt(
     team: "Team", output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None
 ) -> str:
@@ -1496,133 +1458,3 @@ def _get_json_output_prompt(
     json_output_prompt += "\nYour output will be passed to json.loads() to convert it to a Python object."
     json_output_prompt += "\nMake sure it only contains valid JSON."
     return json_output_prompt
-
-
-def deep_copy(team: "Team", *, update: Optional[Dict[str, Any]] = None) -> "Team":
-    """Create and return a deep copy of this Team, optionally updating fields.
-
-    This creates a fresh Team instance with isolated mutable state while sharing
-    heavy resources like database connections and models. Member agents are also
-    deep copied to ensure complete isolation.
-
-    Args:
-        update: Optional dictionary of fields to override in the new Team.
-
-    Returns:
-        Team: A new Team instance with copied state.
-    """
-    from dataclasses import fields
-
-    # Extract the fields to set for the new Team
-    fields_for_new_team: Dict[str, Any] = {}
-
-    for f in fields(cast(Any, team)):
-        # Skip private fields (not part of __init__ signature)
-        if f.name.startswith("_"):
-            continue
-
-        field_value = getattr(team, f.name)
-        if field_value is not None:
-            try:
-                fields_for_new_team[f.name] = team._deep_copy_field(f.name, field_value)
-            except Exception as e:
-                log_warning(f"Failed to deep copy field '{f.name}': {e}. Using original value.")
-                fields_for_new_team[f.name] = field_value
-
-    # Update fields if provided
-    if update:
-        fields_for_new_team.update(update)
-
-    # Create a new Team
-    try:
-        new_team = team.__class__(**fields_for_new_team)
-        log_debug(f"Created new {team.__class__.__name__}")
-        return cast("Team", new_team)
-    except Exception as e:
-        log_error(f"Failed to create deep copy of {team.__class__.__name__}: {e}")
-        raise
-
-
-def _deep_copy_field(team: "Team", field_name: str, field_value: Any) -> Any:
-    """Helper method to deep copy a field based on its type."""
-    from copy import deepcopy
-
-    # For members, deep copy each agent/team
-    if field_name == "members" and field_value is not None:
-        copied_members = []
-        for member in field_value:
-            if hasattr(member, "deep_copy"):
-                copied_members.append(member.deep_copy())
-            else:
-                copied_members.append(member)
-        return copied_members
-
-    # For tools, share MCP tools but copy others
-    if field_name == "tools" and field_value is not None:
-        try:
-            copied_tools = []
-            for tool in field_value:
-                try:
-                    # Share MCP tools (they maintain server connections)
-                    is_mcp_tool = hasattr(type(tool), "__mro__") and any(
-                        c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
-                    )
-                    if is_mcp_tool:
-                        copied_tools.append(tool)
-                    else:
-                        try:
-                            copied_tools.append(deepcopy(tool))
-                        except Exception:
-                            # Tool can't be deep copied, share by reference
-                            copied_tools.append(tool)
-                except Exception:
-                    # MCP detection failed, share tool by reference to be safe
-                    copied_tools.append(tool)
-            return copied_tools
-        except Exception as e:
-            # If entire tools processing fails, log and return original list
-            log_warning(f"Failed to process tools for deep copy: {e}")
-            return field_value
-
-    # Share heavy resources - these maintain connections/pools that shouldn't be duplicated
-    if field_name in (
-        "db",
-        "model",
-        "reasoning_model",
-        "knowledge",
-        "memory_manager",
-        "parser_model",
-        "output_model",
-        "session_summary_manager",
-        "compression_manager",
-    ):
-        return field_value
-
-    # For compound types, attempt a deep copy
-    if isinstance(field_value, (list, dict, set)):
-        try:
-            return deepcopy(field_value)
-        except Exception:
-            try:
-                return copy(field_value)
-            except Exception as e:
-                log_warning(f"Failed to copy field: {field_name} - {e}")
-                return field_value
-
-    # For pydantic models, attempt a model_copy
-    if isinstance(field_value, BaseModel):
-        try:
-            return field_value.model_copy(deep=True)
-        except Exception:
-            try:
-                return field_value.model_copy(deep=False)
-            except Exception as e:
-                log_warning(f"Failed to copy field: {field_name} - {e}")
-                return field_value
-
-    # For other types, attempt a shallow copy first
-    try:
-        return copy(field_value)
-    except Exception:
-        # If copy fails, return as is
-        return field_value
