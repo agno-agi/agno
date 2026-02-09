@@ -107,9 +107,7 @@ if __name__ == "__main__":
         "Clearing the cache worked! Thanks so much!",
         stream=True,
     )
-    agent.learning_machine.learned_knowledge_store.print(
-        query="login chrome cache"
-    )
+    agent.learning_machine.learned_knowledge_store.print(query="login chrome cache")
 
     # Ticket 2: Second customer with similar issue
     print("\n" + "=" * 60)

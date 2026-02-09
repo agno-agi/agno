@@ -68,9 +68,7 @@ if __name__ == "__main__":
     )
     print("\n--- Entities ---")
     pprint(
-        agent.learning_machine.entity_memory_store.search(
-            query="datapipe", limit=10
-        )
+        agent.learning_machine.entity_memory_store.search(query="datapipe", limit=10)
     )
 
     # Query the entity
@@ -99,7 +97,5 @@ if __name__ == "__main__":
     )
     print("\n--- Updated Entities ---")
     pprint(
-        agent.learning_machine.entity_memory_store.search(
-            query="datapipe", limit=10
-        )
+        agent.learning_machine.entity_memory_store.search(query="datapipe", limit=10)
     )
