@@ -489,9 +489,9 @@ def _get_delegate_task_function(
         """
 
         # Find the member agent using the helper function
-        result = _find_member_by_id(team, member_id)
+        result = _find_member_by_id(team, member_id, run_context=run_context)
         if result is None:
-            yield f"Member with ID {member_id} not found in the team or any subteams. Please choose the correct member from the list of members:\n\n{team.get_members_system_message_content(indent=0)}"
+            yield f"Member with ID {member_id} not found in the team or any subteams. Please choose the correct member from the list of members:\n\n{team.get_members_system_message_content(indent=0, run_context=run_context)}"
             return
 
         _, member_agent = result
@@ -615,9 +615,9 @@ def _get_delegate_task_function(
         """
 
         # Find the member agent using the helper function
-        result = _find_member_by_id(team, member_id)
+        result = _find_member_by_id(team, member_id, run_context=run_context)
         if result is None:
-            yield f"Member with ID {member_id} not found in the team or any subteams. Please choose the correct member from the list of members:\n\n{team.get_members_system_message_content(indent=0)}"
+            yield f"Member with ID {member_id} not found in the team or any subteams. Please choose the correct member from the list of members:\n\n{team.get_members_system_message_content(indent=0, run_context=run_context)}"
             return
 
         _, member_agent = result
@@ -734,9 +734,12 @@ def _get_delegate_task_function(
         Returns:
             str: The result of the delegated task.
         """
+        from agno.utils.callables import get_resolved_members
+
+        resolved_members = get_resolved_members(team, run_context) or []
 
         # Run all the members sequentially
-        for _, member_agent in enumerate(team.members):
+        for _, member_agent in enumerate(resolved_members):
             member_agent_task, history = _setup_delegate_task_to_member(member_agent=member_agent, task=task)
 
             member_session_state_copy = copy(run_context.session_state)
@@ -844,6 +847,9 @@ def _get_delegate_task_function(
         Returns:
             str: The result of the delegated task.
         """
+        from agno.utils.callables import get_resolved_members
+
+        resolved_members = get_resolved_members(team, run_context) or []
 
         if stream:
             # Concurrent streaming: launch each member as a streaming worker and merge events
@@ -899,7 +905,7 @@ def _get_delegate_task_function(
 
             # Initialize and launch all members
             tasks: List[asyncio.Task[None]] = []
-            for member_agent in team.members:
+            for member_agent in resolved_members:
                 current_agent = member_agent
                 _initialize_member(team, current_agent)
                 tasks.append(asyncio.create_task(stream_member(current_agent)))
@@ -925,7 +931,7 @@ def _get_delegate_task_function(
         else:
             # Non-streaming concurrent run of members; collect results when done
             tasks = []
-            for member_agent_index, member_agent in enumerate(team.members):
+            for member_agent_index, member_agent in enumerate(resolved_members):
                 current_agent = member_agent
                 member_agent_task, history = _setup_delegate_task_to_member(member_agent=current_agent, task=task)
 
@@ -1032,11 +1038,14 @@ def add_to_knowledge(team: "Team", query: str, result: str) -> str:
     Returns:
         str: A string indicating the status of the addition.
     """
-    if team.knowledge is None:
+    from agno.utils.callables import get_resolved_knowledge
+
+    knowledge = get_resolved_knowledge(team, None)
+    if knowledge is None:
         log_warning("Knowledge is not set, cannot add to knowledge")
         return "Knowledge is not set, cannot add to knowledge"
 
-    insert_method = getattr(team.knowledge, "insert", None)
+    insert_method = getattr(knowledge, "insert", None)
     if not callable(insert_method):
         log_warning("Knowledge base does not support adding content")
         return "Knowledge base does not support adding content"
@@ -1060,16 +1069,19 @@ def get_relevant_docs_from_knowledge(
 ) -> Optional[List[Union[Dict[str, Any], str]]]:
     """Return a list of references from the knowledge base"""
     from agno.knowledge.document import Document
+    from agno.utils.callables import get_resolved_knowledge
+
+    knowledge = get_resolved_knowledge(team, run_context)
 
     # Extract dependencies from run_context if available
     dependencies = run_context.dependencies if run_context else None
 
-    if num_documents is None and team.knowledge is not None:
-        num_documents = getattr(team.knowledge, "max_results", None)
+    if num_documents is None and knowledge is not None:
+        num_documents = getattr(knowledge, "max_results", None)
 
     # Validate the filters against known valid filter keys
-    if team.knowledge is not None and filters is not None:
-        validate_filters_method = getattr(team.knowledge, "validate_filters", None)
+    if knowledge is not None and filters is not None:
+        validate_filters_method = getattr(knowledge, "validate_filters", None)
         if callable(validate_filters_method):
             valid_filters, invalid_keys = validate_filters_method(filters)
 
@@ -1108,17 +1120,17 @@ def get_relevant_docs_from_knowledge(
             raise e
     # Use knowledge protocol's retrieve method
     try:
-        if team.knowledge is None:
+        if knowledge is None:
             return None
 
         # Use protocol retrieve() method if available
-        retrieve_fn = getattr(team.knowledge, "retrieve", None)
+        retrieve_fn = getattr(knowledge, "retrieve", None)
         if not callable(retrieve_fn):
             log_debug("Knowledge does not implement retrieve()")
             return None
 
         if num_documents is None:
-            num_documents = getattr(team.knowledge, "max_results", 10)
+            num_documents = getattr(knowledge, "max_results", 10)
 
         log_debug(f"Retrieving from knowledge base with filters: {filters}")
         relevant_docs: List[Document] = retrieve_fn(query=query, max_results=num_documents, filters=filters)
@@ -1143,16 +1155,19 @@ async def aget_relevant_docs_from_knowledge(
 ) -> Optional[List[Union[Dict[str, Any], str]]]:
     """Get relevant documents from knowledge base asynchronously."""
     from agno.knowledge.document import Document
+    from agno.utils.callables import get_resolved_knowledge
+
+    knowledge = get_resolved_knowledge(team, run_context)
 
     # Extract dependencies from run_context if available
     dependencies = run_context.dependencies if run_context else None
 
-    if num_documents is None and team.knowledge is not None:
-        num_documents = getattr(team.knowledge, "max_results", None)
+    if num_documents is None and knowledge is not None:
+        num_documents = getattr(knowledge, "max_results", None)
 
     # Validate the filters against known valid filter keys
-    if team.knowledge is not None and filters is not None:
-        avalidate_filters_method = getattr(team.knowledge, "avalidate_filters", None)
+    if knowledge is not None and filters is not None:
+        avalidate_filters_method = getattr(knowledge, "avalidate_filters", None)
         if callable(avalidate_filters_method):
             valid_filters, invalid_keys = await avalidate_filters_method(filters)
 
@@ -1198,19 +1213,19 @@ async def aget_relevant_docs_from_knowledge(
 
     # Use knowledge protocol's retrieve method
     try:
-        if team.knowledge is None:
+        if knowledge is None:
             return None
 
         # Use protocol aretrieve() or retrieve() method if available
-        aretrieve_fn = getattr(team.knowledge, "aretrieve", None)
-        retrieve_fn = getattr(team.knowledge, "retrieve", None)
+        aretrieve_fn = getattr(knowledge, "aretrieve", None)
+        retrieve_fn = getattr(knowledge, "retrieve", None)
 
         if not callable(aretrieve_fn) and not callable(retrieve_fn):
             log_debug("Knowledge does not implement retrieve()")
             return None
 
         if num_documents is None:
-            num_documents = getattr(team.knowledge, "max_results", 10)
+            num_documents = getattr(knowledge, "max_results", 10)
 
         log_debug(f"Retrieving from knowledge base with filters: {filters}")
 

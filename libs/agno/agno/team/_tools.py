@@ -52,6 +52,15 @@ from agno.utils.team import (
 )
 
 
+async def _aresolve_callable_resources(team: "Team", run_context: "RunContext") -> None:
+    """Resolve all callable factories (tools, knowledge, members) asynchronously."""
+    from agno.utils.callables import aresolve_callable_knowledge, aresolve_callable_members, aresolve_callable_tools
+
+    await aresolve_callable_tools(team, run_context)
+    await aresolve_callable_knowledge(team, run_context)
+    await aresolve_callable_members(team, run_context)
+
+
 async def _check_and_refresh_mcp_tools(team: "Team") -> None:
     # Connect MCP tools
     from agno.team._init import _connect_mcp_tools
@@ -60,8 +69,8 @@ async def _check_and_refresh_mcp_tools(team: "Team") -> None:
         team,
     )
 
-    # Add provided tools
-    if team.tools is not None:
+    # Add provided tools - only if tools is a static list
+    if team.tools is not None and isinstance(team.tools, list):
         for tool in team.tools:
             # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
             if hasattr(type(tool), "__mro__") and any(
@@ -117,6 +126,24 @@ def _determine_tools_for_model(
     )
     from agno.team._init import _connect_connectable_tools
     from agno.team._messages import _get_user_message
+    from agno.utils.callables import (
+        get_resolved_knowledge,
+        get_resolved_members,
+        get_resolved_tools,
+        resolve_callable_knowledge,
+        resolve_callable_members,
+        resolve_callable_tools,
+    )
+
+    # In sync mode, resolve callable factories now
+    if not async_mode:
+        resolve_callable_tools(team, run_context)
+        resolve_callable_knowledge(team, run_context)
+        resolve_callable_members(team, run_context)
+
+    resolved_tools = get_resolved_tools(team, run_context)
+    resolved_knowledge = get_resolved_knowledge(team, run_context)
+    resolved_members = get_resolved_members(team, run_context)
 
     _connect_connectable_tools(
         team,
@@ -126,8 +153,8 @@ def _determine_tools_for_model(
     _tools: List[Union[Toolkit, Callable, Function, Dict]] = []
 
     # Add provided tools
-    if team.tools is not None:
-        for tool in team.tools:
+    if resolved_tools is not None:
+        for tool in resolved_tools:
             # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
             if hasattr(type(tool), "__mro__") and any(
                 c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
@@ -154,9 +181,9 @@ def _determine_tools_for_model(
         )
 
     # Add tools for accessing knowledge
-    if team.knowledge is not None and team.search_knowledge:
+    if resolved_knowledge is not None and team.search_knowledge:
         # Use knowledge protocol's get_tools method
-        get_tools_fn = getattr(team.knowledge, "get_tools", None)
+        get_tools_fn = getattr(resolved_knowledge, "get_tools", None)
         if callable(get_tools_fn):
             knowledge_tools = get_tools_fn(
                 run_response=run_response,
@@ -168,10 +195,10 @@ def _determine_tools_for_model(
             )
             _tools.extend(knowledge_tools)
 
-    if team.knowledge is not None and team.update_knowledge:
+    if resolved_knowledge is not None and team.update_knowledge:
         _tools.append(team.add_to_knowledge)
 
-    if team.members:
+    if resolved_members:
         # Get the user message if we are using the input directly
         user_message_content = None
         if team.determine_input_for_members is False:
@@ -331,9 +358,9 @@ def _determine_tools_for_model(
     return _functions
 
 
-def get_member_information(team: "Team") -> str:
+def get_member_information(team: "Team", run_context: Optional["RunContext"] = None) -> str:
     """Get information about the members of the team, including their IDs, names, and roles."""
-    return team.get_members_system_message_content(indent=0)
+    return team.get_members_system_message_content(indent=0, run_context=run_context)
 
 
 def _get_history_for_member_agent(
@@ -396,12 +423,15 @@ def _determine_team_member_interactions(
     return team_member_interactions_str
 
 
-def _find_member_by_id(team: "Team", member_id: str) -> Optional[Tuple[int, Union[Agent, "Team"]]]:
+def _find_member_by_id(
+    team: "Team", member_id: str, run_context: Optional["RunContext"] = None
+) -> Optional[Tuple[int, Union[Agent, "Team"]]]:
     """Find a member (agent or team) by its URL-safe ID, searching recursively.
 
     Args:
         team: The team to search in.
         member_id (str): URL-safe ID of the member to find.
+        run_context: Optional RunContext for resolving callable members.
 
     Returns:
         Optional[Tuple[int, Union[Agent, "Team"]]]: Tuple containing:
@@ -409,16 +439,21 @@ def _find_member_by_id(team: "Team", member_id: str) -> Optional[Tuple[int, Unio
             - The matched member (Agent or Team)
     """
     from agno.team.team import Team
+    from agno.utils.callables import get_resolved_members
+
+    resolved_members = get_resolved_members(team, run_context)
+    if resolved_members is None:
+        return None
 
     # First check direct members
-    for i, member in enumerate(team.members):
+    for i, member in enumerate(resolved_members):
         url_safe_member_id = get_member_id(member)
         if url_safe_member_id == member_id:
             return i, member
 
         # If this member is a team, search its members recursively
         if isinstance(member, Team):
-            result = member._find_member_by_id(member_id)
+            result = member._find_member_by_id(member_id, run_context=run_context)
             if result is not None:
                 return result
 

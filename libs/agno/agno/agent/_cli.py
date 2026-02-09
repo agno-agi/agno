@@ -255,7 +255,7 @@ def cli_app(
     from rich.prompt import Prompt
 
     # Ensuring the agent is not using our async MCP tools
-    if agent.tools is not None:
+    if agent.tools is not None and isinstance(agent.tools, list):
         for tool in agent.tools:
             if isawaitable(tool):
                 raise NotImplementedError("Use `acli_app` to use async tools.")

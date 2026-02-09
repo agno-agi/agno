@@ -476,13 +476,13 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
         config["references_format"] = agent.references_format
 
     # --- Tools ---
-    # Serialize tools to their dictionary representations
+    # Serialize tools to their dictionary representations (skip callable factories)
     _tools: List[Union[Function, dict]] = []
-    if agent.model is not None:
+    if agent.model is not None and agent.tools and isinstance(agent.tools, list):
         _tools = parse_tools(
             agent,
             model=agent.model,
-            tools=agent.tools or [],
+            tools=agent.tools,
         )
     if _tools:
         serialized_tools = []
@@ -652,6 +652,10 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
     # TODO: implement compression manager serialization
     # if agent.compression_manager is not None:
     #     config["compression_manager"] = agent.compression_manager.to_dict()
+
+    # --- Callable factory settings ---
+    if not agent.cache_callables:
+        config["cache_callables"] = agent.cache_callables
 
     # --- Debug and telemetry settings ---
     if agent.debug_mode:

@@ -52,18 +52,25 @@ from agno.utils.team import (
 from agno.utils.timer import Timer
 
 
-def get_members_system_message_content(team: "Team", indent: int = 0) -> str:
+def get_members_system_message_content(team: "Team", indent: int = 0, run_context: Optional[RunContext] = None) -> str:
     from agno.team.team import Team
+    from agno.utils.callables import get_resolved_members
+
+    resolved_members = get_resolved_members(team, run_context)
+    if resolved_members is None:
+        return ""
 
     system_message_content = ""
-    for idx, member in enumerate(team.members):
+    for idx, member in enumerate(resolved_members):
         url_safe_member_id = get_member_id(member)
 
         if isinstance(member, Team):
             system_message_content += f"{indent * ' '} - Team: {member.name}\n"
             system_message_content += f"{indent * ' '} - ID: {url_safe_member_id}\n"
             if member.members is not None:
-                system_message_content += member.get_members_system_message_content(indent=indent + 2)
+                system_message_content += member.get_members_system_message_content(
+                    indent=indent + 2, run_context=run_context
+                )
         else:
             system_message_content += f"{indent * ' '} - Agent {idx + 1}:\n"
             if url_safe_member_id is not None:
@@ -72,7 +79,12 @@ def get_members_system_message_content(team: "Team", indent: int = 0) -> str:
                 system_message_content += f"{indent * ' '}   - Name: {member.name}\n"
             if member.role is not None:
                 system_message_content += f"{indent * ' '}   - Role: {member.role}\n"
-            if member.tools is not None and member.tools != [] and team.add_member_tools_to_context:
+            if (
+                member.tools is not None
+                and isinstance(member.tools, list)
+                and member.tools != []
+                and team.add_member_tools_to_context
+            ):
                 system_message_content += f"{indent * ' '}   - Member tools:\n"
                 for _tool in member.tools:
                     if isinstance(_tool, Toolkit):
@@ -212,15 +224,20 @@ def get_system_message(
     if team.name is not None and team.add_name_to_context:
         additional_information.append(f"Your name is: {team.name}.")
 
+    from agno.utils.callables import get_resolved_knowledge, get_resolved_members
+
+    resolved_members = get_resolved_members(team, run_context)
+    resolved_knowledge = get_resolved_knowledge(team, run_context)
+
     # 2 Build the default system message for the Agent.
     system_message_content: str = ""
-    if team.members is not None and len(team.members) > 0:
+    if resolved_members is not None and len(resolved_members) > 0:
         system_message_content += "You are the leader of a team and sub-teams of AI Agents.\n"
         system_message_content += "Your task is to coordinate the team to complete the user's request.\n"
 
         system_message_content += "\nHere are the members in your team:\n"
         system_message_content += "<team_members>\n"
-        system_message_content += team.get_members_system_message_content()
+        system_message_content += team.get_members_system_message_content(run_context=run_context)
         if team.get_member_information_tool:
             system_message_content += "If you need to get information about your team members, you can use the `get_member_information` tool at any time.\n"
         system_message_content += "</team_members>\n"
@@ -321,8 +338,8 @@ def get_system_message(
         )
 
     # Add search_knowledge instructions to the system prompt
-    if team.knowledge is not None and team.search_knowledge and team.add_search_knowledge_instructions:
-        build_context_fn = getattr(team.knowledge, "build_context", None)
+    if resolved_knowledge is not None and team.search_knowledge and team.add_search_knowledge_instructions:
+        build_context_fn = getattr(resolved_knowledge, "build_context", None)
         if callable(build_context_fn):
             knowledge_context = build_context_fn(
                 enable_agentic_filters=team.enable_agentic_knowledge_filters,
@@ -516,15 +533,20 @@ async def aget_system_message(
     if team.name is not None and team.add_name_to_context:
         additional_information.append(f"Your name is: {team.name}.")
 
+    from agno.utils.callables import get_resolved_knowledge, get_resolved_members
+
+    resolved_members = get_resolved_members(team, run_context)
+    resolved_knowledge = get_resolved_knowledge(team, run_context)
+
     # 2 Build the default system message for the Agent.
     system_message_content: str = ""
-    if team.members is not None and len(team.members) > 0:
+    if resolved_members is not None and len(resolved_members) > 0:
         system_message_content += "You are the leader of a team and sub-teams of AI Agents.\n"
         system_message_content += "Your task is to coordinate the team to complete the user's request.\n"
 
         system_message_content += "\nHere are the members in your team:\n"
         system_message_content += "<team_members>\n"
-        system_message_content += team.get_members_system_message_content()
+        system_message_content += team.get_members_system_message_content(run_context=run_context)
         if team.get_member_information_tool:
             system_message_content += "If you need to get information about your team members, you can use the `get_member_information` tool at any time.\n"
         system_message_content += "</team_members>\n"
@@ -625,8 +647,8 @@ async def aget_system_message(
         )
 
     # Add search_knowledge instructions to the system prompt
-    if team.knowledge is not None and team.search_knowledge and team.add_search_knowledge_instructions:
-        build_context_fn = getattr(team.knowledge, "build_context", None)
+    if resolved_knowledge is not None and team.search_knowledge and team.add_search_knowledge_instructions:
+        build_context_fn = getattr(resolved_knowledge, "build_context", None)
         if callable(build_context_fn):
             knowledge_context = build_context_fn(
                 enable_agentic_filters=team.enable_agentic_knowledge_filters,

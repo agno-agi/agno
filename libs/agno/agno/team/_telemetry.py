@@ -31,7 +31,7 @@ def get_telemetry_data(team: "Team") -> Dict[str, Any]:
         "model_id": team.model.id if team.model else None,
         "parser_model": team.parser_model.to_dict() if team.parser_model else None,
         "output_model": team.output_model.to_dict() if team.output_model else None,
-        "member_count": len(team.members) if team.members else 0,
+        "member_count": len(team.members) if isinstance(team.members, list) else 0,
         "has_knowledge": team.knowledge is not None,
         "has_tools": team.tools is not None,
     }
