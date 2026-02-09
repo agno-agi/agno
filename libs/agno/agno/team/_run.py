@@ -2280,10 +2280,14 @@ def continue_run_dispatch(
                 yield from inner  # type: ignore[misc]
             except Exception:
                 run_response.status = RunStatus.paused
-                team._cleanup_and_store(run_response=run_response, session=team_session)
+                # Re-read session so we don't overwrite state saved by the inner run()
+                fresh_session = team._read_or_create_session(session_id=session_id, user_id=user_id)
+                team._cleanup_and_store(run_response=run_response, session=fresh_session)
                 raise
             run_response.status = RunStatus.completed
-            team._cleanup_and_store(run_response=run_response, session=team_session)
+            # Re-read session so we don't overwrite the continuation run stored by inner run()
+            fresh_session = team._read_or_create_session(session_id=session_id, user_id=user_id)
+            team._cleanup_and_store(run_response=run_response, session=fresh_session)
 
         return _wrap_continuation_stream()  # type: ignore[return-value]
 
@@ -2301,11 +2305,15 @@ def continue_run_dispatch(
     except Exception:
         # If continuation fails, keep the original run as paused so user can retry
         run_response.status = RunStatus.paused
+        # Re-read session so we don't overwrite state saved by the inner run()
+        team_session = team._read_or_create_session(session_id=session_id, user_id=user_id)
         team._cleanup_and_store(run_response=run_response, session=team_session)
         raise
 
     # Mark the paused run as completed only after the continuation succeeds
     run_response.status = RunStatus.completed
+    # Re-read session so we don't overwrite the continuation run stored by inner run()
+    team_session = team._read_or_create_session(session_id=session_id, user_id=user_id)
     team._cleanup_and_store(run_response=run_response, session=team_session)
 
     return result
@@ -2461,11 +2469,15 @@ async def _acontinue_run_impl(
     except Exception:
         # If continuation fails, keep the original run as paused so user can retry
         run_response.status = RunStatus.paused
+        # Re-read session so we don't overwrite state saved by the inner arun()
+        team_session = await team._aread_or_create_session(session_id=session_id, user_id=user_id)
         await team._acleanup_and_store(run_response=run_response, session=team_session)
         raise
 
     # Mark the paused run as completed only after the continuation succeeds
     run_response.status = RunStatus.completed
+    # Re-read session so we don't overwrite the continuation run stored by inner arun()
+    team_session = await team._aread_or_create_session(session_id=session_id, user_id=user_id)
     await team._acleanup_and_store(run_response=run_response, session=team_session)
 
     return result
@@ -2551,9 +2563,13 @@ async def _acontinue_run_stream_impl(
     except Exception:
         # If continuation fails, keep the original run as paused so user can retry
         run_response.status = RunStatus.paused
+        # Re-read session so we don't overwrite state saved by the inner arun()
+        team_session = await team._aread_or_create_session(session_id=session_id, user_id=user_id)
         await team._acleanup_and_store(run_response=run_response, session=team_session)
         raise
 
     # Mark the paused run as completed only after streaming finishes
     run_response.status = RunStatus.completed
+    # Re-read session so we don't overwrite the continuation run stored by inner arun()
+    team_session = await team._aread_or_create_session(session_id=session_id, user_id=user_id)
     await team._acleanup_and_store(run_response=run_response, session=team_session)
