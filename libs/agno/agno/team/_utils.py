@@ -147,7 +147,7 @@ def deep_copy(team: Team, *, update: Optional[Dict[str, Any]] = None) -> Team:
     try:
         new_team = team.__class__(**fields_for_new_team)
         log_debug(f"Created new {team.__class__.__name__}")
-        return cast(Team, new_team)
+        return new_team
     except Exception as e:
         log_error(f"Failed to create deep copy of {team.__class__.__name__}: {e}")
         raise
