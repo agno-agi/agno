@@ -51,6 +51,6 @@ agent.print_response(
 
 # View auto-logged decisions
 print("\n=== Auto-Logged Decisions ===\n")
-decision_store = agent.get_learning_machine().decision_log_store
+decision_store = agent.learning_machine.decision_log_store
 if decision_store:
     decision_store.print(agent_id="auto-decision-logger", limit=10)
