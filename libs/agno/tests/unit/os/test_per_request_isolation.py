@@ -241,6 +241,29 @@ class TestAgentDeepCopy:
         assert copy.name == "updated"
         assert agent.name == "original"
 
+    def test_deep_copy_with_team_id_set(self):
+        """deep_copy works when agent has team_id set (part of a team)."""
+        agent = Agent(name="team-member", id="member-id")
+        agent.team_id = "parent-team-id"  # Set at runtime when added to team
+
+        copy = agent.deep_copy()
+
+        assert copy is not agent
+        assert copy.id == agent.id
+        # team_id should NOT be copied (it's a runtime field)
+        assert copy.team_id is None
+
+    def test_deep_copy_with_workflow_id_set(self):
+        """deep_copy works when agent has workflow_id set (part of a workflow)."""
+        agent = Agent(name="workflow-agent", id="agent-id")
+        agent.workflow_id = "parent-workflow-id"
+
+        copy = agent.deep_copy()
+
+        assert copy is not agent
+        assert copy.id == agent.id
+        assert copy.workflow_id is None
+
 
 # ============================================================================
 # Team Deep Copy Tests
@@ -273,6 +296,105 @@ class TestTeamDeepCopy:
         assert copy.members[1] is not member2
         assert copy.members[0].id == member1.id
         assert copy.members[1].id == member2.id
+
+    def test_deep_copy_with_parent_team_id_set(self):
+        """deep_copy works when team has parent_team_id set (nested team)."""
+        inner_agent = Agent(name="inner", id="inner-id")
+        team = Team(name="nested-team", id="nested-id", members=[inner_agent])
+        team.parent_team_id = "outer-team-id"  # Set at runtime
+
+        copy = team.deep_copy()
+
+        assert copy is not team
+        assert copy.id == team.id
+        assert copy.parent_team_id is None
+
+    def test_deep_copy_with_workflow_id_set(self):
+        """deep_copy works when team has workflow_id set (part of workflow)."""
+        agent = Agent(name="member", id="member-id")
+        team = Team(name="workflow-team", id="team-id", members=[agent])
+        team.workflow_id = "workflow-id"
+
+        copy = team.deep_copy()
+
+        assert copy is not team
+        assert copy.id == team.id
+        assert copy.workflow_id is None
+
+
+# ============================================================================
+# Nested Team Deep Copy Tests
+# ============================================================================
+
+
+class TestNestedTeamDeepCopy:
+    """Tests for deep copying nested team structures.
+
+    These tests specifically verify that deep_copy works correctly when teams
+    have runtime-set fields like parent_team_id that are not __init__ parameters.
+    """
+
+    def test_outer_team_deep_copy_with_nested_team(self):
+        """Outer team can be deep copied when it contains nested teams."""
+        inner_agent = Agent(name="inner-agent", id="inner-agent-id")
+        inner_team = Team(name="inner-team", id="inner-team-id", members=[inner_agent])
+        outer_team = Team(name="outer-team", id="outer-team-id", members=[inner_team])
+
+        # Initialize the outer team (this sets parent_team_id on inner_team)
+        outer_team.initialize_team()
+
+        # Verify runtime field was set
+        assert inner_team.parent_team_id == "outer-team-id"
+
+        # This should not raise TypeError
+        copy = outer_team.deep_copy()
+
+        assert copy is not outer_team
+        assert copy.members[0] is not inner_team
+        assert copy.members[0].id == inner_team.id
+
+    def test_three_level_nested_teams(self):
+        """Deep copy works for three levels of nested teams."""
+        agent = Agent(name="agent", id="agent-id")
+        level3 = Team(name="level3", id="level3-id", members=[agent])
+        level2 = Team(name="level2", id="level2-id", members=[level3])
+        level1 = Team(name="level1", id="level1-id", members=[level2])
+
+        level1.initialize_team()
+
+        # Verify runtime fields were set at each level
+        assert level2.parent_team_id == "level1-id"
+        assert level3.parent_team_id == "level2-id"
+
+        # This should not raise TypeError
+        copy = level1.deep_copy()
+
+        # Verify copies are independent instances
+        assert copy is not level1
+        assert copy.members[0] is not level2
+        assert copy.members[0].members[0] is not level3
+
+        # Verify IDs are preserved
+        assert copy.id == level1.id
+        assert copy.members[0].id == level2.id
+        assert copy.members[0].members[0].id == level3.id
+
+    def test_nested_team_runtime_fields_not_propagated(self):
+        """Runtime fields should not be propagated to copies."""
+        inner_agent = Agent(name="inner-agent", id="inner-agent-id")
+        inner_team = Team(name="inner-team", id="inner-team-id", members=[inner_agent])
+        outer_team = Team(name="outer-team", id="outer-team-id", members=[inner_team])
+
+        outer_team.initialize_team()
+
+        # Both teams now have runtime fields set
+        assert inner_team.parent_team_id == "outer-team-id"
+
+        copy = outer_team.deep_copy()
+
+        # The copied inner team should not have parent_team_id set
+        # (it's a runtime field that gets set during initialization)
+        assert copy.members[0].parent_team_id is None
 
 
 # ============================================================================
