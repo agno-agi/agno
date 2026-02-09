@@ -273,7 +273,7 @@ async def ahandle_agent_run_paused_stream(
     log_debug(f"Agent Run Paused: {run_response.run_id}", center=True, symbol="*")
 
 
-def run_impl(
+def _run(
     agent: Agent,
     run_response: RunOutput,
     run_context: RunContext,
@@ -631,7 +631,7 @@ def run_impl(
     return run_response
 
 
-def run_stream_impl(
+def _run_stream(
     agent: Agent,
     run_response: RunOutput,
     run_context: RunContext,
@@ -1179,6 +1179,13 @@ def run_dispatch(
         files=file_artifacts,
     )
 
+    # Read existing session and update metadata BEFORE resolving run options,
+    # so that session-stored metadata is visible to resolve_run_options.
+    from agno.agent._storage import read_or_create_session, update_metadata
+
+    agent_session = read_or_create_session(agent, session_id=session_id, user_id=user_id)
+    update_metadata(agent, session=agent_session)
+
     # Resolve all run options centrally
     opts = resolve_run_options(
         agent,
@@ -1248,7 +1255,7 @@ def run_dispatch(
     run_response.metrics.start_timer()
 
     if opts.stream:
-        response_iterator = run_stream_impl(
+        response_iterator = _run_stream(
             agent,
             run_response=run_response,
             run_context=run_context,
@@ -1266,7 +1273,7 @@ def run_dispatch(
         )
         return response_iterator
     else:
-        response = run_impl(
+        response = _run(
             agent,
             run_response=run_response,
             run_context=run_context,
@@ -1283,7 +1290,7 @@ def run_dispatch(
         return response
 
 
-async def arun_impl(
+async def _arun(
     agent: Agent,
     run_response: RunOutput,
     run_context: RunContext,
@@ -1673,7 +1680,7 @@ async def arun_impl(
     return run_response
 
 
-async def arun_stream_impl(
+async def _arun_stream(
     agent: Agent,
     run_response: RunOutput,
     run_context: RunContext,
@@ -2332,7 +2339,7 @@ def arun_dispatch(  # type: ignore
 
     # Pass the new run_response to _arun
     if opts.stream:
-        return arun_stream_impl(  # type: ignore
+        return _arun_stream(  # type: ignore
             agent,
             run_response=run_response,
             run_context=run_context,
@@ -2349,7 +2356,7 @@ def arun_dispatch(  # type: ignore
             **kwargs,
         )  # type: ignore[assignment]
     else:
-        return arun_impl(  # type: ignore
+        return _arun(  # type: ignore
             agent,
             run_response=run_response,
             run_context=run_context,

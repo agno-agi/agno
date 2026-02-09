@@ -73,7 +73,7 @@ def test_run_dispatch_does_not_reset_cancellation_before_impl(monkeypatch: pytes
     run_id = "run-preserve-cancelled-state"
 
     def initialize_and_cancel(debug_mode=None):
-        # register_run now happens inside run_impl, so we register here to test cancellation
+        # register_run now happens inside _run, so we register here to test cancellation
         register_run(run_id)
         assert cancel_run(run_id) is True
 
@@ -99,7 +99,7 @@ def test_run_dispatch_does_not_reset_cancellation_before_impl(monkeypatch: pytes
         cleanup_run(run_response.run_id)  # type: ignore[arg-type]
         return run_response
 
-    monkeypatch.setattr(_run, "run_impl", fake_run_impl)
+    monkeypatch.setattr(_run, "_run", fake_run_impl)
 
     _run.run_dispatch(agent=agent, input="hello", run_id=run_id, stream=False)
 
@@ -223,7 +223,7 @@ async def test_arun_stream_impl_cleans_up_registered_run_on_session_read_failure
     run_context = RunContext(run_id=run_id, session_id="session-1", session_state={})
     run_response = RunOutput(run_id=run_id)
 
-    response_stream = _run.arun_stream_impl(
+    response_stream = _run._arun_stream(
         agent=agent,
         run_response=run_response,
         run_context=run_context,
@@ -267,7 +267,7 @@ async def test_arun_impl_preserves_original_error_when_session_read_fails(monkey
     run_context = RunContext(run_id=run_id, session_id="session-1", session_state={})
     run_response = RunOutput(run_id=run_id)
 
-    response = await _run.arun_impl(
+    response = await _run._arun(
         agent=agent,
         run_response=run_response,
         run_context=run_context,
@@ -402,7 +402,7 @@ def test_run_dispatch_respects_run_context_precedence(monkeypatch: pytest.Monkey
         cleanup_run(run_response.run_id)  # type: ignore[arg-type]
         return run_response
 
-    monkeypatch.setattr(_run, "run_impl", fake_run_impl)
+    monkeypatch.setattr(_run, "_run", fake_run_impl)
 
     preserved_context = RunContext(
         run_id="ctx-preserve",
@@ -494,7 +494,7 @@ async def test_arun_dispatch_respects_run_context_precedence(monkeypatch: pytest
     ):
         return run_response
 
-    monkeypatch.setattr(_run, "arun_impl", fake_arun_impl)
+    monkeypatch.setattr(_run, "_arun", fake_arun_impl)
 
     preserved_context = RunContext(
         run_id="actx-preserve",
