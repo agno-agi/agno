@@ -127,6 +127,7 @@ def get_approvals_router(os_db: Any, settings: Any) -> APIRouter:
     @router.delete("/approvals/{approval_id}", status_code=204)
     async def cancel_approval(
         approval_id: str,
+        request: Request,
         _: bool = Depends(auth_dependency),
     ) -> None:
         approval = await _db_call("get_approval", approval_id)
@@ -136,11 +137,14 @@ def get_approvals_router(os_db: Any, settings: Any) -> APIRouter:
             raise HTTPException(status_code=409, detail=f"Cannot cancel approval with status {approval['status']}")
 
         now = int(time.time())
+        resolved_by = getattr(request.state, "user_id", None) or getattr(request.state, "sub", None)
         result = await _db_call(
             "update_approval",
             approval_id,
             expected_status="pending",
             status="cancelled",
+            resolved_by=resolved_by,
+            resolved_at=now,
             updated_at=now,
         )
         if result is None:
