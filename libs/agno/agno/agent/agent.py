@@ -31,6 +31,7 @@ from agno.agent import (
     _messages,
     _response,
     _run,
+    _session,
     _storage,
     _telemetry,
     _tools,
@@ -1154,37 +1155,37 @@ class Agent:
         return _storage.delete(self, db=db, hard_delete=hard_delete)
 
     def get_run_output(self, run_id: str, session_id: Optional[str] = None) -> Optional[RunOutput]:
-        return _storage.get_run_output(self, run_id=run_id, session_id=session_id)
+        return _session.get_run_output(self, run_id=run_id, session_id=session_id)
 
     async def aget_run_output(self, run_id: str, session_id: Optional[str] = None) -> Optional[RunOutput]:
-        return await _storage.aget_run_output(self, run_id=run_id, session_id=session_id)
+        return await _session.aget_run_output(self, run_id=run_id, session_id=session_id)
 
     def get_last_run_output(self, session_id: Optional[str] = None) -> Optional[RunOutput]:
-        return _storage.get_last_run_output(self, session_id=session_id)
+        return _session.get_last_run_output(self, session_id=session_id)
 
     async def aget_last_run_output(self, session_id: Optional[str] = None) -> Optional[RunOutput]:
-        return await _storage.aget_last_run_output(self, session_id=session_id)
+        return await _session.aget_last_run_output(self, session_id=session_id)
 
     def get_session(
         self,
         session_id: Optional[str] = None,
     ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession]]:
-        return _storage.get_session(self, session_id=session_id)
+        return _session.get_session(self, session_id=session_id)
 
     async def aget_session(
         self,
         session_id: Optional[str] = None,
     ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession]]:
-        return await _storage.aget_session(self, session_id=session_id)
+        return await _session.aget_session(self, session_id=session_id)
 
     def save_session(self, session: Union[AgentSession, TeamSession, WorkflowSession]) -> None:
-        return _storage.save_session(self, session=session)
+        return _session.save_session(self, session=session)
 
     async def asave_session(self, session: Union[AgentSession, TeamSession, WorkflowSession]) -> None:
-        return await _storage.asave_session(self, session=session)
+        return await _session.asave_session(self, session=session)
 
     def rename(self, name: str, session_id: Optional[str] = None) -> None:
-        return _storage.rename(self, name=name, session_id=session_id)
+        return _session.rename(self, name=name, session_id=session_id)
 
     def set_session_name(
         self,
@@ -1192,7 +1193,7 @@ class Agent:
         autogenerate: bool = False,
         session_name: Optional[str] = None,
     ) -> AgentSession:
-        return _storage.set_session_name(
+        return _session.set_session_name(
             self, session_id=session_id, autogenerate=autogenerate, session_name=session_name
         )
 
@@ -1202,46 +1203,46 @@ class Agent:
         autogenerate: bool = False,
         session_name: Optional[str] = None,
     ) -> AgentSession:
-        return await _storage.aset_session_name(
+        return await _session.aset_session_name(
             self, session_id=session_id, autogenerate=autogenerate, session_name=session_name
         )
 
     def generate_session_name(self, session: AgentSession) -> str:
-        return _storage.generate_session_name(self, session=session)
+        return _session.generate_session_name(self, session=session)
 
     def get_session_name(self, session_id: Optional[str] = None) -> str:
-        return _storage.get_session_name(self, session_id=session_id)
+        return _session.get_session_name(self, session_id=session_id)
 
     async def aget_session_name(self, session_id: Optional[str] = None) -> str:
-        return await _storage.aget_session_name(self, session_id=session_id)
+        return await _session.aget_session_name(self, session_id=session_id)
 
     def get_session_state(self, session_id: Optional[str] = None) -> Dict[str, Any]:
-        return _storage.get_session_state(self, session_id=session_id)
+        return _session.get_session_state(self, session_id=session_id)
 
     async def aget_session_state(self, session_id: Optional[str] = None) -> Dict[str, Any]:
-        return await _storage.aget_session_state(self, session_id=session_id)
+        return await _session.aget_session_state(self, session_id=session_id)
 
     def update_session_state(self, session_state_updates: Dict[str, Any], session_id: Optional[str] = None) -> str:
-        return _storage.update_session_state(self, session_state_updates=session_state_updates, session_id=session_id)
+        return _session.update_session_state(self, session_state_updates=session_state_updates, session_id=session_id)
 
     async def aupdate_session_state(
         self, session_state_updates: Dict[str, Any], session_id: Optional[str] = None
     ) -> str:
-        return await _storage.aupdate_session_state(
+        return await _session.aupdate_session_state(
             self, session_state_updates=session_state_updates, session_id=session_id
         )
 
     def get_session_metrics(self, session_id: Optional[str] = None) -> Optional[Metrics]:
-        return _storage.get_session_metrics(self, session_id=session_id)
+        return _session.get_session_metrics(self, session_id=session_id)
 
     async def aget_session_metrics(self, session_id: Optional[str] = None) -> Optional[Metrics]:
-        return await _storage.aget_session_metrics(self, session_id=session_id)
+        return await _session.aget_session_metrics(self, session_id=session_id)
 
     def delete_session(self, session_id: str) -> None:
-        return _storage.delete_session(self, session_id=session_id)
+        return _session.delete_session(self, session_id=session_id)
 
     async def adelete_session(self, session_id: str) -> None:
-        return await _storage.adelete_session(self, session_id=session_id)
+        return await _session.adelete_session(self, session_id=session_id)
 
     def get_session_messages(
         self,
@@ -1252,7 +1253,7 @@ class Agent:
         skip_statuses: Optional[List[RunStatus]] = None,
         skip_history_messages: bool = True,
     ) -> List[Message]:
-        return _storage.get_session_messages(
+        return _session.get_session_messages(
             self,
             session_id=session_id,
             last_n_runs=last_n_runs,
@@ -1271,7 +1272,7 @@ class Agent:
         skip_statuses: Optional[List[RunStatus]] = None,
         skip_history_messages: bool = True,
     ) -> List[Message]:
-        return await _storage.aget_session_messages(
+        return await _session.aget_session_messages(
             self,
             session_id=session_id,
             last_n_runs=last_n_runs,
@@ -1282,30 +1283,30 @@ class Agent:
         )
 
     def get_chat_history(self, session_id: Optional[str] = None, last_n_runs: Optional[int] = None) -> List[Message]:
-        return _storage.get_chat_history(self, session_id=session_id, last_n_runs=last_n_runs)
+        return _session.get_chat_history(self, session_id=session_id, last_n_runs=last_n_runs)
 
     async def aget_chat_history(
         self, session_id: Optional[str] = None, last_n_runs: Optional[int] = None
     ) -> List[Message]:
-        return await _storage.aget_chat_history(self, session_id=session_id, last_n_runs=last_n_runs)
+        return await _session.aget_chat_history(self, session_id=session_id, last_n_runs=last_n_runs)
 
     def get_session_summary(self, session_id: Optional[str] = None) -> Optional[SessionSummary]:
-        return _storage.get_session_summary(self, session_id=session_id)
+        return _session.get_session_summary(self, session_id=session_id)
 
     async def aget_session_summary(self, session_id: Optional[str] = None) -> Optional[SessionSummary]:
-        return await _storage.aget_session_summary(self, session_id=session_id)
+        return await _session.aget_session_summary(self, session_id=session_id)
 
     def get_user_memories(self, user_id: Optional[str] = None) -> Optional[List[UserMemory]]:
-        return _storage.get_user_memories(self, user_id=user_id)
+        return _session.get_user_memories(self, user_id=user_id)
 
     async def aget_user_memories(self, user_id: Optional[str] = None) -> Optional[List[UserMemory]]:
-        return await _storage.aget_user_memories(self, user_id=user_id)
+        return await _session.aget_user_memories(self, user_id=user_id)
 
     def get_culture_knowledge(self) -> Optional[List[CulturalKnowledge]]:
-        return _storage.get_culture_knowledge(self)
+        return _session.get_culture_knowledge(self)
 
     async def aget_culture_knowledge(self) -> Optional[List[CulturalKnowledge]]:
-        return await _storage.aget_culture_knowledge(self)
+        return await _session.aget_culture_knowledge(self)
 
     # ---------------------------------------------------------------
     # _response module delegates
@@ -1318,7 +1319,7 @@ class Agent:
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
     ) -> None:
-        return _storage.save_run_response_to_file(
+        return _run.save_run_response_to_file(
             self, run_response=run_response, input=input, session_id=session_id, user_id=user_id
         )
 
@@ -1818,7 +1819,7 @@ class Agent:
         )
 
     def _update_session_metrics(self, session: AgentSession, run_response: RunOutput) -> None:
-        return _storage.update_session_metrics(self, session=session, run_response=run_response)
+        return _run.update_session_metrics(self, session=session, run_response=run_response)
 
     def _handle_model_response_stream(
         self,
@@ -2114,7 +2115,7 @@ class Agent:
         run_context: Optional[RunContext] = None,
         user_id: Optional[str] = None,
     ) -> None:
-        return _storage.cleanup_and_store(
+        return _run.cleanup_and_store(
             self, run_response=run_response, session=session, run_context=run_context, user_id=user_id
         )
 
@@ -2125,12 +2126,12 @@ class Agent:
         run_context: Optional[RunContext] = None,
         user_id: Optional[str] = None,
     ) -> None:
-        return await _storage.acleanup_and_store(
+        return await _run.acleanup_and_store(
             self, run_response=run_response, session=session, run_context=run_context, user_id=user_id
         )
 
     def _scrub_run_output_for_storage(self, run_response: RunOutput) -> None:
-        return _storage.scrub_run_output_for_storage(self, run_response=run_response)
+        return _run.scrub_run_output_for_storage(self, run_response=run_response)
 
     def cli_app(
         self,
