@@ -378,6 +378,8 @@ class Team:
     _connectable_tools_initialized_on_run: Optional[List[Any]] = None
     # Internal resolved LearningMachine instance
     _learning: Optional[LearningMachine] = None
+    # Whether learning init has been attempted (prevents repeated attempts when db is None)
+    _learning_init_attempted: bool = False
     # Lazy-initialized shared thread pool executor for background tasks
     _background_executor: Optional[Any] = None
 
@@ -622,7 +624,12 @@ class Team:
 
     @property
     def learning_machine(self) -> Optional[LearningMachine]:
-        if self._learning is None and self.learning is not None and self.learning is not False:
+        if (
+            self._learning is None
+            and not self._learning_init_attempted
+            and self.learning is not None
+            and self.learning is not False
+        ):
             _init._set_learning_machine(self)
         return self._learning
 

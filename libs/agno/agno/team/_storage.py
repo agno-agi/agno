@@ -581,7 +581,14 @@ def to_dict(team: "Team") -> Dict[str, Any]:
 
     # --- Learning settings ---
     if team.learning is not None:
-        config["learning"] = True if team.learning else False
+        if team.learning is True:
+            config["learning"] = True
+        elif team.learning is False:
+            config["learning"] = False
+        elif hasattr(team.learning, "to_dict"):
+            config["learning"] = team.learning.to_dict()
+        else:
+            config["learning"] = True if team.learning else False
     if not team.add_learnings_to_context:  # default is True
         config["add_learnings_to_context"] = team.add_learnings_to_context
 
@@ -662,6 +669,20 @@ def to_dict(team: "Team") -> Dict[str, Any]:
         config["telemetry"] = team.telemetry
 
     return config
+
+
+def _deserialize_learning(value: Any) -> Any:
+    """Deserialize a learning config value from to_dict output.
+
+    Returns True, False, None, or a LearningMachine instance.
+    """
+    if value is None or value is True or value is False:
+        return value
+    if isinstance(value, dict):
+        from agno.learn.machine import LearningMachine
+
+        return LearningMachine.from_dict(value)
+    return value
 
 
 def from_dict(
@@ -898,7 +919,7 @@ def from_dict(
             add_session_summary_to_context=config.get("add_session_summary_to_context"),
             # session_summary_manager=config.get("session_summary_manager"),  # TODO
             # --- Learning settings ---
-            learning=config.get("learning"),
+            learning=_deserialize_learning(config.get("learning")),
             add_learnings_to_context=config.get("add_learnings_to_context", True),
             # --- History settings ---
             add_history_to_context=config.get("add_history_to_context", False),

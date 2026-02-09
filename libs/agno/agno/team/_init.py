@@ -518,6 +518,8 @@ def _set_learning_machine(team: "Team") -> None:
     - learning=False/None: Disabled
     - learning=LearningMachine(...): Use provided, inject db/model
     """
+    team._learning_init_attempted = True
+
     if team.learning is None or team.learning is False:
         team._learning = None
         return
