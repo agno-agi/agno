@@ -143,7 +143,7 @@ def resolve_run_dependencies(agent: Agent, run_context: RunContext) -> None:
 
 
 async def aresolve_run_dependencies(agent: Agent, run_context: RunContext) -> None:
-    from inspect import iscoroutine, iscoroutinefunction, signature
+    from inspect import iscoroutine, signature
 
     log_debug("Resolving context (async)")
     if not isinstance(run_context.dependencies, dict):
@@ -166,7 +166,7 @@ async def aresolve_run_dependencies(agent: Agent, run_context: RunContext) -> No
 
             # Run the function
             result = value(**kwargs)
-            if iscoroutine(result) or iscoroutinefunction(result):
+            if iscoroutine(result):
                 result = await result  # type: ignore
 
             run_context.dependencies[key] = result
@@ -1215,22 +1215,13 @@ def run_dispatch(
         output_schema=opts.output_schema,
     )
     # Apply options with precedence: explicit args > existing run_context > resolved defaults.
-    if dependencies is not None:
-        run_context.dependencies = opts.dependencies
-    elif run_context.dependencies is None:
-        run_context.dependencies = opts.dependencies
-    if knowledge_filters is not None:
-        run_context.knowledge_filters = opts.knowledge_filters
-    elif run_context.knowledge_filters is None:
-        run_context.knowledge_filters = opts.knowledge_filters
-    if metadata is not None:
-        run_context.metadata = opts.metadata
-    elif run_context.metadata is None:
-        run_context.metadata = opts.metadata
-    if output_schema is not None:
-        run_context.output_schema = opts.output_schema
-    elif run_context.output_schema is None:
-        run_context.output_schema = opts.output_schema
+    opts.apply_to_context(
+        run_context,
+        dependencies_provided=dependencies is not None,
+        knowledge_filters_provided=knowledge_filters is not None,
+        metadata_provided=metadata is not None,
+        output_schema_provided=output_schema is not None,
+    )
 
     # Prepare arguments for the model (must be after run_context is fully initialized)
     response_format = get_response_format(agent, run_context=run_context) if agent.parser_model is None else None
@@ -2269,6 +2260,16 @@ def arun_dispatch(  # type: ignore
         files=file_artifacts,
     )
 
+    # Read existing session and update metadata BEFORE resolving run options,
+    # so that session-stored metadata is visible to resolve_run_options.
+    from agno.agent._init import has_async_db
+
+    if not has_async_db(agent):
+        from agno.agent._storage import read_or_create_session, update_metadata
+
+        _pre_session = read_or_create_session(agent, session_id=session_id, user_id=user_id)
+        update_metadata(agent, session=_pre_session)
+
     # Resolve all run options centrally
     opts = resolve_run_options(
         agent,
@@ -2298,22 +2299,13 @@ def arun_dispatch(  # type: ignore
         output_schema=opts.output_schema,
     )
     # Apply options with precedence: explicit args > existing run_context > resolved defaults.
-    if dependencies is not None:
-        run_context.dependencies = opts.dependencies
-    elif run_context.dependencies is None:
-        run_context.dependencies = opts.dependencies
-    if knowledge_filters is not None:
-        run_context.knowledge_filters = opts.knowledge_filters
-    elif run_context.knowledge_filters is None:
-        run_context.knowledge_filters = opts.knowledge_filters
-    if metadata is not None:
-        run_context.metadata = opts.metadata
-    elif run_context.metadata is None:
-        run_context.metadata = opts.metadata
-    if output_schema is not None:
-        run_context.output_schema = opts.output_schema
-    elif run_context.output_schema is None:
-        run_context.output_schema = opts.output_schema
+    opts.apply_to_context(
+        run_context,
+        dependencies_provided=dependencies is not None,
+        knowledge_filters_provided=knowledge_filters is not None,
+        metadata_provided=metadata is not None,
+        output_schema_provided=output_schema is not None,
+    )
 
     # Prepare arguments for the model (must be after run_context is fully initialized)
     response_format = get_response_format(agent, run_context=run_context) if agent.parser_model is None else None
@@ -2468,18 +2460,12 @@ def continue_run_dispatch(
         metadata=opts.metadata,
     )
     # Apply options with precedence: explicit args > existing run_context > resolved defaults.
-    if dependencies is not None:
-        run_context.dependencies = opts.dependencies
-    elif run_context.dependencies is None:
-        run_context.dependencies = opts.dependencies
-    if knowledge_filters is not None:
-        run_context.knowledge_filters = opts.knowledge_filters
-    elif run_context.knowledge_filters is None:
-        run_context.knowledge_filters = opts.knowledge_filters
-    if metadata is not None:
-        run_context.metadata = opts.metadata
-    elif run_context.metadata is None:
-        run_context.metadata = opts.metadata
+    opts.apply_to_context(
+        run_context,
+        dependencies_provided=dependencies is not None,
+        knowledge_filters_provided=knowledge_filters is not None,
+        metadata_provided=metadata is not None,
+    )
 
     # Resolve dependencies
     if run_context.dependencies is not None:
@@ -3131,6 +3117,18 @@ def acontinue_run_dispatch(  # type: ignore
     # Initialize the Agent
     agent.initialize_agent(debug_mode=debug_mode)
 
+    # Read existing session and update metadata BEFORE resolving run options,
+    # so that session-stored metadata is visible to resolve_run_options.
+    from agno.agent._init import has_async_db
+
+    _session_state: Dict[str, Any] = {}
+    if not has_async_db(agent):
+        from agno.agent._storage import load_session_state, read_or_create_session, update_metadata
+
+        _pre_session = read_or_create_session(agent, session_id=session_id, user_id=user_id)
+        update_metadata(agent, session=_pre_session)
+        _session_state = load_session_state(agent, session=_pre_session, session_state={})
+
     # Resolve all run options centrally
     opts = resolve_run_options(
         agent,
@@ -3151,24 +3149,18 @@ def acontinue_run_dispatch(  # type: ignore
         run_id=run_id,  # type: ignore
         session_id=session_id,
         user_id=user_id,
-        session_state={},
+        session_state=_session_state,
         dependencies=opts.dependencies,
         knowledge_filters=opts.knowledge_filters,
         metadata=opts.metadata,
     )
     # Apply options with precedence: explicit args > existing run_context > resolved defaults.
-    if dependencies is not None:
-        run_context.dependencies = opts.dependencies
-    elif run_context.dependencies is None:
-        run_context.dependencies = opts.dependencies
-    if knowledge_filters is not None:
-        run_context.knowledge_filters = opts.knowledge_filters
-    elif run_context.knowledge_filters is None:
-        run_context.knowledge_filters = opts.knowledge_filters
-    if metadata is not None:
-        run_context.metadata = opts.metadata
-    elif run_context.metadata is None:
-        run_context.metadata = opts.metadata
+    opts.apply_to_context(
+        run_context,
+        dependencies_provided=dependencies is not None,
+        knowledge_filters_provided=knowledge_filters is not None,
+        metadata_provided=metadata is not None,
+    )
 
     if opts.stream:
         return acontinue_run_stream_impl(

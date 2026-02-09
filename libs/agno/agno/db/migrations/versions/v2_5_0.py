@@ -171,9 +171,14 @@ def _validate_session_data(sess, full_table: str, table_name: str, db_type: str)
         return False
 
     # Check for duplicate session_id values
-    dup_count = sess.execute(
-        text(f"SELECT COUNT(*) FROM (SELECT session_id FROM {full_table} GROUP BY session_id HAVING COUNT(*) > 1) t")
-    ).scalar() or 0
+    dup_count = (
+        sess.execute(
+            text(
+                f"SELECT COUNT(*) FROM (SELECT session_id FROM {full_table} GROUP BY session_id HAVING COUNT(*) > 1) t"
+            )
+        ).scalar()
+        or 0
+    )
     if dup_count > 0:
         examples = sess.execute(
             text(f"SELECT session_id FROM {full_table} GROUP BY session_id HAVING COUNT(*) > 1 LIMIT 5")
@@ -530,9 +535,7 @@ def _revert_postgres(db: BaseDb, table_name: str) -> bool:
         if pk_row is not None:
             pk_name = pk_row[0]
             log_info(f"-- Dropping PRIMARY KEY {pk_name} from {table_name}")
-            sess.execute(
-                text(f"ALTER TABLE {full_table} DROP CONSTRAINT {quote_db_identifier(db_type, pk_name)}")
-            )
+            sess.execute(text(f"ALTER TABLE {full_table} DROP CONSTRAINT {quote_db_identifier(db_type, pk_name)}"))
             applied = True
 
         sess.commit()
