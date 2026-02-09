@@ -31,7 +31,7 @@ def _make_agent(db=None):
     return Agent(
         name="Email Agent",
         role="Handles email operations",
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=OpenAIChat(id="gpt-5-mini"),
         tools=[send_email],
         db=db,
         telemetry=False,
@@ -41,7 +41,7 @@ def _make_agent(db=None):
 def _make_team(agent, db=None):
     return Team(
         name="Comms Team",
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=OpenAIChat(id="gpt-5-mini"),
         members=[agent],
         db=db,
         telemetry=False,

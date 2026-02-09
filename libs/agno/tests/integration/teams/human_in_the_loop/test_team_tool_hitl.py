@@ -32,12 +32,12 @@ def _make_team(db=None):
     helper = Agent(
         name="Helper Agent",
         role="Assists with general questions",
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=OpenAIChat(id="gpt-5-mini"),
         telemetry=False,
     )
     return Team(
         name="Deploy Team",
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=OpenAIChat(id="gpt-5-mini"),
         members=[helper],
         tools=[approve_deployment],
         db=db,

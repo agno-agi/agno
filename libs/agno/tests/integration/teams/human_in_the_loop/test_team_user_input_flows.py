@@ -29,7 +29,7 @@ def _make_agent(db=None):
     return Agent(
         name="Weather Agent",
         role="Provides weather information",
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=OpenAIChat(id="gpt-5-mini"),
         tools=[get_the_weather],
         db=db,
         telemetry=False,
@@ -39,7 +39,7 @@ def _make_agent(db=None):
 def _make_team(agent, db=None):
     return Team(
         name="Weather Team",
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=OpenAIChat(id="gpt-5-mini"),
         members=[agent],
         db=db,
         telemetry=False,
