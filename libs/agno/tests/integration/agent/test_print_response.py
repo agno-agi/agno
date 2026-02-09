@@ -295,8 +295,8 @@ def test_live_update_calls():
                 agent.print_response(input="Test", show_message=True, console=mock_console, stream=False)
 
                 # Live.update should be called multiple times as panels are added
-                assert mock_live_class.return_value.__enter__.return_value.update.call_count >= 0, (
-                    "Live.update should be called multiple times"
+                assert mock_live_class.return_value.__enter__.return_value.update.call_count >= 1, (
+                    "Live.update should be called at least once"
                 )
 
 

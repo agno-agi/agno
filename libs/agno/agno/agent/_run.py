@@ -306,7 +306,7 @@ def run_impl(
     agent: Agent,
     run_response: RunOutput,
     run_context: RunContext,
-    session: AgentSession,
+    session_id: str,
     user_id: Optional[str] = None,
     add_history_to_context: Optional[bool] = None,
     add_dependencies_to_context: Optional[bool] = None,
@@ -319,19 +319,22 @@ def run_impl(
     """Run the Agent and return the RunOutput.
 
     Steps:
-    1. Execute pre-hooks
-    2. Determine tools for model
-    3. Prepare run messages
-    4. Start memory creation in background thread
-    5. Reason about the task if reasoning is enabled
-    6. Generate a response from the Model (includes running function calls)
-    7. Update the RunOutput with the model response
-    8. Store media if enabled
-    9. Convert the response to the structured format if needed
-    10. Execute post-hooks
-    11. Wait for background memory creation and cultural knowledge creation
-    12. Create session summary
-    13. Cleanup and store the run response and session
+    1. Read or create session
+    2. Update metadata and session state
+    3. Resolve dependencies
+    4. Execute pre-hooks
+    5. Determine tools for model
+    6. Prepare run messages
+    7. Start memory creation in background thread
+    8. Reason about the task if reasoning is enabled
+    9. Generate a response from the Model (includes running function calls)
+    10. Update the RunOutput with the model response
+    11. Store media if enabled
+    12. Convert the response to the structured format if needed
+    13. Execute post-hooks
+    14. Wait for background memory creation and cultural knowledge creation
+    15. Create session summary
+    16. Cleanup and store the run response and session
     """
     from agno.agent._hooks import execute_post_hooks, execute_pre_hooks
     from agno.agent._init import disconnect_connectable_tools
@@ -343,12 +346,17 @@ def run_impl(
         parse_response_with_parser_model,
         update_run_response,
     )
+    from agno.agent._storage import load_session_state, read_or_create_session, update_metadata
     from agno.agent._telemetry import log_agent_telemetry
     from agno.agent._tools import determine_tools_for_model
+
+    register_run(run_context.run_id)
+    log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
 
     memory_future = None
     learning_future = None
     cultural_knowledge_future = None
+    agent_session: Optional[AgentSession] = None
 
     try:
         # Set up retry logic
@@ -357,7 +365,24 @@ def run_impl(
             if num_attempts > 1:
                 log_debug(f"Retrying Agent run {run_response.run_id}. Attempt {attempt + 1} of {num_attempts}...")
             try:
-                # 1. Execute pre-hooks
+                # 1. Read or create session. Reads from the database if provided.
+                agent_session = read_or_create_session(agent, session_id=session_id, user_id=user_id)
+
+                # 2. Update metadata and session state
+                update_metadata(agent, session=agent_session)
+
+                # Initialize session state. Get it from DB if relevant.
+                run_context.session_state = load_session_state(
+                    agent,
+                    session=agent_session,
+                    session_state=run_context.session_state if run_context.session_state is not None else {},
+                )
+
+                # 3. Resolve dependencies
+                if run_context.dependencies is not None:
+                    resolve_run_dependencies(agent, run_context=run_context)
+
+                # 4. Execute pre-hooks
                 run_input = cast(RunInput, run_response.input)
                 agent.model = cast(Model, agent.model)
                 if agent.pre_hooks is not None:
@@ -368,7 +393,7 @@ def run_impl(
                         run_response=run_response,
                         run_input=run_input,
                         run_context=run_context,
-                        session=session,
+                        session=agent_session,
                         user_id=user_id,
                         debug_mode=debug_mode,
                         background_tasks=background_tasks,
@@ -381,7 +406,7 @@ def run_impl(
                 processed_tools = agent.get_tools(
                     run_response=run_response,
                     run_context=run_context,
-                    session=session,
+                    session=agent_session,
                     user_id=user_id,
                 )
                 _tools = determine_tools_for_model(
@@ -389,7 +414,7 @@ def run_impl(
                     model=agent.model,
                     processed_tools=processed_tools,
                     run_response=run_response,
-                    session=session,
+                    session=agent_session,
                     run_context=run_context,
                 )
 
@@ -399,7 +424,7 @@ def run_impl(
                     run_response=run_response,
                     run_context=run_context,
                     input=run_input.input_content,
-                    session=session,
+                    session=agent_session,
                     user_id=user_id,
                     audio=run_input.audios,
                     images=run_input.images,
@@ -414,25 +439,28 @@ def run_impl(
                 if len(run_messages.messages) == 0:
                     log_error("No messages to be sent to the model.")
 
-                log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
+                # Start memory creation in background thread
+                from agno.agent import _managers
 
-                # 4. Start memory creation in background thread
-                memory_future = agent._start_memory_future(
+                memory_future = _managers.start_memory_future(
+                    agent,
                     run_messages=run_messages,
                     user_id=user_id,
                     existing_future=memory_future,
                 )
 
                 # Start learning extraction as a background task (runs concurrently with the main execution)
-                learning_future = agent._start_learning_future(
+                learning_future = _managers.start_learning_future(
+                    agent,
                     run_messages=run_messages,
-                    session=session,
+                    session=agent_session,
                     user_id=user_id,
                     existing_future=learning_future,
                 )
 
                 # Start cultural knowledge creation in background thread
-                cultural_knowledge_future = agent._start_cultural_knowledge_future(
+                cultural_knowledge_future = _managers.start_cultural_knowledge_future(
+                    agent,
                     run_messages=run_messages,
                     existing_future=cultural_knowledge_future,
                 )
@@ -485,7 +513,9 @@ def run_impl(
                         learning_future=learning_future,  # type: ignore
                     )
 
-                    return handle_agent_run_paused(agent, run_response=run_response, session=session, user_id=user_id)
+                    return handle_agent_run_paused(
+                        agent, run_response=run_response, session=agent_session, user_id=user_id
+                    )
 
                 # 8. Store media if enabled
                 if agent.store_media:
@@ -501,7 +531,7 @@ def run_impl(
                         hooks=agent.post_hooks,  # type: ignore
                         run_output=run_response,
                         run_context=run_context,
-                        session=session,
+                        session=agent_session,
                         user_id=user_id,
                         debug_mode=debug_mode,
                         background_tasks=background_tasks,
@@ -522,9 +552,9 @@ def run_impl(
                 # 12. Create session summary
                 if agent.session_summary_manager is not None and agent.enable_session_summaries:
                     # Upsert the RunOutput to Agent Session before creating the session summary
-                    session.upsert_run(run=run_response)
+                    agent_session.upsert_run(run=run_response)
                     try:
-                        agent.session_summary_manager.create_session_summary(session=session)
+                        agent.session_summary_manager.create_session_summary(session=agent_session)
                     except Exception as e:
                         log_warning(f"Error in session summary creation: {str(e)}")
 
@@ -532,11 +562,11 @@ def run_impl(
 
                 # 13. Cleanup and store the run response and session
                 cleanup_and_store(
-                    agent, run_response=run_response, session=session, run_context=run_context, user_id=user_id
+                    agent, run_response=run_response, session=agent_session, run_context=run_context, user_id=user_id
                 )
 
                 # Log Agent Telemetry
-                log_agent_telemetry(agent, session_id=session.session_id, run_id=run_response.run_id)
+                log_agent_telemetry(agent, session_id=agent_session.session_id, run_id=run_response.run_id)
 
                 log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
@@ -547,9 +577,10 @@ def run_impl(
                 run_response.status = RunStatus.cancelled
 
                 # Cleanup and store the run response and session
-                cleanup_and_store(
-                    agent, run_response=run_response, session=session, run_context=run_context, user_id=user_id
-                )
+                if agent_session is not None:
+                    cleanup_and_store(
+                        agent, run_response=run_response, session=agent_session, run_context=run_context, user_id=user_id
+                    )
 
                 return run_response
             except (InputCheckError, OutputCheckError) as e:
@@ -561,9 +592,10 @@ def run_impl(
 
                 log_error(f"Validation failed: {str(e)} | Check trigger: {e.check_trigger}")
 
-                cleanup_and_store(
-                    agent, run_response=run_response, session=session, run_context=run_context, user_id=user_id
-                )
+                if agent_session is not None:
+                    cleanup_and_store(
+                        agent, run_response=run_response, session=agent_session, run_context=run_context, user_id=user_id
+                    )
 
                 return run_response
             except KeyboardInterrupt:
@@ -593,9 +625,10 @@ def run_impl(
                 log_error(f"Error in Agent run: {str(e)}")
 
                 # Cleanup and store the run response and session
-                cleanup_and_store(
-                    agent, run_response=run_response, session=session, run_context=run_context, user_id=user_id
-                )
+                if agent_session is not None:
+                    cleanup_and_store(
+                        agent, run_response=run_response, session=agent_session, run_context=run_context, user_id=user_id
+                    )
 
                 return run_response
     finally:
@@ -619,7 +652,7 @@ def run_stream_impl(
     agent: Agent,
     run_response: RunOutput,
     run_context: RunContext,
-    session: AgentSession,
+    session_id: str,
     user_id: Optional[str] = None,
     add_history_to_context: Optional[bool] = None,
     add_dependencies_to_context: Optional[bool] = None,
@@ -634,16 +667,19 @@ def run_stream_impl(
     """Run the Agent and yield the RunOutput.
 
     Steps:
-    1. Execute pre-hooks
-    2. Determine tools for model
-    3. Prepare run messages
-    4. Start memory creation in background thread
-    5. Reason about the task if reasoning is enabled
-    6. Process model response
-    7. Parse response with parser model if provided
-    8. Wait for background memory creation and cultural knowledge creation
-    9. Create session summary
-    10. Cleanup and store the run response and session
+    1. Read or create session
+    2. Update metadata and session state
+    3. Resolve dependencies
+    4. Execute pre-hooks
+    5. Determine tools for model
+    6. Prepare run messages
+    7. Start memory creation in background thread
+    8. Reason about the task if reasoning is enabled
+    9. Process model response
+    10. Parse response with parser model if provided
+    11. Wait for background memory creation and cultural knowledge creation
+    12. Create session summary
+    13. Cleanup and store the run response and session
     """
     from agno.agent._hooks import execute_post_hooks, execute_pre_hooks
     from agno.agent._init import disconnect_connectable_tools
@@ -654,12 +690,17 @@ def run_stream_impl(
         handle_reasoning_stream,
         parse_response_with_parser_model_stream,
     )
+    from agno.agent._storage import load_session_state, read_or_create_session, update_metadata
     from agno.agent._telemetry import log_agent_telemetry
     from agno.agent._tools import determine_tools_for_model
+
+    register_run(run_context.run_id)
+    log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
 
     memory_future = None
     learning_future = None
     cultural_knowledge_future = None
+    agent_session: Optional[AgentSession] = None
 
     try:
         # Set up retry logic
@@ -668,7 +709,24 @@ def run_stream_impl(
             if num_attempts > 1:
                 log_debug(f"Retrying Agent run {run_response.run_id}. Attempt {attempt + 1} of {num_attempts}...")
             try:
-                # 1. Execute pre-hooks
+                # 1. Read or create session. Reads from the database if provided.
+                agent_session = read_or_create_session(agent, session_id=session_id, user_id=user_id)
+
+                # 2. Update metadata and session state
+                update_metadata(agent, session=agent_session)
+
+                # Initialize session state. Get it from DB if relevant.
+                run_context.session_state = load_session_state(
+                    agent,
+                    session=agent_session,
+                    session_state=run_context.session_state if run_context.session_state is not None else {},
+                )
+
+                # 3. Resolve dependencies
+                if run_context.dependencies is not None:
+                    resolve_run_dependencies(agent, run_context=run_context)
+
+                # 4. Execute pre-hooks
                 run_input = cast(RunInput, run_response.input)
                 agent.model = cast(Model, agent.model)
                 if agent.pre_hooks is not None:
@@ -679,7 +737,7 @@ def run_stream_impl(
                         run_response=run_response,
                         run_input=run_input,
                         run_context=run_context,
-                        session=session,
+                        session=agent_session,
                         user_id=user_id,
                         debug_mode=debug_mode,
                         stream_events=stream_events,
@@ -693,7 +751,7 @@ def run_stream_impl(
                 processed_tools = agent.get_tools(
                     run_response=run_response,
                     run_context=run_context,
-                    session=session,
+                    session=agent_session,
                     user_id=user_id,
                 )
                 _tools = determine_tools_for_model(
@@ -701,7 +759,7 @@ def run_stream_impl(
                     model=agent.model,
                     processed_tools=processed_tools,
                     run_response=run_response,
-                    session=session,
+                    session=agent_session,
                     run_context=run_context,
                 )
 
@@ -710,7 +768,7 @@ def run_stream_impl(
                     agent,
                     run_response=run_response,
                     input=run_input.input_content,
-                    session=session,
+                    session=agent_session,
                     run_context=run_context,
                     user_id=user_id,
                     audio=run_input.audios,
@@ -726,25 +784,28 @@ def run_stream_impl(
                 if len(run_messages.messages) == 0:
                     log_error("No messages to be sent to the model.")
 
-                log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
-
                 # 4. Start memory creation in background thread
-                memory_future = agent._start_memory_future(
+                from agno.agent import _managers
+
+                memory_future = _managers.start_memory_future(
+                    agent,
                     run_messages=run_messages,
                     user_id=user_id,
                     existing_future=memory_future,
                 )
 
                 # Start learning extraction as a background task (runs concurrently with the main execution)
-                learning_future = agent._start_learning_future(
+                learning_future = _managers.start_learning_future(
+                    agent,
                     run_messages=run_messages,
-                    session=session,
+                    session=agent_session,
                     user_id=user_id,
                     existing_future=learning_future,
                 )
 
                 # Start cultural knowledge creation in background thread
-                cultural_knowledge_future = agent._start_cultural_knowledge_future(
+                cultural_knowledge_future = _managers.start_cultural_knowledge_future(
+                    agent,
                     run_messages=run_messages,
                     existing_future=cultural_knowledge_future,
                 )
@@ -774,7 +835,7 @@ def run_stream_impl(
                 if agent.output_model is None:
                     for event in handle_model_response_stream(
                         agent,
-                        session=session,
+                        session=agent_session,
                         run_response=run_response,
                         run_messages=run_messages,
                         tools=_tools,
@@ -793,7 +854,7 @@ def run_stream_impl(
 
                     for event in handle_model_response_stream(
                         agent,
-                        session=session,
+                        session=agent_session,
                         run_response=run_response,
                         run_messages=run_messages,
                         tools=_tools,
@@ -815,7 +876,7 @@ def run_stream_impl(
                     # If an output model is provided, generate output using the output model
                     for event in generate_response_with_output_model_stream(
                         agent,
-                        session=session,
+                        session=agent_session,
                         run_response=run_response,
                         run_messages=run_messages,
                         stream_events=stream_events,
@@ -829,7 +890,7 @@ def run_stream_impl(
                 # 7. Parse response with parser model if provided
                 yield from parse_response_with_parser_model_stream(
                     agent,  # type: ignore
-                    session=session,
+                    session=agent_session,
                     run_response=run_response,
                     stream_events=stream_events,
                     run_context=run_context,
@@ -850,7 +911,7 @@ def run_stream_impl(
 
                     # Handle the paused run
                     yield from handle_agent_run_paused_stream(
-                        agent, run_response=run_response, session=session, user_id=user_id
+                        agent, run_response=run_response, session=agent_session, user_id=user_id
                     )
                     return
 
@@ -870,7 +931,7 @@ def run_stream_impl(
                         hooks=agent.post_hooks,  # type: ignore
                         run_output=run_response,
                         run_context=run_context,
-                        session=session,
+                        session=agent_session,
                         user_id=user_id,
                         debug_mode=debug_mode,
                         stream_events=stream_events,
@@ -893,7 +954,7 @@ def run_stream_impl(
                 # 9. Create session summary
                 if agent.session_summary_manager is not None and agent.enable_session_summaries:
                     # Upsert the RunOutput to Agent Session before creating the session summary
-                    session.upsert_run(run=run_response)
+                    agent_session.upsert_run(run=run_response)
 
                     if stream_events:
                         yield handle_event(  # type: ignore
@@ -903,13 +964,13 @@ def run_stream_impl(
                             store_events=agent.store_events,
                         )
                     try:
-                        agent.session_summary_manager.create_session_summary(session=session)
+                        agent.session_summary_manager.create_session_summary(session=agent_session)
                     except Exception as e:
                         log_warning(f"Error in session summary creation: {str(e)}")
                     if stream_events:
                         yield handle_event(  # type: ignore
                             create_session_summary_completed_event(
-                                from_run_response=run_response, session_summary=session.summary
+                                from_run_response=run_response, session_summary=agent_session.summary
                             ),
                             run_response,
                             events_to_skip=agent.events_to_skip,  # type: ignore
@@ -918,8 +979,8 @@ def run_stream_impl(
 
                 # Update run_response.session_state before creating RunCompletedEvent
                 # This ensures the event has the final state after all tool modifications
-                if session.session_data is not None and "session_state" in session.session_data:
-                    run_response.session_state = session.session_data["session_state"]
+                if agent_session.session_data is not None and "session_state" in agent_session.session_data:
+                    run_response.session_state = agent_session.session_data["session_state"]
 
                 # Create the run completed event
                 completed_event = handle_event(  # type: ignore
@@ -934,7 +995,7 @@ def run_stream_impl(
 
                 # 10. Cleanup and store the run response and session
                 cleanup_and_store(
-                    agent, run_response=run_response, session=session, run_context=run_context, user_id=user_id
+                    agent, run_response=run_response, session=agent_session, run_context=run_context, user_id=user_id
                 )
 
                 if stream_events:
@@ -944,7 +1005,7 @@ def run_stream_impl(
                     yield run_response
 
                 # Log Agent Telemetry
-                log_agent_telemetry(agent, session_id=session.session_id, run_id=run_response.run_id)
+                log_agent_telemetry(agent, session_id=agent_session.session_id, run_id=run_response.run_id)
 
                 log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
@@ -962,9 +1023,10 @@ def run_stream_impl(
                 )
 
                 # Cleanup and store the run response and session
-                cleanup_and_store(
-                    agent, run_response=run_response, session=session, run_context=run_context, user_id=user_id
-                )
+                if agent_session is not None:
+                    cleanup_and_store(
+                        agent, run_response=run_response, session=agent_session, run_context=run_context, user_id=user_id
+                    )
                 break
             except (InputCheckError, OutputCheckError) as e:
                 # Handle exceptions during streaming
@@ -985,9 +1047,10 @@ def run_stream_impl(
 
                 log_error(f"Validation failed: {str(e)} | Check trigger: {e.check_trigger}")
 
-                cleanup_and_store(
-                    agent, run_response=run_response, session=session, run_context=run_context, user_id=user_id
-                )
+                if agent_session is not None:
+                    cleanup_and_store(
+                        agent, run_response=run_response, session=agent_session, run_context=run_context, user_id=user_id
+                    )
                 yield run_error
                 break
             except KeyboardInterrupt:
@@ -1023,9 +1086,10 @@ def run_stream_impl(
                 log_error(f"Error in Agent run: {str(e)}")
 
                 # Cleanup and store the run response and session
-                cleanup_and_store(
-                    agent, run_response=run_response, session=session, run_context=run_context, user_id=user_id
-                )
+                if agent_session is not None:
+                    cleanup_and_store(
+                        agent, run_response=run_response, session=agent_session, run_context=run_context, user_id=user_id
+                    )
 
                 yield run_error
     finally:
@@ -1072,14 +1136,11 @@ def run_dispatch(
     """Run the Agent and return the response."""
     from agno.agent._init import has_async_db
     from agno.agent._response import get_response_format
-    from agno.agent._storage import load_session_state, read_or_create_session, update_metadata
 
     if has_async_db(agent):
         raise RuntimeError("`run` method is not supported with an async database. Please use `arun` method instead.")
 
-    # Initialize session early for error handling
-    session_id, user_id = initialize_session(agent, session_id=session_id, user_id=user_id)
-    # Set the id for the run
+    # Set the id for the run and register it immediately for cancellation tracking
     run_id = run_id or str(uuid4())
 
     if (add_history_to_context or agent.add_history_to_context) and not agent.db and not agent.team_id:
@@ -1096,122 +1157,107 @@ def run_dispatch(
     # Validate input against input_schema if provided
     validated_input = validate_input(input, agent.input_schema)
 
-    try:
-        # Register run for cancellation tracking after validation succeeds
-        register_run(run_id)
+    # Normalise hook & guardails
+    if not agent._hooks_normalised:
+        if agent.pre_hooks:
+            agent.pre_hooks = normalize_pre_hooks(agent.pre_hooks)  # type: ignore
+        if agent.post_hooks:
+            agent.post_hooks = normalize_post_hooks(agent.post_hooks)  # type: ignore
+        agent._hooks_normalised = True
 
-        # Normalise hook & guardails
-        if not agent._hooks_normalised:
-            if agent.pre_hooks:
-                agent.pre_hooks = normalize_pre_hooks(agent.pre_hooks)  # type: ignore
-            if agent.post_hooks:
-                agent.post_hooks = normalize_post_hooks(agent.post_hooks)  # type: ignore
-            agent._hooks_normalised = True
+    # Initialize session
+    session_id, user_id = initialize_session(agent, session_id=session_id, user_id=user_id)
 
-        # Initialize the Agent
-        agent.initialize_agent(debug_mode=debug_mode)
+    # Initialize the Agent
+    agent.initialize_agent(debug_mode=debug_mode)
 
-        image_artifacts, video_artifacts, audio_artifacts, file_artifacts = validate_media_object_id(
-            images=images, videos=videos, audios=audio, files=files
-        )
+    image_artifacts, video_artifacts, audio_artifacts, file_artifacts = validate_media_object_id(
+        images=images, videos=videos, audios=audio, files=files
+    )
 
-        # Create RunInput to capture the original user input
-        run_input = RunInput(
-            input_content=validated_input,
-            images=image_artifacts,
-            videos=video_artifacts,
-            audios=audio_artifacts,
-            files=file_artifacts,
-        )
+    # Create RunInput to capture the original user input
+    run_input = RunInput(
+        input_content=validated_input,
+        images=image_artifacts,
+        videos=video_artifacts,
+        audios=audio_artifacts,
+        files=file_artifacts,
+    )
 
-        # Read existing session from database
-        agent_session = read_or_create_session(agent, session_id=session_id, user_id=user_id)
-        update_metadata(agent, session=agent_session)
+    # Resolve all run options centrally
+    opts = resolve_run_options(
+        agent,
+        stream=stream,
+        stream_events=stream_events,
+        yield_run_output=yield_run_output,
+        add_history_to_context=add_history_to_context,
+        add_dependencies_to_context=add_dependencies_to_context,
+        add_session_state_to_context=add_session_state_to_context,
+        dependencies=dependencies,
+        knowledge_filters=knowledge_filters,
+        metadata=metadata,
+        output_schema=output_schema,
+    )
 
-        # Initialize session state. Get it from DB if relevant.
-        session_state = session_state if session_state is not None else {}
-        session_state = load_session_state(agent, session=agent_session, session_state=session_state)
+    agent.model = cast(Model, agent.model)
 
-        # Resolve all run options centrally
-        opts = resolve_run_options(
-            agent,
-            stream=stream,
-            stream_events=stream_events,
-            yield_run_output=yield_run_output,
-            add_history_to_context=add_history_to_context,
-            add_dependencies_to_context=add_dependencies_to_context,
-            add_session_state_to_context=add_session_state_to_context,
-            dependencies=dependencies,
-            knowledge_filters=knowledge_filters,
-            metadata=metadata,
-            output_schema=output_schema,
-        )
+    # Initialize run context
+    run_context = run_context or RunContext(
+        run_id=run_id,
+        session_id=session_id,
+        user_id=user_id,
+        session_state=session_state,
+        dependencies=opts.dependencies,
+        knowledge_filters=opts.knowledge_filters,
+        metadata=opts.metadata,
+        output_schema=opts.output_schema,
+    )
+    # Apply options with precedence: explicit args > existing run_context > resolved defaults.
+    if dependencies is not None:
+        run_context.dependencies = opts.dependencies
+    elif run_context.dependencies is None:
+        run_context.dependencies = opts.dependencies
+    if knowledge_filters is not None:
+        run_context.knowledge_filters = opts.knowledge_filters
+    elif run_context.knowledge_filters is None:
+        run_context.knowledge_filters = opts.knowledge_filters
+    if metadata is not None:
+        run_context.metadata = opts.metadata
+    elif run_context.metadata is None:
+        run_context.metadata = opts.metadata
+    if output_schema is not None:
+        run_context.output_schema = opts.output_schema
+    elif run_context.output_schema is None:
+        run_context.output_schema = opts.output_schema
 
-        # Initialize run context
-        run_context = run_context or RunContext(
-            run_id=run_id,
-            session_id=session_id,
-            user_id=user_id,
-            session_state=session_state,
-            dependencies=opts.dependencies,
-            knowledge_filters=opts.knowledge_filters,
-            metadata=opts.metadata,
-            output_schema=opts.output_schema,
-        )
-        # Apply options with precedence: explicit args > existing run_context > resolved defaults.
-        if dependencies is not None:
-            run_context.dependencies = opts.dependencies
-        elif run_context.dependencies is None:
-            run_context.dependencies = opts.dependencies
-        if knowledge_filters is not None:
-            run_context.knowledge_filters = opts.knowledge_filters
-        elif run_context.knowledge_filters is None:
-            run_context.knowledge_filters = opts.knowledge_filters
-        if metadata is not None:
-            run_context.metadata = opts.metadata
-        elif run_context.metadata is None:
-            run_context.metadata = opts.metadata
-        if output_schema is not None:
-            run_context.output_schema = opts.output_schema
-        elif run_context.output_schema is None:
-            run_context.output_schema = opts.output_schema
+    # Prepare arguments for the model (must be after run_context is fully initialized)
+    response_format = get_response_format(agent, run_context=run_context) if agent.parser_model is None else None
 
-        # Resolve dependencies
-        if run_context.dependencies is not None:
-            resolve_run_dependencies(agent, run_context=run_context)
+    # Create a new run_response for this attempt
+    run_response = RunOutput(
+        run_id=run_id,
+        session_id=session_id,
+        agent_id=agent.id,
+        user_id=user_id,
+        agent_name=agent.name,
+        metadata=run_context.metadata,
+        session_state=run_context.session_state,
+        input=run_input,
+    )
 
-        # Prepare arguments for the model
-        response_format = get_response_format(agent, run_context=run_context) if agent.parser_model is None else None
-        agent.model = cast(Model, agent.model)
+    run_response.model = agent.model.id if agent.model is not None else None
+    run_response.model_provider = agent.model.provider if agent.model is not None else None
 
-        # Create a new run_response for this attempt
-        run_response = RunOutput(
-            run_id=run_id,
-            session_id=session_id,
-            agent_id=agent.id,
-            user_id=user_id,
-            agent_name=agent.name,
-            metadata=run_context.metadata,
-            session_state=run_context.session_state,
-            input=run_input,
-        )
-
-        run_response.model = agent.model.id if agent.model is not None else None
-        run_response.model_provider = agent.model.provider if agent.model is not None else None
-
-        # Start the run metrics timer, to calculate the run duration
-        run_response.metrics = Metrics()
-        run_response.metrics.start_timer()
-    except Exception:
-        cleanup_run(run_id)
-        raise
+    # Start the run metrics timer, to calculate the run duration
+    run_response.metrics = Metrics()
+    run_response.metrics.start_timer()
 
     if opts.stream:
         response_iterator = run_stream_impl(
             agent,
             run_response=run_response,
             run_context=run_context,
-            session=agent_session,
+            session_id=session_id,
             user_id=user_id,
             add_history_to_context=opts.add_history_to_context,
             add_dependencies_to_context=opts.add_dependencies_to_context,
@@ -1229,7 +1275,7 @@ def run_dispatch(
             agent,
             run_response=run_response,
             run_context=run_context,
-            session=agent_session,
+            session_id=session_id,
             user_id=user_id,
             add_history_to_context=opts.add_history_to_context,
             add_dependencies_to_context=opts.add_dependencies_to_context,
@@ -1386,14 +1432,18 @@ async def arun_impl(
                     log_error("No messages to be sent to the model.")
 
                 # 7. Start memory creation as a background task (runs concurrently with the main execution)
-                memory_task = await agent._astart_memory_task(
+                from agno.agent import _managers
+
+                memory_task = await _managers.astart_memory_task(
+                    agent,
                     run_messages=run_messages,
                     user_id=user_id,
                     existing_task=memory_task,
                 )
 
                 # Start learning extraction as a background task
-                learning_task = await agent._astart_learning_task(
+                learning_task = await _managers.astart_learning_task(
+                    agent,
                     run_messages=run_messages,
                     session=agent_session,
                     user_id=user_id,
@@ -1401,7 +1451,8 @@ async def arun_impl(
                 )
 
                 # Start cultural knowledge creation as a background task (runs concurrently with the main execution)
-                cultural_knowledge_task = await agent._astart_cultural_knowledge_task(
+                cultural_knowledge_task = await _managers.astart_cultural_knowledge_task(
+                    agent,
                     run_messages=run_messages,
                     existing_task=cultural_knowledge_task,
                 )
@@ -1777,14 +1828,18 @@ async def arun_stream_impl(
                     log_error("No messages to be sent to the model.")
 
                 # 7. Start memory creation as a background task (runs concurrently with the main execution)
-                memory_task = await agent._astart_memory_task(
+                from agno.agent import _managers
+
+                memory_task = await _managers.astart_memory_task(
+                    agent,
                     run_messages=run_messages,
                     user_id=user_id,
                     existing_task=memory_task,
                 )
 
                 # Start learning extraction as a background task
-                learning_task = await agent._astart_learning_task(
+                learning_task = await _managers.astart_learning_task(
+                    agent,
                     run_messages=run_messages,
                     session=agent_session,
                     user_id=user_id,
@@ -1792,7 +1847,8 @@ async def arun_stream_impl(
                 )
 
                 # Start cultural knowledge creation as a background task (runs concurrently with the main execution)
-                cultural_knowledge_task = await agent._astart_cultural_knowledge_task(
+                cultural_knowledge_task = await _managers.astart_cultural_knowledge_task(
+                    agent,
                     run_messages=run_messages,
                     existing_task=cultural_knowledge_task,
                 )

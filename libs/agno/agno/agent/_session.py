@@ -308,9 +308,14 @@ def delete_session(agent: Agent, session_id: str):
 
 async def adelete_session(agent: Agent, session_id: str):
     """Delete the current session and save to storage"""
+    from agno.agent import _init
+
     if agent.db is None:
         return
-    await agent.db.delete_session(session_id=session_id)  # type: ignore
+    if _init.has_async_db(agent):
+        await agent.db.delete_session(session_id=session_id)  # type: ignore
+    else:
+        agent.db.delete_session(session_id=session_id)
 
 
 # ---------------------------------------------------------------------------
@@ -335,11 +340,9 @@ def rename(agent: Agent, name: str, session_id: Optional[str] = None) -> None:
         raise Exception("Session ID is not set")
 
     if _init.has_async_db(agent):
-        import asyncio
+        raise RuntimeError("`rename` is not supported with an async database. Please use `arename` instead.")
 
-        session = asyncio.run(aget_session(agent, session_id=session_id))
-    else:
-        session = get_session(agent, session_id=session_id)
+    session = get_session(agent, session_id=session_id)
 
     if session is None:
         raise Exception("Session not found")
@@ -356,12 +359,7 @@ def rename(agent: Agent, name: str, session_id: Optional[str] = None) -> None:
         session.agent_data = {"name": name}  # type: ignore
 
     # -*- Save to storage
-    if _init.has_async_db(agent):
-        import asyncio
-
-        asyncio.run(asave_session(agent, session=session))
-    else:
-        save_session(agent, session=session)
+    save_session(agent, session=session)
 
 
 def set_session_name(

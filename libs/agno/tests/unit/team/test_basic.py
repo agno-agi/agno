@@ -2,6 +2,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
+pytest.importorskip("duckduckgo_search")
+pytest.importorskip("yfinance")
+
 from agno.agent import Agent
 from agno.models.message import Message
 from agno.models.metrics import Metrics
@@ -191,16 +194,20 @@ async def test_asetup_session_resolves_deps_after_state_loaded():
     )
 
     # Mock the submodule functions at their source modules (where they're imported FROM)
-    with patch("agno.team._init._has_async_db", return_value=False), \
-         patch("agno.team._storage._read_or_create_session", return_value=db_session), \
-         patch("agno.team._storage._update_metadata", return_value=None), \
-         patch("agno.team._init._initialize_session_state", side_effect=lambda team, session_state, **kw: session_state), \
-         patch("agno.team._storage._load_session_state", side_effect=lambda team, session, session_state: {
-             **session_state,
-             **session.session_data.get("session_state", {}),
-         }), \
-         patch.object(run_module, "_aresolve_run_dependencies", side_effect=capture_state_on_resolve):
-
+    with (
+        patch("agno.team._init._has_async_db", return_value=False),
+        patch("agno.team._storage._read_or_create_session", return_value=db_session),
+        patch("agno.team._storage._update_metadata", return_value=None),
+        patch("agno.team._init._initialize_session_state", side_effect=lambda team, session_state, **kw: session_state),
+        patch(
+            "agno.team._storage._load_session_state",
+            side_effect=lambda team, session, session_state: {
+                **session_state,
+                **session.session_data.get("session_state", {}),
+            },
+        ),
+        patch.object(run_module, "_aresolve_run_dependencies", side_effect=capture_state_on_resolve),
+    ):
         result_session = await _asetup_session(
             team=team,
             run_context=run_context,

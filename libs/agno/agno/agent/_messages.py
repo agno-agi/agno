@@ -313,7 +313,7 @@ def get_system_message(
 
     # 3.3.10 Then add cultural knowledge to the system prompt
     if agent.add_culture_to_context:
-        _culture_manager_not_set = None
+        _culture_manager_not_set = False
         if not agent.culture_manager:
             set_culture_manager(agent)
             _culture_manager_not_set = True
@@ -658,7 +658,7 @@ async def aget_system_message(
 
     # 3.3.10 Then add cultural knowledge to the system prompt
     if agent.add_culture_to_context:
-        _culture_manager_not_set = None
+        _culture_manager_not_set = False
         if not agent.culture_manager:
             set_culture_manager(agent)
             _culture_manager_not_set = True
@@ -1339,21 +1339,17 @@ async def aget_run_messages(
     agent: Agent,
     *,
     run_response: RunOutput,
+    run_context: RunContext,
     input: Union[str, List, Dict, Message, BaseModel, List[Message]],
     session: AgentSession,
-    run_context: Optional[RunContext] = None,
-    session_state: Optional[Dict[str, Any]] = None,
     user_id: Optional[str] = None,
     audio: Optional[Sequence[Audio]] = None,
     images: Optional[Sequence[Image]] = None,
     videos: Optional[Sequence[Video]] = None,
     files: Optional[Sequence[File]] = None,
-    knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
     add_history_to_context: Optional[bool] = None,
-    dependencies: Optional[Dict[str, Any]] = None,
     add_dependencies_to_context: Optional[bool] = None,
     add_session_state_to_context: Optional[bool] = None,
-    metadata: Optional[Dict[str, Any]] = None,
     tools: Optional[List[Union[Function, dict]]] = None,
     **kwargs: Any,
 ) -> RunMessages:

@@ -562,7 +562,6 @@ def get_previous_sessions_messages_function(
 
         for session in selected_sessions:
             if isinstance(session, AgentSession) and session.runs:
-                message_count = 0
                 for run in session.runs:
                     messages = run.messages
                     if messages is not None:
@@ -582,7 +581,6 @@ def get_previous_sessions_messages_function(
                                         seen_message_pairs.add(msg_pair_id)
                                         all_messages.append(Message.model_validate(last_user))
                                         all_messages.append(Message.model_validate(msg))
-                                        message_count += 1
                                     last_user = None
                             except Exception as e:
                                 log_warning(f"Error processing message pair: {e}")
@@ -643,7 +641,6 @@ async def aget_previous_sessions_messages_function(
 
         for session in selected_sessions:  # type: ignore
             if isinstance(session, AgentSession) and session.runs:
-                message_count = 0
                 for run in session.runs:
                     messages = run.messages
                     if messages is not None:
@@ -663,7 +660,6 @@ async def aget_previous_sessions_messages_function(
                                         seen_message_pairs.add(msg_pair_id)
                                         all_messages.append(Message.model_validate(last_user))
                                         all_messages.append(Message.model_validate(msg))
-                                        message_count += 1
                                     last_user = None
                             except Exception as e:
                                 log_warning(f"Error processing message pair: {e}")

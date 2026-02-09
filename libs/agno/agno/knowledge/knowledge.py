@@ -49,7 +49,7 @@ class Knowledge(RemoteKnowledge):
     max_results: int = 10
     readers: Optional[Dict[str, Reader]] = None
     content_sources: Optional[List[RemoteContentConfig]] = None
-    # Opt-in flag to enable vector search filtering by knowledge instanceP:
+    # Opt-in flag to enable vector search filtering by knowledge instance:
     # When enabled, search results are filtered to only include documents from this knowledge instance
     # Requires re-indexing existing data to include linked_to in document metadata
     isolate_vector_search: bool = False
