@@ -1,24 +1,21 @@
-"""Demo Registry - Tools, models, and databases for AgentOS."""
+"""
+Registry for the Agno demo.
 
-from agno.models.anthropic import Claude
-from agno.models.openai import OpenAIChat
+Provides shared tools, models, and database connections for AgentOS.
+"""
+
+from agno.models.openai import OpenAIResponses
 from agno.registry import Registry
 from agno.tools.calculator import CalculatorTools
-from agno.tools.duckduckgo import DuckDuckGoTools
-from db import demo_db
+from db import get_postgres_db
 
-
-def sample_tool():
-    return "Hello, world!"
-
+demo_db = get_postgres_db()
 
 registry = Registry(
-    name="Demo Registry",
-    tools=[DuckDuckGoTools(), sample_tool, CalculatorTools()],
+    tools=[CalculatorTools()],
     models=[
-        OpenAIChat(id="gpt-5-mini"),
-        OpenAIChat(id="gpt-5"),
-        Claude(id="claude-sonnet-4-5"),
+        OpenAIResponses(id="gpt-5.2"),
+        OpenAIResponses(id="gpt-5-mini"),
     ],
     dbs=[demo_db],
 )
