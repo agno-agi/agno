@@ -191,7 +191,7 @@ if __name__ == "__main__":
             print(f"Response: {response.content}")
 
         print("\n--- Demo 2: Screenshot Analysis (multimodal) ---")
-        sample_image = Path(__file__).parent.parent / "workspace" / "samples" / "sample_screenshot.png"
+        sample_image = Path(__file__).parent.parent / "samples" / "sample_screenshot.png"
         if sample_image.exists():
             response = web_intelligence_agent.run(
                 "Analyze this screenshot and extract key information about the company.",
