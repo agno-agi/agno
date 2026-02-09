@@ -4050,7 +4050,7 @@ def save_run_response_to_file(
             log_warning(f"Failed to save output to file: {e}")
 
 
-def scrub_run_output_for_storage(agent: Agent, run_response: RunOutput) -> None:
+def _scrub_run_output_for_storage(agent: Agent, run_response: RunOutput) -> None:
     """Scrub run output based on storage flags before persisting to database."""
     if not agent.store_media:
         scrub_media_from_run_output(run_response)
@@ -4087,7 +4087,7 @@ def cleanup_and_store(
     from agno.agent import _session
 
     # Scrub the stored run based on storage flags
-    scrub_run_output_for_storage(agent, run_response)
+    _scrub_run_output_for_storage(agent, run_response)
 
     # Stop the timer for the Run duration
     if run_response.metrics:
@@ -4134,7 +4134,7 @@ async def acleanup_and_store(
     from agno.agent import _session
 
     # Scrub the stored run based on storage flags
-    scrub_run_output_for_storage(agent, run_response)
+    _scrub_run_output_for_storage(agent, run_response)
 
     # Stop the timer for the Run duration
     if run_response.metrics:

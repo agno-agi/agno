@@ -1101,6 +1101,9 @@ class Agent:
             **kwargs,
         )
 
+    def _scrub_run_output_for_storage(self, run_response: RunOutput) -> bool:
+        return _run._scrub_run_output_for_storage(self, run_response=run_response)
+
     def cli_app(
         self,
         input: Optional[str] = None,
