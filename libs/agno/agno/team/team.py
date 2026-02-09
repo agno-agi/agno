@@ -27,6 +27,7 @@ from agno.eval.base import BaseEval
 from agno.filters import FilterExpr
 from agno.guardrails import BaseGuardrail
 from agno.knowledge.protocol import KnowledgeProtocol
+from agno.learn.machine import LearningMachine
 from agno.media import Audio, File, Image, Video
 from agno.memory import MemoryManager
 from agno.models.base import Model
@@ -285,6 +286,12 @@ class Team:
     # If True, the team adds session summaries to the context
     add_session_summary_to_context: Optional[bool] = None
 
+    # --- Learning Machine ---
+    # LearningMachine for unified learning capabilities
+    learning: Optional[Union[bool, LearningMachine]] = None
+    # Add learnings context to system prompt
+    add_learnings_to_context: bool = True
+
     # --- Context Compression ---
     # If True, compress tool call results to save context
     compress_tool_results: bool = False
@@ -369,6 +376,8 @@ class Team:
     _mcp_tools_initialized_on_run: Optional[List[Any]] = None
     # Connectable tools initialized on the last run
     _connectable_tools_initialized_on_run: Optional[List[Any]] = None
+    # Internal resolved LearningMachine instance
+    _learning: Optional[LearningMachine] = None
     # Lazy-initialized shared thread pool executor for background tasks
     _background_executor: Optional[Any] = None
 
@@ -454,6 +463,8 @@ class Team:
         enable_session_summaries: bool = False,
         session_summary_manager: Optional[SessionSummaryManager] = None,
         add_session_summary_to_context: Optional[bool] = None,
+        learning: Optional[Union[bool, LearningMachine]] = None,
+        add_learnings_to_context: bool = True,
         compress_tool_results: bool = False,
         compression_manager: Optional["CompressionManager"] = None,
         metadata: Optional[Dict[str, Any]] = None,
@@ -558,6 +569,8 @@ class Team:
             enable_session_summaries=enable_session_summaries,
             session_summary_manager=session_summary_manager,
             add_session_summary_to_context=add_session_summary_to_context,
+            learning=learning,
+            add_learnings_to_context=add_learnings_to_context,
             compress_tool_results=compress_tool_results,
             compression_manager=compression_manager,
             metadata=metadata,
@@ -606,6 +619,12 @@ class Team:
     def initialize_team(self, debug_mode: Optional[bool] = None) -> None:
         # Make sure for the team, we are using the team logger
         return _init.initialize_team(self, debug_mode=debug_mode)
+
+    @property
+    def learning_machine(self) -> Optional[LearningMachine]:
+        if self._learning is None and self.learning is not None and self.learning is not False:
+            _init._set_learning_machine(self)
+        return self._learning
 
     def add_tool(self, tool: Union[Toolkit, Callable, Function, Dict]):
         return _init.add_tool(self, tool=tool)

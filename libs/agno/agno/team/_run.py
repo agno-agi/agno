@@ -196,7 +196,7 @@ def _run(
     """
     from agno.team._hooks import _execute_post_hooks, _execute_pre_hooks
     from agno.team._init import _disconnect_connectable_tools
-    from agno.team._managers import _start_memory_future
+    from agno.team._managers import _start_learning_future, _start_memory_future
     from agno.team._messages import _get_run_messages
     from agno.team._response import (
         _convert_response_to_structured_format,
@@ -211,6 +211,7 @@ def _run(
     log_debug(f"Team Run Start: {run_response.run_id}", center=True)
 
     memory_future = None
+    learning_future = None
     try:
         # Set up retry logic
         num_attempts = team.retries + 1
@@ -295,6 +296,13 @@ def _run(
                     user_id=user_id,
                     existing_future=memory_future,
                 )
+                learning_future = _start_learning_future(
+                    team,
+                    run_messages=run_messages,
+                    session=session,
+                    user_id=user_id,
+                    existing_future=learning_future,
+                )
 
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -359,7 +367,7 @@ def _run(
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
                 # 11. Wait for background memory creation
-                wait_for_open_threads(memory_future=memory_future)  # type: ignore
+                wait_for_open_threads(memory_future=memory_future, learning_future=learning_future)  # type: ignore
 
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -452,6 +460,8 @@ def _run(
         # Cancel background futures on error (wait_for_open_threads handles waiting on success)
         if memory_future is not None and not memory_future.done():
             memory_future.cancel()
+        if learning_future is not None and not learning_future.done():
+            learning_future.cancel()
 
         # Always disconnect connectable tools
         _disconnect_connectable_tools(team)
@@ -491,7 +501,7 @@ def _run_stream(
     """
     from agno.team._hooks import _execute_post_hooks, _execute_pre_hooks
     from agno.team._init import _disconnect_connectable_tools
-    from agno.team._managers import _start_memory_future
+    from agno.team._managers import _start_learning_future, _start_memory_future
     from agno.team._messages import _get_run_messages
     from agno.team._response import (
         _handle_model_response_stream,
@@ -505,6 +515,7 @@ def _run_stream(
     log_debug(f"Team Run Start: {run_response.run_id}", center=True)
 
     memory_future = None
+    learning_future = None
     try:
         # Set up retry logic
         num_attempts = team.retries + 1
@@ -589,6 +600,13 @@ def _run_stream(
                     run_messages=run_messages,
                     user_id=user_id,
                     existing_future=memory_future,
+                )
+                learning_future = _start_learning_future(
+                    team,
+                    run_messages=run_messages,
+                    session=session,
+                    user_id=user_id,
+                    existing_future=learning_future,
                 )
 
                 # Start the Run by yielding a RunStarted event
@@ -703,6 +721,7 @@ def _run_stream(
                 yield from wait_for_thread_tasks_stream(
                     run_response=run_response,
                     memory_future=memory_future,  # type: ignore
+                    learning_future=learning_future,  # type: ignore
                     stream_events=stream_events,
                     events_to_skip=team.events_to_skip,  # type: ignore
                     store_events=team.store_events,
@@ -836,6 +855,8 @@ def _run_stream(
         # Cancel background futures on error (wait_for_thread_tasks_stream handles waiting on success)
         if memory_future is not None and not memory_future.done():
             memory_future.cancel()
+        if learning_future is not None and not learning_future.done():
+            learning_future.cancel()
 
         # Always disconnect connectable tools
         _disconnect_connectable_tools(team)
@@ -1094,7 +1115,7 @@ async def _arun(
     """
     from agno.team._hooks import _aexecute_post_hooks, _aexecute_pre_hooks
     from agno.team._init import _disconnect_connectable_tools, _disconnect_mcp_tools
-    from agno.team._managers import _astart_memory_task
+    from agno.team._managers import _astart_learning_task, _astart_memory_task
     from agno.team._messages import _aget_run_messages
     from agno.team._response import (
         _convert_response_to_structured_format,
@@ -1108,6 +1129,7 @@ async def _arun(
 
     log_debug(f"Team Run Start: {run_response.run_id}", center=True)
     memory_task = None
+    learning_task = None
 
     try:
         # Register run for cancellation tracking
@@ -1206,6 +1228,13 @@ async def _arun(
                     user_id=user_id,
                     existing_task=memory_task,
                 )
+                learning_task = await _astart_learning_task(
+                    team,
+                    run_messages=run_messages,
+                    session=team_session,
+                    user_id=user_id,
+                    existing_task=learning_task,
+                )
 
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
                 # 5. Reason about the task if reasoning is enabled
@@ -1275,7 +1304,7 @@ async def _arun(
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 
                 # 11. Wait for background memory creation
-                await await_for_open_threads(memory_task=memory_task)
+                await await_for_open_threads(memory_task=memory_task, learning_task=learning_task)
 
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
                 # 12. Create session summary
@@ -1373,6 +1402,12 @@ async def _arun(
                 await memory_task
             except asyncio.CancelledError:
                 pass
+        if learning_task is not None and not learning_task.done():
+            learning_task.cancel()
+            try:
+                await learning_task
+            except asyncio.CancelledError:
+                pass
 
         # Always clean up the run tracking
         await acleanup_run(run_response.run_id)  # type: ignore
@@ -1415,7 +1450,7 @@ async def _arun_stream(
     """
     from agno.team._hooks import _aexecute_post_hooks, _aexecute_pre_hooks
     from agno.team._init import _disconnect_connectable_tools, _disconnect_mcp_tools
-    from agno.team._managers import _astart_memory_task
+    from agno.team._managers import _astart_learning_task, _astart_memory_task
     from agno.team._messages import _aget_run_messages
     from agno.team._response import (
         _ahandle_model_response_stream,
@@ -1429,6 +1464,7 @@ async def _arun_stream(
     log_debug(f"Team Run Start: {run_response.run_id}", center=True)
 
     memory_task = None
+    learning_task = None
 
     try:
         # Register run for cancellation tracking
@@ -1523,6 +1559,13 @@ async def _arun_stream(
                     run_messages=run_messages,
                     user_id=user_id,
                     existing_task=memory_task,
+                )
+                learning_task = await _astart_learning_task(
+                    team,
+                    run_messages=run_messages,
+                    session=team_session,
+                    user_id=user_id,
+                    existing_task=learning_task,
                 )
 
                 # Yield the run started event
@@ -1640,6 +1683,7 @@ async def _arun_stream(
                 async for event in await_for_thread_tasks_stream(
                     run_response=run_response,
                     memory_task=memory_task,
+                    learning_task=learning_task,
                     stream_events=stream_events,
                     events_to_skip=team.events_to_skip,  # type: ignore
                     store_events=team.store_events,
@@ -1788,6 +1832,12 @@ async def _arun_stream(
             memory_task.cancel()
             try:
                 await memory_task
+            except asyncio.CancelledError:
+                pass
+        if learning_task is not None and not learning_task.done():
+            learning_task.cancel()
+            try:
+                await learning_task
             except asyncio.CancelledError:
                 pass
 

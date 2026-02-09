@@ -143,6 +143,15 @@ def _determine_tools_for_model(
     if team.memory_manager is not None and team.enable_agentic_memory:
         _tools.append(_get_update_user_memory_function(team, user_id=user_id, async_mode=async_mode))
 
+    # Add learning machine tools
+    if team._learning is not None:
+        learning_tools = team._learning.get_tools(
+            user_id=user_id,
+            session_id=session.session_id if session else None,
+            team_id=team.id,
+        )
+        _tools.extend(learning_tools)
+
     if team.enable_agentic_state:
         _tools.append(Function(name="update_session_state", entrypoint=partial(_update_session_state_tool, team)))
 
