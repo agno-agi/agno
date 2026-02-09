@@ -162,7 +162,7 @@ def attach_routes(
                 audio_file_id = message["audio"]["file_id"]
                 message_text = message.get("caption", "Describe this audio")
             elif message.get("video") or message.get("video_note") or message.get("animation"):
-                vid = message.get("video") or message.get("video_note") or message.get("animation")
+                vid: dict = message.get("video") or message.get("video_note") or message.get("animation")  # type: ignore[assignment]
                 video_file_id = vid["file_id"]
                 message_text = message.get("caption", "Describe this video")
             elif message.get("document"):
