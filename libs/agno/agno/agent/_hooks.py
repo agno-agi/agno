@@ -52,6 +52,8 @@ def execute_pre_hooks(
     **kwargs: Any,
 ) -> Iterator[RunOutputEvent]:
     """Execute multiple pre-hook functions in succession."""
+    from agno.agent._init import set_debug
+
     if hooks is None:
         return
     # Prepare arguments for this hook
@@ -125,7 +127,7 @@ def execute_pre_hooks(
             log_exception(e)
         finally:
             # Reset global log mode incase an agent in the pre-hook changed it
-            agent._set_debug(debug_mode=debug_mode)
+            set_debug(agent, debug_mode=debug_mode)
 
     # Update the input on the run_response
     run_response.input = run_input
@@ -145,6 +147,8 @@ async def aexecute_pre_hooks(
     **kwargs: Any,
 ) -> AsyncIterator[RunOutputEvent]:
     """Execute multiple pre-hook functions in succession (async version)."""
+    from agno.agent._init import set_debug
+
     if hooks is None:
         return
     # Prepare arguments for this hook
@@ -222,7 +226,7 @@ async def aexecute_pre_hooks(
             log_exception(e)
         finally:
             # Reset global log mode incase an agent in the pre-hook changed it
-            agent._set_debug(debug_mode=debug_mode)
+            set_debug(agent, debug_mode=debug_mode)
 
     # Update the input on the run_response
     run_response.input = run_input
@@ -241,6 +245,8 @@ def execute_post_hooks(
     **kwargs: Any,
 ) -> Iterator[RunOutputEvent]:
     """Execute multiple post-hook functions in succession."""
+    from agno.agent._init import set_debug
+
     if hooks is None:
         return
 
@@ -311,7 +317,7 @@ def execute_post_hooks(
             log_exception(e)
         finally:
             # Reset global log mode incase an agent in the pre-hook changed it
-            agent._set_debug(debug_mode=debug_mode)
+            set_debug(agent, debug_mode=debug_mode)
 
 
 async def aexecute_post_hooks(
@@ -327,6 +333,8 @@ async def aexecute_post_hooks(
     **kwargs: Any,
 ) -> AsyncIterator[RunOutputEvent]:
     """Execute multiple post-hook functions in succession (async version)."""
+    from agno.agent._init import set_debug
+
     if hooks is None:
         return
 
@@ -398,4 +406,4 @@ async def aexecute_post_hooks(
             log_exception(e)
         finally:
             # Reset global log mode incase an agent in the pre-hook changed it
-            agent._set_debug(debug_mode=debug_mode)
+            set_debug(agent, debug_mode=debug_mode)

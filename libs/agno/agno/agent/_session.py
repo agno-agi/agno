@@ -813,8 +813,10 @@ def get_user_memories(agent: Agent, user_id: Optional[str] = None) -> Optional[L
     Returns:
         Optional[List[UserMemory]]: The user memories.
     """
+    from agno.agent._init import set_memory_manager
+
     if agent.memory_manager is None:
-        agent._set_memory_manager()
+        set_memory_manager(agent)
 
     user_id = user_id if user_id is not None else agent.user_id
     if user_id is None:
@@ -832,8 +834,10 @@ async def aget_user_memories(agent: Agent, user_id: Optional[str] = None) -> Opt
     Returns:
         Optional[List[UserMemory]]: The user memories.
     """
+    from agno.agent._init import set_memory_manager
+
     if agent.memory_manager is None:
-        agent._set_memory_manager()
+        set_memory_manager(agent)
 
     user_id = user_id if user_id is not None else agent.user_id
     if user_id is None:

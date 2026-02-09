@@ -333,6 +333,19 @@ def run_impl(
     12. Create session summary
     13. Cleanup and store the run response and session
     """
+    from agno.agent._hooks import execute_post_hooks, execute_pre_hooks
+    from agno.agent._init import disconnect_connectable_tools
+    from agno.agent._messages import get_run_messages
+    from agno.agent._response import (
+        convert_response_to_structured_format,
+        generate_response_with_output_model,
+        handle_reasoning,
+        parse_response_with_parser_model,
+        update_run_response,
+    )
+    from agno.agent._telemetry import log_agent_telemetry
+    from agno.agent._tools import determine_tools_for_model
+
     memory_future = None
     learning_future = None
     cultural_knowledge_future = None
@@ -349,7 +362,8 @@ def run_impl(
                 agent.model = cast(Model, agent.model)
                 if agent.pre_hooks is not None:
                     # Can modify the run input
-                    pre_hook_iterator = agent._execute_pre_hooks(
+                    pre_hook_iterator = execute_pre_hooks(
+                        agent,
                         hooks=agent.pre_hooks,  # type: ignore
                         run_response=run_response,
                         run_input=run_input,
@@ -370,7 +384,8 @@ def run_impl(
                     session=session,
                     user_id=user_id,
                 )
-                _tools = agent._determine_tools_for_model(
+                _tools = determine_tools_for_model(
+                    agent,
                     model=agent.model,
                     processed_tools=processed_tools,
                     run_response=run_response,
@@ -379,7 +394,8 @@ def run_impl(
                 )
 
                 # 3. Prepare run messages
-                run_messages: RunMessages = agent._get_run_messages(
+                run_messages: RunMessages = get_run_messages(
+                    agent,
                     run_response=run_response,
                     run_context=run_context,
                     input=run_input.input_content,
@@ -424,7 +440,7 @@ def run_impl(
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
                 # 5. Reason about the task
-                agent._handle_reasoning(run_response=run_response, run_messages=run_messages, run_context=run_context)
+                handle_reasoning(agent, run_response=run_response, run_messages=run_messages, run_context=run_context)
 
                 # Check for cancellation before model call
                 raise_if_cancelled(run_response.run_id)  # type: ignore
@@ -447,13 +463,14 @@ def run_impl(
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
                 # If an output model is provided, generate output using the output model
-                agent._generate_response_with_output_model(model_response, run_messages)
+                generate_response_with_output_model(agent, model_response, run_messages)
 
                 # If a parser model is provided, structure the response separately
-                agent._parse_response_with_parser_model(model_response, run_messages, run_context=run_context)
+                parse_response_with_parser_model(agent, model_response, run_messages, run_context=run_context)
 
                 # 7. Update the RunOutput with the model response
-                agent._update_run_response(
+                update_run_response(
+                    agent,
                     model_response=model_response,
                     run_response=run_response,
                     run_messages=run_messages,
@@ -468,18 +485,19 @@ def run_impl(
                         learning_future=learning_future,  # type: ignore
                     )
 
-                    return agent._handle_agent_run_paused(run_response=run_response, session=session, user_id=user_id)
+                    return handle_agent_run_paused(agent, run_response=run_response, session=session, user_id=user_id)
 
                 # 8. Store media if enabled
                 if agent.store_media:
                     store_media_util(run_response, model_response)
 
                 # 9. Convert the response to the structured format if needed
-                agent._convert_response_to_structured_format(run_response, run_context=run_context)
+                convert_response_to_structured_format(agent, run_response, run_context=run_context)
 
                 # 10. Execute post-hooks after output is generated but before response is returned
                 if agent.post_hooks is not None:
-                    post_hook_iterator = agent._execute_post_hooks(
+                    post_hook_iterator = execute_post_hooks(
+                        agent,
                         hooks=agent.post_hooks,  # type: ignore
                         run_output=run_response,
                         run_context=run_context,
@@ -513,12 +531,12 @@ def run_impl(
                 run_response.status = RunStatus.completed
 
                 # 13. Cleanup and store the run response and session
-                agent._cleanup_and_store(
-                    run_response=run_response, session=session, run_context=run_context, user_id=user_id
+                cleanup_and_store(
+                    agent, run_response=run_response, session=session, run_context=run_context, user_id=user_id
                 )
 
                 # Log Agent Telemetry
-                agent._log_agent_telemetry(session_id=session.session_id, run_id=run_response.run_id)
+                log_agent_telemetry(agent, session_id=session.session_id, run_id=run_response.run_id)
 
                 log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
@@ -529,8 +547,8 @@ def run_impl(
                 run_response.status = RunStatus.cancelled
 
                 # Cleanup and store the run response and session
-                agent._cleanup_and_store(
-                    run_response=run_response, session=session, run_context=run_context, user_id=user_id
+                cleanup_and_store(
+                    agent, run_response=run_response, session=session, run_context=run_context, user_id=user_id
                 )
 
                 return run_response
@@ -543,8 +561,8 @@ def run_impl(
 
                 log_error(f"Validation failed: {str(e)} | Check trigger: {e.check_trigger}")
 
-                agent._cleanup_and_store(
-                    run_response=run_response, session=session, run_context=run_context, user_id=user_id
+                cleanup_and_store(
+                    agent, run_response=run_response, session=session, run_context=run_context, user_id=user_id
                 )
 
                 return run_response
@@ -575,8 +593,8 @@ def run_impl(
                 log_error(f"Error in Agent run: {str(e)}")
 
                 # Cleanup and store the run response and session
-                agent._cleanup_and_store(
-                    run_response=run_response, session=session, run_context=run_context, user_id=user_id
+                cleanup_and_store(
+                    agent, run_response=run_response, session=session, run_context=run_context, user_id=user_id
                 )
 
                 return run_response
@@ -590,7 +608,7 @@ def run_impl(
             learning_future.cancel()
 
         # Always disconnect connectable tools
-        agent._disconnect_connectable_tools()
+        disconnect_connectable_tools(agent)
         # Always clean up the run tracking
         cleanup_run(run_response.run_id)  # type: ignore
 
@@ -627,6 +645,18 @@ def run_stream_impl(
     9. Create session summary
     10. Cleanup and store the run response and session
     """
+    from agno.agent._hooks import execute_post_hooks, execute_pre_hooks
+    from agno.agent._init import disconnect_connectable_tools
+    from agno.agent._messages import get_run_messages
+    from agno.agent._response import (
+        generate_response_with_output_model_stream,
+        handle_model_response_stream,
+        handle_reasoning_stream,
+        parse_response_with_parser_model_stream,
+    )
+    from agno.agent._telemetry import log_agent_telemetry
+    from agno.agent._tools import determine_tools_for_model
+
     memory_future = None
     learning_future = None
     cultural_knowledge_future = None
@@ -643,7 +673,8 @@ def run_stream_impl(
                 agent.model = cast(Model, agent.model)
                 if agent.pre_hooks is not None:
                     # Can modify the run input
-                    pre_hook_iterator = agent._execute_pre_hooks(
+                    pre_hook_iterator = execute_pre_hooks(
+                        agent,
                         hooks=agent.pre_hooks,  # type: ignore
                         run_response=run_response,
                         run_input=run_input,
@@ -665,7 +696,8 @@ def run_stream_impl(
                     session=session,
                     user_id=user_id,
                 )
-                _tools = agent._determine_tools_for_model(
+                _tools = determine_tools_for_model(
+                    agent,
                     model=agent.model,
                     processed_tools=processed_tools,
                     run_response=run_response,
@@ -674,7 +706,8 @@ def run_stream_impl(
                 )
 
                 # 3. Prepare run messages
-                run_messages: RunMessages = agent._get_run_messages(
+                run_messages: RunMessages = get_run_messages(
+                    agent,
                     run_response=run_response,
                     input=run_input.input_content,
                     session=session,
@@ -726,7 +759,8 @@ def run_stream_impl(
                     )
 
                 # 5. Reason about the task if reasoning is enabled
-                yield from agent._handle_reasoning_stream(
+                yield from handle_reasoning_stream(
+                    agent,
                     run_response=run_response,
                     run_messages=run_messages,
                     run_context=run_context,
@@ -738,7 +772,8 @@ def run_stream_impl(
 
                 # 6. Process model response
                 if agent.output_model is None:
-                    for event in agent._handle_model_response_stream(
+                    for event in handle_model_response_stream(
+                        agent,
                         session=session,
                         run_response=run_response,
                         run_messages=run_messages,
@@ -756,7 +791,8 @@ def run_stream_impl(
                         RunContentEvent,
                     )  # type: ignore
 
-                    for event in agent._handle_model_response_stream(
+                    for event in handle_model_response_stream(
+                        agent,
                         session=session,
                         run_response=run_response,
                         run_messages=run_messages,
@@ -777,7 +813,8 @@ def run_stream_impl(
                             yield event
 
                     # If an output model is provided, generate output using the output model
-                    for event in agent._generate_response_with_output_model_stream(
+                    for event in generate_response_with_output_model_stream(
+                        agent,
                         session=session,
                         run_response=run_response,
                         run_messages=run_messages,
@@ -790,8 +827,12 @@ def run_stream_impl(
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
                 # 7. Parse response with parser model if provided
-                yield from agent._parse_response_with_parser_model_stream(  # type: ignore
-                    session=session, run_response=run_response, stream_events=stream_events, run_context=run_context
+                yield from parse_response_with_parser_model_stream(
+                    agent,  # type: ignore
+                    session=session,
+                    run_response=run_response,
+                    stream_events=stream_events,
+                    run_context=run_context,
                 )
 
                 # We should break out of the run function
@@ -808,8 +849,8 @@ def run_stream_impl(
                     )
 
                     # Handle the paused run
-                    yield from agent._handle_agent_run_paused_stream(
-                        run_response=run_response, session=session, user_id=user_id
+                    yield from handle_agent_run_paused_stream(
+                        agent, run_response=run_response, session=session, user_id=user_id
                     )
                     return
 
@@ -824,7 +865,8 @@ def run_stream_impl(
 
                 # Execute post-hooks after output is generated but before response is returned
                 if agent.post_hooks is not None:
-                    yield from agent._execute_post_hooks(
+                    yield from execute_post_hooks(
+                        agent,
                         hooks=agent.post_hooks,  # type: ignore
                         run_output=run_response,
                         run_context=run_context,
@@ -891,8 +933,8 @@ def run_stream_impl(
                 run_response.status = RunStatus.completed
 
                 # 10. Cleanup and store the run response and session
-                agent._cleanup_and_store(
-                    run_response=run_response, session=session, run_context=run_context, user_id=user_id
+                cleanup_and_store(
+                    agent, run_response=run_response, session=session, run_context=run_context, user_id=user_id
                 )
 
                 if stream_events:
@@ -902,7 +944,7 @@ def run_stream_impl(
                     yield run_response
 
                 # Log Agent Telemetry
-                agent._log_agent_telemetry(session_id=session.session_id, run_id=run_response.run_id)
+                log_agent_telemetry(agent, session_id=session.session_id, run_id=run_response.run_id)
 
                 log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
@@ -920,8 +962,8 @@ def run_stream_impl(
                 )
 
                 # Cleanup and store the run response and session
-                agent._cleanup_and_store(
-                    run_response=run_response, session=session, run_context=run_context, user_id=user_id
+                cleanup_and_store(
+                    agent, run_response=run_response, session=session, run_context=run_context, user_id=user_id
                 )
                 break
             except (InputCheckError, OutputCheckError) as e:
@@ -943,8 +985,8 @@ def run_stream_impl(
 
                 log_error(f"Validation failed: {str(e)} | Check trigger: {e.check_trigger}")
 
-                agent._cleanup_and_store(
-                    run_response=run_response, session=session, run_context=run_context, user_id=user_id
+                cleanup_and_store(
+                    agent, run_response=run_response, session=session, run_context=run_context, user_id=user_id
                 )
                 yield run_error
                 break
@@ -981,8 +1023,8 @@ def run_stream_impl(
                 log_error(f"Error in Agent run: {str(e)}")
 
                 # Cleanup and store the run response and session
-                agent._cleanup_and_store(
-                    run_response=run_response, session=session, run_context=run_context, user_id=user_id
+                cleanup_and_store(
+                    agent, run_response=run_response, session=session, run_context=run_context, user_id=user_id
                 )
 
                 yield run_error
@@ -996,7 +1038,7 @@ def run_stream_impl(
             learning_future.cancel()
 
         # Always disconnect connectable tools
-        agent._disconnect_connectable_tools()
+        disconnect_connectable_tools(agent)
         # Always clean up the run tracking
         cleanup_run(run_response.run_id)  # type: ignore
 
@@ -1028,7 +1070,11 @@ def run_dispatch(
     **kwargs: Any,
 ) -> Union[RunOutput, Iterator[Union[RunOutputEvent, RunOutput]]]:
     """Run the Agent and return the response."""
-    if agent._has_async_db():
+    from agno.agent._init import has_async_db
+    from agno.agent._response import get_response_format
+    from agno.agent._storage import load_session_state, read_or_create_session, update_metadata
+
+    if has_async_db(agent):
         raise RuntimeError("`run` method is not supported with an async database. Please use `arun` method instead.")
 
     # Initialize session early for error handling
@@ -1079,12 +1125,12 @@ def run_dispatch(
         )
 
         # Read existing session from database
-        agent_session = agent._read_or_create_session(session_id=session_id, user_id=user_id)
-        agent._update_metadata(session=agent_session)
+        agent_session = read_or_create_session(agent, session_id=session_id, user_id=user_id)
+        update_metadata(agent, session=agent_session)
 
         # Initialize session state. Get it from DB if relevant.
         session_state = session_state if session_state is not None else {}
-        session_state = agent._load_session_state(session=agent_session, session_state=session_state)
+        session_state = load_session_state(agent, session=agent_session, session_state=session_state)
 
         # Resolve all run options centrally
         opts = resolve_run_options(
@@ -1132,10 +1178,10 @@ def run_dispatch(
 
         # Resolve dependencies
         if run_context.dependencies is not None:
-            agent._resolve_run_dependencies(run_context=run_context)
+            resolve_run_dependencies(agent, run_context=run_context)
 
         # Prepare arguments for the model
-        response_format = agent._get_response_format(run_context=run_context) if agent.parser_model is None else None
+        response_format = get_response_format(agent, run_context=run_context) if agent.parser_model is None else None
         agent.model = cast(Model, agent.model)
 
         # Create a new run_response for this attempt
@@ -1230,6 +1276,20 @@ async def arun_impl(
     15. Create session summary
     16. Cleanup and store (scrub, stop timer, save to file, add to session, calculate metrics, save session)
     """
+    from agno.agent._hooks import aexecute_post_hooks, aexecute_pre_hooks
+    from agno.agent._init import disconnect_connectable_tools, disconnect_mcp_tools
+    from agno.agent._messages import aget_run_messages
+    from agno.agent._response import (
+        agenerate_response_with_output_model,
+        ahandle_reasoning,
+        aparse_response_with_parser_model,
+        convert_response_to_structured_format,
+        update_run_response,
+    )
+    from agno.agent._storage import aread_or_create_session, load_session_state, update_metadata
+    from agno.agent._telemetry import alog_agent_telemetry
+    from agno.agent._tools import determine_tools_for_model
+
     await aregister_run(run_context.run_id)
     log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
 
@@ -1248,27 +1308,29 @@ async def arun_impl(
 
             try:
                 # 1. Read or create session. Reads from the database if provided.
-                agent_session = await agent._aread_or_create_session(session_id=session_id, user_id=user_id)
+                agent_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
 
                 # 2. Update metadata and session state
-                agent._update_metadata(session=agent_session)
+                update_metadata(agent, session=agent_session)
 
                 # Initialize session state. Get it from DB if relevant.
-                run_context.session_state = agent._load_session_state(
+                run_context.session_state = load_session_state(
+                    agent,
                     session=agent_session,
                     session_state=run_context.session_state if run_context.session_state is not None else {},
                 )
 
                 # 3. Resolve dependencies
                 if run_context.dependencies is not None:
-                    await agent._aresolve_run_dependencies(run_context=run_context)
+                    await aresolve_run_dependencies(agent, run_context=run_context)
 
                 # 4. Execute pre-hooks
                 run_input = cast(RunInput, run_response.input)
                 agent.model = cast(Model, agent.model)
                 if agent.pre_hooks is not None:
                     # Can modify the run input
-                    pre_hook_iterator = agent._aexecute_pre_hooks(
+                    pre_hook_iterator = aexecute_pre_hooks(
+                        agent,
                         hooks=agent.pre_hooks,  # type: ignore
                         run_response=run_response,
                         run_context=run_context,
@@ -1292,7 +1354,8 @@ async def arun_impl(
                     user_id=user_id,
                 )
 
-                _tools = agent._determine_tools_for_model(
+                _tools = determine_tools_for_model(
+                    agent,
                     model=agent.model,
                     processed_tools=processed_tools,
                     run_response=run_response,
@@ -1302,7 +1365,8 @@ async def arun_impl(
                 )
 
                 # 6. Prepare run messages
-                run_messages: RunMessages = await agent._aget_run_messages(
+                run_messages: RunMessages = await aget_run_messages(
+                    agent,
                     run_response=run_response,
                     run_context=run_context,
                     input=run_input.input_content,
@@ -1346,8 +1410,8 @@ async def arun_impl(
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 
                 # 8. Reason about the task if reasoning is enabled
-                await agent._ahandle_reasoning(
-                    run_response=run_response, run_messages=run_messages, run_context=run_context
+                await ahandle_reasoning(
+                    agent, run_response=run_response, run_messages=run_messages, run_context=run_context
                 )
 
                 # Check for cancellation before model call
@@ -1369,17 +1433,18 @@ async def arun_impl(
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 
                 # If an output model is provided, generate output using the output model
-                await agent._agenerate_response_with_output_model(
-                    model_response=model_response, run_messages=run_messages
+                await agenerate_response_with_output_model(
+                    agent, model_response=model_response, run_messages=run_messages
                 )
 
                 # If a parser model is provided, structure the response separately
-                await agent._aparse_response_with_parser_model(
-                    model_response=model_response, run_messages=run_messages, run_context=run_context
+                await aparse_response_with_parser_model(
+                    agent, model_response=model_response, run_messages=run_messages, run_context=run_context
                 )
 
                 # 10. Update the RunOutput with the model response
-                agent._update_run_response(
+                update_run_response(
+                    agent,
                     model_response=model_response,
                     run_response=run_response,
                     run_messages=run_messages,
@@ -1393,12 +1458,12 @@ async def arun_impl(
                         cultural_knowledge_task=cultural_knowledge_task,
                         learning_task=learning_task,
                     )
-                    return await agent._ahandle_agent_run_paused(
-                        run_response=run_response, session=agent_session, user_id=user_id
+                    return await ahandle_agent_run_paused(
+                        agent, run_response=run_response, session=agent_session, user_id=user_id
                     )
 
                 # 11. Convert the response to the structured format if needed
-                agent._convert_response_to_structured_format(run_response, run_context=run_context)
+                convert_response_to_structured_format(agent, run_response, run_context=run_context)
 
                 # 12. Store media if enabled
                 if agent.store_media:
@@ -1406,7 +1471,8 @@ async def arun_impl(
 
                 # 13. Execute post-hooks (after output is generated but before response is returned)
                 if agent.post_hooks is not None:
-                    async for _ in agent._aexecute_post_hooks(
+                    async for _ in aexecute_post_hooks(
+                        agent,
                         hooks=agent.post_hooks,  # type: ignore
                         run_output=run_response,
                         run_context=run_context,
@@ -1440,7 +1506,8 @@ async def arun_impl(
                 run_response.status = RunStatus.completed
 
                 # 16. Cleanup and store the run response and session
-                await agent._acleanup_and_store(
+                await acleanup_and_store(
+                    agent,
                     run_response=run_response,
                     session=agent_session,
                     run_context=run_context,
@@ -1448,7 +1515,7 @@ async def arun_impl(
                 )
 
                 # Log Agent Telemetry
-                await agent._alog_agent_telemetry(session_id=agent_session.session_id, run_id=run_response.run_id)
+                await alog_agent_telemetry(agent, session_id=agent_session.session_id, run_id=run_response.run_id)
 
                 log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
@@ -1462,7 +1529,8 @@ async def arun_impl(
 
                 # Cleanup and store the run response and session
                 if agent_session is not None:
-                    await agent._acleanup_and_store(
+                    await acleanup_and_store(
+                        agent,
                         run_response=run_response,
                         session=agent_session,
                         run_context=run_context,
@@ -1480,7 +1548,8 @@ async def arun_impl(
                 log_error(f"Validation failed: {str(e)} | Check trigger: {e.check_trigger}")
 
                 if agent_session is not None:
-                    await agent._acleanup_and_store(
+                    await acleanup_and_store(
+                        agent,
                         run_response=run_response,
                         session=agent_session,
                         run_context=run_context,
@@ -1517,7 +1586,8 @@ async def arun_impl(
 
                 # Cleanup and store the run response and session
                 if agent_session is not None:
-                    await agent._acleanup_and_store(
+                    await acleanup_and_store(
+                        agent,
                         run_response=run_response,
                         session=agent_session,
                         run_context=run_context,
@@ -1527,9 +1597,9 @@ async def arun_impl(
                 return run_response
     finally:
         # Always disconnect connectable tools
-        agent._disconnect_connectable_tools()
+        disconnect_connectable_tools(agent)
         # Always disconnect MCP tools
-        await agent._disconnect_mcp_tools()
+        await disconnect_mcp_tools(agent)
 
         # Cancel background tasks on error (await_for_open_threads handles waiting on success)
         if memory_task is not None and not memory_task.done():
@@ -1590,6 +1660,19 @@ async def arun_stream_impl(
     12. Create session summary
     13. Cleanup and store (scrub, stop timer, save to file, add to session, calculate metrics, save session)
     """
+    from agno.agent._hooks import aexecute_post_hooks, aexecute_pre_hooks
+    from agno.agent._init import disconnect_connectable_tools, disconnect_mcp_tools
+    from agno.agent._messages import aget_run_messages
+    from agno.agent._response import (
+        agenerate_response_with_output_model_stream,
+        ahandle_model_response_stream,
+        ahandle_reasoning_stream,
+        aparse_response_with_parser_model_stream,
+    )
+    from agno.agent._storage import aread_or_create_session, load_session_state, update_metadata
+    from agno.agent._telemetry import alog_agent_telemetry
+    from agno.agent._tools import determine_tools_for_model
+
     await aregister_run(run_context.run_id)
     log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
 
@@ -1607,7 +1690,7 @@ async def arun_stream_impl(
 
             try:
                 # 1. Read or create session. Reads from the database if provided.
-                agent_session = await agent._aread_or_create_session(session_id=session_id, user_id=user_id)
+                agent_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
 
                 # Start the Run by yielding a RunStarted event
                 if stream_events:
@@ -1619,23 +1702,25 @@ async def arun_stream_impl(
                     )
 
                 # 2. Update metadata and session state
-                agent._update_metadata(session=agent_session)
+                update_metadata(agent, session=agent_session)
 
                 # Initialize session state. Get it from DB if relevant.
-                run_context.session_state = agent._load_session_state(
+                run_context.session_state = load_session_state(
+                    agent,
                     session=agent_session,
                     session_state=run_context.session_state if run_context.session_state is not None else {},
                 )
 
                 # 3. Resolve dependencies
                 if run_context.dependencies is not None:
-                    await agent._aresolve_run_dependencies(run_context=run_context)
+                    await aresolve_run_dependencies(agent, run_context=run_context)
 
                 # 4. Execute pre-hooks
                 run_input = cast(RunInput, run_response.input)
                 agent.model = cast(Model, agent.model)
                 if agent.pre_hooks is not None:
-                    pre_hook_iterator = agent._aexecute_pre_hooks(
+                    pre_hook_iterator = aexecute_pre_hooks(
+                        agent,
                         hooks=agent.pre_hooks,  # type: ignore
                         run_response=run_response,
                         run_context=run_context,
@@ -1660,7 +1745,8 @@ async def arun_stream_impl(
                     user_id=user_id,
                 )
 
-                _tools = agent._determine_tools_for_model(
+                _tools = determine_tools_for_model(
+                    agent,
                     model=agent.model,
                     processed_tools=processed_tools,
                     run_response=run_response,
@@ -1670,7 +1756,8 @@ async def arun_stream_impl(
                 )
 
                 # 6. Prepare run messages
-                run_messages: RunMessages = await agent._aget_run_messages(
+                run_messages: RunMessages = await aget_run_messages(
+                    agent,
                     run_response=run_response,
                     run_context=run_context,
                     input=run_input.input_content,
@@ -1711,7 +1798,8 @@ async def arun_stream_impl(
                 )
 
                 # 8. Reason about the task if reasoning is enabled
-                async for item in agent._ahandle_reasoning_stream(
+                async for item in ahandle_reasoning_stream(
+                    agent,
                     run_response=run_response,
                     run_messages=run_messages,
                     run_context=run_context,
@@ -1724,7 +1812,8 @@ async def arun_stream_impl(
 
                 # 9. Generate a response from the Model
                 if agent.output_model is None:
-                    async for event in agent._ahandle_model_response_stream(
+                    async for event in ahandle_model_response_stream(
+                        agent,
                         session=agent_session,
                         run_response=run_response,
                         run_messages=run_messages,
@@ -1742,7 +1831,8 @@ async def arun_stream_impl(
                         RunContentEvent,
                     )  # type: ignore
 
-                    async for event in agent._ahandle_model_response_stream(
+                    async for event in ahandle_model_response_stream(
+                        agent,
                         session=agent_session,
                         run_response=run_response,
                         run_messages=run_messages,
@@ -1763,7 +1853,8 @@ async def arun_stream_impl(
                             yield event
 
                     # If an output model is provided, generate output using the output model
-                    async for event in agent._agenerate_response_with_output_model_stream(
+                    async for event in agenerate_response_with_output_model_stream(
+                        agent,
                         session=agent_session,
                         run_response=run_response,
                         run_messages=run_messages,
@@ -1776,7 +1867,8 @@ async def arun_stream_impl(
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 
                 # 10. Parse response with parser model if provided
-                async for event in agent._aparse_response_with_parser_model_stream(
+                async for event in aparse_response_with_parser_model_stream(
+                    agent,
                     session=agent_session,
                     run_response=run_response,
                     stream_events=stream_events,
@@ -1806,15 +1898,16 @@ async def arun_stream_impl(
                     ):
                         yield item
 
-                    async for item in agent._ahandle_agent_run_paused_stream(
-                        run_response=run_response, session=agent_session, user_id=user_id
+                    async for item in ahandle_agent_run_paused_stream(
+                        agent, run_response=run_response, session=agent_session, user_id=user_id
                     ):
                         yield item
                     return
 
                 # Execute post-hooks (after output is generated but before response is returned)
                 if agent.post_hooks is not None:
-                    async for event in agent._aexecute_post_hooks(
+                    async for event in aexecute_post_hooks(
+                        agent,
                         hooks=agent.post_hooks,  # type: ignore
                         run_output=run_response,
                         run_context=run_context,
@@ -1883,7 +1976,8 @@ async def arun_stream_impl(
                 run_response.status = RunStatus.completed
 
                 # 13. Cleanup and store the run response and session
-                await agent._acleanup_and_store(
+                await acleanup_and_store(
+                    agent,
                     run_response=run_response,
                     session=agent_session,
                     run_context=run_context,
@@ -1897,7 +1991,7 @@ async def arun_stream_impl(
                     yield run_response
 
                 # Log Agent Telemetry
-                await agent._alog_agent_telemetry(session_id=agent_session.session_id, run_id=run_response.run_id)
+                await alog_agent_telemetry(agent, session_id=agent_session.session_id, run_id=run_response.run_id)
 
                 log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
@@ -1923,7 +2017,8 @@ async def arun_stream_impl(
 
                 # Cleanup and store the run response and session
                 if agent_session is not None:
-                    await agent._acleanup_and_store(
+                    await acleanup_and_store(
+                        agent,
                         run_response=run_response,
                         session=agent_session,
                         run_context=run_context,
@@ -1952,7 +2047,8 @@ async def arun_stream_impl(
 
                 # Cleanup and store the run response and session
                 if agent_session is not None:
-                    await agent._acleanup_and_store(
+                    await acleanup_and_store(
+                        agent,
                         run_response=run_response,
                         session=agent_session,
                         run_context=run_context,
@@ -1999,7 +2095,8 @@ async def arun_stream_impl(
 
                 # Cleanup and store the run response and session
                 if agent_session is not None:
-                    await agent._acleanup_and_store(
+                    await acleanup_and_store(
+                        agent,
                         run_response=run_response,
                         session=agent_session,
                         run_context=run_context,
@@ -2010,9 +2107,9 @@ async def arun_stream_impl(
                 yield run_error
     finally:
         # Always disconnect connectable tools
-        agent._disconnect_connectable_tools()
+        disconnect_connectable_tools(agent)
         # Always disconnect MCP tools
-        await agent._disconnect_mcp_tools()
+        await disconnect_mcp_tools(agent)
 
         # Cancel background tasks on error (await_for_thread_tasks_stream handles waiting on success)
         if memory_task is not None and not memory_task.done():
@@ -2069,6 +2166,8 @@ def arun_dispatch(  # type: ignore
     """Async Run the Agent and return the response."""
 
     # Set the id for the run and register it immediately for cancellation tracking
+    from agno.agent._response import get_response_format
+
     run_id = run_id or str(uuid4())
 
     if (add_history_to_context or agent.add_history_to_context) and not agent.db and not agent.team_id:
@@ -2159,7 +2258,7 @@ def arun_dispatch(  # type: ignore
         run_context.output_schema = opts.output_schema
 
     # Prepare arguments for the model (must be after run_context is fully initialized)
-    response_format = agent._get_response_format(run_context=run_context) if agent.parser_model is None else None
+    response_format = get_response_format(agent, run_context=run_context) if agent.parser_model is None else None
 
     # Create a new run_response for this attempt
     run_response = RunOutput(
@@ -2250,13 +2349,19 @@ def continue_run_dispatch(
         metadata: The metadata to use for the run.
         debug_mode: Whether to enable debug mode.
     """
+    from agno.agent._init import has_async_db, set_default_model
+    from agno.agent._messages import get_continue_run_messages
+    from agno.agent._response import get_response_format
+    from agno.agent._storage import load_session_state, read_or_create_session, update_metadata
+    from agno.agent._tools import determine_tools_for_model
+
     if run_response is None and run_id is None:
         raise ValueError("Either run_response or run_id must be provided.")
 
     if run_response is None and (run_id is not None and (session_id is None and agent.session_id is None)):
         raise ValueError("Session ID is required to continue a run from a run_id.")
 
-    if agent._has_async_db():
+    if has_async_db(agent):
         raise Exception("continue_run() is not supported with an async DB. Please use acontinue_run() instead.")
 
     background_tasks = kwargs.pop("background_tasks", None)
@@ -2277,11 +2382,11 @@ def continue_run_dispatch(
     agent.initialize_agent(debug_mode=debug_mode)
 
     # Read existing session from storage
-    agent_session = agent._read_or_create_session(session_id=session_id, user_id=user_id)
-    agent._update_metadata(session=agent_session)
+    agent_session = read_or_create_session(agent, session_id=session_id, user_id=user_id)
+    update_metadata(agent, session=agent_session)
 
     # Initialize session state. Get it from DB if relevant.
-    session_state = agent._load_session_state(session=agent_session, session_state={})
+    session_state = load_session_state(agent, session=agent_session, session_state={})
 
     # Resolve all run options centrally
     opts = resolve_run_options(
@@ -2320,7 +2425,7 @@ def continue_run_dispatch(
 
     # Resolve dependencies
     if run_context.dependencies is not None:
-        agent._resolve_run_dependencies(run_context=run_context)
+        resolve_run_dependencies(agent, run_context=run_context)
 
     # Run can be continued from previous run response or from passed run_response context
     if run_response is not None:
@@ -2360,8 +2465,8 @@ def continue_run_dispatch(
         raise ValueError("Either run_response or run_id must be provided.")
 
     # Prepare arguments for the model
-    agent._set_default_model()
-    response_format = agent._get_response_format(run_context=run_context)
+    set_default_model(agent)
+    response_format = get_response_format(agent, run_context=run_context)
     agent.model = cast(Model, agent.model)
 
     processed_tools = agent.get_tools(
@@ -2371,7 +2476,8 @@ def continue_run_dispatch(
         user_id=user_id,
     )
 
-    _tools = agent._determine_tools_for_model(
+    _tools = determine_tools_for_model(
+        agent,
         model=agent.model,
         processed_tools=processed_tools,
         run_response=run_response,
@@ -2384,7 +2490,8 @@ def continue_run_dispatch(
     log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
 
     # Prepare run messages
-    run_messages = agent._get_continue_run_messages(
+    run_messages = get_continue_run_messages(
+        agent,
         input=input,
     )
 
@@ -2451,12 +2558,23 @@ def continue_run_impl(
     8. Cleanup and store (scrub, stop timer, save to file, add to session, calculate metrics, save session)
     """
     # Register run for cancellation tracking
+    from agno.agent._hooks import execute_post_hooks
+    from agno.agent._init import disconnect_connectable_tools
+    from agno.agent._response import (
+        convert_response_to_structured_format,
+        generate_response_with_output_model,
+        parse_response_with_parser_model,
+        update_run_response,
+    )
+    from agno.agent._telemetry import log_agent_telemetry
+    from agno.agent._tools import handle_tool_call_updates
+
     register_run(run_response.run_id)  # type: ignore
 
     agent.model = cast(Model, agent.model)
 
     # 1. Handle the updated tools
-    agent._handle_tool_call_updates(run_response=run_response, run_messages=run_messages, tools=tools)
+    handle_tool_call_updates(agent, run_response=run_response, run_messages=run_messages, tools=tools)
 
     try:
         num_attempts = agent.retries + 1
@@ -2482,13 +2600,14 @@ def continue_run_impl(
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
                 # If an output model is provided, generate output using the output model
-                agent._generate_response_with_output_model(model_response, run_messages)
+                generate_response_with_output_model(agent, model_response, run_messages)
 
                 # If a parser model is provided, structure the response separately
-                agent._parse_response_with_parser_model(model_response, run_messages, run_context=run_context)
+                parse_response_with_parser_model(agent, model_response, run_messages, run_context=run_context)
 
                 # 3. Update the RunOutput with the model response
-                agent._update_run_response(
+                update_run_response(
+                    agent,
                     model_response=model_response,
                     run_response=run_response,
                     run_messages=run_messages,
@@ -2497,10 +2616,10 @@ def continue_run_impl(
 
                 # We should break out of the run function
                 if any(tool_call.is_paused for tool_call in run_response.tools or []):
-                    return agent._handle_agent_run_paused(run_response=run_response, session=session, user_id=user_id)
+                    return handle_agent_run_paused(agent, run_response=run_response, session=session, user_id=user_id)
 
                 # 4. Convert the response to the structured format if needed
-                agent._convert_response_to_structured_format(run_response, run_context=run_context)
+                convert_response_to_structured_format(agent, run_response, run_context=run_context)
 
                 # 5. Store media if enabled
                 if agent.store_media:
@@ -2508,7 +2627,8 @@ def continue_run_impl(
 
                 # 6. Execute post-hooks
                 if agent.post_hooks is not None:
-                    post_hook_iterator = agent._execute_post_hooks(
+                    post_hook_iterator = execute_post_hooks(
+                        agent,
                         hooks=agent.post_hooks,  # type: ignore
                         run_output=run_response,
                         run_context=run_context,
@@ -2536,12 +2656,12 @@ def continue_run_impl(
                 run_response.status = RunStatus.completed
 
                 # 8. Cleanup and store the run response and session
-                agent._cleanup_and_store(
-                    run_response=run_response, session=session, run_context=run_context, user_id=user_id
+                cleanup_and_store(
+                    agent, run_response=run_response, session=session, run_context=run_context, user_id=user_id
                 )
 
                 # Log Agent Telemetry
-                agent._log_agent_telemetry(session_id=session.session_id, run_id=run_response.run_id)
+                log_agent_telemetry(agent, session_id=session.session_id, run_id=run_response.run_id)
 
                 return run_response
             except RunCancelledException as e:
@@ -2552,8 +2672,8 @@ def continue_run_impl(
                 run_response.content = str(e)
 
                 # Cleanup and store the run response and session
-                agent._cleanup_and_store(
-                    run_response=run_response, session=session, run_context=run_context, user_id=user_id
+                cleanup_and_store(
+                    agent, run_response=run_response, session=session, run_context=run_context, user_id=user_id
                 )
 
                 return run_response
@@ -2567,8 +2687,8 @@ def continue_run_impl(
 
                 log_error(f"Validation failed: {str(e)} | Check trigger: {e.check_trigger}")
 
-                agent._cleanup_and_store(
-                    run_response=run_response, session=session, run_context=run_context, user_id=user_id
+                cleanup_and_store(
+                    agent, run_response=run_response, session=session, run_context=run_context, user_id=user_id
                 )
 
                 return run_response
@@ -2600,14 +2720,14 @@ def continue_run_impl(
                 log_error(f"Error in Agent run: {str(e)}")
 
                 # Cleanup and store the run response and session
-                agent._cleanup_and_store(
-                    run_response=run_response, session=session, run_context=run_context, user_id=user_id
+                cleanup_and_store(
+                    agent, run_response=run_response, session=session, run_context=run_context, user_id=user_id
                 )
 
                 return run_response
     finally:
         # Always disconnect connectable tools
-        agent._disconnect_connectable_tools()
+        disconnect_connectable_tools(agent)
         # Always clean up the run tracking
         cleanup_run(run_response.run_id)  # type: ignore
     return run_response
@@ -2639,6 +2759,12 @@ def continue_run_stream_impl(
     6. Cleanup and store the run response and session
     """
 
+    from agno.agent._hooks import execute_post_hooks
+    from agno.agent._init import disconnect_connectable_tools
+    from agno.agent._response import handle_model_response_stream, parse_response_with_parser_model_stream
+    from agno.agent._telemetry import log_agent_telemetry
+    from agno.agent._tools import handle_tool_call_updates_stream
+
     register_run(run_response.run_id)  # type: ignore
 
     # Set up retry logic
@@ -2648,7 +2774,7 @@ def continue_run_stream_impl(
             try:
                 # 1. Resolve dependencies
                 if run_context.dependencies is not None:
-                    agent._resolve_run_dependencies(run_context=run_context)
+                    resolve_run_dependencies(agent, run_context=run_context)
 
                 # Start the Run by yielding a RunContinued event
                 if stream_events:
@@ -2660,12 +2786,17 @@ def continue_run_stream_impl(
                     )
 
                 # 2. Handle the updated tools
-                yield from agent._handle_tool_call_updates_stream(
-                    run_response=run_response, run_messages=run_messages, tools=tools, stream_events=stream_events
+                yield from handle_tool_call_updates_stream(
+                    agent,
+                    run_response=run_response,
+                    run_messages=run_messages,
+                    tools=tools,
+                    stream_events=stream_events,
                 )
 
                 # 3. Process model response
-                for event in agent._handle_model_response_stream(
+                for event in handle_model_response_stream(
+                    agent,
                     session=session,
                     run_response=run_response,
                     run_messages=run_messages,
@@ -2678,8 +2809,12 @@ def continue_run_stream_impl(
                     yield event
 
                 # Parse response with parser model if provided
-                yield from agent._parse_response_with_parser_model_stream(  # type: ignore
-                    session=session, run_response=run_response, stream_events=stream_events, run_context=run_context
+                yield from parse_response_with_parser_model_stream(
+                    agent,  # type: ignore
+                    session=session,
+                    run_response=run_response,
+                    stream_events=stream_events,
+                    run_context=run_context,
                 )
 
                 # Yield RunContentCompletedEvent
@@ -2693,14 +2828,15 @@ def continue_run_stream_impl(
 
                 # We should break out of the run function
                 if any(tool_call.is_paused for tool_call in run_response.tools or []):
-                    yield from agent._handle_agent_run_paused_stream(
-                        run_response=run_response, session=session, user_id=user_id
+                    yield from handle_agent_run_paused_stream(
+                        agent, run_response=run_response, session=session, user_id=user_id
                     )
                     return
 
                 # Execute post-hooks
                 if agent.post_hooks is not None:
-                    yield from agent._execute_post_hooks(
+                    yield from execute_post_hooks(
+                        agent,
                         hooks=agent.post_hooks,  # type: ignore
                         run_output=run_response,
                         session=session,
@@ -2759,8 +2895,8 @@ def continue_run_stream_impl(
                 run_response.status = RunStatus.completed
 
                 # 5. Cleanup and store the run response and session
-                agent._cleanup_and_store(
-                    run_response=run_response, session=session, run_context=run_context, user_id=user_id
+                cleanup_and_store(
+                    agent, run_response=run_response, session=session, run_context=run_context, user_id=user_id
                 )
 
                 if stream_events:
@@ -2770,7 +2906,7 @@ def continue_run_stream_impl(
                     yield run_response
 
                 # Log Agent Telemetry
-                agent._log_agent_telemetry(session_id=session.session_id, run_id=run_response.run_id)
+                log_agent_telemetry(agent, session_id=session.session_id, run_id=run_response.run_id)
 
                 log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
@@ -2791,8 +2927,8 @@ def continue_run_stream_impl(
                 )
 
                 # Cleanup and store the run response and session
-                agent._cleanup_and_store(
-                    run_response=run_response, session=session, run_context=run_context, user_id=user_id
+                cleanup_and_store(
+                    agent, run_response=run_response, session=session, run_context=run_context, user_id=user_id
                 )
                 break
             except (InputCheckError, OutputCheckError) as e:
@@ -2815,8 +2951,8 @@ def continue_run_stream_impl(
 
                 log_error(f"Validation failed: {str(e)} | Check trigger: {e.check_trigger}")
 
-                agent._cleanup_and_store(
-                    run_response=run_response, session=session, run_context=run_context, user_id=user_id
+                cleanup_and_store(
+                    agent, run_response=run_response, session=session, run_context=run_context, user_id=user_id
                 )
                 yield run_error
                 break
@@ -2855,14 +2991,14 @@ def continue_run_stream_impl(
                 log_error(f"Error in Agent run: {str(e)}")
 
                 # Cleanup and store the run response and session
-                agent._cleanup_and_store(
-                    run_response=run_response, session=session, run_context=run_context, user_id=user_id
+                cleanup_and_store(
+                    agent, run_response=run_response, session=session, run_context=run_context, user_id=user_id
                 )
 
                 yield run_error
     finally:
         # Always disconnect connectable tools
-        agent._disconnect_connectable_tools()
+        disconnect_connectable_tools(agent)
         # Always clean up the run tracking
         cleanup_run(run_response.run_id)  # type: ignore
 
@@ -2905,6 +3041,8 @@ def acontinue_run_dispatch(  # type: ignore
         yield_run_output: Whether to yield the run response.
         (deprecated) updated_tools: Use 'requirements' instead.
     """
+    from agno.agent._response import get_response_format
+
     if run_response is None and run_id is None:
         raise ValueError("Either run_response or run_id must be provided.")
 
@@ -2947,7 +3085,7 @@ def acontinue_run_dispatch(  # type: ignore
     )
 
     # Prepare arguments for the model
-    response_format = agent._get_response_format(run_context=run_context)
+    response_format = get_response_format(agent, run_context=run_context)
     agent.model = cast(Model, agent.model)
 
     # Initialize run context
@@ -3040,6 +3178,19 @@ async def acontinue_run_impl(
     13. Create session summary
     14. Cleanup and store (scrub, stop timer, save to file, add to session, calculate metrics, save session)
     """
+    from agno.agent._hooks import aexecute_post_hooks
+    from agno.agent._init import disconnect_connectable_tools, disconnect_mcp_tools
+    from agno.agent._messages import get_continue_run_messages
+    from agno.agent._response import (
+        agenerate_response_with_output_model,
+        aparse_response_with_parser_model,
+        convert_response_to_structured_format,
+        update_run_response,
+    )
+    from agno.agent._storage import aread_or_create_session, load_session_state, update_metadata
+    from agno.agent._telemetry import alog_agent_telemetry
+    from agno.agent._tools import ahandle_tool_call_updates, determine_tools_for_model
+
     log_debug(f"Agent Run Continue: {run_response.run_id if run_response else run_id}", center=True)  # type: ignore
     agent_session: Optional[AgentSession] = None
 
@@ -3052,17 +3203,18 @@ async def acontinue_run_impl(
                     log_debug(f"Retrying Agent acontinue_run {run_id}. Attempt {attempt + 1} of {num_attempts}...")
 
                 # 1. Read existing session from db
-                agent_session = await agent._aread_or_create_session(session_id=session_id, user_id=user_id)
+                agent_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
 
                 # 2. Resolve dependencies
                 if run_context.dependencies is not None:
-                    await agent._aresolve_run_dependencies(run_context=run_context)
+                    await aresolve_run_dependencies(agent, run_context=run_context)
 
                 # 3. Update metadata and session state
-                agent._update_metadata(session=agent_session)
+                update_metadata(agent, session=agent_session)
 
                 # Initialize session state. Get it from DB if relevant.
-                run_context.session_state = agent._load_session_state(
+                run_context.session_state = load_session_state(
+                    agent,
                     session=agent_session,
                     session_state=run_context.session_state if run_context.session_state is not None else {},
                 )
@@ -3115,7 +3267,8 @@ async def acontinue_run_impl(
                     user_id=user_id,
                 )
 
-                _tools = agent._determine_tools_for_model(
+                _tools = determine_tools_for_model(
+                    agent,
                     model=agent.model,
                     processed_tools=processed_tools,
                     run_response=run_response,
@@ -3125,7 +3278,8 @@ async def acontinue_run_impl(
                 )
 
                 # 6. Prepare run messages
-                run_messages: RunMessages = agent._get_continue_run_messages(
+                run_messages: RunMessages = get_continue_run_messages(
+                    agent,
                     input=input,
                 )
 
@@ -3133,8 +3287,8 @@ async def acontinue_run_impl(
                 await aregister_run(run_response.run_id)  # type: ignore
 
                 # 7. Handle the updated tools
-                await agent._ahandle_tool_call_updates(
-                    run_response=run_response, run_messages=run_messages, tools=_tools
+                await ahandle_tool_call_updates(
+                    agent, run_response=run_response, run_messages=run_messages, tools=_tools
                 )
 
                 # 8. Get model response
@@ -3152,17 +3306,18 @@ async def acontinue_run_impl(
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 
                 # If an output model is provided, generate output using the output model
-                await agent._agenerate_response_with_output_model(
-                    model_response=model_response, run_messages=run_messages
+                await agenerate_response_with_output_model(
+                    agent, model_response=model_response, run_messages=run_messages
                 )
 
                 # If a parser model is provided, structure the response separately
-                await agent._aparse_response_with_parser_model(
-                    model_response=model_response, run_messages=run_messages, run_context=run_context
+                await aparse_response_with_parser_model(
+                    agent, model_response=model_response, run_messages=run_messages, run_context=run_context
                 )
 
                 # 9. Update the RunOutput with the model response
-                agent._update_run_response(
+                update_run_response(
+                    agent,
                     model_response=model_response,
                     run_response=run_response,
                     run_messages=run_messages,
@@ -3171,12 +3326,12 @@ async def acontinue_run_impl(
 
                 # Break out of the run function if a tool call is paused
                 if any(tool_call.is_paused for tool_call in run_response.tools or []):
-                    return await agent._ahandle_agent_run_paused(
-                        run_response=run_response, session=agent_session, user_id=user_id
+                    return await ahandle_agent_run_paused(
+                        agent, run_response=run_response, session=agent_session, user_id=user_id
                     )
 
                 # 10. Convert the response to the structured format if needed
-                agent._convert_response_to_structured_format(run_response, run_context=run_context)
+                convert_response_to_structured_format(agent, run_response, run_context=run_context)
 
                 # 11. Store media if enabled
                 if agent.store_media:
@@ -3186,7 +3341,8 @@ async def acontinue_run_impl(
 
                 # 12. Execute post-hooks
                 if agent.post_hooks is not None:
-                    async for _ in agent._aexecute_post_hooks(
+                    async for _ in aexecute_post_hooks(
+                        agent,
                         hooks=agent.post_hooks,  # type: ignore
                         run_output=run_response,
                         run_context=run_context,
@@ -3215,7 +3371,8 @@ async def acontinue_run_impl(
                 run_response.status = RunStatus.completed
 
                 # 14. Cleanup and store the run response and session
-                await agent._acleanup_and_store(
+                await acleanup_and_store(
+                    agent,
                     run_response=run_response,
                     session=agent_session,
                     run_context=run_context,
@@ -3223,7 +3380,7 @@ async def acontinue_run_impl(
                 )
 
                 # Log Agent Telemetry
-                await agent._alog_agent_telemetry(session_id=agent_session.session_id, run_id=run_response.run_id)
+                await alog_agent_telemetry(agent, session_id=agent_session.session_id, run_id=run_response.run_id)
 
                 log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
@@ -3239,7 +3396,8 @@ async def acontinue_run_impl(
                 run_response.content = str(e)
                 # Cleanup and store the run response and session
                 if agent_session is not None:
-                    await agent._acleanup_and_store(
+                    await acleanup_and_store(
+                        agent,
                         run_response=run_response,
                         session=agent_session,
                         run_context=run_context,
@@ -3258,8 +3416,12 @@ async def acontinue_run_impl(
                 log_error(f"Validation failed: {str(e)} | Check trigger: {e.check_trigger}")
 
                 if agent_session is not None:
-                    await agent._acleanup_and_store(
-                        run_response=run_response, session=agent_session, run_context=run_context, user_id=user_id
+                    await acleanup_and_store(
+                        agent,
+                        run_response=run_response,
+                        session=agent_session,
+                        run_context=run_context,
+                        user_id=user_id,
                     )
 
                 return run_response
@@ -3299,7 +3461,8 @@ async def acontinue_run_impl(
 
                 # Cleanup and store the run response and session
                 if agent_session is not None:
-                    await agent._acleanup_and_store(
+                    await acleanup_and_store(
+                        agent,
                         run_response=run_response,  # type: ignore
                         session=agent_session,
                         run_context=run_context,
@@ -3310,9 +3473,9 @@ async def acontinue_run_impl(
 
     finally:
         # Always disconnect connectable tools
-        agent._disconnect_connectable_tools()
+        disconnect_connectable_tools(agent)
         # Always disconnect MCP tools
-        await agent._disconnect_mcp_tools()
+        await disconnect_mcp_tools(agent)
 
         # Always clean up the run tracking
         await acleanup_run(run_response.run_id)  # type: ignore
@@ -3350,6 +3513,18 @@ async def acontinue_run_stream_impl(
     10. Execute post-hooks
     11. Cleanup and store the run response and session
     """
+    from agno.agent._hooks import aexecute_post_hooks
+    from agno.agent._init import disconnect_connectable_tools, disconnect_mcp_tools
+    from agno.agent._messages import get_continue_run_messages
+    from agno.agent._response import (
+        agenerate_response_with_output_model_stream,
+        ahandle_model_response_stream,
+        aparse_response_with_parser_model_stream,
+    )
+    from agno.agent._storage import aread_or_create_session, load_session_state, update_metadata
+    from agno.agent._telemetry import alog_agent_telemetry
+    from agno.agent._tools import ahandle_tool_call_updates_stream, determine_tools_for_model
+
     log_debug(f"Agent Run Continue: {run_response.run_id if run_response else run_id}", center=True)  # type: ignore
 
     agent_session: Optional[AgentSession] = None
@@ -3360,20 +3535,21 @@ async def acontinue_run_stream_impl(
         for attempt in range(num_attempts):
             try:
                 # 1. Read existing session from db
-                agent_session = await agent._aread_or_create_session(session_id=session_id, user_id=user_id)
+                agent_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
 
                 # 2. Update session state and metadata
-                agent._update_metadata(session=agent_session)
+                update_metadata(agent, session=agent_session)
 
                 # Initialize session state. Get it from DB if relevant.
-                run_context.session_state = agent._load_session_state(
+                run_context.session_state = load_session_state(
+                    agent,
                     session=agent_session,
                     session_state=run_context.session_state if run_context.session_state is not None else {},
                 )
 
                 # 3. Resolve dependencies
                 if run_context.dependencies is not None:
-                    await agent._aresolve_run_dependencies(run_context=run_context)
+                    await aresolve_run_dependencies(agent, run_context=run_context)
 
                 # 4. Prepare run response
                 if run_response is not None:
@@ -3424,7 +3600,8 @@ async def acontinue_run_stream_impl(
                     user_id=user_id,
                 )
 
-                _tools = agent._determine_tools_for_model(
+                _tools = determine_tools_for_model(
+                    agent,
                     model=agent.model,
                     processed_tools=processed_tools,
                     run_response=run_response,
@@ -3434,7 +3611,8 @@ async def acontinue_run_stream_impl(
                 )
 
                 # 6. Prepare run messages
-                run_messages: RunMessages = agent._get_continue_run_messages(
+                run_messages: RunMessages = get_continue_run_messages(
+                    agent,
                     input=input,
                 )
 
@@ -3451,15 +3629,20 @@ async def acontinue_run_stream_impl(
                     )
 
                 # 7. Handle the updated tools
-                async for event in agent._ahandle_tool_call_updates_stream(
-                    run_response=run_response, run_messages=run_messages, tools=_tools, stream_events=stream_events
+                async for event in ahandle_tool_call_updates_stream(
+                    agent,
+                    run_response=run_response,
+                    run_messages=run_messages,
+                    tools=_tools,
+                    stream_events=stream_events,
                 ):
                     await araise_if_cancelled(run_response.run_id)  # type: ignore
                     yield event
 
                 # 8. Process model response
                 if agent.output_model is None:
-                    async for event in agent._ahandle_model_response_stream(
+                    async for event in ahandle_model_response_stream(
+                        agent,
                         session=agent_session,
                         run_response=run_response,
                         run_messages=run_messages,
@@ -3476,7 +3659,8 @@ async def acontinue_run_stream_impl(
                         RunContentEvent,
                     )  # type: ignore
 
-                    async for event in agent._ahandle_model_response_stream(
+                    async for event in ahandle_model_response_stream(
+                        agent,
                         session=agent_session,
                         run_response=run_response,
                         run_messages=run_messages,
@@ -3496,7 +3680,8 @@ async def acontinue_run_stream_impl(
                             yield event
 
                     # If an output model is provided, generate output using the output model
-                    async for event in agent._agenerate_response_with_output_model_stream(
+                    async for event in agenerate_response_with_output_model_stream(
+                        agent,
                         session=agent_session,
                         run_response=run_response,
                         run_messages=run_messages,
@@ -3509,7 +3694,8 @@ async def acontinue_run_stream_impl(
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 
                 # Parse response with parser model if provided
-                async for event in agent._aparse_response_with_parser_model_stream(
+                async for event in aparse_response_with_parser_model_stream(
+                    agent,
                     session=agent_session,
                     run_response=run_response,
                     stream_events=stream_events,
@@ -3528,15 +3714,16 @@ async def acontinue_run_stream_impl(
 
                 # Break out of the run function if a tool call is paused
                 if any(tool_call.is_paused for tool_call in run_response.tools or []):
-                    async for item in agent._ahandle_agent_run_paused_stream(
-                        run_response=run_response, session=agent_session, user_id=user_id
+                    async for item in ahandle_agent_run_paused_stream(
+                        agent, run_response=run_response, session=agent_session, user_id=user_id
                     ):
                         yield item
                     return
 
                 # 8. Execute post-hooks
                 if agent.post_hooks is not None:
-                    async for event in agent._aexecute_post_hooks(
+                    async for event in aexecute_post_hooks(
+                        agent,
                         hooks=agent.post_hooks,  # type: ignore
                         run_output=run_response,
                         run_context=run_context,
@@ -3595,8 +3782,8 @@ async def acontinue_run_stream_impl(
                 run_response.status = RunStatus.completed
 
                 # 10. Cleanup and store the run response and session
-                await agent._acleanup_and_store(
-                    run_response=run_response, session=agent_session, run_context=run_context, user_id=user_id
+                await acleanup_and_store(
+                    agent, run_response=run_response, session=agent_session, run_context=run_context, user_id=user_id
                 )
 
                 if stream_events:
@@ -3606,7 +3793,7 @@ async def acontinue_run_stream_impl(
                     yield run_response
 
                 # Log Agent Telemetry
-                await agent._alog_agent_telemetry(session_id=agent_session.session_id, run_id=run_response.run_id)
+                await alog_agent_telemetry(agent, session_id=agent_session.session_id, run_id=run_response.run_id)
 
                 log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
@@ -3633,7 +3820,8 @@ async def acontinue_run_stream_impl(
 
                 # Cleanup and store the run response and session
                 if agent_session is not None:
-                    await agent._acleanup_and_store(
+                    await acleanup_and_store(
+                        agent,
                         run_response=run_response,
                         session=agent_session,
                         run_context=run_context,
@@ -3665,7 +3853,8 @@ async def acontinue_run_stream_impl(
 
                 # Cleanup and store the run response and session
                 if agent_session is not None:
-                    await agent._acleanup_and_store(
+                    await acleanup_and_store(
+                        agent,
                         run_response=run_response,
                         session=agent_session,
                         run_context=run_context,
@@ -3717,7 +3906,8 @@ async def acontinue_run_stream_impl(
 
                 # Cleanup and store the run response and session
                 if agent_session is not None:
-                    await agent._acleanup_and_store(
+                    await acleanup_and_store(
+                        agent,
                         run_response=run_response,
                         session=agent_session,
                         run_context=run_context,
@@ -3728,9 +3918,9 @@ async def acontinue_run_stream_impl(
                 yield run_error
     finally:
         # Always disconnect connectable tools
-        agent._disconnect_connectable_tools()
+        disconnect_connectable_tools(agent)
         # Always disconnect MCP tools
-        await agent._disconnect_mcp_tools()
+        await disconnect_mcp_tools(agent)
 
         # Always clean up the run tracking
         cleanup_run_id = run_response.run_id if run_response and run_response.run_id is not None else run_id
@@ -3794,7 +3984,9 @@ def scrub_run_output_for_storage(agent: Agent, run_response: RunOutput) -> None:
 
 def update_session_metrics(agent: Agent, session: AgentSession, run_response: RunOutput):
     """Calculate session metrics and write them to session_data."""
-    session_metrics = agent._get_session_metrics(session=session)
+    from agno.agent._storage import get_session_metrics_internal
+
+    session_metrics = get_session_metrics_internal(agent, session=session)
     # Add the metrics for the current run to the session metrics
     if session_metrics is None:
         return
