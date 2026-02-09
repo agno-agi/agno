@@ -627,7 +627,7 @@ def get_session_messages(
         log_warning("Session ID is not set, cannot get messages for session")
         return []
 
-    session = team.get_session(session_id=session_id)  # type: ignore
+    session = get_session(team, session_id=session_id)
     if session is None:
         raise Exception("Session not found")
 
@@ -674,7 +674,7 @@ async def aget_session_messages(
         log_warning("Session ID is not set, cannot get messages for session")
         return []
 
-    session = await team.aget_session(session_id=session_id)  # type: ignore
+    session = await aget_session(team, session_id=session_id)
     if session is None:
         raise Exception("Session not found")
 
@@ -702,8 +702,8 @@ def get_chat_history(
     Returns:
         List[Message]: The chat history from the session.
     """
-    return team.get_session_messages(
-        session_id=session_id, last_n_runs=last_n_runs, skip_roles=["system", "tool"], skip_member_messages=True
+    return get_session_messages(
+        team, session_id=session_id, last_n_runs=last_n_runs, skip_roles=["system", "tool"], skip_member_messages=True
     )
 
 
@@ -717,8 +717,8 @@ async def aget_chat_history(
     Returns:
         List[Message]: The chat history from the session.
     """
-    return await team.aget_session_messages(
-        session_id=session_id, last_n_runs=last_n_runs, skip_roles=["system", "tool"], skip_member_messages=True
+    return await aget_session_messages(
+        team, session_id=session_id, last_n_runs=last_n_runs, skip_roles=["system", "tool"], skip_member_messages=True
     )
 
 
@@ -739,7 +739,7 @@ def get_session_summary(team: "Team", session_id: Optional[str] = None) -> Optio
     if session_id is None:
         raise ValueError("Session ID is required")
 
-    session = team.get_session(session_id=session_id)
+    session = get_session(team, session_id=session_id)
 
     if session is None:
         raise Exception(f"Session {session_id} not found")
@@ -759,7 +759,7 @@ async def aget_session_summary(team: "Team", session_id: Optional[str] = None) -
     if session_id is None:
         raise ValueError("Session ID is required")
 
-    session = await team.aget_session(session_id=session_id)
+    session = await aget_session(team, session_id=session_id)
 
     if session is None:
         raise Exception(f"Session {session_id} not found")

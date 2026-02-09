@@ -1101,11 +1101,13 @@ async def _arun(
     from agno.team._telemetry import alog_team_telemetry
     from agno.team._tools import _check_and_refresh_mcp_tools, _determine_tools_for_model
 
-    await aregister_run(run_context.run_id)
     log_debug(f"Team Run Start: {run_response.run_id}", center=True)
     memory_task = None
 
     try:
+        # Register run for cancellation tracking
+        await aregister_run(run_context.run_id)
+
         # Setup session: read/create, load state, resolve dependencies
         team_session = await _asetup_session(
             team=team,
@@ -1421,11 +1423,12 @@ async def _arun_stream(
 
     log_debug(f"Team Run Start: {run_response.run_id}", center=True)
 
-    await aregister_run(run_context.run_id)
-
     memory_task = None
 
     try:
+        # Register run for cancellation tracking
+        await aregister_run(run_context.run_id)
+
         # Setup session: read/create, load state, resolve dependencies
         team_session = await _asetup_session(
             team=team,

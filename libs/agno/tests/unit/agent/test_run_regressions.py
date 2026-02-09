@@ -15,6 +15,7 @@ from agno.run.cancel import (
     get_active_runs,
     get_cancellation_manager,
     is_cancelled,
+    register_run,
     set_cancellation_manager,
 )
 from agno.run.cancellation_management.in_memory_cancellation_manager import InMemoryRunCancellationManager
@@ -72,6 +73,8 @@ def test_run_dispatch_does_not_reset_cancellation_before_impl(monkeypatch: pytes
     run_id = "run-preserve-cancelled-state"
 
     def initialize_and_cancel(debug_mode=None):
+        # register_run now happens inside run_impl, so we register here to test cancellation
+        register_run(run_id)
         assert cancel_run(run_id) is True
 
     monkeypatch.setattr(agent, "initialize_agent", initialize_and_cancel)
@@ -82,7 +85,7 @@ def test_run_dispatch_does_not_reset_cancellation_before_impl(monkeypatch: pytes
         agent: Agent,
         run_response,
         run_context,
-        session,
+        session_id: str = "",
         user_id: Optional[str] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
@@ -386,7 +389,7 @@ def test_run_dispatch_respects_run_context_precedence(monkeypatch: pytest.Monkey
         agent: Agent,
         run_response,
         run_context,
-        session,
+        session_id: str = "",
         user_id: Optional[str] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
