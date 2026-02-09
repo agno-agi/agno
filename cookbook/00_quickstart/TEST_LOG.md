@@ -1,85 +1,55 @@
 # TEST_LOG.md - Quick Start Cookbook
 
-Test results for `cookbook/00_quickstart/` cookbooks.
+Test results for `cookbook/00_quickstart/` examples.
 
-**Test Date:** 2026-02-09
-**Environment:** `.venvs/demo/bin/python`
-**Model:** Gemini (gemini-3-flash-preview)
-**Branch:** v2.5-clean
-
----
-
-## Summary
-
-| Phase | Test | Status |
-|:------|:-----|:-------|
-| Phase 1: Basic | agent_with_tools.py | PASS |
-| Phase 1: Basic | agent_with_structured_output.py | PASS |
-| Phase 1: Basic | agent_with_typed_input_output.py | PASS |
-| Phase 2: Persistence | agent_with_storage.py | PASS |
-| Phase 2: Persistence | agent_with_memory.py | PASS |
-| Phase 2: Persistence | agent_with_state_management.py | PASS |
-| Phase 3: Knowledge | agent_search_over_knowledge.py | PASS |
-| Phase 3: Knowledge | custom_tool_for_self_learning.py | PASS |
-| Phase 4: Safety | agent_with_guardrails.py | PASS |
-| Phase 4: Safety | human_in_the_loop.py | SKIPPED (Interactive) |
-| Phase 5: Multi-Agent | multi_agent_team.py | PASS |
-| Phase 5: Multi-Agent | sequential_workflow.py | PASS |
-
-**Overall: 11 PASS, 1 SKIPPED**
+**Test Date:** 2026-02-08
+**Environment:** `.venvs/demo/bin/python` with `direnv` exports loaded
+**Database:** `pgvector` container running (`pgvector`, port `5532`)
+**Execution Artifacts:** `.context/quickstart_results.json`, `.context/quickstart_logs/*.log`
 
 ---
 
-## Phase 1: Basic (No DB)
+## Structure Validation
 
-### agent_with_tools.py
+### check_cookbook_pattern.py
 
 **Status:** PASS
 
-**Description:** Finance agent with YFinanceTools that retrieves market data and produces investment briefs.
+**Description:** Validates cookbook structure and formatting pattern for quickstart examples.
 
-**Result:** Agent successfully used multiple YFinanceTools (get_current_stock_price, get_stock_fundamentals, get_key_financial_ratios, get_analyst_recommendations, get_company_info, get_company_news, get_technical_indicators) to generate a comprehensive investment brief for NVIDIA including price ($191.83), market cap ($4.67T), P/E ratio (47.48), key drivers, risks, and analyst sentiment (Strong Buy).
-
----
-
-### agent_with_structured_output.py
-
-**Status:** PASS
-
-**Description:** Agent that returns structured Pydantic model (StockAnalysis) with typed fields.
-
-**Result:** Agent correctly returned a StockAnalysis model with all required fields populated: ticker (NVDA), company_name (NVIDIA Corporation), current_price (191.84), market_cap (4.67T), pe_ratio (47.48), week_52_high/low, summary, key_drivers (3 items), key_risks (3 items), and recommendation (Strong Buy).
+**Result:** `.venvs/demo/bin/python cookbook/scripts/check_cookbook_pattern.py --base-dir cookbook/00_quickstart` reported `Checked 13 file(s) ... Violations: 0`.
 
 ---
 
-### agent_with_typed_input_output.py
+### style_guide_compliance_scan
 
 **Status:** PASS
 
-**Description:** Agent with both input schema (AnalysisRequest) and output schema (StockAnalysis) for end-to-end type safety.
+**Description:** Validates module docstring with `=====` underline, section banners, import placement, `if __name__ == "__main__":` gate, and no emoji characters.
 
-**Result:** Successfully processed two analyses:
-1. NVDA with `analysis_type="deep"` - included key_drivers and key_risks
-2. AAPL with `analysis_type="quick"` - correctly omitted key_drivers/key_risks (null)
-
-Both input methods (dict and Pydantic model) worked correctly.
+**Result:** Custom style scan over all 13 runnable files reported `STYLE_OK` with no issues.
 
 ---
 
-## Phase 2: Persistence (SQLite)
+## Runtime Validation
 
-### agent_with_storage.py
+### agent_search_over_knowledge.py
 
 **Status:** PASS
 
-**Description:** Agent with persistent conversation history stored to SQLite (`tmp/agents.db`).
+**Description:** Validates knowledge-base loading/search and response generation.
 
-**Result:** Agent maintained conversation context across 3 turns:
-1. "Give me a quick investment brief on NVIDIA" - Generated brief
-2. "Compare that to Tesla" - Remembered NVDA, fetched TSLA data, produced comparison table
-3. "Based on our discussion, which looks like the better investment?" - Synthesized full conversation into recommendation with NVIDIA vs Tesla comparison (GARP vs speculative growth)
+**Result:** Exited `0` in 8.74s; completed the knowledge-search flow.
 
-Session persistence via `session_id="finance-agent-session"` worked correctly.
+---
+
+### agent_with_guardrails.py
+
+**Status:** PASS
+
+**Description:** Validates guardrails for PII, prompt-injection, and spam-like input.
+
+**Result:** Exited `0` in 13.18s; guardrail validation errors were emitted as expected for blocked inputs and valid input was processed.
 
 ---
 
@@ -87,13 +57,9 @@ Session persistence via `session_id="finance-agent-session"` worked correctly.
 
 **Status:** PASS
 
-**Description:** Agent with MemoryManager that extracts and stores user preferences across sessions.
+**Description:** Validates memory extraction and recall behavior.
 
-**Result:** Agent successfully:
-1. Captured user preferences: "AI and semiconductor stocks" with "moderate risk tolerance"
-2. Used preferences to make personalized recommendations (MSFT, AVGO, TSM, ASML with Beta/volatility considerations)
-3. Stored 2 memories to SQLite with topics: `['interests', 'stocks', 'AI', 'semiconductors']` and `['risk tolerance', 'investments']`
-4. Memory retrieval via `agent.get_user_memories(user_id=...)` returned both stored preferences
+**Result:** Exited `0` in 25.43s; memory operations completed successfully.
 
 ---
 
@@ -101,29 +67,49 @@ Session persistence via `session_id="finance-agent-session"` worked correctly.
 
 **Status:** PASS
 
-**Description:** Agent with session state for managing a stock watchlist using custom tools.
+**Description:** Validates stateful tool interactions and session watchlist behavior.
 
-**Result:** Agent successfully:
-1. Used `add_to_watchlist` tool to add NVDA, AAPL, GOOGL to watchlist
-2. Tracked watchlist state: `{'watchlist': ['NVDA', 'AAPL', 'GOOGL']}`
-3. Fetched current prices and historical data for watched stocks when asked "How are my watched stocks doing?"
-4. State persisted across runs and was accessible via `agent.get_session_state()`
+**Result:** Exited `0` in 15.95s; session state flow completed.
 
 ---
 
-## Phase 3: Knowledge (ChromaDb)
-
-### agent_search_over_knowledge.py
+### agent_with_storage.py
 
 **Status:** PASS
 
-**Description:** Agent with searchable knowledge base using ChromaDb with hybrid search (vector + keyword).
+**Description:** Validates persisted session storage and response generation.
 
-**Result:** Agent successfully:
-1. Loaded knowledge from URL (`https://docs.agno.com/introduction.md`)
-2. Stored in ChromaDb with hybrid search (RRF fusion, k=60)
-3. Used `search_knowledge_base(query="What is Agno?")` tool to retrieve relevant content
-4. Generated comprehensive response about Agno framework including core components (SDK, AgentOS, AgentOS UI), key features, and code example
+**Result:** Exited `0` in 26.65s; completed end-to-end persisted-session flow.
+
+---
+
+### agent_with_structured_output.py
+
+**Status:** PASS
+
+**Description:** Validates schema-constrained output generation.
+
+**Result:** Exited `0` in 14.34s; structured output returned. Non-fatal warning observed about non-text response parts (`function_call` parts concatenated to text).
+
+---
+
+### agent_with_tools.py
+
+**Status:** PASS
+
+**Description:** Validates tool-using agent behavior with market-data tools.
+
+**Result:** Exited `0` in 10.52s; tool-driven analysis flow completed.
+
+---
+
+### agent_with_typed_input_output.py
+
+**Status:** PASS
+
+**Description:** Validates typed request input and typed response output flow.
+
+**Result:** Exited `0` in 18.10s; typed I/O flow completed. Non-fatal warning observed about non-text response parts (`function_call` parts concatenated to text).
 
 ---
 
@@ -131,60 +117,39 @@ Session persistence via `session_id="finance-agent-session"` worked correctly.
 
 **Status:** PASS
 
-**Description:** Self-learning agent with custom `save_learning` tool to persist insights to knowledge base.
+**Description:** Validates custom learning tool save/search behavior.
 
-**Result:** Agent successfully:
-1. Answered question about P/E ratios for tech stocks
-2. Proposed a learning: "Tech stock P/E and PEG benchmarks" with actionable insight
-3. Saved learning when user confirmed with "yes"
-4. Retrieved saved learnings from knowledge base showing the stored insight with timestamp
-
----
-
-## Phase 4: Safety
-
-### agent_with_guardrails.py
-
-**Status:** PASS
-
-**Description:** Agent with input validation guardrails: PIIDetectionGuardrail, PromptInjectionGuardrail, and custom SpamDetectionGuardrail.
-
-**Result:** All guardrails worked correctly:
-1. **Normal request** ("What's a good P/E ratio?") - Processed successfully with detailed response including real examples (MSFT, AAPL, NVDA P/E ratios)
-2. **PII** ("My SSN is 123-45-6789") - Blocked with "Potential PII detected in input"
-3. **Prompt injection** ("Ignore previous instructions") - Blocked with "Potential jailbreaking or prompt injection detected"
-4. **Spam** ("URGENT!!! BUY NOW!!!!") - Blocked with "Input appears to be spam (excessive exclamation marks)"
+**Result:** Exited `0` in 24.48s; learning retrieval worked.
 
 ---
 
 ### human_in_the_loop.py
 
-**Status:** SKIPPED (Interactive)
+**Status:** PASS
 
-**Description:** Agent with `@tool(requires_confirmation=True)` for human-in-the-loop approval workflow.
+**Description:** Validates confirmation-required tool execution.
 
-**Result:** This test requires interactive user input (confirmation prompts via `rich.prompt.Prompt`) and cannot be fully automated.
-
-**Note:** Manual testing required for full validation.
+**Result:** Exited `0` in 10.79s; confirmation path exercised with stdin `y` and execution completed.
 
 ---
-
-## Phase 5: Multi-Agent
 
 ### multi_agent_team.py
 
 **Status:** PASS
 
-**Description:** Investment research team with Bull Analyst, Bear Analyst, and Lead Analyst (team leader).
+**Description:** Validates team collaboration, delegation, and synthesis flow.
 
-**Result:** Team successfully:
-1. Delegated NVIDIA analysis to both Bull and Bear analysts
-2. **Bull Analyst**: Made case FOR investment (AI dominance, growth, margins)
-3. **Bear Analyst**: Made case AGAINST investment (valuation, geopolitical risks, concentration)
-4. **Team Leader**: Synthesized both views into balanced recommendation with confidence level
-5. Follow-up "How does AMD compare?" maintained context, delegated to both analysts, and produced comprehensive AMD vs NVIDIA comparison with metrics table
+**Result:** Exited `0` in 94.08s; multi-agent team run completed successfully in this environment.
 
-Team coordination via `delegate_task_to_member` worked correctly.
+---
+
+### run.py
+
+**Status:** PASS
+
+**Description:** Startup-only validation for long-running AgentOS server.
+
+**Result:** Ran for 25s and intentionally timed out (`exit 124`) after startup checks; observed `Uvicorn running on` and `Application startup complete`.
 
 ---
 
@@ -192,19 +157,28 @@ Team coordination via `delegate_task_to_member` worked correctly.
 
 **Status:** PASS
 
-**Description:** Three-step research pipeline: Data Gathering -> Analysis -> Report Writing.
+**Description:** Validates sequential multi-step workflow execution.
 
-**Result:** Workflow executed all 3 steps sequentially:
-1. **Step 1 (Data Gatherer)**: Fetched comprehensive market data for NVIDIA using YFinanceTools (price, fundamentals, ratios, analyst sentiment, historical data)
-2. **Step 2 (Analyst)**: Interpreted key metrics, compared to benchmarks, identified strengths/weaknesses
-3. **Step 3 (Report Writer)**: Produced investment brief with core price info, valuation, efficiency metrics, and analyst sentiment
+**Result:** Exited `0` in 37.27s; workflow completed all steps.
 
 ---
 
-## Notes
+## Summary
 
-1. **API Rate Limits**: No rate limit issues encountered during this run.
-2. **tmp/ Directory**: Tests create files in `tmp/` (agents.db, chromadb/) - this is expected behavior.
-3. **Network Dependency**: yfinance requires internet access for real-time stock data.
-4. **Interactive Tests**: human_in_the_loop.py requires manual testing with user input.
-5. **Environment**: `GOOGLE_API_KEY` must be set via direnv or manually exported.
+| File | Status | Notes |
+|------|--------|-------|
+| `agent_search_over_knowledge.py` | PASS | Exited `0`; knowledge-search flow completed |
+| `agent_with_guardrails.py` | PASS | Exited `0`; guardrails blocked invalid inputs and allowed valid input |
+| `agent_with_memory.py` | PASS | Exited `0`; memory flow completed |
+| `agent_with_state_management.py` | PASS | Exited `0`; session state flow completed |
+| `agent_with_storage.py` | PASS | Exited `0`; persisted-session response completed |
+| `agent_with_structured_output.py` | PASS | Exited `0`; structured output returned with non-fatal non-text-parts warning |
+| `agent_with_tools.py` | PASS | Exited `0`; tool-driven analysis completed |
+| `agent_with_typed_input_output.py` | PASS | Exited `0`; typed I/O completed with non-fatal non-text-parts warning |
+| `custom_tool_for_self_learning.py` | PASS | Exited `0`; learning save/search completed |
+| `human_in_the_loop.py` | PASS | Exited `0`; approval path completed with stdin `y` |
+| `multi_agent_team.py` | PASS | Exited `0`; team collaboration flow completed |
+| `run.py` | PASS | Startup markers observed; intentionally timed out after 25s |
+| `sequential_workflow.py` | PASS | Exited `0`; sequential workflow completed |
+
+**Overall:** 13 PASS, 0 FAIL

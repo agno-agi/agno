@@ -18,9 +18,9 @@ from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIResponses
 
-# ============================================================================
-# Setup - Using the simplest possible configuration
-# ============================================================================
+# ---------------------------------------------------------------------------
+# Create Agent - Using the simplest possible configuration
+# ---------------------------------------------------------------------------
 
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 
@@ -32,9 +32,9 @@ agent = Agent(
     markdown=True,
 )
 
-# ============================================================================
-# Demo
-# ============================================================================
+# ---------------------------------------------------------------------------
+# Run Demo
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     user_id = "shorthand_test@example.com"

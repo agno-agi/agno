@@ -1,8 +1,18 @@
+"""
+Agentic Session State
+=============================
+
+Agentic Session State.
+"""
+
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 
 db = SqliteDb(db_file="tmp/agents.db")
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 agent = Agent(
     model=OpenAIChat(id="o3-mini"),
     db=db,
@@ -11,8 +21,12 @@ agent = Agent(
     enable_agentic_state=True,
 )
 
-agent.print_response("Add milk, eggs, and bread to the shopping list")
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    agent.print_response("Add milk, eggs, and bread to the shopping list")
 
-agent.print_response("I picked up the eggs, now what's on my list?")
+    agent.print_response("I picked up the eggs, now what's on my list?")
 
-print(f"Session state: {agent.get_session_state()}")
+    print(f"Session state: {agent.get_session_state()}")

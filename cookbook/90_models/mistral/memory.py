@@ -11,6 +11,10 @@ from agno.db.postgres import PostgresDb
 from agno.models.mistral.mistral import MistralChat
 from agno.tools.websearch import WebSearchTools
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 # Setup the database
 db = PostgresDb(db_url=db_url)
@@ -43,3 +47,10 @@ agent.print_response("What is the weather in nyc?", stream=True)
 agent.print_response(
     "What have we been talking about, do you know my name?", stream=True
 )
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

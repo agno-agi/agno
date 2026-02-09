@@ -12,6 +12,10 @@ from agno.eval.agent_as_judge import AgentAsJudgeEval
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
+
 # Setup database
 db = AsyncSqliteDb(db_file="tmp/agent_as_judge_evals.db")
 
@@ -71,6 +75,10 @@ app = agent_os.get_app()
 # Test with:
 # curl -X POST http://localhost:7777/agents/geography-agent/runs \
 #   -F "message=What is the capital of France?" -F "stream=false"
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     agent_os.serve(app="background_evals_example:app", port=7777, reload=True)
