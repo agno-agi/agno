@@ -479,11 +479,3 @@ def start_learning_future(
     return None
 
 
-def get_learning_machine(agent: Agent) -> Optional[LearningMachine]:
-    """Get the resolved LearningMachine instance.
-
-    Returns:
-        The LearningMachine instance if learning is enabled and initialized,
-        None otherwise.
-    """
-    return agent._learning

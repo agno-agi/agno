@@ -70,7 +70,7 @@ if __name__ == "__main__":
         session_id="session_1",
         stream=True,
     )
-    agent.get_learning_machine().learned_knowledge_store.print(query="cloud")
+    agent.learning_machine.learned_knowledge_store.print(query="cloud")
 
     # Session 2: Apply the learning (new user, new session)
     print("\n" + "=" * 60)

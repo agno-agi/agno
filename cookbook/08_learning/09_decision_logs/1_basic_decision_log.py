@@ -55,6 +55,6 @@ agent.print_response(
 
 # View logged decisions
 print("\n=== Decisions Logged ===\n")
-decision_store = agent.get_learning_machine().decision_log_store
+decision_store = agent.learning_machine.decision_log_store
 if decision_store:
     decision_store.print(agent_id="decision-logger", limit=5)
