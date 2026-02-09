@@ -14,11 +14,8 @@ from agno.workflow import RemoteWorkflow, Workflow
 
 try:
     from telebot.async_telebot import AsyncTeleBot
-except ImportError:
-    raise ImportError(
-        "`telegram` interface requires the `pyTelegramBotAPI` package. "
-        "Run `pip install pyTelegramBotAPI` or `pip install 'agno[telegram]'` to install it."
-    )
+except ImportError as e:
+    raise ImportError("`pyTelegramBotAPI` not installed. Please install using `pip install 'agno[telegram]'`") from e
 
 
 def _get_bot_token() -> str:
