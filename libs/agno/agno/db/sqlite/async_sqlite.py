@@ -3431,20 +3431,14 @@ class AsyncSqliteDb(AsyncBaseDb):
                         .limit(1)
                     ).scalar_subquery()
 
-                    # Atomic UPDATE — only one writer can match this row
+                    # Atomic UPDATE … RETURNING — claim and fetch in one statement
                     update_stmt = (
-                        table.update().where(table.c.id == candidate).values(locked_by=worker_id, locked_at=now)
+                        table.update()
+                        .where(table.c.id == candidate)
+                        .values(locked_by=worker_id, locked_at=now)
+                        .returning(*table.c)
                     )
-                    result = await sess.execute(update_stmt)
-                    if result.rowcount == 0:  # type: ignore
-                        return None
-
-                    # Fetch the claimed row back
-                    row = (
-                        await sess.execute(
-                            select(table).where(table.c.locked_by == worker_id).where(table.c.locked_at == now)
-                        )
-                    ).fetchone()
+                    row = (await sess.execute(update_stmt)).fetchone()
                     if row is None:
                         return None
                     return dict(row._mapping)

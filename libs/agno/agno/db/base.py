@@ -86,6 +86,7 @@ class BaseDb(ABC):
             "components_table": self.components_table_name,
             "component_configs_table": self.component_configs_table_name,
             "component_links_table": self.component_links_table_name,
+            "learnings_table": self.learnings_table_name,
             "schedules_table": self.schedules_table_name,
             "schedule_runs_table": self.schedule_runs_table_name,
         }

@@ -85,7 +85,16 @@ class ScheduleUpdate(BaseModel):
 
     @model_validator(mode="after")
     def reject_null_required_fields(self) -> "ScheduleUpdate":
-        non_nullable = ("name", "cron_expr", "endpoint", "method")
+        non_nullable = (
+            "name",
+            "cron_expr",
+            "endpoint",
+            "method",
+            "timezone",
+            "timeout_seconds",
+            "max_retries",
+            "retry_delay_seconds",
+        )
         data = self.model_dump(exclude_unset=True)
         for field_name in non_nullable:
             if field_name in data and data[field_name] is None:
