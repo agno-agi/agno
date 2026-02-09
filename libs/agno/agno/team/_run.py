@@ -2126,7 +2126,9 @@ def _scrub_member_responses(team: "Team", member_responses: List[Union[TeamRunOu
         _, member = member_result
 
         if not member.store_media or not member.store_tool_messages or not member.store_history_messages:
-            member._scrub_run_output_for_storage(member_response)  # type: ignore
+            from agno.agent._run import scrub_run_output_for_storage
+
+            scrub_run_output_for_storage(member, run_response=member_response)  # type: ignore[arg-type]
 
         # If this is a nested team, recursively scrub its member responses
         if isinstance(member, Team) and isinstance(member_response, TeamRunOutput) and member_response.member_responses:

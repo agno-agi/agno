@@ -579,7 +579,11 @@ def run_impl(
                 # Cleanup and store the run response and session
                 if agent_session is not None:
                     cleanup_and_store(
-                        agent, run_response=run_response, session=agent_session, run_context=run_context, user_id=user_id
+                        agent,
+                        run_response=run_response,
+                        session=agent_session,
+                        run_context=run_context,
+                        user_id=user_id,
                     )
 
                 return run_response
@@ -594,7 +598,11 @@ def run_impl(
 
                 if agent_session is not None:
                     cleanup_and_store(
-                        agent, run_response=run_response, session=agent_session, run_context=run_context, user_id=user_id
+                        agent,
+                        run_response=run_response,
+                        session=agent_session,
+                        run_context=run_context,
+                        user_id=user_id,
                     )
 
                 return run_response
@@ -627,7 +635,11 @@ def run_impl(
                 # Cleanup and store the run response and session
                 if agent_session is not None:
                     cleanup_and_store(
-                        agent, run_response=run_response, session=agent_session, run_context=run_context, user_id=user_id
+                        agent,
+                        run_response=run_response,
+                        session=agent_session,
+                        run_context=run_context,
+                        user_id=user_id,
                     )
 
                 return run_response
@@ -1025,7 +1037,11 @@ def run_stream_impl(
                 # Cleanup and store the run response and session
                 if agent_session is not None:
                     cleanup_and_store(
-                        agent, run_response=run_response, session=agent_session, run_context=run_context, user_id=user_id
+                        agent,
+                        run_response=run_response,
+                        session=agent_session,
+                        run_context=run_context,
+                        user_id=user_id,
                     )
                 break
             except (InputCheckError, OutputCheckError) as e:
@@ -1049,7 +1065,11 @@ def run_stream_impl(
 
                 if agent_session is not None:
                     cleanup_and_store(
-                        agent, run_response=run_response, session=agent_session, run_context=run_context, user_id=user_id
+                        agent,
+                        run_response=run_response,
+                        session=agent_session,
+                        run_context=run_context,
+                        user_id=user_id,
                     )
                 yield run_error
                 break
@@ -1088,7 +1108,11 @@ def run_stream_impl(
                 # Cleanup and store the run response and session
                 if agent_session is not None:
                     cleanup_and_store(
-                        agent, run_response=run_response, session=agent_session, run_context=run_context, user_id=user_id
+                        agent,
+                        run_response=run_response,
+                        session=agent_session,
+                        run_context=run_context,
+                        user_id=user_id,
                     )
 
                 yield run_error
