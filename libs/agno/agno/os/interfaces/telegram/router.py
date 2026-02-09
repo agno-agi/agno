@@ -12,19 +12,13 @@ from agno.team import RemoteTeam, Team
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.workflow import RemoteWorkflow, Workflow
 
-AsyncTeleBot: Any = None
 try:
-    from telebot.async_telebot import AsyncTeleBot  # type: ignore[no-redef]
+    from telebot.async_telebot import AsyncTeleBot
 except ImportError:
-    pass
-
-
-def _require_telebot() -> None:
-    if AsyncTeleBot is None:
-        raise ImportError(
-            "`telegram` interface requires the `pyTelegramBotAPI` package. "
-            "Run `pip install pyTelegramBotAPI` or `pip install 'agno[telegram]'` to install it."
-        )
+    raise ImportError(
+        "`telegram` interface requires the `pyTelegramBotAPI` package. "
+        "Run `pip install pyTelegramBotAPI` or `pip install 'agno[telegram]'` to install it."
+    )
 
 
 def _get_bot_token() -> str:
@@ -49,12 +43,10 @@ def attach_routes(
     _get_bot_token()
 
     async def _send_chat_action(chat_id: int, action: str) -> None:
-        _require_telebot()
         bot = AsyncTeleBot(_get_bot_token())
         await bot.send_chat_action(chat_id, action)
 
     async def _get_file_bytes(file_id: str) -> Optional[bytes]:
-        _require_telebot()
         try:
             bot = AsyncTeleBot(_get_bot_token())
             file_info = await bot.get_file(file_id)
@@ -64,12 +56,10 @@ def attach_routes(
             return None
 
     async def _send_text_message(chat_id: int, text: str) -> None:
-        _require_telebot()
         bot = AsyncTeleBot(_get_bot_token())
         await bot.send_message(chat_id, text)
 
     async def _send_text_chunked(chat_id: int, text: str, max_chars: int = 4000) -> None:
-        _require_telebot()
         if len(text) <= 4096:
             await _send_text_message(chat_id, text)
             return
@@ -79,23 +69,19 @@ def attach_routes(
             await bot.send_message(chat_id, f"[{i}/{len(chunks)}] {chunk}")
 
     async def _send_photo_message(chat_id: int, photo: Union[bytes, str], caption: Optional[str] = None) -> None:
-        _require_telebot()
         bot = AsyncTeleBot(_get_bot_token())
         log_debug(f"Sending photo to chat_id={chat_id}, caption={caption[:50] if caption else None}")
         await bot.send_photo(chat_id, photo, caption=caption)
 
     async def _send_audio_message(chat_id: int, audio: Union[bytes, str], caption: Optional[str] = None) -> None:
-        _require_telebot()
         bot = AsyncTeleBot(_get_bot_token())
         await bot.send_audio(chat_id, audio, caption=caption)
 
     async def _send_video_message(chat_id: int, video: Union[bytes, str], caption: Optional[str] = None) -> None:
-        _require_telebot()
         bot = AsyncTeleBot(_get_bot_token())
         await bot.send_video(chat_id, video, caption=caption)
 
     async def _send_document_message(chat_id: int, document: Union[bytes, str], caption: Optional[str] = None) -> None:
-        _require_telebot()
         bot = AsyncTeleBot(_get_bot_token())
         await bot.send_document(chat_id, document, caption=caption)
 

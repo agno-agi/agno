@@ -1,12 +1,41 @@
 import base64
+import sys
+import types
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from agno.os.interfaces.telegram import Telegram
-from agno.os.interfaces.telegram.security import (
+
+def _install_fake_telebot():
+    telebot = types.ModuleType("telebot")
+    telebot_async = types.ModuleType("telebot.async_telebot")
+    telebot_apihelper = types.ModuleType("telebot.apihelper")
+
+    class AsyncTeleBot:
+        def __init__(self, token=None):
+            self.token = token
+
+    class TeleBot:
+        def __init__(self, token=None):
+            self.token = token
+
+    class ApiTelegramException(Exception):
+        pass
+
+    telebot.TeleBot = TeleBot
+    telebot_async.AsyncTeleBot = AsyncTeleBot
+    telebot_apihelper.ApiTelegramException = ApiTelegramException
+    sys.modules.setdefault("telebot", telebot)
+    sys.modules.setdefault("telebot.async_telebot", telebot_async)
+    sys.modules.setdefault("telebot.apihelper", telebot_apihelper)
+
+
+_install_fake_telebot()
+
+from agno.os.interfaces.telegram import Telegram  # noqa: E402
+from agno.os.interfaces.telegram.security import (  # noqa: E402
     get_webhook_secret_token,
     is_development_mode,
     validate_webhook_secret_token,

@@ -5,16 +5,15 @@ from typing import Any, List, Optional, Union
 from agno.tools import Toolkit
 from agno.utils.log import log_debug
 
-TeleBot: Any = None
-AsyncTeleBot: Any = None
-ApiTelegramException: Any = None
-
 try:
-    from telebot import TeleBot  # type: ignore[no-redef]
-    from telebot.apihelper import ApiTelegramException  # type: ignore[no-redef]
-    from telebot.async_telebot import AsyncTeleBot  # type: ignore[no-redef]
+    from telebot import TeleBot
+    from telebot.apihelper import ApiTelegramException
+    from telebot.async_telebot import AsyncTeleBot
 except ImportError:
-    pass
+    raise ImportError(
+        "`telegram` tools require the `pyTelegramBotAPI` package. "
+        "Run `pip install pyTelegramBotAPI` or `pip install 'agno[telegram]'` to install it."
+    )
 
 
 class TelegramTools(Toolkit):
@@ -53,12 +52,6 @@ class TelegramTools(Toolkit):
         all: bool = False,
         **kwargs: Any,
     ):
-        if TeleBot is None:
-            raise ImportError(
-                "`telegram` tools require the `pyTelegramBotAPI` package. "
-                "Run `pip install pyTelegramBotAPI` or `pip install 'agno[telegram]'` to install it."
-            )
-
         self.token = token or getenv("TELEGRAM_TOKEN")
         if not self.token:
             raise ValueError("TELEGRAM_TOKEN not set. Please set the TELEGRAM_TOKEN environment variable.")
