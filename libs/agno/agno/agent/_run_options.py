@@ -52,7 +52,7 @@ def resolve_run_options(
 
     Reads from ``agent`` but does not mutate it.
     """
-    from agno.agent._messages import get_effective_filters
+    from agno.agent._utils import get_effective_filters
     from agno.utils.merge_dict import merge_dictionaries
 
     # stream: call-site > agent.stream > False

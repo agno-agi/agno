@@ -1,4 +1,4 @@
-"""Response processing, reasoning, and parser/output model helpers for Agent."""
+"""Response processing, reasoning, output format, and model response handling for Agent."""
 
 from __future__ import annotations
 
@@ -11,35 +11,57 @@ from typing import (
     Iterator,
     List,
     Optional,
+    Type,
+    Union,
+    cast,
+    get_args,
 )
+from uuid import uuid4
+
+from pydantic import BaseModel
 
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
 
+from agno.media import Audio
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.metrics import Metrics
-from agno.models.response import ModelResponse
+from agno.models.response import ModelResponse, ModelResponseEvent
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
 from agno.run import RunContext
-from agno.run.agent import RunOutput, RunOutputEvent
+from agno.run.agent import RunEvent, RunOutput, RunOutputEvent
 from agno.run.messages import RunMessages
+from agno.run.requirement import RunRequirement
+from agno.run.team import TeamRunOutputEvent
 from agno.session import AgentSession
+from agno.tools.function import Function
 from agno.utils.events import (
+    create_compression_completed_event,
+    create_compression_started_event,
+    create_model_request_completed_event,
+    create_model_request_started_event,
     create_parser_model_response_completed_event,
     create_parser_model_response_started_event,
     create_reasoning_completed_event,
     create_reasoning_content_delta_event,
     create_reasoning_started_event,
     create_reasoning_step_event,
+    create_run_output_content_event,
+    create_tool_call_completed_event,
+    create_tool_call_error_event,
+    create_tool_call_started_event,
     handle_event,
 )
-from agno.utils.log import log_warning
+from agno.utils.log import log_debug, log_warning
+from agno.utils.merge_dict import merge_dictionaries
 from agno.utils.reasoning import (
+    add_reasoning_metrics_to_metadata,
     add_reasoning_step_to_metadata,
     append_to_reasoning_content,
     update_run_output_with_reasoning,
 )
+from agno.utils.string import parse_response_dict_str, parse_response_model_str
 
 
 def calculate_run_metrics(
@@ -770,3 +792,843 @@ def update_reasoning_content_from_tool_call(
         return reasoning_step
 
     return None
+
+
+# ---------------------------------------------------------------------------
+# Output format resolution
+# ---------------------------------------------------------------------------
+
+
+def model_should_return_structured_output(agent: Agent, run_context: Optional[RunContext] = None) -> bool:
+    # Get output_schema from run_context
+    output_schema = run_context.output_schema if run_context else None
+
+    agent.model = cast(Model, agent.model)
+    return bool(
+        agent.model.supports_native_structured_outputs
+        and output_schema is not None
+        and (not agent.use_json_mode or agent.structured_outputs)
+    )
+
+
+def get_response_format(
+    agent: Agent, model: Optional[Model] = None, run_context: Optional[RunContext] = None
+) -> Optional[Union[Dict, Type[BaseModel]]]:
+    # Get output_schema from run_context
+    output_schema = run_context.output_schema if run_context else None
+
+    model = cast(Model, model or agent.model)
+    if output_schema is None:
+        return None
+    else:
+        json_response_format: Dict[str, Any] = {"type": "json_object"}
+
+        if model.supports_native_structured_outputs:
+            if not agent.use_json_mode or agent.structured_outputs:
+                log_debug("Setting Model.response_format to Agent.output_schema")
+                return output_schema
+            else:
+                log_debug("Model supports native structured outputs but it is not enabled. Using JSON mode instead.")
+                return json_response_format
+
+        elif model.supports_json_schema_outputs:
+            if agent.use_json_mode or (not agent.structured_outputs):
+                log_debug("Setting Model.response_format to JSON response mode")
+                # Handle JSON schema - pass through directly (user provides full provider format)
+                if isinstance(output_schema, dict):
+                    return output_schema
+                # Handle Pydantic schema
+                return {
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": output_schema.__name__,
+                        "schema": output_schema.model_json_schema(),
+                    },
+                }
+            else:
+                return None
+
+        else:
+            log_debug("Model does not support structured or JSON schema outputs.")
+            return json_response_format
+
+
+# ---------------------------------------------------------------------------
+# Response conversion
+# ---------------------------------------------------------------------------
+
+
+def convert_response_to_structured_format(
+    agent: Agent, run_response: Union[RunOutput, ModelResponse], run_context: Optional[RunContext] = None
+):
+    # Get output_schema from run_context
+    output_schema = run_context.output_schema if run_context else None
+
+    # Convert the response to the structured format if needed
+    if output_schema is not None:
+        # If the output schema is a dict, do not convert it into a BaseModel
+        if isinstance(output_schema, dict):
+            if isinstance(run_response.content, str):
+                parsed_dict = parse_response_dict_str(run_response.content)
+                if parsed_dict is not None:
+                    run_response.content = parsed_dict
+                    if isinstance(run_response, RunOutput):
+                        run_response.content_type = "dict"
+                else:
+                    log_warning("Failed to parse JSON response against the provided output schema.")
+        # If the output schema is a Pydantic model and parse_response is True, parse it into a BaseModel
+        elif not isinstance(run_response.content, output_schema):
+            if isinstance(run_response.content, str) and agent.parse_response:
+                try:
+                    structured_output = parse_response_model_str(run_response.content, output_schema)
+
+                    # Update RunOutput
+                    if structured_output is not None:
+                        run_response.content = structured_output
+                        if isinstance(run_response, RunOutput):
+                            run_response.content_type = output_schema.__name__
+                    else:
+                        log_warning("Failed to convert response to output_schema")
+                except Exception as e:
+                    log_warning(f"Failed to convert response to output model: {e}")
+            else:
+                log_warning("Something went wrong. Run response content is not a string")
+
+
+# ---------------------------------------------------------------------------
+# Run response update
+# ---------------------------------------------------------------------------
+
+
+def update_run_response(
+    agent: Agent,
+    model_response: ModelResponse,
+    run_response: RunOutput,
+    run_messages: RunMessages,
+    run_context: Optional[RunContext] = None,
+):
+    # Get output_schema from run_context
+    output_schema = run_context.output_schema if run_context else None
+
+    # Handle structured outputs
+    if output_schema is not None and model_response.parsed is not None:
+        # We get native structured outputs from the model
+        if agent._model_should_return_structured_output(run_context=run_context):
+            # Update the run_response content with the structured output
+            run_response.content = model_response.parsed
+            # Update the run_response content_type with the structured output class name
+            run_response.content_type = "dict" if isinstance(output_schema, dict) else output_schema.__name__
+    else:
+        # Update the run_response content with the model response content
+        run_response.content = model_response.content
+
+    # Update the run_response reasoning content with the model response reasoning content
+    if model_response.reasoning_content is not None:
+        run_response.reasoning_content = model_response.reasoning_content
+    if model_response.redacted_reasoning_content is not None:
+        if run_response.reasoning_content is None:
+            run_response.reasoning_content = model_response.redacted_reasoning_content
+        else:
+            run_response.reasoning_content += model_response.redacted_reasoning_content
+
+    # Update the run_response citations with the model response citations
+    if model_response.citations is not None:
+        run_response.citations = model_response.citations
+    if model_response.provider_data is not None:
+        run_response.model_provider_data = model_response.provider_data
+
+    # Update the run_response tools with the model response tool_executions
+    if model_response.tool_executions is not None:
+        if run_response.tools is None:
+            run_response.tools = model_response.tool_executions
+        else:
+            run_response.tools.extend(model_response.tool_executions)
+
+        # For Reasoning/Thinking/Knowledge Tools update reasoning_content in RunOutput
+        for tool_call in model_response.tool_executions:
+            tool_name = tool_call.tool_name or ""
+            if tool_name.lower() in ["think", "analyze"]:
+                tool_args = tool_call.tool_args or {}
+                agent._update_reasoning_content_from_tool_call(
+                    run_response=run_response,
+                    tool_name=tool_name,
+                    tool_args=tool_args,
+                )
+
+    # Update the run_response audio with the model response audio
+    if model_response.audio is not None:
+        run_response.response_audio = model_response.audio
+
+    # Update the run_response created_at with the model response created_at
+    run_response.created_at = model_response.created_at
+
+    # Build a list of messages that should be added to the RunOutput
+    messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
+    # Update the RunOutput messages
+    run_response.messages = messages_for_run_response
+    # Update the RunOutput metrics
+    run_response.metrics = agent._calculate_run_metrics(
+        messages=messages_for_run_response, current_run_metrics=run_response.metrics
+    )
+
+
+# ---------------------------------------------------------------------------
+# Model response streaming
+# ---------------------------------------------------------------------------
+
+
+def handle_model_response_stream(
+    agent: Agent,
+    session: AgentSession,
+    run_response: RunOutput,
+    run_messages: RunMessages,
+    tools: Optional[List[Union[Function, dict]]] = None,
+    response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+    stream_events: bool = False,
+    session_state: Optional[Dict[str, Any]] = None,
+    run_context: Optional[RunContext] = None,
+) -> Iterator[RunOutputEvent]:
+    agent.model = cast(Model, agent.model)
+
+    reasoning_state = {
+        "reasoning_started": False,
+        "reasoning_time_taken": 0.0,
+    }
+    model_response = ModelResponse(content="")
+
+    # Get output_schema from run_context
+    output_schema = run_context.output_schema if run_context else None
+    should_parse_structured_output = output_schema is not None and agent.parse_response and agent.parser_model is None
+
+    stream_model_response = True
+    if should_parse_structured_output:
+        log_debug("Response model set, model response is not streamed.")
+        stream_model_response = False
+
+    for model_response_event in agent.model.response_stream(
+        messages=run_messages.messages,
+        response_format=response_format,
+        tools=tools,
+        tool_choice=agent.tool_choice,
+        tool_call_limit=agent.tool_call_limit,
+        stream_model_response=stream_model_response,
+        run_response=run_response,
+        send_media_to_model=agent.send_media_to_model,
+        compression_manager=agent.compression_manager if agent.compress_tool_results else None,
+    ):
+        # Handle LLM request events and compression events from ModelResponse
+        if isinstance(model_response_event, ModelResponse):
+            if model_response_event.event == ModelResponseEvent.model_request_started.value:
+                if stream_events:
+                    yield handle_event(  # type: ignore
+                        create_model_request_started_event(
+                            from_run_response=run_response,
+                            model=agent.model.id,
+                            model_provider=agent.model.provider,
+                        ),
+                        run_response,
+                        events_to_skip=agent.events_to_skip,  # type: ignore
+                        store_events=agent.store_events,
+                    )
+                continue
+
+            if model_response_event.event == ModelResponseEvent.model_request_completed.value:
+                if stream_events:
+                    yield handle_event(  # type: ignore
+                        create_model_request_completed_event(
+                            from_run_response=run_response,
+                            model=agent.model.id,
+                            model_provider=agent.model.provider,
+                            input_tokens=model_response_event.input_tokens,
+                            output_tokens=model_response_event.output_tokens,
+                            total_tokens=model_response_event.total_tokens,
+                            time_to_first_token=model_response_event.time_to_first_token,
+                            reasoning_tokens=model_response_event.reasoning_tokens,
+                            cache_read_tokens=model_response_event.cache_read_tokens,
+                            cache_write_tokens=model_response_event.cache_write_tokens,
+                        ),
+                        run_response,
+                        events_to_skip=agent.events_to_skip,  # type: ignore
+                        store_events=agent.store_events,
+                    )
+                continue
+
+            # Handle compression events
+            if model_response_event.event == ModelResponseEvent.compression_started.value:
+                if stream_events:
+                    yield handle_event(  # type: ignore
+                        create_compression_started_event(from_run_response=run_response),
+                        run_response,
+                        events_to_skip=agent.events_to_skip,  # type: ignore
+                        store_events=agent.store_events,
+                    )
+                continue
+
+            if model_response_event.event == ModelResponseEvent.compression_completed.value:
+                if stream_events:
+                    stats = model_response_event.compression_stats or {}
+                    yield handle_event(  # type: ignore
+                        create_compression_completed_event(
+                            from_run_response=run_response,
+                            tool_results_compressed=stats.get("tool_results_compressed"),
+                            original_size=stats.get("original_size"),
+                            compressed_size=stats.get("compressed_size"),
+                        ),
+                        run_response,
+                        events_to_skip=agent.events_to_skip,  # type: ignore
+                        store_events=agent.store_events,
+                    )
+                continue
+
+        yield from handle_model_response_chunk(
+            agent,
+            session=session,
+            run_response=run_response,
+            model_response=model_response,
+            model_response_event=model_response_event,
+            reasoning_state=reasoning_state,
+            parse_structured_output=should_parse_structured_output,
+            stream_events=stream_events,
+            session_state=session_state,
+            run_context=run_context,
+        )
+
+    # Update RunOutput
+    # Build a list of messages that should be added to the RunOutput
+    messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
+    # Update the RunOutput messages
+    run_response.messages = messages_for_run_response
+    # Update the RunOutput metrics
+    run_response.metrics = agent._calculate_run_metrics(
+        messages=messages_for_run_response, current_run_metrics=run_response.metrics
+    )
+
+    # Determine reasoning completed
+    if stream_events and reasoning_state["reasoning_started"]:
+        all_reasoning_steps: List[ReasoningStep] = []
+        if run_response and run_response.reasoning_steps:
+            all_reasoning_steps = cast(List[ReasoningStep], run_response.reasoning_steps)
+
+        if all_reasoning_steps:
+            add_reasoning_metrics_to_metadata(
+                run_response=run_response,
+                reasoning_time_taken=reasoning_state["reasoning_time_taken"],
+            )
+            yield handle_event(  # type: ignore
+                create_reasoning_completed_event(
+                    from_run_response=run_response,
+                    content=ReasoningSteps(reasoning_steps=all_reasoning_steps),
+                    content_type=ReasoningSteps.__name__,
+                ),
+                run_response,
+                events_to_skip=agent.events_to_skip,  # type: ignore
+                store_events=agent.store_events,
+            )
+
+    # Update the run_response audio if streaming
+    if model_response.audio is not None:
+        run_response.response_audio = model_response.audio
+
+
+async def ahandle_model_response_stream(
+    agent: Agent,
+    session: AgentSession,
+    run_response: RunOutput,
+    run_messages: RunMessages,
+    tools: Optional[List[Union[Function, dict]]] = None,
+    response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+    stream_events: bool = False,
+    session_state: Optional[Dict[str, Any]] = None,
+    run_context: Optional[RunContext] = None,
+) -> AsyncIterator[RunOutputEvent]:
+    agent.model = cast(Model, agent.model)
+
+    reasoning_state = {
+        "reasoning_started": False,
+        "reasoning_time_taken": 0.0,
+    }
+    model_response = ModelResponse(content="")
+
+    # Get output_schema from run_context
+    output_schema = run_context.output_schema if run_context else None
+    should_parse_structured_output = output_schema is not None and agent.parse_response and agent.parser_model is None
+
+    stream_model_response = True
+    if should_parse_structured_output:
+        log_debug("Response model set, model response is not streamed.")
+        stream_model_response = False
+
+    model_response_stream = agent.model.aresponse_stream(
+        messages=run_messages.messages,
+        response_format=response_format,
+        tools=tools,
+        tool_choice=agent.tool_choice,
+        tool_call_limit=agent.tool_call_limit,
+        stream_model_response=stream_model_response,
+        run_response=run_response,
+        send_media_to_model=agent.send_media_to_model,
+        compression_manager=agent.compression_manager if agent.compress_tool_results else None,
+    )  # type: ignore
+
+    async for model_response_event in model_response_stream:  # type: ignore
+        # Handle LLM request events and compression events from ModelResponse
+        if isinstance(model_response_event, ModelResponse):
+            if model_response_event.event == ModelResponseEvent.model_request_started.value:
+                if stream_events:
+                    yield handle_event(  # type: ignore
+                        create_model_request_started_event(
+                            from_run_response=run_response,
+                            model=agent.model.id,
+                            model_provider=agent.model.provider,
+                        ),
+                        run_response,
+                        events_to_skip=agent.events_to_skip,  # type: ignore
+                        store_events=agent.store_events,
+                    )
+                continue
+
+            if model_response_event.event == ModelResponseEvent.model_request_completed.value:
+                if stream_events:
+                    yield handle_event(  # type: ignore
+                        create_model_request_completed_event(
+                            from_run_response=run_response,
+                            model=agent.model.id,
+                            model_provider=agent.model.provider,
+                            input_tokens=model_response_event.input_tokens,
+                            output_tokens=model_response_event.output_tokens,
+                            total_tokens=model_response_event.total_tokens,
+                            time_to_first_token=model_response_event.time_to_first_token,
+                            reasoning_tokens=model_response_event.reasoning_tokens,
+                            cache_read_tokens=model_response_event.cache_read_tokens,
+                            cache_write_tokens=model_response_event.cache_write_tokens,
+                        ),
+                        run_response,
+                        events_to_skip=agent.events_to_skip,  # type: ignore
+                        store_events=agent.store_events,
+                    )
+                continue
+
+            # Handle compression events
+            if model_response_event.event == ModelResponseEvent.compression_started.value:
+                if stream_events:
+                    yield handle_event(  # type: ignore
+                        create_compression_started_event(from_run_response=run_response),
+                        run_response,
+                        events_to_skip=agent.events_to_skip,  # type: ignore
+                        store_events=agent.store_events,
+                    )
+                continue
+
+            if model_response_event.event == ModelResponseEvent.compression_completed.value:
+                if stream_events:
+                    stats = model_response_event.compression_stats or {}
+                    yield handle_event(  # type: ignore
+                        create_compression_completed_event(
+                            from_run_response=run_response,
+                            tool_results_compressed=stats.get("tool_results_compressed"),
+                            original_size=stats.get("original_size"),
+                            compressed_size=stats.get("compressed_size"),
+                        ),
+                        run_response,
+                        events_to_skip=agent.events_to_skip,  # type: ignore
+                        store_events=agent.store_events,
+                    )
+                continue
+
+        for event in handle_model_response_chunk(
+            agent,
+            session=session,
+            run_response=run_response,
+            model_response=model_response,
+            model_response_event=model_response_event,
+            reasoning_state=reasoning_state,
+            parse_structured_output=should_parse_structured_output,
+            stream_events=stream_events,
+            session_state=session_state,
+            run_context=run_context,
+        ):
+            yield event
+
+    # Update RunOutput
+    # Build a list of messages that should be added to the RunOutput
+    messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
+    # Update the RunOutput messages
+    run_response.messages = messages_for_run_response
+    # Update the RunOutput metrics
+    run_response.metrics = agent._calculate_run_metrics(
+        messages=messages_for_run_response, current_run_metrics=run_response.metrics
+    )
+
+    if stream_events and reasoning_state["reasoning_started"]:
+        all_reasoning_steps: List[ReasoningStep] = []
+        if run_response and run_response.reasoning_steps:
+            all_reasoning_steps = cast(List[ReasoningStep], run_response.reasoning_steps)
+
+        if all_reasoning_steps:
+            add_reasoning_metrics_to_metadata(
+                run_response=run_response,
+                reasoning_time_taken=reasoning_state["reasoning_time_taken"],
+            )
+            yield handle_event(  # type: ignore
+                create_reasoning_completed_event(
+                    from_run_response=run_response,
+                    content=ReasoningSteps(reasoning_steps=all_reasoning_steps),
+                    content_type=ReasoningSteps.__name__,
+                ),
+                run_response,
+                events_to_skip=agent.events_to_skip,  # type: ignore
+                store_events=agent.store_events,
+            )
+
+    # Update the run_response audio if streaming
+    if model_response.audio is not None:
+        run_response.response_audio = model_response.audio
+
+
+def handle_model_response_chunk(
+    agent: Agent,
+    session: AgentSession,
+    run_response: RunOutput,
+    model_response: ModelResponse,
+    model_response_event: Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent],
+    reasoning_state: Optional[Dict[str, Any]] = None,
+    parse_structured_output: bool = False,
+    stream_events: bool = False,
+    session_state: Optional[Dict[str, Any]] = None,
+    run_context: Optional[RunContext] = None,
+) -> Iterator[RunOutputEvent]:
+    from agno.run.workflow import WorkflowRunOutputEvent
+
+    if (
+        isinstance(model_response_event, tuple(get_args(RunOutputEvent)))
+        or isinstance(model_response_event, tuple(get_args(TeamRunOutputEvent)))
+        or isinstance(model_response_event, tuple(get_args(WorkflowRunOutputEvent)))
+    ):
+        if model_response_event.event == RunEvent.custom_event:  # type: ignore
+            model_response_event.agent_id = agent.id  # type: ignore
+            model_response_event.agent_name = agent.name  # type: ignore
+            model_response_event.session_id = session.session_id  # type: ignore
+            model_response_event.run_id = run_response.run_id  # type: ignore
+
+        # We just bubble the event up
+        yield handle_event(  # type: ignore
+            model_response_event,  # type: ignore
+            run_response,
+            events_to_skip=agent.events_to_skip,  # type: ignore
+            store_events=agent.store_events,
+        )
+    else:
+        model_response_event = cast(ModelResponse, model_response_event)
+        # If the model response is an assistant_response, yield a RunOutput
+        if model_response_event.event == ModelResponseEvent.assistant_response.value:
+            content_type = "str"
+
+            # Process content and thinking
+            if model_response_event.content is not None:
+                if parse_structured_output:
+                    model_response.content = model_response_event.content
+                    convert_response_to_structured_format(agent, model_response, run_context=run_context)
+
+                    # Get output_schema from run_context
+                    output_schema = run_context.output_schema if run_context else None
+                    content_type = "dict" if isinstance(output_schema, dict) else output_schema.__name__  # type: ignore
+                    run_response.content = model_response.content
+                    run_response.content_type = content_type
+                else:
+                    model_response.content = (model_response.content or "") + model_response_event.content
+                    run_response.content = model_response.content
+                    run_response.content_type = "str"
+
+            # Process reasoning content
+            if model_response_event.reasoning_content is not None:
+                model_response.reasoning_content = (
+                    model_response.reasoning_content or ""
+                ) + model_response_event.reasoning_content
+                run_response.reasoning_content = model_response.reasoning_content
+
+            if model_response_event.redacted_reasoning_content is not None:
+                if not model_response.reasoning_content:
+                    model_response.reasoning_content = model_response_event.redacted_reasoning_content
+                else:
+                    model_response.reasoning_content += model_response_event.redacted_reasoning_content
+                run_response.reasoning_content = model_response.reasoning_content
+
+            # Handle provider data (one chunk)
+            if model_response_event.provider_data is not None:
+                run_response.model_provider_data = model_response_event.provider_data
+
+            # Handle citations (one chunk)
+            if model_response_event.citations is not None:
+                run_response.citations = model_response_event.citations
+
+            # Only yield if we have content to show
+            if content_type != "str":
+                yield handle_event(  # type: ignore
+                    create_run_output_content_event(
+                        from_run_response=run_response,
+                        content=model_response.content,
+                        content_type=content_type,
+                    ),
+                    run_response,
+                    events_to_skip=agent.events_to_skip,  # type: ignore
+                    store_events=agent.store_events,
+                )
+            elif (
+                model_response_event.content is not None
+                or model_response_event.reasoning_content is not None
+                or model_response_event.redacted_reasoning_content is not None
+                or model_response_event.citations is not None
+                or model_response_event.provider_data is not None
+            ):
+                yield handle_event(  # type: ignore
+                    create_run_output_content_event(
+                        from_run_response=run_response,
+                        content=model_response_event.content,
+                        reasoning_content=model_response_event.reasoning_content,
+                        redacted_reasoning_content=model_response_event.redacted_reasoning_content,
+                        citations=model_response_event.citations,
+                        model_provider_data=model_response_event.provider_data,
+                    ),
+                    run_response,
+                    events_to_skip=agent.events_to_skip,  # type: ignore
+                    store_events=agent.store_events,
+                )
+
+            # Process audio
+            if model_response_event.audio is not None:
+                if model_response.audio is None:
+                    model_response.audio = Audio(id=str(uuid4()), content=b"", transcript="")
+
+                if model_response_event.audio.id is not None:
+                    model_response.audio.id = model_response_event.audio.id  # type: ignore
+
+                if model_response_event.audio.content is not None:
+                    # Handle both base64 string and bytes content
+                    if isinstance(model_response_event.audio.content, str):
+                        # Decode base64 string to bytes
+                        try:
+                            import base64
+
+                            decoded_content = base64.b64decode(model_response_event.audio.content)
+                            if model_response.audio.content is None:
+                                model_response.audio.content = b""
+                            model_response.audio.content += decoded_content
+                        except Exception:
+                            # If decode fails, encode string as bytes
+                            if model_response.audio.content is None:
+                                model_response.audio.content = b""
+                            model_response.audio.content += model_response_event.audio.content.encode("utf-8")
+                    elif isinstance(model_response_event.audio.content, bytes):
+                        # Content is already bytes
+                        if model_response.audio.content is None:
+                            model_response.audio.content = b""
+                        model_response.audio.content += model_response_event.audio.content
+
+                if model_response_event.audio.transcript is not None:
+                    model_response.audio.transcript += model_response_event.audio.transcript  # type: ignore
+
+                if model_response_event.audio.expires_at is not None:
+                    model_response.audio.expires_at = model_response_event.audio.expires_at  # type: ignore
+                if model_response_event.audio.mime_type is not None:
+                    model_response.audio.mime_type = model_response_event.audio.mime_type  # type: ignore
+                if model_response_event.audio.sample_rate is not None:
+                    model_response.audio.sample_rate = model_response_event.audio.sample_rate
+                if model_response_event.audio.channels is not None:
+                    model_response.audio.channels = model_response_event.audio.channels
+
+                # Yield the audio and transcript bit by bit
+                run_response.response_audio = Audio(
+                    id=model_response_event.audio.id,
+                    content=model_response_event.audio.content,
+                    transcript=model_response_event.audio.transcript,
+                    sample_rate=model_response_event.audio.sample_rate,
+                    channels=model_response_event.audio.channels,
+                )
+                run_response.created_at = model_response_event.created_at
+
+                yield handle_event(  # type: ignore
+                    create_run_output_content_event(
+                        from_run_response=run_response,
+                        response_audio=run_response.response_audio,
+                    ),
+                    run_response,
+                    events_to_skip=agent.events_to_skip,  # type: ignore
+                    store_events=agent.store_events,
+                )
+
+            if model_response_event.images is not None:
+                yield handle_event(  # type: ignore
+                    create_run_output_content_event(
+                        from_run_response=run_response,
+                        image=model_response_event.images[-1],
+                    ),
+                    run_response,
+                    events_to_skip=agent.events_to_skip,  # type: ignore
+                    store_events=agent.store_events,
+                )
+
+                if model_response.images is None:
+                    model_response.images = []
+                model_response.images.extend(model_response_event.images)
+                # Store media in run_response if store_media is enabled
+                if agent.store_media:
+                    for image in model_response_event.images:
+                        if run_response.images is None:
+                            run_response.images = []
+                        run_response.images.append(image)
+
+        # Handle tool interruption events (HITL flow)
+        elif model_response_event.event == ModelResponseEvent.tool_call_paused.value:
+            # Add tool calls to the run_response
+            tool_executions_list = model_response_event.tool_executions
+            if tool_executions_list is not None:
+                # Add tool calls to the agent.run_response
+                if run_response.tools is None:
+                    run_response.tools = tool_executions_list
+                else:
+                    run_response.tools.extend(tool_executions_list)
+                # Add requirement to the run_response
+                if run_response.requirements is None:
+                    run_response.requirements = []
+                run_response.requirements.append(RunRequirement(tool_execution=tool_executions_list[-1]))
+
+        # If the model response is a tool_call_started, add the tool call to the run_response
+        elif (
+            model_response_event.event == ModelResponseEvent.tool_call_started.value
+        ):  # Add tool calls to the run_response
+            tool_executions_list = model_response_event.tool_executions
+            if tool_executions_list is not None:
+                # Add tool calls to the agent.run_response
+                if run_response.tools is None:
+                    run_response.tools = tool_executions_list
+                else:
+                    run_response.tools.extend(tool_executions_list)
+
+                # Yield each tool call started event
+                if stream_events:
+                    for tool in tool_executions_list:
+                        yield handle_event(  # type: ignore
+                            create_tool_call_started_event(from_run_response=run_response, tool=tool),
+                            run_response,
+                            events_to_skip=agent.events_to_skip,  # type: ignore
+                            store_events=agent.store_events,
+                        )
+
+        # If the model response is a tool_call_completed, update the existing tool call in the run_response
+        elif model_response_event.event == ModelResponseEvent.tool_call_completed.value:
+            if model_response_event.updated_session_state is not None:
+                # update the session_state for RunOutput
+                if session_state is not None:
+                    merge_dictionaries(session_state, model_response_event.updated_session_state)
+                # update the DB session
+                if session.session_data is not None and session.session_data.get("session_state") is not None:
+                    merge_dictionaries(
+                        session.session_data["session_state"], model_response_event.updated_session_state
+                    )
+
+            if model_response_event.images is not None:
+                for image in model_response_event.images:
+                    if run_response.images is None:
+                        run_response.images = []
+                    run_response.images.append(image)
+
+            if model_response_event.videos is not None:
+                for video in model_response_event.videos:
+                    if run_response.videos is None:
+                        run_response.videos = []
+                    run_response.videos.append(video)
+
+            if model_response_event.audios is not None:
+                for audio in model_response_event.audios:
+                    if run_response.audio is None:
+                        run_response.audio = []
+                    run_response.audio.append(audio)
+
+            if model_response_event.files is not None:
+                for file_obj in model_response_event.files:
+                    if run_response.files is None:
+                        run_response.files = []
+                    run_response.files.append(file_obj)
+
+            reasoning_step: Optional[ReasoningStep] = None
+
+            tool_executions_list = model_response_event.tool_executions
+            if tool_executions_list is not None:
+                # Update the existing tool call in the run_response
+                if run_response.tools:
+                    # Create a mapping of tool_call_id to index
+                    tool_call_index_map = {
+                        tc.tool_call_id: i for i, tc in enumerate(run_response.tools) if tc.tool_call_id is not None
+                    }
+                    # Process tool calls
+                    for tool_call_dict in tool_executions_list:
+                        tool_call_id = tool_call_dict.tool_call_id or ""
+                        index = tool_call_index_map.get(tool_call_id)
+                        if index is not None:
+                            run_response.tools[index] = tool_call_dict
+                else:
+                    run_response.tools = tool_executions_list
+
+                # Only iterate through new tool calls
+                for tool_call in tool_executions_list:
+                    tool_name = tool_call.tool_name or ""
+                    if tool_name.lower() in ["think", "analyze"]:
+                        tool_args = tool_call.tool_args or {}
+
+                        reasoning_step = agent._update_reasoning_content_from_tool_call(
+                            run_response=run_response,
+                            tool_name=tool_name,
+                            tool_args=tool_args,
+                        )
+
+                        tool_call_metrics = tool_call.metrics
+
+                        if (
+                            tool_call_metrics is not None
+                            and tool_call_metrics.duration is not None
+                            and reasoning_state is not None
+                        ):
+                            reasoning_state["reasoning_time_taken"] = reasoning_state["reasoning_time_taken"] + float(
+                                tool_call_metrics.duration
+                            )
+
+                    if stream_events:
+                        yield handle_event(  # type: ignore
+                            create_tool_call_completed_event(
+                                from_run_response=run_response, tool=tool_call, content=model_response_event.content
+                            ),
+                            run_response,
+                            events_to_skip=agent.events_to_skip,  # type: ignore
+                            store_events=agent.store_events,
+                        )
+                        if tool_call.tool_call_error:
+                            yield handle_event(  # type: ignore
+                                create_tool_call_error_event(
+                                    from_run_response=run_response, tool=tool_call, error=str(tool_call.result)
+                                ),
+                                run_response,
+                                events_to_skip=agent.events_to_skip,  # type: ignore
+                                store_events=agent.store_events,
+                            )
+
+            if stream_events:
+                if reasoning_step is not None:
+                    if reasoning_state and not reasoning_state["reasoning_started"]:
+                        yield handle_event(  # type: ignore
+                            create_reasoning_started_event(from_run_response=run_response),
+                            run_response,
+                            events_to_skip=agent.events_to_skip,  # type: ignore
+                            store_events=agent.store_events,
+                        )
+                        reasoning_state["reasoning_started"] = True
+
+                    yield handle_event(  # type: ignore
+                        create_reasoning_step_event(
+                            from_run_response=run_response,
+                            reasoning_step=reasoning_step,
+                            reasoning_content=run_response.reasoning_content or "",
+                        ),
+                        run_response,
+                        events_to_skip=agent.events_to_skip,  # type: ignore
+                        store_events=agent.store_events,
+                    )
