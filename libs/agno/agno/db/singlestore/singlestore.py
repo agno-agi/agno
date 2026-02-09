@@ -273,9 +273,10 @@ class SingleStoreDb(BaseDb):
 
                         columns_def = ", ".join(columns_sql)
 
-                        # Add shard key and single unique constraint
+                        # Add primary key, shard key and unique constraint
                         table_sql = f"""CREATE TABLE IF NOT EXISTS {table_ref} (
                             {columns_def},
+                            PRIMARY KEY (session_id),
                             SHARD KEY (session_id),
                             UNIQUE KEY uq_session_type (session_id, session_type)
                         )"""
