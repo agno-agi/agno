@@ -915,7 +915,9 @@ def _find_member_by_id(
     return None
 
 
-def _find_member_route_by_id(team: "Team", member_id: str) -> Optional[Tuple[int, Union[Agent, "Team"]]]:
+def _find_member_route_by_id(
+    team: "Team", member_id: str, run_context: Optional[RunContext] = None
+) -> Optional[Tuple[int, Union[Agent, "Team"]]]:
     """Find a routable member by ID for continue_run dispatching.
 
     For nested matches inside a sub-team, returns the top-level sub-team so callers
@@ -924,6 +926,7 @@ def _find_member_route_by_id(team: "Team", member_id: str) -> Optional[Tuple[int
     Args:
         team: The team to search in.
         member_id (str): URL-safe ID of the member to find.
+        run_context: Optional run context containing resolved callable members.
 
     Returns:
         Optional[Tuple[int, Union[Agent, "Team"]]]: Tuple containing:
@@ -931,8 +934,12 @@ def _find_member_route_by_id(team: "Team", member_id: str) -> Optional[Tuple[int
             - The direct member (or parent sub-team for nested matches)
     """
     from agno.team.team import Team
+    from agno.utils.callables import get_resolved_members
 
-    for i, member in enumerate(team.members):
+    # Use resolved members (from run_context or static list)
+    members = get_resolved_members(team, run_context) or []
+
+    for i, member in enumerate(members):
         url_safe_member_id = get_member_id(member)
         if url_safe_member_id == member_id:
             return i, member
