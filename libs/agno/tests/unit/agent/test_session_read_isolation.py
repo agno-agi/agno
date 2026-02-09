@@ -226,6 +226,54 @@ async def test_aget_session_cache_respects_user_id():
 # --- Layer 5: save_session ---
 
 
+# --- Layer 4: delete_session / adelete_session ---
+
+
+def test_delete_session_passes_user_id_to_db():
+    agent = Agent(model=OpenAIChat(id="gpt-4o"))
+    agent.db = MagicMock()
+    agent.db.delete_session = MagicMock()
+
+    agent.delete_session(session_id="s1", user_id="alice")
+
+    agent.db.delete_session.assert_called_once_with(session_id="s1", user_id="alice")
+
+
+def test_delete_session_none_user_id_acts_as_wildcard():
+    agent = Agent(model=OpenAIChat(id="gpt-4o"))
+    agent.db = MagicMock()
+    agent.db.delete_session = MagicMock()
+
+    agent.delete_session(session_id="s1")
+
+    agent.db.delete_session.assert_called_once_with(session_id="s1", user_id=None)
+
+
+@pytest.mark.asyncio
+async def test_adelete_session_passes_user_id_to_db():
+    agent = Agent(model=OpenAIChat(id="gpt-4o"))
+    agent.db = AsyncMock()
+    agent.db.delete_session = AsyncMock()
+
+    await agent.adelete_session(session_id="s1", user_id="alice")
+
+    agent.db.delete_session.assert_called_once_with(session_id="s1", user_id="alice")
+
+
+@pytest.mark.asyncio
+async def test_adelete_session_none_user_id_acts_as_wildcard():
+    agent = Agent(model=OpenAIChat(id="gpt-4o"))
+    agent.db = AsyncMock()
+    agent.db.delete_session = AsyncMock()
+
+    await agent.adelete_session(session_id="s1")
+
+    agent.db.delete_session.assert_called_once_with(session_id="s1", user_id=None)
+
+
+# --- Layer 5: save_session ---
+
+
 def test_save_session_warns_on_upsert_rejection():
     agent = Agent(model=OpenAIChat(id="gpt-4o"))
     agent.db = MagicMock()

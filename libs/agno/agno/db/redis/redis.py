@@ -279,16 +279,22 @@ class RedisDb(BaseDb):
 
     # -- Session methods --
 
-    def delete_session(self, session_id: str) -> bool:
+    def delete_session(self, session_id: str, user_id: Optional[str] = None) -> bool:
         """Delete a session from Redis.
 
         Args:
             session_id (str): The ID of the session to delete.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
 
         Raises:
             Exception: If any error occurs while deleting the session.
         """
         try:
+            if user_id is not None:
+                session = self._get_record("sessions", session_id)
+                if session is None or session.get("user_id") != user_id:
+                    log_debug(f"No session found to delete with session_id: {session_id} and user_id: {user_id}")
+                    return False
             if self._delete_record(
                 table_type="sessions",
                 record_id=session_id,
@@ -304,11 +310,12 @@ class RedisDb(BaseDb):
             log_error(f"Error deleting session: {e}")
             raise e
 
-    def delete_sessions(self, session_ids: List[str]) -> None:
+    def delete_sessions(self, session_ids: List[str], user_id: Optional[str] = None) -> None:
         """Delete multiple sessions from Redis.
 
         Args:
             session_ids (List[str]): The IDs of the sessions to delete.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
 
         Raises:
             Exception: If any error occurs while deleting the sessions.
@@ -316,6 +323,10 @@ class RedisDb(BaseDb):
         try:
             deleted_count = 0
             for session_id in session_ids:
+                if user_id is not None:
+                    session = self._get_record("sessions", session_id)
+                    if session is None or session.get("user_id") != user_id:
+                        continue
                 if self._delete_record(
                     "sessions",
                     session_id,
@@ -455,7 +466,12 @@ class RedisDb(BaseDb):
             raise e
 
     def rename_session(
-        self, session_id: str, session_type: SessionType, session_name: str, deserialize: Optional[bool] = True
+        self,
+        session_id: str,
+        session_type: SessionType,
+        session_name: str,
+        user_id: Optional[str] = None,
+        deserialize: Optional[bool] = True,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         """Rename a session in Redis.
 
@@ -463,6 +479,7 @@ class RedisDb(BaseDb):
             session_id (str): The ID of the session to rename.
             session_type (SessionType): The type of session to rename.
             session_name (str): The new name of the session.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
 
         Returns:
             Optional[Session]: The renamed session if successful, None otherwise.
@@ -473,6 +490,9 @@ class RedisDb(BaseDb):
         try:
             session = self._get_record("sessions", session_id)
             if session is None:
+                return None
+
+            if user_id is not None and session.get("user_id") != user_id:
                 return None
 
             # Update session_name, in session_data

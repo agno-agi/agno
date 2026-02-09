@@ -181,6 +181,63 @@ async def test_aget_session_defaults_user_id_from_self():
     assert result.user_id == "alice"
 
 
+# --- Layer 4: delete_session / adelete_session ---
+
+
+def test_delete_session_passes_user_id_to_db():
+    team = Team(model=OpenAIChat(id="gpt-4o"), members=[])
+    team.db = MagicMock()
+    team.db.delete_session = MagicMock()
+
+    team.delete_session(session_id="s1", user_id="alice")
+
+    team.db.delete_session.assert_called_once_with(session_id="s1", user_id="alice")
+
+
+def test_delete_session_none_user_id_acts_as_wildcard():
+    team = Team(model=OpenAIChat(id="gpt-4o"), members=[])
+    team.db = MagicMock()
+    team.db.delete_session = MagicMock()
+
+    team.delete_session(session_id="s1")
+
+    team.db.delete_session.assert_called_once_with(session_id="s1", user_id=None)
+
+
+@pytest.mark.asyncio
+async def test_adelete_session_passes_user_id_to_db():
+    team = Team(model=OpenAIChat(id="gpt-4o"), members=[])
+    team.db = AsyncMock()
+    team.db.delete_session = AsyncMock()
+
+    await team.adelete_session(session_id="s1", user_id="alice")
+
+    team.db.delete_session.assert_called_once_with(session_id="s1", user_id="alice")
+
+
+@pytest.mark.asyncio
+async def test_adelete_session_none_user_id_acts_as_wildcard():
+    team = Team(model=OpenAIChat(id="gpt-4o"), members=[])
+    team.db = AsyncMock()
+    team.db.delete_session = AsyncMock()
+
+    await team.adelete_session(session_id="s1")
+
+    team.db.delete_session.assert_called_once_with(session_id="s1", user_id=None)
+
+
+@pytest.mark.asyncio
+async def test_adelete_session_passes_user_id_async_branch():
+    team = Team(model=OpenAIChat(id="gpt-4o"), members=[])
+    team.db = AsyncMock()
+    team.db.delete_session = AsyncMock()
+
+    with patch.object(type(team), "_has_async_db", return_value=True):
+        await team.adelete_session(session_id="s1", user_id="alice")
+
+    team.db.delete_session.assert_called_once_with(session_id="s1", user_id="alice")
+
+
 # --- Layer 5: save_session ---
 
 

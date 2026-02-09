@@ -184,6 +184,51 @@ async def test_aget_session_cache_respects_user_id():
     assert result_bob is None
 
 
+# --- Layer 4: delete_session / adelete_session ---
+
+
+def test_delete_session_passes_user_id_to_db():
+    wf = Workflow()
+    wf.db = MagicMock()
+    wf.db.delete_session = MagicMock()
+
+    wf.delete_session(session_id="s1", user_id="alice")
+
+    wf.db.delete_session.assert_called_once_with(session_id="s1", user_id="alice")
+
+
+def test_delete_session_none_user_id_acts_as_wildcard():
+    wf = Workflow()
+    wf.db = MagicMock()
+    wf.db.delete_session = MagicMock()
+
+    wf.delete_session(session_id="s1")
+
+    wf.db.delete_session.assert_called_once_with(session_id="s1", user_id=None)
+
+
+@pytest.mark.asyncio
+async def test_adelete_session_passes_user_id_to_db():
+    wf = Workflow()
+    wf.db = AsyncMock()
+    wf.db.delete_session = AsyncMock()
+
+    await wf.adelete_session(session_id="s1", user_id="alice")
+
+    wf.db.delete_session.assert_called_once_with(session_id="s1", user_id="alice")
+
+
+@pytest.mark.asyncio
+async def test_adelete_session_none_user_id_acts_as_wildcard():
+    wf = Workflow()
+    wf.db = AsyncMock()
+    wf.db.delete_session = AsyncMock()
+
+    await wf.adelete_session(session_id="s1")
+
+    wf.db.delete_session.assert_called_once_with(session_id="s1", user_id=None)
+
+
 # --- Layer 5: save_session / asave_session ---
 
 

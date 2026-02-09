@@ -143,11 +143,12 @@ class JsonDb(BaseDb):
 
     # -- Session methods --
 
-    def delete_session(self, session_id: str) -> bool:
+    def delete_session(self, session_id: str, user_id: Optional[str] = None) -> bool:
         """Delete a session from the JSON file.
 
         Args:
             session_id (str): The ID of the session to delete.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
 
         Returns:
             bool: True if the session was deleted, False otherwise.
@@ -158,7 +159,11 @@ class JsonDb(BaseDb):
         try:
             sessions = self._read_json_file(self.session_table_name)
             original_count = len(sessions)
-            sessions = [s for s in sessions if s.get("session_id") != session_id]
+            sessions = [
+                s
+                for s in sessions
+                if not (s.get("session_id") == session_id and (user_id is None or s.get("user_id") == user_id))
+            ]
 
             if len(sessions) < original_count:
                 self._write_json_file(self.session_table_name, sessions)
@@ -173,18 +178,23 @@ class JsonDb(BaseDb):
             log_error(f"Error deleting session: {e}")
             raise e
 
-    def delete_sessions(self, session_ids: List[str]) -> None:
+    def delete_sessions(self, session_ids: List[str], user_id: Optional[str] = None) -> None:
         """Delete multiple sessions from the JSON file.
 
         Args:
             session_ids (List[str]): The IDs of the sessions to delete.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
 
         Raises:
             Exception: If an error occurs during deletion.
         """
         try:
             sessions = self._read_json_file(self.session_table_name)
-            sessions = [s for s in sessions if s.get("session_id") not in session_ids]
+            sessions = [
+                s
+                for s in sessions
+                if not (s.get("session_id") in session_ids and (user_id is None or s.get("user_id") == user_id))
+            ]
             self._write_json_file(self.session_table_name, sessions)
             log_debug(f"Successfully deleted sessions with ids: {session_ids}")
 
@@ -337,7 +347,12 @@ class JsonDb(BaseDb):
             raise e
 
     def rename_session(
-        self, session_id: str, session_type: SessionType, session_name: str, deserialize: Optional[bool] = True
+        self,
+        session_id: str,
+        session_type: SessionType,
+        session_name: str,
+        user_id: Optional[str] = None,
+        deserialize: Optional[bool] = True,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         """Rename a session in the JSON file."""
         try:
@@ -345,6 +360,8 @@ class JsonDb(BaseDb):
 
             for i, session in enumerate(sessions):
                 if session.get("session_id") == session_id and session.get("session_type") == session_type.value:
+                    if user_id is not None and session.get("user_id") != user_id:
+                        continue
                     # Update session name in session_data
                     if "session_data" not in session:
                         session["session_data"] = {}
