@@ -71,7 +71,7 @@ Once the server is running, use these endpoints to browse S3 content:
 
 ## 1. List all configured sources
 
-    curl -s http://localhost:7777/v1/knowledge/sources | jq
+    curl -s http://localhost:7777/v1/knowledge/s3-sources-demo/sources | jq
 
 Response:
     [
@@ -86,7 +86,7 @@ Response:
 
 ## 2. List files at the root of a source
 
-    curl -s "http://localhost:7777/v1/knowledge/sources/company-docs/files" | jq
+    curl -s "http://localhost:7777/v1/knowledge/s3-sources-demo/sources/company-docs/files" | jq
 
 Response:
     {
@@ -112,16 +112,16 @@ Response:
 
 ## 3. Navigate into a folder
 
-    curl -s "http://localhost:7777/v1/knowledge/sources/company-docs/files?prefix=reports/" | jq
+    curl -s "http://localhost:7777/v1/knowledge/s3-sources-demo/sources/company-docs/files?prefix=reports/" | jq
 
 
 ## 4. Paginate through large folders
 
     # First page
-    curl -s "http://localhost:7777/v1/knowledge/sources/company-docs/files?limit=10" | jq
+    curl -s "http://localhost:7777/v1/knowledge/s3-sources-demo/sources/company-docs/files?limit=10" | jq
 
     # Page 2
-    curl -s "http://localhost:7777/v1/knowledge/sources/company-docs/files?limit=10&page=2" | jq
+    curl -s "http://localhost:7777/v1/knowledge/s3-sources-demo/sources/company-docs/files?limit=10&page=2" | jq
 
 
 ## 5. After browsing, ingest specific files

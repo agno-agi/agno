@@ -20,6 +20,7 @@ import sys
 import httpx
 
 BASE_URL = "http://localhost:7777/v1"
+KNOWLEDGE_ID = "s3-sources-demo"  # Must match the knowledge name in s3_sources.py
 
 
 def print_json(data):
@@ -33,7 +34,7 @@ def test_list_sources():
     print("TEST: List Content Sources")
     print("=" * 60)
 
-    response = httpx.get(f"{BASE_URL}/knowledge/sources")
+    response = httpx.get(f"{BASE_URL}/knowledge/{KNOWLEDGE_ID}/sources")
 
     print(f"Status: {response.status_code}")
     if response.status_code == 200:
@@ -57,7 +58,7 @@ def test_list_files(source_id: str, prefix: str = "", limit: int = 10):
         params["prefix"] = prefix
 
     response = httpx.get(
-        f"{BASE_URL}/knowledge/sources/{source_id}/files",
+        f"{BASE_URL}/knowledge/{KNOWLEDGE_ID}/sources/{source_id}/files",
         params=params,
     )
 
@@ -84,7 +85,7 @@ def test_pagination(source_id: str, limit: int = 2):
 
     # Get first page to find total pages
     response = httpx.get(
-        f"{BASE_URL}/knowledge/sources/{source_id}/files",
+        f"{BASE_URL}/knowledge/{KNOWLEDGE_ID}/sources/{source_id}/files",
         params={"limit": limit, "page": 1},
     )
 
@@ -103,7 +104,7 @@ def test_pagination(source_id: str, limit: int = 2):
     # Iterate through pages
     for page in range(1, min(total_pages + 1, 5)):  # Max 5 pages for demo
         response = httpx.get(
-            f"{BASE_URL}/knowledge/sources/{source_id}/files",
+            f"{BASE_URL}/knowledge/{KNOWLEDGE_ID}/sources/{source_id}/files",
             params={"limit": limit, "page": page},
         )
 
@@ -141,7 +142,9 @@ def test_invalid_source():
     print("TEST: Invalid Source ID")
     print("=" * 60)
 
-    response = httpx.get(f"{BASE_URL}/knowledge/sources/nonexistent/files")
+    response = httpx.get(
+        f"{BASE_URL}/knowledge/{KNOWLEDGE_ID}/sources/nonexistent/files"
+    )
     print(f"Status: {response.status_code}")
     print(f"Response: {response.text}")
 

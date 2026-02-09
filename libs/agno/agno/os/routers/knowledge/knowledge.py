@@ -1197,7 +1197,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
         )
 
     @router.get(
-        "/knowledge/sources",
+        "/knowledge/{knowledge_id}/sources",
         response_model=List[RemoteContentSourceSchema],
         status_code=200,
         operation_id="list_content_sources",
@@ -1219,13 +1219,15 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
                     }
                 },
             },
+            404: {"description": "Knowledge base not found", "model": NotFoundResponse},
         },
     )
     async def list_sources(
         request: Request,
+        knowledge_id: str = Path(..., description="ID of the knowledge base"),
         db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
     ) -> List[RemoteContentSourceSchema]:
-        knowledge = get_knowledge_instance_by_db_id(knowledge_instances, db_id)
+        knowledge = get_knowledge_instance(knowledge_instances, db_id, knowledge_id)
 
         if isinstance(knowledge, RemoteKnowledge):
             raise HTTPException(status_code=501, detail="Source listing not yet supported for RemoteKnowledge")
@@ -1248,7 +1250,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
         ]
 
     @router.get(
-        "/knowledge/sources/{source_id}/files",
+        "/knowledge/{knowledge_id}/sources/{source_id}/files",
         response_model=SourceFilesResponseSchema,
         status_code=200,
         operation_id="list_source_files",
@@ -1272,7 +1274,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
                                     "name": "annual-summary.pdf",
                                     "size": 102400,
                                     "last_modified": "2024-01-15T10:30:00Z",
-                                    "content_type": None,
+                                    "content_type": "application/pdf",
                                 }
                             ],
                             "meta": {"page": 1, "limit": 100, "total_pages": 1, "total_count": 1},
@@ -1280,12 +1282,13 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
                     }
                 },
             },
-            404: {"description": "Content source not found", "model": NotFoundResponse},
+            404: {"description": "Knowledge base or content source not found", "model": NotFoundResponse},
             400: {"description": "Unsupported source type", "model": BadRequestResponse},
         },
     )
     async def list_source_files(
         request: Request,
+        knowledge_id: str = Path(..., description="ID of the knowledge base"),
         source_id: str = Path(..., description="ID of the content source"),
         prefix: Optional[str] = Query(default=None, description="Path prefix to filter files"),
         limit: int = Query(default=100, ge=1, le=1000, description="Number of files per page"),
@@ -1293,7 +1296,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
         delimiter: str = Query(default="/", description="Folder delimiter (enables folder grouping)"),
         db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
     ) -> SourceFilesResponseSchema:
-        knowledge = get_knowledge_instance_by_db_id(knowledge_instances, db_id)
+        knowledge = get_knowledge_instance(knowledge_instances, db_id, knowledge_id)
 
         if isinstance(knowledge, RemoteKnowledge):
             raise HTTPException(status_code=501, detail="Source file listing not yet supported for RemoteKnowledge")

@@ -23,13 +23,13 @@ Demonstrates the new S3 file browsing API that lets you list and navigate S3 buc
 .venvs/demo/bin/python cookbook/07_knowledge/cloud/s3_sources.py
 
 # List sources
-curl -s http://localhost:7777/v1/knowledge/sources | jq
+curl -s http://localhost:7777/v1/knowledge/s3-sources-demo/sources | jq
 
 # Browse files
-curl -s "http://localhost:7777/v1/knowledge/sources/company-docs/files" | jq
+curl -s "http://localhost:7777/v1/knowledge/s3-sources-demo/sources/company-docs/files" | jq
 
 # Navigate folders
-curl -s "http://localhost:7777/v1/knowledge/sources/company-docs/files?prefix=reports/" | jq
+curl -s "http://localhost:7777/v1/knowledge/s3-sources-demo/sources/company-docs/files?prefix=reports/" | jq
 ```
 
 ### `s3_direct.py` — Direct S3 Listing (No Server)
@@ -106,14 +106,14 @@ export GITHUB_TOKEN=ghp_...  # Fine-grained PAT with Contents: read
 
 ### List Sources
 ```
-GET /v1/knowledge/sources
+GET /v1/knowledge/{knowledge_id}/sources
 ```
 
-Returns all configured content sources.
+Returns all configured content sources for a knowledge base.
 
 ### List Files
 ```
-GET /v1/knowledge/sources/{source_id}/files
+GET /v1/knowledge/{knowledge_id}/sources/{source_id}/files
 ```
 
 Query parameters:
