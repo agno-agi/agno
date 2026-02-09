@@ -1153,7 +1153,6 @@ class Team:
         debug_mode: Optional[bool] = None,
         yield_run_output: bool = False,
         output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
-        background: bool = False,
         **kwargs: Any,
     ) -> AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent]]: ...
 
