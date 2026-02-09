@@ -423,3 +423,33 @@ def _find_member_by_id(team: "Team", member_id: str) -> Optional[Tuple[int, Unio
                 return result
 
     return None
+
+
+def _find_member_route_by_id(team: "Team", member_id: str) -> Optional[Tuple[int, Union[Agent, "Team"]]]:
+    """Find a member by ID, returning the top-level sub-team for nested matches.
+
+    Unlike _find_member_by_id which returns the actual matched member,
+    this returns the parent sub-team when the match is nested. This enables
+    routing through the sub-team's own continue_run path for nested HITL.
+
+    Args:
+        team: The team to search in.
+        member_id: URL-safe ID of the member to find.
+
+    Returns:
+        Tuple of (index, routable_member) or None.
+    """
+    from agno.team.team import Team
+
+    for i, member in enumerate(team.members):
+        url_safe_member_id = get_member_id(member)
+        if url_safe_member_id == member_id:
+            return i, member
+
+        # For nested teams, return the top-level sub-team as the route target
+        if isinstance(member, Team):
+            result = _find_member_route_by_id(member, member_id)
+            if result is not None:
+                return i, member  # Return the sub-team, not the leaf
+
+    return None

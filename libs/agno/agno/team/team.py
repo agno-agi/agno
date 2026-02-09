@@ -607,6 +607,26 @@ class Team:
         # Make sure for the team, we are using the team logger
         return _init.initialize_team(self, debug_mode=debug_mode)
 
+    def _has_async_db(self) -> bool:
+        return _init._has_async_db(self)
+
+    def _initialize_session(
+        self, session_id: Optional[str] = None, user_id: Optional[str] = None
+    ) -> Tuple[str, Optional[str]]:
+        return _init._initialize_session(self, session_id=session_id, user_id=user_id)
+
+    def _read_or_create_session(self, session_id: str, user_id: Optional[str] = None) -> TeamSession:
+        return _storage._read_or_create_session(self, session_id=session_id, user_id=user_id)
+
+    async def _aread_or_create_session(self, session_id: str, user_id: Optional[str] = None) -> TeamSession:
+        return await _storage._aread_or_create_session(self, session_id=session_id, user_id=user_id)
+
+    def _cleanup_and_store(self, run_response: TeamRunOutput, session: TeamSession) -> None:
+        return _run._cleanup_and_store(self, run_response=run_response, session=session)
+
+    async def _acleanup_and_store(self, run_response: TeamRunOutput, session: TeamSession) -> None:
+        return await _run._acleanup_and_store(self, run_response=run_response, session=session)
+
     def add_tool(self, tool: Union[Toolkit, Callable, Function, Dict]):
         return _init.add_tool(self, tool=tool)
 
@@ -984,6 +1004,76 @@ class Team:
             session_state=session_state,
             run_context=run_context,
         )
+
+    ###########################################################################
+    # Continue Run (HITL)
+    ###########################################################################
+
+    def continue_run(
+        self,
+        run_response: Optional[TeamRunOutput] = None,
+        *,
+        run_id: Optional[str] = None,
+        requirements: Optional[list] = None,
+        stream: Optional[bool] = None,
+        stream_events: Optional[bool] = None,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        debug_mode: Optional[bool] = None,
+        yield_run_output: bool = False,
+        **kwargs: Any,
+    ) -> Union[TeamRunOutput, Iterator[Union[RunOutputEvent, TeamRunOutputEvent]]]:
+        """Continue a paused team run by routing resolved requirements back to member agents.
+
+        Can be called with:
+        - continue_run(paused_run_response) - easiest, uses the run_response directly
+        - continue_run(run_id=..., requirements=..., session_id=...) - stateless continuation
+        """
+        return _run.continue_run_dispatch(
+            self,
+            run_response=run_response,
+            run_id=run_id,
+            requirements=requirements,
+            stream=stream,
+            stream_events=stream_events,
+            user_id=user_id,
+            session_id=session_id,
+            debug_mode=debug_mode,
+            yield_run_output=yield_run_output,
+            **kwargs,
+        )
+
+    async def acontinue_run(
+        self,
+        run_response: Optional[TeamRunOutput] = None,
+        *,
+        run_id: Optional[str] = None,
+        requirements: Optional[list] = None,
+        stream: Optional[bool] = None,
+        stream_events: Optional[bool] = None,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        debug_mode: Optional[bool] = None,
+        yield_run_output: bool = False,
+        **kwargs: Any,
+    ) -> Union[TeamRunOutput, AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent]]]:
+        """Continue a paused team run (async version)."""
+        return await _run.acontinue_run_dispatch(
+            self,
+            run_response=run_response,
+            run_id=run_id,
+            requirements=requirements,
+            stream=stream,
+            stream_events=stream_events,
+            user_id=user_id,
+            session_id=session_id,
+            debug_mode=debug_mode,
+            yield_run_output=yield_run_output,
+            **kwargs,
+        )
+
+    def _find_member_route_by_id(self, member_id: str) -> Optional[Tuple[int, Union[Agent, "Team"]]]:
+        return _tools._find_member_route_by_id(self, member_id=member_id)
 
     ###########################################################################
     # Print Response

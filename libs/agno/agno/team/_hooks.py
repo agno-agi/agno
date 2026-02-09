@@ -418,3 +418,153 @@ async def _aexecute_post_hooks(
         finally:
             # Reset global log mode incase an agent in the post-hook changed it
             _set_debug(team, debug_mode=debug_mode)
+
+
+# ── HITL Pause / Continue Handlers ──────────────────────────────────────
+
+
+def _get_team_paused_content(run_response: TeamRunOutput) -> str:
+    """Generate a default content string for a paused team run."""
+    lines = ["Team run paused. The following members require input:"]
+    for req in run_response.active_requirements:
+        member_name = req.member_agent_name or "Unknown"
+        tool_name = req.tool_execution.tool_name if req.tool_execution else "unknown"
+        if req.needs_confirmation:
+            lines.append(f"- {member_name}: {tool_name} requires confirmation")
+        elif req.needs_user_input:
+            lines.append(f"- {member_name}: {tool_name} requires user input")
+        elif req.needs_external_execution:
+            lines.append(f"- {member_name}: {tool_name} requires external execution")
+    return "\n".join(lines)
+
+
+def handle_team_run_paused(
+    team: "Team",
+    run_response: TeamRunOutput,
+    session: TeamSession,
+) -> TeamRunOutput:
+    """Non-streaming pause handler: marks run as paused, emits event, stores state."""
+    from agno.run import RunStatus
+    from agno.team._run import _cleanup_and_store
+    from agno.utils.events import create_team_run_paused_event
+    from agno.utils.log import log_debug
+
+    run_response.status = RunStatus.paused
+    if not run_response.content:
+        run_response.content = _get_team_paused_content(run_response)
+
+    handle_event(
+        create_team_run_paused_event(
+            from_run_response=run_response,
+            tools=run_response.tools,
+            requirements=run_response.requirements,
+        ),
+        run_response,
+        events_to_skip=team.events_to_skip,
+        store_events=team.store_events,
+    )
+
+    _cleanup_and_store(team, run_response=run_response, session=session)
+
+    log_debug(f"Team Run Paused: {run_response.run_id}", center=True, symbol="*")
+    return run_response
+
+
+def handle_team_run_paused_stream(
+    team: "Team",
+    run_response: TeamRunOutput,
+    session: TeamSession,
+) -> Iterator[TeamRunOutputEvent]:
+    """Streaming pause handler: yields pause event."""
+    from agno.run import RunStatus
+    from agno.team._run import _cleanup_and_store
+    from agno.utils.events import create_team_run_paused_event
+    from agno.utils.log import log_debug
+
+    run_response.status = RunStatus.paused
+    if not run_response.content:
+        run_response.content = _get_team_paused_content(run_response)
+
+    paused_event = handle_event(
+        create_team_run_paused_event(
+            from_run_response=run_response,
+            tools=run_response.tools,
+            requirements=run_response.requirements,
+        ),
+        run_response,
+        events_to_skip=team.events_to_skip,
+        store_events=team.store_events,
+    )
+
+    if paused_event is not None:
+        yield paused_event  # type: ignore
+
+    _cleanup_and_store(team, run_response=run_response, session=session)
+
+    log_debug(f"Team Run Paused: {run_response.run_id}", center=True, symbol="*")
+
+
+async def ahandle_team_run_paused(
+    team: "Team",
+    run_response: TeamRunOutput,
+    session: TeamSession,
+) -> TeamRunOutput:
+    """Async non-streaming pause handler."""
+    from agno.run import RunStatus
+    from agno.team._run import _acleanup_and_store
+    from agno.utils.events import create_team_run_paused_event
+    from agno.utils.log import log_debug
+
+    run_response.status = RunStatus.paused
+    if not run_response.content:
+        run_response.content = _get_team_paused_content(run_response)
+
+    handle_event(
+        create_team_run_paused_event(
+            from_run_response=run_response,
+            tools=run_response.tools,
+            requirements=run_response.requirements,
+        ),
+        run_response,
+        events_to_skip=team.events_to_skip,
+        store_events=team.store_events,
+    )
+
+    await _acleanup_and_store(team, run_response=run_response, session=session)
+
+    log_debug(f"Team Run Paused: {run_response.run_id}", center=True, symbol="*")
+    return run_response
+
+
+async def ahandle_team_run_paused_stream(
+    team: "Team",
+    run_response: TeamRunOutput,
+    session: TeamSession,
+) -> AsyncIterator[TeamRunOutputEvent]:
+    """Async streaming pause handler."""
+    from agno.run import RunStatus
+    from agno.team._run import _acleanup_and_store
+    from agno.utils.events import create_team_run_paused_event
+    from agno.utils.log import log_debug
+
+    run_response.status = RunStatus.paused
+    if not run_response.content:
+        run_response.content = _get_team_paused_content(run_response)
+
+    paused_event = handle_event(
+        create_team_run_paused_event(
+            from_run_response=run_response,
+            tools=run_response.tools,
+            requirements=run_response.requirements,
+        ),
+        run_response,
+        events_to_skip=team.events_to_skip,
+        store_events=team.store_events,
+    )
+
+    if paused_event is not None:
+        yield paused_event  # type: ignore
+
+    await _acleanup_and_store(team, run_response=run_response, session=session)
+
+    log_debug(f"Team Run Paused: {run_response.run_id}", center=True, symbol="*")

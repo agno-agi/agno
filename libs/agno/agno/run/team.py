@@ -137,6 +137,8 @@ class TeamRunEvent(str, Enum):
     run_completed = "TeamRunCompleted"
     run_error = "TeamRunError"
     run_cancelled = "TeamRunCancelled"
+    run_paused = "TeamRunPaused"
+    run_continued = "TeamRunContinued"
 
     pre_hook_started = "TeamPreHookStarted"
     pre_hook_completed = "TeamPreHookCompleted"
@@ -292,6 +294,28 @@ class RunCancelledEvent(BaseTeamRunEvent):
     @property
     def is_cancelled(self):
         return True
+
+
+@dataclass
+class RunPausedEvent(BaseTeamRunEvent):
+    event: str = TeamRunEvent.run_paused.value
+    tools: Optional[List[ToolExecution]] = None
+    requirements: Optional[List[RunRequirement]] = None
+
+    @property
+    def is_paused(self):
+        return True
+
+    @property
+    def active_requirements(self) -> List[RunRequirement]:
+        if not self.requirements:
+            return []
+        return [req for req in self.requirements if not req.is_resolved()]
+
+
+@dataclass
+class RunContinuedEvent(BaseTeamRunEvent):
+    event: str = TeamRunEvent.run_continued.value
 
 
 @dataclass
@@ -473,6 +497,8 @@ TeamRunOutputEvent = Union[
     RunCompletedEvent,
     RunErrorEvent,
     RunCancelledEvent,
+    RunPausedEvent,
+    RunContinuedEvent,
     PreHookStartedEvent,
     PreHookCompletedEvent,
     ReasoningStartedEvent,
@@ -506,6 +532,8 @@ TEAM_RUN_EVENT_TYPE_REGISTRY = {
     TeamRunEvent.run_completed.value: RunCompletedEvent,
     TeamRunEvent.run_error.value: RunErrorEvent,
     TeamRunEvent.run_cancelled.value: RunCancelledEvent,
+    TeamRunEvent.run_paused.value: RunPausedEvent,
+    TeamRunEvent.run_continued.value: RunContinuedEvent,
     TeamRunEvent.pre_hook_started.value: PreHookStartedEvent,
     TeamRunEvent.pre_hook_completed.value: PreHookCompletedEvent,
     TeamRunEvent.post_hook_started.value: PostHookStartedEvent,
@@ -639,6 +667,7 @@ class TeamRunOutput:
                 "reasoning_steps",
                 "reasoning_messages",
                 "references",
+                "requirements",
             ]
         }
         if self.events is not None:
@@ -702,6 +731,9 @@ class TeamRunOutput:
                     _dict["tools"].append(tool.to_dict())
                 else:
                     _dict["tools"].append(tool)
+
+        if self.requirements is not None:
+            _dict["requirements"] = [req.to_dict() for req in self.requirements]
 
         if self.input is not None:
             _dict["input"] = self.input.to_dict()
@@ -773,6 +805,13 @@ class TeamRunOutput:
         tools = data.pop("tools", [])
         tools = [ToolExecution.from_dict(tool) for tool in tools] if tools else None
 
+        requirements_data = data.pop("requirements", None)
+        requirements = None
+        if requirements_data:
+            requirements = [
+                RunRequirement.from_dict(req) if isinstance(req, dict) else req for req in requirements_data
+            ]
+
         response_audio = reconstruct_response_audio(data.pop("response_audio", None))
 
         input_data = data.pop("input", None)
@@ -809,6 +848,7 @@ class TeamRunOutput:
             input=input_obj,
             citations=citations,
             tools=tools,
+            requirements=requirements,
             events=events,
             **filtered_data,
         )

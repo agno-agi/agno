@@ -54,8 +54,37 @@ from agno.utils.response import (
 from agno.utils.team import (
     add_interaction_to_team_run_context,
     format_member_agent_task,
+    get_member_id,
 )
 from agno.utils.timer import Timer
+
+
+def _propagate_member_pause(
+    run_response: TeamRunOutput,
+    member_agent: Union[Agent, "Team"],
+    member_run_response: Union[TeamRunOutput, RunOutput],
+) -> None:
+    """Copy HITL requirements from a paused member run to the team run response.
+
+    Uses deepcopy to prevent aliasing of ToolExecution objects between
+    the member's requirements and the team's copy.
+    """
+    from copy import deepcopy
+
+    if not member_run_response.requirements:
+        return
+    if run_response.requirements is None:
+        run_response.requirements = []
+    member_id_str = get_member_id(member_agent)
+    for req in member_run_response.requirements:
+        req_copy = deepcopy(req)
+        if req_copy.member_agent_id is None:
+            req_copy.member_agent_id = member_id_str
+        if req_copy.member_agent_name is None:
+            req_copy.member_agent_name = member_agent.name
+        if req_copy.member_run_id is None:
+            req_copy.member_run_id = member_run_response.run_id
+        run_response.requirements.append(req_copy)
 
 
 def _get_update_user_memory_function(team: "Team", user_id: Optional[str] = None, async_mode: bool = False) -> Function:
@@ -591,6 +620,19 @@ def _get_delegate_task_function(
             except Exception as e:
                 yield str(e)
 
+        # Check if the member run is paused (HITL)
+        if member_agent_run_response is not None and member_agent_run_response.is_paused:
+            _propagate_member_pause(run_response, member_agent, member_agent_run_response)
+            use_team_logger()
+            _process_delegate_task_to_member(
+                member_agent_run_response,
+                member_agent,
+                member_agent_task,  # type: ignore
+                member_session_state_copy,  # type: ignore
+            )
+            yield f"Member '{member_agent.name}' requires human input before continuing."
+            return
+
         # Afterward, switch back to the team logger
         use_team_logger()
 
@@ -713,6 +755,19 @@ def _get_delegate_task_function(
             except Exception as e:
                 yield str(e)
 
+        # Check if the member run is paused (HITL)
+        if member_agent_run_response is not None and member_agent_run_response.is_paused:
+            _propagate_member_pause(run_response, member_agent, member_agent_run_response)
+            use_team_logger()
+            _process_delegate_task_to_member(
+                member_agent_run_response,
+                member_agent,
+                member_agent_task,  # type: ignore
+                member_session_state_copy,  # type: ignore
+            )
+            yield f"Member '{member_agent.name}' requires human input before continuing."
+            return
+
         # Afterward, switch back to the team logger
         use_team_logger()
 
@@ -831,6 +886,11 @@ def _get_delegate_task_function(
                 member_session_state_copy,  # type: ignore
             )
 
+            # Check if the member run is paused (HITL)
+            if member_agent_run_response is not None and member_agent_run_response.is_paused:
+                _propagate_member_pause(run_response, member_agent, member_agent_run_response)
+                yield f"Agent {member_agent.name}: Requires human input before continuing."
+
         # After all the member runs, switch back to the team logger
         use_team_logger()
 
@@ -895,6 +955,10 @@ def _get_delegate_task_function(
                         member_agent_task,  # type: ignore
                         member_session_state_copy,  # type: ignore
                     )
+                    # Check if the member run is paused (HITL)
+                    if member_agent_run_response is not None and member_agent_run_response.is_paused:
+                        _propagate_member_pause(run_response, agent, member_agent_run_response)
+                        await queue.put(f"Agent {agent.name}: Requires human input before continuing.")
                     await queue.put(done_marker)
 
             # Initialize and launch all members
@@ -967,6 +1031,15 @@ def _get_delegate_task_function(
                         member_session_state_copy,  # type: ignore
                     )
 
+                    # Check if the member run is paused (HITL)
+                    if member_agent_run_response.is_paused:
+                        member_name = member_agent.name if member_agent.name else f"agent_{member_agent_index}"
+                        return (
+                            f"Agent {member_name}: Requires human input before continuing.",
+                            member_agent,
+                            member_agent_run_response,
+                        )  # type: ignore
+
                     member_name = member_agent.name if member_agent.name else f"agent_{member_agent_index}"
                     try:
                         if member_agent_run_response.content is None and (
@@ -995,7 +1068,13 @@ def _get_delegate_task_function(
 
             results = await asyncio.gather(*[task() for task in tasks])  # type: ignore
             for result in results:
-                yield result
+                if isinstance(result, tuple):
+                    # Paused member: propagate requirements sequentially
+                    text, paused_agent, paused_response = result
+                    _propagate_member_pause(run_response, paused_agent, paused_response)
+                    yield text
+                else:
+                    yield result
 
         # After all the member runs, switch back to the team logger
         use_team_logger()

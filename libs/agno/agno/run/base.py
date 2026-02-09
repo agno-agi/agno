@@ -175,6 +175,12 @@ class BaseRunOutputEvent:
 
             data["tool"] = ToolExecution.from_dict(tool)
 
+        tools = data.pop("tools", None)
+        if tools:
+            from agno.models.response import ToolExecution as TE
+
+            data["tools"] = [TE.from_dict(t) if isinstance(t, dict) else t for t in tools]
+
         images = data.pop("images", None)
         if images:
             data["images"] = [Image.model_validate(image) for image in images]

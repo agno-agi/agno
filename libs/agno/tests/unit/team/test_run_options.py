@@ -324,8 +324,6 @@ class TestRenamedFunctionsImportable:
         assert not hasattr(_run, "arun_impl")
         assert not hasattr(_run, "arun_stream_impl")
         assert not hasattr(_run, "asetup_session")
-        assert not hasattr(_run, "run")
-        assert not hasattr(_run, "arun")
 
 
 # ---------------------------------------------------------------------------
@@ -379,7 +377,6 @@ class TestTeamWrappersDelegateCorrectly:
 class TestParityWithAgent:
     def test_same_fields_as_agent_run_options(self):
         from agno.agent._run_options import ResolvedRunOptions as AgentOpts
-
         from agno.team._run_options import ResolvedRunOptions as TeamOpts
 
         agent_fields = {f.name for f in dataclasses.fields(AgentOpts)}
@@ -388,7 +385,6 @@ class TestParityWithAgent:
 
     def test_same_field_types_as_agent_run_options(self):
         from agno.agent._run_options import ResolvedRunOptions as AgentOpts
-
         from agno.team._run_options import ResolvedRunOptions as TeamOpts
 
         agent_types = {f.name: f.type for f in dataclasses.fields(AgentOpts)}

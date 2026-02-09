@@ -89,6 +89,10 @@ class TeamSession:
                 return run
         return None
 
+    def get_run_by_id(self, run_id: str) -> Optional[Union[TeamRunOutput, RunOutput]]:
+        """Alias for get_run for consistency with AgentSession API."""
+        return self.get_run(run_id)
+
     def upsert_run(self, run_response: Union[TeamRunOutput, RunOutput]):
         """Adds a RunOutput, together with some calculated data, to the runs list."""
         messages = run_response.messages
