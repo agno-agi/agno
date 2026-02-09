@@ -149,16 +149,6 @@ def set_learning_machine(agent: Agent) -> None:
         agent._learning = agent.learning
 
 
-def get_learning_machine(agent: Agent) -> Optional[LearningMachine]:
-    """Get the resolved LearningMachine instance.
-
-    Returns:
-        The LearningMachine instance if learning is enabled and initialized,
-        None otherwise.
-    """
-    return agent._learning
-
-
 def set_session_summary_manager(agent: Agent) -> None:
     if agent.enable_session_summaries and agent.session_summary_manager is None:
         agent.session_summary_manager = SessionSummaryManager(model=agent.model)

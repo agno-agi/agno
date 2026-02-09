@@ -8,15 +8,16 @@ from typing import (
     Dict,
     List,
     Optional,
+    Tuple,
     Union,
     cast,
 )
+from uuid import uuid4
 
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
 
-from agno.db.base import SessionType, UserMemory
-from agno.db.schemas.culture import CulturalKnowledge
+from agno.db.base import SessionType
 from agno.models.message import Message
 from agno.models.metrics import Metrics
 from agno.run import RunStatus
@@ -24,15 +25,11 @@ from agno.run.agent import RunOutput
 from agno.session import AgentSession, TeamSession, WorkflowSession
 from agno.session.summary import SessionSummary
 from agno.utils.agent import (
-    aget_last_run_output_util,
-    aget_run_output_util,
     aget_session_metrics_util,
     aget_session_name_util,
     aget_session_state_util,
     aset_session_name_util,
     aupdate_session_state_util,
-    get_last_run_output_util,
-    get_run_output_util,
     get_session_metrics_util,
     get_session_name_util,
     get_session_state_util,
@@ -42,80 +39,32 @@ from agno.utils.agent import (
 from agno.utils.log import log_debug, log_error, log_warning
 
 # ---------------------------------------------------------------------------
-# Run output accessors
+# Session initialization
 # ---------------------------------------------------------------------------
 
 
-def get_run_output(agent: Agent, run_id: str, session_id: Optional[str] = None) -> Optional[RunOutput]:
-    """
-    Get a RunOutput from the database.
+def initialize_session(
+    agent: Agent,
+    session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+) -> Tuple[str, Optional[str]]:
+    """Initialize the session for the agent."""
 
-    Args:
-        agent: The Agent instance.
-        run_id (str): The run_id to load from storage.
-        session_id (Optional[str]): The session_id to load from storage.
-    Returns:
-        Optional[RunOutput]: The RunOutput from the database or None if not found.
-    """
-    if not session_id and not agent.session_id:
-        raise Exception("No session_id provided")
+    if session_id is None:
+        if agent.session_id:
+            session_id = agent.session_id
+        else:
+            session_id = str(uuid4())
+            # We make the session_id sticky to the agent instance if no session_id is provided
+            agent.session_id = session_id
 
-    session_id_to_load = session_id or agent.session_id
-    return cast(RunOutput, get_run_output_util(agent, run_id=run_id, session_id=session_id_to_load))
+    log_debug(f"Session ID: {session_id}", center=True)
 
+    # Use the default user_id when necessary
+    if user_id is None or user_id == "":
+        user_id = agent.user_id
 
-async def aget_run_output(agent: Agent, run_id: str, session_id: Optional[str] = None) -> Optional[RunOutput]:
-    """
-    Get a RunOutput from the database.
-
-    Args:
-        agent: The Agent instance.
-        run_id (str): The run_id to load from storage.
-        session_id (Optional[str]): The session_id to load from storage.
-    Returns:
-        Optional[RunOutput]: The RunOutput from the database or None if not found.
-    """
-    if not session_id and not agent.session_id:
-        raise Exception("No session_id provided")
-
-    session_id_to_load = session_id or agent.session_id
-    return cast(RunOutput, await aget_run_output_util(agent, run_id=run_id, session_id=session_id_to_load))
-
-
-def get_last_run_output(agent: Agent, session_id: Optional[str] = None) -> Optional[RunOutput]:
-    """
-    Get the last run response from the database.
-
-    Args:
-        agent: The Agent instance.
-        session_id (Optional[str]): The session_id to load from storage.
-
-    Returns:
-        Optional[RunOutput]: The last run response from the database or None if not found.
-    """
-    if not session_id and not agent.session_id:
-        raise Exception("No session_id provided")
-
-    session_id_to_load = session_id or agent.session_id
-    return cast(RunOutput, get_last_run_output_util(agent, session_id=session_id_to_load))
-
-
-async def aget_last_run_output(agent: Agent, session_id: Optional[str] = None) -> Optional[RunOutput]:
-    """
-    Get the last run response from the database.
-
-    Args:
-        agent: The Agent instance.
-        session_id (Optional[str]): The session_id to load from storage.
-
-    Returns:
-        Optional[RunOutput]: The last run response from the database or None if not found.
-    """
-    if not session_id and not agent.session_id:
-        raise Exception("No session_id provided")
-
-    session_id_to_load = session_id or agent.session_id
-    return cast(RunOutput, await aget_last_run_output_util(agent, session_id=session_id_to_load))
+    return session_id, user_id
 
 
 # ---------------------------------------------------------------------------
@@ -610,6 +559,21 @@ async def aget_session_metrics(agent: Agent, session_id: Optional[str] = None) -
     return await aget_session_metrics_util(agent, session_id=session_id)
 
 
+def update_session_metrics(agent: Agent, session: AgentSession, run_response: RunOutput) -> None:
+    """Calculate session metrics and write them to session_data."""
+    from agno.agent._storage import get_session_metrics_internal
+
+    session_metrics = get_session_metrics_internal(agent, session=session)
+    # Add the metrics for the current run to the session metrics
+    if session_metrics is None:
+        return
+    if run_response.metrics is not None:
+        session_metrics += run_response.metrics
+    session_metrics.time_to_first_token = None
+    if session.session_data is not None:
+        session.session_data["session_metrics"] = session_metrics
+
+
 # ---------------------------------------------------------------------------
 # Session messages
 # ---------------------------------------------------------------------------
@@ -795,80 +759,3 @@ async def aget_session_summary(agent: Agent, session_id: Optional[str] = None) -
         raise Exception(f"Session {session_id} not found")
 
     return session.get_session_summary()  # type: ignore
-
-
-# ---------------------------------------------------------------------------
-# User memories and cultural knowledge
-# ---------------------------------------------------------------------------
-
-
-def get_user_memories(agent: Agent, user_id: Optional[str] = None) -> Optional[List[UserMemory]]:
-    """Get the user memories for the given user ID.
-
-    Args:
-        agent: The Agent instance.
-        user_id: The user ID to get the memories for. If not provided, the current cached user ID is used.
-    Returns:
-        Optional[List[UserMemory]]: The user memories.
-    """
-    from agno.agent._init import set_memory_manager
-
-    if agent.memory_manager is None:
-        set_memory_manager(agent)
-
-    user_id = user_id if user_id is not None else agent.user_id
-    if user_id is None:
-        user_id = "default"
-
-    return agent.memory_manager.get_user_memories(user_id=user_id)  # type: ignore
-
-
-async def aget_user_memories(agent: Agent, user_id: Optional[str] = None) -> Optional[List[UserMemory]]:
-    """Get the user memories for the given user ID.
-
-    Args:
-        agent: The Agent instance.
-        user_id: The user ID to get the memories for. If not provided, the current cached user ID is used.
-    Returns:
-        Optional[List[UserMemory]]: The user memories.
-    """
-    from agno.agent._init import set_memory_manager
-
-    if agent.memory_manager is None:
-        set_memory_manager(agent)
-
-    user_id = user_id if user_id is not None else agent.user_id
-    if user_id is None:
-        user_id = "default"
-
-    return await agent.memory_manager.aget_user_memories(user_id=user_id)  # type: ignore
-
-
-def get_culture_knowledge(agent: Agent) -> Optional[List[CulturalKnowledge]]:
-    """Get the cultural knowledge the agent has access to
-
-    Args:
-        agent: The Agent instance.
-
-    Returns:
-        Optional[List[CulturalKnowledge]]: The cultural knowledge.
-    """
-    if agent.culture_manager is None:
-        return None
-
-    return agent.culture_manager.get_all_knowledge()
-
-
-async def aget_culture_knowledge(agent: Agent) -> Optional[List[CulturalKnowledge]]:
-    """Get the cultural knowledge the agent has access to
-
-    Args:
-        agent: The Agent instance.
-
-    Returns:
-        Optional[List[CulturalKnowledge]]: The cultural knowledge.
-    """
-    if agent.culture_manager is None:
-        return None
-
-    return await agent.culture_manager.aget_all_knowledge()
