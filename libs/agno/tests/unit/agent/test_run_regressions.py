@@ -3,7 +3,7 @@ from typing import Any, Optional
 
 import pytest
 
-from agno.agent import _run
+from agno.agent import _init, _messages, _response, _run, _storage, _tools
 from agno.agent.agent import Agent
 from agno.db.base import SessionType
 from agno.run import RunContext
@@ -37,15 +37,15 @@ def _patch_sync_dispatch_dependencies(
     monkeypatch: pytest.MonkeyPatch,
     runs: Optional[list[Any]] = None,
 ) -> None:
-    monkeypatch.setattr(agent, "_has_async_db", lambda: False)
-    monkeypatch.setattr(agent, "_update_metadata", lambda session: None)
-    monkeypatch.setattr(agent, "_load_session_state", lambda session, session_state: session_state)
-    monkeypatch.setattr(agent, "_resolve_run_dependencies", lambda run_context: None)
-    monkeypatch.setattr(agent, "_get_response_format", lambda run_context=None: None)
+    monkeypatch.setattr(_init, "has_async_db", lambda agent: False)
+    monkeypatch.setattr(_storage, "update_metadata", lambda agent, session=None: None)
+    monkeypatch.setattr(_storage, "load_session_state", lambda agent, session=None, session_state=None: session_state)
+    monkeypatch.setattr(_run, "resolve_run_dependencies", lambda agent, run_context: None)
+    monkeypatch.setattr(_response, "get_response_format", lambda agent, run_context=None: None)
     monkeypatch.setattr(
-        agent,
-        "_read_or_create_session",
-        lambda session_id, user_id: AgentSession(session_id=session_id, user_id=user_id, runs=runs),
+        _storage,
+        "read_or_create_session",
+        lambda agent, session_id=None, user_id=None: AgentSession(session_id=session_id, user_id=user_id, runs=runs),
     )
 
 
@@ -106,14 +106,14 @@ def test_run_dispatch_does_not_reset_cancellation_before_impl(monkeypatch: pytes
 
 def test_continue_run_dispatch_handles_none_session_runs(monkeypatch: pytest.MonkeyPatch):
     agent = Agent(name="test-agent")
-    monkeypatch.setattr(agent, "_has_async_db", lambda: False)
+    monkeypatch.setattr(_init, "has_async_db", lambda agent: False)
     monkeypatch.setattr(agent, "initialize_agent", lambda debug_mode=None: None)
-    monkeypatch.setattr(agent, "_update_metadata", lambda session: None)
-    monkeypatch.setattr(agent, "_load_session_state", lambda session, session_state: session_state)
+    monkeypatch.setattr(_storage, "update_metadata", lambda agent, session=None: None)
+    monkeypatch.setattr(_storage, "load_session_state", lambda agent, session=None, session_state=None: session_state)
     monkeypatch.setattr(
-        agent,
-        "_read_or_create_session",
-        lambda session_id, user_id: AgentSession(session_id=session_id, user_id=user_id, runs=None),
+        _storage,
+        "read_or_create_session",
+        lambda agent, session_id=None, user_id=None: AgentSession(session_id=session_id, user_id=user_id, runs=None),
     )
 
     with pytest.raises(RuntimeError, match="No runs found for run ID missing-run"):
@@ -129,22 +129,22 @@ def test_continue_run_dispatch_handles_none_session_runs(monkeypatch: pytest.Mon
 async def test_acontinue_run_dispatch_handles_none_session_runs(monkeypatch: pytest.MonkeyPatch):
     agent = Agent(name="test-agent")
     monkeypatch.setattr(agent, "initialize_agent", lambda debug_mode=None: None)
-    monkeypatch.setattr(agent, "_update_metadata", lambda session: None)
-    monkeypatch.setattr(agent, "_load_session_state", lambda session, session_state: session_state)
+    monkeypatch.setattr(_storage, "update_metadata", lambda agent, session=None: None)
+    monkeypatch.setattr(_storage, "load_session_state", lambda agent, session=None, session_state=None: session_state)
 
-    async def fake_aread_or_create_session(session_id: str, user_id: Optional[str] = None):
+    async def fake_aread_or_create_session(agent, session_id: str, user_id: Optional[str] = None):
         return AgentSession(session_id=session_id, user_id=user_id, runs=None)
 
-    async def fake_acleanup_and_store(**kwargs: Any):
+    async def fake_acleanup_and_store(agent, **kwargs: Any):
         return None
 
-    async def fake_disconnect_mcp_tools():
+    async def fake_disconnect_mcp_tools(agent):
         return None
 
-    monkeypatch.setattr(agent, "_aread_or_create_session", fake_aread_or_create_session)
-    monkeypatch.setattr(agent, "_acleanup_and_store", fake_acleanup_and_store)
-    monkeypatch.setattr(agent, "_disconnect_connectable_tools", lambda: None)
-    monkeypatch.setattr(agent, "_disconnect_mcp_tools", fake_disconnect_mcp_tools)
+    monkeypatch.setattr(_storage, "aread_or_create_session", fake_aread_or_create_session)
+    monkeypatch.setattr(_run, "acleanup_and_store", fake_acleanup_and_store)
+    monkeypatch.setattr(_init, "disconnect_connectable_tools", lambda agent: None)
+    monkeypatch.setattr(_init, "disconnect_mcp_tools", fake_disconnect_mcp_tools)
 
     response = await _run.acontinue_run_dispatch(
         agent=agent,
@@ -166,17 +166,17 @@ async def test_acontinue_run_stream_impl_yields_error_event_without_attribute_er
     agent = Agent(name="test-agent")
     run_id = "missing-stream-run"
 
-    async def fake_aread_or_create_session(session_id: str, user_id: Optional[str] = None):
+    async def fake_aread_or_create_session(agent, session_id: str, user_id: Optional[str] = None):
         return AgentSession(session_id=session_id, user_id=user_id, runs=None)
 
-    async def fake_disconnect_mcp_tools():
+    async def fake_disconnect_mcp_tools(agent):
         return None
 
-    monkeypatch.setattr(agent, "_aread_or_create_session", fake_aread_or_create_session)
-    monkeypatch.setattr(agent, "_update_metadata", lambda session: None)
-    monkeypatch.setattr(agent, "_load_session_state", lambda session, session_state: session_state)
-    monkeypatch.setattr(agent, "_disconnect_connectable_tools", lambda: None)
-    monkeypatch.setattr(agent, "_disconnect_mcp_tools", fake_disconnect_mcp_tools)
+    monkeypatch.setattr(_storage, "aread_or_create_session", fake_aread_or_create_session)
+    monkeypatch.setattr(_storage, "update_metadata", lambda agent, session=None: None)
+    monkeypatch.setattr(_storage, "load_session_state", lambda agent, session=None, session_state=None: session_state)
+    monkeypatch.setattr(_init, "disconnect_connectable_tools", lambda agent: None)
+    monkeypatch.setattr(_init, "disconnect_mcp_tools", fake_disconnect_mcp_tools)
 
     run_context = RunContext(
         run_id=run_id,
@@ -207,15 +207,15 @@ async def test_arun_stream_impl_cleans_up_registered_run_on_session_read_failure
     agent = Agent(name="test-agent")
     run_id = "arun-stream-session-fail"
 
-    async def fail_aread_or_create_session(session_id: str, user_id: Optional[str] = None):
+    async def fail_aread_or_create_session(agent, session_id: str, user_id: Optional[str] = None):
         raise RuntimeError("session read failed")
 
-    async def fake_disconnect_mcp_tools():
+    async def fake_disconnect_mcp_tools(agent):
         return None
 
-    monkeypatch.setattr(agent, "_aread_or_create_session", fail_aread_or_create_session)
-    monkeypatch.setattr(agent, "_disconnect_connectable_tools", lambda: None)
-    monkeypatch.setattr(agent, "_disconnect_mcp_tools", fake_disconnect_mcp_tools)
+    monkeypatch.setattr(_storage, "aread_or_create_session", fail_aread_or_create_session)
+    monkeypatch.setattr(_init, "disconnect_connectable_tools", lambda agent: None)
+    monkeypatch.setattr(_init, "disconnect_mcp_tools", fake_disconnect_mcp_tools)
 
     run_context = RunContext(run_id=run_id, session_id="session-1", session_state={})
     run_response = RunOutput(run_id=run_id)
@@ -246,20 +246,20 @@ async def test_arun_impl_preserves_original_error_when_session_read_fails(monkey
     run_id = "arun-session-fail"
     cleanup_calls = []
 
-    async def fail_aread_or_create_session(session_id: str, user_id: Optional[str] = None):
+    async def fail_aread_or_create_session(agent, session_id: str, user_id: Optional[str] = None):
         raise RuntimeError("session read failed")
 
-    async def fake_acleanup_and_store(**kwargs: Any):
+    async def fake_acleanup_and_store(agent, **kwargs: Any):
         cleanup_calls.append(kwargs)
         return None
 
-    async def fake_disconnect_mcp_tools():
+    async def fake_disconnect_mcp_tools(agent):
         return None
 
-    monkeypatch.setattr(agent, "_aread_or_create_session", fail_aread_or_create_session)
-    monkeypatch.setattr(agent, "_acleanup_and_store", fake_acleanup_and_store)
-    monkeypatch.setattr(agent, "_disconnect_connectable_tools", lambda: None)
-    monkeypatch.setattr(agent, "_disconnect_mcp_tools", fake_disconnect_mcp_tools)
+    monkeypatch.setattr(_storage, "aread_or_create_session", fail_aread_or_create_session)
+    monkeypatch.setattr(_run, "acleanup_and_store", fake_acleanup_and_store)
+    monkeypatch.setattr(_init, "disconnect_connectable_tools", lambda agent: None)
+    monkeypatch.setattr(_init, "disconnect_mcp_tools", fake_disconnect_mcp_tools)
 
     run_context = RunContext(run_id=run_id, session_id="session-1", session_state={})
     run_response = RunOutput(run_id=run_id)
@@ -283,20 +283,20 @@ async def test_acontinue_run_impl_preserves_original_error_when_session_read_fai
     run_id = "acontinue-session-fail"
     cleanup_calls = []
 
-    async def fail_aread_or_create_session(session_id: str, user_id: Optional[str] = None):
+    async def fail_aread_or_create_session(agent, session_id: str, user_id: Optional[str] = None):
         raise RuntimeError("session read failed")
 
-    async def fake_acleanup_and_store(**kwargs: Any):
+    async def fake_acleanup_and_store(agent, **kwargs: Any):
         cleanup_calls.append(kwargs)
         return None
 
-    async def fake_disconnect_mcp_tools():
+    async def fake_disconnect_mcp_tools(agent):
         return None
 
-    monkeypatch.setattr(agent, "_aread_or_create_session", fail_aread_or_create_session)
-    monkeypatch.setattr(agent, "_acleanup_and_store", fake_acleanup_and_store)
-    monkeypatch.setattr(agent, "_disconnect_connectable_tools", lambda: None)
-    monkeypatch.setattr(agent, "_disconnect_mcp_tools", fake_disconnect_mcp_tools)
+    monkeypatch.setattr(_storage, "aread_or_create_session", fail_aread_or_create_session)
+    monkeypatch.setattr(_run, "acleanup_and_store", fake_acleanup_and_store)
+    monkeypatch.setattr(_init, "disconnect_connectable_tools", lambda agent: None)
+    monkeypatch.setattr(_init, "disconnect_mcp_tools", fake_disconnect_mcp_tools)
 
     run_context = RunContext(run_id=run_id, session_id="session-1", session_state={})
 
@@ -361,20 +361,20 @@ def _make_precedence_test_agent() -> Agent:
 
 
 def _patch_continue_dispatch_dependencies(agent: Agent, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(agent, "_has_async_db", lambda: False)
+    monkeypatch.setattr(_init, "has_async_db", lambda agent: False)
     monkeypatch.setattr(agent, "initialize_agent", lambda debug_mode=None: None)
-    monkeypatch.setattr(agent, "_update_metadata", lambda session: None)
-    monkeypatch.setattr(agent, "_load_session_state", lambda session, session_state: session_state)
+    monkeypatch.setattr(_storage, "update_metadata", lambda agent, session=None: None)
+    monkeypatch.setattr(_storage, "load_session_state", lambda agent, session=None, session_state=None: session_state)
     monkeypatch.setattr(
-        agent,
-        "_read_or_create_session",
-        lambda session_id, user_id: AgentSession(session_id=session_id, user_id=user_id, runs=[]),
+        _storage,
+        "read_or_create_session",
+        lambda agent, session_id=None, user_id=None: AgentSession(session_id=session_id, user_id=user_id, runs=[]),
     )
-    monkeypatch.setattr(agent, "_set_default_model", lambda: None)
-    monkeypatch.setattr(agent, "_get_response_format", lambda run_context=None: None)
+    monkeypatch.setattr(_init, "set_default_model", lambda agent: None)
+    monkeypatch.setattr(_response, "get_response_format", lambda agent, run_context=None: None)
     monkeypatch.setattr(agent, "get_tools", lambda **kwargs: [])
-    monkeypatch.setattr(agent, "_determine_tools_for_model", lambda **kwargs: [])
-    monkeypatch.setattr(agent, "_get_continue_run_messages", lambda input: RunMessages(messages=[]))
+    monkeypatch.setattr(_tools, "determine_tools_for_model", lambda agent, **kwargs: [])
+    monkeypatch.setattr(_messages, "get_continue_run_messages", lambda agent, input=None: RunMessages(messages=[]))
 
 
 def test_run_dispatch_respects_run_context_precedence(monkeypatch: pytest.MonkeyPatch):
@@ -473,7 +473,7 @@ def test_run_dispatch_respects_run_context_precedence(monkeypatch: pytest.Monkey
 async def test_arun_dispatch_respects_run_context_precedence(monkeypatch: pytest.MonkeyPatch):
     agent = _make_precedence_test_agent()
     monkeypatch.setattr(agent, "initialize_agent", lambda debug_mode=None: None)
-    monkeypatch.setattr(agent, "_get_response_format", lambda run_context=None: None)
+    monkeypatch.setattr(_response, "get_response_format", lambda agent, run_context=None: None)
 
     async def fake_arun_impl(
         agent: Agent,
@@ -644,7 +644,7 @@ def test_continue_run_dispatch_respects_run_context_precedence(monkeypatch: pyte
 async def test_acontinue_run_dispatch_respects_run_context_precedence(monkeypatch: pytest.MonkeyPatch):
     agent = _make_precedence_test_agent()
     monkeypatch.setattr(agent, "initialize_agent", lambda debug_mode=None: None)
-    monkeypatch.setattr(agent, "_get_response_format", lambda run_context=None: None)
+    monkeypatch.setattr(_response, "get_response_format", lambda agent, run_context=None: None)
 
     async def fake_acontinue_run_impl(
         agent: Agent,

@@ -194,7 +194,7 @@ def read_or_create_session(
             session_id=session_id,
             agent_id=agent.id,
             user_id=user_id,
-            agent_data=agent._get_agent_data(),
+            agent_data=get_agent_data(agent),
             session_data=session_data,
             metadata=agent.metadata,
             created_at=int(time()),
@@ -255,7 +255,7 @@ async def aread_or_create_session(
             session_id=session_id,
             agent_id=agent.id,
             user_id=user_id,
-            agent_data=agent._get_agent_data(),
+            agent_data=get_agent_data(agent),
             session_data=session_data,
             metadata=agent.metadata,
             created_at=int(time()),
@@ -304,6 +304,8 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
     Returns:
         Dict[str, Any]: Dictionary representation of the agent configuration
     """
+    from agno.agent._tools import parse_tools
+
     config: Dict[str, Any] = {}
 
     # --- Agent Settings ---
@@ -399,7 +401,8 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
     # Serialize tools to their dictionary representations
     _tools: List[Union[Function, dict]] = []
     if agent.model is not None:
-        _tools = agent._parse_tools(
+        _tools = parse_tools(
+            agent,
             model=agent.model,
             tools=agent.tools or [],
         )

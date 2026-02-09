@@ -110,6 +110,8 @@ def get_system_message(
     """
 
     # Extract values from run_context
+    from agno.agent._init import set_culture_manager, set_memory_manager
+
     session_state = run_context.session_state if run_context else None
     user_id = run_context.user_id if run_context else None
 
@@ -274,7 +276,7 @@ def get_system_message(
         if not user_id:
             user_id = "default"
         if agent.memory_manager is None:
-            agent._set_memory_manager()
+            set_memory_manager(agent)
             _memory_manager_not_set = True
 
         user_memories = agent.memory_manager.get_user_memories(user_id=user_id)  # type: ignore
@@ -313,7 +315,7 @@ def get_system_message(
     if agent.add_culture_to_context:
         _culture_manager_not_set = None
         if not agent.culture_manager:
-            agent._set_culture_manager()
+            set_culture_manager(agent)
             _culture_manager_not_set = True
 
         cultural_knowledge = agent.culture_manager.get_all_knowledge()  # type: ignore
@@ -449,6 +451,8 @@ async def aget_system_message(
     """
 
     # Extract values from run_context
+    from agno.agent._init import has_async_db, set_culture_manager, set_memory_manager
+
     session_state = run_context.session_state if run_context else None
     user_id = run_context.user_id if run_context else None
 
@@ -614,10 +618,10 @@ async def aget_system_message(
         if not user_id:
             user_id = "default"
         if agent.memory_manager is None:
-            agent._set_memory_manager()
+            set_memory_manager(agent)
             _memory_manager_not_set = True
 
-        if agent._has_async_db():
+        if has_async_db(agent):
             user_memories = await agent.memory_manager.aget_user_memories(user_id=user_id)  # type: ignore
         else:
             user_memories = agent.memory_manager.get_user_memories(user_id=user_id)  # type: ignore
@@ -656,7 +660,7 @@ async def aget_system_message(
     if agent.add_culture_to_context:
         _culture_manager_not_set = None
         if not agent.culture_manager:
-            agent._set_culture_manager()
+            set_culture_manager(agent)
             _culture_manager_not_set = True
 
         cultural_knowledge = await agent.culture_manager.aget_all_knowledge()  # type: ignore

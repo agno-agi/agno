@@ -385,6 +385,8 @@ def parse_response_with_parser_model(
     agent: Agent, model_response: ModelResponse, run_messages: RunMessages, run_context: Optional[RunContext] = None
 ) -> None:
     """Parse the model response using the parser model."""
+    from agno.agent._messages import get_messages_for_parser_model
+
     if agent.parser_model is None:
         return
 
@@ -392,9 +394,9 @@ def parse_response_with_parser_model(
     output_schema = run_context.output_schema if run_context else None
 
     if output_schema is not None:
-        parser_response_format = agent._get_response_format(agent.parser_model, run_context=run_context)
-        messages_for_parser_model = agent._get_messages_for_parser_model(
-            model_response, parser_response_format, run_context=run_context
+        parser_response_format = get_response_format(agent, agent.parser_model, run_context=run_context)
+        messages_for_parser_model = get_messages_for_parser_model(
+            agent, model_response, parser_response_format, run_context=run_context
         )
         parser_model_response: ModelResponse = agent.parser_model.response(
             messages=messages_for_parser_model,
@@ -415,6 +417,8 @@ async def aparse_response_with_parser_model(
     agent: Agent, model_response: ModelResponse, run_messages: RunMessages, run_context: Optional[RunContext] = None
 ) -> None:
     """Parse the model response using the parser model."""
+    from agno.agent._messages import get_messages_for_parser_model
+
     if agent.parser_model is None:
         return
 
@@ -422,9 +426,9 @@ async def aparse_response_with_parser_model(
     output_schema = run_context.output_schema if run_context else None
 
     if output_schema is not None:
-        parser_response_format = agent._get_response_format(agent.parser_model, run_context=run_context)
-        messages_for_parser_model = agent._get_messages_for_parser_model(
-            model_response, parser_response_format, run_context=run_context
+        parser_response_format = get_response_format(agent, agent.parser_model, run_context=run_context)
+        messages_for_parser_model = get_messages_for_parser_model(
+            agent, model_response, parser_response_format, run_context=run_context
         )
         parser_model_response: ModelResponse = await agent.parser_model.aresponse(
             messages=messages_for_parser_model,
@@ -449,6 +453,8 @@ def parse_response_with_parser_model_stream(
     run_context: Optional[RunContext] = None,
 ) -> Iterator[RunOutputEvent]:
     """Parse the model response using the parser model"""
+    from agno.agent._messages import get_messages_for_parser_model_stream
+
     if agent.parser_model is not None:
         # Get output_schema from run_context
         output_schema = run_context.output_schema if run_context else None
@@ -463,16 +469,17 @@ def parse_response_with_parser_model_stream(
                 )
 
             parser_model_response = ModelResponse(content="")
-            parser_response_format = agent._get_response_format(agent.parser_model, run_context=run_context)
-            messages_for_parser_model = agent._get_messages_for_parser_model_stream(
-                run_response, parser_response_format, run_context=run_context
+            parser_response_format = get_response_format(agent, agent.parser_model, run_context=run_context)
+            messages_for_parser_model = get_messages_for_parser_model_stream(
+                agent, run_response, parser_response_format, run_context=run_context
             )
             for model_response_event in agent.parser_model.response_stream(
                 messages=messages_for_parser_model,
                 response_format=parser_response_format,
                 stream_model_response=False,
             ):
-                yield from agent._handle_model_response_chunk(
+                yield from handle_model_response_chunk(
+                    agent,
                     session=session,
                     run_response=run_response,
                     model_response=parser_model_response,
@@ -513,6 +520,8 @@ async def aparse_response_with_parser_model_stream(
     run_context: Optional[RunContext] = None,
 ) -> AsyncIterator[RunOutputEvent]:
     """Parse the model response using the parser model stream."""
+    from agno.agent._messages import get_messages_for_parser_model_stream
+
     if agent.parser_model is not None:
         # Get output_schema from run_context
         output_schema = run_context.output_schema if run_context else None
@@ -527,9 +536,9 @@ async def aparse_response_with_parser_model_stream(
                 )
 
             parser_model_response = ModelResponse(content="")
-            parser_response_format = agent._get_response_format(agent.parser_model, run_context=run_context)
-            messages_for_parser_model = agent._get_messages_for_parser_model_stream(
-                run_response, parser_response_format, run_context=run_context
+            parser_response_format = get_response_format(agent, agent.parser_model, run_context=run_context)
+            messages_for_parser_model = get_messages_for_parser_model_stream(
+                agent, run_response, parser_response_format, run_context=run_context
             )
             model_response_stream = agent.parser_model.aresponse_stream(
                 messages=messages_for_parser_model,
@@ -537,7 +546,8 @@ async def aparse_response_with_parser_model_stream(
                 stream_model_response=False,
             )
             async for model_response_event in model_response_stream:  # type: ignore
-                for event in agent._handle_model_response_chunk(
+                for event in handle_model_response_chunk(
+                    agent,
                     session=session,
                     run_response=run_response,
                     model_response=parser_model_response,
@@ -572,10 +582,12 @@ async def aparse_response_with_parser_model_stream(
 
 def generate_response_with_output_model(agent: Agent, model_response: ModelResponse, run_messages: RunMessages) -> None:
     """Parse the model response using the output model."""
+    from agno.agent._messages import get_messages_for_output_model
+
     if agent.output_model is None:
         return
 
-    messages_for_output_model = agent._get_messages_for_output_model(run_messages.messages)
+    messages_for_output_model = get_messages_for_output_model(agent, run_messages.messages)
     output_model_response: ModelResponse = agent.output_model.response(messages=messages_for_output_model)
     model_response.content = output_model_response.content
 
@@ -588,6 +600,7 @@ def generate_response_with_output_model_stream(
     stream_events: bool = False,
 ) -> Iterator[RunOutputEvent]:
     """Parse the model response using the output model."""
+    from agno.agent._messages import get_messages_for_output_model
     from agno.utils.events import (
         create_output_model_response_completed_event,
         create_output_model_response_started_event,
@@ -604,12 +617,13 @@ def generate_response_with_output_model_stream(
             store_events=agent.store_events,
         )
 
-    messages_for_output_model = agent._get_messages_for_output_model(run_messages.messages)
+    messages_for_output_model = get_messages_for_output_model(agent, run_messages.messages)
 
     model_response = ModelResponse(content="")
 
     for model_response_event in agent.output_model.response_stream(messages=messages_for_output_model):
-        yield from agent._handle_model_response_chunk(
+        yield from handle_model_response_chunk(
+            agent,
             session=session,
             run_response=run_response,
             model_response=model_response,
@@ -637,10 +651,12 @@ async def agenerate_response_with_output_model(
     agent: Agent, model_response: ModelResponse, run_messages: RunMessages
 ) -> None:
     """Parse the model response using the output model."""
+    from agno.agent._messages import get_messages_for_output_model
+
     if agent.output_model is None:
         return
 
-    messages_for_output_model = agent._get_messages_for_output_model(run_messages.messages)
+    messages_for_output_model = get_messages_for_output_model(agent, run_messages.messages)
     output_model_response: ModelResponse = await agent.output_model.aresponse(messages=messages_for_output_model)
     model_response.content = output_model_response.content
 
@@ -653,6 +669,7 @@ async def agenerate_response_with_output_model_stream(
     stream_events: bool = False,
 ) -> AsyncIterator[RunOutputEvent]:
     """Parse the model response using the output model."""
+    from agno.agent._messages import get_messages_for_output_model
     from agno.utils.events import (
         create_output_model_response_completed_event,
         create_output_model_response_started_event,
@@ -669,14 +686,15 @@ async def agenerate_response_with_output_model_stream(
             store_events=agent.store_events,
         )
 
-    messages_for_output_model = agent._get_messages_for_output_model(run_messages.messages)
+    messages_for_output_model = get_messages_for_output_model(agent, run_messages.messages)
 
     model_response = ModelResponse(content="")
 
     model_response_stream = agent.output_model.aresponse_stream(messages=messages_for_output_model)
 
     async for model_response_event in model_response_stream:
-        for event in agent._handle_model_response_chunk(
+        for event in handle_model_response_chunk(
+            agent,
             session=session,
             run_response=run_response,
             model_response=model_response,
@@ -913,7 +931,7 @@ def update_run_response(
     # Handle structured outputs
     if output_schema is not None and model_response.parsed is not None:
         # We get native structured outputs from the model
-        if agent._model_should_return_structured_output(run_context=run_context):
+        if model_should_return_structured_output(agent, run_context=run_context):
             # Update the run_response content with the structured output
             run_response.content = model_response.parsed
             # Update the run_response content_type with the structured output class name
@@ -949,7 +967,8 @@ def update_run_response(
             tool_name = tool_call.tool_name or ""
             if tool_name.lower() in ["think", "analyze"]:
                 tool_args = tool_call.tool_args or {}
-                agent._update_reasoning_content_from_tool_call(
+                update_reasoning_content_from_tool_call(
+                    agent,
                     run_response=run_response,
                     tool_name=tool_name,
                     tool_args=tool_args,
@@ -967,8 +986,8 @@ def update_run_response(
     # Update the RunOutput messages
     run_response.messages = messages_for_run_response
     # Update the RunOutput metrics
-    run_response.metrics = agent._calculate_run_metrics(
-        messages=messages_for_run_response, current_run_metrics=run_response.metrics
+    run_response.metrics = calculate_run_metrics(
+        agent, messages=messages_for_run_response, current_run_metrics=run_response.metrics
     )
 
 
@@ -1099,8 +1118,8 @@ def handle_model_response_stream(
     # Update the RunOutput messages
     run_response.messages = messages_for_run_response
     # Update the RunOutput metrics
-    run_response.metrics = agent._calculate_run_metrics(
-        messages=messages_for_run_response, current_run_metrics=run_response.metrics
+    run_response.metrics = calculate_run_metrics(
+        agent, messages=messages_for_run_response, current_run_metrics=run_response.metrics
     )
 
     # Determine reasoning completed
@@ -1255,8 +1274,8 @@ async def ahandle_model_response_stream(
     # Update the RunOutput messages
     run_response.messages = messages_for_run_response
     # Update the RunOutput metrics
-    run_response.metrics = agent._calculate_run_metrics(
-        messages=messages_for_run_response, current_run_metrics=run_response.metrics
+    run_response.metrics = calculate_run_metrics(
+        agent, messages=messages_for_run_response, current_run_metrics=run_response.metrics
     )
 
     if stream_events and reasoning_state["reasoning_started"]:
@@ -1575,7 +1594,8 @@ def handle_model_response_chunk(
                     if tool_name.lower() in ["think", "analyze"]:
                         tool_args = tool_call.tool_args or {}
 
-                        reasoning_step = agent._update_reasoning_content_from_tool_call(
+                        reasoning_step = update_reasoning_content_from_tool_call(
+                            agent,
                             run_response=run_response,
                             tool_name=tool_name,
                             tool_args=tool_args,
