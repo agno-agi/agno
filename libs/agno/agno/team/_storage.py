@@ -23,14 +23,22 @@ from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, SessionType
 from agno.db.utils import db_from_dict
 from agno.models.base import Model
 from agno.models.message import Message
+from agno.models.metrics import Metrics
 from agno.models.utils import get_model
 from agno.registry.registry import Registry
+from agno.run.agent import RunOutput
 from agno.run.team import (
     TeamRunOutput,
 )
 from agno.session import TeamSession, WorkflowSession
 from agno.tools import Toolkit
 from agno.tools.function import Function
+from agno.utils.agent import (
+    aget_last_run_output_util,
+    aget_run_output_util,
+    get_last_run_output_util,
+    get_run_output_util,
+)
 from agno.utils.log import (
     log_debug,
     log_error,
@@ -38,6 +46,101 @@ from agno.utils.log import (
 )
 from agno.utils.merge_dict import merge_dictionaries
 from agno.utils.string import generate_id_from_name
+
+# ---------------------------------------------------------------------------
+# Run output accessors
+# ---------------------------------------------------------------------------
+
+
+def get_run_output(
+    team: "Team", run_id: str, session_id: Optional[str] = None
+) -> Optional[Union[TeamRunOutput, RunOutput]]:
+    """
+    Get a RunOutput or TeamRunOutput from the database.  Handles cached sessions.
+
+    Args:
+        run_id (str): The run_id to load from storage.
+        session_id (Optional[str]): The session_id to load from storage.
+    """
+    if not session_id and not team.session_id:
+        raise Exception("No session_id provided")
+
+    session_id_to_load = session_id or team.session_id
+    return get_run_output_util(cast(Any, team), run_id=run_id, session_id=session_id_to_load)
+
+
+async def aget_run_output(
+    team: "Team", run_id: str, session_id: Optional[str] = None
+) -> Optional[Union[TeamRunOutput, RunOutput]]:
+    """
+    Get a RunOutput or TeamRunOutput from the database.  Handles cached sessions.
+
+    Args:
+        run_id (str): The run_id to load from storage.
+        session_id (Optional[str]): The session_id to load from storage.
+    """
+    if not session_id and not team.session_id:
+        raise Exception("No session_id provided")
+
+    session_id_to_load = session_id or team.session_id
+    return await aget_run_output_util(cast(Any, team), run_id=run_id, session_id=session_id_to_load)
+
+
+def get_last_run_output(team: "Team", session_id: Optional[str] = None) -> Optional[TeamRunOutput]:
+    """
+    Get the last run response from the database.
+
+    Args:
+        session_id (Optional[str]): The session_id to load from storage.
+
+    Returns:
+        RunOutput: The last run response from the database.
+    """
+    if not session_id and not team.session_id:
+        raise Exception("No session_id provided")
+
+    session_id_to_load = session_id or team.session_id
+    return cast(TeamRunOutput, get_last_run_output_util(cast(Any, team), session_id=session_id_to_load))
+
+
+async def aget_last_run_output(team: "Team", session_id: Optional[str] = None) -> Optional[TeamRunOutput]:
+    """
+    Get the last run response from the database.
+
+    Args:
+        session_id (Optional[str]): The session_id to load from storage.
+
+    Returns:
+        RunOutput: The last run response from the database.
+    """
+    if not session_id and not team.session_id:
+        raise Exception("No session_id provided")
+
+    session_id_to_load = session_id or team.session_id
+    return cast(TeamRunOutput, await aget_last_run_output_util(cast(Any, team), session_id=session_id_to_load))
+
+
+# ---------------------------------------------------------------------------
+# Session metrics (internal)
+# ---------------------------------------------------------------------------
+
+
+def get_session_metrics_internal(team: "Team", session: TeamSession) -> Metrics:
+    # Get the session_metrics from the database
+    if session.session_data is not None and "session_metrics" in session.session_data:
+        session_metrics_from_db = session.session_data.get("session_metrics")
+        if session_metrics_from_db is not None:
+            if isinstance(session_metrics_from_db, dict):
+                return Metrics(**session_metrics_from_db)
+            elif isinstance(session_metrics_from_db, Metrics):
+                return session_metrics_from_db
+
+    return Metrics()
+
+
+# ---------------------------------------------------------------------------
+# Session read / write
+# ---------------------------------------------------------------------------
 
 
 def _read_session(
