@@ -2,7 +2,7 @@
 AgentOS Demo
 
 Prerequisites:
-uv pip install -U fastapi uvicorn sqlalchemy pgvector psycopg openai ddgs yfinance
+uv pip install -U fastapi uvicorn sqlalchemy pgvector psycopg openai ddgs
 """
 
 from agno.agent import Agent
