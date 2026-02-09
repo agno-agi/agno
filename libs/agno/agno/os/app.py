@@ -24,6 +24,7 @@ from agno.os.config import (
     EvalsDomainConfig,
     KnowledgeConfig,
     KnowledgeDomainConfig,
+    KnowledgeInstanceConfig,
     MemoryConfig,
     MemoryDomainConfig,
     MetricsConfig,
@@ -51,6 +52,7 @@ from agno.os.routers.traces import get_traces_router
 from agno.os.routers.workflows import get_workflow_router
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
+    _generate_knowledge_id,
     collect_mcp_tools_from_team,
     collect_mcp_tools_from_workflow,
     find_conflicting_routes,
@@ -975,18 +977,19 @@ class AgentOS:
 
     def _auto_discover_knowledge_instances(self) -> None:
         """Auto-discover the knowledge instances used by all contextual agents, teams and workflows."""
-        seen_ids: set[str] = set()
+        seen_instances: set[int] = set()  # Track by object identity
         knowledge_instances: List[Union[Knowledge, RemoteKnowledge]] = []
 
         def _add_knowledge_if_not_duplicate(knowledge: Any) -> None:
-            """Add knowledge instance if it's not already in the list (by object identity or db_id)."""
+            """Add knowledge instance if it's not already in the list (by object identity)."""
             # Only handle Knowledge and RemoteKnowledge instances that have contents_db
             contents_db = getattr(knowledge, "contents_db", None)
             if not contents_db:
                 return
-            if contents_db.id in seen_ids:
+            # Deduplicate by object identity to allow multiple knowledge instances with the same contents_db
+            if id(knowledge) in seen_instances:
                 return
-            seen_ids.add(contents_db.id)
+            seen_instances.add(id(knowledge))
             # Only append if it's a Knowledge or RemoteKnowledge instance
             if isinstance(knowledge, (Knowledge, RemoteKnowledge)):
                 knowledge_instances.append(knowledge)
@@ -1003,6 +1006,43 @@ class AgentOS:
             _add_knowledge_if_not_duplicate(knowledge_base)
 
         self.knowledge_instances = knowledge_instances
+
+        # Validate that all knowledge instances have unique names
+        # Duplicate names cause content isolation issues since linked_to uses the name
+        self._validate_knowledge_instance_names()
+
+    def _validate_knowledge_instance_names(self) -> None:
+        """Validate that all knowledge instances have unique names.
+
+        Raises:
+            ValueError: If duplicate knowledge instance names are detected.
+        """
+        seen_names: dict[str, str] = {}  # name -> first occurrence description
+        duplicates: list[str] = []
+
+        for knowledge in self.knowledge_instances:
+            contents_db = getattr(knowledge, "contents_db", None)
+            if not contents_db:
+                continue
+
+            # Get the name (with fallback)
+            knowledge_name = getattr(knowledge, "name", None) or f"knowledge_{contents_db.id}"
+
+            if knowledge_name in seen_names:
+                duplicates.append(knowledge_name)
+            else:
+                seen_names[knowledge_name] = f"db_id={contents_db.id}"
+
+        if duplicates:
+            unique_duplicates = list(set(duplicates))
+            error_msg = (
+                f"Duplicate knowledge instance names detected: {unique_duplicates}. "
+                "Each knowledge instance must have a unique name for proper content isolation. "
+                "Content is filtered by the 'linked_to' field which uses the knowledge instance name. "
+                "Duplicate names will cause content from different instances to be mixed together."
+            )
+            log_error(error_msg)
+            raise ValueError(error_msg)
 
     def _get_session_config(self) -> SessionConfig:
         session_config = self.config.session if self.config and self.config.session else SessionConfig()
@@ -1052,6 +1092,30 @@ class AgentOS:
 
         if knowledge_config.dbs is None:
             knowledge_config.dbs = []
+
+        if knowledge_config.knowledge_instances is None:
+            knowledge_config.knowledge_instances = []
+
+        # Build knowledge_instances list
+        # Note: Duplicate names are caught by _validate_knowledge_instance_names() at startup
+        for knowledge in self.knowledge_instances:
+            contents_db = getattr(knowledge, "contents_db", None)
+            if contents_db:
+                # Use knowledge name or generate a fallback name from db_id
+                knowledge_name = getattr(knowledge, "name", None) or f"knowledge_{contents_db.id}"
+
+                # Generate a deterministic ID based on name and db_id
+                knowledge_id = _generate_knowledge_id(knowledge_name, contents_db.id)
+
+                knowledge_config.knowledge_instances.append(
+                    KnowledgeInstanceConfig(
+                        id=knowledge_id,
+                        name=knowledge_name,
+                        description=getattr(knowledge, "description", None),
+                        db_id=contents_db.id,
+                        table=contents_db.knowledge_table_name,
+                    )
+                )
 
         dbs_with_specific_config = [db.db_id for db in knowledge_config.dbs]
 
