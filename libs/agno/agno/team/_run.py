@@ -2064,7 +2064,7 @@ def _cleanup_and_store(team: "Team", run_response: TeamRunOutput, session: TeamS
     #  Scrub the stored run based on storage flags
     from agno.team._session import update_session_metrics
 
-    _scrub_run_output_for_storage(team, run_response)
+    scrub_run_output_for_storage(team, run_response)
 
     # Stop the timer for the Run duration
     if run_response.metrics:
@@ -2084,7 +2084,7 @@ async def _acleanup_and_store(team: "Team", run_response: TeamRunOutput, session
     #  Scrub the stored run based on storage flags
     from agno.team._session import update_session_metrics
 
-    _scrub_run_output_for_storage(team, run_response)
+    scrub_run_output_for_storage(team, run_response)
 
     # Stop the timer for the Run duration
     if run_response.metrics:
@@ -2100,7 +2100,7 @@ async def _acleanup_and_store(team: "Team", run_response: TeamRunOutput, session
     await team.asave_session(session=session)
 
 
-def _scrub_run_output_for_storage(team: "Team", run_response: TeamRunOutput) -> bool:
+def scrub_run_output_for_storage(team: "Team", run_response: TeamRunOutput) -> bool:
     """
     Scrub run output based on storage flags before persisting to database.
     Returns True if any scrubbing was done, False otherwise.
