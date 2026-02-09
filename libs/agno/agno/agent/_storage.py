@@ -27,9 +27,92 @@ from agno.registry.registry import Registry
 from agno.run.agent import RunOutput
 from agno.session import AgentSession, TeamSession, WorkflowSession
 from agno.tools.function import Function
+from agno.utils.agent import (
+    aget_last_run_output_util,
+    aget_run_output_util,
+    get_last_run_output_util,
+    get_run_output_util,
+)
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.merge_dict import merge_dictionaries
 from agno.utils.string import generate_id_from_name
+
+# ---------------------------------------------------------------------------
+# Run output accessors
+# ---------------------------------------------------------------------------
+
+
+def get_run_output(agent: Agent, run_id: str, session_id: Optional[str] = None) -> Optional[RunOutput]:
+    """
+    Get a RunOutput from the database.
+
+    Args:
+        agent: The Agent instance.
+        run_id (str): The run_id to load from storage.
+        session_id (Optional[str]): The session_id to load from storage.
+    Returns:
+        Optional[RunOutput]: The RunOutput from the database or None if not found.
+    """
+    if not session_id and not agent.session_id:
+        raise Exception("No session_id provided")
+
+    session_id_to_load = session_id or agent.session_id
+    return cast(RunOutput, get_run_output_util(agent, run_id=run_id, session_id=session_id_to_load))
+
+
+async def aget_run_output(agent: Agent, run_id: str, session_id: Optional[str] = None) -> Optional[RunOutput]:
+    """
+    Get a RunOutput from the database.
+
+    Args:
+        agent: The Agent instance.
+        run_id (str): The run_id to load from storage.
+        session_id (Optional[str]): The session_id to load from storage.
+    Returns:
+        Optional[RunOutput]: The RunOutput from the database or None if not found.
+    """
+    if not session_id and not agent.session_id:
+        raise Exception("No session_id provided")
+
+    session_id_to_load = session_id or agent.session_id
+    return cast(RunOutput, await aget_run_output_util(agent, run_id=run_id, session_id=session_id_to_load))
+
+
+def get_last_run_output(agent: Agent, session_id: Optional[str] = None) -> Optional[RunOutput]:
+    """
+    Get the last run response from the database.
+
+    Args:
+        agent: The Agent instance.
+        session_id (Optional[str]): The session_id to load from storage.
+
+    Returns:
+        Optional[RunOutput]: The last run response from the database or None if not found.
+    """
+    if not session_id and not agent.session_id:
+        raise Exception("No session_id provided")
+
+    session_id_to_load = session_id or agent.session_id
+    return cast(RunOutput, get_last_run_output_util(agent, session_id=session_id_to_load))
+
+
+async def aget_last_run_output(agent: Agent, session_id: Optional[str] = None) -> Optional[RunOutput]:
+    """
+    Get the last run response from the database.
+
+    Args:
+        agent: The Agent instance.
+        session_id (Optional[str]): The session_id to load from storage.
+
+    Returns:
+        Optional[RunOutput]: The last run response from the database or None if not found.
+    """
+    if not session_id and not agent.session_id:
+        raise Exception("No session_id provided")
+
+    session_id_to_load = session_id or agent.session_id
+    return cast(RunOutput, await aget_last_run_output_util(agent, session_id=session_id_to_load))
+
 
 # ---------------------------------------------------------------------------
 # Session I/O (low-level DB calls)
@@ -156,11 +239,6 @@ def get_session_metrics_internal(agent: Agent, session: AgentSession):
                 return session_metrics_from_db
     else:
         return Metrics()
-
-
-# ---------------------------------------------------------------------------
-# Session initialization
-# ---------------------------------------------------------------------------
 
 
 def read_or_create_session(

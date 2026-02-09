@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from agno.agent.agent import Agent
 
 from agno.agent._run_options import resolve_run_options
+from agno.agent._session import initialize_session, update_session_metrics
 from agno.exceptions import (
     InputCheckError,
     OutputCheckError,
@@ -271,35 +272,6 @@ async def ahandle_agent_run_paused_stream(
     yield pause_event  # type: ignore
 
     log_debug(f"Agent Run Paused: {run_response.run_id}", center=True, symbol="*")
-
-
-# ---------------------------------------------------------------------------
-# Session initialization
-# ---------------------------------------------------------------------------
-
-
-def initialize_session(
-    agent: Agent,
-    session_id: Optional[str] = None,
-    user_id: Optional[str] = None,
-) -> Tuple[str, Optional[str]]:
-    """Initialize the session for the agent."""
-
-    if session_id is None:
-        if agent.session_id:
-            session_id = agent.session_id
-        else:
-            session_id = str(uuid4())
-            # We make the session_id sticky to the agent instance if no session_id is provided
-            agent.session_id = session_id
-
-    log_debug(f"Session ID: {session_id}", center=True)
-
-    # Use the default user_id when necessary
-    if user_id is None or user_id == "":
-        user_id = agent.user_id
-
-    return session_id, user_id
 
 
 def run_impl(
@@ -4060,21 +4032,6 @@ def scrub_run_output_for_storage(agent: Agent, run_response: RunOutput) -> None:
 
     if not agent.store_history_messages:
         scrub_history_messages_from_run_output(run_response)
-
-
-def update_session_metrics(agent: Agent, session: AgentSession, run_response: RunOutput):
-    """Calculate session metrics and write them to session_data."""
-    from agno.agent._storage import get_session_metrics_internal
-
-    session_metrics = get_session_metrics_internal(agent, session=session)
-    # Add the metrics for the current run to the session metrics
-    if session_metrics is None:
-        return
-    if run_response.metrics is not None:
-        session_metrics += run_response.metrics
-    session_metrics.time_to_first_token = None
-    if session.session_data is not None:
-        session.session_data["session_metrics"] = session_metrics
 
 
 def cleanup_and_store(
