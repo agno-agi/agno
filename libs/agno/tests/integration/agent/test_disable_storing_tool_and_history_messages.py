@@ -120,8 +120,8 @@ async def test_store_tool_results_disabled_async(tmp_path):
 
 
 # --- History Message Storage Tests ---
-def test_store_history_messages_enabled_by_default(tmp_path):
-    """Test that history messages are stored by default."""
+def test_store_history_messages_disabled_by_default(tmp_path):
+    """Test that history messages are NOT stored by default (prevents quadratic storage growth)."""
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
         db=SqliteDb(db_file=str(tmp_path / "test.db")),
@@ -129,8 +129,8 @@ def test_store_history_messages_enabled_by_default(tmp_path):
         num_history_runs=2,
     )
 
-    # Default should be True
-    assert agent.store_history_messages is True
+    # Default should be False to prevent quadratic storage growth
+    assert agent.store_history_messages is False
 
     # First run to establish history
     agent.run("My name is Alice")
@@ -143,9 +143,9 @@ def test_store_history_messages_enabled_by_default(tmp_path):
     assert stored_run is not None
 
     if stored_run.messages:
-        # Should have history messages
+        # Should NOT have history messages stored (they're reconstructed on-the-fly)
         history_msgs = [m for m in stored_run.messages if m.from_history]
-        assert len(history_msgs) > 0
+        assert len(history_msgs) == 0
 
 
 def test_store_history_messages_disabled(tmp_path):
