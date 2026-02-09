@@ -435,7 +435,7 @@ class TestProcessMessage:
                         "message_id": 100,
                         "from": {"id": 67890},
                         "chat": {"id": 12345, "type": "private"},
-                        "sticker": {"file_id": "sticker_id", "width": 512, "height": 512},
+                        "location": {"latitude": 40.7128, "longitude": -74.0060},
                     },
                 },
             )
@@ -450,6 +450,47 @@ class TestProcessMessage:
 
 
 class TestOutboundImages:
+    def test_url_image_sent_directly(self, monkeypatch):
+        monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
+        monkeypatch.setenv("APP_ENV", "development")
+
+        mock_image = MagicMock()
+        mock_image.url = "https://example.com/dalle-image.png"
+        mock_image.content = None
+        mock_image.filepath = None
+
+        mock_response = MagicMock()
+        mock_response.status = "COMPLETED"
+        mock_response.content = "Here is a generated image"
+        mock_response.reasoning_content = None
+        mock_response.images = [mock_image]
+
+        agent = AsyncMock()
+        agent.arun = AsyncMock(return_value=mock_response)
+        mock_bot = AsyncMock()
+
+        with patch(f"{ROUTER_MODULE}.AsyncTeleBot", return_value=mock_bot):
+            client = _build_telegram_client(agent=agent)
+            resp = client.post(
+                "/telegram/webhook",
+                json={
+                    "update_id": 1,
+                    "message": {
+                        "message_id": 100,
+                        "from": {"id": 67890},
+                        "chat": {"id": 12345, "type": "private"},
+                        "text": "Generate an image",
+                    },
+                },
+            )
+
+        assert resp.status_code == 200
+        mock_bot.send_photo.assert_called_once()
+        call_args = mock_bot.send_photo.call_args
+        assert call_args[0][0] == 12345
+        assert call_args[0][1] == "https://example.com/dalle-image.png"
+        assert call_args[1]["caption"] == "Here is a generated image"
+
     def test_base64_string_image_sent(self, monkeypatch):
         monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
         monkeypatch.setenv("APP_ENV", "development")
@@ -458,6 +499,8 @@ class TestOutboundImages:
         b64_str = base64.b64encode(raw_image).decode("utf-8")
 
         mock_image = MagicMock()
+        mock_image.url = None
+        mock_image.filepath = None
         mock_image.content = b64_str
 
         mock_response = MagicMock()
@@ -499,6 +542,8 @@ class TestOutboundImages:
         raw_image = b"\x89PNG\r\n\x1a\nfake-png-data"
 
         mock_image = MagicMock()
+        mock_image.url = None
+        mock_image.filepath = None
         mock_image.content = raw_image
 
         mock_response = MagicMock()
@@ -540,6 +585,8 @@ class TestOutboundImages:
         b64_str = base64.b64encode(raw_image).decode("utf-8")
 
         mock_image = MagicMock()
+        mock_image.url = None
+        mock_image.filepath = None
         mock_image.content = b64_str
 
         mock_response = MagicMock()
@@ -573,6 +620,365 @@ class TestOutboundImages:
         send_calls = mock_bot.send_message.call_args_list
         sent_texts = [call[0][1] for call in send_calls]
         assert "Fallback text" in sent_texts
+
+
+# ---------------------------------------------------------------------------
+# Inbound media (voice, video, document, sticker)
+# ---------------------------------------------------------------------------
+
+
+class TestInboundMedia:
+    def test_voice_message_passes_audio(self, monkeypatch):
+        monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
+        monkeypatch.setenv("APP_ENV", "development")
+
+        mock_response = MagicMock()
+        mock_response.status = "COMPLETED"
+        mock_response.content = "I heard audio"
+        mock_response.reasoning_content = None
+        mock_response.images = None
+        mock_response.audios = None
+        mock_response.videos = None
+        mock_response.files = None
+
+        agent = AsyncMock()
+        agent.arun = AsyncMock(return_value=mock_response)
+
+        mock_file_info = MagicMock()
+        mock_file_info.file_path = "voice/file_voice.ogg"
+        mock_bot = AsyncMock()
+        mock_bot.get_file = AsyncMock(return_value=mock_file_info)
+        mock_bot.download_file = AsyncMock(return_value=b"fake-audio-bytes")
+
+        with patch(f"{ROUTER_MODULE}.AsyncTeleBot", return_value=mock_bot):
+            client = _build_telegram_client(agent=agent)
+            resp = client.post(
+                "/telegram/webhook",
+                json={
+                    "update_id": 1,
+                    "message": {
+                        "message_id": 100,
+                        "from": {"id": 67890},
+                        "chat": {"id": 12345, "type": "private"},
+                        "voice": {"file_id": "voice_file_id", "duration": 3},
+                    },
+                },
+            )
+
+        assert resp.status_code == 200
+        mock_bot.get_file.assert_called_with("voice_file_id")
+        agent.arun.assert_called_once()
+        call_kwargs = agent.arun.call_args[1]
+        assert call_kwargs["audio"] is not None
+        assert len(call_kwargs["audio"]) == 1
+        assert call_kwargs["images"] is None
+
+    def test_video_message_passes_video(self, monkeypatch):
+        monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
+        monkeypatch.setenv("APP_ENV", "development")
+
+        mock_response = MagicMock()
+        mock_response.status = "COMPLETED"
+        mock_response.content = "I see a video"
+        mock_response.reasoning_content = None
+        mock_response.images = None
+        mock_response.audios = None
+        mock_response.videos = None
+        mock_response.files = None
+
+        agent = AsyncMock()
+        agent.arun = AsyncMock(return_value=mock_response)
+
+        mock_file_info = MagicMock()
+        mock_file_info.file_path = "video/file_vid.mp4"
+        mock_bot = AsyncMock()
+        mock_bot.get_file = AsyncMock(return_value=mock_file_info)
+        mock_bot.download_file = AsyncMock(return_value=b"fake-video-bytes")
+
+        with patch(f"{ROUTER_MODULE}.AsyncTeleBot", return_value=mock_bot):
+            client = _build_telegram_client(agent=agent)
+            resp = client.post(
+                "/telegram/webhook",
+                json={
+                    "update_id": 1,
+                    "message": {
+                        "message_id": 100,
+                        "from": {"id": 67890},
+                        "chat": {"id": 12345, "type": "private"},
+                        "video": {"file_id": "video_file_id", "duration": 10, "width": 1920, "height": 1080},
+                    },
+                },
+            )
+
+        assert resp.status_code == 200
+        mock_bot.get_file.assert_called_with("video_file_id")
+        agent.arun.assert_called_once()
+        call_kwargs = agent.arun.call_args[1]
+        assert call_kwargs["videos"] is not None
+        assert len(call_kwargs["videos"]) == 1
+        assert call_kwargs["images"] is None
+
+    def test_document_message_passes_file(self, monkeypatch):
+        monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
+        monkeypatch.setenv("APP_ENV", "development")
+
+        mock_response = MagicMock()
+        mock_response.status = "COMPLETED"
+        mock_response.content = "Processed the file"
+        mock_response.reasoning_content = None
+        mock_response.images = None
+        mock_response.audios = None
+        mock_response.videos = None
+        mock_response.files = None
+
+        agent = AsyncMock()
+        agent.arun = AsyncMock(return_value=mock_response)
+
+        mock_file_info = MagicMock()
+        mock_file_info.file_path = "documents/report.pdf"
+        mock_bot = AsyncMock()
+        mock_bot.get_file = AsyncMock(return_value=mock_file_info)
+        mock_bot.download_file = AsyncMock(return_value=b"fake-pdf-bytes")
+
+        with patch(f"{ROUTER_MODULE}.AsyncTeleBot", return_value=mock_bot):
+            client = _build_telegram_client(agent=agent)
+            resp = client.post(
+                "/telegram/webhook",
+                json={
+                    "update_id": 1,
+                    "message": {
+                        "message_id": 100,
+                        "from": {"id": 67890},
+                        "chat": {"id": 12345, "type": "private"},
+                        "document": {
+                            "file_id": "doc_file_id",
+                            "file_name": "report.pdf",
+                            "mime_type": "application/pdf",
+                        },
+                    },
+                },
+            )
+
+        assert resp.status_code == 200
+        mock_bot.get_file.assert_called_with("doc_file_id")
+        agent.arun.assert_called_once()
+        call_kwargs = agent.arun.call_args[1]
+        assert call_kwargs["files"] is not None
+        assert len(call_kwargs["files"]) == 1
+        assert call_kwargs["images"] is None
+
+    def test_sticker_message_passes_image(self, monkeypatch):
+        monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
+        monkeypatch.setenv("APP_ENV", "development")
+
+        mock_response = MagicMock()
+        mock_response.status = "COMPLETED"
+        mock_response.content = "A funny sticker"
+        mock_response.reasoning_content = None
+        mock_response.images = None
+        mock_response.audios = None
+        mock_response.videos = None
+        mock_response.files = None
+
+        agent = AsyncMock()
+        agent.arun = AsyncMock(return_value=mock_response)
+
+        mock_file_info = MagicMock()
+        mock_file_info.file_path = "stickers/sticker.webp"
+        mock_bot = AsyncMock()
+        mock_bot.get_file = AsyncMock(return_value=mock_file_info)
+        mock_bot.download_file = AsyncMock(return_value=b"fake-sticker-bytes")
+
+        with patch(f"{ROUTER_MODULE}.AsyncTeleBot", return_value=mock_bot):
+            client = _build_telegram_client(agent=agent)
+            resp = client.post(
+                "/telegram/webhook",
+                json={
+                    "update_id": 1,
+                    "message": {
+                        "message_id": 100,
+                        "from": {"id": 67890},
+                        "chat": {"id": 12345, "type": "private"},
+                        "sticker": {"file_id": "sticker_file_id", "width": 512, "height": 512},
+                    },
+                },
+            )
+
+        assert resp.status_code == 200
+        mock_bot.get_file.assert_called_with("sticker_file_id")
+        agent.arun.assert_called_once()
+        call_kwargs = agent.arun.call_args[1]
+        assert call_kwargs["images"] is not None
+        assert len(call_kwargs["images"]) == 1
+
+
+# ---------------------------------------------------------------------------
+# Outbound audio, video, and document handling
+# ---------------------------------------------------------------------------
+
+
+class TestOutboundAudioVideoFiles:
+    def _make_response(self, **overrides):
+        r = MagicMock()
+        r.status = "COMPLETED"
+        r.content = "Here is media"
+        r.reasoning_content = None
+        r.images = None
+        r.audios = None
+        r.videos = None
+        r.files = None
+        for k, v in overrides.items():
+            setattr(r, k, v)
+        return r
+
+    def test_audio_url_sent_directly(self, monkeypatch):
+        monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
+        monkeypatch.setenv("APP_ENV", "development")
+
+        mock_audio = MagicMock()
+        mock_audio.url = "https://example.com/audio.mp3"
+        mock_audio.content = None
+        mock_audio.filepath = None
+        mock_audio.get_content_bytes = MagicMock(return_value=None)
+
+        mock_response = self._make_response(audios=[mock_audio])
+        agent = AsyncMock()
+        agent.arun = AsyncMock(return_value=mock_response)
+        mock_bot = AsyncMock()
+
+        with patch(f"{ROUTER_MODULE}.AsyncTeleBot", return_value=mock_bot):
+            client = _build_telegram_client(agent=agent)
+            resp = client.post(
+                "/telegram/webhook",
+                json={
+                    "update_id": 1,
+                    "message": {
+                        "message_id": 100,
+                        "from": {"id": 67890},
+                        "chat": {"id": 12345, "type": "private"},
+                        "text": "Generate audio",
+                    },
+                },
+            )
+
+        assert resp.status_code == 200
+        mock_bot.send_audio.assert_called_once()
+        call_args = mock_bot.send_audio.call_args
+        assert call_args[0][0] == 12345
+        assert call_args[0][1] == "https://example.com/audio.mp3"
+        assert call_args[1]["caption"] == "Here is media"
+
+    def test_video_url_sent_directly(self, monkeypatch):
+        monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
+        monkeypatch.setenv("APP_ENV", "development")
+
+        mock_video = MagicMock()
+        mock_video.url = "https://example.com/video.mp4"
+        mock_video.content = None
+        mock_video.filepath = None
+        mock_video.get_content_bytes = MagicMock(return_value=None)
+
+        mock_response = self._make_response(videos=[mock_video])
+        agent = AsyncMock()
+        agent.arun = AsyncMock(return_value=mock_response)
+        mock_bot = AsyncMock()
+
+        with patch(f"{ROUTER_MODULE}.AsyncTeleBot", return_value=mock_bot):
+            client = _build_telegram_client(agent=agent)
+            resp = client.post(
+                "/telegram/webhook",
+                json={
+                    "update_id": 1,
+                    "message": {
+                        "message_id": 100,
+                        "from": {"id": 67890},
+                        "chat": {"id": 12345, "type": "private"},
+                        "text": "Generate video",
+                    },
+                },
+            )
+
+        assert resp.status_code == 200
+        mock_bot.send_video.assert_called_once()
+        call_args = mock_bot.send_video.call_args
+        assert call_args[0][0] == 12345
+        assert call_args[0][1] == "https://example.com/video.mp4"
+
+    def test_document_bytes_sent(self, monkeypatch):
+        monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
+        monkeypatch.setenv("APP_ENV", "development")
+
+        mock_file = MagicMock()
+        mock_file.url = None
+        mock_file.get_content_bytes = MagicMock(return_value=b"fake-doc-bytes")
+
+        mock_response = self._make_response(files=[mock_file])
+        agent = AsyncMock()
+        agent.arun = AsyncMock(return_value=mock_response)
+        mock_bot = AsyncMock()
+
+        with patch(f"{ROUTER_MODULE}.AsyncTeleBot", return_value=mock_bot):
+            client = _build_telegram_client(agent=agent)
+            resp = client.post(
+                "/telegram/webhook",
+                json={
+                    "update_id": 1,
+                    "message": {
+                        "message_id": 100,
+                        "from": {"id": 67890},
+                        "chat": {"id": 12345, "type": "private"},
+                        "text": "Generate a report",
+                    },
+                },
+            )
+
+        assert resp.status_code == 200
+        mock_bot.send_document.assert_called_once()
+        call_args = mock_bot.send_document.call_args
+        assert call_args[0][0] == 12345
+        assert call_args[0][1] == b"fake-doc-bytes"
+
+    def test_caption_only_on_first_media(self, monkeypatch):
+        monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
+        monkeypatch.setenv("APP_ENV", "development")
+
+        mock_img = MagicMock()
+        mock_img.url = "https://example.com/img.png"
+        mock_img.content = None
+        mock_img.filepath = None
+
+        mock_audio = MagicMock()
+        mock_audio.url = "https://example.com/audio.mp3"
+        mock_audio.get_content_bytes = MagicMock(return_value=None)
+
+        mock_response = self._make_response(images=[mock_img], audios=[mock_audio])
+        agent = AsyncMock()
+        agent.arun = AsyncMock(return_value=mock_response)
+        mock_bot = AsyncMock()
+
+        with patch(f"{ROUTER_MODULE}.AsyncTeleBot", return_value=mock_bot):
+            client = _build_telegram_client(agent=agent)
+            resp = client.post(
+                "/telegram/webhook",
+                json={
+                    "update_id": 1,
+                    "message": {
+                        "message_id": 100,
+                        "from": {"id": 67890},
+                        "chat": {"id": 12345, "type": "private"},
+                        "text": "Generate image and audio",
+                    },
+                },
+            )
+
+        assert resp.status_code == 200
+        # Image gets caption, audio does not
+        photo_args = mock_bot.send_photo.call_args
+        assert photo_args[1]["caption"] == "Here is media"
+        audio_args = mock_bot.send_audio.call_args
+        assert audio_args[1]["caption"] is None
+        # Text not sent separately since media was sent
+        mock_bot.send_message.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
