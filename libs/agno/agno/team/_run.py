@@ -227,21 +227,6 @@ def _run_tasks(
                     session=session,
                     user_id=user_id,
                 )
-                learning_future = team._start_learning_future(
-                    run_messages=run_messages,
-                    session=session,
-                    user_id=user_id,
-                )
-                learning_future = team._start_learning_future(
-                    run_messages=run_messages,
-                    session=session,
-                    user_id=user_id,
-                )
-                learning_future = team._start_learning_future(
-                    run_messages=run_messages,
-                    session=session,
-                    user_id=user_id,
-                )
 
                 # Reasoning on first iteration
                 team._handle_reasoning(run_response=run_response, run_messages=run_messages, run_context=run_context)
@@ -1444,24 +1429,6 @@ async def _arun_tasks(
                     run_messages=run_messages,
                     user_id=user_id,
                     existing_task=None,
-                )
-                learning_task = await team._astart_learning_task(
-                    run_messages=run_messages,
-                    session=team_session,
-                    user_id=user_id,
-                    existing_task=learning_task,
-                )
-                learning_task = await team._astart_learning_task(
-                    run_messages=run_messages,
-                    session=team_session,
-                    user_id=user_id,
-                    existing_task=learning_task,
-                )
-                learning_task = await team._astart_learning_task(
-                    run_messages=run_messages,
-                    session=team_session,
-                    user_id=user_id,
-                    existing_task=learning_task,
                 )
                 learning_task = await team._astart_learning_task(
                     run_messages=run_messages,
