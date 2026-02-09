@@ -79,6 +79,7 @@ from agno.utils.events import (
     create_run_content_completed_event,
     create_run_continued_event,
     create_run_error_event,
+    create_run_paused_event,
     create_run_started_event,
     create_session_summary_completed_event,
     create_session_summary_started_event,
@@ -94,6 +95,7 @@ from agno.utils.log import (
     log_info,
     log_warning,
 )
+from agno.utils.response import get_paused_content
 
 # ---------------------------------------------------------------------------
 # Run dependency resolution
@@ -167,6 +169,113 @@ async def aresolve_run_dependencies(agent: Agent, run_context: RunContext) -> No
             run_context.dependencies[key] = result
         except Exception as e:
             log_warning(f"Failed to resolve context for '{key}': {e}")
+
+
+# ---------------------------------------------------------------------------
+# Pause handling
+# ---------------------------------------------------------------------------
+
+
+def handle_agent_run_paused(
+    agent: Agent,
+    run_response: RunOutput,
+    session: AgentSession,
+    user_id: Optional[str] = None,
+) -> RunOutput:
+    from agno.agent import _storage
+
+    run_response.status = RunStatus.paused
+    if not run_response.content:
+        run_response.content = get_paused_content(run_response)
+
+    _storage.cleanup_and_store(agent, run_response=run_response, session=session, user_id=user_id)
+
+    log_debug(f"Agent Run Paused: {run_response.run_id}", center=True, symbol="*")
+
+    # We return and await confirmation/completion for the tools that require it
+    return run_response
+
+
+def handle_agent_run_paused_stream(
+    agent: Agent,
+    run_response: RunOutput,
+    session: AgentSession,
+    user_id: Optional[str] = None,
+) -> Iterator[RunOutputEvent]:
+    from agno.agent import _storage
+
+    run_response.status = RunStatus.paused
+    if not run_response.content:
+        run_response.content = get_paused_content(run_response)
+
+    # We return and await confirmation/completion for the tools that require it
+    pause_event = handle_event(
+        create_run_paused_event(
+            from_run_response=run_response,
+            tools=run_response.tools,
+            requirements=run_response.requirements,
+        ),
+        run_response,
+        events_to_skip=agent.events_to_skip,  # type: ignore
+        store_events=agent.store_events,
+    )
+
+    _storage.cleanup_and_store(agent, run_response=run_response, session=session, user_id=user_id)
+
+    yield pause_event  # type: ignore
+
+    log_debug(f"Agent Run Paused: {run_response.run_id}", center=True, symbol="*")
+
+
+async def ahandle_agent_run_paused(
+    agent: Agent,
+    run_response: RunOutput,
+    session: AgentSession,
+    user_id: Optional[str] = None,
+) -> RunOutput:
+    from agno.agent import _storage
+
+    run_response.status = RunStatus.paused
+    if not run_response.content:
+        run_response.content = get_paused_content(run_response)
+
+    await _storage.acleanup_and_store(agent, run_response=run_response, session=session, user_id=user_id)
+
+    log_debug(f"Agent Run Paused: {run_response.run_id}", center=True, symbol="*")
+
+    # We return and await confirmation/completion for the tools that require it
+    return run_response
+
+
+async def ahandle_agent_run_paused_stream(
+    agent: Agent,
+    run_response: RunOutput,
+    session: AgentSession,
+    user_id: Optional[str] = None,
+) -> AsyncIterator[RunOutputEvent]:
+    from agno.agent import _storage
+
+    run_response.status = RunStatus.paused
+    if not run_response.content:
+        run_response.content = get_paused_content(run_response)
+
+    # We return and await confirmation/completion for the tools that require it
+    pause_event = handle_event(
+        create_run_paused_event(
+            from_run_response=run_response,
+            tools=run_response.tools,
+            requirements=run_response.requirements,
+        ),
+        run_response,
+        events_to_skip=agent.events_to_skip,  # type: ignore
+        store_events=agent.store_events,
+    )
+
+    await _storage.acleanup_and_store(agent, run_response=run_response, session=session, user_id=user_id)
+
+    yield pause_event  # type: ignore
+
+    log_debug(f"Agent Run Paused: {run_response.run_id}", center=True, symbol="*")
 
 
 # ---------------------------------------------------------------------------

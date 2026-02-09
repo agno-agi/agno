@@ -65,7 +65,7 @@ def _async_stream():
             {"session": Mock(), "run_response": Mock(), "run_messages": Mock()},
         ),
         (
-            "agno.agent._hooks.ahandle_agent_run_paused_stream",
+            "agno.agent._run.ahandle_agent_run_paused_stream",
             "_ahandle_agent_run_paused_stream",
             {"run_response": Mock(), "session": Mock()},
         ),

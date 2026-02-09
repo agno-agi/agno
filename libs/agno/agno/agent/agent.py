@@ -1689,7 +1689,7 @@ class Agent:
         session: AgentSession,
         user_id: Optional[str] = None,
     ) -> RunOutput:
-        return _hooks.handle_agent_run_paused(self, run_response=run_response, session=session, user_id=user_id)
+        return _run.handle_agent_run_paused(self, run_response=run_response, session=session, user_id=user_id)
 
     def _handle_agent_run_paused_stream(
         self,
@@ -1697,7 +1697,7 @@ class Agent:
         session: AgentSession,
         user_id: Optional[str] = None,
     ) -> Iterator[RunOutputEvent]:
-        return _hooks.handle_agent_run_paused_stream(self, run_response=run_response, session=session, user_id=user_id)
+        return _run.handle_agent_run_paused_stream(self, run_response=run_response, session=session, user_id=user_id)
 
     async def _ahandle_agent_run_paused(
         self,
@@ -1705,7 +1705,7 @@ class Agent:
         session: AgentSession,
         user_id: Optional[str] = None,
     ) -> RunOutput:
-        return await _hooks.ahandle_agent_run_paused(self, run_response=run_response, session=session, user_id=user_id)
+        return await _run.ahandle_agent_run_paused(self, run_response=run_response, session=session, user_id=user_id)
 
     def _ahandle_agent_run_paused_stream(
         self,
@@ -1713,7 +1713,7 @@ class Agent:
         session: AgentSession,
         user_id: Optional[str] = None,
     ) -> AsyncIterator[RunOutputEvent]:
-        return _hooks.ahandle_agent_run_paused_stream(self, run_response=run_response, session=session, user_id=user_id)
+        return _run.ahandle_agent_run_paused_stream(self, run_response=run_response, session=session, user_id=user_id)
 
     def _convert_response_to_structured_format(
         self, run_response: Union[RunOutput, ModelResponse], run_context: Optional[RunContext] = None

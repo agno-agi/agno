@@ -1,4 +1,4 @@
-"""Pre/post hooks and pause handling for Agent."""
+"""Pre/post hooks for Agent."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from agno.agent.agent import Agent
 
 from agno.exceptions import InputCheckError, OutputCheckError
-from agno.run import RunContext, RunStatus
+from agno.run import RunContext
 from agno.run.agent import RunInput, RunOutput, RunOutputEvent
 from agno.session import AgentSession
 from agno.utils.events import (
@@ -25,7 +25,6 @@ from agno.utils.events import (
     create_post_hook_started_event,
     create_pre_hook_completed_event,
     create_pre_hook_started_event,
-    create_run_paused_event,
     handle_event,
 )
 from agno.utils.hooks import (
@@ -34,15 +33,9 @@ from agno.utils.hooks import (
     should_run_hook_in_background,
 )
 from agno.utils.log import (
-    log_debug,
     log_error,
     log_exception,
 )
-from agno.utils.response import get_paused_content
-
-# ---------------------------------------------------------------------------
-# Pre/Post Hooks
-# ---------------------------------------------------------------------------
 
 
 def execute_pre_hooks(
@@ -406,118 +399,3 @@ async def aexecute_post_hooks(
         finally:
             # Reset global log mode incase an agent in the pre-hook changed it
             agent._set_debug(debug_mode=debug_mode)
-
-
-# ---------------------------------------------------------------------------
-# Pause Handling
-# ---------------------------------------------------------------------------
-
-
-def handle_agent_run_paused(
-    agent: Agent,
-    run_response: RunOutput,
-    session: AgentSession,
-    user_id: Optional[str] = None,
-) -> RunOutput:
-    from agno.agent import _storage
-
-    # Set the run response to paused
-
-    run_response.status = RunStatus.paused
-    if not run_response.content:
-        run_response.content = get_paused_content(run_response)
-
-    _storage.cleanup_and_store(agent, run_response=run_response, session=session, user_id=user_id)
-
-    log_debug(f"Agent Run Paused: {run_response.run_id}", center=True, symbol="*")
-
-    # We return and await confirmation/completion for the tools that require it
-    return run_response
-
-
-def handle_agent_run_paused_stream(
-    agent: Agent,
-    run_response: RunOutput,
-    session: AgentSession,
-    user_id: Optional[str] = None,
-) -> Iterator[RunOutputEvent]:
-    from agno.agent import _storage
-
-    # Set the run response to paused
-
-    run_response.status = RunStatus.paused
-    if not run_response.content:
-        run_response.content = get_paused_content(run_response)
-
-    # We return and await confirmation/completion for the tools that require it
-    pause_event = handle_event(
-        create_run_paused_event(
-            from_run_response=run_response,
-            tools=run_response.tools,
-            requirements=run_response.requirements,
-        ),
-        run_response,
-        events_to_skip=agent.events_to_skip,  # type: ignore
-        store_events=agent.store_events,
-    )
-
-    _storage.cleanup_and_store(agent, run_response=run_response, session=session, user_id=user_id)
-
-    yield pause_event  # type: ignore
-
-    log_debug(f"Agent Run Paused: {run_response.run_id}", center=True, symbol="*")
-
-
-async def ahandle_agent_run_paused(
-    agent: Agent,
-    run_response: RunOutput,
-    session: AgentSession,
-    user_id: Optional[str] = None,
-) -> RunOutput:
-    from agno.agent import _storage
-
-    # Set the run response to paused
-
-    run_response.status = RunStatus.paused
-    if not run_response.content:
-        run_response.content = get_paused_content(run_response)
-
-    await _storage.acleanup_and_store(agent, run_response=run_response, session=session, user_id=user_id)
-
-    log_debug(f"Agent Run Paused: {run_response.run_id}", center=True, symbol="*")
-
-    # We return and await confirmation/completion for the tools that require it
-    return run_response
-
-
-async def ahandle_agent_run_paused_stream(
-    agent: Agent,
-    run_response: RunOutput,
-    session: AgentSession,
-    user_id: Optional[str] = None,
-) -> AsyncIterator[RunOutputEvent]:
-    from agno.agent import _storage
-
-    # Set the run response to paused
-
-    run_response.status = RunStatus.paused
-    if not run_response.content:
-        run_response.content = get_paused_content(run_response)
-
-    # We return and await confirmation/completion for the tools that require it
-    pause_event = handle_event(
-        create_run_paused_event(
-            from_run_response=run_response,
-            tools=run_response.tools,
-            requirements=run_response.requirements,
-        ),
-        run_response,
-        events_to_skip=agent.events_to_skip,  # type: ignore
-        store_events=agent.store_events,
-    )
-
-    await _storage.acleanup_and_store(agent, run_response=run_response, session=session, user_id=user_id)
-
-    yield pause_event  # type: ignore
-
-    log_debug(f"Agent Run Paused: {run_response.run_id}", center=True, symbol="*")
