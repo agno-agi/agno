@@ -23,34 +23,16 @@ from agno.agent import Agent
 from agno.exceptions import StopAgentRun
 from agno.models.openai import OpenAIChat
 from agno.tools import FunctionCall, tool
-from rich.console import Console
-from rich.prompt import Prompt
-
-# This is the console instance used by the print_response method
-# We can use this to stop and restart the live display and ask for user confirmation
-console = Console()
 
 
 def pre_hook(fc: FunctionCall):
-    # Get the live display instance from the console
-    live = console._live
-
-    # Stop the live display temporarily so we can ask for user confirmation
-    live.stop()  # type: ignore
-
-    # Ask for confirmation
-    console.print(f"\nAbout to run [bold blue]{fc.function.name}[/]")
-    message = (
-        Prompt.ask("Do you want to continue?", choices=["y", "n"], default="y")
-        .strip()
-        .lower()
-    )
-
-    # Restart the live display
-    live.start()  # type: ignore
-
-    # If the user does not want to continue, raise a StopExecution exception
-    if message != "y":
+    """Pre-hook that asks for user confirmation before running a tool."""
+    print(f"\n⚠️  About to run: {fc.function.name}")
+    print(f"   Arguments: {fc.arguments}")
+    
+    message = input("Do you want to continue? [y/n] (default: y): ").strip().lower()
+    
+    if message == "n":
         raise StopAgentRun(
             "Tool call cancelled by user",
             agent_message="Stopping execution as permission was not granted.",
@@ -59,7 +41,7 @@ def pre_hook(fc: FunctionCall):
 
 @tool(pre_hook=pre_hook)
 def get_top_hackernews_stories(num_stories: int) -> Iterator[str]:
-    """Fetch top stories from Hacker News after user confirmation.
+    """Fetch top stories from Hacker News.
 
     Args:
         num_stories (int): Number of stories to retrieve
@@ -82,13 +64,13 @@ def get_top_hackernews_stories(num_stories: int) -> Iterator[str]:
         yield json.dumps(story)
 
 
-# Initialize the agent with a tech-savvy personality and clear instructions
+# Initialize the agent
 agent = Agent(
-    model=OpenAIChat(id="gpt-5.2"),
+    model=OpenAIChat(id="gpt-4o-mini"),
     tools=[get_top_hackernews_stories],
     markdown=True,
 )
 
-agent.print_response(
-    "Fetch the top 2 hackernews stories?", stream=True, console=console
-)
+# Use stream=False to avoid Live display interference with input()
+response = agent.run("Fetch the top 2 hackernews stories",)
+print(response.content)
