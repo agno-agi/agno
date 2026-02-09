@@ -170,11 +170,9 @@ def _run_tasks(
             deque(pre_hook_iterator, maxlen=0)
 
         goal_reached = False
+        team_run_context: Dict[str, Any] = {}
         for iteration in range(1, max_iterations + 1):
             log_debug(f"Tasks iteration {iteration}/{max_iterations}")
-
-            # Initialize team run context
-            team_run_context: Dict[str, Any] = {}
 
             # Determine tools (task management tools)
             _tools = team._determine_tools_for_model(
@@ -329,9 +327,14 @@ def _run_tasks(
         else:
             run_response.status = RunStatus.error
             if not run_response.content:
-                run_response.content = (
-                    f"Tasks mode reached max iterations ({max_iterations}) without completing all tasks"
-                )
+                task_list = load_task_list(run_context.session_state)
+                failed_tasks = [t for t in task_list.tasks if t.status == TaskStatus.failed]
+                if failed_tasks:
+                    run_response.content = f"Tasks mode completed with {len(failed_tasks)} failed task(s)"
+                else:
+                    run_response.content = (
+                        f"Tasks mode reached max iterations ({max_iterations}) without completing all tasks"
+                    )
         team._cleanup_and_store(run_response=run_response, session=session)
         team._log_team_telemetry(session_id=session.session_id, run_id=run_response.run_id)
 
@@ -1347,10 +1350,9 @@ async def _arun_tasks(
         await team._check_and_refresh_mcp_tools()
 
         goal_reached = False
+        team_run_context: Dict[str, Any] = {}
         for iteration in range(1, max_iterations + 1):
             log_debug(f"Async tasks iteration {iteration}/{max_iterations}")
-
-            team_run_context: Dict[str, Any] = {}
 
             _tools = team._determine_tools_for_model(
                 model=team.model,
@@ -1498,9 +1500,14 @@ async def _arun_tasks(
         else:
             run_response.status = RunStatus.error
             if not run_response.content:
-                run_response.content = (
-                    f"Tasks mode reached max iterations ({max_iterations}) without completing all tasks"
-                )
+                task_list = load_task_list(run_context.session_state)
+                failed_tasks = [t for t in task_list.tasks if t.status == TaskStatus.failed]
+                if failed_tasks:
+                    run_response.content = f"Tasks mode completed with {len(failed_tasks)} failed task(s)"
+                else:
+                    run_response.content = (
+                        f"Tasks mode reached max iterations ({max_iterations}) without completing all tasks"
+                    )
 
         if team._has_async_db():
             await team._acleanup_and_store(run_response=run_response, session=team_session)

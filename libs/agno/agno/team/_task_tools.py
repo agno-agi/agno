@@ -20,6 +20,7 @@ from typing import (
 )
 
 from agno.agent import Agent
+from agno.exceptions import RunCancelledException
 from agno.media import Audio, File, Image, Video
 from agno.run import RunContext
 from agno.run.agent import RunOutput, RunOutputEvent
@@ -299,6 +300,8 @@ def _get_task_management_tools(
                     else None,
                 )
                 check_if_run_cancelled(member_run_response)
+        except RunCancelledException:
+            raise
         except Exception as e:
             task.status = TaskStatus.failed
             task.result = f"Member execution error: {e}"
@@ -452,6 +455,8 @@ def _get_task_management_tools(
                     else None,
                 )
                 check_if_run_cancelled(member_run_response)
+        except RunCancelledException:
+            raise
         except Exception as e:
             task.status = TaskStatus.failed
             task.result = f"Member execution error: {e}"
