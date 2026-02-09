@@ -12,6 +12,9 @@ from typing import (
 if TYPE_CHECKING:
     from agno.team.team import Team
 
+from typing import List
+
+from agno.db.base import UserMemory
 from agno.run.messages import RunMessages
 from agno.utils.log import log_debug
 
@@ -128,3 +131,43 @@ def _start_memory_future(
         return team.background_executor.submit(_make_memories, team, run_messages=run_messages, user_id=user_id)
 
     return None
+    
+
+def get_user_memories(team: "Team", user_id: Optional[str] = None) -> Optional[List[UserMemory]]:
+    """Get the user memories for the given user ID.
+
+    Args:
+        user_id: The user ID to get the memories for. If not provided, the current cached user ID is used.
+    Returns:
+        Optional[List[UserMemory]]: The user memories.
+    """
+    from agno.team._init import _set_memory_manager
+
+    if team.memory_manager is None:
+        _set_memory_manager(team)
+
+    user_id = user_id if user_id is not None else team.user_id
+    if user_id is None:
+        user_id = "default"
+
+    return team.memory_manager.get_user_memories(user_id=user_id)  # type: ignore
+
+
+async def aget_user_memories(team: "Team", user_id: Optional[str] = None) -> Optional[List[UserMemory]]:
+    """Get the user memories for the given user ID.
+
+    Args:
+        user_id: The user ID to get the memories for. If not provided, the current cached user ID is used.
+    Returns:
+        Optional[List[UserMemory]]: The user memories.
+    """
+    from agno.team._init import _set_memory_manager
+
+    if team.memory_manager is None:
+        _set_memory_manager(team)
+
+    user_id = user_id if user_id is not None else team.user_id
+    if user_id is None:
+        user_id = "default"
+
+    return await team.memory_manager.aget_user_memories(user_id=user_id)  # type: ignore

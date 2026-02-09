@@ -6,12 +6,16 @@ from asyncio import CancelledError, Task, create_task
 from concurrent.futures import Future
 from typing import (
     TYPE_CHECKING,
+    List,
     Optional,
 )
 
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
 
+from agno.db.base import UserMemory
+from agno.db.schemas.culture import CulturalKnowledge
+from agno.learn.machine import LearningMachine
 from agno.models.message import Message
 from agno.run.messages import RunMessages
 from agno.session import AgentSession
@@ -187,6 +191,48 @@ def start_memory_future(
     return None
 
 
+def get_user_memories(agent: Agent, user_id: Optional[str] = None) -> Optional[List[UserMemory]]:
+    """Get the user memories for the given user ID.
+
+    Args:
+        agent: The Agent instance.
+        user_id: The user ID to get the memories for. If not provided, the current cached user ID is used.
+    Returns:
+        Optional[List[UserMemory]]: The user memories.
+    """
+    from agno.agent._init import set_memory_manager
+
+    if agent.memory_manager is None:
+        set_memory_manager(agent)
+
+    user_id = user_id if user_id is not None else agent.user_id
+    if user_id is None:
+        user_id = "default"
+
+    return agent.memory_manager.get_user_memories(user_id=user_id)  # type: ignore
+
+
+async def aget_user_memories(agent: Agent, user_id: Optional[str] = None) -> Optional[List[UserMemory]]:
+    """Get the user memories for the given user ID.
+
+    Args:
+        agent: The Agent instance.
+        user_id: The user ID to get the memories for. If not provided, the current cached user ID is used.
+    Returns:
+        Optional[List[UserMemory]]: The user memories.
+    """
+    from agno.agent._init import set_memory_manager
+
+    if agent.memory_manager is None:
+        set_memory_manager(agent)
+
+    user_id = user_id if user_id is not None else agent.user_id
+    if user_id is None:
+        user_id = "default"
+
+    return await agent.memory_manager.aget_user_memories(user_id=user_id)  # type: ignore
+
+
 # ---------------------------------------------------------------------------
 # Cultural knowledge
 # ---------------------------------------------------------------------------
@@ -267,6 +313,36 @@ def start_cultural_knowledge_future(
         return agent.background_executor.submit(make_cultural_knowledge, agent, run_messages=run_messages)
 
     return None
+
+
+def get_culture_knowledge(agent: Agent) -> Optional[List[CulturalKnowledge]]:
+    """Get the cultural knowledge the agent has access to
+
+    Args:
+        agent: The Agent instance.
+
+    Returns:
+        Optional[List[CulturalKnowledge]]: The cultural knowledge.
+    """
+    if agent.culture_manager is None:
+        return None
+
+    return agent.culture_manager.get_all_knowledge()
+
+
+async def aget_culture_knowledge(agent: Agent) -> Optional[List[CulturalKnowledge]]:
+    """Get the cultural knowledge the agent has access to
+
+    Args:
+        agent: The Agent instance.
+
+    Returns:
+        Optional[List[CulturalKnowledge]]: The cultural knowledge.
+    """
+    if agent.culture_manager is None:
+        return None
+
+    return await agent.culture_manager.aget_all_knowledge()
 
 
 # ---------------------------------------------------------------------------
@@ -401,3 +477,13 @@ def start_learning_future(
         )
 
     return None
+
+
+def get_learning_machine(agent: Agent) -> Optional[LearningMachine]:
+    """Get the resolved LearningMachine instance.
+
+    Returns:
+        The LearningMachine instance if learning is enabled and initialized,
+        None otherwise.
+    """
+    return agent._learning

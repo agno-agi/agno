@@ -36,12 +36,18 @@ from agno.models.response import ModelResponse
 from agno.run import RunContext, RunStatus
 from agno.run.agent import RunOutput, RunOutputEvent
 from agno.run.cancel import (
+    acancel_run as acancel_run_global,
+)
+from agno.run.cancel import (
     acleanup_run,
     araise_if_cancelled,
     aregister_run,
     cleanup_run,
     raise_if_cancelled,
     register_run,
+)
+from agno.run.cancel import (
+    cancel_run as cancel_run_global,
 )
 from agno.run.messages import RunMessages
 from agno.run.team import (
@@ -84,6 +90,30 @@ from agno.utils.merge_dict import merge_dictionaries
 
 if TYPE_CHECKING:
     from agno.team.team import Team
+
+
+def cancel_run(run_id: str) -> bool:
+    """Cancel a running team execution.
+
+    Args:
+        run_id (str): The run_id to cancel.
+
+    Returns:
+        bool: True if the run was found and marked for cancellation, False otherwise.
+    """
+    return cancel_run_global(run_id)
+
+
+async def acancel_run(run_id: str) -> bool:
+    """Cancel a running team execution.
+
+    Args:
+        run_id (str): The run_id to cancel.
+
+    Returns:
+        bool: True if the run was found and marked for cancellation, False otherwise.
+    """
+    return await acancel_run_global(run_id)
 
 
 async def _asetup_session(
@@ -2032,7 +2062,7 @@ def _update_team_media(team: "Team", run_response: Union[TeamRunOutput, RunOutpu
 
 def _cleanup_and_store(team: "Team", run_response: TeamRunOutput, session: TeamSession) -> None:
     #  Scrub the stored run based on storage flags
-    from agno.team._response import update_session_metrics
+    from agno.team._session import update_session_metrics
 
     scrub_run_output_for_storage(team, run_response)
 
@@ -2052,7 +2082,7 @@ def _cleanup_and_store(team: "Team", run_response: TeamRunOutput, session: TeamS
 
 async def _acleanup_and_store(team: "Team", run_response: TeamRunOutput, session: TeamSession) -> None:
     #  Scrub the stored run based on storage flags
-    from agno.team._response import update_session_metrics
+    from agno.team._session import update_session_metrics
 
     scrub_run_output_for_storage(team, run_response)
 
