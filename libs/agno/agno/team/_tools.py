@@ -107,7 +107,11 @@ async def acancel_run(run_id: str) -> bool:
 
 async def _check_and_refresh_mcp_tools(team: "Team") -> None:
     # Connect MCP tools
-    await team._connect_mcp_tools()
+    from agno.team._init import _connect_mcp_tools
+
+    await _connect_mcp_tools(
+        team,
+    )
 
     # Add provided tools
     if team.tools is not None:
@@ -155,7 +159,12 @@ def _determine_tools_for_model(
     check_mcp_tools: bool = True,
 ) -> List[Union[Function, dict]]:
     # Connect tools that require connection management
-    team._connect_connectable_tools()
+    from agno.team._init import _connect_connectable_tools
+    from agno.team._messages import _get_user_message
+
+    _connect_connectable_tools(
+        team,
+    )
 
     # Prepare tools
     _tools: List[Union[Toolkit, Callable, Function, Dict]] = []
@@ -173,18 +182,18 @@ def _determine_tools_for_model(
             _tools.append(tool)
 
     if team.read_chat_history:
-        _tools.append(team._get_chat_history_function(session=session, async_mode=async_mode))
+        _tools.append(_get_chat_history_function(team, session=session, async_mode=async_mode))
 
     if team.memory_manager is not None and team.enable_agentic_memory:
-        _tools.append(team._get_update_user_memory_function(user_id=user_id, async_mode=async_mode))
+        _tools.append(_get_update_user_memory_function(team, user_id=user_id, async_mode=async_mode))
 
     if team.enable_agentic_state:
         _tools.append(Function(name="update_session_state", entrypoint=team._update_session_state_tool))
 
     if team.search_session_history:
         _tools.append(
-            team._get_previous_sessions_messages_function(
-                num_history_sessions=team.num_history_sessions, user_id=user_id, async_mode=async_mode
+            _get_previous_sessions_messages_function(
+                team, num_history_sessions=team.num_history_sessions, user_id=user_id, async_mode=async_mode
             )
         )
 
@@ -210,7 +219,8 @@ def _determine_tools_for_model(
         # Get the user message if we are using the input directly
         user_message_content = None
         if team.determine_input_for_members is False:
-            user_message = team._get_user_message(
+            user_message = _get_user_message(
+                team,
                 run_response=run_response,
                 run_context=run_context,
                 input_message=input_message,
@@ -223,7 +233,8 @@ def _determine_tools_for_model(
             )
             user_message_content = user_message.content if user_message is not None else None
 
-        delegate_task_func = team._get_delegate_task_function(
+        delegate_task_func = _get_delegate_task_function(
+            team,
             run_response=run_response,
             run_context=run_context,
             session=session,
@@ -517,6 +528,8 @@ def _get_previous_sessions_messages_function(
         Callable: A function that retrieves messages from previous sessions
     """
 
+    from agno.team._init import _has_async_db
+
     def get_previous_session_messages() -> str:
         """Use this function to retrieve messages from previous chat sessions.
         USE THIS TOOL ONLY WHEN THE QUESTION IS EITHER "What was my last conversation?" or "What was my last question?" and similar to it.
@@ -576,10 +589,12 @@ def _get_previous_sessions_messages_function(
         """
         import json
 
+        from agno.team._init import _has_async_db
+
         if team.db is None:
             return "Previous session messages not available"
 
-        if team._has_async_db():
+        if _has_async_db(team):
             selected_sessions = await cast(AsyncBaseDb, team.db).get_sessions(  # type: ignore
                 session_type=SessionType.TEAM,
                 limit=num_history_sessions,
@@ -625,7 +640,7 @@ def _get_previous_sessions_messages_function(
 
         return json.dumps([msg.to_dict() for msg in all_messages]) if all_messages else "No history found"
 
-    if team._has_async_db():
+    if _has_async_db(team):
         return Function.from_callable(aget_previous_session_messages, name="get_previous_session_messages")
     else:
         return Function.from_callable(get_previous_session_messages, name="get_previous_session_messages")
@@ -742,6 +757,9 @@ def _get_delegate_task_function(
     add_session_state_to_context: Optional[bool] = None,
     debug_mode: Optional[bool] = None,
 ) -> Function:
+    from agno.team._init import _initialize_member
+    from agno.team._run import _update_team_media
+
     if not images:
         images = []
     if not videos:
@@ -753,7 +771,8 @@ def _get_delegate_task_function(
 
     def _setup_delegate_task_to_member(member_agent: Union[Agent, "Team"], task: str):
         # 1. Initialize the member agent
-        team._initialize_member(member_agent)
+
+        _initialize_member(team, member_agent)
 
         # If team has send_media_to_model=False, ensure member agent also has it set to False
         # This allows tools to access files while preventing models from receiving them
@@ -777,8 +796,8 @@ def _get_delegate_task_function(
             member_agent.enable_agentic_knowledge_filters = team.enable_agentic_knowledge_filters
 
         # 4. Determine team context to send
-        team_member_interactions_str = team._determine_team_member_interactions(
-            team_run_context, images=images, videos=videos, audio=audio, files=files
+        team_member_interactions_str = _determine_team_member_interactions(
+            team, team_run_context, images=images, videos=videos, audio=audio, files=files
         )
 
         # 5. Get the team history
@@ -802,7 +821,7 @@ def _get_delegate_task_function(
         # 7. Add member-level history for the member if enabled (because we won't load the session for the member, so history won't be loaded automatically)
         history = None
         if hasattr(member_agent, "add_history_to_context") and member_agent.add_history_to_context:
-            history = team._get_history_for_member_agent(session, member_agent)
+            history = _get_history_for_member_agent(team, session, member_agent)
             if history:
                 if isinstance(member_agent_task, str):
                     history.append(Message(role="user", content=member_agent_task))
@@ -816,6 +835,7 @@ def _get_delegate_task_function(
         member_session_state_copy: Dict[str, Any],
     ):
         # Add team run id to the member run
+
         if member_agent_run_response is not None:
             member_agent_run_response.parent_run_id = run_response.run_id  # type: ignore
 
@@ -861,7 +881,7 @@ def _get_delegate_task_function(
 
         # Update the team media
         if member_agent_run_response is not None:
-            team._update_team_media(member_agent_run_response)  # type: ignore
+            _update_team_media(team, member_agent_run_response)  # type: ignore
 
     def delegate_task_to_member(member_id: str, task: str) -> Iterator[Union[RunOutputEvent, TeamRunOutputEvent, str]]:
         """Use this function to delegate a task to the selected team member.
@@ -875,7 +895,7 @@ def _get_delegate_task_function(
         """
 
         # Find the member agent using the helper function
-        result = team._find_member_by_id(member_id)
+        result = _find_member_by_id(team, member_id)
         if result is None:
             yield f"Member with ID {member_id} not found in the team or any subteams. Please choose the correct member from the list of members:\n\n{team.get_members_system_message_content(indent=0)}"
             return
@@ -1001,7 +1021,7 @@ def _get_delegate_task_function(
         """
 
         # Find the member agent using the helper function
-        result = team._find_member_by_id(member_id)
+        result = _find_member_by_id(team, member_id)
         if result is None:
             yield f"Member with ID {member_id} not found in the team or any subteams. Please choose the correct member from the list of members:\n\n{team.get_members_system_message_content(indent=0)}"
             return
@@ -1287,7 +1307,7 @@ def _get_delegate_task_function(
             tasks: List[asyncio.Task[None]] = []
             for member_agent in team.members:
                 current_agent = member_agent
-                team._initialize_member(current_agent)
+                _initialize_member(team, current_agent)
                 tasks.append(asyncio.create_task(stream_member(current_agent)))
 
             # Drain queue until all members reported done
@@ -1626,6 +1646,8 @@ def _get_search_knowledge_base_function(
 ) -> Function:
     """Factory function to create a search_knowledge_base function with filters."""
 
+    from agno.team._utils import _convert_documents_to_string
+
     def search_knowledge_base(query: str) -> str:
         """Use this function to search the knowledge base for information about a query.
 
@@ -1654,7 +1676,7 @@ def _get_search_knowledge_base_function(
 
         if docs_from_knowledge is None:
             return "No documents found"
-        return team._convert_documents_to_string(docs_from_knowledge)
+        return _convert_documents_to_string(team, docs_from_knowledge)
 
     async def asearch_knowledge_base(query: str) -> str:
         """Use this function to search the knowledge base for information about a query asynchronously.
@@ -1682,7 +1704,7 @@ def _get_search_knowledge_base_function(
 
         if docs_from_knowledge is None:
             return "No documents found"
-        return team._convert_documents_to_string(docs_from_knowledge)
+        return _convert_documents_to_string(team, docs_from_knowledge)
 
     if async_mode:
         search_knowledge_base_function = asearch_knowledge_base
@@ -1701,6 +1723,8 @@ def _get_search_knowledge_base_with_agentic_filters_function(
 ) -> Function:
     """Factory function to create a search_knowledge_base function with filters."""
 
+    from agno.team._utils import _convert_documents_to_string
+
     def search_knowledge_base(query: str, filters: Optional[List[KnowledgeFilter]] = None) -> str:
         """Use this function to search the knowledge base for information about a query.
 
@@ -1711,6 +1735,7 @@ def _get_search_knowledge_base_with_agentic_filters_function(
         Returns:
             str: A string containing the response from the knowledge base.
         """
+
         filters_dict = {filt.key: filt.value for filt in filters} if filters else None
         search_filters = get_agentic_or_user_search_filters(filters_dict, knowledge_filters)
 
@@ -1733,7 +1758,7 @@ def _get_search_knowledge_base_with_agentic_filters_function(
 
         if docs_from_knowledge is None:
             return "No documents found"
-        return team._convert_documents_to_string(docs_from_knowledge)
+        return _convert_documents_to_string(team, docs_from_knowledge)
 
     async def asearch_knowledge_base(query: str, filters: Optional[List[KnowledgeFilter]] = None) -> str:
         """Use this function to search the knowledge base for information about a query asynchronously.
@@ -1745,6 +1770,7 @@ def _get_search_knowledge_base_with_agentic_filters_function(
         Returns:
             str: A string containing the response from the knowledge base.
         """
+
         filters_dict = {filt.key: filt.value for filt in filters} if filters else None
         search_filters = get_agentic_or_user_search_filters(filters_dict, knowledge_filters)
 
@@ -1765,7 +1791,7 @@ def _get_search_knowledge_base_with_agentic_filters_function(
 
         if docs_from_knowledge is None:
             return "No documents found"
-        return team._convert_documents_to_string(docs_from_knowledge)
+        return _convert_documents_to_string(team, docs_from_knowledge)
 
     if async_mode:
         search_knowledge_base_function = asearch_knowledge_base

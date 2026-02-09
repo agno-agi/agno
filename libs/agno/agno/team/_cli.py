@@ -72,7 +72,9 @@ def team_print_response(
     tags_to_include_in_markdown: Optional[Set[str]] = None,
     **kwargs: Any,
 ) -> None:
-    if team._has_async_db():
+    from agno.team._init import _has_async_db
+
+    if _has_async_db(team):
         raise Exception("This method is not supported with an async DB. Please use the async version of this method.")
 
     if not tags_to_include_in_markdown:

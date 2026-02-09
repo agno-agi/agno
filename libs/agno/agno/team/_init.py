@@ -335,7 +335,9 @@ def __init__(
     # Lazy-initialized shared thread pool executor for background tasks (memory, cultural knowledge, etc.)
     team._background_executor = None
 
-    team._resolve_models()
+    _resolve_models(
+        team,
+    )
 
 
 def background_executor(team: "Team") -> Any:
@@ -565,21 +567,21 @@ def initialize_team(team: "Team", debug_mode: Optional[bool] = None) -> None:
         )
         team.respond_directly = False
 
-    team._set_default_model()
+    _set_default_model(team)
 
     # Set debug mode
-    team._set_debug(debug_mode=debug_mode)
+    _set_debug(team, debug_mode=debug_mode)
 
     # Set the team ID if not set
     team.set_id()
 
     # Set the memory manager and session summary manager
     if team.update_memory_on_run or team.enable_agentic_memory or team.memory_manager is not None:
-        team._set_memory_manager()
+        _set_memory_manager(team)
     if team.enable_session_summaries or team.session_summary_manager is not None:
-        team._set_session_summary_manager()
+        _set_session_summary_manager(team)
     if team.compress_tool_results or team.compression_manager is not None:
-        team._set_compression_manager()
+        _set_compression_manager(team)
 
     log_debug(f"Team ID: {team.id}", center=True)
 
@@ -588,7 +590,7 @@ def initialize_team(team: "Team", debug_mode: Optional[bool] = None) -> None:
         team._formatter = SafeFormatter()
 
     for member in team.members:
-        team._initialize_member(member, debug_mode=team.debug_mode)
+        _initialize_member(team, member, debug_mode=team.debug_mode)
 
 
 def add_tool(team: "Team", tool: Union[Toolkit, Callable, Function, Dict]) -> None:

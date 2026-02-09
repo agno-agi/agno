@@ -99,29 +99,38 @@ async def _asetup_session(
     does inline before calling _run()/_run_stream().
     """
     # Read or create session
-    if team._has_async_db():
-        team_session = await team._aread_or_create_session(session_id=session_id, user_id=user_id)
+    from agno.team._init import _has_async_db, _initialize_session_state
+    from agno.team._storage import (
+        _aread_or_create_session,
+        _load_session_state,
+        _read_or_create_session,
+        _update_metadata,
+    )
+
+    if _has_async_db(team):
+        team_session = await _aread_or_create_session(team, session_id=session_id, user_id=user_id)
     else:
-        team_session = team._read_or_create_session(session_id=session_id, user_id=user_id)
+        team_session = _read_or_create_session(team, session_id=session_id, user_id=user_id)
 
     # Update metadata
-    team._update_metadata(session=team_session)
+    _update_metadata(team, session=team_session)
 
     # Initialize and load session state from DB
-    run_context.session_state = team._initialize_session_state(
+    run_context.session_state = _initialize_session_state(
+        team,
         session_state=run_context.session_state if run_context.session_state is not None else {},
         user_id=user_id,
         session_id=session_id,
         run_id=run_id,
     )
     if run_context.session_state is not None:
-        run_context.session_state = team._load_session_state(
-            session=team_session, session_state=run_context.session_state
+        run_context.session_state = _load_session_state(
+            team, session=team_session, session_state=run_context.session_state
         )
 
     # Resolve callable dependencies AFTER state is loaded
     if run_context.dependencies is not None:
-        await team._aresolve_run_dependencies(run_context=run_context)
+        await _aresolve_run_dependencies(team, run_context=run_context)
 
     return team_session
 
@@ -156,6 +165,20 @@ def _run(
     12. Create session summary
     13. Cleanup and store (scrub, stop timer, add to session, calculate metrics, save session)
     """
+    from agno.team._hooks import _execute_post_hooks, _execute_pre_hooks
+    from agno.team._init import _disconnect_connectable_tools
+    from agno.team._managers import _start_memory_future
+    from agno.team._messages import _get_run_messages
+    from agno.team._response import (
+        _convert_response_to_structured_format,
+        _update_run_response,
+        handle_reasoning,
+        parse_response_with_output_model,
+        parse_response_with_parser_model,
+    )
+    from agno.team._telemetry import log_team_telemetry
+    from agno.team._tools import _determine_tools_for_model
+
     log_debug(f"Team Run Start: {run_response.run_id}", center=True)
 
     memory_future = None
@@ -172,7 +195,8 @@ def _run(
                 team.model = cast(Model, team.model)
                 if team.pre_hooks is not None:
                     # Can modify the run input
-                    pre_hook_iterator = team._execute_pre_hooks(
+                    pre_hook_iterator = _execute_pre_hooks(
+                        team,
                         hooks=team.pre_hooks,  # type: ignore
                         run_response=run_response,
                         run_input=run_input,
@@ -192,7 +216,8 @@ def _run(
                 # Note: MCP tool refresh is async-only by design (_check_and_refresh_mcp_tools
                 # is called in _arun/_arun_stream). Sync paths do not support MCP tools.
 
-                _tools = team._determine_tools_for_model(
+                _tools = _determine_tools_for_model(
+                    team,
                     model=team.model,
                     run_response=run_response,
                     run_context=run_context,
@@ -214,7 +239,8 @@ def _run(
                 )
 
                 # 3. Prepare run messages
-                run_messages: RunMessages = team._get_run_messages(
+                run_messages: RunMessages = _get_run_messages(
+                    team,
                     run_response=run_response,
                     session=session,
                     run_context=run_context,
@@ -234,7 +260,8 @@ def _run(
                     log_error("No messages to be sent to the model.")
 
                 # 4. Start memory creation in background thread
-                memory_future = team._start_memory_future(
+                memory_future = _start_memory_future(
+                    team,
                     run_messages=run_messages,
                     user_id=user_id,
                     existing_future=memory_future,
@@ -243,7 +270,7 @@ def _run(
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
                 # 5. Reason about the task if reasoning is enabled
-                team._handle_reasoning(run_response=run_response, run_messages=run_messages, run_context=run_context)
+                handle_reasoning(team, run_response=run_response, run_messages=run_messages, run_context=run_context)
 
                 # Check for cancellation before model call
                 raise_if_cancelled(run_response.run_id)  # type: ignore
@@ -265,13 +292,14 @@ def _run(
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
                 # If an output model is provided, generate output using the output model
-                team._parse_response_with_output_model(model_response, run_messages)
+                parse_response_with_output_model(team, model_response, run_messages)
 
                 # If a parser model is provided, structure the response separately
-                team._parse_response_with_parser_model(model_response, run_messages, run_context=run_context)
+                parse_response_with_parser_model(team, model_response, run_messages, run_context=run_context)
 
                 # 7. Update TeamRunOutput with the model response
-                team._update_run_response(
+                _update_run_response(
+                    team,
                     model_response=model_response,
                     run_response=run_response,
                     run_messages=run_messages,
@@ -283,11 +311,12 @@ def _run(
                     store_media_util(run_response, model_response)
 
                 # 9. Convert response to structured format
-                team._convert_response_to_structured_format(run_response=run_response, run_context=run_context)
+                _convert_response_to_structured_format(team, run_response=run_response, run_context=run_context)
 
                 # 10. Execute post-hooks after output is generated but before response is returned
                 if team.post_hooks is not None:
-                    iterator = team._execute_post_hooks(
+                    iterator = _execute_post_hooks(
+                        team,
                         hooks=team.post_hooks,  # type: ignore
                         run_output=run_response,
                         run_context=run_context,
@@ -320,10 +349,10 @@ def _run(
                 run_response.status = RunStatus.completed
 
                 # 13. Cleanup and store the run response
-                team._cleanup_and_store(run_response=run_response, session=session)
+                _cleanup_and_store(team, run_response=run_response, session=session)
 
                 # Log Team Telemetry
-                team._log_team_telemetry(session_id=session.session_id, run_id=run_response.run_id)
+                log_team_telemetry(team, session_id=session.session_id, run_id=run_response.run_id)
 
                 log_debug(f"Team Run End: {run_response.run_id}", center=True, symbol="*")
 
@@ -335,7 +364,7 @@ def _run(
                 run_response.content = str(e)
 
                 # Cleanup and store the run response and session
-                team._cleanup_and_store(run_response=run_response, session=session)
+                _cleanup_and_store(team, run_response=run_response, session=session)
 
                 return run_response
             except (InputCheckError, OutputCheckError) as e:
@@ -356,7 +385,7 @@ def _run(
 
                 log_error(f"Validation failed: {str(e)} | Check: {e.check_trigger}")
 
-                team._cleanup_and_store(run_response=run_response, session=session)
+                _cleanup_and_store(team, run_response=run_response, session=session)
 
                 return run_response
             except KeyboardInterrupt:
@@ -387,7 +416,7 @@ def _run(
                 log_error(f"Error in Team run: {str(e)}")
 
                 # Cleanup and store the run response and session
-                team._cleanup_and_store(run_response=run_response, session=session)
+                _cleanup_and_store(team, run_response=run_response, session=session)
 
                 return run_response
     finally:
@@ -396,7 +425,7 @@ def _run(
             memory_future.cancel()
 
         # Always disconnect connectable tools
-        team._disconnect_connectable_tools()
+        _disconnect_connectable_tools(team)
         # Always clean up the run tracking
         cleanup_run(run_response.run_id)  # type: ignore
     return run_response  # Defensive fallback for type-checker; all paths return inside the loop
@@ -431,6 +460,19 @@ def _run_stream(
     9. Create session summary
     10. Cleanup and store (scrub, add to session, calculate metrics, save session)
     """
+    from agno.team._hooks import _execute_post_hooks, _execute_pre_hooks
+    from agno.team._init import _disconnect_connectable_tools
+    from agno.team._managers import _start_memory_future
+    from agno.team._messages import _get_run_messages
+    from agno.team._response import (
+        _handle_model_response_stream,
+        generate_response_with_output_model_stream,
+        handle_reasoning_stream,
+        parse_response_with_parser_model_stream,
+    )
+    from agno.team._telemetry import log_team_telemetry
+    from agno.team._tools import _determine_tools_for_model
+
     log_debug(f"Team Run Start: {run_response.run_id}", center=True)
 
     memory_future = None
@@ -447,7 +489,8 @@ def _run_stream(
                 team.model = cast(Model, team.model)
                 if team.pre_hooks is not None:
                     # Can modify the run input
-                    pre_hook_iterator = team._execute_pre_hooks(
+                    pre_hook_iterator = _execute_pre_hooks(
+                        team,
                         hooks=team.pre_hooks,  # type: ignore
                         run_response=run_response,
                         run_context=run_context,
@@ -468,7 +511,8 @@ def _run_stream(
                 # Note: MCP tool refresh is async-only by design (_check_and_refresh_mcp_tools
                 # is called in _arun/_arun_stream). Sync paths do not support MCP tools.
 
-                _tools = team._determine_tools_for_model(
+                _tools = _determine_tools_for_model(
+                    team,
                     model=team.model,
                     run_response=run_response,
                     run_context=run_context,
@@ -490,7 +534,8 @@ def _run_stream(
                 )
 
                 # 3. Prepare run messages
-                run_messages: RunMessages = team._get_run_messages(
+                run_messages: RunMessages = _get_run_messages(
+                    team,
                     run_response=run_response,
                     run_context=run_context,
                     session=session,
@@ -510,7 +555,8 @@ def _run_stream(
                     log_error("No messages to be sent to the model.")
 
                 # 4. Start memory creation in background thread
-                memory_future = team._start_memory_future(
+                memory_future = _start_memory_future(
+                    team,
                     run_messages=run_messages,
                     user_id=user_id,
                     existing_future=memory_future,
@@ -528,7 +574,8 @@ def _run_stream(
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
                 # 5. Reason about the task if reasoning is enabled
-                yield from team._handle_reasoning_stream(
+                yield from handle_reasoning_stream(
+                    team,
                     run_response=run_response,
                     run_messages=run_messages,
                     run_context=run_context,
@@ -540,7 +587,8 @@ def _run_stream(
 
                 # 6. Get a response from the model
                 if team.output_model is None:
-                    for event in team._handle_model_response_stream(
+                    for event in _handle_model_response_stream(
+                        team,
                         session=session,
                         run_response=run_response,
                         run_messages=run_messages,
@@ -553,7 +601,8 @@ def _run_stream(
                         raise_if_cancelled(run_response.run_id)  # type: ignore
                         yield event
                 else:
-                    for event in team._handle_model_response_stream(
+                    for event in _handle_model_response_stream(
+                        team,
                         session=session,
                         run_response=run_response,
                         run_messages=run_messages,
@@ -575,7 +624,8 @@ def _run_stream(
                         else:
                             yield event
 
-                    for event in team._generate_response_with_output_model_stream(
+                    for event in generate_response_with_output_model_stream(
+                        team,
                         session=session,
                         run_response=run_response,
                         run_messages=run_messages,
@@ -588,8 +638,12 @@ def _run_stream(
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
                 # 7. Parse response with parser model if provided
-                yield from team._parse_response_with_parser_model_stream(
-                    session=session, run_response=run_response, stream_events=stream_events, run_context=run_context
+                yield from parse_response_with_parser_model_stream(
+                    team,
+                    session=session,
+                    run_response=run_response,
+                    stream_events=stream_events,
+                    run_context=run_context,
                 )
 
                 # Yield RunContentCompletedEvent
@@ -602,7 +656,8 @@ def _run_stream(
                     )
                 # Execute post-hooks after output is generated but before response is returned
                 if team.post_hooks is not None:
-                    yield from team._execute_post_hooks(
+                    yield from _execute_post_hooks(
+                        team,
                         hooks=team.post_hooks,  # type: ignore
                         run_output=run_response,
                         run_context=run_context,
@@ -667,7 +722,7 @@ def _run_stream(
                 run_response.status = RunStatus.completed
 
                 # 10. Cleanup and store the run response
-                team._cleanup_and_store(run_response=run_response, session=session)
+                _cleanup_and_store(team, run_response=run_response, session=session)
 
                 if stream_events:
                     yield completed_event
@@ -676,7 +731,7 @@ def _run_stream(
                     yield run_response
 
                 # Log Team Telemetry
-                team._log_team_telemetry(session_id=session.session_id, run_id=run_response.run_id)
+                log_team_telemetry(team, session_id=session.session_id, run_id=run_response.run_id)
 
                 log_debug(f"Team Run End: {run_response.run_id}", center=True, symbol="*")
 
@@ -694,7 +749,7 @@ def _run_stream(
                     events_to_skip=team.events_to_skip,
                     store_events=team.store_events,
                 )
-                team._cleanup_and_store(run_response=run_response, session=session)
+                _cleanup_and_store(team, run_response=run_response, session=session)
                 break
             except (InputCheckError, OutputCheckError) as e:
                 run_response.status = RunStatus.error
@@ -711,7 +766,7 @@ def _run_stream(
 
                 if run_response.content is None:
                     run_response.content = str(e)
-                team._cleanup_and_store(run_response=run_response, session=session)
+                _cleanup_and_store(team, run_response=run_response, session=session)
                 yield run_error
                 break
 
@@ -746,7 +801,7 @@ def _run_stream(
 
                 log_error(f"Error in Team run: {str(e)}")
 
-                team._cleanup_and_store(run_response=run_response, session=session)
+                _cleanup_and_store(team, run_response=run_response, session=session)
                 yield run_error
     finally:
         # Cancel background futures on error (wait_for_thread_tasks_stream handles waiting on success)
@@ -754,7 +809,7 @@ def _run_stream(
             memory_future.cancel()
 
         # Always disconnect connectable tools
-        team._disconnect_connectable_tools()
+        _disconnect_connectable_tools(team)
         # Always clean up the run tracking
         cleanup_run(run_response.run_id)  # type: ignore
 
@@ -786,7 +841,12 @@ def run(
     **kwargs: Any,
 ) -> Union[TeamRunOutput, Iterator[Union[RunOutputEvent, TeamRunOutputEvent]]]:
     """Run the Team and return the response."""
-    if team._has_async_db():
+    from agno.team._init import _has_async_db, _initialize_session, _initialize_session_state
+    from agno.team._response import get_response_format
+    from agno.team._storage import _load_session_state, _read_or_create_session, _update_metadata
+    from agno.team._utils import _get_effective_filters
+
+    if _has_async_db(team):
         raise Exception("run() is not supported with an async DB. Please use arun() instead.")
 
     # Set the id for the run
@@ -821,7 +881,7 @@ def run(
                 team.post_hooks = normalize_post_hooks(team.post_hooks)  # type: ignore
             team._hooks_normalised = True
 
-        session_id, user_id = team._initialize_session(session_id=session_id, user_id=user_id)
+        session_id, user_id = _initialize_session(team, session_id=session_id, user_id=user_id)
 
         image_artifacts, video_artifacts, audio_artifacts, file_artifacts = validate_media_object_id(
             images=images, videos=videos, audios=audio, files=files
@@ -837,18 +897,19 @@ def run(
         )
 
         # Read existing session from database
-        team_session = team._read_or_create_session(session_id=session_id, user_id=user_id)
-        team._update_metadata(session=team_session)
+        team_session = _read_or_create_session(team, session_id=session_id, user_id=user_id)
+        _update_metadata(team, session=team_session)
 
         # Initialize session state
-        session_state = team._initialize_session_state(
+        session_state = _initialize_session_state(
+            team,
             session_state=session_state if session_state is not None else {},
             user_id=user_id,
             session_id=session_id,
             run_id=run_id,
         )
         # Update session state from DB
-        session_state = team._load_session_state(session=team_session, session_state=session_state)
+        session_state = _load_session_state(team, session=team_session, session_state=session_state)
 
         dependencies_provided = dependencies is not None
         knowledge_filters_provided = knowledge_filters is not None
@@ -891,7 +952,7 @@ def run(
         #  Get knowledge filters
         effective_filters = knowledge_filters
         if team.knowledge_filters or knowledge_filters:
-            effective_filters = team._get_effective_filters(knowledge_filters)
+            effective_filters = _get_effective_filters(team, knowledge_filters)
 
         # Resolve output_schema parameter takes precedence, then fall back to team.output_schema
         if output_schema is None:
@@ -928,11 +989,11 @@ def run(
 
         # Resolve callable dependencies once before retry loop
         if run_context.dependencies is not None:
-            team._resolve_run_dependencies(run_context=run_context)
+            _resolve_run_dependencies(team, run_context=run_context)
 
         # Configure the model for runs
         response_format: Optional[Union[Dict, Type[BaseModel]]] = (
-            team._get_response_format(run_context=run_context) if team.parser_model is None else None
+            get_response_format(team, run_context=run_context) if team.parser_model is None else None
         )
 
         # Create a new run_response for this attempt
@@ -958,7 +1019,8 @@ def run(
         raise
 
     if stream:
-        return team._run_stream(
+        return _run_stream(
+            team,
             run_response=run_response,
             run_context=run_context,
             session=team_session,
@@ -975,7 +1037,8 @@ def run(
         )  # type: ignore
 
     else:
-        return team._run(
+        return _run(
+            team,
             run_response=run_response,
             run_context=run_context,
             session=team_session,
@@ -1024,6 +1087,20 @@ async def _arun(
     12. Create session summary
     13. Cleanup and store (scrub, add to session, calculate metrics, save session)
     """
+    from agno.team._hooks import _aexecute_post_hooks, _aexecute_pre_hooks
+    from agno.team._init import _disconnect_connectable_tools, _disconnect_mcp_tools
+    from agno.team._managers import _astart_memory_task
+    from agno.team._messages import _aget_run_messages
+    from agno.team._response import (
+        _convert_response_to_structured_format,
+        _update_run_response,
+        agenerate_response_with_output_model,
+        ahandle_reasoning,
+        aparse_response_with_parser_model,
+    )
+    from agno.team._telemetry import alog_team_telemetry
+    from agno.team._tools import _check_and_refresh_mcp_tools, _determine_tools_for_model
+
     await aregister_run(run_context.run_id)
     log_debug(f"Team Run Start: {run_response.run_id}", center=True)
     memory_task = None
@@ -1049,7 +1126,8 @@ async def _arun(
 
                 # 1. Execute pre-hooks after session is loaded but before processing starts
                 if team.pre_hooks is not None:
-                    pre_hook_iterator = team._aexecute_pre_hooks(
+                    pre_hook_iterator = _aexecute_pre_hooks(
+                        team,
                         hooks=team.pre_hooks,  # type: ignore
                         run_response=run_response,
                         run_context=run_context,
@@ -1068,8 +1146,11 @@ async def _arun(
                 # 2. Determine tools for model
                 team_run_context: Dict[str, Any] = {}
                 team.model = cast(Model, team.model)
-                await team._check_and_refresh_mcp_tools()
-                _tools = team._determine_tools_for_model(
+                await _check_and_refresh_mcp_tools(
+                    team,
+                )
+                _tools = _determine_tools_for_model(
+                    team,
                     model=team.model,
                     run_response=run_response,
                     run_context=run_context,
@@ -1091,7 +1172,8 @@ async def _arun(
                 )
 
                 # 3. Prepare run messages
-                run_messages = await team._aget_run_messages(
+                run_messages = await _aget_run_messages(
+                    team,
                     run_response=run_response,
                     run_context=run_context,
                     session=team_session,  # type: ignore
@@ -1111,7 +1193,8 @@ async def _arun(
                 team.model = cast(Model, team.model)
 
                 # 4. Start memory creation in background task
-                memory_task = await team._astart_memory_task(
+                memory_task = await _astart_memory_task(
+                    team,
                     run_messages=run_messages,
                     user_id=user_id,
                     existing_task=memory_task,
@@ -1119,8 +1202,8 @@ async def _arun(
 
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
                 # 5. Reason about the task if reasoning is enabled
-                await team._ahandle_reasoning(
-                    run_response=run_response, run_messages=run_messages, run_context=run_context
+                await ahandle_reasoning(
+                    team, run_response=run_response, run_messages=run_messages, run_context=run_context
                 )
 
                 # Check for cancellation before model call
@@ -1142,17 +1225,18 @@ async def _arun(
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 
                 # If an output model is provided, generate output using the output model
-                await team._agenerate_response_with_output_model(
-                    model_response=model_response, run_messages=run_messages
+                await agenerate_response_with_output_model(
+                    team, model_response=model_response, run_messages=run_messages
                 )
 
                 # If a parser model is provided, structure the response separately
-                await team._aparse_response_with_parser_model(
-                    model_response=model_response, run_messages=run_messages, run_context=run_context
+                await aparse_response_with_parser_model(
+                    team, model_response=model_response, run_messages=run_messages, run_context=run_context
                 )
 
                 # 7. Update TeamRunOutput with the model response
-                team._update_run_response(
+                _update_run_response(
+                    team,
                     model_response=model_response,
                     run_response=run_response,
                     run_messages=run_messages,
@@ -1164,11 +1248,12 @@ async def _arun(
                     store_media_util(run_response, model_response)
 
                 # 9. Convert response to structured format
-                team._convert_response_to_structured_format(run_response=run_response, run_context=run_context)
+                _convert_response_to_structured_format(team, run_response=run_response, run_context=run_context)
 
                 # 10. Execute post-hooks after output is generated but before response is returned
                 if team.post_hooks is not None:
-                    async for _ in team._aexecute_post_hooks(
+                    async for _ in _aexecute_post_hooks(
+                        team,
                         hooks=team.post_hooks,  # type: ignore
                         run_output=run_response,
                         run_context=run_context,
@@ -1199,10 +1284,10 @@ async def _arun(
                 run_response.status = RunStatus.completed
 
                 # 13. Cleanup and store the run response and session
-                await team._acleanup_and_store(run_response=run_response, session=team_session)
+                await _acleanup_and_store(team, run_response=run_response, session=team_session)
 
                 # Log Team Telemetry
-                await team._alog_team_telemetry(session_id=team_session.session_id, run_id=run_response.run_id)
+                await alog_team_telemetry(team, session_id=team_session.session_id, run_id=run_response.run_id)
 
                 log_debug(f"Team Run End: {run_response.run_id}", center=True, symbol="*")
 
@@ -1215,7 +1300,7 @@ async def _arun(
                 run_response.status = RunStatus.cancelled
 
                 # Cleanup and store the run response and session
-                await team._acleanup_and_store(run_response=run_response, session=team_session)
+                await _acleanup_and_store(team, run_response=run_response, session=team_session)
 
                 return run_response
 
@@ -1234,7 +1319,7 @@ async def _arun(
 
                 log_error(f"Validation failed: {str(e)} | Check: {e.check_trigger}")
 
-                await team._acleanup_and_store(run_response=run_response, session=team_session)
+                await _acleanup_and_store(team, run_response=run_response, session=team_session)
 
                 return run_response
 
@@ -1266,13 +1351,13 @@ async def _arun(
                 log_error(f"Error in Team run: {str(e)}")
 
                 # Cleanup and store the run response and session
-                await team._acleanup_and_store(run_response=run_response, session=team_session)
+                await _acleanup_and_store(team, run_response=run_response, session=team_session)
 
                 return run_response
     finally:
         # Always disconnect connectable tools
-        team._disconnect_connectable_tools()
-        await team._disconnect_mcp_tools()
+        _disconnect_connectable_tools(team)
+        await _disconnect_mcp_tools(team)
 
         # Cancel background task on error (await_for_open_threads handles waiting on success)
         if memory_task is not None and not memory_task.done():
@@ -1321,6 +1406,19 @@ async def _arun_stream(
     9. Create session summary
     10. Cleanup and store (scrub, add to session, calculate metrics, save session)
     """
+    from agno.team._hooks import _aexecute_post_hooks, _aexecute_pre_hooks
+    from agno.team._init import _disconnect_connectable_tools, _disconnect_mcp_tools
+    from agno.team._managers import _astart_memory_task
+    from agno.team._messages import _aget_run_messages
+    from agno.team._response import (
+        _ahandle_model_response_stream,
+        agenerate_response_with_output_model_stream,
+        ahandle_reasoning_stream,
+        aparse_response_with_parser_model_stream,
+    )
+    from agno.team._telemetry import alog_team_telemetry
+    from agno.team._tools import _check_and_refresh_mcp_tools, _determine_tools_for_model
+
     log_debug(f"Team Run Start: {run_response.run_id}", center=True)
 
     await aregister_run(run_context.run_id)
@@ -1348,7 +1446,8 @@ async def _arun_stream(
                 run_input = cast(TeamRunInput, run_response.input)
                 team.model = cast(Model, team.model)
                 if team.pre_hooks is not None:
-                    pre_hook_iterator = team._aexecute_pre_hooks(
+                    pre_hook_iterator = _aexecute_pre_hooks(
+                        team,
                         hooks=team.pre_hooks,  # type: ignore
                         run_response=run_response,
                         run_context=run_context,
@@ -1366,8 +1465,11 @@ async def _arun_stream(
                 # 2. Determine tools for model
                 team_run_context: Dict[str, Any] = {}
                 team.model = cast(Model, team.model)
-                await team._check_and_refresh_mcp_tools()
-                _tools = team._determine_tools_for_model(
+                await _check_and_refresh_mcp_tools(
+                    team,
+                )
+                _tools = _determine_tools_for_model(
+                    team,
                     model=team.model,
                     run_response=run_response,
                     run_context=run_context,
@@ -1389,7 +1491,8 @@ async def _arun_stream(
                 )
 
                 # 3. Prepare run messages
-                run_messages = await team._aget_run_messages(
+                run_messages = await _aget_run_messages(
+                    team,
                     run_response=run_response,
                     run_context=run_context,
                     session=team_session,  # type: ignore
@@ -1407,7 +1510,8 @@ async def _arun_stream(
                 )
 
                 # 4. Start memory creation in background task
-                memory_task = await team._astart_memory_task(
+                memory_task = await _astart_memory_task(
+                    team,
                     run_messages=run_messages,
                     user_id=user_id,
                     existing_task=memory_task,
@@ -1423,7 +1527,8 @@ async def _arun_stream(
                     )
 
                 # 5. Reason about the task if reasoning is enabled
-                async for item in team._ahandle_reasoning_stream(
+                async for item in ahandle_reasoning_stream(
+                    team,
                     run_response=run_response,
                     run_messages=run_messages,
                     run_context=run_context,
@@ -1437,7 +1542,8 @@ async def _arun_stream(
 
                 # 6. Get a response from the model
                 if team.output_model is None:
-                    async for event in team._ahandle_model_response_stream(
+                    async for event in _ahandle_model_response_stream(
+                        team,
                         session=team_session,
                         run_response=run_response,
                         run_messages=run_messages,
@@ -1450,7 +1556,8 @@ async def _arun_stream(
                         await araise_if_cancelled(run_response.run_id)  # type: ignore
                         yield event
                 else:
-                    async for event in team._ahandle_model_response_stream(
+                    async for event in _ahandle_model_response_stream(
+                        team,
                         session=team_session,
                         run_response=run_response,
                         run_messages=run_messages,
@@ -1472,7 +1579,8 @@ async def _arun_stream(
                         else:
                             yield event
 
-                    async for event in team._agenerate_response_with_output_model_stream(
+                    async for event in agenerate_response_with_output_model_stream(
+                        team,
                         session=team_session,
                         run_response=run_response,
                         run_messages=run_messages,
@@ -1485,7 +1593,8 @@ async def _arun_stream(
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 
                 # 7. Parse response with parser model if provided
-                async for event in team._aparse_response_with_parser_model_stream(
+                async for event in aparse_response_with_parser_model_stream(
+                    team,
                     session=team_session,
                     run_response=run_response,
                     stream_events=stream_events,
@@ -1504,7 +1613,8 @@ async def _arun_stream(
 
                 # Execute post-hooks after output is generated but before response is returned
                 if team.post_hooks is not None:
-                    async for event in team._aexecute_post_hooks(
+                    async for event in _aexecute_post_hooks(
+                        team,
                         hooks=team.post_hooks,  # type: ignore
                         run_output=run_response,
                         run_context=run_context,
@@ -1571,7 +1681,7 @@ async def _arun_stream(
                 run_response.status = RunStatus.completed
 
                 # 10. Cleanup and store the run response and session
-                await team._acleanup_and_store(run_response=run_response, session=team_session)
+                await _acleanup_and_store(team, run_response=run_response, session=team_session)
 
                 if stream_events:
                     yield completed_event
@@ -1580,7 +1690,7 @@ async def _arun_stream(
                     yield run_response
 
                 # Log Team Telemetry
-                await team._alog_team_telemetry(session_id=team_session.session_id, run_id=run_response.run_id)
+                await alog_team_telemetry(team, session_id=team_session.session_id, run_id=run_response.run_id)
 
                 log_debug(f"Team Run End: {run_response.run_id}", center=True, symbol="*")
                 break
@@ -1599,7 +1709,7 @@ async def _arun_stream(
                 )
 
                 # Cleanup and store the run response and session
-                await team._acleanup_and_store(run_response=run_response, session=team_session)
+                await _acleanup_and_store(team, run_response=run_response, session=team_session)
                 break
 
             except (InputCheckError, OutputCheckError) as e:
@@ -1617,7 +1727,7 @@ async def _arun_stream(
 
                 log_error(f"Validation failed: {str(e)} | Check: {e.check_trigger}")
 
-                await team._acleanup_and_store(run_response=run_response, session=team_session)
+                await _acleanup_and_store(team, run_response=run_response, session=team_session)
 
                 yield run_error
 
@@ -1656,14 +1766,14 @@ async def _arun_stream(
                 log_error(f"Error in Team run: {str(e)}")
 
                 # Cleanup and store the run response and session
-                await team._acleanup_and_store(run_response=run_response, session=team_session)
+                await _acleanup_and_store(team, run_response=run_response, session=team_session)
 
                 yield run_error
 
     finally:
         # Always disconnect connectable tools
-        team._disconnect_connectable_tools()
-        await team._disconnect_mcp_tools()
+        _disconnect_connectable_tools(team)
+        await _disconnect_mcp_tools(team)
 
         # Cancel background task on error (await_for_thread_tasks_stream handles waiting on success)
         if memory_task is not None and not memory_task.done():
@@ -1706,6 +1816,10 @@ def arun(  # type: ignore
     """Run the Team asynchronously and return the response."""
 
     # Set the id for the run and register it immediately for cancellation tracking
+    from agno.team._init import _initialize_session
+    from agno.team._response import get_response_format
+    from agno.team._utils import _get_effective_filters
+
     run_id = run_id or str(uuid4())
 
     if (add_history_to_context or team.add_history_to_context) and not team.db and not team.parent_team_id:
@@ -1733,7 +1847,7 @@ def arun(  # type: ignore
             team.post_hooks = normalize_post_hooks(team.post_hooks, async_mode=True)  # type: ignore
         team._hooks_normalised = True
 
-    session_id, user_id = team._initialize_session(session_id=session_id, user_id=user_id)
+    session_id, user_id = _initialize_session(team, session_id=session_id, user_id=user_id)
 
     image_artifacts, video_artifacts, audio_artifacts, file_artifacts = validate_media_object_id(
         images=images, videos=videos, audios=audio, files=files
@@ -1785,7 +1899,7 @@ def arun(  # type: ignore
     #  Get knowledge filters
     effective_filters = knowledge_filters
     if team.knowledge_filters or knowledge_filters:
-        effective_filters = team._get_effective_filters(knowledge_filters)
+        effective_filters = _get_effective_filters(team, knowledge_filters)
 
     # Resolve output_schema parameter takes precedence, then fall back to team.output_schema
     if output_schema is None:
@@ -1822,7 +1936,7 @@ def arun(  # type: ignore
 
     # Configure the model for runs
     response_format: Optional[Union[Dict, Type[BaseModel]]] = (
-        team._get_response_format(run_context=run_context) if team.parser_model is None else None
+        get_response_format(team, run_context=run_context) if team.parser_model is None else None
     )
 
     # Create a new run_response for this attempt
@@ -1845,7 +1959,8 @@ def arun(  # type: ignore
     run_response.metrics.start_timer()
 
     if stream:
-        return team._arun_stream(  # type: ignore
+        return _arun_stream(
+            team,  # type: ignore
             run_response=run_response,
             run_context=run_context,
             session_id=session_id,
@@ -1861,7 +1976,8 @@ def arun(  # type: ignore
             **kwargs,
         )
     else:
-        return team._arun(  # type: ignore
+        return _arun(
+            team,  # type: ignore
             run_response=run_response,
             run_context=run_context,
             session_id=session_id,
@@ -1913,7 +2029,9 @@ def _update_team_media(team: "Team", run_response: Union[TeamRunOutput, RunOutpu
 
 def _cleanup_and_store(team: "Team", run_response: TeamRunOutput, session: TeamSession) -> None:
     #  Scrub the stored run based on storage flags
-    team._scrub_run_output_for_storage(run_response)
+    from agno.team._response import update_session_metrics
+
+    _scrub_run_output_for_storage(team, run_response)
 
     # Stop the timer for the Run duration
     if run_response.metrics:
@@ -1923,7 +2041,7 @@ def _cleanup_and_store(team: "Team", run_response: TeamRunOutput, session: TeamS
     session.upsert_run(run_response=run_response)
 
     # Calculate session metrics
-    team._update_session_metrics(session=session, run_response=run_response)
+    update_session_metrics(team, session=session, run_response=run_response)
 
     # Save session to memory
     team.save_session(session=session)
@@ -1931,7 +2049,9 @@ def _cleanup_and_store(team: "Team", run_response: TeamRunOutput, session: TeamS
 
 async def _acleanup_and_store(team: "Team", run_response: TeamRunOutput, session: TeamSession) -> None:
     #  Scrub the stored run based on storage flags
-    team._scrub_run_output_for_storage(run_response)
+    from agno.team._response import update_session_metrics
+
+    _scrub_run_output_for_storage(team, run_response)
 
     # Stop the timer for the Run duration
     if run_response.metrics:
@@ -1941,7 +2061,7 @@ async def _acleanup_and_store(team: "Team", run_response: TeamRunOutput, session
     session.upsert_run(run_response=run_response)
 
     # Calculate session metrics
-    team._update_session_metrics(session=session, run_response=run_response)
+    update_session_metrics(team, session=session, run_response=run_response)
 
     # Save session to memory
     await team.asave_session(session=session)
@@ -1981,6 +2101,7 @@ def _scrub_member_responses(team: "Team", member_responses: List[Union[TeamRunOu
     This is called when saving the team session to ensure member data is scrubbed per member settings.
     Recursively handles nested team's member responses.
     """
+    from agno.team._tools import _find_member_by_id
     from agno.team.team import Team
 
     for member_response in member_responses:
@@ -1994,7 +2115,7 @@ def _scrub_member_responses(team: "Team", member_responses: List[Union[TeamRunOu
             log_info("Skipping member response with no ID")
             continue
 
-        member_result = team._find_member_by_id(member_id)
+        member_result = _find_member_by_id(team, member_id)
         if not member_result:
             log_debug(f"Could not find member with ID: {member_id}")
             continue

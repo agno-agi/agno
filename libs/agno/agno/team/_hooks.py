@@ -58,6 +58,8 @@ def _execute_pre_hooks(
     **kwargs: Any,
 ) -> Iterator[TeamRunOutputEvent]:
     """Execute multiple pre-hook functions in succession."""
+    from agno.team._init import _set_debug
+
     if hooks is None:
         return
 
@@ -129,7 +131,7 @@ def _execute_pre_hooks(
             log_exception(e)
         finally:
             # Reset global log mode incase an agent in the pre-hook changed it
-            team._set_debug(debug_mode=debug_mode)
+            _set_debug(team, debug_mode=debug_mode)
 
     # Update the input on the run_response
     run_response.input = run_input
@@ -149,6 +151,8 @@ async def _aexecute_pre_hooks(
     **kwargs: Any,
 ) -> AsyncIterator[TeamRunOutputEvent]:
     """Execute multiple pre-hook functions in succession (async version)."""
+    from agno.team._init import _set_debug
+
     if hooks is None:
         return
 
@@ -226,7 +230,7 @@ async def _aexecute_pre_hooks(
             log_exception(e)
         finally:
             # Reset global log mode incase an agent in the pre-hook changed it
-            team._set_debug(debug_mode=debug_mode)
+            _set_debug(team, debug_mode=debug_mode)
 
     # Update the input on the run_response
     run_response.input = run_input
@@ -245,6 +249,8 @@ def _execute_post_hooks(
     **kwargs: Any,
 ) -> Iterator[TeamRunOutputEvent]:
     """Execute multiple post-hook functions in succession."""
+    from agno.team._init import _set_debug
+
     if hooks is None:
         return
 
@@ -317,7 +323,7 @@ def _execute_post_hooks(
             log_exception(e)
         finally:
             # Reset global log mode incase an agent in the post-hook changed it
-            team._set_debug(debug_mode=debug_mode)
+            _set_debug(team, debug_mode=debug_mode)
 
 
 async def _aexecute_post_hooks(
@@ -333,6 +339,8 @@ async def _aexecute_post_hooks(
     **kwargs: Any,
 ) -> AsyncIterator[TeamRunOutputEvent]:
     """Execute multiple post-hook functions in succession (async version)."""
+    from agno.team._init import _set_debug
+
     if hooks is None:
         return
 
@@ -409,4 +417,4 @@ async def _aexecute_post_hooks(
             log_exception(e)
         finally:
             # Reset global log mode incase an agent in the post-hook changed it
-            team._set_debug(debug_mode=debug_mode)
+            _set_debug(team, debug_mode=debug_mode)

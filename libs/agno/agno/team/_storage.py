@@ -114,6 +114,7 @@ def _read_or_create_session(team: "Team", session_id: str, user_id: Optional[str
     from time import time
 
     from agno.session.team import TeamSession
+    from agno.team._telemetry import get_team_data
 
     # Return existing session if we have one
     if team._cached_session is not None and team._cached_session.session_id == session_id:
@@ -122,7 +123,7 @@ def _read_or_create_session(team: "Team", session_id: str, user_id: Optional[str
     # Try to load from database
     team_session = None
     if team.db is not None and team.parent_team_id is None and team.workflow_id is None:
-        team_session = cast(TeamSession, team._read_session(session_id=session_id))
+        team_session = cast(TeamSession, _read_session(team, session_id=session_id))
 
     # Create new session if none found
     if team_session is None:
@@ -136,7 +137,7 @@ def _read_or_create_session(team: "Team", session_id: str, user_id: Optional[str
             session_id=session_id,
             team_id=team.id,
             user_id=user_id,
-            team_data=team._get_team_data(),
+            team_data=get_team_data(team),
             session_data=session_data,
             metadata=team.metadata,
             created_at=int(time()),
@@ -172,6 +173,8 @@ async def _aread_or_create_session(team: "Team", session_id: str, user_id: Optio
     from time import time
 
     from agno.session.team import TeamSession
+    from agno.team._init import _has_async_db
+    from agno.team._telemetry import get_team_data
 
     # Return existing session if we have one
     if team._cached_session is not None and team._cached_session.session_id == session_id:
@@ -180,10 +183,10 @@ async def _aread_or_create_session(team: "Team", session_id: str, user_id: Optio
     # Try to load from database
     team_session = None
     if team.db is not None and team.parent_team_id is None and team.workflow_id is None:
-        if team._has_async_db():
-            team_session = cast(TeamSession, await team._aread_session(session_id=session_id))
+        if _has_async_db(team):
+            team_session = cast(TeamSession, await _aread_session(team, session_id=session_id))
         else:
-            team_session = cast(TeamSession, team._read_session(session_id=session_id))
+            team_session = cast(TeamSession, _read_session(team, session_id=session_id))
 
     # Create new session if none found
     if team_session is None:
@@ -197,7 +200,7 @@ async def _aread_or_create_session(team: "Team", session_id: str, user_id: Optio
             session_id=session_id,
             team_id=team.id,
             user_id=user_id,
-            team_data=team._get_team_data(),
+            team_data=get_team_data(team),
             session_data=session_data,
             metadata=team.metadata,
             created_at=int(time()),
