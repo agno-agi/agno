@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import asyncio
-from concurrent.futures import Future
 from dataclasses import dataclass
 from typing import (
     Any,
@@ -24,7 +22,7 @@ from pydantic import BaseModel
 
 from agno.agent import Agent
 from agno.compression.manager import CompressionManager
-from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, SessionType, UserMemory
+from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, UserMemory
 from agno.eval.base import BaseEval
 from agno.filters import FilterExpr
 from agno.guardrails import BaseGuardrail
@@ -38,19 +36,16 @@ from agno.models.response import ModelResponse
 from agno.registry.registry import Registry
 from agno.run import RunContext, RunStatus
 from agno.run.agent import RunEvent, RunOutput, RunOutputEvent
-from agno.run.messages import RunMessages
 from agno.run.team import (
     TeamRunEvent,
-    TeamRunInput,
     TeamRunOutput,
     TeamRunOutputEvent,
 )
-from agno.session import SessionSummaryManager, TeamSession, WorkflowSession
+from agno.session import SessionSummaryManager, TeamSession
 from agno.session.summary import SessionSummary
 from agno.team import (
     _cli,
     _default_tools,
-    _hooks,
     _init,
     _managers,
     _messages,
@@ -58,7 +53,6 @@ from agno.team import (
     _run,
     _session,
     _storage,
-    _telemetry,
     _tools,
     _utils,
 )
@@ -598,13 +592,6 @@ class Team:
     def set_id(self) -> None:
         return _init.set_id(self)
 
-    def _set_debug(self, debug_mode: Optional[bool] = None) -> None:
-        # Get the debug level from the environment variable or the default debug level
-        return _init._set_debug(self, debug_mode=debug_mode)
-
-    def _set_telemetry(self) -> None:
-        return _init._set_telemetry(self)
-
     def _initialize_member(self, member: Union["Team", Agent], debug_mode: Optional[bool] = None) -> None:
         # Set debug mode for all members
         return _init._initialize_member(self, member=member, debug_mode=debug_mode)
@@ -615,39 +602,6 @@ class Team:
     def _set_default_model(self) -> None:
         # Set the default model
         return _init._set_default_model(self)
-
-    def _set_memory_manager(self) -> None:
-        return _init._set_memory_manager(self)
-
-    def _set_session_summary_manager(self) -> None:
-        return _init._set_session_summary_manager(self)
-
-    def _set_compression_manager(self) -> None:
-        return _init._set_compression_manager(self)
-
-    def _initialize_session(
-        self,
-        session_id: Optional[str] = None,
-        user_id: Optional[str] = None,
-    ) -> Tuple[str, Optional[str]]:
-        return _init._initialize_session(self, session_id=session_id, user_id=user_id)
-
-    def _initialize_session_state(
-        self,
-        session_state: Dict[str, Any],
-        user_id: Optional[str] = None,
-        session_id: Optional[str] = None,
-        run_id: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        return _init._initialize_session_state(
-            self, session_state=session_state, user_id=user_id, session_id=session_id, run_id=run_id
-        )
-
-    def _has_async_db(self) -> bool:
-        return _init._has_async_db(self)
-
-    def _resolve_models(self) -> None:
-        return _init._resolve_models(self)
 
     def initialize_team(self, debug_mode: Optional[bool] = None) -> None:
         # Make sure for the team, we are using the team logger
@@ -666,186 +620,6 @@ class Team:
     @staticmethod
     async def acancel_run(run_id: str) -> bool:
         return await _run.acancel_run(run_id=run_id)
-
-    async def _connect_mcp_tools(self) -> None:
-        return await _init._connect_mcp_tools(self)
-
-    async def _disconnect_mcp_tools(self) -> None:
-        return await _init._disconnect_mcp_tools(self)
-
-    def _connect_connectable_tools(self) -> None:
-        return _init._connect_connectable_tools(self)
-
-    def _disconnect_connectable_tools(self) -> None:
-        return _init._disconnect_connectable_tools(self)
-
-    def _execute_pre_hooks(
-        self,
-        hooks: Optional[List[Callable[..., Any]]],
-        run_response: TeamRunOutput,
-        run_input: TeamRunInput,
-        session: TeamSession,
-        run_context: RunContext,
-        user_id: Optional[str] = None,
-        debug_mode: Optional[bool] = None,
-        stream_events: bool = False,
-        background_tasks: Optional[Any] = None,
-        **kwargs: Any,
-    ) -> Iterator[TeamRunOutputEvent]:
-        yield from _hooks._execute_pre_hooks(
-            self,
-            hooks=hooks,
-            run_response=run_response,
-            run_input=run_input,
-            session=session,
-            run_context=run_context,
-            user_id=user_id,
-            debug_mode=debug_mode,
-            stream_events=stream_events,
-            background_tasks=background_tasks,
-            **kwargs,
-        )
-
-    async def _aexecute_pre_hooks(
-        self,
-        hooks: Optional[List[Callable[..., Any]]],
-        run_response: TeamRunOutput,
-        run_input: TeamRunInput,
-        session: TeamSession,
-        run_context: RunContext,
-        user_id: Optional[str] = None,
-        debug_mode: Optional[bool] = None,
-        stream_events: bool = False,
-        background_tasks: Optional[Any] = None,
-        **kwargs: Any,
-    ) -> AsyncIterator[TeamRunOutputEvent]:
-        async for _item_ in _hooks._aexecute_pre_hooks(
-            self,
-            hooks=hooks,
-            run_response=run_response,
-            run_input=run_input,
-            session=session,
-            run_context=run_context,
-            user_id=user_id,
-            debug_mode=debug_mode,
-            stream_events=stream_events,
-            background_tasks=background_tasks,
-            **kwargs,
-        ):
-            yield _item_
-
-    def _execute_post_hooks(
-        self,
-        hooks: Optional[List[Callable[..., Any]]],
-        run_output: TeamRunOutput,
-        session: TeamSession,
-        run_context: RunContext,
-        user_id: Optional[str] = None,
-        debug_mode: Optional[bool] = None,
-        stream_events: bool = False,
-        background_tasks: Optional[Any] = None,
-        **kwargs: Any,
-    ) -> Iterator[TeamRunOutputEvent]:
-        yield from _hooks._execute_post_hooks(
-            self,
-            hooks=hooks,
-            run_output=run_output,
-            session=session,
-            run_context=run_context,
-            user_id=user_id,
-            debug_mode=debug_mode,
-            stream_events=stream_events,
-            background_tasks=background_tasks,
-            **kwargs,
-        )
-
-    async def _aexecute_post_hooks(
-        self,
-        hooks: Optional[List[Callable[..., Any]]],
-        run_output: TeamRunOutput,
-        session: TeamSession,
-        run_context: RunContext,
-        user_id: Optional[str] = None,
-        debug_mode: Optional[bool] = None,
-        stream_events: bool = False,
-        background_tasks: Optional[Any] = None,
-        **kwargs: Any,
-    ) -> AsyncIterator[TeamRunOutputEvent]:
-        async for _item_ in _hooks._aexecute_post_hooks(
-            self,
-            hooks=hooks,
-            run_output=run_output,
-            session=session,
-            run_context=run_context,
-            user_id=user_id,
-            debug_mode=debug_mode,
-            stream_events=stream_events,
-            background_tasks=background_tasks,
-            **kwargs,
-        ):
-            yield _item_
-
-    def _run(
-        self,
-        run_response: TeamRunOutput,
-        session: TeamSession,
-        run_context: RunContext,
-        user_id: Optional[str] = None,
-        add_history_to_context: Optional[bool] = None,
-        add_dependencies_to_context: Optional[bool] = None,
-        add_session_state_to_context: Optional[bool] = None,
-        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        debug_mode: Optional[bool] = None,
-        background_tasks: Optional[Any] = None,
-        **kwargs: Any,
-    ) -> TeamRunOutput:
-        return _run._run(
-            self,
-            run_response=run_response,
-            session=session,
-            run_context=run_context,
-            user_id=user_id,
-            add_history_to_context=add_history_to_context,
-            add_dependencies_to_context=add_dependencies_to_context,
-            add_session_state_to_context=add_session_state_to_context,
-            response_format=response_format,
-            debug_mode=debug_mode,
-            background_tasks=background_tasks,
-            **kwargs,
-        )
-
-    def _run_stream(
-        self,
-        run_response: TeamRunOutput,
-        run_context: RunContext,
-        session: TeamSession,
-        user_id: Optional[str] = None,
-        add_history_to_context: Optional[bool] = None,
-        add_dependencies_to_context: Optional[bool] = None,
-        add_session_state_to_context: Optional[bool] = None,
-        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        stream_events: bool = False,
-        yield_run_output: bool = False,
-        debug_mode: Optional[bool] = None,
-        background_tasks: Optional[Any] = None,
-        **kwargs: Any,
-    ) -> Iterator[Union[TeamRunOutputEvent, RunOutputEvent, TeamRunOutput]]:
-        yield from _run._run_stream(
-            self,
-            run_response=run_response,
-            run_context=run_context,
-            session=session,
-            user_id=user_id,
-            add_history_to_context=add_history_to_context,
-            add_dependencies_to_context=add_dependencies_to_context,
-            add_session_state_to_context=add_session_state_to_context,
-            response_format=response_format,
-            stream_events=stream_events,
-            yield_run_output=yield_run_output,
-            debug_mode=debug_mode,
-            background_tasks=background_tasks,
-            **kwargs,
-        )
 
     @overload
     def run(
@@ -954,69 +728,6 @@ class Team:
             **kwargs,
         )
 
-    async def _arun(
-        self,
-        run_response: TeamRunOutput,
-        run_context: RunContext,
-        session_id: str,
-        user_id: Optional[str] = None,
-        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        add_dependencies_to_context: Optional[bool] = None,
-        add_session_state_to_context: Optional[bool] = None,
-        add_history_to_context: Optional[bool] = None,
-        debug_mode: Optional[bool] = None,
-        background_tasks: Optional[Any] = None,
-        **kwargs: Any,
-    ) -> TeamRunOutput:
-        return await _run._arun(
-            self,
-            run_response=run_response,
-            run_context=run_context,
-            session_id=session_id,
-            user_id=user_id,
-            response_format=response_format,
-            add_dependencies_to_context=add_dependencies_to_context,
-            add_session_state_to_context=add_session_state_to_context,
-            add_history_to_context=add_history_to_context,
-            debug_mode=debug_mode,
-            background_tasks=background_tasks,
-            **kwargs,
-        )
-
-    async def _arun_stream(
-        self,
-        run_response: TeamRunOutput,
-        run_context: RunContext,
-        session_id: str,
-        user_id: Optional[str] = None,
-        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        stream_events: bool = False,
-        yield_run_output: bool = False,
-        add_dependencies_to_context: Optional[bool] = None,
-        add_session_state_to_context: Optional[bool] = None,
-        add_history_to_context: Optional[bool] = None,
-        debug_mode: Optional[bool] = None,
-        background_tasks: Optional[Any] = None,
-        **kwargs: Any,
-    ) -> AsyncIterator[Union[TeamRunOutputEvent, RunOutputEvent, TeamRunOutput]]:
-        async for _item_ in _run._arun_stream(
-            self,
-            run_response=run_response,
-            run_context=run_context,
-            session_id=session_id,
-            user_id=user_id,
-            response_format=response_format,
-            stream_events=stream_events,
-            yield_run_output=yield_run_output,
-            add_dependencies_to_context=add_dependencies_to_context,
-            add_session_state_to_context=add_session_state_to_context,
-            add_history_to_context=add_history_to_context,
-            debug_mode=debug_mode,
-            background_tasks=background_tasks,
-            **kwargs,
-        ):
-            yield _item_
-
     @overload
     async def arun(
         self,
@@ -1124,69 +835,6 @@ class Team:
             **kwargs,
         )
 
-    def _update_run_response(
-        self,
-        model_response: ModelResponse,
-        run_response: TeamRunOutput,
-        run_messages: RunMessages,
-        run_context: Optional[RunContext] = None,
-    ):
-        # Get output_schema from run_context
-        return _response._update_run_response(
-            self,
-            model_response=model_response,
-            run_response=run_response,
-            run_messages=run_messages,
-            run_context=run_context,
-        )
-
-    def _handle_model_response_stream(
-        self,
-        session: TeamSession,
-        run_response: TeamRunOutput,
-        run_messages: RunMessages,
-        tools: Optional[List[Union[Function, dict]]] = None,
-        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        stream_events: bool = False,
-        session_state: Optional[Dict[str, Any]] = None,
-        run_context: Optional[RunContext] = None,
-    ) -> Iterator[Union[TeamRunOutputEvent, RunOutputEvent]]:
-        yield from _response._handle_model_response_stream(
-            self,
-            session=session,
-            run_response=run_response,
-            run_messages=run_messages,
-            tools=tools,
-            response_format=response_format,
-            stream_events=stream_events,
-            session_state=session_state,
-            run_context=run_context,
-        )
-
-    async def _ahandle_model_response_stream(
-        self,
-        session: TeamSession,
-        run_response: TeamRunOutput,
-        run_messages: RunMessages,
-        tools: Optional[List[Union[Function, dict]]] = None,
-        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        stream_events: bool = False,
-        session_state: Optional[Dict[str, Any]] = None,
-        run_context: Optional[RunContext] = None,
-    ) -> AsyncIterator[Union[TeamRunOutputEvent, RunOutputEvent]]:
-        async for _item_ in _response._ahandle_model_response_stream(
-            self,
-            session=session,
-            run_response=run_response,
-            run_messages=run_messages,
-            tools=tools,
-            response_format=response_format,
-            stream_events=stream_events,
-            session_state=session_state,
-            run_context=run_context,
-        ):
-            yield _item_
-
     def _handle_model_response_chunk(
         self,
         session: TeamSession,
@@ -1210,56 +858,6 @@ class Team:
             parse_structured_output=parse_structured_output,
             session_state=session_state,
             run_context=run_context,
-        )
-
-    def _convert_response_to_structured_format(
-        self, run_response: Union[TeamRunOutput, RunOutput, ModelResponse], run_context: Optional[RunContext] = None
-    ):
-        # Get output_schema from run_context
-        return _response._convert_response_to_structured_format(
-            self, run_response=run_response, run_context=run_context
-        )
-
-    def _cleanup_and_store(self, run_response: TeamRunOutput, session: TeamSession) -> None:
-        #  Scrub the stored run based on storage flags
-        return _run._cleanup_and_store(self, run_response=run_response, session=session)
-
-    async def _acleanup_and_store(self, run_response: TeamRunOutput, session: TeamSession) -> None:
-        #  Scrub the stored run based on storage flags
-        return await _run._acleanup_and_store(self, run_response=run_response, session=session)
-
-    def _make_memories(
-        self,
-        run_messages: RunMessages,
-        user_id: Optional[str] = None,
-    ):
-        return _managers._make_memories(self, run_messages=run_messages, user_id=user_id)
-
-    async def _amake_memories(
-        self,
-        run_messages: RunMessages,
-        user_id: Optional[str] = None,
-    ):
-        return await _managers._amake_memories(self, run_messages=run_messages, user_id=user_id)
-
-    async def _astart_memory_task(
-        self,
-        run_messages: RunMessages,
-        user_id: Optional[str],
-        existing_task: Optional[asyncio.Task[None]],
-    ) -> Optional[asyncio.Task[None]]:
-        return await _managers._astart_memory_task(
-            self, run_messages=run_messages, user_id=user_id, existing_task=existing_task
-        )
-
-    def _start_memory_future(
-        self,
-        run_messages: RunMessages,
-        user_id: Optional[str],
-        existing_future: Optional[Future[None]],
-    ) -> Optional[Future[None]]:
-        return _managers._start_memory_future(
-            self, run_messages=run_messages, user_id=user_id, existing_future=existing_future
         )
 
     ###########################################################################
@@ -1437,21 +1035,8 @@ class Team:
     def _calculate_metrics(self, messages: List[Message], current_run_metrics: Optional[Metrics] = None) -> Metrics:
         return _response.calculate_metrics(self, messages, current_run_metrics=current_run_metrics)
 
-    def _get_session_metrics(self, session: TeamSession) -> Metrics:
-        return _storage.get_session_metrics_internal(self, session)
-
     def _update_session_metrics(self, session: TeamSession, run_response: TeamRunOutput):
         _session.update_session_metrics(self, session, run_response)
-
-    def _resolve_run_dependencies(self, run_context: RunContext) -> None:
-        return _run._resolve_run_dependencies(self, run_context=run_context)
-
-    async def _aresolve_run_dependencies(self, run_context: RunContext) -> None:
-        return await _run._aresolve_run_dependencies(self, run_context=run_context)
-
-    async def _check_and_refresh_mcp_tools(self) -> None:
-        # Connect MCP tools
-        return await _tools._check_and_refresh_mcp_tools(self)
 
     def _determine_tools_for_model(
         self,
@@ -1548,213 +1133,12 @@ class Team:
             add_session_state_to_context=add_session_state_to_context,
         )
 
-    def _get_formatted_session_state_for_system_message(self, session_state: Dict[str, Any]) -> str:
-        return _messages._get_formatted_session_state_for_system_message(self, session_state=session_state)
-
-    def _get_run_messages(
-        self,
-        *,
-        run_response: TeamRunOutput,
-        run_context: RunContext,
-        session: TeamSession,
-        user_id: Optional[str] = None,
-        input_message: Optional[Union[str, List, Dict, Message, BaseModel, List[Message]]] = None,
-        audio: Optional[Sequence[Audio]] = None,
-        images: Optional[Sequence[Image]] = None,
-        videos: Optional[Sequence[Video]] = None,
-        files: Optional[Sequence[File]] = None,
-        add_history_to_context: Optional[bool] = None,
-        add_dependencies_to_context: Optional[bool] = None,
-        add_session_state_to_context: Optional[bool] = None,
-        tools: Optional[List[Union[Function, dict]]] = None,
-        **kwargs: Any,
-    ) -> RunMessages:
-        return _messages._get_run_messages(
-            self,
-            run_response=run_response,
-            run_context=run_context,
-            session=session,
-            user_id=user_id,
-            input_message=input_message,
-            audio=audio,
-            images=images,
-            videos=videos,
-            files=files,
-            add_history_to_context=add_history_to_context,
-            add_dependencies_to_context=add_dependencies_to_context,
-            add_session_state_to_context=add_session_state_to_context,
-            tools=tools,
-            **kwargs,
-        )
-
-    async def _aget_run_messages(
-        self,
-        *,
-        run_response: TeamRunOutput,
-        run_context: RunContext,
-        session: TeamSession,
-        user_id: Optional[str] = None,
-        input_message: Optional[Union[str, List, Dict, Message, BaseModel, List[Message]]] = None,
-        audio: Optional[Sequence[Audio]] = None,
-        images: Optional[Sequence[Image]] = None,
-        videos: Optional[Sequence[Video]] = None,
-        files: Optional[Sequence[File]] = None,
-        add_history_to_context: Optional[bool] = None,
-        add_dependencies_to_context: Optional[bool] = None,
-        add_session_state_to_context: Optional[bool] = None,
-        tools: Optional[List[Union[Function, dict]]] = None,
-        **kwargs: Any,
-    ) -> RunMessages:
-        return await _messages._aget_run_messages(
-            self,
-            run_response=run_response,
-            run_context=run_context,
-            session=session,
-            user_id=user_id,
-            input_message=input_message,
-            audio=audio,
-            images=images,
-            videos=videos,
-            files=files,
-            add_history_to_context=add_history_to_context,
-            add_dependencies_to_context=add_dependencies_to_context,
-            add_session_state_to_context=add_session_state_to_context,
-            tools=tools,
-            **kwargs,
-        )
-
-    def _get_user_message(
-        self,
-        *,
-        run_response: TeamRunOutput,
-        run_context: RunContext,
-        input_message: Optional[Union[str, List, Dict, Message, BaseModel, List[Message]]] = None,
-        audio: Optional[Sequence[Audio]] = None,
-        images: Optional[Sequence[Image]] = None,
-        videos: Optional[Sequence[Video]] = None,
-        files: Optional[Sequence[File]] = None,
-        add_dependencies_to_context: Optional[bool] = None,
-        **kwargs,
-    ):
-        # Get references from the knowledge base to use in the user message
-        return _messages._get_user_message(
-            self,
-            run_response=run_response,
-            run_context=run_context,
-            input_message=input_message,
-            audio=audio,
-            images=images,
-            videos=videos,
-            files=files,
-            add_dependencies_to_context=add_dependencies_to_context,
-            **kwargs,
-        )
-
-    async def _aget_user_message(
-        self,
-        *,
-        run_response: TeamRunOutput,
-        run_context: RunContext,
-        input_message: Optional[Union[str, List, Dict, Message, BaseModel, List[Message]]] = None,
-        audio: Optional[Sequence[Audio]] = None,
-        images: Optional[Sequence[Image]] = None,
-        videos: Optional[Sequence[Video]] = None,
-        files: Optional[Sequence[File]] = None,
-        add_dependencies_to_context: Optional[bool] = None,
-        **kwargs,
-    ):
-        # Get references from the knowledge base to use in the user message
-        return await _messages._aget_user_message(
-            self,
-            run_response=run_response,
-            run_context=run_context,
-            input_message=input_message,
-            audio=audio,
-            images=images,
-            videos=videos,
-            files=files,
-            add_dependencies_to_context=add_dependencies_to_context,
-            **kwargs,
-        )
-
-    def _get_messages_for_parser_model(
-        self,
-        model_response: ModelResponse,
-        response_format: Optional[Union[Dict, Type[BaseModel]]],
-        run_context: Optional[RunContext] = None,
-    ) -> List[Message]:
-        return _messages._get_messages_for_parser_model(
-            self, model_response=model_response, response_format=response_format, run_context=run_context
-        )
-
-    def _get_messages_for_parser_model_stream(
-        self,
-        run_response: TeamRunOutput,
-        response_format: Optional[Union[Dict, Type[BaseModel]]],
-        run_context: Optional[RunContext] = None,
-    ) -> List[Message]:
-        return _messages._get_messages_for_parser_model_stream(
-            self, run_response=run_response, response_format=response_format, run_context=run_context
-        )
-
-    def _get_messages_for_output_model(self, messages: List[Message]) -> List[Message]:
-        return _messages._get_messages_for_output_model(self, messages=messages)
-
-    def _format_message_with_state_variables(
-        self,
-        message: Any,
-        run_context: Optional[RunContext] = None,
-    ) -> Any:
-        return _messages._format_message_with_state_variables(self, message=message, run_context=run_context)
-
-    def _convert_dependencies_to_string(self, context: Dict[str, Any]) -> str:
-        return _utils._convert_dependencies_to_string(self, context=context)
-
-    def _get_json_output_prompt(self, output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None) -> str:
-        return _messages._get_json_output_prompt(self, output_schema=output_schema)
-
-    def _update_team_media(self, run_response: Union[TeamRunOutput, RunOutput]) -> None:
-        return _run._update_team_media(self, run_response=run_response)
-
     ###########################################################################
     # Built-in Tools
     ###########################################################################
 
-    def _get_update_user_memory_function(self, user_id: Optional[str] = None, async_mode: bool = False) -> Function:
-        return _default_tools._get_update_user_memory_function(self, user_id=user_id, async_mode=async_mode)
-
     def get_member_information(self) -> str:
         return _tools.get_member_information(self)
-
-    def _get_chat_history_function(self, session: TeamSession, async_mode: bool = False):
-        return _default_tools._get_chat_history_function(self, session=session, async_mode=async_mode)
-
-    def _update_session_state_tool(self, run_context: RunContext, session_state_updates: dict) -> str:
-        return _default_tools._update_session_state_tool(
-            self, run_context=run_context, session_state_updates=session_state_updates
-        )
-
-    def _get_previous_sessions_messages_function(
-        self, num_history_sessions: Optional[int] = 2, user_id: Optional[str] = None, async_mode: bool = False
-    ):
-        return _default_tools._get_previous_sessions_messages_function(
-            self, num_history_sessions=num_history_sessions, user_id=user_id, async_mode=async_mode
-        )
-
-    def _get_history_for_member_agent(self, session: TeamSession, member_agent: Union[Agent, "Team"]) -> List[Message]:
-        return _tools._get_history_for_member_agent(self, session=session, member_agent=member_agent)
-
-    def _determine_team_member_interactions(
-        self,
-        team_run_context: Dict[str, Any],
-        images: List[Image],
-        videos: List[Video],
-        audio: List[Audio],
-        files: List[File],
-    ) -> Optional[str]:
-        return _tools._determine_team_member_interactions(
-            self, team_run_context=team_run_context, images=images, videos=videos, audio=audio, files=files
-        )
 
     def _find_member_by_id(self, member_id: str) -> Optional[Tuple[int, Union[Agent, "Team"]]]:
         return _tools._find_member_by_id(self, member_id=member_id)
@@ -1803,33 +1187,6 @@ class Team:
     ###########################################################################
     # Session Management
     ###########################################################################
-    def _read_session(
-        self, session_id: str, session_type: SessionType = SessionType.TEAM
-    ) -> Optional[Union[TeamSession, WorkflowSession]]:
-        return _storage._read_session(self, session_id=session_id, session_type=session_type)
-
-    async def _aread_session(
-        self, session_id: str, session_type: SessionType = SessionType.TEAM
-    ) -> Optional[Union[TeamSession, WorkflowSession]]:
-        return await _storage._aread_session(self, session_id=session_id, session_type=session_type)
-
-    def _upsert_session(self, session: TeamSession) -> Optional[TeamSession]:
-        return _storage._upsert_session(self, session=session)
-
-    async def _aupsert_session(self, session: TeamSession) -> Optional[TeamSession]:
-        return await _storage._aupsert_session(self, session=session)
-
-    def _read_or_create_session(self, session_id: str, user_id: Optional[str] = None) -> TeamSession:
-        return _storage._read_or_create_session(self, session_id=session_id, user_id=user_id)
-
-    async def _aread_or_create_session(self, session_id: str, user_id: Optional[str] = None) -> TeamSession:
-        return await _storage._aread_or_create_session(self, session_id=session_id, user_id=user_id)
-
-    def _load_session_state(self, session: TeamSession, session_state: Dict[str, Any]) -> Dict[str, Any]:
-        return _storage._load_session_state(self, session=session, session_state=session_state)
-
-    def _update_metadata(self, session: TeamSession):
-        return _storage._update_metadata(self, session=session)
 
     # -*- Serialization Functions
     def to_dict(self) -> Dict[str, Any]:
@@ -2057,54 +1414,12 @@ class Team:
             self, query=query, num_documents=num_documents, filters=filters, run_context=run_context, **kwargs
         )
 
-    def _convert_documents_to_string(self, docs: List[Union[Dict[str, Any], str]]) -> str:
-        return _utils._convert_documents_to_string(self, docs=docs)
-
-    def _get_effective_filters(
-        self, knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
-    ) -> Optional[Any]:
-        return _utils._get_effective_filters(self, knowledge_filters=knowledge_filters)
-
-    def _get_search_knowledge_base_function(
-        self,
-        run_response: TeamRunOutput,
-        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
-        async_mode: bool = False,
-        run_context: Optional[RunContext] = None,
-    ) -> Function:
-        return _default_tools._get_search_knowledge_base_function(
-            self,
-            run_response=run_response,
-            knowledge_filters=knowledge_filters,
-            async_mode=async_mode,
-            run_context=run_context,
-        )
-
-    def _get_search_knowledge_base_with_agentic_filters_function(
-        self,
-        run_response: TeamRunOutput,
-        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
-        async_mode: bool = False,
-        run_context: Optional[RunContext] = None,
-    ) -> Function:
-        return _default_tools._get_search_knowledge_base_with_agentic_filters_function(
-            self,
-            run_response=run_response,
-            knowledge_filters=knowledge_filters,
-            async_mode=async_mode,
-            run_context=run_context,
-        )
-
     ###########################################################################
     # Logging
     ###########################################################################
 
-    def _get_telemetry_data(self) -> Dict[str, Any]:
-        return _telemetry.get_telemetry_data(self)
-
     def deep_copy(self, *, update: Optional[Dict[str, Any]] = None) -> "Team":
         return _utils.deep_copy(self, update=update)
-
 
 
 def get_team_by_id(

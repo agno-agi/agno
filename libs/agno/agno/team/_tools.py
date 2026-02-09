@@ -106,11 +106,14 @@ def _determine_tools_for_model(
     check_mcp_tools: bool = True,
 ) -> List[Union[Function, dict]]:
     # Connect tools that require connection management
+    from functools import partial
+
     from agno.team._default_tools import (
         _get_chat_history_function,
         _get_delegate_task_function,
         _get_previous_sessions_messages_function,
         _get_update_user_memory_function,
+        _update_session_state_tool,
     )
     from agno.team._init import _connect_connectable_tools
     from agno.team._messages import _get_user_message
@@ -141,7 +144,7 @@ def _determine_tools_for_model(
         _tools.append(_get_update_user_memory_function(team, user_id=user_id, async_mode=async_mode))
 
     if team.enable_agentic_state:
-        _tools.append(Function(name="update_session_state", entrypoint=team._update_session_state_tool))
+        _tools.append(Function(name="update_session_state", entrypoint=partial(_update_session_state_tool, team)))
 
     if team.search_session_history:
         _tools.append(
