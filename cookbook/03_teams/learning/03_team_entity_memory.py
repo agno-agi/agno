@@ -77,7 +77,11 @@ if __name__ == "__main__":
 
     lm = team.learning_machine
     print("\n--- Entities Tracked ---")
-    lm.entity_memory_store.print()
+    entities = lm.entity_memory_store.search(query="project", user_id=user_id)
+    for entity in entities:
+        lm.entity_memory_store.print(
+            entity_id=entity.entity_id, entity_type=entity.entity_type, user_id=user_id
+        )
 
     # Session 2: Update and query entities
     print("\n" + "=" * 60)
@@ -93,4 +97,8 @@ if __name__ == "__main__":
     )
 
     print("\n--- Updated Entities ---")
-    lm.entity_memory_store.print()
+    entities = lm.entity_memory_store.search(query="project", user_id=user_id)
+    for entity in entities:
+        lm.entity_memory_store.print(
+            entity_id=entity.entity_id, entity_type=entity.entity_type, user_id=user_id
+        )
