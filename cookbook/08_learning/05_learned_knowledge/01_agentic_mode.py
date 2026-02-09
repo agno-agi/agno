@@ -87,9 +87,7 @@ if __name__ == "__main__":
         session_id="session_2",
         stream=True,
     )
-    agent.learning_machine.learned_knowledge_store.print(
-        query="database migration"
-    )
+    agent.learning_machine.learned_knowledge_store.print(query="database migration")
 
     # Apply learnings
     print("\n" + "=" * 60)

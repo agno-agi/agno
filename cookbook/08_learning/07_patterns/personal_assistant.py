@@ -81,9 +81,7 @@ if __name__ == "__main__":
     )
     agent.learning_machine.user_profile_store.print(user_id=user_id)
     print("\n--- Entities ---")
-    pprint(
-        agent.learning_machine.entity_memory_store.search(query="sarah", limit=10)
-    )
+    pprint(agent.learning_machine.entity_memory_store.search(query="sarah", limit=10))
 
     # Conversation 2: New session (demonstrates memory)
     print("\n" + "=" * 60)

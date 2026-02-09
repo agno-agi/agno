@@ -7,7 +7,7 @@ Changes:
 
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.migrations.utils import quote_db_identifier
-from agno.utils.log import log_error, log_info, log_warning
+from agno.utils.log import log_error, log_info
 
 try:
     from sqlalchemy import text
