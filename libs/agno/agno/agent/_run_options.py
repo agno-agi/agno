@@ -18,7 +18,8 @@ class ResolvedRunOptions:
     """Immutable snapshot of resolved run options.
 
     All values are fully resolved (call-site > agent default > fallback)
-    at construction time.
+    at construction time, except metadata where agent-level values take
+    precedence on conflicting keys.
     """
 
     stream: bool

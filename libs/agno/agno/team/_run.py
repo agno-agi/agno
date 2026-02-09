@@ -800,9 +800,6 @@ def run(
             "add_history_to_context is True, but no database has been assigned to the team. History will not be added to the context."
         )
 
-    # Register run for cancellation tracking
-    register_run(run_id)  # type: ignore
-
     background_tasks = kwargs.pop("background_tasks", None)
     if background_tasks is not None:
         from fastapi import BackgroundTasks
@@ -812,144 +809,153 @@ def run(
     # Validate input against input_schema if provided
     validated_input = validate_input(input, team.input_schema)
 
-    # Normalise hook & guardails
-    if not team._hooks_normalised:
-        if team.pre_hooks:
-            team.pre_hooks = normalize_pre_hooks(team.pre_hooks)  # type: ignore
-        if team.post_hooks:
-            team.post_hooks = normalize_post_hooks(team.post_hooks)  # type: ignore
-        team._hooks_normalised = True
+    try:
+        # Register run for cancellation tracking (after validation succeeds)
+        register_run(run_id)  # type: ignore
 
-    session_id, user_id = team._initialize_session(session_id=session_id, user_id=user_id)
+        # Normalise hook & guardails
+        if not team._hooks_normalised:
+            if team.pre_hooks:
+                team.pre_hooks = normalize_pre_hooks(team.pre_hooks)  # type: ignore
+            if team.post_hooks:
+                team.post_hooks = normalize_post_hooks(team.post_hooks)  # type: ignore
+            team._hooks_normalised = True
 
-    image_artifacts, video_artifacts, audio_artifacts, file_artifacts = validate_media_object_id(
-        images=images, videos=videos, audios=audio, files=files
-    )
+        session_id, user_id = team._initialize_session(session_id=session_id, user_id=user_id)
 
-    # Create RunInput to capture the original user input
-    run_input = TeamRunInput(
-        input_content=validated_input,
-        images=image_artifacts,
-        videos=video_artifacts,
-        audios=audio_artifacts,
-        files=file_artifacts,
-    )
+        image_artifacts, video_artifacts, audio_artifacts, file_artifacts = validate_media_object_id(
+            images=images, videos=videos, audios=audio, files=files
+        )
 
-    # Read existing session from database
-    team_session = team._read_or_create_session(session_id=session_id, user_id=user_id)
-    team._update_metadata(session=team_session)
+        # Create RunInput to capture the original user input
+        run_input = TeamRunInput(
+            input_content=validated_input,
+            images=image_artifacts,
+            videos=video_artifacts,
+            audios=audio_artifacts,
+            files=file_artifacts,
+        )
 
-    # Initialize session state
-    session_state = team._initialize_session_state(
-        session_state=session_state if session_state is not None else {},
-        user_id=user_id,
-        session_id=session_id,
-        run_id=run_id,
-    )
-    # Update session state from DB
-    session_state = team._load_session_state(session=team_session, session_state=session_state)
+        # Read existing session from database
+        team_session = team._read_or_create_session(session_id=session_id, user_id=user_id)
+        team._update_metadata(session=team_session)
 
-    dependencies_provided = dependencies is not None
-    knowledge_filters_provided = knowledge_filters is not None
-    metadata_provided = metadata is not None
-    output_schema_provided = output_schema is not None
+        # Initialize session state
+        session_state = team._initialize_session_state(
+            session_state=session_state if session_state is not None else {},
+            user_id=user_id,
+            session_id=session_id,
+            run_id=run_id,
+        )
+        # Update session state from DB
+        session_state = team._load_session_state(session=team_session, session_state=session_state)
 
-    # Determine runtime dependencies
-    dependencies = dependencies if dependencies is not None else team.dependencies
+        dependencies_provided = dependencies is not None
+        knowledge_filters_provided = knowledge_filters is not None
+        metadata_provided = metadata is not None
+        output_schema_provided = output_schema is not None
 
-    # Determine runtime context parameters
-    add_dependencies = (
-        add_dependencies_to_context if add_dependencies_to_context is not None else team.add_dependencies_to_context
-    )
-    add_session_state = (
-        add_session_state_to_context if add_session_state_to_context is not None else team.add_session_state_to_context
-    )
-    add_history = add_history_to_context if add_history_to_context is not None else team.add_history_to_context
+        # Determine runtime dependencies
+        dependencies = dependencies if dependencies is not None else team.dependencies
 
-    # Use stream override value when necessary
-    if stream is None:
-        stream = False if team.stream is None else team.stream
+        # Determine runtime context parameters
+        add_dependencies = (
+            add_dependencies_to_context if add_dependencies_to_context is not None else team.add_dependencies_to_context
+        )
+        add_session_state = (
+            add_session_state_to_context
+            if add_session_state_to_context is not None
+            else team.add_session_state_to_context
+        )
+        add_history = add_history_to_context if add_history_to_context is not None else team.add_history_to_context
 
-    # Can't stream events if streaming is disabled
-    if stream is False:
-        stream_events = False
+        # Use stream override value when necessary
+        if stream is None:
+            stream = False if team.stream is None else team.stream
 
-    if stream_events is None:
-        stream_events = False if team.stream_events is None else team.stream_events
+        # Can't stream events if streaming is disabled
+        if stream is False:
+            stream_events = False
 
-    team.model = cast(Model, team.model)
+        if stream_events is None:
+            stream_events = False if team.stream_events is None else team.stream_events
 
-    if team.metadata is not None:
-        if metadata is None:
-            metadata = team.metadata
-        else:
-            merge_dictionaries(metadata, team.metadata)
+        team.model = cast(Model, team.model)
 
-    #  Get knowledge filters
-    effective_filters = knowledge_filters
-    if team.knowledge_filters or knowledge_filters:
-        effective_filters = team._get_effective_filters(knowledge_filters)
+        if team.metadata is not None:
+            if metadata is None:
+                metadata = team.metadata
+            else:
+                merge_dictionaries(metadata, team.metadata)
 
-    # Resolve output_schema parameter takes precedence, then fall back to team.output_schema
-    if output_schema is None:
-        output_schema = team.output_schema
+        #  Get knowledge filters
+        effective_filters = knowledge_filters
+        if team.knowledge_filters or knowledge_filters:
+            effective_filters = team._get_effective_filters(knowledge_filters)
 
-    # Initialize run context
-    run_context = run_context or RunContext(
-        run_id=run_id,
-        session_id=session_id,
-        user_id=user_id,
-        session_state=session_state,
-        dependencies=dependencies,
-        knowledge_filters=effective_filters,
-        metadata=metadata,
-        output_schema=output_schema,
-    )
-    # Apply options with precedence: explicit args > existing run_context > resolved defaults.
-    if dependencies_provided:
-        run_context.dependencies = dependencies
-    elif run_context.dependencies is None:
-        run_context.dependencies = dependencies
-    if knowledge_filters_provided:
-        run_context.knowledge_filters = effective_filters
-    elif run_context.knowledge_filters is None:
-        run_context.knowledge_filters = effective_filters
-    if metadata_provided:
-        run_context.metadata = metadata
-    elif run_context.metadata is None:
-        run_context.metadata = metadata
-    if output_schema_provided:
-        run_context.output_schema = output_schema
-    elif run_context.output_schema is None:
-        run_context.output_schema = output_schema
+        # Resolve output_schema parameter takes precedence, then fall back to team.output_schema
+        if output_schema is None:
+            output_schema = team.output_schema
 
-    # Resolve callable dependencies once before retry loop
-    if run_context.dependencies is not None:
-        team._resolve_run_dependencies(run_context=run_context)
+        # Initialize run context
+        run_context = run_context or RunContext(
+            run_id=run_id,
+            session_id=session_id,
+            user_id=user_id,
+            session_state=session_state,
+            dependencies=dependencies,
+            knowledge_filters=effective_filters,
+            metadata=metadata,
+            output_schema=output_schema,
+        )
+        # Apply options with precedence: explicit args > existing run_context > resolved defaults.
+        if dependencies_provided:
+            run_context.dependencies = dependencies
+        elif run_context.dependencies is None:
+            run_context.dependencies = dependencies
+        if knowledge_filters_provided:
+            run_context.knowledge_filters = effective_filters
+        elif run_context.knowledge_filters is None:
+            run_context.knowledge_filters = effective_filters
+        if metadata_provided:
+            run_context.metadata = metadata
+        elif run_context.metadata is None:
+            run_context.metadata = metadata
+        if output_schema_provided:
+            run_context.output_schema = output_schema
+        elif run_context.output_schema is None:
+            run_context.output_schema = output_schema
 
-    # Configure the model for runs
-    response_format: Optional[Union[Dict, Type[BaseModel]]] = (
-        team._get_response_format(run_context=run_context) if team.parser_model is None else None
-    )
+        # Resolve callable dependencies once before retry loop
+        if run_context.dependencies is not None:
+            team._resolve_run_dependencies(run_context=run_context)
 
-    # Create a new run_response for this attempt
-    run_response = TeamRunOutput(
-        run_id=run_id,
-        session_id=session_id,
-        user_id=user_id,
-        team_id=team.id,
-        team_name=team.name,
-        metadata=run_context.metadata,
-        session_state=run_context.session_state,
-        input=run_input,
-    )
+        # Configure the model for runs
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = (
+            team._get_response_format(run_context=run_context) if team.parser_model is None else None
+        )
 
-    run_response.model = team.model.id if team.model is not None else None
-    run_response.model_provider = team.model.provider if team.model is not None else None
+        # Create a new run_response for this attempt
+        run_response = TeamRunOutput(
+            run_id=run_id,
+            session_id=session_id,
+            user_id=user_id,
+            team_id=team.id,
+            team_name=team.name,
+            metadata=run_context.metadata,
+            session_state=run_context.session_state,
+            input=run_input,
+        )
 
-    # Start the run metrics timer, to calculate the run duration
-    run_response.metrics = Metrics()
-    run_response.metrics.start_timer()
+        run_response.model = team.model.id if team.model is not None else None
+        run_response.model_provider = team.model.provider if team.model is not None else None
+
+        # Start the run metrics timer, to calculate the run duration
+        run_response.metrics = Metrics()
+        run_response.metrics.start_timer()
+    except Exception:
+        cleanup_run(run_id)
+        raise
 
     if stream:
         return team._run_stream(

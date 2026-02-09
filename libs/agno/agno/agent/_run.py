@@ -3048,6 +3048,8 @@ async def acontinue_run_impl(
                 return run_response
 
             except RunCancelledException as e:
+                if run_response is None:
+                    run_response = RunOutput(run_id=run_id)
                 run_response = cast(RunOutput, run_response)
                 # Handle run cancellation
                 log_info(f"Run {run_response.run_id if run_response else run_id} was cancelled")
