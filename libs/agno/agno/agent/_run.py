@@ -1180,6 +1180,13 @@ def run_dispatch(
         files=file_artifacts,
     )
 
+    # Read existing session and update metadata BEFORE resolving run options,
+    # so that session-stored metadata is visible to resolve_run_options.
+    from agno.agent._storage import read_or_create_session, update_metadata
+
+    agent_session = read_or_create_session(agent, session_id=session_id, user_id=user_id)
+    update_metadata(agent, session=agent_session)
+
     # Resolve all run options centrally
     opts = resolve_run_options(
         agent,
