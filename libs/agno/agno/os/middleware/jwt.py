@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse
 from jwt import PyJWK
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from agno.os.auth import INTERNAL_SERVICE_SCOPES
 from agno.os.scopes import (
     AgentOSScope,
     get_accessible_resource_ids,
@@ -691,17 +692,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
             request.state.authenticated = True
             request.state.user_id = "__scheduler__"
             request.state.session_id = None
-            internal_scopes = [
-                "agents:read",
-                "agents:run",
-                "teams:read",
-                "teams:run",
-                "workflows:read",
-                "workflows:run",
-                "schedules:read",
-                "schedules:write",
-                "schedules:delete",
-            ]
+            internal_scopes = list(INTERNAL_SERVICE_SCOPES)
             request.state.scopes = internal_scopes
             request.state.authorization_enabled = self.authorization or False
 

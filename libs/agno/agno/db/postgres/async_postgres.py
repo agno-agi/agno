@@ -3173,6 +3173,12 @@ class AsyncPostgresDb(AsyncBaseDb):
             return False
 
     async def claim_due_schedule(self, worker_id: str, lock_grace_seconds: int = 300) -> Optional[Dict[str, Any]]:
+        """Atomically claim a due schedule using UPDATE … RETURNING.
+
+        A subquery with FOR UPDATE SKIP LOCKED selects the single best
+        candidate row, and the outer UPDATE claims it and returns the
+        full row in one statement — no TOCTOU window.
+        """
         try:
             table = await self._get_table(table_type="schedules")
             if table is None:
@@ -3181,8 +3187,9 @@ class AsyncPostgresDb(AsyncBaseDb):
             stale_threshold = now - lock_grace_seconds
             async with self.async_session_factory() as sess:
                 async with sess.begin():
-                    stmt = (
-                        select(table)
+                    # Subquery picks the single best candidate row
+                    candidate = (
+                        select(table.c.id)
                         .where(table.c.enabled == True)  # noqa: E712
                         .where(table.c.next_run_at <= now)
                         .where(
@@ -3194,20 +3201,19 @@ class AsyncPostgresDb(AsyncBaseDb):
                         .order_by(table.c.next_run_at.asc())
                         .limit(1)
                         .with_for_update(skip_locked=True)
+                    ).scalar_subquery()
+
+                    # Atomic UPDATE … RETURNING — claim and fetch in one statement
+                    update_stmt = (
+                        table.update()
+                        .where(table.c.id == candidate)
+                        .values(locked_by=worker_id, locked_at=now)
+                        .returning(*table.c)
                     )
-                    result = await sess.execute(stmt)
-                    row = result.fetchone()
+                    row = (await sess.execute(update_stmt)).fetchone()
                     if row is None:
                         return None
-                    row_dict = dict(row._mapping)
-                    schedule_id = row_dict["id"]
-                    update_stmt = (
-                        table.update().where(table.c.id == schedule_id).values(locked_by=worker_id, locked_at=now)
-                    )
-                    await sess.execute(update_stmt)
-                    row_dict["locked_by"] = worker_id
-                    row_dict["locked_at"] = now
-            return row_dict
+                    return dict(row._mapping)
         except Exception as e:
             log_warning(f"Error claiming due schedule: {e}")
             return None
