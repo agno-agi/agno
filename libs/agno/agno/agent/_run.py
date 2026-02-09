@@ -3177,7 +3177,7 @@ async def acontinue_run_stream_impl(
         num_attempts = agent.retries + 1
         for attempt in range(num_attempts):
             try:
-                # 1. Read` existing session from db
+                # 1. Read existing session from db
                 agent_session = await agent._aread_or_create_session(session_id=session_id, user_id=user_id)
 
                 # 2. Update session state and metadata

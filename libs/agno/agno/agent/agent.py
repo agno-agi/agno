@@ -14,6 +14,7 @@ from typing import (
     Optional,
     Sequence,
     Set,
+    Tuple,
     Type,
     Union,
     overload,
@@ -2187,7 +2188,7 @@ class Agent:
         self,
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
-    ) -> tuple:
+    ) -> Tuple[str, Optional[str]]:
         return _run.initialize_session(self, session_id=session_id, user_id=user_id)
 
     def _run(
