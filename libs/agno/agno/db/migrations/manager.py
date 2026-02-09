@@ -14,6 +14,7 @@ class MigrationManager:
     available_versions: list[tuple[str, Version]] = [
         ("v2_0_0", packaging_version.parse("2.0.0")),
         ("v2_3_0", packaging_version.parse("2.3.0")),
+        ("v2_5_0", packaging_version.parse("2.5.0")),
     ]
 
     def __init__(self, db: Union[AsyncBaseDb, BaseDb]):

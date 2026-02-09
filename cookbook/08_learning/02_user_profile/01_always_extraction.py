@@ -52,7 +52,7 @@ if __name__ == "__main__":
         session_id="conv_1",
         stream=True,
     )
-    agent.get_learning_machine().user_profile_store.print(user_id=user_id)
+    agent.learning_machine.user_profile_store.print(user_id=user_id)
 
     # Conversation 2: Share work context
     print("\n" + "=" * 60)
@@ -65,7 +65,7 @@ if __name__ == "__main__":
         session_id="conv_2",
         stream=True,
     )
-    agent.get_learning_machine().user_profile_store.print(user_id=user_id)
+    agent.learning_machine.user_profile_store.print(user_id=user_id)
 
     # Conversation 3: Preferences
     print("\n" + "=" * 60)
@@ -79,7 +79,7 @@ if __name__ == "__main__":
         session_id="conv_3",
         stream=True,
     )
-    agent.get_learning_machine().user_profile_store.print(user_id=user_id)
+    agent.learning_machine.user_profile_store.print(user_id=user_id)
 
     # Conversation 4: Nickname
     print("\n" + "=" * 60)
@@ -92,4 +92,4 @@ if __name__ == "__main__":
         session_id="conv_4",
         stream=True,
     )
-    agent.get_learning_machine().user_profile_store.print(user_id=user_id)
+    agent.learning_machine.user_profile_store.print(user_id=user_id)

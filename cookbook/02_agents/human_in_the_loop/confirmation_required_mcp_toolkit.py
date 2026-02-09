@@ -74,7 +74,7 @@ async def main():
             # Not paused - print the streaming content
             if run_event.content:
                 print(run_event.content, end="")
-    
+
     print()  # Final newline
 
 
