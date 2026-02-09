@@ -764,7 +764,7 @@ class Team:
         output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
         **kwargs: Any,
     ) -> Union[TeamRunOutput, Iterator[Union[RunOutputEvent, TeamRunOutputEvent]]]:
-        return _run.run(
+        return _run.run_dispatch(
             self,
             input=input,
             stream=stream,
@@ -934,7 +934,7 @@ class Team:
         output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
         **kwargs: Any,
     ) -> Union[TeamRunOutput, AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent]]]:
-        return _run.arun(
+        return _run.arun_dispatch(
             self,
             input=input,
             stream=stream,

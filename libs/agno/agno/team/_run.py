@@ -86,7 +86,6 @@ from agno.utils.log import (
     log_info,
     log_warning,
 )
-from agno.utils.merge_dict import merge_dictionaries
 
 if TYPE_CHECKING:
     from agno.team.team import Team
@@ -125,8 +124,8 @@ async def _asetup_session(
 ) -> TeamSession:
     """Read/create session, load state from DB, and resolve callable dependencies.
 
-    Shared setup for _arun() and _arun_stream(). Mirrors what the sync run()
-    does inline before calling _run()/_run_stream().
+    Shared setup for _arun() and _arun_stream(). Mirrors what the sync
+    run_dispatch() does inline before calling _run()/_run_stream().
     """
     # Read or create session
     from agno.team._init import _has_async_db, _initialize_session_state
@@ -844,7 +843,7 @@ def _run_stream(
         cleanup_run(run_response.run_id)  # type: ignore
 
 
-def run(
+def run_dispatch(
     team: "Team",
     input: Union[str, List, Dict, Message, BaseModel, List[Message]],
     *,
@@ -873,8 +872,8 @@ def run(
     """Run the Team and return the response."""
     from agno.team._init import _has_async_db, _initialize_session, _initialize_session_state
     from agno.team._response import get_response_format
+    from agno.team._run_options import resolve_run_options
     from agno.team._storage import _load_session_state, _read_or_create_session, _update_metadata
-    from agno.team._utils import _get_effective_filters
 
     if _has_async_db(team):
         raise Exception("run() is not supported with an async DB. Please use arun() instead.")
@@ -930,6 +929,21 @@ def run(
         team_session = _read_or_create_session(team, session_id=session_id, user_id=user_id)
         _update_metadata(team, session=team_session)
 
+        # Resolve run options AFTER _update_metadata so session-stored metadata is visible
+        opts = resolve_run_options(
+            team,
+            stream=stream,
+            stream_events=stream_events,
+            yield_run_output=yield_run_output,
+            add_history_to_context=add_history_to_context,
+            add_dependencies_to_context=add_dependencies_to_context,
+            add_session_state_to_context=add_session_state_to_context,
+            dependencies=dependencies,
+            knowledge_filters=knowledge_filters,
+            metadata=metadata,
+            output_schema=output_schema,
+        )
+
         # Initialize session state
         session_state = _initialize_session_state(
             team,
@@ -941,52 +955,13 @@ def run(
         # Update session state from DB
         session_state = _load_session_state(team, session=team_session, session_state=session_state)
 
+        # Track which options were explicitly provided for run_context precedence
         dependencies_provided = dependencies is not None
         knowledge_filters_provided = knowledge_filters is not None
         metadata_provided = metadata is not None
         output_schema_provided = output_schema is not None
 
-        # Determine runtime dependencies
-        dependencies = dependencies if dependencies is not None else team.dependencies
-
-        # Determine runtime context parameters
-        add_dependencies = (
-            add_dependencies_to_context if add_dependencies_to_context is not None else team.add_dependencies_to_context
-        )
-        add_session_state = (
-            add_session_state_to_context
-            if add_session_state_to_context is not None
-            else team.add_session_state_to_context
-        )
-        add_history = add_history_to_context if add_history_to_context is not None else team.add_history_to_context
-
-        # Use stream override value when necessary
-        if stream is None:
-            stream = False if team.stream is None else team.stream
-
-        # Can't stream events if streaming is disabled
-        if stream is False:
-            stream_events = False
-
-        if stream_events is None:
-            stream_events = False if team.stream_events is None else team.stream_events
-
         team.model = cast(Model, team.model)
-
-        if team.metadata is not None:
-            if metadata is None:
-                metadata = team.metadata
-            else:
-                merge_dictionaries(metadata, team.metadata)
-
-        #  Get knowledge filters
-        effective_filters = knowledge_filters
-        if team.knowledge_filters or knowledge_filters:
-            effective_filters = _get_effective_filters(team, knowledge_filters)
-
-        # Resolve output_schema parameter takes precedence, then fall back to team.output_schema
-        if output_schema is None:
-            output_schema = team.output_schema
 
         # Initialize run context
         run_context = run_context or RunContext(
@@ -994,28 +969,28 @@ def run(
             session_id=session_id,
             user_id=user_id,
             session_state=session_state,
-            dependencies=dependencies,
-            knowledge_filters=effective_filters,
-            metadata=metadata,
-            output_schema=output_schema,
+            dependencies=opts.dependencies,
+            knowledge_filters=opts.knowledge_filters,
+            metadata=opts.metadata,
+            output_schema=opts.output_schema,
         )
         # Apply options with precedence: explicit args > existing run_context > resolved defaults.
         if dependencies_provided:
-            run_context.dependencies = dependencies
+            run_context.dependencies = opts.dependencies
         elif run_context.dependencies is None:
-            run_context.dependencies = dependencies
+            run_context.dependencies = opts.dependencies
         if knowledge_filters_provided:
-            run_context.knowledge_filters = effective_filters
+            run_context.knowledge_filters = opts.knowledge_filters
         elif run_context.knowledge_filters is None:
-            run_context.knowledge_filters = effective_filters
+            run_context.knowledge_filters = opts.knowledge_filters
         if metadata_provided:
-            run_context.metadata = metadata
+            run_context.metadata = opts.metadata
         elif run_context.metadata is None:
-            run_context.metadata = metadata
+            run_context.metadata = opts.metadata
         if output_schema_provided:
-            run_context.output_schema = output_schema
+            run_context.output_schema = opts.output_schema
         elif run_context.output_schema is None:
-            run_context.output_schema = output_schema
+            run_context.output_schema = opts.output_schema
 
         # Resolve callable dependencies once before retry loop
         if run_context.dependencies is not None:
@@ -1048,19 +1023,19 @@ def run(
         cleanup_run(run_id)
         raise
 
-    if stream:
+    if opts.stream:
         return _run_stream(
             team,
             run_response=run_response,
             run_context=run_context,
             session=team_session,
             user_id=user_id,
-            add_history_to_context=add_history,
-            add_dependencies_to_context=add_dependencies,
-            add_session_state_to_context=add_session_state,
+            add_history_to_context=opts.add_history_to_context,
+            add_dependencies_to_context=opts.add_dependencies_to_context,
+            add_session_state_to_context=opts.add_session_state_to_context,
             response_format=response_format,
-            stream_events=stream_events,
-            yield_run_output=yield_run_output,
+            stream_events=opts.stream_events,
+            yield_run_output=opts.yield_run_output,
             debug_mode=debug_mode,
             background_tasks=background_tasks,
             **kwargs,
@@ -1073,9 +1048,9 @@ def run(
             run_context=run_context,
             session=team_session,
             user_id=user_id,
-            add_history_to_context=add_history,
-            add_dependencies_to_context=add_dependencies,
-            add_session_state_to_context=add_session_state,
+            add_history_to_context=opts.add_history_to_context,
+            add_dependencies_to_context=opts.add_dependencies_to_context,
+            add_session_state_to_context=opts.add_session_state_to_context,
             response_format=response_format,
             debug_mode=debug_mode,
             background_tasks=background_tasks,
@@ -1820,7 +1795,7 @@ async def _arun_stream(
         await acleanup_run(run_response.run_id)  # type: ignore
 
 
-def arun(  # type: ignore
+def arun_dispatch(  # type: ignore
     team: "Team",
     input: Union[str, List, Dict, Message, BaseModel, List[Message]],
     *,
@@ -1851,11 +1826,29 @@ def arun(  # type: ignore
     # Set the id for the run and register it immediately for cancellation tracking
     from agno.team._init import _initialize_session
     from agno.team._response import get_response_format
-    from agno.team._utils import _get_effective_filters
+    from agno.team._run_options import resolve_run_options
 
     run_id = run_id or str(uuid4())
 
-    if (add_history_to_context or team.add_history_to_context) and not team.db and not team.parent_team_id:
+    # Initialize Team
+    team.initialize_team(debug_mode=debug_mode)
+
+    # Resolve run options centrally
+    opts = resolve_run_options(
+        team,
+        stream=stream,
+        stream_events=stream_events,
+        yield_run_output=yield_run_output,
+        add_history_to_context=add_history_to_context,
+        add_dependencies_to_context=add_dependencies_to_context,
+        add_session_state_to_context=add_session_state_to_context,
+        dependencies=dependencies,
+        knowledge_filters=knowledge_filters,
+        metadata=metadata,
+        output_schema=output_schema,
+    )
+
+    if (opts.add_history_to_context) and not team.db and not team.parent_team_id:
         log_warning(
             "add_history_to_context is True, but no database has been assigned to the team. History will not be added to the context."
         )
@@ -1868,9 +1861,6 @@ def arun(  # type: ignore
 
     # Validate input against input_schema if provided
     validated_input = validate_input(input, team.input_schema)
-
-    # Initialize Team
-    team.initialize_team(debug_mode=debug_mode)
 
     # Normalise hook & guardails
     if not team._hooks_normalised:
@@ -1886,20 +1876,11 @@ def arun(  # type: ignore
         images=images, videos=videos, audios=audio, files=files
     )
 
+    # Track which options were explicitly provided for run_context precedence
     dependencies_provided = dependencies is not None
     knowledge_filters_provided = knowledge_filters is not None
     metadata_provided = metadata is not None
     output_schema_provided = output_schema is not None
-
-    # Resolve variables
-    dependencies = dependencies if dependencies is not None else team.dependencies
-    add_dependencies = (
-        add_dependencies_to_context if add_dependencies_to_context is not None else team.add_dependencies_to_context
-    )
-    add_session_state = (
-        add_session_state_to_context if add_session_state_to_context is not None else team.add_session_state_to_context
-    )
-    add_history = add_history_to_context if add_history_to_context is not None else team.add_history_to_context
 
     # Create RunInput to capture the original user input
     run_input = TeamRunInput(
@@ -1910,33 +1891,7 @@ def arun(  # type: ignore
         files=file_artifacts,
     )
 
-    # Use stream override value when necessary
-    if stream is None:
-        stream = False if team.stream is None else team.stream
-
-    # Can't stream events if streaming is disabled
-    if stream is False:
-        stream_events = False
-
-    if stream_events is None:
-        stream_events = False if team.stream_events is None else team.stream_events
-
     team.model = cast(Model, team.model)
-
-    if team.metadata is not None:
-        if metadata is None:
-            metadata = team.metadata
-        else:
-            merge_dictionaries(metadata, team.metadata)
-
-    #  Get knowledge filters
-    effective_filters = knowledge_filters
-    if team.knowledge_filters or knowledge_filters:
-        effective_filters = _get_effective_filters(team, knowledge_filters)
-
-    # Resolve output_schema parameter takes precedence, then fall back to team.output_schema
-    if output_schema is None:
-        output_schema = team.output_schema
 
     # Initialize run context
     run_context = run_context or RunContext(
@@ -1944,28 +1899,28 @@ def arun(  # type: ignore
         session_id=session_id,
         user_id=user_id,
         session_state=session_state,
-        dependencies=dependencies,
-        knowledge_filters=effective_filters,
-        metadata=metadata,
-        output_schema=output_schema,
+        dependencies=opts.dependencies,
+        knowledge_filters=opts.knowledge_filters,
+        metadata=opts.metadata,
+        output_schema=opts.output_schema,
     )
     # Apply options with precedence: explicit args > existing run_context > resolved defaults.
     if dependencies_provided:
-        run_context.dependencies = dependencies
+        run_context.dependencies = opts.dependencies
     elif run_context.dependencies is None:
-        run_context.dependencies = dependencies
+        run_context.dependencies = opts.dependencies
     if knowledge_filters_provided:
-        run_context.knowledge_filters = effective_filters
+        run_context.knowledge_filters = opts.knowledge_filters
     elif run_context.knowledge_filters is None:
-        run_context.knowledge_filters = effective_filters
+        run_context.knowledge_filters = opts.knowledge_filters
     if metadata_provided:
-        run_context.metadata = metadata
+        run_context.metadata = opts.metadata
     elif run_context.metadata is None:
-        run_context.metadata = metadata
+        run_context.metadata = opts.metadata
     if output_schema_provided:
-        run_context.output_schema = output_schema
+        run_context.output_schema = opts.output_schema
     elif run_context.output_schema is None:
-        run_context.output_schema = output_schema
+        run_context.output_schema = opts.output_schema
 
     # Configure the model for runs
     response_format: Optional[Union[Dict, Type[BaseModel]]] = (
@@ -1991,19 +1946,19 @@ def arun(  # type: ignore
     run_response.metrics = Metrics()
     run_response.metrics.start_timer()
 
-    if stream:
+    if opts.stream:
         return _arun_stream(
             team,  # type: ignore
             run_response=run_response,
             run_context=run_context,
             session_id=session_id,
             user_id=user_id,
-            add_history_to_context=add_history,
-            add_dependencies_to_context=add_dependencies,
-            add_session_state_to_context=add_session_state,
+            add_history_to_context=opts.add_history_to_context,
+            add_dependencies_to_context=opts.add_dependencies_to_context,
+            add_session_state_to_context=opts.add_session_state_to_context,
             response_format=response_format,
-            stream_events=stream_events,
-            yield_run_output=yield_run_output,
+            stream_events=opts.stream_events,
+            yield_run_output=opts.yield_run_output,
             debug_mode=debug_mode,
             background_tasks=background_tasks,
             **kwargs,
@@ -2015,9 +1970,9 @@ def arun(  # type: ignore
             run_context=run_context,
             session_id=session_id,
             user_id=user_id,
-            add_history_to_context=add_history,
-            add_dependencies_to_context=add_dependencies,
-            add_session_state_to_context=add_session_state,
+            add_history_to_context=opts.add_history_to_context,
+            add_dependencies_to_context=opts.add_dependencies_to_context,
+            add_session_state_to_context=opts.add_session_state_to_context,
             response_format=response_format,
             debug_mode=debug_mode,
             background_tasks=background_tasks,
