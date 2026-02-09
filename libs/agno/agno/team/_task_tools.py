@@ -127,6 +127,8 @@ def _get_task_management_tools(
             new_status = TaskStatus(status)
         except ValueError:
             return f"Invalid status '{status}'. Must be one of: pending, in_progress, completed, failed."
+        if new_status == TaskStatus.blocked:
+            return "Cannot manually set status to 'blocked'. Blocked status is managed automatically based on task dependencies."
 
         updates: Dict[str, Any] = {"status": new_status}
         if result is not None:

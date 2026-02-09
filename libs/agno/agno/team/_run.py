@@ -280,11 +280,11 @@ def _run_tasks(
 
             if task_list.tasks and task_list.all_terminal():
                 if any(t.status == TaskStatus.failed for t in task_list.tasks) and not task_list.goal_complete:
-                    log_debug("Tasks mode: all tasks terminal but some failed — not marking as goal reached")
+                    log_debug("Tasks mode: all tasks terminal but some failed — continuing to let model handle")
                 else:
                     log_debug("Tasks mode: all tasks in terminal state")
                     goal_reached = True
-                break
+                    break
 
             raise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -349,6 +349,14 @@ def _run_tasks(
         return run_response
     except (InputCheckError, OutputCheckError) as e:
         run_response.status = RunStatus.error
+        run_error = create_team_run_error_event(
+            run_response,
+            error=str(e),
+            error_id=e.error_id,
+            error_type=e.type,
+            additional_data=e.additional_data,
+        )
+        run_response.events = add_team_error_event(error=run_error, events=run_response.events)
         if run_response.content is None:
             run_response.content = str(e)
         log_error(f"Validation failed: {str(e)} | Check: {e.check_trigger}")
@@ -361,6 +369,8 @@ def _run_tasks(
         return run_response
     except Exception as e:
         run_response.status = RunStatus.error
+        run_error = create_team_run_error_event(run_response, error=str(e))
+        run_response.events = add_team_error_event(error=run_error, events=run_response.events)
         if run_response.content is None:
             run_response.content = str(e)
         log_error(f"Error in Team task run: {str(e)}")
@@ -1456,11 +1466,11 @@ async def _arun_tasks(
 
             if task_list.tasks and task_list.all_terminal():
                 if any(t.status == TaskStatus.failed for t in task_list.tasks) and not task_list.goal_complete:
-                    log_debug("Async tasks mode: all tasks terminal but some failed — not marking as goal reached")
+                    log_debug("Async tasks mode: all tasks terminal but some failed — continuing to let model handle")
                 else:
                     log_debug("Async tasks mode: all tasks in terminal state")
                     goal_reached = True
-                break
+                    break
 
             await araise_if_cancelled(run_response.run_id)  # type: ignore
         else:
@@ -1529,6 +1539,14 @@ async def _arun_tasks(
         return run_response
     except (InputCheckError, OutputCheckError) as e:
         run_response.status = RunStatus.error
+        run_error = create_team_run_error_event(
+            run_response,
+            error=str(e),
+            error_id=e.error_id,
+            error_type=e.type,
+            additional_data=e.additional_data,
+        )
+        run_response.events = add_team_error_event(error=run_error, events=run_response.events)
         if run_response.content is None:
             run_response.content = str(e)
         log_error(f"Validation failed: {str(e)} | Check: {e.check_trigger}")
@@ -1544,6 +1562,8 @@ async def _arun_tasks(
         return run_response
     except Exception as e:
         run_response.status = RunStatus.error
+        run_error = create_team_run_error_event(run_response, error=str(e))
+        run_response.events = add_team_error_event(error=run_error, events=run_response.events)
         if run_response.content is None:
             run_response.content = str(e)
         log_error(f"Error in Team async task run: {str(e)}")
