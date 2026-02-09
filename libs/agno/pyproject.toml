@@ -64,6 +64,7 @@ dev = [
   "openai",
   "fakeredis",
   "xlwt",
+  "types-greenlet",
 ]
 
 os = ["fastapi", "uvicorn", "PyJWT"]
