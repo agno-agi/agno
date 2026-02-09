@@ -6,7 +6,7 @@ from agno.utils.log import log_warning
 
 
 def is_development_mode() -> bool:
-    return os.getenv("APP_ENV", "development").lower() == "development"
+    return os.getenv("APP_ENV", "").lower() == "development"
 
 
 def get_webhook_secret_token() -> str:

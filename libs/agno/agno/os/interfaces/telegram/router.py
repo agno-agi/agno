@@ -1,7 +1,7 @@
-from os import getenv
+import base64
+import binascii
 from typing import Optional, Union
 
-import httpx
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 
 from agno.agent.agent import Agent
@@ -10,6 +10,13 @@ from agno.media import Image
 from agno.team.remote import RemoteTeam
 from agno.team.team import Team
 from agno.utils.log import log_error, log_info, log_warning
+from agno.utils.telegram import (
+    get_bot_token,
+    get_file_bytes_async,
+    send_chat_action_async,
+    send_photo_message_async,
+    send_text_chunked_async,
+)
 from agno.workflow import RemoteWorkflow, Workflow
 
 from .security import validate_webhook_secret_token
@@ -24,11 +31,8 @@ def attach_routes(
     if agent is None and team is None and workflow is None:
         raise ValueError("Either agent, team, or workflow must be provided.")
 
-    bot_token = getenv("TELEGRAM_TOKEN")
-    if not bot_token:
-        raise ValueError("TELEGRAM_TOKEN environment variable is not set")
-
-    base_url = f"https://api.telegram.org/bot{bot_token}"
+    # Validate token is available at startup
+    get_bot_token()
 
     @router.get("/status")
     async def status():
@@ -37,7 +41,6 @@ def attach_routes(
     @router.post("/webhook")
     async def webhook(request: Request, background_tasks: BackgroundTasks):
         try:
-            # Validate secret token header
             secret_token = request.headers.get("X-Telegram-Bot-Api-Secret-Token")
             if not validate_webhook_secret_token(secret_token):
                 log_warning("Invalid webhook secret token")
@@ -72,13 +75,11 @@ def attach_routes(
         try:
             message_image = None
 
-            # Send typing indicator
-            await _send_chat_action(chat_id, "typing")
+            await send_chat_action_async(chat_id, "typing")
 
             if message.get("text"):
                 message_text = message["text"]
             elif message.get("photo"):
-                # Telegram sends multiple sizes; last is largest
                 message_image = message["photo"][-1]["file_id"]
                 message_text = message.get("caption", "Describe the image")
             else:
@@ -90,10 +91,11 @@ def attach_routes(
 
             images = None
             if message_image:
-                image_bytes = await _download_file(message_image)
+                image_bytes = await get_file_bytes_async(message_image)
                 if image_bytes:
                     images = [Image(content=image_bytes)]
 
+            response = None
             if agent:
                 response = await agent.arun(
                     message_text,
@@ -116,59 +118,62 @@ def attach_routes(
                     images=images,
                 )
 
+            if not response:
+                return
+
             if response.status == "ERROR":
-                await _send_message(
+                await send_text_chunked_async(
                     chat_id, "Sorry, there was an error processing your message. Please try again later."
                 )
                 log_error(response.content)
                 return
 
             if response.reasoning_content:
-                await _send_message(chat_id, f"Reasoning: \n{response.reasoning_content}")
+                await send_text_chunked_async(chat_id, f"Reasoning: \n{response.reasoning_content}")
 
-            await _send_message(chat_id, response.content)  # type: ignore
+            # Outbound image handling
+            if response.images:
+                any_sent = False
+                for image in response.images:
+                    image_bytes_out = None
+                    content = image.content
+                    if isinstance(content, bytes):
+                        try:
+                            decoded = content.decode("utf-8")
+                            image_bytes_out = base64.b64decode(decoded)
+                        except (UnicodeDecodeError, binascii.Error):
+                            image_bytes_out = content
+                    elif isinstance(content, str):
+                        try:
+                            image_bytes_out = base64.b64decode(content)
+                        except binascii.Error:
+                            log_warning(f"Invalid base64 image content for chat {chat_id}")
+                    else:
+                        log_warning(f"Unexpected image content type: {type(content)} for chat {chat_id}")
+
+                    if image_bytes_out:
+                        try:
+                            await send_photo_message_async(
+                                chat_id=chat_id,
+                                photo_bytes=image_bytes_out,
+                                caption=response.content[:1024] if response.content else None,
+                            )
+                            any_sent = True
+                        except Exception as img_err:
+                            log_error(f"Failed to send photo to chat {chat_id}: {img_err}")
+
+                if not any_sent:
+                    await send_text_chunked_async(chat_id, response.content or "")
+            else:
+                await send_text_chunked_async(chat_id, response.content or "")
 
         except Exception as e:
             log_error(f"Error processing message: {str(e)}")
             try:
-                await _send_message(
+                await send_text_chunked_async(
                     chat_id, "Sorry, there was an error processing your message. Please try again later."
                 )
             except Exception as send_error:
                 log_error(f"Error sending error message: {str(send_error)}")
-
-    async def _send_chat_action(chat_id: int, action: str) -> None:
-        async with httpx.AsyncClient() as client:
-            await client.post(f"{base_url}/sendChatAction", json={"chat_id": chat_id, "action": action})
-
-    async def _download_file(file_id: str) -> Optional[bytes]:
-        try:
-            async with httpx.AsyncClient() as client:
-                # Step 1: Get the file path
-                resp = await client.get(f"{base_url}/getFile", params={"file_id": file_id})
-                resp.raise_for_status()
-                file_path = resp.json()["result"]["file_path"]
-
-                # Step 2: Download the file
-                file_url = f"https://api.telegram.org/file/bot{bot_token}/{file_path}"
-                file_resp = await client.get(file_url)
-                file_resp.raise_for_status()
-                return file_resp.content
-        except Exception as e:
-            log_error(f"Error downloading file: {str(e)}")
-            return None
-
-    async def _send_message(chat_id: int, message: str) -> None:
-        if len(message) <= 4096:
-            async with httpx.AsyncClient() as client:
-                await client.post(f"{base_url}/sendMessage", json={"chat_id": chat_id, "text": message})
-            return
-
-        # Split message into batches of 4000 characters (Telegram limit is 4096)
-        message_batches = [message[i : i + 4000] for i in range(0, len(message), 4000)]
-        async with httpx.AsyncClient() as client:
-            for i, batch in enumerate(message_batches, 1):
-                batch_message = f"[{i}/{len(message_batches)}] {batch}"
-                await client.post(f"{base_url}/sendMessage", json={"chat_id": chat_id, "text": batch_message})
 
     return router

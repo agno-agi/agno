@@ -1,3 +1,4 @@
+import base64
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -17,9 +18,9 @@ from agno.os.interfaces.telegram.security import (
 
 
 class TestIsDevelopmentMode:
-    def test_default_is_dev(self, monkeypatch):
+    def test_unset_is_not_dev(self, monkeypatch):
         monkeypatch.delenv("APP_ENV", raising=False)
-        assert is_development_mode() is True
+        assert is_development_mode() is False
 
     def test_explicit_development(self, monkeypatch):
         monkeypatch.setenv("APP_ENV", "development")
@@ -51,7 +52,7 @@ class TestGetWebhookSecretToken:
 
 class TestValidateWebhookSecretToken:
     def test_dev_mode_bypasses(self, monkeypatch):
-        monkeypatch.delenv("APP_ENV", raising=False)
+        monkeypatch.setenv("APP_ENV", "development")
         assert validate_webhook_secret_token(None) is True
         assert validate_webhook_secret_token("anything") is True
 
@@ -129,10 +130,12 @@ class TestTelegramClass:
 # router.py (FastAPI endpoints via TestClient)
 # ---------------------------------------------------------------------------
 
+ROUTER_MODULE = "agno.os.interfaces.telegram.router"
+
 
 def _make_app(monkeypatch, agent=None, team=None, workflow=None):
     monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
-    monkeypatch.delenv("APP_ENV", raising=False)
+    monkeypatch.setenv("APP_ENV", "development")
     tg = Telegram(agent=agent, team=team, workflow=workflow)
     app = FastAPI()
     app.include_router(tg.get_router())
@@ -262,7 +265,7 @@ class TestProcessMessage:
     @pytest.mark.asyncio
     async def test_text_message_calls_agent_arun(self, monkeypatch):
         monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
-        monkeypatch.delenv("APP_ENV", raising=False)
+        monkeypatch.setenv("APP_ENV", "development")
 
         mock_response = MagicMock()
         mock_response.status = "COMPLETED"
@@ -273,23 +276,17 @@ class TestProcessMessage:
         agent = AsyncMock()
         agent.arun = AsyncMock(return_value=mock_response)
 
-        from fastapi import APIRouter
+        with (
+            patch(f"{ROUTER_MODULE}.send_chat_action_async", new_callable=AsyncMock) as mock_action,
+            patch(f"{ROUTER_MODULE}.send_text_chunked_async", new_callable=AsyncMock) as mock_send,
+        ):
+            from fastapi import APIRouter
 
-        from agno.os.interfaces.telegram.router import attach_routes
+            from agno.os.interfaces.telegram.router import attach_routes
 
-        router = APIRouter(prefix="/telegram")
-        with patch("agno.os.interfaces.telegram.router.httpx.AsyncClient") as mock_client_cls:
-            mock_client = AsyncMock()
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=False)
-            mock_client.post = AsyncMock()
-            mock_client_cls.return_value = mock_client
-
+            router = APIRouter(prefix="/telegram")
             attach_routes(router=router, agent=agent)
 
-            # Get the process_message function from the closure
-            # We need to call it through the route handler
-            # Instead, test via the webhook + background tasks running synchronously
             app = FastAPI()
             app.include_router(router)
             client = TestClient(app)
@@ -308,7 +305,6 @@ class TestProcessMessage:
             )
             assert resp.status_code == 200
 
-            # Wait for background task
             agent.arun.assert_called_once()
             call_kwargs = agent.arun.call_args
             assert call_kwargs[0][0] == "Hello bot"
@@ -316,10 +312,13 @@ class TestProcessMessage:
             assert call_kwargs[1]["session_id"] == "tg:12345"
             assert call_kwargs[1]["images"] is None
 
+            mock_action.assert_called_once_with(12345, "typing")
+            mock_send.assert_called_once_with(12345, "Agent reply")
+
     @pytest.mark.asyncio
     async def test_photo_message_downloads_file(self, monkeypatch):
         monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
-        monkeypatch.delenv("APP_ENV", raising=False)
+        monkeypatch.setenv("APP_ENV", "development")
 
         mock_response = MagicMock()
         mock_response.status = "COMPLETED"
@@ -330,28 +329,13 @@ class TestProcessMessage:
         agent = AsyncMock()
         agent.arun = AsyncMock(return_value=mock_response)
 
-        with patch("agno.os.interfaces.telegram.router.httpx.AsyncClient") as mock_client_cls:
-            mock_client = AsyncMock()
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=False)
-
-            # Mock getFile response
-            get_file_resp = MagicMock()
-            get_file_resp.raise_for_status = MagicMock()
-            get_file_resp.json.return_value = {"result": {"file_path": "photos/file_123.jpg"}}
-
-            # Mock file download response
-            download_resp = MagicMock()
-            download_resp.raise_for_status = MagicMock()
-            download_resp.content = b"fake-image-bytes"
-
-            # Mock sendChatAction and sendMessage responses
-            action_resp = MagicMock()
-
-            mock_client.get = AsyncMock(side_effect=[get_file_resp, download_resp])
-            mock_client.post = AsyncMock(return_value=action_resp)
-            mock_client_cls.return_value = mock_client
-
+        with (
+            patch(f"{ROUTER_MODULE}.send_chat_action_async", new_callable=AsyncMock),
+            patch(f"{ROUTER_MODULE}.send_text_chunked_async", new_callable=AsyncMock),
+            patch(
+                f"{ROUTER_MODULE}.get_file_bytes_async", new_callable=AsyncMock, return_value=b"fake-image-bytes"
+            ) as mock_download,
+        ):
             from fastapi import APIRouter
 
             from agno.os.interfaces.telegram.router import attach_routes
@@ -381,6 +365,7 @@ class TestProcessMessage:
             )
             assert resp.status_code == 200
 
+            mock_download.assert_called_once_with("large_id")
             agent.arun.assert_called_once()
             call_kwargs = agent.arun.call_args
             assert call_kwargs[0][0] == "What is this?"
@@ -390,7 +375,7 @@ class TestProcessMessage:
     @pytest.mark.asyncio
     async def test_error_response_sends_error_message(self, monkeypatch):
         monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
-        monkeypatch.delenv("APP_ENV", raising=False)
+        monkeypatch.setenv("APP_ENV", "development")
 
         mock_response = MagicMock()
         mock_response.status = "ERROR"
@@ -399,13 +384,10 @@ class TestProcessMessage:
         agent = AsyncMock()
         agent.arun = AsyncMock(return_value=mock_response)
 
-        with patch("agno.os.interfaces.telegram.router.httpx.AsyncClient") as mock_client_cls:
-            mock_client = AsyncMock()
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=False)
-            mock_client.post = AsyncMock()
-            mock_client_cls.return_value = mock_client
-
+        with (
+            patch(f"{ROUTER_MODULE}.send_chat_action_async", new_callable=AsyncMock),
+            patch(f"{ROUTER_MODULE}.send_text_chunked_async", new_callable=AsyncMock) as mock_send,
+        ):
             from fastapi import APIRouter
 
             from agno.os.interfaces.telegram.router import attach_routes
@@ -431,31 +413,22 @@ class TestProcessMessage:
             )
             assert resp.status_code == 200
 
-            # The error message should be sent back to the user
-            sent_calls = [c for c in mock_client.post.call_args_list if "sendMessage" in str(c)]
-            error_msgs = [
-                c
-                for c in sent_calls
-                if "Sorry" in str(c.kwargs.get("json", {}).get("text", ""))
-                or "Sorry" in str(c.args[1] if len(c.args) > 1 else "")
-            ]
-            assert len(error_msgs) >= 1 or len(sent_calls) >= 1
+            mock_send.assert_called_once()
+            sent_text = mock_send.call_args[0][1]
+            assert "Sorry" in sent_text
 
     @pytest.mark.asyncio
     async def test_no_chat_id_skips_processing(self, monkeypatch):
         monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
-        monkeypatch.delenv("APP_ENV", raising=False)
+        monkeypatch.setenv("APP_ENV", "development")
 
         agent = AsyncMock()
         agent.arun = AsyncMock()
 
-        with patch("agno.os.interfaces.telegram.router.httpx.AsyncClient") as mock_client_cls:
-            mock_client = AsyncMock()
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=False)
-            mock_client.post = AsyncMock()
-            mock_client_cls.return_value = mock_client
-
+        with (
+            patch(f"{ROUTER_MODULE}.send_chat_action_async", new_callable=AsyncMock),
+            patch(f"{ROUTER_MODULE}.send_text_chunked_async", new_callable=AsyncMock),
+        ):
             from fastapi import APIRouter
 
             from agno.os.interfaces.telegram.router import attach_routes
@@ -484,18 +457,15 @@ class TestProcessMessage:
     @pytest.mark.asyncio
     async def test_unsupported_message_type_skips(self, monkeypatch):
         monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
-        monkeypatch.delenv("APP_ENV", raising=False)
+        monkeypatch.setenv("APP_ENV", "development")
 
         agent = AsyncMock()
         agent.arun = AsyncMock()
 
-        with patch("agno.os.interfaces.telegram.router.httpx.AsyncClient") as mock_client_cls:
-            mock_client = AsyncMock()
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=False)
-            mock_client.post = AsyncMock()
-            mock_client_cls.return_value = mock_client
-
+        with (
+            patch(f"{ROUTER_MODULE}.send_chat_action_async", new_callable=AsyncMock),
+            patch(f"{ROUTER_MODULE}.send_text_chunked_async", new_callable=AsyncMock),
+        ):
             from fastapi import APIRouter
 
             from agno.os.interfaces.telegram.router import attach_routes
@@ -507,7 +477,6 @@ class TestProcessMessage:
             app.include_router(router)
             client = TestClient(app)
 
-            # Send a sticker (unsupported in v1)
             resp = client.post(
                 "/telegram/webhook",
                 json={
@@ -525,34 +494,36 @@ class TestProcessMessage:
 
 
 # ---------------------------------------------------------------------------
-# Message splitting
+# Outbound image handling
 # ---------------------------------------------------------------------------
 
 
-class TestMessageSplitting:
+class TestOutboundImages:
     @pytest.mark.asyncio
-    async def test_long_message_is_split(self, monkeypatch):
+    async def test_base64_string_image_sent(self, monkeypatch):
         monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
-        monkeypatch.delenv("APP_ENV", raising=False)
+        monkeypatch.setenv("APP_ENV", "development")
 
-        long_content = "x" * 8500  # > 4096, will be split
+        raw_image = b"fake-png-data"
+        b64_str = base64.b64encode(raw_image).decode("utf-8")
+
+        mock_image = MagicMock()
+        mock_image.content = b64_str
 
         mock_response = MagicMock()
         mock_response.status = "COMPLETED"
-        mock_response.content = long_content
+        mock_response.content = "Here is the image"
         mock_response.reasoning_content = None
-        mock_response.images = None
+        mock_response.images = [mock_image]
 
         agent = AsyncMock()
         agent.arun = AsyncMock(return_value=mock_response)
 
-        with patch("agno.os.interfaces.telegram.router.httpx.AsyncClient") as mock_client_cls:
-            mock_client = AsyncMock()
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=False)
-            mock_client.post = AsyncMock()
-            mock_client_cls.return_value = mock_client
-
+        with (
+            patch(f"{ROUTER_MODULE}.send_chat_action_async", new_callable=AsyncMock),
+            patch(f"{ROUTER_MODULE}.send_text_chunked_async", new_callable=AsyncMock),
+            patch(f"{ROUTER_MODULE}.send_photo_message_async", new_callable=AsyncMock) as mock_photo,
+        ):
             from fastapi import APIRouter
 
             from agno.os.interfaces.telegram.router import attach_routes
@@ -572,22 +543,138 @@ class TestMessageSplitting:
                         "message_id": 100,
                         "from": {"id": 67890},
                         "chat": {"id": 12345, "type": "private"},
-                        "text": "Give me a very long answer",
+                        "text": "Generate an image",
                     },
                 },
             )
             assert resp.status_code == 200
 
-            # Should have sent: typing indicator + 3 message batches (8500/4000 = 3 batches)
-            send_calls = mock_client.post.call_args_list
-            send_message_calls = [c for c in send_calls if "sendMessage" in str(c)]
-            # 8500 chars → batches of 4000: ceil(8500/4000) = 3 batches
-            assert len(send_message_calls) >= 3
+            mock_photo.assert_called_once()
+            call_kwargs = mock_photo.call_args[1]
+            assert call_kwargs["chat_id"] == 12345
+            assert call_kwargs["photo_bytes"] == raw_image
+            assert call_kwargs["caption"] == "Here is the image"
 
     @pytest.mark.asyncio
-    async def test_short_message_not_split(self, monkeypatch):
+    async def test_raw_bytes_image_sent(self, monkeypatch):
         monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
-        monkeypatch.delenv("APP_ENV", raising=False)
+        monkeypatch.setenv("APP_ENV", "development")
+
+        raw_image = b"\x89PNG\r\n\x1a\nfake-png-data"
+
+        mock_image = MagicMock()
+        mock_image.content = raw_image
+
+        mock_response = MagicMock()
+        mock_response.status = "COMPLETED"
+        mock_response.content = "Here is the image"
+        mock_response.reasoning_content = None
+        mock_response.images = [mock_image]
+
+        agent = AsyncMock()
+        agent.arun = AsyncMock(return_value=mock_response)
+
+        with (
+            patch(f"{ROUTER_MODULE}.send_chat_action_async", new_callable=AsyncMock),
+            patch(f"{ROUTER_MODULE}.send_text_chunked_async", new_callable=AsyncMock),
+            patch(f"{ROUTER_MODULE}.send_photo_message_async", new_callable=AsyncMock) as mock_photo,
+        ):
+            from fastapi import APIRouter
+
+            from agno.os.interfaces.telegram.router import attach_routes
+
+            router = APIRouter(prefix="/telegram")
+            attach_routes(router=router, agent=agent)
+
+            app = FastAPI()
+            app.include_router(router)
+            client = TestClient(app)
+
+            resp = client.post(
+                "/telegram/webhook",
+                json={
+                    "update_id": 1,
+                    "message": {
+                        "message_id": 100,
+                        "from": {"id": 67890},
+                        "chat": {"id": 12345, "type": "private"},
+                        "text": "Generate an image",
+                    },
+                },
+            )
+            assert resp.status_code == 200
+
+            mock_photo.assert_called_once()
+            call_kwargs = mock_photo.call_args[1]
+            # Raw bytes (not valid UTF-8) should be passed through directly
+            assert call_kwargs["photo_bytes"] == raw_image
+
+    @pytest.mark.asyncio
+    async def test_image_failure_falls_back_to_text(self, monkeypatch):
+        monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
+        monkeypatch.setenv("APP_ENV", "development")
+
+        raw_image = b"fake-png"
+        b64_str = base64.b64encode(raw_image).decode("utf-8")
+
+        mock_image = MagicMock()
+        mock_image.content = b64_str
+
+        mock_response = MagicMock()
+        mock_response.status = "COMPLETED"
+        mock_response.content = "Fallback text"
+        mock_response.reasoning_content = None
+        mock_response.images = [mock_image]
+
+        agent = AsyncMock()
+        agent.arun = AsyncMock(return_value=mock_response)
+
+        with (
+            patch(f"{ROUTER_MODULE}.send_chat_action_async", new_callable=AsyncMock),
+            patch(f"{ROUTER_MODULE}.send_text_chunked_async", new_callable=AsyncMock) as mock_text,
+            patch(
+                f"{ROUTER_MODULE}.send_photo_message_async", new_callable=AsyncMock, side_effect=Exception("API error")
+            ),
+        ):
+            from fastapi import APIRouter
+
+            from agno.os.interfaces.telegram.router import attach_routes
+
+            router = APIRouter(prefix="/telegram")
+            attach_routes(router=router, agent=agent)
+
+            app = FastAPI()
+            app.include_router(router)
+            client = TestClient(app)
+
+            resp = client.post(
+                "/telegram/webhook",
+                json={
+                    "update_id": 1,
+                    "message": {
+                        "message_id": 100,
+                        "from": {"id": 67890},
+                        "chat": {"id": 12345, "type": "private"},
+                        "text": "Generate an image",
+                    },
+                },
+            )
+            assert resp.status_code == 200
+
+            # Fallback to text when photo fails
+            mock_text.assert_called_once_with(12345, "Fallback text")
+
+
+# ---------------------------------------------------------------------------
+# Message splitting (now in utils, but test end-to-end)
+# ---------------------------------------------------------------------------
+
+
+class TestMessageSplitting:
+    @pytest.mark.asyncio
+    async def test_sends_via_chunked(self, monkeypatch):
+        monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
+        monkeypatch.setenv("APP_ENV", "development")
 
         mock_response = MagicMock()
         mock_response.status = "COMPLETED"
@@ -598,13 +685,10 @@ class TestMessageSplitting:
         agent = AsyncMock()
         agent.arun = AsyncMock(return_value=mock_response)
 
-        with patch("agno.os.interfaces.telegram.router.httpx.AsyncClient") as mock_client_cls:
-            mock_client = AsyncMock()
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=False)
-            mock_client.post = AsyncMock()
-            mock_client_cls.return_value = mock_client
-
+        with (
+            patch(f"{ROUTER_MODULE}.send_chat_action_async", new_callable=AsyncMock),
+            patch(f"{ROUTER_MODULE}.send_text_chunked_async", new_callable=AsyncMock) as mock_send,
+        ):
             from fastapi import APIRouter
 
             from agno.os.interfaces.telegram.router import attach_routes
@@ -630,10 +714,7 @@ class TestMessageSplitting:
             )
             assert resp.status_code == 200
 
-            send_calls = mock_client.post.call_args_list
-            send_message_calls = [c for c in send_calls if "sendMessage" in str(c)]
-            # typing indicator (sendChatAction) + 1 sendMessage
-            assert len(send_message_calls) == 1
+            mock_send.assert_called_once_with(12345, "Short reply")
 
 
 # ---------------------------------------------------------------------------

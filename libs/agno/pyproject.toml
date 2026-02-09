@@ -144,6 +144,7 @@ daytona = ["daytona"]
 oxylabs = ["oxylabs"]
 trafilatura = ["trafilatura"]
 neo4j = ["neo4j"]
+telegram = ["pyTelegramBotAPI>=4.29.0"]
 
 # Dependencies for Storage
 sql = ["sqlalchemy"]
@@ -529,6 +530,7 @@ module = [
   "streamlit.*",
   "tantivy.*",
   "tavily.*",
+  "telebot.*",
   "textract.*",
   "timeout_decorator.*",
   "tiktoken.*",
