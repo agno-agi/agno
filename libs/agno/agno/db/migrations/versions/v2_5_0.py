@@ -143,6 +143,73 @@ def _has_constraint(sess, db_schema: str, table_name: str, constraint_name: str,
     return result.scalar() is not None
 
 
+def _validate_session_data(sess, full_table: str, table_name: str) -> bool:
+    """Check for NULL or duplicate session_id values that would prevent adding a PRIMARY KEY.
+
+    Returns:
+        bool: True if data is valid for PK, False if issues were found.
+    """
+    # Check for NULL session_id values
+    null_count = sess.execute(text(f"SELECT COUNT(*) FROM {full_table} WHERE session_id IS NULL")).scalar() or 0
+    if null_count > 0:
+        log_warning(
+            f"Cannot add PRIMARY KEY to {table_name}: found {null_count} rows with NULL session_id. "
+            f"Fix with: DELETE FROM {full_table} WHERE session_id IS NULL"
+        )
+        return False
+
+    # Check for duplicate session_id values
+    dup_result = sess.execute(
+        text(f"SELECT session_id, COUNT(*) as cnt FROM {full_table} GROUP BY session_id HAVING COUNT(*) > 1")
+    )
+    duplicates = dup_result.fetchall()
+    if duplicates:
+        dup_ids = [row[0] for row in duplicates[:5]]
+        log_warning(
+            f"Cannot add PRIMARY KEY to {table_name}: found {len(duplicates)} duplicate session_id values. "
+            f"Examples: {dup_ids}. "
+            f"Fix with: DELETE FROM {full_table} WHERE ctid NOT IN "
+            f"(SELECT MIN(ctid) FROM {full_table} GROUP BY session_id)"
+        )
+        return False
+
+    return True
+
+
+async def _async_validate_session_data(sess, full_table: str, table_name: str) -> bool:
+    """Async version: check for NULL or duplicate session_id values.
+
+    Returns:
+        bool: True if data is valid for PK, False if issues were found.
+    """
+    # Check for NULL session_id values
+    result = await sess.execute(text(f"SELECT COUNT(*) FROM {full_table} WHERE session_id IS NULL"))
+    null_count = result.scalar() or 0
+    if null_count > 0:
+        log_warning(
+            f"Cannot add PRIMARY KEY to {table_name}: found {null_count} rows with NULL session_id. "
+            f"Fix with: DELETE FROM {full_table} WHERE session_id IS NULL"
+        )
+        return False
+
+    # Check for duplicate session_id values
+    result = await sess.execute(
+        text(f"SELECT session_id, COUNT(*) as cnt FROM {full_table} GROUP BY session_id HAVING COUNT(*) > 1")
+    )
+    duplicates = result.fetchall()
+    if duplicates:
+        dup_ids = [row[0] for row in duplicates[:5]]
+        log_warning(
+            f"Cannot add PRIMARY KEY to {table_name}: found {len(duplicates)} duplicate session_id values. "
+            f"Examples: {dup_ids}. "
+            f"Fix with: DELETE FROM {full_table} WHERE ctid NOT IN "
+            f"(SELECT MIN(ctid) FROM {full_table} GROUP BY session_id)"
+        )
+        return False
+
+    return True
+
+
 def _migrate_postgres(db: BaseDb, table_name: str) -> bool:
     """Add PRIMARY KEY on session_id and drop uq_session_id for PostgreSQL."""
     db_schema = db.db_schema or "public"  # type: ignore
@@ -173,6 +240,8 @@ def _migrate_postgres(db: BaseDb, table_name: str) -> bool:
         # Check if PK already exists
         has_pk = _has_constraint(sess, db_schema, table_name, f"{table_name}_pkey", "PRIMARY KEY")
         if not has_pk:
+            if not _validate_session_data(sess, full_table, table_name):
+                return False
             log_info(f"-- Adding PRIMARY KEY on session_id to {table_name}")
             sess.execute(text(f"ALTER TABLE {full_table} ADD PRIMARY KEY (session_id)"))
             applied = True
@@ -227,6 +296,8 @@ async def _migrate_async_postgres(db: AsyncBaseDb, table_name: str) -> bool:
         )
         has_pk = result.scalar() is not None
         if not has_pk:
+            if not await _async_validate_session_data(sess, full_table, table_name):
+                return False
             log_info(f"-- Adding PRIMARY KEY on session_id to {table_name}")
             await sess.execute(text(f"ALTER TABLE {full_table} ADD PRIMARY KEY (session_id)"))
             applied = True
@@ -295,6 +366,8 @@ def _migrate_mysql(db: BaseDb, table_name: str) -> bool:
         ).scalar()
 
         if not pk_exists:
+            if not _validate_session_data(sess, full_table, table_name):
+                return False
             log_info(f"-- Adding PRIMARY KEY on session_id to {table_name}")
             sess.execute(text(f"ALTER TABLE {full_table} ADD PRIMARY KEY (`session_id`)"))
             applied = True
@@ -361,6 +434,8 @@ def _migrate_singlestore(db: BaseDb, table_name: str) -> bool:
         ).scalar()
 
         if not pk_exists:
+            if not _validate_session_data(sess, full_table, table_name):
+                return False
             log_info(f"-- Adding PRIMARY KEY on session_id to {table_name}")
             sess.execute(text(f"ALTER TABLE {full_table} ADD PRIMARY KEY (`session_id`)"))
             applied = True
