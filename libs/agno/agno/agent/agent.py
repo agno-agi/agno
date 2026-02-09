@@ -1105,9 +1105,6 @@ class Agent:
             **kwargs,
         )
 
-    def scrub_run_output_for_storage(self, run_response: RunOutput) -> None:
-        return _run.scrub_run_output_for_storage(self, run_response=run_response)
-
     def cli_app(
         self,
         input: Optional[str] = None,
@@ -1157,6 +1154,13 @@ class Agent:
             exit_on=exit_on,
             **kwargs,
         )
+
+    # ---------------------------------------------------------------
+    # Helper functions
+    # ---------------------------------------------------------------
+
+    def scrub_run_output_for_storage(self, run_response: RunOutput) -> None:
+        return _run.scrub_run_output_for_storage(self, run_response=run_response)
 
     # ---------------------------------------------------------------
     # _run module delegates
@@ -1283,7 +1287,7 @@ class Agent:
         background_tasks: Optional[Any] = None,
         **kwargs: Any,
     ) -> RunOutput:
-        return _run.run_impl(
+        return _run._run(
             self,
             run_response=run_response,
             run_context=run_context,
@@ -1314,7 +1318,7 @@ class Agent:
         background_tasks: Optional[Any] = None,
         **kwargs: Any,
     ) -> Iterator[Union[RunOutputEvent, RunOutput]]:
-        return _run.run_stream_impl(
+        return _run._run_stream(
             self,
             run_response=run_response,
             run_context=run_context,
@@ -1451,7 +1455,7 @@ class Agent:
         background_tasks: Optional[Any] = None,
         **kwargs: Any,
     ) -> RunOutput:
-        return await _run.arun_impl(
+        return await _run._arun(
             self,
             run_response=run_response,
             run_context=run_context,
@@ -1482,7 +1486,7 @@ class Agent:
         background_tasks: Optional[Any] = None,
         **kwargs: Any,
     ) -> AsyncIterator[Union[RunOutputEvent, RunOutput]]:
-        return _run.arun_stream_impl(
+        return _run._arun_stream(
             self,
             run_response=run_response,
             run_context=run_context,
