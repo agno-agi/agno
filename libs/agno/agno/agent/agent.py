@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from asyncio import Task
-from concurrent.futures import Future
 from dataclasses import dataclass
 from typing import (
     Any,
@@ -14,7 +12,6 @@ from typing import (
     Optional,
     Sequence,
     Set,
-    Tuple,
     Type,
     Union,
     overload,
@@ -25,21 +22,17 @@ from pydantic import BaseModel
 from agno.agent import (
     _cli,
     _default_tools,
-    _hooks,
     _init,
-    _managers,
     _messages,
-    _response,
     _run,
     _session,
     _storage,
-    _telemetry,
     _tools,
     _utils,
 )
 from agno.compression.manager import CompressionManager
 from agno.culture.manager import CultureManager
-from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, SessionType, UserMemory
+from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, UserMemory
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.eval.base import BaseEval
 from agno.filters import FilterExpr
@@ -51,19 +44,15 @@ from agno.memory import MemoryManager
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.metrics import Metrics
-from agno.models.response import ModelResponse, ToolExecution
-from agno.reasoning.step import ReasoningStep
+from agno.models.response import ToolExecution
 from agno.registry.registry import Registry
 from agno.run import RunContext, RunStatus
 from agno.run.agent import (
     RunEvent,
-    RunInput,
     RunOutput,
     RunOutputEvent,
 )
-from agno.run.messages import RunMessages
 from agno.run.requirement import RunRequirement
-from agno.run.team import TeamRunOutputEvent
 from agno.session import AgentSession, SessionSummaryManager, TeamSession, WorkflowSession
 from agno.session.summary import SessionSummary
 from agno.skills import Skills
@@ -631,7 +620,7 @@ class Agent:
         # Lazy-initialized shared thread pool executor for background tasks (memory, cultural knowledge, etc.)
         self._background_executor: Optional[Any] = None
 
-        self._get_models()
+        _init.get_models(self)
 
     # ---------------------------------------------------------------
     # Properties
@@ -656,38 +645,8 @@ class Agent:
     def set_id(self) -> None:
         return _init.set_id(self)
 
-    def _set_debug(self, debug_mode: Optional[bool] = None) -> None:
-        return _init.set_debug(self, debug_mode=debug_mode)
-
-    def _set_telemetry(self) -> None:
-        return _init.set_telemetry(self)
-
-    def _set_default_model(self) -> None:
-        return _init.set_default_model(self)
-
-    def _set_culture_manager(self) -> None:
-        return _init.set_culture_manager(self)
-
-    def _set_memory_manager(self) -> None:
-        return _init.set_memory_manager(self)
-
-    def _set_learning_machine(self) -> None:
-        return _init.set_learning_machine(self)
-
     def get_learning_machine(self) -> Optional[LearningMachine]:
         return _init.get_learning_machine(self)
-
-    def _set_session_summary_manager(self) -> None:
-        return _init.set_session_summary_manager(self)
-
-    def _set_compression_manager(self) -> None:
-        return _init.set_compression_manager(self)
-
-    def _has_async_db(self) -> bool:
-        return _init.has_async_db(self)
-
-    def _get_models(self) -> None:
-        return _init.get_models(self)
 
     def initialize_agent(self, debug_mode: Optional[bool] = None) -> None:
         return _init.initialize_agent(self, debug_mode=debug_mode)
@@ -698,37 +657,9 @@ class Agent:
     def set_tools(self, tools: Sequence[Union[Toolkit, Callable, Function, Dict]]) -> None:
         return _init.set_tools(self, tools)
 
-    async def _connect_mcp_tools(self) -> None:
-        return await _init.connect_mcp_tools(self)
-
-    async def _disconnect_mcp_tools(self) -> None:
-        return await _init.disconnect_mcp_tools(self)
-
-    def _connect_connectable_tools(self) -> None:
-        return _init.connect_connectable_tools(self)
-
-    def _disconnect_connectable_tools(self) -> None:
-        return _init.disconnect_connectable_tools(self)
-
-    # ---------------------------------------------------------------
-    # _telemetry module delegates
-    # ---------------------------------------------------------------
-
-    def _get_telemetry_data(self) -> Dict[str, Any]:
-        return _telemetry.get_telemetry_data(self)
-
-    def _log_agent_telemetry(self, session_id: str, run_id: Optional[str] = None) -> None:
-        return _telemetry.log_agent_telemetry(self, session_id=session_id, run_id=run_id)
-
-    async def _alog_agent_telemetry(self, session_id: str, run_id: Optional[str] = None) -> None:
-        return await _telemetry.alog_agent_telemetry(self, session_id=session_id, run_id=run_id)
-
     # ---------------------------------------------------------------
     # _tools module delegates
     # ---------------------------------------------------------------
-
-    def _raise_if_async_tools(self) -> None:
-        return _tools.raise_if_async_tools(self)
 
     def get_tools(
         self,
@@ -758,51 +689,6 @@ class Agent:
             check_mcp_tools=check_mcp_tools,
         )
 
-    def _parse_tools(
-        self,
-        tools: List[Union[Toolkit, Callable, Function, Dict]],
-        model: Model,
-        run_context: Optional[RunContext] = None,
-        async_mode: bool = False,
-    ) -> List[Union[Function, dict]]:
-        return _tools.parse_tools(self, tools=tools, model=model, run_context=run_context, async_mode=async_mode)
-
-    def _determine_tools_for_model(
-        self,
-        model: Model,
-        processed_tools: List[Union[Toolkit, Callable, Function, Dict]],
-        run_response: RunOutput,
-        run_context: RunContext,
-        session: AgentSession,
-        async_mode: bool = False,
-    ) -> List[Union[Function, dict]]:
-        return _tools.determine_tools_for_model(
-            self,
-            model=model,
-            processed_tools=processed_tools,
-            run_response=run_response,
-            run_context=run_context,
-            session=session,
-            async_mode=async_mode,
-        )
-
-    def _model_should_return_structured_output(self, run_context: Optional[RunContext] = None) -> bool:
-        return _response.model_should_return_structured_output(self, run_context=run_context)
-
-    def _get_response_format(
-        self, model: Optional[Model] = None, run_context: Optional[RunContext] = None
-    ) -> Optional[Union[Dict, Type[BaseModel]]]:
-        return _response.get_response_format(self, model=model, run_context=run_context)
-
-    def _resolve_run_dependencies(self, run_context: RunContext) -> None:
-        return _run.resolve_run_dependencies(self, run_context=run_context)
-
-    async def _aresolve_run_dependencies(self, run_context: RunContext) -> None:
-        return await _run.aresolve_run_dependencies(self, run_context=run_context)
-
-    def _get_agent_data(self) -> Dict[str, Any]:
-        return _storage.get_agent_data(self)
-
     @staticmethod
     def cancel_run(run_id: str) -> bool:
         return _run.cancel_run(run_id)
@@ -814,13 +700,6 @@ class Agent:
     # ---------------------------------------------------------------
     # _messages module delegates
     # ---------------------------------------------------------------
-
-    def _format_message_with_state_variables(
-        self,
-        message: Any,
-        run_context: Optional[RunContext] = None,
-    ) -> Any:
-        return _messages.format_message_with_state_variables(self, message=message, run_context=run_context)
 
     def get_system_message(
         self,
@@ -851,162 +730,6 @@ class Agent:
             tools=tools,
             add_session_state_to_context=add_session_state_to_context,
         )
-
-    def _get_formatted_session_state_for_system_message(self, session_state: Dict[str, Any]) -> str:
-        return _messages.get_formatted_session_state_for_system_message(self, session_state=session_state)
-
-    def _get_user_message(
-        self,
-        *,
-        run_response: RunOutput,
-        run_context: Optional[RunContext] = None,
-        input: Optional[Union[str, List, Dict, Message, BaseModel, List[Message]]] = None,
-        audio: Optional[Sequence[Audio]] = None,
-        images: Optional[Sequence[Image]] = None,
-        videos: Optional[Sequence[Video]] = None,
-        files: Optional[Sequence[File]] = None,
-        add_dependencies_to_context: Optional[bool] = None,
-        **kwargs: Any,
-    ) -> Optional[Message]:
-        return _messages.get_user_message(
-            self,
-            run_response=run_response,
-            run_context=run_context,
-            input=input,
-            audio=audio,
-            images=images,
-            videos=videos,
-            files=files,
-            add_dependencies_to_context=add_dependencies_to_context,
-            **kwargs,
-        )
-
-    async def _aget_user_message(
-        self,
-        *,
-        run_response: RunOutput,
-        run_context: Optional[RunContext] = None,
-        input: Optional[Union[str, List, Dict, Message, BaseModel, List[Message]]] = None,
-        audio: Optional[Sequence[Audio]] = None,
-        images: Optional[Sequence[Image]] = None,
-        videos: Optional[Sequence[Video]] = None,
-        files: Optional[Sequence[File]] = None,
-        add_dependencies_to_context: Optional[bool] = None,
-        **kwargs: Any,
-    ) -> Optional[Message]:
-        return await _messages.aget_user_message(
-            self,
-            run_response=run_response,
-            run_context=run_context,
-            input=input,
-            audio=audio,
-            images=images,
-            videos=videos,
-            files=files,
-            add_dependencies_to_context=add_dependencies_to_context,
-            **kwargs,
-        )
-
-    def _get_run_messages(
-        self,
-        *,
-        run_response: RunOutput,
-        run_context: RunContext,
-        input: Union[str, List, Dict, Message, BaseModel, List[Message]],
-        session: AgentSession,
-        user_id: Optional[str] = None,
-        audio: Optional[Sequence[Audio]] = None,
-        images: Optional[Sequence[Image]] = None,
-        videos: Optional[Sequence[Video]] = None,
-        files: Optional[Sequence[File]] = None,
-        add_history_to_context: Optional[bool] = None,
-        add_dependencies_to_context: Optional[bool] = None,
-        add_session_state_to_context: Optional[bool] = None,
-        tools: Optional[List[Union[Function, dict]]] = None,
-        **kwargs: Any,
-    ) -> RunMessages:
-        return _messages.get_run_messages(
-            self,
-            run_response=run_response,
-            run_context=run_context,
-            input=input,
-            session=session,
-            user_id=user_id,
-            audio=audio,
-            images=images,
-            videos=videos,
-            files=files,
-            add_history_to_context=add_history_to_context,
-            add_dependencies_to_context=add_dependencies_to_context,
-            add_session_state_to_context=add_session_state_to_context,
-            tools=tools,
-            **kwargs,
-        )
-
-    async def _aget_run_messages(
-        self,
-        *,
-        run_response: RunOutput,
-        run_context: RunContext,
-        input: Union[str, List, Dict, Message, BaseModel, List[Message]],
-        session: AgentSession,
-        user_id: Optional[str] = None,
-        audio: Optional[Sequence[Audio]] = None,
-        images: Optional[Sequence[Image]] = None,
-        videos: Optional[Sequence[Video]] = None,
-        files: Optional[Sequence[File]] = None,
-        add_history_to_context: Optional[bool] = None,
-        add_dependencies_to_context: Optional[bool] = None,
-        add_session_state_to_context: Optional[bool] = None,
-        tools: Optional[List[Union[Function, dict]]] = None,
-        **kwargs: Any,
-    ) -> RunMessages:
-        return await _messages.aget_run_messages(
-            self,
-            run_response=run_response,
-            run_context=run_context,
-            input=input,
-            session=session,
-            user_id=user_id,
-            audio=audio,
-            images=images,
-            videos=videos,
-            files=files,
-            add_history_to_context=add_history_to_context,
-            add_dependencies_to_context=add_dependencies_to_context,
-            add_session_state_to_context=add_session_state_to_context,
-            tools=tools,
-            **kwargs,
-        )
-
-    def _get_continue_run_messages(
-        self,
-        input: List[Message],
-    ) -> RunMessages:
-        return _messages.get_continue_run_messages(self, input=input)
-
-    def _get_messages_for_parser_model(
-        self,
-        model_response: ModelResponse,
-        response_format: Optional[Union[Dict, Type[BaseModel]]],
-        run_context: Optional[RunContext] = None,
-    ) -> List[Message]:
-        return _messages.get_messages_for_parser_model(
-            self, model_response=model_response, response_format=response_format, run_context=run_context
-        )
-
-    def _get_messages_for_parser_model_stream(
-        self,
-        run_response: RunOutput,
-        response_format: Optional[Union[Dict, Type[BaseModel]]],
-        run_context: Optional[RunContext] = None,
-    ) -> List[Message]:
-        return _messages.get_messages_for_parser_model_stream(
-            self, run_response=run_response, response_format=response_format, run_context=run_context
-        )
-
-    def _get_messages_for_output_model(self, messages: List[Message]) -> List[Message]:
-        return _messages.get_messages_for_output_model(self, messages=messages)
 
     def get_relevant_docs_from_knowledge(
         self,
@@ -1046,68 +769,12 @@ class Agent:
             **kwargs,
         )
 
-    def _convert_documents_to_string(self, docs: List[Union[Dict[str, Any], str]]) -> str:
-        return _utils.convert_documents_to_string(self, docs=docs)
-
-    def _convert_dependencies_to_string(self, context: Dict[str, Any]) -> str:
-        return _utils.convert_dependencies_to_string(self, context=context)
-
     def deep_copy(self, *, update: Optional[Dict[str, Any]] = None) -> Agent:
         return _utils.deep_copy(self, update=update)
-
-    def _deep_copy_field(self, field_name: str, field_value: Any) -> Any:
-        return _utils.deep_copy_field(self, field_name=field_name, field_value=field_value)
 
     # ---------------------------------------------------------------
     # _storage module delegates
     # ---------------------------------------------------------------
-
-    def _read_session(
-        self, session_id: str, session_type: Optional[SessionType] = SessionType.AGENT
-    ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession]]:
-        if session_type is None:
-            session_type = SessionType.AGENT
-        return _storage.read_session(self, session_id=session_id, session_type=session_type)
-
-    async def _aread_session(
-        self, session_id: str, session_type: Optional[SessionType] = SessionType.AGENT
-    ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession]]:
-        if session_type is None:
-            session_type = SessionType.AGENT
-        return await _storage.aread_session(self, session_id=session_id, session_type=session_type)
-
-    def _upsert_session(
-        self, session: Union[AgentSession, TeamSession, WorkflowSession]
-    ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession]]:
-        return _storage.upsert_session(self, session=session)
-
-    async def _aupsert_session(
-        self, session: Union[AgentSession, TeamSession, WorkflowSession]
-    ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession]]:
-        return await _storage.aupsert_session(self, session=session)
-
-    def _load_session_state(self, session: AgentSession, session_state: Dict[str, Any]) -> Dict[str, Any]:
-        return _storage.load_session_state(self, session=session, session_state=session_state)
-
-    def _update_metadata(self, session: AgentSession) -> None:
-        return _storage.update_metadata(self, session=session)
-
-    def _get_session_metrics(self, session: AgentSession) -> Optional[Metrics]:
-        return _storage.get_session_metrics_internal(self, session=session)
-
-    def _read_or_create_session(
-        self,
-        session_id: str,
-        user_id: Optional[str] = None,
-    ) -> AgentSession:
-        return _storage.read_or_create_session(self, session_id=session_id, user_id=user_id)
-
-    async def _aread_or_create_session(
-        self,
-        session_id: str,
-        user_id: Optional[str] = None,
-    ) -> AgentSession:
-        return await _storage.aread_or_create_session(self, session_id=session_id, user_id=user_id)
 
     def to_dict(self) -> Dict[str, Any]:
         return _storage.to_dict(self)
@@ -1315,662 +982,8 @@ class Agent:
             self, run_response=run_response, input=input, session_id=session_id, user_id=user_id
         )
 
-    def _calculate_run_metrics(self, messages: List[Message], current_run_metrics: Optional[Metrics] = None) -> Metrics:
-        return _response.calculate_run_metrics(self, messages=messages, current_run_metrics=current_run_metrics)
-
-    def _handle_reasoning(
-        self, run_response: RunOutput, run_messages: RunMessages, run_context: Optional[RunContext] = None
-    ) -> None:
-        return _response.handle_reasoning(
-            self, run_response=run_response, run_messages=run_messages, run_context=run_context
-        )
-
-    def _handle_reasoning_stream(
-        self,
-        run_response: RunOutput,
-        run_messages: RunMessages,
-        run_context: Optional[RunContext] = None,
-        stream_events: Optional[bool] = None,
-    ) -> Iterator[RunOutputEvent]:
-        return _response.handle_reasoning_stream(
-            self,
-            run_response=run_response,
-            run_messages=run_messages,
-            run_context=run_context,
-            stream_events=stream_events,
-        )
-
-    async def _ahandle_reasoning(
-        self, run_response: RunOutput, run_messages: RunMessages, run_context: Optional[RunContext] = None
-    ) -> None:
-        return await _response.ahandle_reasoning(
-            self, run_response=run_response, run_messages=run_messages, run_context=run_context
-        )
-
-    def _ahandle_reasoning_stream(
-        self,
-        run_response: RunOutput,
-        run_messages: RunMessages,
-        run_context: Optional[RunContext] = None,
-        stream_events: Optional[bool] = None,
-    ) -> AsyncIterator[RunOutputEvent]:
-        return _response.ahandle_reasoning_stream(
-            self,
-            run_response=run_response,
-            run_messages=run_messages,
-            run_context=run_context,
-            stream_events=stream_events,
-        )
-
-    def _format_reasoning_step_content(self, run_response: RunOutput, reasoning_step: ReasoningStep) -> str:
-        return _response.format_reasoning_step_content(self, run_response=run_response, reasoning_step=reasoning_step)
-
-    def _handle_reasoning_event(
-        self,
-        event: Any,
-        run_response: RunOutput,
-        stream_events: Optional[bool] = None,
-    ) -> Iterator[RunOutputEvent]:
-        return _response.handle_reasoning_event(
-            self, event=event, run_response=run_response, stream_events=stream_events
-        )
-
-    def _reason(
-        self,
-        run_response: RunOutput,
-        run_messages: RunMessages,
-        run_context: Optional[RunContext] = None,
-        stream_events: Optional[bool] = None,
-    ) -> Iterator[RunOutputEvent]:
-        return _response.reason(
-            self,
-            run_response=run_response,
-            run_messages=run_messages,
-            run_context=run_context,
-            stream_events=stream_events,
-        )
-
-    def _areason(
-        self,
-        run_response: RunOutput,
-        run_messages: RunMessages,
-        run_context: Optional[RunContext] = None,
-        stream_events: Optional[bool] = None,
-    ) -> AsyncIterator[RunOutputEvent]:
-        return _response.areason(
-            self,
-            run_response=run_response,
-            run_messages=run_messages,
-            run_context=run_context,
-            stream_events=stream_events,
-        )
-
-    def _process_parser_response(
-        self,
-        model_response: ModelResponse,
-        run_messages: RunMessages,
-        parser_model_response: ModelResponse,
-        messages_for_parser_model: list,
-    ) -> None:
-        return _response.process_parser_response(
-            self,
-            model_response=model_response,
-            run_messages=run_messages,
-            parser_model_response=parser_model_response,
-            messages_for_parser_model=messages_for_parser_model,
-        )
-
-    def _parse_response_with_parser_model(
-        self, model_response: ModelResponse, run_messages: RunMessages, run_context: Optional[RunContext] = None
-    ) -> None:
-        return _response.parse_response_with_parser_model(
-            self, model_response=model_response, run_messages=run_messages, run_context=run_context
-        )
-
-    async def _aparse_response_with_parser_model(
-        self, model_response: ModelResponse, run_messages: RunMessages, run_context: Optional[RunContext] = None
-    ) -> None:
-        return await _response.aparse_response_with_parser_model(
-            self, model_response=model_response, run_messages=run_messages, run_context=run_context
-        )
-
-    def _parse_response_with_parser_model_stream(
-        self,
-        session: AgentSession,
-        run_response: RunOutput,
-        stream_events: bool = True,
-        run_context: Optional[RunContext] = None,
-    ):
-        return _response.parse_response_with_parser_model_stream(
-            self, session=session, run_response=run_response, stream_events=stream_events, run_context=run_context
-        )
-
-    def _aparse_response_with_parser_model_stream(
-        self,
-        session: AgentSession,
-        run_response: RunOutput,
-        stream_events: bool = True,
-        run_context: Optional[RunContext] = None,
-    ):
-        return _response.aparse_response_with_parser_model_stream(
-            self, session=session, run_response=run_response, stream_events=stream_events, run_context=run_context
-        )
-
-    def _generate_response_with_output_model(self, model_response: ModelResponse, run_messages: RunMessages) -> None:
-        return _response.generate_response_with_output_model(
-            self, model_response=model_response, run_messages=run_messages
-        )
-
-    def _generate_response_with_output_model_stream(
-        self,
-        session: AgentSession,
-        run_response: RunOutput,
-        run_messages: RunMessages,
-        stream_events: bool = False,
-    ):
-        return _response.generate_response_with_output_model_stream(
-            self, session=session, run_response=run_response, run_messages=run_messages, stream_events=stream_events
-        )
-
-    async def _agenerate_response_with_output_model(
-        self, model_response: ModelResponse, run_messages: RunMessages
-    ) -> None:
-        return await _response.agenerate_response_with_output_model(
-            self, model_response=model_response, run_messages=run_messages
-        )
-
-    def _agenerate_response_with_output_model_stream(
-        self,
-        session: AgentSession,
-        run_response: RunOutput,
-        run_messages: RunMessages,
-        stream_events: bool = False,
-    ):
-        return _response.agenerate_response_with_output_model_stream(
-            self, session=session, run_response=run_response, run_messages=run_messages, stream_events=stream_events
-        )
-
-    # ---------------------------------------------------------------
-    # _default_tools module delegates
-    # ---------------------------------------------------------------
-
-    def _get_update_user_memory_function(self, user_id: Optional[str] = None, async_mode: bool = False) -> Function:
-        return _default_tools.get_update_user_memory_function(self, user_id=user_id, async_mode=async_mode)
-
-    def _get_update_cultural_knowledge_function(self, async_mode: bool = False) -> Function:
-        return _default_tools.get_update_cultural_knowledge_function(self, async_mode=async_mode)
-
-    def _create_knowledge_retriever_search_tool(
-        self,
-        run_response: Optional[RunOutput] = None,
-        run_context: Optional[RunContext] = None,
-        async_mode: bool = False,
-    ) -> Function:
-        return _default_tools.create_knowledge_retriever_search_tool(
-            self, run_response=run_response, run_context=run_context, async_mode=async_mode
-        )
-
-    def _get_chat_history_function(self, session: AgentSession) -> Callable:
-        return _default_tools.get_chat_history_function(self, session=session)
-
-    def _get_tool_call_history_function(self, session: AgentSession) -> Callable:
-        return _default_tools.get_tool_call_history_function(self, session=session)
-
-    def _update_session_state_tool(self, run_context: RunContext, session_state_updates: dict) -> str:
-        return _default_tools.update_session_state_tool(
-            self, run_context=run_context, session_state_updates=session_state_updates
-        )
-
-    def _get_search_knowledge_base_function(
-        self,
-        run_response: RunOutput,
-        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
-        async_mode: bool = False,
-        run_context: Optional[RunContext] = None,
-    ) -> Function:
-        return _default_tools.get_search_knowledge_base_function(
-            self,
-            run_response=run_response,
-            knowledge_filters=knowledge_filters,
-            async_mode=async_mode,
-            run_context=run_context,
-        )
-
-    def _search_knowledge_base_with_agentic_filters_function(
-        self,
-        run_response: RunOutput,
-        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
-        async_mode: bool = False,
-        run_context: Optional[RunContext] = None,
-    ) -> Function:
-        return _default_tools.search_knowledge_base_with_agentic_filters_function(
-            self,
-            run_response=run_response,
-            knowledge_filters=knowledge_filters,
-            async_mode=async_mode,
-            run_context=run_context,
-        )
-
     def add_to_knowledge(self, query: str, result: str) -> str:
         return _default_tools.add_to_knowledge(self, query=query, result=result)
-
-    def _get_previous_sessions_messages_function(
-        self, num_history_sessions: Optional[int] = 2, user_id: Optional[str] = None
-    ) -> Callable:
-        return _default_tools.get_previous_sessions_messages_function(
-            self, num_history_sessions=num_history_sessions, user_id=user_id
-        )
-
-    async def _aget_previous_sessions_messages_function(
-        self, num_history_sessions: Optional[int] = 2, user_id: Optional[str] = None
-    ) -> Function:
-        return await _default_tools.aget_previous_sessions_messages_function(
-            self, num_history_sessions=num_history_sessions, user_id=user_id
-        )
-
-    # ---------------------------------------------------------------
-    # _hooks module delegates
-    # ---------------------------------------------------------------
-
-    def _execute_pre_hooks(
-        self,
-        hooks: Optional[List[Callable[..., Any]]],
-        run_response: RunOutput,
-        run_input: RunInput,
-        session: AgentSession,
-        run_context: RunContext,
-        user_id: Optional[str] = None,
-        debug_mode: Optional[bool] = None,
-        stream_events: bool = False,
-        background_tasks: Optional[Any] = None,
-        **kwargs: Any,
-    ) -> Iterator[RunOutputEvent]:
-        return _hooks.execute_pre_hooks(
-            self,
-            hooks=hooks,
-            run_response=run_response,
-            run_input=run_input,
-            session=session,
-            run_context=run_context,
-            user_id=user_id,
-            debug_mode=debug_mode,
-            stream_events=stream_events,
-            background_tasks=background_tasks,
-            **kwargs,
-        )
-
-    def _aexecute_pre_hooks(
-        self,
-        hooks: Optional[List[Callable[..., Any]]],
-        run_response: RunOutput,
-        run_input: RunInput,
-        run_context: RunContext,
-        session: AgentSession,
-        user_id: Optional[str] = None,
-        debug_mode: Optional[bool] = None,
-        stream_events: bool = False,
-        background_tasks: Optional[Any] = None,
-        **kwargs: Any,
-    ) -> AsyncIterator[RunOutputEvent]:
-        return _hooks.aexecute_pre_hooks(
-            self,
-            hooks=hooks,
-            run_response=run_response,
-            run_input=run_input,
-            run_context=run_context,
-            session=session,
-            user_id=user_id,
-            debug_mode=debug_mode,
-            stream_events=stream_events,
-            background_tasks=background_tasks,
-            **kwargs,
-        )
-
-    def _execute_post_hooks(
-        self,
-        hooks: Optional[List[Callable[..., Any]]],
-        run_output: RunOutput,
-        session: AgentSession,
-        run_context: RunContext,
-        user_id: Optional[str] = None,
-        debug_mode: Optional[bool] = None,
-        stream_events: bool = False,
-        background_tasks: Optional[Any] = None,
-        **kwargs: Any,
-    ) -> Iterator[RunOutputEvent]:
-        return _hooks.execute_post_hooks(
-            self,
-            hooks=hooks,
-            run_output=run_output,
-            session=session,
-            run_context=run_context,
-            user_id=user_id,
-            debug_mode=debug_mode,
-            stream_events=stream_events,
-            background_tasks=background_tasks,
-            **kwargs,
-        )
-
-    def _aexecute_post_hooks(
-        self,
-        hooks: Optional[List[Callable[..., Any]]],
-        run_output: RunOutput,
-        run_context: RunContext,
-        session: AgentSession,
-        user_id: Optional[str] = None,
-        debug_mode: Optional[bool] = None,
-        stream_events: bool = False,
-        background_tasks: Optional[Any] = None,
-        **kwargs: Any,
-    ) -> AsyncIterator[RunOutputEvent]:
-        return _hooks.aexecute_post_hooks(
-            self,
-            hooks=hooks,
-            run_output=run_output,
-            run_context=run_context,
-            session=session,
-            user_id=user_id,
-            debug_mode=debug_mode,
-            stream_events=stream_events,
-            background_tasks=background_tasks,
-            **kwargs,
-        )
-
-    def _handle_agent_run_paused(
-        self,
-        run_response: RunOutput,
-        session: AgentSession,
-        user_id: Optional[str] = None,
-    ) -> RunOutput:
-        return _run.handle_agent_run_paused(self, run_response=run_response, session=session, user_id=user_id)
-
-    def _handle_agent_run_paused_stream(
-        self,
-        run_response: RunOutput,
-        session: AgentSession,
-        user_id: Optional[str] = None,
-    ) -> Iterator[RunOutputEvent]:
-        return _run.handle_agent_run_paused_stream(self, run_response=run_response, session=session, user_id=user_id)
-
-    async def _ahandle_agent_run_paused(
-        self,
-        run_response: RunOutput,
-        session: AgentSession,
-        user_id: Optional[str] = None,
-    ) -> RunOutput:
-        return await _run.ahandle_agent_run_paused(self, run_response=run_response, session=session, user_id=user_id)
-
-    def _ahandle_agent_run_paused_stream(
-        self,
-        run_response: RunOutput,
-        session: AgentSession,
-        user_id: Optional[str] = None,
-    ) -> AsyncIterator[RunOutputEvent]:
-        return _run.ahandle_agent_run_paused_stream(self, run_response=run_response, session=session, user_id=user_id)
-
-    def _convert_response_to_structured_format(
-        self, run_response: Union[RunOutput, ModelResponse], run_context: Optional[RunContext] = None
-    ) -> None:
-        return _response.convert_response_to_structured_format(self, run_response=run_response, run_context=run_context)
-
-    def _handle_external_execution_update(self, run_messages: RunMessages, tool: ToolExecution) -> None:
-        return _tools.handle_external_execution_update(self, run_messages=run_messages, tool=tool)
-
-    def _handle_user_input_update(self, tool: ToolExecution) -> None:
-        return _tools.handle_user_input_update(self, tool=tool)
-
-    def _handle_get_user_input_tool_update(self, run_messages: RunMessages, tool: ToolExecution) -> None:
-        return _tools.handle_get_user_input_tool_update(self, run_messages=run_messages, tool=tool)
-
-    def _run_tool(
-        self,
-        run_response: RunOutput,
-        run_messages: RunMessages,
-        tool: ToolExecution,
-        functions: Optional[Dict[str, Function]] = None,
-        stream_events: bool = False,
-    ) -> Iterator[RunOutputEvent]:
-        return _tools.run_tool(
-            self,
-            run_response=run_response,
-            run_messages=run_messages,
-            tool=tool,
-            functions=functions,
-            stream_events=stream_events,
-        )
-
-    def _reject_tool_call(
-        self, run_messages: RunMessages, tool: ToolExecution, functions: Optional[Dict[str, Function]] = None
-    ) -> None:
-        return _tools.reject_tool_call(self, run_messages=run_messages, tool=tool, functions=functions)
-
-    def _arun_tool(
-        self,
-        run_response: RunOutput,
-        run_messages: RunMessages,
-        tool: ToolExecution,
-        functions: Optional[Dict[str, Function]] = None,
-        stream_events: bool = False,
-    ) -> AsyncIterator[RunOutputEvent]:
-        return _tools.arun_tool(
-            self,
-            run_response=run_response,
-            run_messages=run_messages,
-            tool=tool,
-            functions=functions,
-            stream_events=stream_events,
-        )
-
-    def _handle_tool_call_updates(
-        self, run_response: RunOutput, run_messages: RunMessages, tools: List[Union[Function, dict]]
-    ) -> None:
-        return _tools.handle_tool_call_updates(self, run_response=run_response, run_messages=run_messages, tools=tools)
-
-    def _handle_tool_call_updates_stream(
-        self,
-        run_response: RunOutput,
-        run_messages: RunMessages,
-        tools: List[Union[Function, dict]],
-        stream_events: bool = False,
-    ) -> Iterator[RunOutputEvent]:
-        return _tools.handle_tool_call_updates_stream(
-            self, run_response=run_response, run_messages=run_messages, tools=tools, stream_events=stream_events
-        )
-
-    async def _ahandle_tool_call_updates(
-        self, run_response: RunOutput, run_messages: RunMessages, tools: List[Union[Function, dict]]
-    ) -> None:
-        return await _tools.ahandle_tool_call_updates(
-            self, run_response=run_response, run_messages=run_messages, tools=tools
-        )
-
-    def _ahandle_tool_call_updates_stream(
-        self,
-        run_response: RunOutput,
-        run_messages: RunMessages,
-        tools: List[Union[Function, dict]],
-        stream_events: bool = False,
-    ) -> AsyncIterator[RunOutputEvent]:
-        return _tools.ahandle_tool_call_updates_stream(
-            self, run_response=run_response, run_messages=run_messages, tools=tools, stream_events=stream_events
-        )
-
-    def _update_run_response(
-        self,
-        model_response: ModelResponse,
-        run_response: RunOutput,
-        run_messages: RunMessages,
-        run_context: Optional[RunContext] = None,
-    ) -> None:
-        return _response.update_run_response(
-            self,
-            model_response=model_response,
-            run_response=run_response,
-            run_messages=run_messages,
-            run_context=run_context,
-        )
-
-    def _update_session_metrics(self, session: AgentSession, run_response: RunOutput) -> None:
-        return _run.update_session_metrics(self, session=session, run_response=run_response)
-
-    def _handle_model_response_stream(
-        self,
-        session: AgentSession,
-        run_response: RunOutput,
-        run_messages: RunMessages,
-        tools: Optional[List[Union[Function, dict]]] = None,
-        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        stream_events: bool = False,
-        session_state: Optional[Dict[str, Any]] = None,
-        run_context: Optional[RunContext] = None,
-    ) -> Iterator[RunOutputEvent]:
-        return _response.handle_model_response_stream(
-            self,
-            session=session,
-            run_response=run_response,
-            run_messages=run_messages,
-            tools=tools,
-            response_format=response_format,
-            stream_events=stream_events,
-            session_state=session_state,
-            run_context=run_context,
-        )
-
-    def _ahandle_model_response_stream(
-        self,
-        session: AgentSession,
-        run_response: RunOutput,
-        run_messages: RunMessages,
-        tools: Optional[List[Union[Function, dict]]] = None,
-        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        stream_events: bool = False,
-        session_state: Optional[Dict[str, Any]] = None,
-        run_context: Optional[RunContext] = None,
-    ) -> AsyncIterator[RunOutputEvent]:
-        return _response.ahandle_model_response_stream(
-            self,
-            session=session,
-            run_response=run_response,
-            run_messages=run_messages,
-            tools=tools,
-            response_format=response_format,
-            stream_events=stream_events,
-            session_state=session_state,
-            run_context=run_context,
-        )
-
-    def _handle_model_response_chunk(
-        self,
-        session: AgentSession,
-        run_response: RunOutput,
-        model_response: ModelResponse,
-        model_response_event: Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent],
-        reasoning_state: Optional[Dict[str, Any]] = None,
-        parse_structured_output: bool = False,
-        stream_events: bool = False,
-        session_state: Optional[Dict[str, Any]] = None,
-        run_context: Optional[RunContext] = None,
-    ) -> Iterator[RunOutputEvent]:
-        return _response.handle_model_response_chunk(
-            self,
-            session=session,
-            run_response=run_response,
-            model_response=model_response,
-            model_response_event=model_response_event,
-            reasoning_state=reasoning_state,
-            parse_structured_output=parse_structured_output,
-            stream_events=stream_events,
-            session_state=session_state,
-            run_context=run_context,
-        )
-
-    def _make_cultural_knowledge(self, run_messages: RunMessages) -> None:
-        return _managers.make_cultural_knowledge(self, run_messages=run_messages)
-
-    async def _acreate_cultural_knowledge(self, run_messages: RunMessages) -> None:
-        return await _managers.acreate_cultural_knowledge(self, run_messages=run_messages)
-
-    def _make_memories(self, run_messages: RunMessages, user_id: Optional[str] = None) -> None:
-        return _managers.make_memories(self, run_messages=run_messages, user_id=user_id)
-
-    async def _amake_memories(self, run_messages: RunMessages, user_id: Optional[str] = None) -> None:
-        return await _managers.amake_memories(self, run_messages=run_messages, user_id=user_id)
-
-    async def _astart_memory_task(
-        self,
-        run_messages: RunMessages,
-        user_id: Optional[str],
-        existing_task: Optional[Task[None]],
-    ) -> Optional[Task[None]]:
-        return await _managers.astart_memory_task(
-            self, run_messages=run_messages, user_id=user_id, existing_task=existing_task
-        )
-
-    async def _astart_cultural_knowledge_task(
-        self,
-        run_messages: RunMessages,
-        existing_task: Optional[Task[None]],
-    ) -> Optional[Task[None]]:
-        return await _managers.astart_cultural_knowledge_task(
-            self, run_messages=run_messages, existing_task=existing_task
-        )
-
-    def _process_learnings(
-        self,
-        run_messages: RunMessages,
-        session: AgentSession,
-        user_id: Optional[str],
-    ) -> None:
-        return _managers.process_learnings(self, run_messages=run_messages, session=session, user_id=user_id)
-
-    async def _astart_learning_task(
-        self,
-        run_messages: RunMessages,
-        session: AgentSession,
-        user_id: Optional[str],
-        existing_task: Optional[Task] = None,
-    ) -> Optional[Task]:
-        return await _managers.astart_learning_task(
-            self, run_messages=run_messages, session=session, user_id=user_id, existing_task=existing_task
-        )
-
-    async def _aprocess_learnings(
-        self,
-        run_messages: RunMessages,
-        session: AgentSession,
-        user_id: Optional[str],
-    ) -> None:
-        return await _managers.aprocess_learnings(self, run_messages=run_messages, session=session, user_id=user_id)
-
-    def _start_memory_future(
-        self,
-        run_messages: RunMessages,
-        user_id: Optional[str],
-        existing_future: Optional[Future] = None,
-    ) -> Optional[Future]:
-        return _managers.start_memory_future(
-            self, run_messages=run_messages, user_id=user_id, existing_future=existing_future
-        )
-
-    def _start_learning_future(
-        self,
-        run_messages: RunMessages,
-        session: AgentSession,
-        user_id: Optional[str],
-        existing_future: Optional[Future] = None,
-    ) -> Optional[Future]:
-        return _managers.start_learning_future(
-            self, run_messages=run_messages, session=session, user_id=user_id, existing_future=existing_future
-        )
-
-    def _start_cultural_knowledge_future(
-        self,
-        run_messages: RunMessages,
-        existing_future: Optional[Future] = None,
-    ) -> Optional[Future]:
-        return _managers.start_cultural_knowledge_future(
-            self, run_messages=run_messages, existing_future=existing_future
-        )
 
     # ---------------------------------------------------------------
     # _cli module delegates
@@ -2088,43 +1101,6 @@ class Agent:
             **kwargs,
         )
 
-    def _update_reasoning_content_from_tool_call(
-        self, run_response: RunOutput, tool_name: str, tool_args: Dict[str, Any]
-    ) -> Optional[ReasoningStep]:
-        return _response.update_reasoning_content_from_tool_call(
-            self, run_response=run_response, tool_name=tool_name, tool_args=tool_args
-        )
-
-    def _get_effective_filters(
-        self, knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
-    ) -> Optional[Any]:
-        return _utils.get_effective_filters(self, knowledge_filters=knowledge_filters)
-
-    def _cleanup_and_store(
-        self,
-        run_response: RunOutput,
-        session: AgentSession,
-        run_context: Optional[RunContext] = None,
-        user_id: Optional[str] = None,
-    ) -> None:
-        return _run.cleanup_and_store(
-            self, run_response=run_response, session=session, run_context=run_context, user_id=user_id
-        )
-
-    async def _acleanup_and_store(
-        self,
-        run_response: RunOutput,
-        session: AgentSession,
-        run_context: Optional[RunContext] = None,
-        user_id: Optional[str] = None,
-    ) -> None:
-        return await _run.acleanup_and_store(
-            self, run_response=run_response, session=session, run_context=run_context, user_id=user_id
-        )
-
-    def _scrub_run_output_for_storage(self, run_response: RunOutput) -> None:
-        return _run.scrub_run_output_for_storage(self, run_response=run_response)
-
     def cli_app(
         self,
         input: Optional[str] = None,
@@ -2178,75 +1154,6 @@ class Agent:
     # ---------------------------------------------------------------
     # _run module delegates
     # ---------------------------------------------------------------
-
-    def _initialize_session(
-        self,
-        session_id: Optional[str] = None,
-        user_id: Optional[str] = None,
-    ) -> Tuple[str, Optional[str]]:
-        return _run.initialize_session(self, session_id=session_id, user_id=user_id)
-
-    def _run(
-        self,
-        run_response: RunOutput,
-        run_context: RunContext,
-        session: AgentSession,
-        user_id: Optional[str] = None,
-        add_history_to_context: Optional[bool] = None,
-        add_dependencies_to_context: Optional[bool] = None,
-        add_session_state_to_context: Optional[bool] = None,
-        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        debug_mode: Optional[bool] = None,
-        background_tasks: Optional[Any] = None,
-        **kwargs: Any,
-    ) -> RunOutput:
-        return _run.run_impl(
-            self,
-            run_response=run_response,
-            run_context=run_context,
-            session=session,
-            user_id=user_id,
-            add_history_to_context=add_history_to_context,
-            add_dependencies_to_context=add_dependencies_to_context,
-            add_session_state_to_context=add_session_state_to_context,
-            response_format=response_format,
-            debug_mode=debug_mode,
-            background_tasks=background_tasks,
-            **kwargs,
-        )
-
-    def _run_stream(
-        self,
-        run_response: RunOutput,
-        run_context: RunContext,
-        session: AgentSession,
-        user_id: Optional[str] = None,
-        add_history_to_context: Optional[bool] = None,
-        add_dependencies_to_context: Optional[bool] = None,
-        add_session_state_to_context: Optional[bool] = None,
-        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        stream_events: bool = False,
-        yield_run_output: Optional[bool] = None,
-        debug_mode: Optional[bool] = None,
-        background_tasks: Optional[Any] = None,
-        **kwargs: Any,
-    ) -> Iterator[Union[RunOutputEvent, RunOutput]]:
-        return _run.run_stream_impl(
-            self,
-            run_response=run_response,
-            run_context=run_context,
-            session=session,
-            user_id=user_id,
-            add_history_to_context=add_history_to_context,
-            add_dependencies_to_context=add_dependencies_to_context,
-            add_session_state_to_context=add_session_state_to_context,
-            response_format=response_format,
-            stream_events=stream_events,
-            yield_run_output=yield_run_output,
-            debug_mode=debug_mode,
-            background_tasks=background_tasks,
-            **kwargs,
-        )
 
     @overload
     def run(
@@ -2352,68 +1259,6 @@ class Agent:
             output_schema=output_schema,
             yield_run_output=yield_run_output,
             debug_mode=debug_mode,
-            **kwargs,
-        )
-
-    async def _arun(
-        self,
-        run_response: RunOutput,
-        run_context: RunContext,
-        session_id: str,
-        user_id: Optional[str] = None,
-        add_history_to_context: Optional[bool] = None,
-        add_dependencies_to_context: Optional[bool] = None,
-        add_session_state_to_context: Optional[bool] = None,
-        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        debug_mode: Optional[bool] = None,
-        background_tasks: Optional[Any] = None,
-        **kwargs: Any,
-    ) -> RunOutput:
-        return await _run.arun_impl(
-            self,
-            run_response=run_response,
-            run_context=run_context,
-            session_id=session_id,
-            user_id=user_id,
-            add_history_to_context=add_history_to_context,
-            add_dependencies_to_context=add_dependencies_to_context,
-            add_session_state_to_context=add_session_state_to_context,
-            response_format=response_format,
-            debug_mode=debug_mode,
-            background_tasks=background_tasks,
-            **kwargs,
-        )
-
-    def _arun_stream(
-        self,
-        run_response: RunOutput,
-        run_context: RunContext,
-        session_id: str,
-        user_id: Optional[str] = None,
-        add_history_to_context: Optional[bool] = None,
-        add_dependencies_to_context: Optional[bool] = None,
-        add_session_state_to_context: Optional[bool] = None,
-        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        stream_events: bool = False,
-        yield_run_output: Optional[bool] = None,
-        debug_mode: Optional[bool] = None,
-        background_tasks: Optional[Any] = None,
-        **kwargs: Any,
-    ) -> AsyncIterator[Union[RunOutputEvent, RunOutput]]:
-        return _run.arun_stream_impl(
-            self,
-            run_response=run_response,
-            run_context=run_context,
-            session_id=session_id,
-            user_id=user_id,
-            add_history_to_context=add_history_to_context,
-            add_dependencies_to_context=add_dependencies_to_context,
-            add_session_state_to_context=add_session_state_to_context,
-            response_format=response_format,
-            stream_events=stream_events,
-            yield_run_output=yield_run_output,
-            debug_mode=debug_mode,
-            background_tasks=background_tasks,
             **kwargs,
         )
 
@@ -2599,64 +1444,6 @@ class Agent:
             **kwargs,
         )
 
-    def _continue_run(
-        self,
-        run_response: RunOutput,
-        run_messages: RunMessages,
-        run_context: RunContext,
-        session: AgentSession,
-        tools: List[Union[Function, dict]],
-        user_id: Optional[str] = None,
-        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        debug_mode: Optional[bool] = None,
-        background_tasks: Optional[Any] = None,
-        **kwargs,
-    ) -> RunOutput:
-        return _run.continue_run_impl(
-            self,
-            run_response=run_response,
-            run_messages=run_messages,
-            run_context=run_context,
-            session=session,
-            tools=tools,
-            user_id=user_id,
-            response_format=response_format,
-            debug_mode=debug_mode,
-            background_tasks=background_tasks,
-            **kwargs,
-        )
-
-    def _continue_run_stream(
-        self,
-        run_response: RunOutput,
-        run_messages: RunMessages,
-        run_context: RunContext,
-        session: AgentSession,
-        tools: List[Union[Function, dict]],
-        user_id: Optional[str] = None,
-        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        stream_events: bool = False,
-        debug_mode: Optional[bool] = None,
-        yield_run_output: bool = False,
-        background_tasks: Optional[Any] = None,
-        **kwargs,
-    ) -> Iterator[Union[RunOutputEvent, RunOutput]]:
-        return _run.continue_run_stream_impl(
-            self,
-            run_response=run_response,
-            run_messages=run_messages,
-            run_context=run_context,
-            session=session,
-            tools=tools,
-            user_id=user_id,
-            response_format=response_format,
-            stream_events=stream_events,
-            debug_mode=debug_mode,
-            yield_run_output=yield_run_output,
-            background_tasks=background_tasks,
-            **kwargs,
-        )
-
     @overload
     async def acontinue_run(
         self,
@@ -2730,68 +1517,6 @@ class Agent:
             metadata=metadata,
             debug_mode=debug_mode,
             yield_run_output=yield_run_output,
-            **kwargs,
-        )
-
-    async def _acontinue_run(
-        self,
-        session_id: str,
-        run_context: RunContext,
-        run_response: Optional[RunOutput] = None,
-        updated_tools: Optional[List[ToolExecution]] = None,
-        requirements: Optional[List[RunRequirement]] = None,
-        run_id: Optional[str] = None,
-        user_id: Optional[str] = None,
-        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        debug_mode: Optional[bool] = None,
-        background_tasks: Optional[Any] = None,
-        **kwargs,
-    ) -> RunOutput:
-        return await _run.acontinue_run_impl(
-            self,
-            session_id=session_id,
-            run_context=run_context,
-            run_response=run_response,
-            updated_tools=updated_tools,
-            requirements=requirements,
-            run_id=run_id,
-            user_id=user_id,
-            response_format=response_format,
-            debug_mode=debug_mode,
-            background_tasks=background_tasks,
-            **kwargs,
-        )
-
-    def _acontinue_run_stream(
-        self,
-        session_id: str,
-        run_context: RunContext,
-        run_response: Optional[RunOutput] = None,
-        updated_tools: Optional[List[ToolExecution]] = None,
-        requirements: Optional[List[RunRequirement]] = None,
-        run_id: Optional[str] = None,
-        user_id: Optional[str] = None,
-        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        stream_events: bool = False,
-        yield_run_output: bool = False,
-        debug_mode: Optional[bool] = None,
-        background_tasks: Optional[Any] = None,
-        **kwargs,
-    ) -> AsyncIterator[Union[RunOutputEvent, RunOutput]]:
-        return _run.acontinue_run_stream_impl(
-            self,
-            session_id=session_id,
-            run_context=run_context,
-            run_response=run_response,
-            updated_tools=updated_tools,
-            requirements=requirements,
-            run_id=run_id,
-            user_id=user_id,
-            response_format=response_format,
-            stream_events=stream_events,
-            yield_run_output=yield_run_output,
-            debug_mode=debug_mode,
-            background_tasks=background_tasks,
             **kwargs,
         )
 

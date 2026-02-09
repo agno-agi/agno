@@ -346,8 +346,8 @@ def test_continue_run_stream_impl_registers_run_for_cancellation():
 
 
 def test_session_read_wrappers_default_to_agent_session_type():
-    read_default = inspect.signature(Agent._read_session).parameters["session_type"].default
-    aread_default = inspect.signature(Agent._aread_session).parameters["session_type"].default
+    read_default = inspect.signature(_storage.read_session).parameters["session_type"].default
+    aread_default = inspect.signature(_storage.aread_session).parameters["session_type"].default
 
     assert read_default == SessionType.AGENT
     assert aread_default == SessionType.AGENT

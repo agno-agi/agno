@@ -3266,8 +3266,10 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
             String representation of documents.
         """
         # If agent has a custom converter, use it
-        if agent is not None and hasattr(agent, "_convert_documents_to_string"):
-            return agent._convert_documents_to_string([doc.to_dict() for doc in docs])
+        if agent is not None:
+            from agno.agent._utils import convert_documents_to_string
+
+            return convert_documents_to_string(agent, docs=[doc.to_dict() for doc in docs])
 
         # Default conversion
         if not docs:
