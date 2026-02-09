@@ -130,16 +130,28 @@ async def async_down(db: AsyncBaseDb, table_type: str, table_name: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _has_constraint(sess, db_schema: str, table_name: str, constraint_name: str, constraint_type: str) -> bool:
-    """Check if a constraint exists on a table."""
-    result = sess.execute(
-        text(
-            "SELECT 1 FROM information_schema.table_constraints "
-            "WHERE table_schema = :schema AND table_name = :table "
-            "AND constraint_name = :constraint AND constraint_type = :ctype"
-        ),
-        {"schema": db_schema, "table": table_name, "constraint": constraint_name, "ctype": constraint_type},
+def _has_constraint(
+    sess, db_schema: str, table_name: str, constraint_type: str, constraint_name: str | None = None
+) -> bool:
+    """Check if a constraint exists on a table.
+
+    Args:
+        sess: SQLAlchemy session.
+        db_schema: Database schema name.
+        table_name: Table name.
+        constraint_type: Constraint type (e.g. 'PRIMARY KEY', 'UNIQUE').
+        constraint_name: Optional constraint name. When None, checks by type only.
+    """
+    query = (
+        "SELECT 1 FROM information_schema.table_constraints "
+        "WHERE table_schema = :schema AND table_name = :table "
+        "AND constraint_type = :ctype"
     )
+    params: dict = {"schema": db_schema, "table": table_name, "ctype": constraint_type}
+    if constraint_name is not None:
+        query += " AND constraint_name = :constraint"
+        params["constraint"] = constraint_name
+    result = sess.execute(text(query), params)
     return result.scalar() is not None
 
 
@@ -171,14 +183,14 @@ def _migrate_postgres(db: BaseDb, table_name: str) -> bool:
         applied = False
 
         # Check if PK already exists
-        has_pk = _has_constraint(sess, db_schema, table_name, f"{table_name}_pkey", "PRIMARY KEY")
+        has_pk = _has_constraint(sess, db_schema, table_name, "PRIMARY KEY")
         if not has_pk:
             log_info(f"-- Adding PRIMARY KEY on session_id to {table_name}")
             sess.execute(text(f"ALTER TABLE {full_table} ADD PRIMARY KEY (session_id)"))
             applied = True
 
         # Drop the old unique constraint if it exists
-        has_uq = _has_constraint(sess, db_schema, table_name, uq_name, "UNIQUE")
+        has_uq = _has_constraint(sess, db_schema, table_name, "UNIQUE", uq_name)
         if has_uq:
             log_info(f"-- Dropping redundant UNIQUE constraint {uq_name} from {table_name}")
             sess.execute(text(f"ALTER TABLE {full_table} DROP CONSTRAINT {quote_db_identifier(db_type, uq_name)}"))
@@ -416,7 +428,7 @@ def _revert_postgres(db: BaseDb, table_name: str) -> bool:
         applied = False
 
         # Re-add unique constraint if missing
-        has_uq = _has_constraint(sess, db_schema, table_name, uq_name, "UNIQUE")
+        has_uq = _has_constraint(sess, db_schema, table_name, "UNIQUE", uq_name)
         if not has_uq:
             log_info(f"-- Re-adding UNIQUE constraint {uq_name} to {table_name}")
             sess.execute(
@@ -427,11 +439,20 @@ def _revert_postgres(db: BaseDb, table_name: str) -> bool:
             applied = True
 
         # Drop primary key if it exists
-        has_pk = _has_constraint(sess, db_schema, table_name, f"{table_name}_pkey", "PRIMARY KEY")
-        if has_pk:
-            log_info(f"-- Dropping PRIMARY KEY from {table_name}")
+        pk_result = sess.execute(
+            text(
+                "SELECT constraint_name FROM information_schema.table_constraints "
+                "WHERE table_schema = :schema AND table_name = :table "
+                "AND constraint_type = 'PRIMARY KEY'"
+            ),
+            {"schema": db_schema, "table": table_name},
+        )
+        pk_row = pk_result.fetchone()
+        if pk_row is not None:
+            pk_name = pk_row[0]
+            log_info(f"-- Dropping PRIMARY KEY {pk_name} from {table_name}")
             sess.execute(
-                text(f"ALTER TABLE {full_table} DROP CONSTRAINT {quote_db_identifier(db_type, f'{table_name}_pkey')}")
+                text(f"ALTER TABLE {full_table} DROP CONSTRAINT {quote_db_identifier(db_type, pk_name)}")
             )
             applied = True
 
@@ -488,17 +509,18 @@ async def _revert_async_postgres(db: AsyncBaseDb, table_name: str) -> bool:
         # Drop primary key if it exists
         result = await sess.execute(
             text(
-                "SELECT 1 FROM information_schema.table_constraints "
+                "SELECT constraint_name FROM information_schema.table_constraints "
                 "WHERE table_schema = :schema AND table_name = :table "
                 "AND constraint_type = 'PRIMARY KEY'"
             ),
             {"schema": db_schema, "table": table_name},
         )
-        has_pk = result.scalar() is not None
-        if has_pk:
-            log_info(f"-- Dropping PRIMARY KEY from {table_name}")
+        pk_row = result.fetchone()
+        if pk_row is not None:
+            pk_name = pk_row[0]
+            log_info(f"-- Dropping PRIMARY KEY {pk_name} from {table_name}")
             await sess.execute(
-                text(f"ALTER TABLE {full_table} DROP CONSTRAINT {quote_db_identifier(db_type, f'{table_name}_pkey')}")
+                text(f"ALTER TABLE {full_table} DROP CONSTRAINT {quote_db_identifier(db_type, pk_name)}")
             )
             applied = True
 
