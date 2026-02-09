@@ -95,6 +95,84 @@ from agno.utils.log import (
     log_warning,
 )
 
+# ---------------------------------------------------------------------------
+# Run dependency resolution
+# ---------------------------------------------------------------------------
+
+
+def resolve_run_dependencies(agent: Agent, run_context: RunContext) -> None:
+    from inspect import iscoroutine, iscoroutinefunction, signature
+
+    # Dependencies should already be resolved in run() method
+    log_debug("Resolving dependencies")
+    if not isinstance(run_context.dependencies, dict):
+        log_warning("Run dependencies are not a dict")
+        return
+
+    for key, value in run_context.dependencies.items():
+        if iscoroutine(value) or iscoroutinefunction(value):
+            log_warning(f"Dependency {key} is a coroutine. Use agent.arun() or agent.aprint_response() instead.")
+            continue
+        elif callable(value):
+            try:
+                sig = signature(value)
+
+                # Build kwargs for the function
+                kwargs: Dict[str, Any] = {}
+                if "agent" in sig.parameters:
+                    kwargs["agent"] = agent
+                if "run_context" in sig.parameters:
+                    kwargs["run_context"] = run_context
+
+                # Run the function
+                result = value(**kwargs)
+
+                # Carry the result in the run context
+                if result is not None:
+                    run_context.dependencies[key] = result
+
+            except Exception as e:
+                log_warning(f"Failed to resolve dependencies for '{key}': {e}")
+        else:
+            run_context.dependencies[key] = value
+
+
+async def aresolve_run_dependencies(agent: Agent, run_context: RunContext) -> None:
+    from inspect import iscoroutine, iscoroutinefunction, signature
+
+    log_debug("Resolving context (async)")
+    if not isinstance(run_context.dependencies, dict):
+        log_warning("Run dependencies are not a dict")
+        return
+
+    for key, value in run_context.dependencies.items():
+        if not callable(value):
+            run_context.dependencies[key] = value
+            continue
+        try:
+            sig = signature(value)
+
+            # Build kwargs for the function
+            kwargs: Dict[str, Any] = {}
+            if "agent" in sig.parameters:
+                kwargs["agent"] = agent
+            if "run_context" in sig.parameters:
+                kwargs["run_context"] = run_context
+
+            # Run the function
+            result = value(**kwargs)
+            if iscoroutine(result) or iscoroutinefunction(result):
+                result = await result  # type: ignore
+
+            run_context.dependencies[key] = result
+        except Exception as e:
+            log_warning(f"Failed to resolve context for '{key}': {e}")
+
+
+# ---------------------------------------------------------------------------
+# Session initialization
+# ---------------------------------------------------------------------------
+
 
 def initialize_session(
     agent: Agent,

@@ -27,12 +27,14 @@ from agno.agent import (
     _default_tools,
     _hooks,
     _init,
+    _managers,
     _messages,
     _response,
     _run,
     _storage,
     _telemetry,
     _tools,
+    _utils,
 )
 from agno.compression.manager import CompressionManager
 from agno.culture.manager import CultureManager
@@ -784,18 +786,18 @@ class Agent:
         )
 
     def _model_should_return_structured_output(self, run_context: Optional[RunContext] = None) -> bool:
-        return _tools.model_should_return_structured_output(self, run_context=run_context)
+        return _response.model_should_return_structured_output(self, run_context=run_context)
 
     def _get_response_format(
         self, model: Optional[Model] = None, run_context: Optional[RunContext] = None
     ) -> Optional[Union[Dict, Type[BaseModel]]]:
-        return _tools.get_response_format(self, model=model, run_context=run_context)
+        return _response.get_response_format(self, model=model, run_context=run_context)
 
     def _resolve_run_dependencies(self, run_context: RunContext) -> None:
-        return _tools.resolve_run_dependencies(self, run_context=run_context)
+        return _run.resolve_run_dependencies(self, run_context=run_context)
 
     async def _aresolve_run_dependencies(self, run_context: RunContext) -> None:
-        return await _tools.aresolve_run_dependencies(self, run_context=run_context)
+        return await _run.aresolve_run_dependencies(self, run_context=run_context)
 
     def _get_agent_data(self) -> Dict[str, Any]:
         return _storage.get_agent_data(self)
@@ -1052,10 +1054,10 @@ class Agent:
         )
 
     def _convert_documents_to_string(self, docs: List[Union[Dict[str, Any], str]]) -> str:
-        return _messages.convert_documents_to_string(self, docs=docs)
+        return _utils.convert_documents_to_string(self, docs=docs)
 
     def _convert_dependencies_to_string(self, context: Dict[str, Any]) -> str:
-        return _messages.convert_dependencies_to_string(self, context=context)
+        return _utils.convert_dependencies_to_string(self, context=context)
 
     def deep_copy(self, *, update: Optional[Dict[str, Any]] = None) -> Agent:
         return _init.deep_copy(self, update=update)
@@ -1716,16 +1718,16 @@ class Agent:
     def _convert_response_to_structured_format(
         self, run_response: Union[RunOutput, ModelResponse], run_context: Optional[RunContext] = None
     ) -> None:
-        return _hooks.convert_response_to_structured_format(self, run_response=run_response, run_context=run_context)
+        return _response.convert_response_to_structured_format(self, run_response=run_response, run_context=run_context)
 
     def _handle_external_execution_update(self, run_messages: RunMessages, tool: ToolExecution) -> None:
-        return _hooks.handle_external_execution_update(self, run_messages=run_messages, tool=tool)
+        return _tools.handle_external_execution_update(self, run_messages=run_messages, tool=tool)
 
     def _handle_user_input_update(self, tool: ToolExecution) -> None:
-        return _hooks.handle_user_input_update(self, tool=tool)
+        return _tools.handle_user_input_update(self, tool=tool)
 
     def _handle_get_user_input_tool_update(self, run_messages: RunMessages, tool: ToolExecution) -> None:
-        return _hooks.handle_get_user_input_tool_update(self, run_messages=run_messages, tool=tool)
+        return _tools.handle_get_user_input_tool_update(self, run_messages=run_messages, tool=tool)
 
     def _run_tool(
         self,
@@ -1735,7 +1737,7 @@ class Agent:
         functions: Optional[Dict[str, Function]] = None,
         stream_events: bool = False,
     ) -> Iterator[RunOutputEvent]:
-        return _hooks.run_tool(
+        return _tools.run_tool(
             self,
             run_response=run_response,
             run_messages=run_messages,
@@ -1747,7 +1749,7 @@ class Agent:
     def _reject_tool_call(
         self, run_messages: RunMessages, tool: ToolExecution, functions: Optional[Dict[str, Function]] = None
     ) -> None:
-        return _hooks.reject_tool_call(self, run_messages=run_messages, tool=tool, functions=functions)
+        return _tools.reject_tool_call(self, run_messages=run_messages, tool=tool, functions=functions)
 
     def _arun_tool(
         self,
@@ -1757,7 +1759,7 @@ class Agent:
         functions: Optional[Dict[str, Function]] = None,
         stream_events: bool = False,
     ) -> AsyncIterator[RunOutputEvent]:
-        return _hooks.arun_tool(
+        return _tools.arun_tool(
             self,
             run_response=run_response,
             run_messages=run_messages,
@@ -1769,7 +1771,7 @@ class Agent:
     def _handle_tool_call_updates(
         self, run_response: RunOutput, run_messages: RunMessages, tools: List[Union[Function, dict]]
     ) -> None:
-        return _hooks.handle_tool_call_updates(self, run_response=run_response, run_messages=run_messages, tools=tools)
+        return _tools.handle_tool_call_updates(self, run_response=run_response, run_messages=run_messages, tools=tools)
 
     def _handle_tool_call_updates_stream(
         self,
@@ -1778,14 +1780,14 @@ class Agent:
         tools: List[Union[Function, dict]],
         stream_events: bool = False,
     ) -> Iterator[RunOutputEvent]:
-        return _hooks.handle_tool_call_updates_stream(
+        return _tools.handle_tool_call_updates_stream(
             self, run_response=run_response, run_messages=run_messages, tools=tools, stream_events=stream_events
         )
 
     async def _ahandle_tool_call_updates(
         self, run_response: RunOutput, run_messages: RunMessages, tools: List[Union[Function, dict]]
     ) -> None:
-        return await _hooks.ahandle_tool_call_updates(
+        return await _tools.ahandle_tool_call_updates(
             self, run_response=run_response, run_messages=run_messages, tools=tools
         )
 
@@ -1796,7 +1798,7 @@ class Agent:
         tools: List[Union[Function, dict]],
         stream_events: bool = False,
     ) -> AsyncIterator[RunOutputEvent]:
-        return _hooks.ahandle_tool_call_updates_stream(
+        return _tools.ahandle_tool_call_updates_stream(
             self, run_response=run_response, run_messages=run_messages, tools=tools, stream_events=stream_events
         )
 
@@ -1807,7 +1809,7 @@ class Agent:
         run_messages: RunMessages,
         run_context: Optional[RunContext] = None,
     ) -> None:
-        return _hooks.update_run_response(
+        return _response.update_run_response(
             self,
             model_response=model_response,
             run_response=run_response,
@@ -1829,7 +1831,7 @@ class Agent:
         session_state: Optional[Dict[str, Any]] = None,
         run_context: Optional[RunContext] = None,
     ) -> Iterator[RunOutputEvent]:
-        return _hooks.handle_model_response_stream(
+        return _response.handle_model_response_stream(
             self,
             session=session,
             run_response=run_response,
@@ -1852,7 +1854,7 @@ class Agent:
         session_state: Optional[Dict[str, Any]] = None,
         run_context: Optional[RunContext] = None,
     ) -> AsyncIterator[RunOutputEvent]:
-        return _hooks.ahandle_model_response_stream(
+        return _response.ahandle_model_response_stream(
             self,
             session=session,
             run_response=run_response,
@@ -1876,7 +1878,7 @@ class Agent:
         session_state: Optional[Dict[str, Any]] = None,
         run_context: Optional[RunContext] = None,
     ) -> Iterator[RunOutputEvent]:
-        return _hooks.handle_model_response_chunk(
+        return _response.handle_model_response_chunk(
             self,
             session=session,
             run_response=run_response,
@@ -1890,16 +1892,16 @@ class Agent:
         )
 
     def _make_cultural_knowledge(self, run_messages: RunMessages) -> None:
-        return _storage.make_cultural_knowledge(self, run_messages=run_messages)
+        return _managers.make_cultural_knowledge(self, run_messages=run_messages)
 
     async def _acreate_cultural_knowledge(self, run_messages: RunMessages) -> None:
-        return await _storage.acreate_cultural_knowledge(self, run_messages=run_messages)
+        return await _managers.acreate_cultural_knowledge(self, run_messages=run_messages)
 
     def _make_memories(self, run_messages: RunMessages, user_id: Optional[str] = None) -> None:
-        return _storage.make_memories(self, run_messages=run_messages, user_id=user_id)
+        return _managers.make_memories(self, run_messages=run_messages, user_id=user_id)
 
     async def _amake_memories(self, run_messages: RunMessages, user_id: Optional[str] = None) -> None:
-        return await _storage.amake_memories(self, run_messages=run_messages, user_id=user_id)
+        return await _managers.amake_memories(self, run_messages=run_messages, user_id=user_id)
 
     async def _astart_memory_task(
         self,
@@ -1907,7 +1909,7 @@ class Agent:
         user_id: Optional[str],
         existing_task: Optional[Task[None]],
     ) -> Optional[Task[None]]:
-        return await _storage.astart_memory_task(
+        return await _managers.astart_memory_task(
             self, run_messages=run_messages, user_id=user_id, existing_task=existing_task
         )
 
@@ -1916,7 +1918,7 @@ class Agent:
         run_messages: RunMessages,
         existing_task: Optional[Task[None]],
     ) -> Optional[Task[None]]:
-        return await _storage.astart_cultural_knowledge_task(
+        return await _managers.astart_cultural_knowledge_task(
             self, run_messages=run_messages, existing_task=existing_task
         )
 
@@ -1926,7 +1928,7 @@ class Agent:
         session: AgentSession,
         user_id: Optional[str],
     ) -> None:
-        return _storage.process_learnings(self, run_messages=run_messages, session=session, user_id=user_id)
+        return _managers.process_learnings(self, run_messages=run_messages, session=session, user_id=user_id)
 
     async def _astart_learning_task(
         self,
@@ -1935,7 +1937,7 @@ class Agent:
         user_id: Optional[str],
         existing_task: Optional[Task] = None,
     ) -> Optional[Task]:
-        return await _storage.astart_learning_task(
+        return await _managers.astart_learning_task(
             self, run_messages=run_messages, session=session, user_id=user_id, existing_task=existing_task
         )
 
@@ -1945,7 +1947,7 @@ class Agent:
         session: AgentSession,
         user_id: Optional[str],
     ) -> None:
-        return await _storage.aprocess_learnings(self, run_messages=run_messages, session=session, user_id=user_id)
+        return await _managers.aprocess_learnings(self, run_messages=run_messages, session=session, user_id=user_id)
 
     def _start_memory_future(
         self,
@@ -1953,7 +1955,7 @@ class Agent:
         user_id: Optional[str],
         existing_future: Optional[Future] = None,
     ) -> Optional[Future]:
-        return _storage.start_memory_future(
+        return _managers.start_memory_future(
             self, run_messages=run_messages, user_id=user_id, existing_future=existing_future
         )
 
@@ -1964,7 +1966,7 @@ class Agent:
         user_id: Optional[str],
         existing_future: Optional[Future] = None,
     ) -> Optional[Future]:
-        return _storage.start_learning_future(
+        return _managers.start_learning_future(
             self, run_messages=run_messages, session=session, user_id=user_id, existing_future=existing_future
         )
 
@@ -1973,7 +1975,7 @@ class Agent:
         run_messages: RunMessages,
         existing_future: Optional[Future] = None,
     ) -> Optional[Future]:
-        return _storage.start_cultural_knowledge_future(
+        return _managers.start_cultural_knowledge_future(
             self, run_messages=run_messages, existing_future=existing_future
         )
 
@@ -2103,7 +2105,7 @@ class Agent:
     def _get_effective_filters(
         self, knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
     ) -> Optional[Any]:
-        return _messages.get_effective_filters(self, knowledge_filters=knowledge_filters)
+        return _utils.get_effective_filters(self, knowledge_filters=knowledge_filters)
 
     def _cleanup_and_store(
         self,

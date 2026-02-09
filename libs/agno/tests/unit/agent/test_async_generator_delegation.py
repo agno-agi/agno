@@ -70,17 +70,17 @@ def _async_stream():
             {"run_response": Mock(), "session": Mock()},
         ),
         (
-            "agno.agent._hooks.arun_tool",
+            "agno.agent._tools.arun_tool",
             "_arun_tool",
             {"run_response": Mock(), "run_messages": Mock(), "tool": Mock()},
         ),
         (
-            "agno.agent._hooks.ahandle_tool_call_updates_stream",
+            "agno.agent._tools.ahandle_tool_call_updates_stream",
             "_ahandle_tool_call_updates_stream",
             {"run_response": Mock(), "run_messages": Mock(), "tools": []},
         ),
         (
-            "agno.agent._hooks.ahandle_model_response_stream",
+            "agno.agent._response.ahandle_model_response_stream",
             "_ahandle_model_response_stream",
             {"session": Mock(), "run_response": Mock(), "run_messages": Mock()},
         ),
