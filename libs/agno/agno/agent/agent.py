@@ -1061,10 +1061,10 @@ class Agent:
         return _utils.convert_dependencies_to_string(self, context=context)
 
     def deep_copy(self, *, update: Optional[Dict[str, Any]] = None) -> Agent:
-        return _init.deep_copy(self, update=update)
+        return _utils.deep_copy(self, update=update)
 
     def _deep_copy_field(self, field_name: str, field_value: Any) -> Any:
-        return _init.deep_copy_field(self, field_name=field_name, field_value=field_value)
+        return _utils.deep_copy_field(self, field_name=field_name, field_value=field_value)
 
     # ---------------------------------------------------------------
     # _storage module delegates
