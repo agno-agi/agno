@@ -6,7 +6,7 @@ from agno.run import RunContext
 from agno.run.cancel import cleanup_run
 from agno.run.team import TeamRunOutput
 from agno.session.team import TeamSession
-from agno.team import _init, _response, _run, _storage, _utils
+from agno.team import _init, _response, _run, _run_options, _storage, _utils
 from agno.team.team import Team
 
 
@@ -40,6 +40,37 @@ def _patch_team_dispatch_dependencies(team: Team, monkeypatch: pytest.MonkeyPatc
         "_get_effective_filters",
         lambda team, knowledge_filters=None: {"team_filter": "default", **(knowledge_filters or {})},
     )
+    # Also patch in _run_options since resolve_run_options imports from _utils at call time
+    monkeypatch.setattr(
+        _run_options,
+        "resolve_run_options",
+        lambda team, **kwargs: _run_options.ResolvedRunOptions(
+            stream=kwargs.get("stream") if kwargs.get("stream") is not None else (team.stream or False),
+            stream_events=kwargs.get("stream_events")
+            if kwargs.get("stream_events") is not None
+            else (team.stream_events or False),
+            yield_run_output=kwargs.get("yield_run_output") or False,
+            add_history_to_context=kwargs.get("add_history_to_context")
+            if kwargs.get("add_history_to_context") is not None
+            else team.add_history_to_context,
+            add_dependencies_to_context=kwargs.get("add_dependencies_to_context")
+            if kwargs.get("add_dependencies_to_context") is not None
+            else team.add_dependencies_to_context,
+            add_session_state_to_context=kwargs.get("add_session_state_to_context")
+            if kwargs.get("add_session_state_to_context") is not None
+            else team.add_session_state_to_context,
+            dependencies=kwargs.get("dependencies") if kwargs.get("dependencies") is not None else team.dependencies,
+            knowledge_filters=({"team_filter": "default", **(kwargs.get("knowledge_filters") or {})})
+            if (team.knowledge_filters or kwargs.get("knowledge_filters"))
+            else None,
+            metadata=({**(kwargs.get("metadata") or {}), **(team.metadata or {})})
+            if (kwargs.get("metadata") is not None or team.metadata is not None)
+            else None,
+            output_schema=kwargs.get("output_schema")
+            if kwargs.get("output_schema") is not None
+            else team.output_schema,
+        ),
+    )
 
 
 def test_run_respects_run_context_precedence(monkeypatch: pytest.MonkeyPatch):
@@ -64,7 +95,7 @@ def test_run_respects_run_context_precedence(monkeypatch: pytest.MonkeyPatch):
         cleanup_run(run_response.run_id)  # type: ignore[arg-type]
         return run_response
 
-    monkeypatch.setattr(_run, "_run", fake_run)
+    monkeypatch.setattr(_run, "run_impl", fake_run)
 
     preserved_context = RunContext(
         run_id="team-preserve",
@@ -75,7 +106,7 @@ def test_run_respects_run_context_precedence(monkeypatch: pytest.MonkeyPatch):
         metadata={"ctx_meta": "keep"},
         output_schema={"ctx_schema": "keep"},
     )
-    _run.run(
+    _run.run_dispatch(
         team=team,
         input="hello",
         run_id="run-preserve",
@@ -97,7 +128,7 @@ def test_run_respects_run_context_precedence(monkeypatch: pytest.MonkeyPatch):
         metadata={"ctx_meta": "keep"},
         output_schema={"ctx_schema": "keep"},
     )
-    _run.run(
+    _run.run_dispatch(
         team=team,
         input="hello",
         run_id="run-override",
@@ -123,7 +154,7 @@ def test_run_respects_run_context_precedence(monkeypatch: pytest.MonkeyPatch):
         metadata=None,
         output_schema=None,
     )
-    _run.run(
+    _run.run_dispatch(
         team=team,
         input="hello",
         run_id="run-empty",
@@ -159,7 +190,7 @@ async def test_arun_respects_run_context_precedence(monkeypatch: pytest.MonkeyPa
     ) -> TeamRunOutput:
         return run_response
 
-    monkeypatch.setattr(_run, "_arun", fake_arun)
+    monkeypatch.setattr(_run, "arun_impl", fake_arun)
 
     preserved_context = RunContext(
         run_id="ateam-preserve",
@@ -170,7 +201,7 @@ async def test_arun_respects_run_context_precedence(monkeypatch: pytest.MonkeyPa
         metadata={"ctx_meta": "keep"},
         output_schema={"ctx_schema": "keep"},
     )
-    await _run.arun(
+    await _run.arun_dispatch(
         team=team,
         input="hello",
         run_id="arun-preserve",
@@ -192,7 +223,7 @@ async def test_arun_respects_run_context_precedence(monkeypatch: pytest.MonkeyPa
         metadata={"ctx_meta": "keep"},
         output_schema={"ctx_schema": "keep"},
     )
-    await _run.arun(
+    await _run.arun_dispatch(
         team=team,
         input="hello",
         run_id="arun-override",
@@ -218,7 +249,7 @@ async def test_arun_respects_run_context_precedence(monkeypatch: pytest.MonkeyPa
         metadata=None,
         output_schema=None,
     )
-    await _run.arun(
+    await _run.arun_dispatch(
         team=team,
         input="hello",
         run_id="arun-empty",

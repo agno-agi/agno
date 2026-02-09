@@ -12,7 +12,7 @@ from agno.models.openai import OpenAIChat
 from agno.run import RunContext
 from agno.run.team import TeamRunOutput
 from agno.session.team import TeamSession
-from agno.team._run import _asetup_session
+from agno.team._run import asetup_session
 from agno.team.team import Team
 from agno.tools.websearch import WebSearchTools
 from agno.tools.yfinance import YFinanceTools
@@ -208,7 +208,7 @@ async def test_asetup_session_resolves_deps_after_state_loaded():
         ),
         patch.object(run_module, "_aresolve_run_dependencies", side_effect=capture_state_on_resolve),
     ):
-        result_session = await _asetup_session(
+        result_session = await asetup_session(
             team=team,
             run_context=run_context,
             session_id="test-session",
