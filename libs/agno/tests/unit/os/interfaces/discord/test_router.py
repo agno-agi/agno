@@ -250,3 +250,144 @@ class TestDiscordClass:
         assert router is not None
         route_paths = [r.path for r in router.routes]
         assert "/discord/interactions" in route_paths
+
+
+def _make_agent_response(**overrides):
+    defaults = dict(
+        status="OK",
+        content="Hello from agent",
+        reasoning_content=None,
+        is_paused=False,
+        images=None,
+        files=None,
+        videos=None,
+        audio=None,
+    )
+    defaults.update(overrides)
+    return MagicMock(**defaults)
+
+
+def _make_mock_discord_tools():
+    mock_dt = MagicMock()
+    mock_dt.edit_webhook_message = AsyncMock()
+    mock_dt.send_webhook_followup = AsyncMock()
+    mock_dt.download_attachment_async = AsyncMock(return_value=b"file-bytes")
+    mock_dt.upload_webhook_file = AsyncMock()
+    return mock_dt
+
+
+def _slash_command_payload(**overrides):
+    payload = {
+        "type": 2,
+        "id": "1234",
+        "application_id": "app123",
+        "token": "interaction_token",
+        "guild_id": "guild1",
+        "channel_id": "channel1",
+        "member": {"user": {"id": "user1"}},
+        "data": {
+            "name": "ask",
+            "options": [{"name": "message", "value": "Hello", "type": 3}],
+        },
+    }
+    payload.update(overrides)
+    return payload
+
+
+class TestBackgroundDelegation:
+    """Verify router delegates API calls to DiscordTools (zero httpx in router)."""
+
+    def test_command_edits_original_with_response(self, mock_agent):
+        mock_agent.arun = AsyncMock(return_value=_make_agent_response())
+        mock_dt = _make_mock_discord_tools()
+
+        with patch("agno.os.interfaces.discord.router.DiscordTools", return_value=mock_dt):
+            app = _make_app(mock_agent)
+            client = TestClient(app, raise_server_exceptions=False)
+            resp = _post_interaction(client, _slash_command_payload())
+
+        assert resp.status_code == 200
+        mock_dt.edit_webhook_message.assert_called_once()
+        args = mock_dt.edit_webhook_message.call_args
+        assert args[0][0] == "app123"
+        assert args[0][1] == "interaction_token"
+        assert "Hello from agent" in args[0][2]
+
+    def test_long_response_splits_into_followups(self, mock_agent):
+        long_text = "x" * 4000
+        mock_agent.arun = AsyncMock(return_value=_make_agent_response(content=long_text))
+        mock_dt = _make_mock_discord_tools()
+
+        with patch("agno.os.interfaces.discord.router.DiscordTools", return_value=mock_dt):
+            app = _make_app(mock_agent)
+            client = TestClient(app, raise_server_exceptions=False)
+            _post_interaction(client, _slash_command_payload())
+
+        # First batch → edit_webhook_message, remaining → send_webhook_followup
+        mock_dt.edit_webhook_message.assert_called_once()
+        assert mock_dt.send_webhook_followup.call_count >= 1
+
+    def test_hitl_sends_buttons_via_edit(self, mock_agent):
+        mock_tool = MagicMock()
+        mock_tool.tool_name = "dangerous_tool"
+        response = _make_agent_response(
+            is_paused=True,
+            run_id="run123",
+            tools_requiring_confirmation=[mock_tool],
+        )
+        mock_agent.arun = AsyncMock(return_value=response)
+        mock_dt = _make_mock_discord_tools()
+
+        with patch("agno.os.interfaces.discord.router.DiscordTools", return_value=mock_dt):
+            app = _make_app(mock_agent)
+            client = TestClient(app, raise_server_exceptions=False)
+            _post_interaction(client, _slash_command_payload())
+
+        mock_dt.edit_webhook_message.assert_called_once()
+        call_kwargs = mock_dt.edit_webhook_message.call_args
+        # Should include components (HITL buttons)
+        assert call_kwargs.kwargs.get("components") or (len(call_kwargs[0]) >= 4 and call_kwargs[0][3] is not None)
+
+    def test_attachment_download_delegates(self, mock_agent):
+        mock_agent.arun = AsyncMock(return_value=_make_agent_response())
+        mock_dt = _make_mock_discord_tools()
+
+        payload = _slash_command_payload()
+        payload["data"]["options"].append({"name": "file", "value": "att123", "type": 11})
+        payload["data"]["resolved"] = {
+            "attachments": {
+                "att123": {
+                    "url": "https://cdn.discordapp.com/file.png",
+                    "content_type": "image/png",
+                    "filename": "file.png",
+                    "size": 1024,
+                }
+            }
+        }
+
+        with patch("agno.os.interfaces.discord.router.DiscordTools", return_value=mock_dt):
+            app = _make_app(mock_agent)
+            client = TestClient(app, raise_server_exceptions=False)
+            _post_interaction(client, payload)
+
+        mock_dt.download_attachment_async.assert_called_once_with("https://cdn.discordapp.com/file.png")
+
+    def test_response_media_uploads_via_webhook(self, mock_agent):
+        mock_image = MagicMock()
+        mock_image.get_content_bytes.return_value = b"png-bytes"
+        mock_image.filename = None
+
+        response = _make_agent_response(images=[mock_image])
+        mock_agent.arun = AsyncMock(return_value=response)
+        mock_dt = _make_mock_discord_tools()
+
+        with patch("agno.os.interfaces.discord.router.DiscordTools", return_value=mock_dt):
+            app = _make_app(mock_agent)
+            client = TestClient(app, raise_server_exceptions=False)
+            _post_interaction(client, _slash_command_payload())
+
+        mock_dt.upload_webhook_file.assert_called_once()
+        args = mock_dt.upload_webhook_file.call_args
+        assert args[0][0] == "app123"
+        assert args[0][2] == "image.png"
+        assert args[0][3] == b"png-bytes"

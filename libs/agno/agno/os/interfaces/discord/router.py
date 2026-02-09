@@ -1,7 +1,6 @@
 from os import getenv
 from typing import Any, Dict, List, Optional, Union
 
-import httpx
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from fastapi.responses import JSONResponse
 
@@ -9,6 +8,7 @@ from agno.agent import Agent, RemoteAgent
 from agno.media import Audio, File, Image, Video
 from agno.os.interfaces.discord.security import verify_discord_signature
 from agno.team import RemoteTeam, Team
+from agno.tools.discord import DiscordTools
 from agno.utils.log import log_error, log_warning
 from agno.utils.message import get_text_from_message
 from agno.workflow import RemoteWorkflow, Workflow
@@ -25,8 +25,6 @@ RESPONSE_CHANNEL_MESSAGE_WITH_SOURCE = 4
 RESPONSE_DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE = 5
 RESPONSE_DEFERRED_UPDATE_MESSAGE = 6
 
-DISCORD_API_BASE = "https://discord.com/api/v10"
-
 
 def attach_routes(
     router: APIRouter,
@@ -39,6 +37,8 @@ def attach_routes(
     allowed_channel_ids: Optional[List[str]] = None,
 ) -> APIRouter:
     entity_type = "agent" if agent else "team" if team else "workflow" if workflow else "unknown"
+
+    discord_tools = DiscordTools(async_mode=True)
 
     @router.post(
         "/interactions",
@@ -323,58 +323,39 @@ def attach_routes(
             log_warning(f"Attachment too large ({size} bytes), skipping: {filename}")
             return
 
-        try:
-            async with httpx.AsyncClient(timeout=30) as client:
-                resp = await client.get(url)
-                resp.raise_for_status()
-                content_bytes = resp.content
+        content_bytes = await discord_tools.download_attachment_async(url)
+        if not content_bytes:
+            return
 
-            if content_type.startswith("image/"):
-                images.append(Image(content=content_bytes))
-            elif content_type.startswith("video/"):
-                videos.append(Video(content=content_bytes))
-            elif content_type.startswith("audio/"):
-                audio_list.append(Audio(content=content_bytes))
-            else:
-                files.append(File(content=content_bytes, filename=filename))
-        except Exception as e:
-            log_error(f"Failed to download attachment {filename}: {e}")
+        if content_type.startswith("image/"):
+            images.append(Image(content=content_bytes))
+        elif content_type.startswith("video/"):
+            videos.append(Video(content=content_bytes))
+        elif content_type.startswith("audio/"):
+            audio_list.append(Audio(content=content_bytes))
+        else:
+            files.append(File(content=content_bytes, filename=filename))
 
     async def _send_followup(
         application_id: str,
         interaction_token: str,
         message: str,
         edit_original: bool = False,
-        flags: int = 0,
     ):
         if not message:
             message = "(empty response)"
 
         if edit_original:
-            # Edit the deferred "thinking..." message
-            url = f"{DISCORD_API_BASE}/webhooks/{application_id}/{interaction_token}/messages/@original"
             batches = _split_message(message)
-            # First batch edits the original
-            async with httpx.AsyncClient(timeout=30) as client:
-                await client.patch(url, json={"content": batches[0]})
+            # First batch edits the deferred "thinking..." message
+            await discord_tools.edit_webhook_message(application_id, interaction_token, batches[0])
             # Remaining batches as new follow-ups
-            if len(batches) > 1:
-                followup_url = f"{DISCORD_API_BASE}/webhooks/{application_id}/{interaction_token}"
-                async with httpx.AsyncClient(timeout=30) as client:
-                    for batch in batches[1:]:
-                        payload: Dict[str, Any] = {"content": batch}
-                        if flags:
-                            payload["flags"] = flags
-                        await client.post(followup_url, json=payload)
+            for batch in batches[1:]:
+                await discord_tools.send_webhook_followup(application_id, interaction_token, batch)
         else:
-            url = f"{DISCORD_API_BASE}/webhooks/{application_id}/{interaction_token}"
             batches = _split_message(message)
-            async with httpx.AsyncClient(timeout=30) as client:
-                for batch in batches:
-                    payload = {"content": batch}
-                    if flags:
-                        payload["flags"] = flags
-                    await client.post(url, json=payload)
+            for batch in batches:
+                await discord_tools.send_webhook_followup(application_id, interaction_token, batch)
 
     def _split_message(message: str) -> List[str]:
         if len(message) <= max_message_chars:
@@ -416,15 +397,12 @@ def attach_routes(
             }
         ]
 
-        url = f"{DISCORD_API_BASE}/webhooks/{application_id}/{interaction_token}/messages/@original"
-        async with httpx.AsyncClient(timeout=30) as client:
-            await client.patch(
-                url,
-                json={
-                    "content": f"Tool requiring confirmation: **{tool_list}**",
-                    "components": components,
-                },
-            )
+        await discord_tools.edit_webhook_message(
+            application_id,
+            interaction_token,
+            f"Tool requiring confirmation: **{tool_list}**",
+            components=components,
+        )
 
     async def _upload_response_media(application_id: str, interaction_token: str, response):
         media_attrs = [
@@ -433,8 +411,6 @@ def attach_routes(
             ("videos", "video.mp4", "video/mp4"),
             ("audio", "audio.mp3", "audio/mpeg"),
         ]
-
-        url = f"{DISCORD_API_BASE}/webhooks/{application_id}/{interaction_token}"
 
         for attr, default_name, default_mime in media_attrs:
             items = getattr(response, attr, None)
@@ -446,12 +422,9 @@ def attach_routes(
                     continue
                 filename = getattr(item, "filename", None) or default_name
                 try:
-                    async with httpx.AsyncClient(timeout=60) as client:
-                        await client.post(
-                            url,
-                            data={"payload_json": '{"content":""}'},
-                            files={"files[0]": (filename, content_bytes, default_mime)},
-                        )
+                    await discord_tools.upload_webhook_file(
+                        application_id, interaction_token, filename, content_bytes, default_mime
+                    )
                 except Exception as e:
                     log_error(f"Failed to upload {attr.rstrip('s')}: {e}")
 
