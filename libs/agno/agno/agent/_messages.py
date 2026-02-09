@@ -18,6 +18,7 @@ from pydantic import BaseModel
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
 
+from agno.agent._utils import convert_dependencies_to_string, convert_documents_to_string
 from agno.filters import FilterExpr
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Message, MessageReferences
@@ -34,7 +35,7 @@ from agno.utils.agent import (
     execute_system_message,
 )
 from agno.utils.common import is_typed_dict
-from agno.utils.log import log_debug, log_error, log_warning
+from agno.utils.log import log_debug, log_warning
 from agno.utils.message import filter_tool_calls, get_text_from_message
 from agno.utils.prompts import get_json_output_prompt, get_response_model_format_prompt
 from agno.utils.timer import Timer
@@ -1843,102 +1844,3 @@ async def aget_relevant_docs_from_knowledge(
     except Exception as e:
         log_warning(f"Error retrieving from knowledge base: {e}")
         raise e
-
-
-# ---------------------------------------------------------------------------
-# Document / dependency conversion
-# ---------------------------------------------------------------------------
-
-
-def convert_documents_to_string(agent: Agent, docs: List[Union[Dict[str, Any], str]]) -> str:
-    if docs is None or len(docs) == 0:
-        return ""
-
-    if agent.references_format == "yaml":
-        import yaml
-
-        return yaml.dump(docs)
-
-    import json
-
-    return json.dumps(docs, indent=2, ensure_ascii=False)
-
-
-def convert_dependencies_to_string(agent: Agent, context: Dict[str, Any]) -> str:
-    """Convert the context dictionary to a string representation.
-
-    Args:
-        agent: The Agent instance.
-        context: Dictionary containing context data
-
-    Returns:
-        String representation of the context, or empty string if conversion fails
-    """
-    if context is None:
-        return ""
-
-    import json
-
-    try:
-        return json.dumps(context, indent=2, default=str)
-    except (TypeError, ValueError, OverflowError) as e:
-        log_warning(f"Failed to convert context to JSON: {e}")
-        # Attempt a fallback conversion for non-serializable objects
-        sanitized_context = {}
-        for key, value in context.items():
-            try:
-                # Try to serialize each value individually
-                json.dumps({key: value}, default=str)
-                sanitized_context[key] = value
-            except Exception:
-                # If serialization fails, convert to string representation
-                sanitized_context[key] = str(value)
-
-        try:
-            return json.dumps(sanitized_context, indent=2)
-        except Exception as e:
-            log_error(f"Failed to convert sanitized context to JSON: {e}")
-            return str(context)
-
-
-# ---------------------------------------------------------------------------
-# Knowledge filter resolution
-# ---------------------------------------------------------------------------
-
-
-def get_effective_filters(
-    agent: Agent, knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
-) -> Optional[Any]:
-    """
-    Determine which knowledge filters to use, with priority to run-level filters.
-
-    Args:
-        agent: The Agent instance.
-        knowledge_filters: Filters passed at run time.
-
-    Returns:
-        The effective filters to use, with run-level filters taking priority.
-    """
-    effective_filters = None
-
-    # If agent has filters, use those as a base
-    if agent.knowledge_filters:
-        effective_filters = agent.knowledge_filters.copy()
-
-    # If run has filters, they override agent filters
-    if knowledge_filters:
-        if effective_filters:
-            if isinstance(knowledge_filters, dict):
-                if isinstance(effective_filters, dict):
-                    effective_filters.update(knowledge_filters)
-                else:
-                    effective_filters = knowledge_filters
-            elif isinstance(knowledge_filters, list):
-                effective_filters = [*effective_filters, *knowledge_filters]
-        else:
-            effective_filters = knowledge_filters
-
-    if effective_filters:
-        log_debug(f"Using knowledge filters: {effective_filters}")
-
-    return effective_filters

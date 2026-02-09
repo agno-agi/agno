@@ -1,27 +1,30 @@
-"""Tool resolution and formatting helpers for Agent."""
+"""Tool resolution, formatting, and execution helpers for Agent."""
 
 from __future__ import annotations
 
+from collections import deque
 from typing import (
     TYPE_CHECKING,
-    Any,
+    AsyncIterator,
     Callable,
     Dict,
+    Iterator,
     List,
     Optional,
-    Type,
     Union,
     cast,
 )
-
-from pydantic import BaseModel
 
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
 
 from agno.models.base import Model
+from agno.models.message import Message
+from agno.models.metrics import Metrics
+from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
 from agno.run import RunContext
-from agno.run.agent import RunOutput
+from agno.run.agent import RunOutput, RunOutputEvent
+from agno.run.messages import RunMessages
 from agno.session import AgentSession
 from agno.tools import Toolkit
 from agno.tools.function import Function
@@ -30,6 +33,12 @@ from agno.utils.agent import (
     collect_joint_files,
     collect_joint_images,
     collect_joint_videos,
+)
+from agno.utils.events import (
+    create_tool_call_completed_event,
+    create_tool_call_error_event,
+    create_tool_call_started_event,
+    handle_event,
 )
 from agno.utils.log import log_debug, log_warning
 
@@ -428,124 +437,361 @@ def determine_tools_for_model(
     return _functions
 
 
-def model_should_return_structured_output(agent: Agent, run_context: Optional[RunContext] = None) -> bool:
-    # Get output_schema from run_context
-    output_schema = run_context.output_schema if run_context else None
+# ---------------------------------------------------------------------------
+# Tool Execution
+# ---------------------------------------------------------------------------
+
+
+def handle_external_execution_update(agent: Agent, run_messages: RunMessages, tool: ToolExecution):
+    agent.model = cast(Model, agent.model)
+
+    if tool.result is not None:
+        for msg in run_messages.messages:
+            # Skip if the message is already in the run_messages
+            if msg.tool_call_id == tool.tool_call_id:
+                break
+
+        run_messages.messages.append(
+            Message(
+                role=agent.model.tool_message_role,
+                content=tool.result,
+                tool_call_id=tool.tool_call_id,
+                tool_name=tool.tool_name,
+                tool_args=tool.tool_args,
+                tool_call_error=tool.tool_call_error,
+                stop_after_tool_call=tool.stop_after_tool_call,
+            )
+        )
+        tool.external_execution_required = False
+    else:
+        raise ValueError(f"Tool {tool.tool_name} requires external execution, cannot continue run")
+
+
+def handle_user_input_update(agent: Agent, tool: ToolExecution):
+    for field in tool.user_input_schema or []:
+        if not tool.tool_args:
+            tool.tool_args = {}
+        tool.tool_args[field.name] = field.value
+
+
+def handle_get_user_input_tool_update(agent: Agent, run_messages: RunMessages, tool: ToolExecution):
+    import json
 
     agent.model = cast(Model, agent.model)
-    return bool(
-        agent.model.supports_native_structured_outputs
-        and output_schema is not None
-        and (not agent.use_json_mode or agent.structured_outputs)
+    # Skipping tool without user_input_schema so that tool_call_id is not repeated
+    if not hasattr(tool, "user_input_schema") or not tool.user_input_schema:
+        return
+    user_input_result = [
+        {"name": user_input_field.name, "value": user_input_field.value}
+        for user_input_field in tool.user_input_schema or []
+    ]
+    # Add the tool call result to the run_messages
+    run_messages.messages.append(
+        Message(
+            role=agent.model.tool_message_role,
+            content=f"User inputs retrieved: {json.dumps(user_input_result)}",
+            tool_call_id=tool.tool_call_id,
+            tool_name=tool.tool_name,
+            tool_args=tool.tool_args,
+            metrics=Metrics(duration=0),
+        )
     )
 
 
-def get_response_format(
-    agent: Agent, model: Optional[Model] = None, run_context: Optional[RunContext] = None
-) -> Optional[Union[Dict, Type[BaseModel]]]:
-    # Get output_schema from run_context
-    output_schema = run_context.output_schema if run_context else None
+def run_tool(
+    agent: Agent,
+    run_response: RunOutput,
+    run_messages: RunMessages,
+    tool: ToolExecution,
+    functions: Optional[Dict[str, Function]] = None,
+    stream_events: bool = False,
+) -> Iterator[RunOutputEvent]:
+    from agno.run.agent import CustomEvent
 
-    model = cast(Model, model or agent.model)
-    if output_schema is None:
-        return None
-    else:
-        json_response_format: Dict[str, Any] = {"type": "json_object"}
+    agent.model = cast(Model, agent.model)
+    # Execute the tool
+    function_call = agent.model.get_function_call_to_run_from_tool_execution(tool, functions)
+    function_call_results: List[Message] = []
 
-        if model.supports_native_structured_outputs:
-            if not agent.use_json_mode or agent.structured_outputs:
-                log_debug("Setting Model.response_format to Agent.output_schema")
-                return output_schema
+    for call_result in agent.model.run_function_call(
+        function_call=function_call,
+        function_call_results=function_call_results,
+    ):
+        if isinstance(call_result, ModelResponse):
+            if call_result.event == ModelResponseEvent.tool_call_started.value:
+                if stream_events:
+                    yield handle_event(  # type: ignore
+                        create_tool_call_started_event(from_run_response=run_response, tool=tool),
+                        run_response,
+                        events_to_skip=agent.events_to_skip,  # type: ignore
+                        store_events=agent.store_events,
+                    )
+
+            if call_result.event == ModelResponseEvent.tool_call_completed.value and call_result.tool_executions:
+                tool_execution = call_result.tool_executions[0]
+                tool.result = tool_execution.result
+                tool.tool_call_error = tool_execution.tool_call_error
+                if stream_events:
+                    yield handle_event(  # type: ignore
+                        create_tool_call_completed_event(
+                            from_run_response=run_response, tool=tool, content=call_result.content
+                        ),
+                        run_response,
+                        events_to_skip=agent.events_to_skip,  # type: ignore
+                        store_events=agent.store_events,
+                    )
+                    if tool.tool_call_error:
+                        yield handle_event(  # type: ignore
+                            create_tool_call_error_event(
+                                from_run_response=run_response, tool=tool, error=str(tool.result)
+                            ),
+                            run_response,
+                            events_to_skip=agent.events_to_skip,  # type: ignore
+                            store_events=agent.store_events,
+                        )
+        # Yield CustomEvent instances from sync tool generators
+        elif isinstance(call_result, CustomEvent):
+            if stream_events:
+                yield call_result  # type: ignore
+
+    if len(function_call_results) > 0:
+        run_messages.messages.extend(function_call_results)
+
+
+def reject_tool_call(
+    agent: Agent, run_messages: RunMessages, tool: ToolExecution, functions: Optional[Dict[str, Function]] = None
+):
+    agent.model = cast(Model, agent.model)
+    function_call = agent.model.get_function_call_to_run_from_tool_execution(tool, functions)
+    function_call.error = tool.confirmation_note or "Function call was rejected by the user"
+    function_call_result = agent.model.create_function_call_result(
+        function_call=function_call,
+        success=False,
+    )
+    run_messages.messages.append(function_call_result)
+
+
+async def arun_tool(
+    agent: Agent,
+    run_response: RunOutput,
+    run_messages: RunMessages,
+    tool: ToolExecution,
+    functions: Optional[Dict[str, Function]] = None,
+    stream_events: bool = False,
+) -> AsyncIterator[RunOutputEvent]:
+    from agno.run.agent import CustomEvent
+
+    agent.model = cast(Model, agent.model)
+
+    # Execute the tool
+    function_call = agent.model.get_function_call_to_run_from_tool_execution(tool, functions)
+    function_call_results: List[Message] = []
+
+    async for call_result in agent.model.arun_function_calls(
+        function_calls=[function_call],
+        function_call_results=function_call_results,
+        skip_pause_check=True,
+    ):
+        if isinstance(call_result, ModelResponse):
+            if call_result.event == ModelResponseEvent.tool_call_started.value:
+                if stream_events:
+                    yield handle_event(  # type: ignore
+                        create_tool_call_started_event(from_run_response=run_response, tool=tool),
+                        run_response,
+                        events_to_skip=agent.events_to_skip,  # type: ignore
+                        store_events=agent.store_events,
+                    )
+            if call_result.event == ModelResponseEvent.tool_call_completed.value and call_result.tool_executions:
+                tool_execution = call_result.tool_executions[0]
+                tool.result = tool_execution.result
+                tool.tool_call_error = tool_execution.tool_call_error
+                if stream_events:
+                    yield handle_event(  # type: ignore
+                        create_tool_call_completed_event(
+                            from_run_response=run_response, tool=tool, content=call_result.content
+                        ),
+                        run_response,
+                        events_to_skip=agent.events_to_skip,  # type: ignore
+                        store_events=agent.store_events,
+                    )
+                    if tool.tool_call_error:
+                        yield handle_event(  # type: ignore
+                            create_tool_call_error_event(
+                                from_run_response=run_response, tool=tool, error=str(tool.result)
+                            ),
+                            run_response,
+                            events_to_skip=agent.events_to_skip,  # type: ignore
+                            store_events=agent.store_events,
+                        )
+        # Yield CustomEvent instances from async tool generators
+        elif isinstance(call_result, CustomEvent):
+            if stream_events:
+                yield call_result  # type: ignore
+
+    if len(function_call_results) > 0:
+        run_messages.messages.extend(function_call_results)
+
+
+def handle_tool_call_updates(
+    agent: Agent, run_response: RunOutput, run_messages: RunMessages, tools: List[Union[Function, dict]]
+):
+    agent.model = cast(Model, agent.model)
+    _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)}
+
+    for _t in run_response.tools or []:
+        # Case 1: Handle confirmed tools and execute them
+        if _t.requires_confirmation is not None and _t.requires_confirmation is True and _functions:
+            # Tool is confirmed and hasn't been run before
+            if _t.confirmed is not None and _t.confirmed is True and _t.result is None:
+                # Consume the generator without yielding
+                deque(run_tool(agent, run_response, run_messages, _t, functions=_functions), maxlen=0)
             else:
-                log_debug("Model supports native structured outputs but it is not enabled. Using JSON mode instead.")
-                return json_response_format
+                reject_tool_call(agent, run_messages, _t, functions=_functions)
+                _t.confirmed = False
+                _t.confirmation_note = _t.confirmation_note or "Tool call was rejected"
+                _t.tool_call_error = True
+            _t.requires_confirmation = False
 
-        elif model.supports_json_schema_outputs:
-            if agent.use_json_mode or (not agent.structured_outputs):
-                log_debug("Setting Model.response_format to JSON response mode")
-                # Handle JSON schema - pass through directly (user provides full provider format)
-                if isinstance(output_schema, dict):
-                    return output_schema
-                # Handle Pydantic schema
-                return {
-                    "type": "json_schema",
-                    "json_schema": {
-                        "name": output_schema.__name__,
-                        "schema": output_schema.model_json_schema(),
-                    },
-                }
+        # Case 2: Handle external execution required tools
+        elif _t.external_execution_required is not None and _t.external_execution_required is True:
+            handle_external_execution_update(agent, run_messages=run_messages, tool=_t)
+
+        # Case 3: Agentic user input required
+        elif _t.tool_name == "get_user_input" and _t.requires_user_input is not None and _t.requires_user_input is True:
+            handle_get_user_input_tool_update(agent, run_messages=run_messages, tool=_t)
+            _t.requires_user_input = False
+
+        # Case 4: Handle user input required tools
+        elif _t.requires_user_input is not None and _t.requires_user_input is True:
+            handle_user_input_update(agent, tool=_t)
+            _t.requires_user_input = False
+            _t.answered = True
+            # Consume the generator without yielding
+            deque(run_tool(agent, run_response, run_messages, _t, functions=_functions), maxlen=0)
+
+
+def handle_tool_call_updates_stream(
+    agent: Agent,
+    run_response: RunOutput,
+    run_messages: RunMessages,
+    tools: List[Union[Function, dict]],
+    stream_events: bool = False,
+) -> Iterator[RunOutputEvent]:
+    agent.model = cast(Model, agent.model)
+    _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)}
+
+    for _t in run_response.tools or []:
+        # Case 1: Handle confirmed tools and execute them
+        if _t.requires_confirmation is not None and _t.requires_confirmation is True and _functions:
+            # Tool is confirmed and hasn't been run before
+            if _t.confirmed is not None and _t.confirmed is True and _t.result is None:
+                yield from run_tool(
+                    agent, run_response, run_messages, _t, functions=_functions, stream_events=stream_events
+                )
             else:
-                return None
+                reject_tool_call(agent, run_messages, _t, functions=_functions)
+                _t.confirmed = False
+                _t.confirmation_note = _t.confirmation_note or "Tool call was rejected"
+                _t.tool_call_error = True
+            _t.requires_confirmation = False
 
-        else:
-            log_debug("Model does not support structured or JSON schema outputs.")
-            return json_response_format
+        # Case 2: Handle external execution required tools
+        elif _t.external_execution_required is not None and _t.external_execution_required is True:
+            handle_external_execution_update(agent, run_messages=run_messages, tool=_t)
 
+        # Case 3: Agentic user input required
+        elif _t.tool_name == "get_user_input" and _t.requires_user_input is not None and _t.requires_user_input is True:
+            handle_get_user_input_tool_update(agent, run_messages=run_messages, tool=_t)
+            _t.requires_user_input = False
+            _t.answered = True
 
-def resolve_run_dependencies(agent: Agent, run_context: RunContext) -> None:
-    from inspect import iscoroutine, iscoroutinefunction, signature
-
-    # Dependencies should already be resolved in run() method
-    log_debug("Resolving dependencies")
-    if not isinstance(run_context.dependencies, dict):
-        log_warning("Run dependencies are not a dict")
-        return
-
-    for key, value in run_context.dependencies.items():
-        if iscoroutine(value) or iscoroutinefunction(value):
-            log_warning(f"Dependency {key} is a coroutine. Use agent.arun() or agent.aprint_response() instead.")
-            continue
-        elif callable(value):
-            try:
-                sig = signature(value)
-
-                # Build kwargs for the function
-                kwargs: Dict[str, Any] = {}
-                if "agent" in sig.parameters:
-                    kwargs["agent"] = agent
-                if "run_context" in sig.parameters:
-                    kwargs["run_context"] = run_context
-
-                # Run the function
-                result = value(**kwargs)
-
-                # Carry the result in the run context
-                if result is not None:
-                    run_context.dependencies[key] = result
-
-            except Exception as e:
-                log_warning(f"Failed to resolve dependencies for '{key}': {e}")
-        else:
-            run_context.dependencies[key] = value
+        # Case 4: Handle user input required tools
+        elif _t.requires_user_input is not None and _t.requires_user_input is True:
+            handle_user_input_update(agent, tool=_t)
+            yield from run_tool(
+                agent, run_response, run_messages, _t, functions=_functions, stream_events=stream_events
+            )
+            _t.requires_user_input = False
+            _t.answered = True
 
 
-async def aresolve_run_dependencies(agent: Agent, run_context: RunContext) -> None:
-    from inspect import iscoroutine, iscoroutinefunction, signature
+async def ahandle_tool_call_updates(
+    agent: Agent, run_response: RunOutput, run_messages: RunMessages, tools: List[Union[Function, dict]]
+):
+    agent.model = cast(Model, agent.model)
+    _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)}
 
-    log_debug("Resolving context (async)")
-    if not isinstance(run_context.dependencies, dict):
-        log_warning("Run dependencies are not a dict")
-        return
+    for _t in run_response.tools or []:
+        # Case 1: Handle confirmed tools and execute them
+        if _t.requires_confirmation is not None and _t.requires_confirmation is True and _functions:
+            # Tool is confirmed and hasn't been run before
+            if _t.confirmed is not None and _t.confirmed is True and _t.result is None:
+                async for _ in arun_tool(agent, run_response, run_messages, _t, functions=_functions):
+                    pass
+            else:
+                reject_tool_call(agent, run_messages, _t, functions=_functions)
+                _t.confirmed = False
+                _t.confirmation_note = _t.confirmation_note or "Tool call was rejected"
+                _t.tool_call_error = True
+            _t.requires_confirmation = False
 
-    for key, value in run_context.dependencies.items():
-        if not callable(value):
-            run_context.dependencies[key] = value
-            continue
-        try:
-            sig = signature(value)
+        # Case 2: Handle external execution required tools
+        elif _t.external_execution_required is not None and _t.external_execution_required is True:
+            handle_external_execution_update(agent, run_messages=run_messages, tool=_t)
+        # Case 3: Agentic user input required
+        elif _t.tool_name == "get_user_input" and _t.requires_user_input is not None and _t.requires_user_input is True:
+            handle_get_user_input_tool_update(agent, run_messages=run_messages, tool=_t)
+            _t.requires_user_input = False
+            _t.answered = True
+        # Case 4: Handle user input required tools
+        elif _t.requires_user_input is not None and _t.requires_user_input is True:
+            handle_user_input_update(agent, tool=_t)
+            async for _ in arun_tool(agent, run_response, run_messages, _t, functions=_functions):
+                pass
+            _t.requires_user_input = False
+            _t.answered = True
 
-            # Build kwargs for the function
-            kwargs: Dict[str, Any] = {}
-            if "agent" in sig.parameters:
-                kwargs["agent"] = agent
-            if "run_context" in sig.parameters:
-                kwargs["run_context"] = run_context
 
-            # Run the function
-            result = value(**kwargs)
-            if iscoroutine(result) or iscoroutinefunction(result):
-                result = await result  # type: ignore
+async def ahandle_tool_call_updates_stream(
+    agent: Agent,
+    run_response: RunOutput,
+    run_messages: RunMessages,
+    tools: List[Union[Function, dict]],
+    stream_events: bool = False,
+) -> AsyncIterator[RunOutputEvent]:
+    agent.model = cast(Model, agent.model)
+    _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)}
 
-            run_context.dependencies[key] = result
-        except Exception as e:
-            log_warning(f"Failed to resolve context for '{key}': {e}")
+    for _t in run_response.tools or []:
+        # Case 1: Handle confirmed tools and execute them
+        if _t.requires_confirmation is not None and _t.requires_confirmation is True and _functions:
+            # Tool is confirmed and hasn't been run before
+            if _t.confirmed is not None and _t.confirmed is True and _t.result is None:
+                async for event in arun_tool(
+                    agent, run_response, run_messages, _t, functions=_functions, stream_events=stream_events
+                ):
+                    yield event
+            else:
+                reject_tool_call(agent, run_messages, _t, functions=_functions)
+                _t.confirmed = False
+                _t.confirmation_note = _t.confirmation_note or "Tool call was rejected"
+                _t.tool_call_error = True
+            _t.requires_confirmation = False
+
+        # Case 2: Handle external execution required tools
+        elif _t.external_execution_required is not None and _t.external_execution_required is True:
+            handle_external_execution_update(agent, run_messages=run_messages, tool=_t)
+        # Case 3: Agentic user input required
+        elif _t.tool_name == "get_user_input" and _t.requires_user_input is not None and _t.requires_user_input is True:
+            handle_get_user_input_tool_update(agent, run_messages=run_messages, tool=_t)
+            _t.requires_user_input = False
+            _t.answered = True
+        # # Case 4: Handle user input required tools
+        elif _t.requires_user_input is not None and _t.requires_user_input is True:
+            handle_user_input_update(agent, tool=_t)
+            async for event in arun_tool(
+                agent, run_response, run_messages, _t, functions=_functions, stream_events=stream_events
+            ):
+                yield event
+            _t.requires_user_input = False
+            _t.answered = True

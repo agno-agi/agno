@@ -66,6 +66,9 @@ from agno.tools.function import Function
 from agno.utils.agent import (
     await_for_open_threads,
     await_for_thread_tasks_stream,
+    scrub_history_messages_from_run_output,
+    scrub_media_from_run_output,
+    scrub_tool_results_from_run_output,
     store_media_util,
     validate_input,
     validate_media_object_id,
@@ -79,6 +82,7 @@ from agno.utils.events import (
     create_run_content_completed_event,
     create_run_continued_event,
     create_run_error_event,
+    create_run_paused_event,
     create_run_started_event,
     create_session_summary_completed_event,
     create_session_summary_started_event,
@@ -94,6 +98,184 @@ from agno.utils.log import (
     log_info,
     log_warning,
 )
+from agno.utils.response import get_paused_content
+
+# ---------------------------------------------------------------------------
+# Run dependency resolution
+# ---------------------------------------------------------------------------
+
+
+def resolve_run_dependencies(agent: Agent, run_context: RunContext) -> None:
+    from inspect import iscoroutine, iscoroutinefunction, signature
+
+    # Dependencies should already be resolved in run() method
+    log_debug("Resolving dependencies")
+    if not isinstance(run_context.dependencies, dict):
+        log_warning("Run dependencies are not a dict")
+        return
+
+    for key, value in run_context.dependencies.items():
+        if iscoroutine(value) or iscoroutinefunction(value):
+            log_warning(f"Dependency {key} is a coroutine. Use agent.arun() or agent.aprint_response() instead.")
+            continue
+        elif callable(value):
+            try:
+                sig = signature(value)
+
+                # Build kwargs for the function
+                kwargs: Dict[str, Any] = {}
+                if "agent" in sig.parameters:
+                    kwargs["agent"] = agent
+                if "run_context" in sig.parameters:
+                    kwargs["run_context"] = run_context
+
+                # Run the function
+                result = value(**kwargs)
+
+                # Carry the result in the run context
+                if result is not None:
+                    run_context.dependencies[key] = result
+
+            except Exception as e:
+                log_warning(f"Failed to resolve dependencies for '{key}': {e}")
+        else:
+            run_context.dependencies[key] = value
+
+
+async def aresolve_run_dependencies(agent: Agent, run_context: RunContext) -> None:
+    from inspect import iscoroutine, iscoroutinefunction, signature
+
+    log_debug("Resolving context (async)")
+    if not isinstance(run_context.dependencies, dict):
+        log_warning("Run dependencies are not a dict")
+        return
+
+    for key, value in run_context.dependencies.items():
+        if not callable(value):
+            run_context.dependencies[key] = value
+            continue
+        try:
+            sig = signature(value)
+
+            # Build kwargs for the function
+            kwargs: Dict[str, Any] = {}
+            if "agent" in sig.parameters:
+                kwargs["agent"] = agent
+            if "run_context" in sig.parameters:
+                kwargs["run_context"] = run_context
+
+            # Run the function
+            result = value(**kwargs)
+            if iscoroutine(result) or iscoroutinefunction(result):
+                result = await result  # type: ignore
+
+            run_context.dependencies[key] = result
+        except Exception as e:
+            log_warning(f"Failed to resolve context for '{key}': {e}")
+
+
+# ---------------------------------------------------------------------------
+# Pause handling
+# ---------------------------------------------------------------------------
+
+
+def handle_agent_run_paused(
+    agent: Agent,
+    run_response: RunOutput,
+    session: AgentSession,
+    user_id: Optional[str] = None,
+) -> RunOutput:
+    run_response.status = RunStatus.paused
+    if not run_response.content:
+        run_response.content = get_paused_content(run_response)
+
+    cleanup_and_store(agent, run_response=run_response, session=session, user_id=user_id)
+
+    log_debug(f"Agent Run Paused: {run_response.run_id}", center=True, symbol="*")
+
+    # We return and await confirmation/completion for the tools that require it
+    return run_response
+
+
+def handle_agent_run_paused_stream(
+    agent: Agent,
+    run_response: RunOutput,
+    session: AgentSession,
+    user_id: Optional[str] = None,
+) -> Iterator[RunOutputEvent]:
+    run_response.status = RunStatus.paused
+    if not run_response.content:
+        run_response.content = get_paused_content(run_response)
+
+    # We return and await confirmation/completion for the tools that require it
+    pause_event = handle_event(
+        create_run_paused_event(
+            from_run_response=run_response,
+            tools=run_response.tools,
+            requirements=run_response.requirements,
+        ),
+        run_response,
+        events_to_skip=agent.events_to_skip,  # type: ignore
+        store_events=agent.store_events,
+    )
+
+    cleanup_and_store(agent, run_response=run_response, session=session, user_id=user_id)
+
+    yield pause_event  # type: ignore
+
+    log_debug(f"Agent Run Paused: {run_response.run_id}", center=True, symbol="*")
+
+
+async def ahandle_agent_run_paused(
+    agent: Agent,
+    run_response: RunOutput,
+    session: AgentSession,
+    user_id: Optional[str] = None,
+) -> RunOutput:
+    run_response.status = RunStatus.paused
+    if not run_response.content:
+        run_response.content = get_paused_content(run_response)
+
+    await acleanup_and_store(agent, run_response=run_response, session=session, user_id=user_id)
+
+    log_debug(f"Agent Run Paused: {run_response.run_id}", center=True, symbol="*")
+
+    # We return and await confirmation/completion for the tools that require it
+    return run_response
+
+
+async def ahandle_agent_run_paused_stream(
+    agent: Agent,
+    run_response: RunOutput,
+    session: AgentSession,
+    user_id: Optional[str] = None,
+) -> AsyncIterator[RunOutputEvent]:
+    run_response.status = RunStatus.paused
+    if not run_response.content:
+        run_response.content = get_paused_content(run_response)
+
+    # We return and await confirmation/completion for the tools that require it
+    pause_event = handle_event(
+        create_run_paused_event(
+            from_run_response=run_response,
+            tools=run_response.tools,
+            requirements=run_response.requirements,
+        ),
+        run_response,
+        events_to_skip=agent.events_to_skip,  # type: ignore
+        store_events=agent.store_events,
+    )
+
+    await acleanup_and_store(agent, run_response=run_response, session=session, user_id=user_id)
+
+    yield pause_event  # type: ignore
+
+    log_debug(f"Agent Run Paused: {run_response.run_id}", center=True, symbol="*")
+
+
+# ---------------------------------------------------------------------------
+# Session initialization
+# ---------------------------------------------------------------------------
 
 
 def initialize_session(
@@ -3554,6 +3736,167 @@ async def acontinue_run_stream_impl(
         cleanup_run_id = run_response.run_id if run_response and run_response.run_id is not None else run_id
         if cleanup_run_id is not None:
             await acleanup_run(cleanup_run_id)
+
+
+# ---------------------------------------------------------------------------
+# Post-run cleanup
+# ---------------------------------------------------------------------------
+
+
+def save_run_response_to_file(
+    agent: Agent,
+    run_response: RunOutput,
+    input: Optional[Union[str, List, Dict, Message]] = None,
+    session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+) -> None:
+    if agent.save_response_to_file is not None and run_response is not None:
+        message_str = None
+        if input is not None:
+            if isinstance(input, str):
+                message_str = input
+            else:
+                log_warning("Did not use input in output file name: input is not a string")
+        try:
+            from pathlib import Path
+
+            fn = agent.save_response_to_file.format(
+                name=agent.name,
+                session_id=session_id,
+                user_id=user_id,
+                message=message_str,
+                run_id=run_response.run_id,
+            )
+            fn_path = Path(fn)
+            if not fn_path.parent.exists():
+                fn_path.parent.mkdir(parents=True, exist_ok=True)
+            if isinstance(run_response.content, str):
+                fn_path.write_text(run_response.content)
+            else:
+                import json
+
+                fn_path.write_text(json.dumps(run_response.content, indent=2))
+        except Exception as e:
+            log_warning(f"Failed to save output to file: {e}")
+
+
+def scrub_run_output_for_storage(agent: Agent, run_response: RunOutput) -> None:
+    """Scrub run output based on storage flags before persisting to database."""
+    if not agent.store_media:
+        scrub_media_from_run_output(run_response)
+
+    if not agent.store_tool_messages:
+        scrub_tool_results_from_run_output(run_response)
+
+    if not agent.store_history_messages:
+        scrub_history_messages_from_run_output(run_response)
+
+
+def update_session_metrics(agent: Agent, session: AgentSession, run_response: RunOutput):
+    """Calculate session metrics and write them to session_data."""
+    session_metrics = agent._get_session_metrics(session=session)
+    # Add the metrics for the current run to the session metrics
+    if session_metrics is None:
+        return
+    if run_response.metrics is not None:
+        session_metrics += run_response.metrics
+    session_metrics.time_to_first_token = None
+    if session.session_data is not None:
+        session.session_data["session_metrics"] = session_metrics
+
+
+def cleanup_and_store(
+    agent: Agent,
+    run_response: RunOutput,
+    session: AgentSession,
+    run_context: Optional[RunContext] = None,
+    user_id: Optional[str] = None,
+) -> None:
+    from agno.agent import _session
+
+    # Scrub the stored run based on storage flags
+    scrub_run_output_for_storage(agent, run_response)
+
+    # Stop the timer for the Run duration
+    if run_response.metrics:
+        run_response.metrics.stop_timer()
+
+    # Update run_response.session_state before saving
+    # This ensures RunOutput reflects all tool modifications
+    if session.session_data is not None and run_context is not None and run_context.session_state is not None:
+        run_response.session_state = run_context.session_state
+
+    # Optional: Save output to file if save_response_to_file is set
+    save_run_response_to_file(
+        agent,
+        run_response=run_response,
+        input=run_response.input.input_content_string() if run_response.input else "",
+        session_id=session.session_id,
+        user_id=user_id,
+    )
+
+    # Add RunOutput to Agent Session
+    session.upsert_run(run=run_response)
+
+    # Calculate session metrics
+    update_session_metrics(agent, session=session, run_response=run_response)
+
+    # Update session state before saving the session
+    if run_context is not None and run_context.session_state is not None:
+        if session.session_data is not None:
+            session.session_data["session_state"] = run_context.session_state
+        else:
+            session.session_data = {"session_state": run_context.session_state}
+
+    # Save session to memory
+    _session.save_session(agent, session=session)
+
+
+async def acleanup_and_store(
+    agent: Agent,
+    run_response: RunOutput,
+    session: AgentSession,
+    run_context: Optional[RunContext] = None,
+    user_id: Optional[str] = None,
+) -> None:
+    from agno.agent import _session
+
+    # Scrub the stored run based on storage flags
+    scrub_run_output_for_storage(agent, run_response)
+
+    # Stop the timer for the Run duration
+    if run_response.metrics:
+        run_response.metrics.stop_timer()
+
+    # Update run_response.session_state from session before saving
+    # This ensures RunOutput reflects all tool modifications
+    if session.session_data is not None and run_context is not None and run_context.session_state is not None:
+        run_response.session_state = run_context.session_state
+
+    # Optional: Save output to file if save_response_to_file is set
+    save_run_response_to_file(
+        agent,
+        run_response=run_response,
+        input=run_response.input.input_content_string() if run_response.input else "",
+        session_id=session.session_id,
+        user_id=user_id,
+    )
+
+    # Add RunOutput to Agent Session
+    session.upsert_run(run=run_response)
+
+    # Calculate session metrics
+    update_session_metrics(agent, session=session, run_response=run_response)
+
+    # Update session state before saving the session
+    if run_context is not None and run_context.session_state is not None:
+        if session.session_data is not None:
+            session.session_data["session_state"] = run_context.session_state
+        else:
+            session.session_data = {"session_state": run_context.session_state}
+
+    # Save session to memory
+    await _session.asave_session(agent, session=session)
 
 
 # ---------------------------------------------------------------------------
