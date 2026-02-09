@@ -2022,6 +2022,9 @@ class Team:
     def _find_member_by_id(self, member_id: str) -> Optional[Tuple[int, Union[Agent, "Team"]]]:
         return _tools._find_member_by_id(self, member_id=member_id)
 
+    def _find_member_route_by_id(self, member_id: str) -> Optional[Tuple[int, Union[Agent, "Team"]]]:
+        return _tools._find_member_route_by_id(self, member_id=member_id)
+
     def _get_delegate_task_function(
         self,
         run_response: TeamRunOutput,

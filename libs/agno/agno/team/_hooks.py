@@ -111,7 +111,7 @@ def handle_team_run_paused(
     run_response: TeamRunOutput,
     session: TeamSession,
 ) -> TeamRunOutput:
-    from agno.team import _api
+    from agno.team import _storage
 
     run_response.status = RunStatus.paused
     if not run_response.content:
@@ -129,7 +129,7 @@ def handle_team_run_paused(
         store_events=team.store_events,
     )
 
-    _api._cleanup_and_store(team, run_response=run_response, session=session)
+    _storage._cleanup_and_store(team, run_response=run_response, session=session)
 
     log_debug(f"Team Run Paused: {run_response.run_id}", center=True, symbol="*")
     return run_response
@@ -140,7 +140,7 @@ def handle_team_run_paused_stream(
     run_response: TeamRunOutput,
     session: TeamSession,
 ) -> Iterator[Union[TeamRunOutputEvent, RunOutputEvent]]:
-    from agno.team import _api
+    from agno.team import _storage
 
     run_response.status = RunStatus.paused
     if not run_response.content:
@@ -157,7 +157,7 @@ def handle_team_run_paused_stream(
         store_events=team.store_events,
     )
 
-    _api._cleanup_and_store(team, run_response=run_response, session=session)
+    _storage._cleanup_and_store(team, run_response=run_response, session=session)
 
     if pause_event is not None:
         yield pause_event
@@ -170,7 +170,7 @@ async def ahandle_team_run_paused(
     run_response: TeamRunOutput,
     session: TeamSession,
 ) -> TeamRunOutput:
-    from agno.team import _api
+    from agno.team import _storage
 
     run_response.status = RunStatus.paused
     if not run_response.content:
@@ -188,7 +188,7 @@ async def ahandle_team_run_paused(
         store_events=team.store_events,
     )
 
-    await _api._acleanup_and_store(team, run_response=run_response, session=session)
+    await _storage._acleanup_and_store(team, run_response=run_response, session=session)
 
     log_debug(f"Team Run Paused: {run_response.run_id}", center=True, symbol="*")
     return run_response
@@ -199,7 +199,7 @@ async def ahandle_team_run_paused_stream(
     run_response: TeamRunOutput,
     session: TeamSession,
 ) -> AsyncIterator[Union[TeamRunOutputEvent, RunOutputEvent]]:
-    from agno.team import _api
+    from agno.team import _storage
 
     run_response.status = RunStatus.paused
     if not run_response.content:
@@ -216,7 +216,7 @@ async def ahandle_team_run_paused_stream(
         store_events=team.store_events,
     )
 
-    await _api._acleanup_and_store(team, run_response=run_response, session=session)
+    await _storage._acleanup_and_store(team, run_response=run_response, session=session)
 
     if pause_event is not None:
         yield pause_event

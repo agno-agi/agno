@@ -2004,8 +2004,8 @@ def _route_requirements_to_members(
 
     results: Dict[str, Union[RunOutput, TeamRunOutput]] = {}
     for (member_id, member_name, member_run_id), reqs in member_requirements.items():
-        # Find the member agent
-        found = team._find_member_by_id(member_id)
+        # Find the routable member (parent sub-team for nested matches)
+        found = team._find_member_route_by_id(member_id)
         if found is None:
             raise RuntimeError(f"Cannot route requirements to member: no agent found with ID {member_id}")
         _, member = found
@@ -2059,7 +2059,7 @@ async def _aroute_requirements_to_members(
     # Validate all members exist before starting any continuations
     member_map: Dict[tuple, Any] = {}
     for (member_id, member_name, member_run_id), reqs in member_requirements.items():
-        found = team._find_member_by_id(member_id)
+        found = team._find_member_route_by_id(member_id)
         if found is None:
             raise RuntimeError(f"Cannot route requirements to member: no agent found with ID {member_id}")
         member_map[(member_id, member_name, member_run_id)] = found[1]
@@ -2208,10 +2208,13 @@ def continue_run_dispatch(
         if run_response is None:
             raise RuntimeError(f"No runs found for run ID {run_id}")
 
-        run_response.requirements = _normalize_requirements_payload(requirements)
+        run_response.requirements = requirements  # type: ignore[assignment]
 
     run_response = cast(TeamRunOutput, run_response)
     run_response.requirements = _normalize_requirements_payload(run_response.requirements)
+
+    if run_response.status != RunStatus.paused:
+        raise ValueError(f"Cannot continue run {run_response.run_id}: run is not paused (status={run_response.status})")
 
     # Use stream override value when necessary
     if stream is None:
@@ -2414,10 +2417,13 @@ async def _acontinue_run_impl(
         if run_response is None:
             raise RuntimeError(f"No runs found for run ID {run_id}")
 
-        run_response.requirements = _normalize_requirements_payload(requirements)
+        run_response.requirements = requirements  # type: ignore[assignment]
 
     run_response = cast(TeamRunOutput, run_response)
     run_response.requirements = _normalize_requirements_payload(run_response.requirements)
+
+    if run_response.status != RunStatus.paused:
+        raise ValueError(f"Cannot continue run {run_response.run_id}: run is not paused (status={run_response.status})")
 
     log_debug(f"Team Run Continue: {run_response.run_id}", center=True, symbol="*")
 
@@ -2492,10 +2498,13 @@ async def _acontinue_run_stream_impl(
         if run_response is None:
             raise RuntimeError(f"No runs found for run ID {run_id}")
 
-        run_response.requirements = _normalize_requirements_payload(requirements)
+        run_response.requirements = requirements  # type: ignore[assignment]
 
     run_response = cast(TeamRunOutput, run_response)
     run_response.requirements = _normalize_requirements_payload(run_response.requirements)
+
+    if run_response.status != RunStatus.paused:
+        raise ValueError(f"Cannot continue run {run_response.run_id}: run is not paused (status={run_response.status})")
 
     log_debug(f"Team Run Continue: {run_response.run_id}", center=True, symbol="*")
 

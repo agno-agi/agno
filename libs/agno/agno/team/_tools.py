@@ -763,6 +763,8 @@ def _determine_team_member_interactions(
 def _find_member_by_id(team: "Team", member_id: str) -> Optional[Tuple[int, Union[Agent, "Team"]]]:
     """Find a member (agent or team) by its URL-safe ID, searching recursively.
 
+    Returns the actual matched member, even if nested inside a sub-team.
+
     Args:
         team: The team to search in.
         member_id (str): URL-safe ID of the member to find.
@@ -784,8 +786,36 @@ def _find_member_by_id(team: "Team", member_id: str) -> Optional[Tuple[int, Unio
         if isinstance(member, Team):
             result = member._find_member_by_id(member_id)
             if result is not None:
-                # Return the top-level subteam member so callers route
-                # through the subteam's own continue_run path.
+                return result
+
+    return None
+
+
+def _find_member_route_by_id(team: "Team", member_id: str) -> Optional[Tuple[int, Union[Agent, "Team"]]]:
+    """Find a routable member by ID for continue_run dispatching.
+
+    For nested matches inside a sub-team, returns the top-level sub-team so callers
+    can route through the sub-team's own continue_run path.
+
+    Args:
+        team: The team to search in.
+        member_id (str): URL-safe ID of the member to find.
+
+    Returns:
+        Optional[Tuple[int, Union[Agent, "Team"]]]: Tuple containing:
+            - Index of the member in its immediate parent's members list
+            - The direct member (or parent sub-team for nested matches)
+    """
+    from agno.team.team import Team
+
+    for i, member in enumerate(team.members):
+        url_safe_member_id = get_member_id(member)
+        if url_safe_member_id == member_id:
+            return i, member
+
+        if isinstance(member, Team):
+            result = member._find_member_by_id(member_id)
+            if result is not None:
                 return i, member
 
     return None

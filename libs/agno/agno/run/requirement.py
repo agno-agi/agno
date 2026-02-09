@@ -1,12 +1,9 @@
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
 from agno.models.response import ToolExecution, UserInputField
-
-if TYPE_CHECKING:
-    pass
 
 
 @dataclass
