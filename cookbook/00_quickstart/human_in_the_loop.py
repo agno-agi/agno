@@ -50,7 +50,7 @@ agent_db = SqliteDb(db_file="tmp/agents.db")
 # Knowledge Base for Learnings
 # ============================================================================
 learnings_kb = Knowledge(
-    name="Agent Learnings",
+    name="Agent Learnings HITL",
     vector_db=ChromaDb(
         name="learnings",
         collection="learnings",
