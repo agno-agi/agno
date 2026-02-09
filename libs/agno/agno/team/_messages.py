@@ -1343,6 +1343,10 @@ def _get_messages_for_parser_model_stream(
 
 def _get_messages_for_output_model(team: "Team", messages: List[Message]) -> List[Message]:
     """Get the messages for the output model."""
+    from copy import deepcopy
+
+    # Copy the list and messages to avoid mutating the originals
+    messages = [deepcopy(m) for m in messages]
 
     if team.output_model_prompt is not None:
         system_message_exists = False

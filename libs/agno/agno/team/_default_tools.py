@@ -350,6 +350,7 @@ def _get_delegate_task_function(
         _determine_team_member_interactions,
         _find_member_by_id,
         _get_history_for_member_agent,
+        _propagate_member_pause,
     )
 
     if not images:
@@ -564,6 +565,20 @@ def _get_delegate_task_function(
 
             check_if_run_cancelled(member_agent_run_response)  # type: ignore
 
+        # Check if the member run is paused (HITL)
+        if member_agent_run_response is not None and member_agent_run_response.is_paused:
+            _propagate_member_pause(run_response, member_agent, member_agent_run_response)
+            use_team_logger()
+            _process_delegate_task_to_member(
+                member_agent_run_response,
+                member_agent,
+                member_agent_task,  # type: ignore
+                member_session_state_copy,  # type: ignore
+            )
+            yield f"Member '{member_agent.name}' requires human input before continuing."
+            return
+
+        if not stream:
             try:
                 if member_agent_run_response.content is None and (  # type: ignore
                     member_agent_run_response.tools is None or len(member_agent_run_response.tools) == 0  # type: ignore
@@ -689,6 +704,20 @@ def _get_delegate_task_function(
             )
             check_if_run_cancelled(member_agent_run_response)  # type: ignore
 
+        # Check if the member run is paused (HITL)
+        if member_agent_run_response is not None and member_agent_run_response.is_paused:
+            _propagate_member_pause(run_response, member_agent, member_agent_run_response)
+            use_team_logger()
+            _process_delegate_task_to_member(
+                member_agent_run_response,
+                member_agent,
+                member_agent_task,  # type: ignore
+                member_session_state_copy,  # type: ignore
+            )
+            yield f"Member '{member_agent.name}' requires human input before continuing."
+            return
+
+        if not stream:
             try:
                 if member_agent_run_response.content is None and (  # type: ignore
                     member_agent_run_response.tools is None or len(member_agent_run_response.tools) == 0  # type: ignore
@@ -803,6 +832,20 @@ def _get_delegate_task_function(
 
                 check_if_run_cancelled(member_agent_run_response)  # type: ignore
 
+            # Check if the member run is paused (HITL)
+            if member_agent_run_response is not None and member_agent_run_response.is_paused:
+                _propagate_member_pause(run_response, member_agent, member_agent_run_response)
+                use_team_logger()
+                _process_delegate_task_to_member(
+                    member_agent_run_response,
+                    member_agent,
+                    member_agent_task,  # type: ignore
+                    member_session_state_copy,  # type: ignore
+                )
+                yield f"Agent {member_agent.name}: Requires human input before continuing."
+                continue
+
+            if not stream:
                 try:
                     if member_agent_run_response.content is None and (  # type: ignore
                         member_agent_run_response.tools is None or len(member_agent_run_response.tools) == 0  # type: ignore
@@ -877,24 +920,38 @@ def _get_delegate_task_function(
                 )
                 member_agent_run_response = None
                 try:
-                    async for member_agent_run_output_event in member_stream:
-                        # Do NOT break out of the loop, AsyncIterator need to exit properly
-                        if isinstance(member_agent_run_output_event, (TeamRunOutput, RunOutput)):
-                            member_agent_run_response = member_agent_run_output_event  # type: ignore
-                            continue  # Don't yield TeamRunOutput or RunOutput, only yield events
+                    try:
+                        async for member_agent_run_output_event in member_stream:
+                            # Do NOT break out of the loop, AsyncIterator need to exit properly
+                            if isinstance(member_agent_run_output_event, (TeamRunOutput, RunOutput)):
+                                member_agent_run_response = member_agent_run_output_event  # type: ignore
+                                continue  # Don't yield TeamRunOutput or RunOutput, only yield events
 
-                        check_if_run_cancelled(member_agent_run_output_event)
-                        member_agent_run_output_event.parent_run_id = member_agent_run_output_event.parent_run_id or (
-                            run_response.run_id if run_response is not None else None
-                        )
-                        await queue.put(member_agent_run_output_event)
+                            check_if_run_cancelled(member_agent_run_output_event)
+                            member_agent_run_output_event.parent_run_id = (
+                                member_agent_run_output_event.parent_run_id
+                                or (run_response.run_id if run_response is not None else None)
+                            )
+                            await queue.put(member_agent_run_output_event)
+                    finally:
+                        # Check if the member run is paused (HITL)
+                        if member_agent_run_response is not None and member_agent_run_response.is_paused:
+                            _propagate_member_pause(run_response, agent, member_agent_run_response)
+                            _process_delegate_task_to_member(
+                                member_agent_run_response,
+                                agent,
+                                member_agent_task,  # type: ignore
+                                member_session_state_copy,  # type: ignore
+                            )
+                            await queue.put(f"Agent {agent.name}: Requires human input before continuing.")
+                        else:
+                            _process_delegate_task_to_member(
+                                member_agent_run_response,
+                                agent,
+                                member_agent_task,  # type: ignore
+                                member_session_state_copy,  # type: ignore
+                            )
                 finally:
-                    _process_delegate_task_to_member(
-                        member_agent_run_response,
-                        agent,
-                        member_agent_task,  # type: ignore
-                        member_session_state_copy,  # type: ignore
-                    )
                     await queue.put(done_marker)
 
             # Initialize and launch all members
@@ -934,7 +991,7 @@ def _get_delegate_task_function(
                     member_agent_task=member_agent_task,
                     history=history,
                     member_agent_index=member_agent_index,
-                ) -> str:
+                ) -> tuple[str, Optional[Union[Agent, "Team"]], Optional[Union[RunOutput, TeamRunOutput]]]:
                     member_session_state_copy = copy(run_context.session_state)
 
                     member_agent_run_response = await member_agent.arun(
@@ -960,6 +1017,22 @@ def _get_delegate_task_function(
                     )
                     check_if_run_cancelled(member_agent_run_response)
 
+                    member_name = member_agent.name if member_agent.name else f"agent_{member_agent_index}"
+
+                    # Check if the member run is paused (HITL) before processing
+                    if member_agent_run_response is not None and member_agent_run_response.is_paused:
+                        _process_delegate_task_to_member(
+                            member_agent_run_response,
+                            member_agent,
+                            member_agent_task,  # type: ignore
+                            member_session_state_copy,  # type: ignore
+                        )
+                        return (
+                            f"Agent {member_name}: Requires human input before continuing.",
+                            member_agent,
+                            member_agent_run_response,
+                        )
+
                     _process_delegate_task_to_member(
                         member_agent_run_response,
                         member_agent,
@@ -967,35 +1040,49 @@ def _get_delegate_task_function(
                         member_session_state_copy,  # type: ignore
                     )
 
-                    member_name = member_agent.name if member_agent.name else f"agent_{member_agent_index}"
                     try:
                         if member_agent_run_response.content is None and (
                             member_agent_run_response.tools is None or len(member_agent_run_response.tools) == 0
                         ):
-                            return f"Agent {member_name}: No response from the member agent."
+                            return (f"Agent {member_name}: No response from the member agent.", None, None)
                         elif isinstance(member_agent_run_response.content, str):
                             if len(member_agent_run_response.content.strip()) > 0:
-                                return f"Agent {member_name}: {member_agent_run_response.content}"
+                                return (f"Agent {member_name}: {member_agent_run_response.content}", None, None)
                             elif (
                                 member_agent_run_response.tools is not None and len(member_agent_run_response.tools) > 0
                             ):
-                                return f"Agent {member_name}: {','.join([tool.result for tool in member_agent_run_response.tools])}"
+                                return (
+                                    f"Agent {member_name}: {','.join([tool.result for tool in member_agent_run_response.tools])}",
+                                    None,
+                                    None,
+                                )
                         elif issubclass(type(member_agent_run_response.content), BaseModel):
-                            return f"Agent {member_name}: {member_agent_run_response.content.model_dump_json(indent=2)}"  # type: ignore
+                            return (
+                                f"Agent {member_name}: {member_agent_run_response.content.model_dump_json(indent=2)}",  # type: ignore
+                                None,
+                                None,
+                            )
                         else:
                             import json
 
-                            return f"Agent {member_name}: {json.dumps(member_agent_run_response.content, indent=2)}"
+                            return (
+                                f"Agent {member_name}: {json.dumps(member_agent_run_response.content, indent=2)}",
+                                None,
+                                None,
+                            )
                     except Exception as e:
-                        return f"Agent {member_name}: Error - {str(e)}"
+                        return (f"Agent {member_name}: Error - {str(e)}", None, None)
 
-                    return f"Agent {member_name}: No Response"
+                    return (f"Agent {member_name}: No Response", None, None)
 
                 tasks.append(run_member_agent)  # type: ignore
 
             results = await asyncio.gather(*[task() for task in tasks])  # type: ignore
-            for result in results:
-                yield result
+            # Propagate pauses sequentially after all members complete
+            for result_text, paused_agent, paused_run_response in results:
+                if paused_agent is not None and paused_run_response is not None:
+                    _propagate_member_pause(run_response, paused_agent, paused_run_response)
+                yield result_text
 
         # After all the member runs, switch back to the team logger
         use_team_logger()

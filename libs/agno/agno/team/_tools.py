@@ -26,6 +26,7 @@ from agno.media import Audio, File, Image, Video
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.run import RunContext
+from agno.run.agent import RunOutput
 from agno.run.team import (
     TeamRunOutput,
 )
@@ -423,3 +424,58 @@ def _find_member_by_id(team: "Team", member_id: str) -> Optional[Tuple[int, Unio
                 return result
 
     return None
+
+
+def _find_member_route_by_id(team: "Team", member_id: str) -> Optional[Tuple[int, Union[Agent, "Team"]]]:
+    """Find a routable member by ID for continue_run dispatching.
+
+    For nested matches inside a sub-team, returns the top-level sub-team so callers
+    can route through the sub-team's own continue_run path.
+
+    Args:
+        team: The team to search in.
+        member_id (str): URL-safe ID of the member to find.
+
+    Returns:
+        Optional[Tuple[int, Union[Agent, "Team"]]]: Tuple containing:
+            - Index of the member in its immediate parent's members list
+            - The direct member (or parent sub-team for nested matches)
+    """
+    from agno.team.team import Team
+
+    for i, member in enumerate(team.members):
+        url_safe_member_id = get_member_id(member)
+        if url_safe_member_id == member_id:
+            return i, member
+
+        if isinstance(member, Team):
+            result = member._find_member_by_id(member_id)
+            if result is not None:
+                return i, member
+
+    return None
+
+
+def _propagate_member_pause(
+    run_response: TeamRunOutput,
+    member_agent: Union[Agent, "Team"],
+    member_run_response: Union[RunOutput, TeamRunOutput],
+) -> None:
+    """Copy HITL requirements from a paused member run to the team run response."""
+    if not member_run_response.requirements:
+        return
+    if run_response.requirements is None:
+        run_response.requirements = []
+    member_id = get_member_id(member_agent)
+    for req in member_run_response.requirements:
+        req_copy = deepcopy(req)
+        if req_copy.member_agent_id is None:
+            req_copy.member_agent_id = member_id
+        if req_copy.member_agent_name is None:
+            req_copy.member_agent_name = member_agent.name
+        if req_copy.member_run_id is None:
+            req_copy.member_run_id = member_run_response.run_id
+        # Keep a reference to the member's paused RunOutput so continue_run
+        # can pass it directly without needing a session/DB lookup.
+        req_copy._member_run_response = member_run_response
+        run_response.requirements.append(req_copy)
