@@ -16,13 +16,29 @@ Example queries:
 """
 
 import sys
+import time
 from textwrap import dedent
+from typing import Any, Callable, Dict
 
 from agno.agent import Agent
+from agno.compression.manager import CompressionManager
 from agno.models.openai import OpenAIResponses
 from agno.tools.parallel import ParallelTools
 from agno.tools.reasoning import ReasoningTools
+from agno.utils.log import logger
 from db import demo_db
+
+
+def execution_logger(
+    function_name: str, function_call: Callable, arguments: Dict[str, Any]
+) -> Any:
+    start = time.time()
+    logger.info(f"[Research] Tool started: {function_name}")
+    result = function_call(**arguments)
+    elapsed = time.time() - start
+    logger.info(f"[Research] Tool completed: {function_name} ({elapsed:.2f}s)")
+    return result
+
 
 # ============================================================================
 # Description & Instructions
@@ -165,6 +181,13 @@ research_agent = Agent(
     ],
     description=description,
     instructions=instructions,
+    compress_tool_results=True,
+    compression_manager=CompressionManager(
+        model=OpenAIResponses(id="gpt-5-mini"),
+        compress_tool_results_limit=3,
+    ),
+    enable_session_summaries=True,
+    tool_hooks=[execution_logger],
     add_history_to_context=True,
     add_datetime_to_context=True,
     enable_agentic_memory=True,
