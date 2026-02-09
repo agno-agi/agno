@@ -125,10 +125,7 @@ def create_knowledge_retriever_search_tool(
         retrieval_timer.start()
 
         try:
-            from agno.agent import _messages
-
-            docs = _messages.get_relevant_docs_from_knowledge(
-                agent,
+            docs = agent.get_relevant_docs_from_knowledge(
                 query=query,
                 run_context=run_context,
             )
@@ -175,10 +172,7 @@ def create_knowledge_retriever_search_tool(
         retrieval_timer.start()
 
         try:
-            from agno.agent import _messages
-
-            docs = await _messages.aget_relevant_docs_from_knowledge(
-                agent,
+            docs = await agent.aget_relevant_docs_from_knowledge(
                 query=query,
                 run_context=run_context,
             )
@@ -333,13 +327,11 @@ def get_search_knowledge_base_function(
         Returns:
             str: A string containing the response from the knowledge base.
         """
-        from agno.agent import _messages
-
         # Get the relevant documents from the knowledge base, passing filters
         retrieval_timer = Timer()
         retrieval_timer.start()
-        docs_from_knowledge = _messages.get_relevant_docs_from_knowledge(
-            agent, query=query, filters=knowledge_filters, run_context=run_context
+        docs_from_knowledge = agent.get_relevant_docs_from_knowledge(
+            query=query, filters=knowledge_filters, run_context=run_context
         )
         if docs_from_knowledge is not None:
             references = MessageReferences(
@@ -356,7 +348,7 @@ def get_search_knowledge_base_function(
 
         if docs_from_knowledge is None:
             return "No documents found"
-        return _messages.convert_documents_to_string(agent, docs_from_knowledge)
+        return agent._convert_documents_to_string(docs_from_knowledge)
 
     async def asearch_knowledge_base(query: str) -> str:
         """Use this function to search the knowledge base for information about a query asynchronously.
@@ -367,12 +359,10 @@ def get_search_knowledge_base_function(
         Returns:
             str: A string containing the response from the knowledge base.
         """
-        from agno.agent import _messages
-
         retrieval_timer = Timer()
         retrieval_timer.start()
-        docs_from_knowledge = await _messages.aget_relevant_docs_from_knowledge(
-            agent, query=query, filters=knowledge_filters, run_context=run_context
+        docs_from_knowledge = await agent.aget_relevant_docs_from_knowledge(
+            query=query, filters=knowledge_filters, run_context=run_context
         )
         if docs_from_knowledge is not None:
             references = MessageReferences(
@@ -388,7 +378,7 @@ def get_search_knowledge_base_function(
 
         if docs_from_knowledge is None:
             return "No documents found"
-        return _messages.convert_documents_to_string(agent, docs_from_knowledge)
+        return agent._convert_documents_to_string(docs_from_knowledge)
 
     if async_mode:
         search_knowledge_base_function = asearch_knowledge_base
@@ -417,16 +407,14 @@ def search_knowledge_base_with_agentic_filters_function(
         Returns:
             str: A string containing the response from the knowledge base.
         """
-        from agno.agent import _messages
-
         filters_dict = {filt.key: filt.value for filt in filters} if filters else None
         search_filters = get_agentic_or_user_search_filters(filters_dict, knowledge_filters)
 
         # Get the relevant documents from the knowledge base, passing filters
         retrieval_timer = Timer()
         retrieval_timer.start()
-        docs_from_knowledge = _messages.get_relevant_docs_from_knowledge(
-            agent, query=query, filters=search_filters, validate_filters=True, run_context=run_context
+        docs_from_knowledge = agent.get_relevant_docs_from_knowledge(
+            query=query, filters=search_filters, validate_filters=True, run_context=run_context
         )
         if docs_from_knowledge is not None:
             references = MessageReferences(
@@ -443,7 +431,7 @@ def search_knowledge_base_with_agentic_filters_function(
 
         if docs_from_knowledge is None:
             return "No documents found"
-        return _messages.convert_documents_to_string(agent, docs_from_knowledge)
+        return agent._convert_documents_to_string(docs_from_knowledge)
 
     async def asearch_knowledge_base(query: str, filters: Optional[List[KnowledgeFilter]] = None) -> str:
         """Use this function to search the knowledge base for information about a query asynchronously.
@@ -455,15 +443,13 @@ def search_knowledge_base_with_agentic_filters_function(
         Returns:
             str: A string containing the response from the knowledge base.
         """
-        from agno.agent import _messages
-
         filters_dict = {filt.key: filt.value for filt in filters} if filters else None
         search_filters = get_agentic_or_user_search_filters(filters_dict, knowledge_filters)
 
         retrieval_timer = Timer()
         retrieval_timer.start()
-        docs_from_knowledge = await _messages.aget_relevant_docs_from_knowledge(
-            agent, query=query, filters=search_filters, validate_filters=True, run_context=run_context
+        docs_from_knowledge = await agent.aget_relevant_docs_from_knowledge(
+            query=query, filters=search_filters, validate_filters=True, run_context=run_context
         )
         if docs_from_knowledge is not None:
             references = MessageReferences(
@@ -479,7 +465,7 @@ def search_knowledge_base_with_agentic_filters_function(
 
         if docs_from_knowledge is None:
             return "No documents found"
-        return _messages.convert_documents_to_string(agent, docs_from_knowledge)
+        return agent._convert_documents_to_string(docs_from_knowledge)
 
     if async_mode:
         search_knowledge_base_function = asearch_knowledge_base
@@ -606,7 +592,6 @@ async def aget_previous_sessions_messages_function(
     Returns:
         Function: An async function that retrieves messages from previous sessions.
     """
-    from agno.agent import _init
 
     async def aget_previous_session_messages() -> str:
         """Use this function to retrieve messages from previous chat sessions.
@@ -621,7 +606,7 @@ async def aget_previous_sessions_messages_function(
         if agent.db is None:
             return json.dumps([])
 
-        if _init.has_async_db(agent):
+        if agent._has_async_db():
             selected_sessions = await agent.db.get_sessions(  # type: ignore
                 session_type=SessionType.AGENT,
                 limit=num_history_sessions,

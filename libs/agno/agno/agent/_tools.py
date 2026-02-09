@@ -70,12 +70,12 @@ def get_tools(
     session: AgentSession,
     user_id: Optional[str] = None,
 ) -> List[Union[Toolkit, Callable, Function, Dict]]:
-    from agno.agent import _default_tools, _init
+    from agno.agent import _default_tools
 
     agent_tools: List[Union[Toolkit, Callable, Function, Dict]] = []
 
     # Connect tools that require connection management
-    _init.connect_connectable_tools(agent)
+    agent._connect_connectable_tools()
 
     # Add provided tools
     if agent.tools is not None:
@@ -161,15 +161,15 @@ async def aget_tools(
     user_id: Optional[str] = None,
     check_mcp_tools: bool = True,
 ) -> List[Union[Toolkit, Callable, Function, Dict]]:
-    from agno.agent import _default_tools, _init
+    from agno.agent import _default_tools
 
     agent_tools: List[Union[Toolkit, Callable, Function, Dict]] = []
 
     # Connect tools that require connection management
-    _init.connect_connectable_tools(agent)
+    agent._connect_connectable_tools()
 
     # Connect MCP tools
-    await _init.connect_mcp_tools(agent)
+    await agent._connect_mcp_tools()
 
     # Add provided tools
     if agent.tools is not None:

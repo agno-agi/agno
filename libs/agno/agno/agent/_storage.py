@@ -243,8 +243,6 @@ async def aread_or_create_session(
     from time import time
     from uuid import uuid4
 
-    from agno.agent import _init
-
     # Returning cached session if we have one
     if agent._cached_session is not None and agent._cached_session.session_id == session_id:
         return agent._cached_session
@@ -253,7 +251,7 @@ async def aread_or_create_session(
     agent_session = None
     if agent.db is not None and agent.team_id is None and agent.workflow_id is None:
         log_debug(f"Reading AgentSession: {session_id}")
-        if _init.has_async_db(agent):
+        if agent._has_async_db():
             agent_session = cast(AgentSession, await aread_session(agent, session_id=session_id))
         else:
             agent_session = cast(AgentSession, read_session(agent, session_id=session_id))
@@ -1056,8 +1054,6 @@ def get_session(
     Returns:
         AgentSession: The AgentSession loaded from the database/cache or None if not found.
     """
-    from agno.agent import _init
-
     if not session_id and not agent.session_id:
         raise Exception("No session_id provided")
 
@@ -1068,7 +1064,7 @@ def get_session(
         if agent._cached_session.session_id == session_id_to_load:
             return agent._cached_session
 
-    if _init.has_async_db(agent):
+    if agent._has_async_db():
         raise ValueError("Async database not supported for get_session")
 
     # Load and return the session from the database
@@ -1172,9 +1168,7 @@ def save_session(agent: Agent, session: Union[AgentSession, TeamSession, Workflo
     """
     Save the AgentSession to storage
     """
-    from agno.agent import _init
-
-    if _init.has_async_db(agent):
+    if agent._has_async_db():
         raise ValueError("Async database not supported for save_session")
     # If the agent is a member of a team, do not save the session to the database
     if (
@@ -1196,7 +1190,6 @@ async def asave_session(agent: Agent, session: Union[AgentSession, TeamSession, 
     """
     Save the AgentSession to storage
     """
-    from agno.agent import _init
 
     # If the agent is a member of a team, do not save the session to the database
     if (
@@ -1209,7 +1202,7 @@ async def asave_session(agent: Agent, session: Union[AgentSession, TeamSession, 
             session.session_data["session_state"].pop("current_session_id", None)
             session.session_data["session_state"].pop("current_user_id", None)
             session.session_data["session_state"].pop("current_run_id", None)
-        if _init.has_async_db(agent):
+        if agent._has_async_db():
             await aupsert_session(agent, session=session)
         else:
             upsert_session(agent, session=session)
@@ -1228,14 +1221,12 @@ def rename(agent: Agent, name: str, session_id: Optional[str] = None) -> None:
         name (str): The new name for the Agent.
         session_id (Optional[str]): The session_id of the session where to store the new name. If not provided, the current cached session ID is used.
     """
-    from agno.agent import _init
-
     session_id = session_id or agent.session_id
 
     if session_id is None:
         raise Exception("Session ID is not set")
 
-    if _init.has_async_db(agent):
+    if agent._has_async_db():
         import asyncio
 
         session = asyncio.run(aget_session(agent, session_id=session_id))
@@ -1257,7 +1248,7 @@ def rename(agent: Agent, name: str, session_id: Optional[str] = None) -> None:
         session.agent_data = {"name": name}  # type: ignore
 
     # -*- Save to storage
-    if _init.has_async_db(agent):
+    if agent._has_async_db():
         import asyncio
 
         asyncio.run(asave_session(agent, session=session))

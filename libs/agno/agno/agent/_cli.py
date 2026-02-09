@@ -57,9 +57,7 @@ def agent_print_response(
     tags_to_include_in_markdown: Optional[Set[str]] = None,
     **kwargs: Any,
 ) -> None:
-    from agno.agent import _init
-
-    if _init.has_async_db(agent):
+    if agent._has_async_db():
         raise Exception("This method is not supported with an async DB. Please use the async version of this method.")
 
     if not tags_to_include_in_markdown:

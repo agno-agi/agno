@@ -38,9 +38,7 @@ def get_telemetry_data(agent: Agent) -> Dict[str, Any]:
 
 def log_agent_telemetry(agent: Agent, session_id: str, run_id: Optional[str] = None) -> None:
     """Send a telemetry event to the API for a created Agent run."""
-    from agno.agent import _init
-
-    _init.set_telemetry(agent)
+    agent._set_telemetry()
     if not agent.telemetry:
         return
 
@@ -60,9 +58,7 @@ def log_agent_telemetry(agent: Agent, session_id: str, run_id: Optional[str] = N
 
 async def alog_agent_telemetry(agent: Agent, session_id: str, run_id: Optional[str] = None) -> None:
     """Send a telemetry event to the API for a created Agent async run."""
-    from agno.agent import _init
-
-    _init.set_telemetry(agent)
+    agent._set_telemetry()
     if not agent.telemetry:
         return
 
