@@ -2723,7 +2723,7 @@ def _build_continuation_message(member_results: Dict[str, Union["RunOutput", Tea
         elif not isinstance(content, str):
             import json
 
-            content = json.dumps(content, indent=2)
+            content = json.dumps(content, indent=2, default=str)
         parts.append(f"Results from '{member_name}':\n{content}")
     return "Previously delegated tasks have been completed.\n\n" + "\n\n".join(parts)
 
