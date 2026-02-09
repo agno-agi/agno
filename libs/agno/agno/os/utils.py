@@ -260,23 +260,71 @@ async def get_db(
     return next(db for dbs in dbs.values() for db in dbs)
 
 
-def get_knowledge_instance_by_db_id(
-    knowledge_instances: List[Union[Knowledge, RemoteKnowledge]], db_id: Optional[str] = None
+def _generate_knowledge_id(name: str, db_id: str) -> str:
+    """Generate a deterministic ID for a knowledge instance based on name and db_id."""
+    import hashlib
+
+    id_seed = f"{name}:{db_id}"
+    hash_hex = hashlib.md5(id_seed.encode()).hexdigest()
+    return f"{hash_hex[:8]}-{hash_hex[8:12]}-{hash_hex[12:16]}-{hash_hex[16:20]}-{hash_hex[20:32]}"
+
+
+def get_knowledge_instance(
+    knowledge_instances: List[Union[Knowledge, RemoteKnowledge]],
+    db_id: Optional[str] = None,
+    knowledge_id: Optional[str] = None,
 ) -> Union[Knowledge, RemoteKnowledge]:
-    """Return the knowledge instance with the given ID, or the first knowledge instance if no ID is provided."""
+    """Return the knowledge instance matching the given criteria.
+
+    Args:
+        knowledge_instances: List of knowledge instances to search
+        db_id: Database ID to filter by (optional)
+        knowledge_id: Knowledge base name or generated ID to filter by (optional)
+
+    Returns:
+        The matching knowledge instance
+
+    Raises:
+        HTTPException: If no matching instance is found or parameters are invalid
+    """
+    # If knowledge_id provided, find by name or generated ID
+    if knowledge_id:
+        for knowledge in knowledge_instances:
+            if not knowledge.contents_db:
+                continue
+            # Use knowledge name or generate fallback name from db_id
+            name = getattr(knowledge, "name", None) or f"knowledge_{knowledge.contents_db.id}"
+            # Generate the ID for this knowledge instance
+            generated_id = _generate_knowledge_id(name, knowledge.contents_db.id)
+
+            # Match by name or generated ID
+            if name == knowledge_id or generated_id == knowledge_id:
+                # If db_id also provided, validate it matches
+                if db_id and knowledge.contents_db.id != db_id:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Knowledge base '{knowledge_id}' belongs to db '{knowledge.contents_db.id}', not '{db_id}'",
+                    )
+                return knowledge
+        raise HTTPException(status_code=404, detail=f"Knowledge base '{knowledge_id}' not found")
+
+    # If only one instance, return it (backwards compatible)
     if not db_id and len(knowledge_instances) == 1:
         return next(iter(knowledge_instances))
 
+    # If no identifiers provided, require one
     if not db_id:
         raise HTTPException(
-            status_code=400, detail="The db_id query parameter is required when using multiple databases"
+            status_code=400,
+            detail="Either db_id or knowledge_id query parameter is required when using multiple knowledge bases",
         )
 
+    # Find by db_id (backwards compatible behavior)
     for knowledge in knowledge_instances:
         if knowledge.contents_db and knowledge.contents_db.id == db_id:
             return knowledge
 
-    raise HTTPException(status_code=404, detail=f"Knowledge instance with id '{db_id}' not found")
+    raise HTTPException(status_code=404, detail=f"Knowledge instance with db_id '{db_id}' not found")
 
 
 def get_run_input(run_dict: Dict[str, Any], is_workflow_run: bool = False) -> str:
