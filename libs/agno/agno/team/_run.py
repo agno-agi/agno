@@ -1904,3 +1904,178 @@ def _update_team_media(team: "Team", run_response: Union[TeamRunOutput, RunOutpu
         if team.audio is None:
             team.audio = []
         team.audio.extend(run_response.audio)
+
+
+# ---------------------------------------------------------------------------
+# Post-run cleanup (moved from _storage.py)
+# ---------------------------------------------------------------------------
+
+
+def _cleanup_and_store(team: "Team", run_response: TeamRunOutput, session: TeamSession) -> None:
+    #  Scrub the stored run based on storage flags
+    team._scrub_run_output_for_storage(run_response)
+
+    # Stop the timer for the Run duration
+    if run_response.metrics:
+        run_response.metrics.stop_timer()
+
+    # Add RunOutput to Agent Session
+    session.upsert_run(run_response=run_response)
+
+    # Calculate session metrics
+    team._update_session_metrics(session=session, run_response=run_response)
+
+    # Save session to memory
+    team.save_session(session=session)
+
+
+async def _acleanup_and_store(team: "Team", run_response: TeamRunOutput, session: TeamSession) -> None:
+    #  Scrub the stored run based on storage flags
+    team._scrub_run_output_for_storage(run_response)
+
+    # Stop the timer for the Run duration
+    if run_response.metrics:
+        run_response.metrics.stop_timer()
+
+    # Add RunOutput to Agent Session
+    session.upsert_run(run_response=run_response)
+
+    # Calculate session metrics
+    team._update_session_metrics(session=session, run_response=run_response)
+
+    # Save session to memory
+    await team.asave_session(session=session)
+
+
+def _scrub_run_output_for_storage(team: "Team", run_response: TeamRunOutput) -> bool:
+    """
+    Scrub run output based on storage flags before persisting to database.
+    Returns True if any scrubbing was done, False otherwise.
+    """
+    from agno.utils.agent import (
+        scrub_history_messages_from_run_output,
+        scrub_media_from_run_output,
+        scrub_tool_results_from_run_output,
+    )
+
+    scrubbed = False
+
+    if not team.store_media:
+        scrub_media_from_run_output(run_response)
+        scrubbed = True
+
+    if not team.store_tool_messages:
+        scrub_tool_results_from_run_output(run_response)
+        scrubbed = True
+
+    if not team.store_history_messages:
+        scrub_history_messages_from_run_output(run_response)
+        scrubbed = True
+
+    return scrubbed
+
+
+def _scrub_member_responses(team: "Team", member_responses: List[Union[TeamRunOutput, RunOutput]]) -> None:
+    """
+    Scrub member responses based on each member's storage flags.
+    This is called when saving the team session to ensure member data is scrubbed per member settings.
+    Recursively handles nested team's member responses.
+    """
+    from agno.team.team import Team
+
+    for member_response in member_responses:
+        member_id = None
+        if isinstance(member_response, RunOutput):
+            member_id = member_response.agent_id
+        elif isinstance(member_response, TeamRunOutput):
+            member_id = member_response.team_id
+
+        if not member_id:
+            log_info("Skipping member response with no ID")
+            continue
+
+        member_result = team._find_member_by_id(member_id)
+        if not member_result:
+            log_debug(f"Could not find member with ID: {member_id}")
+            continue
+
+        _, member = member_result
+
+        if not member.store_media or not member.store_tool_messages or not member.store_history_messages:
+            member._scrub_run_output_for_storage(member_response)  # type: ignore
+
+        # If this is a nested team, recursively scrub its member responses
+        if isinstance(member, Team) and isinstance(member_response, TeamRunOutput) and member_response.member_responses:
+            member._scrub_member_responses(member_response.member_responses)  # type: ignore
+
+
+# ---------------------------------------------------------------------------
+# Run dependency resolution (moved from _tools.py)
+# ---------------------------------------------------------------------------
+
+
+def _resolve_run_dependencies(team: "Team", run_context: RunContext) -> None:
+    from inspect import signature
+
+    log_debug("Resolving dependencies")
+    if not isinstance(run_context.dependencies, dict):
+        log_warning("Dependencies is not a dict")
+        return
+
+    for key, value in run_context.dependencies.items():
+        if not callable(value):
+            run_context.dependencies[key] = value
+            continue
+
+        try:
+            sig = signature(value)
+
+            # Build kwargs for the function
+            kwargs: Dict[str, Any] = {}
+            if "agent" in sig.parameters:
+                kwargs["agent"] = team
+            if "team" in sig.parameters:
+                kwargs["team"] = team
+            if "run_context" in sig.parameters:
+                kwargs["run_context"] = run_context
+
+            resolved_value = value(**kwargs) if kwargs else value()
+
+            run_context.dependencies[key] = resolved_value
+        except Exception as e:
+            log_warning(f"Failed to resolve dependencies for {key}: {e}")
+
+
+async def _aresolve_run_dependencies(team: "Team", run_context: RunContext) -> None:
+    from inspect import iscoroutine, signature
+
+    log_debug("Resolving context (async)")
+    if not isinstance(run_context.dependencies, dict):
+        log_warning("Dependencies is not a dict")
+        return
+
+    for key, value in run_context.dependencies.items():
+        if not callable(value):
+            run_context.dependencies[key] = value
+            continue
+
+        try:
+            sig = signature(value)
+
+            # Build kwargs for the function
+            kwargs: Dict[str, Any] = {}
+            if "agent" in sig.parameters:
+                kwargs["agent"] = team
+            if "team" in sig.parameters:
+                kwargs["team"] = team
+            if "run_context" in sig.parameters:
+                kwargs["run_context"] = run_context
+
+            resolved_value = value(**kwargs) if kwargs else value()
+
+            if iscoroutine(resolved_value):
+                resolved_value = await resolved_value
+
+            run_context.dependencies[key] = resolved_value
+        except Exception as e:
+            log_warning(f"Failed to resolve context for '{key}': {e}")

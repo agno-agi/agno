@@ -52,7 +52,20 @@ from agno.run.team import (
 )
 from agno.session import SessionSummaryManager, TeamSession, WorkflowSession
 from agno.session.summary import SessionSummary
-from agno.team import _cli, _hooks, _init, _messages, _response, _run, _storage, _telemetry, _tools
+from agno.team import (
+    _cli,
+    _hooks,
+    _init,
+    _managers,
+    _messages,
+    _response,
+    _run,
+    _session,
+    _storage,
+    _telemetry,
+    _tools,
+    _utils,
+)
 from agno.tools import Toolkit
 from agno.tools.function import Function
 from agno.utils.log import (
@@ -1123,7 +1136,7 @@ class Team:
         run_context: Optional[RunContext] = None,
     ):
         # Get output_schema from run_context
-        return _hooks._update_run_response(
+        return _response._update_run_response(
             self,
             model_response=model_response,
             run_response=run_response,
@@ -1142,7 +1155,7 @@ class Team:
         session_state: Optional[Dict[str, Any]] = None,
         run_context: Optional[RunContext] = None,
     ) -> Iterator[Union[TeamRunOutputEvent, RunOutputEvent]]:
-        yield from _hooks._handle_model_response_stream(
+        yield from _response._handle_model_response_stream(
             self,
             session=session,
             run_response=run_response,
@@ -1165,7 +1178,7 @@ class Team:
         session_state: Optional[Dict[str, Any]] = None,
         run_context: Optional[RunContext] = None,
     ) -> AsyncIterator[Union[TeamRunOutputEvent, RunOutputEvent]]:
-        async for _item_ in _hooks._ahandle_model_response_stream(
+        async for _item_ in _response._ahandle_model_response_stream(
             self,
             session=session,
             run_response=run_response,
@@ -1190,7 +1203,7 @@ class Team:
         session_state: Optional[Dict[str, Any]] = None,
         run_context: Optional[RunContext] = None,
     ) -> Iterator[Union[TeamRunOutputEvent, RunOutputEvent]]:
-        yield from _hooks._handle_model_response_chunk(
+        yield from _response._handle_model_response_chunk(
             self,
             session=session,
             run_response=run_response,
@@ -1207,29 +1220,31 @@ class Team:
         self, run_response: Union[TeamRunOutput, RunOutput, ModelResponse], run_context: Optional[RunContext] = None
     ):
         # Get output_schema from run_context
-        return _hooks._convert_response_to_structured_format(self, run_response=run_response, run_context=run_context)
+        return _response._convert_response_to_structured_format(
+            self, run_response=run_response, run_context=run_context
+        )
 
     def _cleanup_and_store(self, run_response: TeamRunOutput, session: TeamSession) -> None:
         #  Scrub the stored run based on storage flags
-        return _storage._cleanup_and_store(self, run_response=run_response, session=session)
+        return _run._cleanup_and_store(self, run_response=run_response, session=session)
 
     async def _acleanup_and_store(self, run_response: TeamRunOutput, session: TeamSession) -> None:
         #  Scrub the stored run based on storage flags
-        return await _storage._acleanup_and_store(self, run_response=run_response, session=session)
+        return await _run._acleanup_and_store(self, run_response=run_response, session=session)
 
     def _make_memories(
         self,
         run_messages: RunMessages,
         user_id: Optional[str] = None,
     ):
-        return _hooks._make_memories(self, run_messages=run_messages, user_id=user_id)
+        return _managers._make_memories(self, run_messages=run_messages, user_id=user_id)
 
     async def _amake_memories(
         self,
         run_messages: RunMessages,
         user_id: Optional[str] = None,
     ):
-        return await _hooks._amake_memories(self, run_messages=run_messages, user_id=user_id)
+        return await _managers._amake_memories(self, run_messages=run_messages, user_id=user_id)
 
     async def _astart_memory_task(
         self,
@@ -1237,7 +1252,7 @@ class Team:
         user_id: Optional[str],
         existing_task: Optional[asyncio.Task[None]],
     ) -> Optional[asyncio.Task[None]]:
-        return await _hooks._astart_memory_task(
+        return await _managers._astart_memory_task(
             self, run_messages=run_messages, user_id=user_id, existing_task=existing_task
         )
 
@@ -1247,7 +1262,7 @@ class Team:
         user_id: Optional[str],
         existing_future: Optional[Future[None]],
     ) -> Optional[Future[None]]:
-        return _hooks._start_memory_future(
+        return _managers._start_memory_future(
             self, run_messages=run_messages, user_id=user_id, existing_future=existing_future
         )
 
@@ -1463,10 +1478,10 @@ class Team:
         return _cli._get_member_name(self, entity_id=entity_id)
 
     def _scrub_run_output_for_storage(self, run_response: TeamRunOutput) -> bool:
-        return _storage._scrub_run_output_for_storage(self, run_response=run_response)
+        return _run._scrub_run_output_for_storage(self, run_response=run_response)
 
     def _scrub_member_responses(self, member_responses: List[Union[TeamRunOutput, RunOutput]]) -> None:
-        return _storage._scrub_member_responses(self, member_responses=member_responses)
+        return _run._scrub_member_responses(self, member_responses=member_responses)
 
     def cli_app(
         self,
@@ -1585,10 +1600,10 @@ class Team:
             yield event
 
     def _resolve_run_dependencies(self, run_context: RunContext) -> None:
-        return _tools._resolve_run_dependencies(self, run_context=run_context)
+        return _run._resolve_run_dependencies(self, run_context=run_context)
 
     async def _aresolve_run_dependencies(self, run_context: RunContext) -> None:
-        return await _tools._aresolve_run_dependencies(self, run_context=run_context)
+        return await _run._aresolve_run_dependencies(self, run_context=run_context)
 
     async def _check_and_refresh_mcp_tools(self) -> None:
         # Connect MCP tools
@@ -1849,7 +1864,7 @@ class Team:
         return _messages._format_message_with_state_variables(self, message=message, run_context=run_context)
 
     def _convert_dependencies_to_string(self, context: Dict[str, Any]) -> str:
-        return _messages._convert_dependencies_to_string(self, context=context)
+        return _utils._convert_dependencies_to_string(self, context=context)
 
     def _get_json_output_prompt(self, output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None) -> str:
         return _messages._get_json_output_prompt(self, output_schema=output_schema)
@@ -2019,87 +2034,87 @@ class Team:
     def get_run_output(
         self, run_id: str, session_id: Optional[str] = None
     ) -> Optional[Union[TeamRunOutput, RunOutput]]:
-        return _storage.get_run_output(self, run_id=run_id, session_id=session_id)
+        return _session.get_run_output(self, run_id=run_id, session_id=session_id)
 
     async def aget_run_output(
         self, run_id: str, session_id: Optional[str] = None
     ) -> Optional[Union[TeamRunOutput, RunOutput]]:
-        return await _storage.aget_run_output(self, run_id=run_id, session_id=session_id)
+        return await _session.aget_run_output(self, run_id=run_id, session_id=session_id)
 
     def get_last_run_output(self, session_id: Optional[str] = None) -> Optional[TeamRunOutput]:
-        return _storage.get_last_run_output(self, session_id=session_id)
+        return _session.get_last_run_output(self, session_id=session_id)
 
     async def aget_last_run_output(self, session_id: Optional[str] = None) -> Optional[TeamRunOutput]:
-        return await _storage.aget_last_run_output(self, session_id=session_id)
+        return await _session.aget_last_run_output(self, session_id=session_id)
 
     def get_session(
         self,
         session_id: Optional[str] = None,
     ) -> Optional[TeamSession]:
-        return _storage.get_session(self, session_id=session_id)
+        return _session.get_session(self, session_id=session_id)
 
     async def aget_session(
         self,
         session_id: Optional[str] = None,
     ) -> Optional[TeamSession]:
-        return await _storage.aget_session(self, session_id=session_id)
+        return await _session.aget_session(self, session_id=session_id)
 
     def save_session(self, session: TeamSession) -> None:
-        return _storage.save_session(self, session=session)
+        return _session.save_session(self, session=session)
 
     async def asave_session(self, session: TeamSession) -> None:
-        return await _storage.asave_session(self, session=session)
+        return await _session.asave_session(self, session=session)
 
     def generate_session_name(self, session: TeamSession) -> str:
-        return _storage.generate_session_name(self, session=session)
+        return _session.generate_session_name(self, session=session)
 
     def set_session_name(
         self, session_id: Optional[str] = None, autogenerate: bool = False, session_name: Optional[str] = None
     ) -> TeamSession:
-        return _storage.set_session_name(
+        return _session.set_session_name(
             self, session_id=session_id, autogenerate=autogenerate, session_name=session_name
         )
 
     async def aset_session_name(
         self, session_id: Optional[str] = None, autogenerate: bool = False, session_name: Optional[str] = None
     ) -> TeamSession:
-        return await _storage.aset_session_name(
+        return await _session.aset_session_name(
             self, session_id=session_id, autogenerate=autogenerate, session_name=session_name
         )
 
     def get_session_name(self, session_id: Optional[str] = None) -> str:
-        return _storage.get_session_name(self, session_id=session_id)
+        return _session.get_session_name(self, session_id=session_id)
 
     async def aget_session_name(self, session_id: Optional[str] = None) -> str:
-        return await _storage.aget_session_name(self, session_id=session_id)
+        return await _session.aget_session_name(self, session_id=session_id)
 
     def get_session_state(self, session_id: Optional[str] = None) -> Dict[str, Any]:
-        return _storage.get_session_state(self, session_id=session_id)
+        return _session.get_session_state(self, session_id=session_id)
 
     async def aget_session_state(self, session_id: Optional[str] = None) -> Dict[str, Any]:
-        return await _storage.aget_session_state(self, session_id=session_id)
+        return await _session.aget_session_state(self, session_id=session_id)
 
     def update_session_state(self, session_state_updates: Dict[str, Any], session_id: Optional[str] = None) -> str:
-        return _storage.update_session_state(self, session_state_updates=session_state_updates, session_id=session_id)
+        return _session.update_session_state(self, session_state_updates=session_state_updates, session_id=session_id)
 
     async def aupdate_session_state(
         self, session_state_updates: Dict[str, Any], session_id: Optional[str] = None
     ) -> str:
-        return await _storage.aupdate_session_state(
+        return await _session.aupdate_session_state(
             self, session_state_updates=session_state_updates, session_id=session_id
         )
 
     def get_session_metrics(self, session_id: Optional[str] = None) -> Optional[Metrics]:
-        return _storage.get_session_metrics(self, session_id=session_id)
+        return _session.get_session_metrics(self, session_id=session_id)
 
     async def aget_session_metrics(self, session_id: Optional[str] = None) -> Optional[Metrics]:
-        return await _storage.aget_session_metrics(self, session_id=session_id)
+        return await _session.aget_session_metrics(self, session_id=session_id)
 
     def delete_session(self, session_id: str):
-        return _storage.delete_session(self, session_id=session_id)
+        return _session.delete_session(self, session_id=session_id)
 
     async def adelete_session(self, session_id: str):
-        return await _storage.adelete_session(self, session_id=session_id)
+        return await _session.adelete_session(self, session_id=session_id)
 
     def get_session_messages(
         self,
@@ -2112,7 +2127,7 @@ class Team:
         skip_history_messages: bool = True,
         skip_member_messages: bool = True,
     ) -> List[Message]:
-        return _storage.get_session_messages(
+        return _session.get_session_messages(
             self,
             session_id=session_id,
             member_ids=member_ids,
@@ -2135,7 +2150,7 @@ class Team:
         skip_history_messages: bool = True,
         skip_member_messages: bool = True,
     ) -> List[Message]:
-        return await _storage.aget_session_messages(
+        return await _session.aget_session_messages(
             self,
             session_id=session_id,
             member_ids=member_ids,
@@ -2148,24 +2163,24 @@ class Team:
         )
 
     def get_chat_history(self, session_id: Optional[str] = None, last_n_runs: Optional[int] = None) -> List[Message]:
-        return _storage.get_chat_history(self, session_id=session_id, last_n_runs=last_n_runs)
+        return _session.get_chat_history(self, session_id=session_id, last_n_runs=last_n_runs)
 
     async def aget_chat_history(
         self, session_id: Optional[str] = None, last_n_runs: Optional[int] = None
     ) -> List[Message]:
-        return await _storage.aget_chat_history(self, session_id=session_id, last_n_runs=last_n_runs)
+        return await _session.aget_chat_history(self, session_id=session_id, last_n_runs=last_n_runs)
 
     def get_session_summary(self, session_id: Optional[str] = None) -> Optional[SessionSummary]:
-        return _storage.get_session_summary(self, session_id=session_id)
+        return _session.get_session_summary(self, session_id=session_id)
 
     async def aget_session_summary(self, session_id: Optional[str] = None) -> Optional[SessionSummary]:
-        return await _storage.aget_session_summary(self, session_id=session_id)
+        return await _session.aget_session_summary(self, session_id=session_id)
 
     def get_user_memories(self, user_id: Optional[str] = None) -> Optional[List[UserMemory]]:
-        return _storage.get_user_memories(self, user_id=user_id)
+        return _session.get_user_memories(self, user_id=user_id)
 
     async def aget_user_memories(self, user_id: Optional[str] = None) -> Optional[List[UserMemory]]:
-        return await _storage.aget_user_memories(self, user_id=user_id)
+        return await _session.aget_user_memories(self, user_id=user_id)
 
     ###########################################################################
     # Handle reasoning content
@@ -2208,12 +2223,12 @@ class Team:
         )
 
     def _convert_documents_to_string(self, docs: List[Union[Dict[str, Any], str]]) -> str:
-        return _tools._convert_documents_to_string(self, docs=docs)
+        return _utils._convert_documents_to_string(self, docs=docs)
 
     def _get_effective_filters(
         self, knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
     ) -> Optional[Any]:
-        return _tools._get_effective_filters(self, knowledge_filters=knowledge_filters)
+        return _utils._get_effective_filters(self, knowledge_filters=knowledge_filters)
 
     def _get_search_knowledge_base_function(
         self,
@@ -2262,10 +2277,10 @@ class Team:
         await _telemetry.alog_team_telemetry(self, session_id=session_id, run_id=run_id)
 
     def deep_copy(self, *, update: Optional[Dict[str, Any]] = None) -> "Team":
-        return _messages.deep_copy(self, update=update)
+        return _utils.deep_copy(self, update=update)
 
     def _deep_copy_field(self, field_name: str, field_value: Any) -> Any:
-        return _messages._deep_copy_field(self, field_name=field_name, field_value=field_value)
+        return _utils._deep_copy_field(self, field_name=field_name, field_value=field_value)
 
 
 def get_team_by_id(

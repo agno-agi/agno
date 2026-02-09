@@ -105,73 +105,6 @@ async def acancel_run(run_id: str) -> bool:
     return await acancel_run_global(run_id)
 
 
-def _resolve_run_dependencies(team: "Team", run_context: RunContext) -> None:
-    from inspect import signature
-
-    log_debug("Resolving dependencies")
-    if not isinstance(run_context.dependencies, dict):
-        log_warning("Dependencies is not a dict")
-        return
-
-    for key, value in run_context.dependencies.items():
-        if not callable(value):
-            run_context.dependencies[key] = value
-            continue
-
-        try:
-            sig = signature(value)
-
-            # Build kwargs for the function
-            kwargs: Dict[str, Any] = {}
-            if "agent" in sig.parameters:
-                kwargs["agent"] = team
-            if "team" in sig.parameters:
-                kwargs["team"] = team
-            if "run_context" in sig.parameters:
-                kwargs["run_context"] = run_context
-
-            resolved_value = value(**kwargs) if kwargs else value()
-
-            run_context.dependencies[key] = resolved_value
-        except Exception as e:
-            log_warning(f"Failed to resolve dependencies for {key}: {e}")
-
-
-async def _aresolve_run_dependencies(team: "Team", run_context: RunContext) -> None:
-    from inspect import iscoroutine, signature
-
-    log_debug("Resolving context (async)")
-    if not isinstance(run_context.dependencies, dict):
-        log_warning("Dependencies is not a dict")
-        return
-
-    for key, value in run_context.dependencies.items():
-        if not callable(value):
-            run_context.dependencies[key] = value
-            continue
-
-        try:
-            sig = signature(value)
-
-            # Build kwargs for the function
-            kwargs: Dict[str, Any] = {}
-            if "agent" in sig.parameters:
-                kwargs["agent"] = team
-            if "team" in sig.parameters:
-                kwargs["team"] = team
-            if "run_context" in sig.parameters:
-                kwargs["run_context"] = run_context
-
-            resolved_value = value(**kwargs) if kwargs else value()
-
-            if iscoroutine(resolved_value):
-                resolved_value = await resolved_value
-
-            run_context.dependencies[key] = resolved_value
-        except Exception as e:
-            log_warning(f"Failed to resolve context for '{key}': {e}")
-
-
 async def _check_and_refresh_mcp_tools(team: "Team") -> None:
     # Connect MCP tools
     await team._connect_mcp_tools()
@@ -1682,54 +1615,6 @@ async def aget_relevant_docs_from_knowledge(
     except Exception as e:
         log_warning(f"Error retrieving from knowledge base: {e}")
         raise e
-
-
-def _convert_documents_to_string(team: "Team", docs: List[Union[Dict[str, Any], str]]) -> str:
-    if docs is None or len(docs) == 0:
-        return ""
-
-    if team.references_format == "yaml":
-        import yaml
-
-        return yaml.dump(docs)
-
-    import json
-
-    return json.dumps(docs, indent=2)
-
-
-def _get_effective_filters(
-    team: "Team", knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
-) -> Optional[Any]:
-    """
-    Determine effective filters for the team, considering:
-    1. Team-level filters (team.knowledge_filters)
-    2. Run-time filters (knowledge_filters)
-
-    Priority: Run-time filters > Team filters
-    """
-    effective_filters = None
-
-    # Start with team-level filters if they exist
-    if team.knowledge_filters:
-        effective_filters = team.knowledge_filters.copy()
-
-    # Apply run-time filters if they exist
-    if knowledge_filters:
-        if effective_filters:
-            if isinstance(effective_filters, dict):
-                if isinstance(knowledge_filters, dict):
-                    effective_filters.update(cast(Dict[str, Any], knowledge_filters))
-                else:
-                    # If knowledge_filters is not a dict (e.g., list of FilterExpr), combine as list if effective_filters is dict
-                    # Convert the dict to a list and concatenate
-                    effective_filters = cast(Any, [effective_filters, *knowledge_filters])
-            else:
-                effective_filters = [*effective_filters, *knowledge_filters]
-        else:
-            effective_filters = knowledge_filters
-
-    return effective_filters
 
 
 def _get_search_knowledge_base_function(
