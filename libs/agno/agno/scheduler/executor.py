@@ -38,7 +38,7 @@ class ScheduleExecutor:
 
     For run endpoints (``/agents/*/runs``, ``/teams/*/runs``, etc.) the executor
     submits a background run (``background=true``), then polls the run status
-    endpoint until it reaches a terminal state (COMPLETED, ERROR, CANCELLED).
+    endpoint until it reaches a terminal state (COMPLETED, ERROR, CANCELLED, PAUSED).
 
     For all other endpoints a simple request/response cycle is used.
     """
@@ -133,7 +133,7 @@ class ScheduleExecutor:
                     else:
                         db.update_schedule_run(run_record_id, **updates)
 
-                    if last_status == "success":
+                    if last_status in ("success", "paused"):
                         break
 
                 except Exception as exc:

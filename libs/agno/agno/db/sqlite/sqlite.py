@@ -4481,16 +4481,14 @@ class SqliteDb(BaseDb):
                     .limit(1)
                 ).scalar_subquery()
 
-                # Atomic UPDATE — only one writer can match this row
-                update_stmt = table.update().where(table.c.id == candidate).values(locked_by=worker_id, locked_at=now)
-                result = sess.execute(update_stmt)
-                if result.rowcount == 0:
-                    return None
-
-                # Fetch the claimed row back
-                row = sess.execute(
-                    select(table).where(table.c.locked_by == worker_id).where(table.c.locked_at == now)
-                ).fetchone()
+                # Atomic UPDATE … RETURNING — claim and fetch in one statement
+                update_stmt = (
+                    table.update()
+                    .where(table.c.id == candidate)
+                    .values(locked_by=worker_id, locked_at=now)
+                    .returning(*table.c)
+                )
+                row = sess.execute(update_stmt).fetchone()
                 if row is None:
                     return None
                 return dict(row._mapping)

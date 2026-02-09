@@ -43,7 +43,7 @@ class TestRunEndpointRegex:
 
 class TestTerminalStatuses:
     def test_all_terminal_statuses(self):
-        assert _TERMINAL_STATUSES == {"COMPLETED", "CANCELLED", "ERROR"}
+        assert _TERMINAL_STATUSES == {"COMPLETED", "CANCELLED", "ERROR", "PAUSED"}
 
 
 class TestScheduleExecutorInit:
