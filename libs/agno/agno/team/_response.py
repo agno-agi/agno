@@ -501,30 +501,6 @@ def calculate_metrics(team: "Team", messages: List[Message], current_run_metrics
     return metrics
 
 
-def get_session_metrics(team: "Team", session: TeamSession) -> Metrics:
-    # Get the session_metrics from the database
-    if session.session_data is not None and "session_metrics" in session.session_data:
-        session_metrics_from_db = session.session_data.get("session_metrics")
-        if session_metrics_from_db is not None:
-            if isinstance(session_metrics_from_db, dict):
-                return Metrics(**session_metrics_from_db)
-            elif isinstance(session_metrics_from_db, Metrics):
-                return session_metrics_from_db
-
-    return Metrics()
-
-
-def update_session_metrics(team: "Team", session: TeamSession, run_response: TeamRunOutput) -> None:
-    """Calculate session metrics"""
-    session_metrics = get_session_metrics(team, session=session)
-    # Add the metrics for the current run to the session metrics
-    if run_response.metrics is not None:
-        session_metrics += run_response.metrics
-    session_metrics.time_to_first_token = None
-    if session.session_data is not None:
-        session.session_data["session_metrics"] = session_metrics
-
-
 # ---------------------------------------------------------------------------
 # Reasoning
 # ---------------------------------------------------------------------------
@@ -564,7 +540,7 @@ def handle_reasoning_event(
     Convert a ReasoningEvent from the ReasoningManager to Team-specific TeamRunOutputEvents.
 
     This method handles the conversion of generic reasoning events to Team events,
-    keeping the Team._reason() method clean and simple.
+    keeping the reason() function clean and simple.
     """
     from agno.reasoning.manager import ReasoningEventType
 

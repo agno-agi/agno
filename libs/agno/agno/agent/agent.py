@@ -23,6 +23,7 @@ from agno.agent import (
     _cli,
     _default_tools,
     _init,
+    _managers,
     _messages,
     _run,
     _session,
@@ -646,7 +647,7 @@ class Agent:
         return _init.set_id(self)
 
     def get_learning_machine(self) -> Optional[LearningMachine]:
-        return _init.get_learning_machine(self)
+        return _managers.get_learning_machine(self)
 
     def initialize_agent(self, debug_mode: Optional[bool] = None) -> None:
         return _init.initialize_agent(self, debug_mode=debug_mode)
@@ -814,16 +815,16 @@ class Agent:
         return _storage.delete(self, db=db, hard_delete=hard_delete)
 
     def get_run_output(self, run_id: str, session_id: Optional[str] = None) -> Optional[RunOutput]:
-        return _session.get_run_output(self, run_id=run_id, session_id=session_id)
+        return _storage.get_run_output(self, run_id=run_id, session_id=session_id)
 
     async def aget_run_output(self, run_id: str, session_id: Optional[str] = None) -> Optional[RunOutput]:
-        return await _session.aget_run_output(self, run_id=run_id, session_id=session_id)
+        return await _storage.aget_run_output(self, run_id=run_id, session_id=session_id)
 
     def get_last_run_output(self, session_id: Optional[str] = None) -> Optional[RunOutput]:
-        return _session.get_last_run_output(self, session_id=session_id)
+        return _storage.get_last_run_output(self, session_id=session_id)
 
     async def aget_last_run_output(self, session_id: Optional[str] = None) -> Optional[RunOutput]:
-        return await _session.aget_last_run_output(self, session_id=session_id)
+        return await _storage.aget_last_run_output(self, session_id=session_id)
 
     def get_session(
         self,
@@ -956,16 +957,16 @@ class Agent:
         return await _session.aget_session_summary(self, session_id=session_id)
 
     def get_user_memories(self, user_id: Optional[str] = None) -> Optional[List[UserMemory]]:
-        return _session.get_user_memories(self, user_id=user_id)
+        return _managers.get_user_memories(self, user_id=user_id)
 
     async def aget_user_memories(self, user_id: Optional[str] = None) -> Optional[List[UserMemory]]:
-        return await _session.aget_user_memories(self, user_id=user_id)
+        return await _managers.aget_user_memories(self, user_id=user_id)
 
     def get_culture_knowledge(self) -> Optional[List[CulturalKnowledge]]:
-        return _session.get_culture_knowledge(self)
+        return _managers.get_culture_knowledge(self)
 
     async def aget_culture_knowledge(self) -> Optional[List[CulturalKnowledge]]:
-        return await _session.aget_culture_knowledge(self)
+        return await _managers.aget_culture_knowledge(self)
 
     # ---------------------------------------------------------------
     # _response module delegates

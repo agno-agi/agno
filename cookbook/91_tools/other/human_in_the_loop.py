@@ -29,9 +29,9 @@ def pre_hook(fc: FunctionCall):
     """Pre-hook that asks for user confirmation before running a tool."""
     print(f"\n⚠️  About to run: {fc.function.name}")
     print(f"   Arguments: {fc.arguments}")
-    
+
     message = input("Do you want to continue? [y/n] (default: y): ").strip().lower()
-    
+
     if message == "n":
         raise StopAgentRun(
             "Tool call cancelled by user",
@@ -72,5 +72,7 @@ agent = Agent(
 )
 
 # Use stream=False to avoid Live display interference with input()
-response = agent.run("Fetch the top 2 hackernews stories",)
+response = agent.run(
+    "Fetch the top 2 hackernews stories",
+)
 print(response.content)
