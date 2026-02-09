@@ -21,7 +21,6 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Iterable
 
-
 REQUIRED_FILES = ("README.md", "TEST_LOG.md")
 SKIP_DIR_NAMES = {"__pycache__", ".git", ".context"}
 SKIP_PATH_PREFIXES = {"scripts"}

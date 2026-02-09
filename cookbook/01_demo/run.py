@@ -37,10 +37,11 @@ agent_os = AgentOS(
     ],
     teams=[research_team, support_team],
     workflows=[daily_brief_workflow, meeting_prep_workflow],
+    tracing=True,
+    scheduler=True,
     registry=registry,
     config=config_path,
     db=get_postgres_db(),
-    tracing=True,
 )
 
 app = agent_os.get_app()
