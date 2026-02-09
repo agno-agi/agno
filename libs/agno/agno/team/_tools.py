@@ -871,9 +871,9 @@ def _get_delegate_task_function(
                 or not member_agent.store_tool_messages
                 or not member_agent.store_history_messages
             ):
-                from agno.agent._run import _scrub_run_output_for_storage
+                from agno.agent._run import scrub_run_output_for_storage
 
-                _scrub_run_output_for_storage(member_agent, run_response=member_agent_run_response)  # type: ignore[arg-type]
+                scrub_run_output_for_storage(member_agent, run_response=member_agent_run_response)  # type: ignore[arg-type]
 
             # Add the member run to the team session
             session.upsert_run(member_agent_run_response)

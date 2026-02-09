@@ -1477,8 +1477,8 @@ class Team:
     def _get_member_name(self, entity_id: str) -> str:
         return _cli._get_member_name(self, entity_id=entity_id)
 
-    def _scrub_run_output_for_storage(self, run_response: TeamRunOutput) -> bool:
-        return _run._scrub_run_output_for_storage(self, run_response=run_response)
+    def scrub_run_output_for_storage(self, run_response: TeamRunOutput) -> bool:
+        return _run.scrub_run_output_for_storage(self, run_response=run_response)
 
     def _scrub_member_responses(self, member_responses: List[Union[TeamRunOutput, RunOutput]]) -> None:
         return _run._scrub_member_responses(self, member_responses=member_responses)

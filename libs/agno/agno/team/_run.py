@@ -2034,7 +2034,7 @@ def _cleanup_and_store(team: "Team", run_response: TeamRunOutput, session: TeamS
     #  Scrub the stored run based on storage flags
     from agno.team._response import update_session_metrics
 
-    _scrub_run_output_for_storage(team, run_response)
+    scrub_run_output_for_storage(team, run_response)
 
     # Stop the timer for the Run duration
     if run_response.metrics:
@@ -2054,7 +2054,7 @@ async def _acleanup_and_store(team: "Team", run_response: TeamRunOutput, session
     #  Scrub the stored run based on storage flags
     from agno.team._response import update_session_metrics
 
-    _scrub_run_output_for_storage(team, run_response)
+    scrub_run_output_for_storage(team, run_response)
 
     # Stop the timer for the Run duration
     if run_response.metrics:
@@ -2070,7 +2070,7 @@ async def _acleanup_and_store(team: "Team", run_response: TeamRunOutput, session
     await team.asave_session(session=session)
 
 
-def _scrub_run_output_for_storage(team: "Team", run_response: TeamRunOutput) -> bool:
+def scrub_run_output_for_storage(team: "Team", run_response: TeamRunOutput) -> bool:
     """
     Scrub run output based on storage flags before persisting to database.
     Returns True if any scrubbing was done, False otherwise.
@@ -2126,9 +2126,9 @@ def _scrub_member_responses(team: "Team", member_responses: List[Union[TeamRunOu
         _, member = member_result
 
         if not member.store_media or not member.store_tool_messages or not member.store_history_messages:
-            from agno.agent._run import _scrub_run_output_for_storage
+            from agno.agent._run import scrub_run_output_for_storage
 
-            _scrub_run_output_for_storage(member, run_response=member_response)  # type: ignore[arg-type]
+            scrub_run_output_for_storage(member, run_response=member_response)  # type: ignore[arg-type]
 
         # If this is a nested team, recursively scrub its member responses
         if isinstance(member, Team) and isinstance(member_response, TeamRunOutput) and member_response.member_responses:
