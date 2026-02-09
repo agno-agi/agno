@@ -68,7 +68,7 @@ source .venvs/demo/bin/activate
 
 ### 3. Run PgVector
 ```bash
-./scripts/run_pgvector.sh
+./cookbook/scripts/run_pgvector.sh
 ```
 
 ### 4. Load data for Dash (F1 dataset)

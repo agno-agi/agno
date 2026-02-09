@@ -1,8 +1,4 @@
-"""
-Shared database configuration.
-
-All agents, teams, and workflows use this module for database connections.
-"""
+"""Database configuration."""
 
 from os import getenv
 
