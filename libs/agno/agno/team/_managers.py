@@ -131,7 +131,7 @@ def _start_memory_future(
         return team.background_executor.submit(_make_memories, team, run_messages=run_messages, user_id=user_id)
 
     return None
-    
+
 
 def get_user_memories(team: "Team", user_id: Optional[str] = None) -> Optional[List[UserMemory]]:
     """Get the user memories for the given user ID.

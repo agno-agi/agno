@@ -48,8 +48,8 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-  "mypy==1.18.2",
-  "ruff==0.14.3",
+  "mypy",
+  "ruff",
   "pytest",
   "pytest-asyncio",
   "pytest-cov",
