@@ -332,13 +332,18 @@ def attach_routes(
             }
 
         cancelled = await agent.acancel_run(task_id)
-        task_state = TaskState.canceled if cancelled else TaskState.failed
+        if not cancelled:
+            return {
+                "jsonrpc": "2.0",
+                "id": request_body.get("id", "unknown"),
+                "error": {"code": -32001, "message": f"Task {task_id} not found"},
+            }
         return {
             "jsonrpc": "2.0",
             "id": request_body.get("id", "unknown"),
             "result": {
                 "id": task_id,
-                "status": {"state": task_state.value},
+                "status": {"state": TaskState.canceled.value},
             },
         }
 

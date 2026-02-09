@@ -2558,6 +2558,8 @@ def arun(  # type: ignore
     run_response.metrics.start_timer()
 
     # Background execution: pre-persist PENDING run, spawn task, return immediately
+    if background and stream:
+        raise ValueError("background=True is not compatible with stream=True")
     if background:
         return arun_background_impl(  # type: ignore
             team,
