@@ -115,7 +115,7 @@ async def acancel_run(run_id: str) -> bool:
     return await acancel_run_global(run_id)
 
 
-async def asetup_session(
+async def _asetup_session(
     team: "Team",
     run_context: RunContext,
     session_id: str,
@@ -124,8 +124,8 @@ async def asetup_session(
 ) -> TeamSession:
     """Read/create session, load state from DB, and resolve callable dependencies.
 
-    Shared setup for arun_impl() and arun_stream_impl(). Mirrors what the sync
-    run_dispatch() does inline before calling run_impl()/run_stream_impl().
+    Shared setup for _arun() and _arun_stream(). Mirrors what the sync
+    run_dispatch() does inline before calling _run()/_run_stream().
     """
     # Read or create session
     from agno.team._init import _has_async_db, _initialize_session_state
@@ -164,7 +164,7 @@ async def asetup_session(
     return team_session
 
 
-def run_impl(
+def _run(
     team: "Team",
     run_response: TeamRunOutput,
     session: TeamSession,
@@ -460,7 +460,7 @@ def run_impl(
     return run_response  # Defensive fallback for type-checker; all paths return inside the loop
 
 
-def run_stream_impl(
+def _run_stream(
     team: "Team",
     run_response: TeamRunOutput,
     run_context: RunContext,
@@ -1024,7 +1024,7 @@ def run_dispatch(
         raise
 
     if opts.stream:
-        return run_stream_impl(
+        return _run_stream(
             team,
             run_response=run_response,
             run_context=run_context,
@@ -1042,7 +1042,7 @@ def run_dispatch(
         )  # type: ignore
 
     else:
-        return run_impl(
+        return _run(
             team,
             run_response=run_response,
             run_context=run_context,
@@ -1058,7 +1058,7 @@ def run_dispatch(
         )
 
 
-async def arun_impl(
+async def _arun(
     team: "Team",
     run_response: TeamRunOutput,
     run_context: RunContext,
@@ -1075,7 +1075,7 @@ async def arun_impl(
     """Run the Team and return the response.
 
     Pre-loop setup:
-    1. Setup session via asetup_session (read/create, load state, resolve dependencies)
+    1. Setup session via _asetup_session (read/create, load state, resolve dependencies)
 
     Steps (inside retry loop):
     1. Execute pre-hooks
@@ -1114,7 +1114,7 @@ async def arun_impl(
         await aregister_run(run_context.run_id)
 
         # Setup session: read/create, load state, resolve dependencies
-        team_session = await asetup_session(
+        team_session = await _asetup_session(
             team=team,
             run_context=run_context,
             session_id=session_id,
@@ -1380,7 +1380,7 @@ async def arun_impl(
     return run_response
 
 
-async def arun_stream_impl(
+async def _arun_stream(
     team: "Team",
     run_response: TeamRunOutput,
     run_context: RunContext,
@@ -1399,7 +1399,7 @@ async def arun_stream_impl(
     """Run the Team and return the response as a stream.
 
     Pre-loop setup:
-    1. Setup session via asetup_session (read/create, load state, resolve dependencies)
+    1. Setup session via _asetup_session (read/create, load state, resolve dependencies)
 
     Steps (inside retry loop):
     1. Execute pre-hooks
@@ -1435,7 +1435,7 @@ async def arun_stream_impl(
         await aregister_run(run_context.run_id)
 
         # Setup session: read/create, load state, resolve dependencies
-        team_session = await asetup_session(
+        team_session = await _asetup_session(
             team=team,
             run_context=run_context,
             session_id=session_id,
@@ -1947,7 +1947,7 @@ def arun_dispatch(  # type: ignore
     run_response.metrics.start_timer()
 
     if opts.stream:
-        return arun_stream_impl(
+        return _arun_stream(
             team,  # type: ignore
             run_response=run_response,
             run_context=run_context,
@@ -1964,7 +1964,7 @@ def arun_dispatch(  # type: ignore
             **kwargs,
         )
     else:
-        return arun_impl(
+        return _arun(
             team,  # type: ignore
             run_response=run_response,
             run_context=run_context,

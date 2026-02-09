@@ -285,45 +285,45 @@ class TestRenamedFunctionsImportable:
 
         assert callable(run_dispatch)
 
-    def test_run_impl_importable(self):
-        from agno.team._run import run_impl
+    def test_run_importable(self):
+        from agno.team._run import _run
 
-        assert callable(run_impl)
+        assert callable(_run)
 
-    def test_run_stream_impl_importable(self):
-        from agno.team._run import run_stream_impl
+    def test_run_stream_importable(self):
+        from agno.team._run import _run_stream
 
-        assert callable(run_stream_impl)
+        assert callable(_run_stream)
 
     def test_arun_dispatch_importable(self):
         from agno.team._run import arun_dispatch
 
         assert callable(arun_dispatch)
 
-    def test_arun_impl_importable(self):
-        from agno.team._run import arun_impl
+    def test_arun_importable(self):
+        from agno.team._run import _arun
 
-        assert callable(arun_impl)
+        assert callable(_arun)
 
-    def test_arun_stream_impl_importable(self):
-        from agno.team._run import arun_stream_impl
+    def test_arun_stream_importable(self):
+        from agno.team._run import _arun_stream
 
-        assert callable(arun_stream_impl)
+        assert callable(_arun_stream)
 
     def test_asetup_session_importable(self):
-        from agno.team._run import asetup_session
+        from agno.team._run import _asetup_session
 
-        assert callable(asetup_session)
+        assert callable(_asetup_session)
 
     def test_old_names_not_present(self):
-        """Old underscore-prefixed names should not exist on the module."""
+        """Old _impl-suffixed names should not exist on the module."""
         from agno.team import _run
 
-        assert not hasattr(_run, "_run")
-        assert not hasattr(_run, "_run_stream")
-        assert not hasattr(_run, "_arun")
-        assert not hasattr(_run, "_arun_stream")
-        assert not hasattr(_run, "_asetup_session")
+        assert not hasattr(_run, "run_impl")
+        assert not hasattr(_run, "run_stream_impl")
+        assert not hasattr(_run, "arun_impl")
+        assert not hasattr(_run, "arun_stream_impl")
+        assert not hasattr(_run, "asetup_session")
         assert not hasattr(_run, "run")
         assert not hasattr(_run, "arun")
 

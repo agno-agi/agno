@@ -95,7 +95,7 @@ def test_run_respects_run_context_precedence(monkeypatch: pytest.MonkeyPatch):
         cleanup_run(run_response.run_id)  # type: ignore[arg-type]
         return run_response
 
-    monkeypatch.setattr(_run, "run_impl", fake_run)
+    monkeypatch.setattr(_run, "_run", fake_run)
 
     preserved_context = RunContext(
         run_id="team-preserve",
@@ -190,7 +190,7 @@ async def test_arun_respects_run_context_precedence(monkeypatch: pytest.MonkeyPa
     ) -> TeamRunOutput:
         return run_response
 
-    monkeypatch.setattr(_run, "arun_impl", fake_arun)
+    monkeypatch.setattr(_run, "_arun", fake_arun)
 
     preserved_context = RunContext(
         run_id="ateam-preserve",
