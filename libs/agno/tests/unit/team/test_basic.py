@@ -165,6 +165,10 @@ async def test_asetup_session_resolves_deps_after_state_loaded():
     This is a regression test: if dependency resolution runs before state loading,
     the callable won't see DB-stored session state values.
     """
+    from unittest.mock import patch
+
+    import agno.team._run as run_module
+
     # Create a session with DB-stored state
     db_session = TeamSession(session_id="test-session")
     db_session.session_data = {"session_state": {"from_db": "loaded"}}
@@ -172,21 +176,12 @@ async def test_asetup_session_resolves_deps_after_state_loaded():
     # Track the session_state snapshot at the time _aresolve_run_dependencies is called
     captured_state = {}
 
-    async def capture_state_on_resolve(run_context):
+    async def capture_state_on_resolve(team, run_context):
         """Capture session_state at dep resolution time, then do actual resolution."""
         captured_state.update(run_context.session_state or {})
 
-    # Create a minimal Team mock
+    # Create a minimal Team mock (only used to pass to the functions)
     team = MagicMock()
-    team._has_async_db.return_value = False
-    team._read_or_create_session.return_value = db_session
-    team._update_metadata.return_value = None
-    team._initialize_session_state.side_effect = lambda session_state, **kw: session_state
-    team._load_session_state.side_effect = lambda session, session_state: {
-        **session_state,
-        **session.session_data.get("session_state", {}),
-    }
-    team._aresolve_run_dependencies = AsyncMock(side_effect=capture_state_on_resolve)
 
     run_context = RunContext(
         run_id="test-run",
@@ -195,13 +190,24 @@ async def test_asetup_session_resolves_deps_after_state_loaded():
         dependencies={"some_dep": lambda: "value"},
     )
 
-    result_session = await _asetup_session(
-        team=team,
-        run_context=run_context,
-        session_id="test-session",
-        user_id=None,
-        run_id="test-run",
-    )
+    # Mock the submodule functions at their source modules (where they're imported FROM)
+    with patch("agno.team._init._has_async_db", return_value=False), \
+         patch("agno.team._storage._read_or_create_session", return_value=db_session), \
+         patch("agno.team._storage._update_metadata", return_value=None), \
+         patch("agno.team._init._initialize_session_state", side_effect=lambda team, session_state, **kw: session_state), \
+         patch("agno.team._storage._load_session_state", side_effect=lambda team, session, session_state: {
+             **session_state,
+             **session.session_data.get("session_state", {}),
+         }), \
+         patch.object(run_module, "_aresolve_run_dependencies", side_effect=capture_state_on_resolve):
+
+        result_session = await _asetup_session(
+            team=team,
+            run_context=run_context,
+            session_id="test-session",
+            user_id=None,
+            run_id="test-run",
+        )
 
     assert result_session == db_session
     # At the time deps were resolved, session_state should already contain DB values
