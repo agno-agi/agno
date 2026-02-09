@@ -603,7 +603,7 @@ class Agent:
         self.telemetry = telemetry
 
         # Internal use: _learning holds the resolved LearningMachine instance
-        # use get_learning_machine() to access it.
+        # use agent.learning_machine to access it.
         self._learning: Optional[LearningMachine] = None
 
         # If we are caching the agent session
@@ -639,15 +639,18 @@ class Agent:
     def cached_session(self) -> Optional[AgentSession]:
         return self._cached_session
 
+    @property
+    def learning_machine(self) -> Optional[LearningMachine]:
+        if self._learning is None and self.learning is not None and self.learning is not False:
+            _init.set_learning_machine(self)
+        return self._learning
+
     # ---------------------------------------------------------------
     # _init module delegates
     # ---------------------------------------------------------------
 
     def set_id(self) -> None:
         return _init.set_id(self)
-
-    def get_learning_machine(self) -> Optional[LearningMachine]:
-        return _managers.get_learning_machine(self)
 
     def initialize_agent(self, debug_mode: Optional[bool] = None) -> None:
         return _init.initialize_agent(self, debug_mode=debug_mode)
@@ -1102,7 +1105,7 @@ class Agent:
             **kwargs,
         )
 
-    def scrub_run_output_for_storage(self, run_response: RunOutput) -> bool:
+    def scrub_run_output_for_storage(self, run_response: RunOutput) -> None:
         return _run.scrub_run_output_for_storage(self, run_response=run_response)
 
     def cli_app(
@@ -1266,6 +1269,68 @@ class Agent:
             **kwargs,
         )
 
+    def _run(
+        self,
+        run_response: RunOutput,
+        run_context: RunContext,
+        session: AgentSession,
+        user_id: Optional[str] = None,
+        add_history_to_context: Optional[bool] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        debug_mode: Optional[bool] = None,
+        background_tasks: Optional[Any] = None,
+        **kwargs: Any,
+    ) -> RunOutput:
+        return _run.run_impl(
+            self,
+            run_response=run_response,
+            run_context=run_context,
+            session=session,
+            user_id=user_id,
+            add_history_to_context=add_history_to_context,
+            add_dependencies_to_context=add_dependencies_to_context,
+            add_session_state_to_context=add_session_state_to_context,
+            response_format=response_format,
+            debug_mode=debug_mode,
+            background_tasks=background_tasks,
+            **kwargs,
+        )
+
+    def _run_stream(
+        self,
+        run_response: RunOutput,
+        run_context: RunContext,
+        session: AgentSession,
+        user_id: Optional[str] = None,
+        add_history_to_context: Optional[bool] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        stream_events: bool = False,
+        yield_run_output: Optional[bool] = None,
+        debug_mode: Optional[bool] = None,
+        background_tasks: Optional[Any] = None,
+        **kwargs: Any,
+    ) -> Iterator[Union[RunOutputEvent, RunOutput]]:
+        return _run.run_stream_impl(
+            self,
+            run_response=run_response,
+            run_context=run_context,
+            session=session,
+            user_id=user_id,
+            add_history_to_context=add_history_to_context,
+            add_dependencies_to_context=add_dependencies_to_context,
+            add_session_state_to_context=add_session_state_to_context,
+            response_format=response_format,
+            stream_events=stream_events,
+            yield_run_output=yield_run_output,
+            debug_mode=debug_mode,
+            background_tasks=background_tasks,
+            **kwargs,
+        )
+
     @overload
     async def arun(
         self,
@@ -1369,6 +1434,68 @@ class Agent:
             output_schema=output_schema,
             yield_run_output=yield_run_output,
             debug_mode=debug_mode,
+            **kwargs,
+        )
+
+    async def _arun(
+        self,
+        run_response: RunOutput,
+        run_context: RunContext,
+        session_id: str,
+        user_id: Optional[str] = None,
+        add_history_to_context: Optional[bool] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        debug_mode: Optional[bool] = None,
+        background_tasks: Optional[Any] = None,
+        **kwargs: Any,
+    ) -> RunOutput:
+        return await _run.arun_impl(
+            self,
+            run_response=run_response,
+            run_context=run_context,
+            session_id=session_id,
+            user_id=user_id,
+            add_history_to_context=add_history_to_context,
+            add_dependencies_to_context=add_dependencies_to_context,
+            add_session_state_to_context=add_session_state_to_context,
+            response_format=response_format,
+            debug_mode=debug_mode,
+            background_tasks=background_tasks,
+            **kwargs,
+        )
+
+    def _arun_stream(
+        self,
+        run_response: RunOutput,
+        run_context: RunContext,
+        session_id: str,
+        user_id: Optional[str] = None,
+        add_history_to_context: Optional[bool] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        stream_events: bool = False,
+        yield_run_output: Optional[bool] = None,
+        debug_mode: Optional[bool] = None,
+        background_tasks: Optional[Any] = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[Union[RunOutputEvent, RunOutput]]:
+        return _run.arun_stream_impl(
+            self,
+            run_response=run_response,
+            run_context=run_context,
+            session_id=session_id,
+            user_id=user_id,
+            add_history_to_context=add_history_to_context,
+            add_dependencies_to_context=add_dependencies_to_context,
+            add_session_state_to_context=add_session_state_to_context,
+            response_format=response_format,
+            stream_events=stream_events,
+            yield_run_output=yield_run_output,
+            debug_mode=debug_mode,
+            background_tasks=background_tasks,
             **kwargs,
         )
 

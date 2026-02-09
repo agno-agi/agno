@@ -124,7 +124,7 @@ cookbook/08_learning/
 Access the learning machine from an agent:
 ```python
 # Get the resolved LearningMachine instance
-learning_machine = agent.get_learning_machine()
+learning_machine = agent.learning_machine
 
 # Access individual stores
 learning_machine.user_profile_store.print(user_id=user_id)
@@ -148,7 +148,7 @@ learning_machine.learned_knowledge_store.print(query="...")
 
 5. **Claude model version matters**: Use `claude-sonnet-4-5` or newer. Older model IDs (e.g., `claude-sonnet-4-20250514`) don't support structured outputs and extraction will fail. See `06_quick_tests/04_claude_model.py`.
 
-6. **Lazy initialization**: `LearningMachine` is only initialized when the agent runs, not when constructed. Calling `agent.get_learning_machine()` before the first `print_response()` will return `None`.
+6. **Lazy initialization**: `agent.learning_machine` now lazily initializes, so it works even before the agent runs. There is no need to call `print_response()` first.
 
 7. **upsert_learning doesn't update learning_type**: The `upsert_learning` method in postgres.py (and likely other DB adapters) only updates `content`, `metadata`, and `updated_at` on conflict - it does NOT update `learning_type`. This means if you rename a learning type (e.g., `memories` → `user_memory`), existing rows won't be found. **Future work:** Fix `upsert_learning` to update `learning_type` on conflict.
 

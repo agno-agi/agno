@@ -15,7 +15,6 @@ if TYPE_CHECKING:
 
 from agno.db.base import UserMemory
 from agno.db.schemas.culture import CulturalKnowledge
-from agno.learn.machine import LearningMachine
 from agno.models.message import Message
 from agno.run.messages import RunMessages
 from agno.session import AgentSession
@@ -477,13 +476,3 @@ def start_learning_future(
         )
 
     return None
-
-
-def get_learning_machine(agent: Agent) -> Optional[LearningMachine]:
-    """Get the resolved LearningMachine instance.
-
-    Returns:
-        The LearningMachine instance if learning is enabled and initialized,
-        None otherwise.
-    """
-    return agent._learning
