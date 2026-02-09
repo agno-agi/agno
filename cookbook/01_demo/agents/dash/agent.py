@@ -26,9 +26,9 @@ from .context.business_rules import BUSINESS_CONTEXT
 from .context.semantic_model import SEMANTIC_MODEL_STR
 from .tools import create_introspect_schema_tool, create_save_validated_query_tool
 
-# ============================================================================
+# ---------------------------------------------------------------------------
 # Database & Knowledge
-# ============================================================================
+# ---------------------------------------------------------------------------
 
 agent_db = get_postgres_db()
 
@@ -38,9 +38,9 @@ dash_knowledge = create_knowledge("Dash Knowledge", "dash_knowledge")
 # LEARNINGS: Dynamic, discovered (type errors, date formats, business rules)
 dash_learnings = create_knowledge("Dash Learnings", "dash_learnings")
 
-# ============================================================================
+# ---------------------------------------------------------------------------
 # Tools
-# ============================================================================
+# ---------------------------------------------------------------------------
 
 save_validated_query = create_save_validated_query_tool(dash_knowledge)
 introspect_schema = create_introspect_schema_tool(db_url)
@@ -54,9 +54,9 @@ base_tools: list = [
     ),
 ]
 
-# ============================================================================
+# ---------------------------------------------------------------------------
 # Instructions
-# ============================================================================
+# ---------------------------------------------------------------------------
 
 INSTRUCTIONS = f"""\
 You are Dash, a self-learning data agent that provides **insights**, not just query results.
@@ -150,9 +150,9 @@ Don't guess. If the schema doesn't have it, say so and explain what IS available
 {BUSINESS_CONTEXT}\
 """
 
-# ============================================================================
+# ---------------------------------------------------------------------------
 # Create Agent
-# ============================================================================
+# ---------------------------------------------------------------------------
 
 dash = Agent(
     id="dash",

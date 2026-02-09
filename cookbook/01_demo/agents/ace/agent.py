@@ -24,9 +24,9 @@ from agno.models.openai import OpenAIResponses
 from agno.tools.mcp import MCPTools
 from db import create_knowledge, get_postgres_db
 
-# ============================================================================
+# ---------------------------------------------------------------------------
 # Setup
-# ============================================================================
+# ---------------------------------------------------------------------------
 agent_db = get_postgres_db(contents_table="ace_contents")
 
 # Exa MCP for context research when drafting responses
@@ -42,9 +42,9 @@ EXA_MCP_URL = (
 ace_knowledge = create_knowledge("Ace Knowledge", "ace_knowledge")
 ace_learnings = create_knowledge("Ace Learnings", "ace_learnings")
 
-# ============================================================================
+# ---------------------------------------------------------------------------
 # Instructions
-# ============================================================================
+# ---------------------------------------------------------------------------
 instructions = """\
 You are Ace, a response agent that learns your voice.
 
@@ -155,9 +155,9 @@ Always present drafts clearly:
 - Honest about uncertainty -- flags when you're guessing at tone\
 """
 
-# ============================================================================
+# ---------------------------------------------------------------------------
 # Create Agent
-# ============================================================================
+# ---------------------------------------------------------------------------
 ace = Agent(
     id="ace",
     name="Ace",

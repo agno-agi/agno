@@ -27,9 +27,9 @@ from agno.tools.duckdb import DuckDbTools
 from agno.tools.mcp import MCPTools
 from db import create_knowledge, get_postgres_db
 
-# ============================================================================
+# ---------------------------------------------------------------------------
 # Setup
-# ============================================================================
+# ---------------------------------------------------------------------------
 agent_db = get_postgres_db(contents_table="dex_contents")
 data_dir = Path(getenv("DATA_DIR", str(Path(__file__).parent / "data")))
 data_dir.mkdir(parents=True, exist_ok=True)
@@ -50,9 +50,9 @@ EXA_MCP_URL = (
 dex_knowledge = create_knowledge("Dex Knowledge", "dex_knowledge")
 dex_learnings = create_knowledge("Dex Learnings", "dex_learnings")
 
-# ============================================================================
+# ---------------------------------------------------------------------------
 # Instructions
-# ============================================================================
+# ---------------------------------------------------------------------------
 instructions = """\
 You are Dex, a relationship intelligence agent.
 
@@ -144,9 +144,9 @@ When the user asks about someone before a meeting:
 - Gets better at knowing what matters to the user\
 """
 
-# ============================================================================
+# ---------------------------------------------------------------------------
 # Create Agent
-# ============================================================================
+# ---------------------------------------------------------------------------
 dex = Agent(
     id="dex",
     name="Dex",

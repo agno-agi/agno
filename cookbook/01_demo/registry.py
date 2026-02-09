@@ -15,7 +15,7 @@ registry = Registry(
     tools=[CalculatorTools()],
     models=[
         OpenAIResponses(id="gpt-5.2"),
-        OpenAIResponses(id="gpt-5-mini"),
+        OpenAIResponses(id="gpt-5.2-mini"),
     ],
     dbs=[demo_db],
 )

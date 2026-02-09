@@ -85,6 +85,7 @@ python -m cookbook.01_demo.agents.scout.scripts.load_knowledge
 ### 6. Export environment variables
 ```bash
 export OPENAI_API_KEY="..."      # Required for all agents
+export EXA_API_KEY="..."         # Optional because Exa MCP is currently free
 ```
 
 ### 7. Run the demo
@@ -107,14 +108,14 @@ python -m cookbook.01_demo.run
 
 ```bash
 # Run all evals
-python -m evals.run_evals
+python -m cookbook.01_demo.evals.run_evals
 
 # Filter by agent
-python -m evals.run_evals --agent dash
+python -m cookbook.01_demo.evals.run_evals --agent dash
 
 # Filter by category
-python -m evals.run_evals --category dash_basic
+python -m cookbook.01_demo.evals.run_evals --category dash_basic
 
 # Verbose mode (show full responses on failure)
-python -m evals.run_evals --verbose
+python -m cookbook.01_demo.evals.run_evals --verbose
 ```

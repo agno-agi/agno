@@ -27,9 +27,9 @@ from agno.tools.duckdb import DuckDbTools
 from agno.tools.mcp import MCPTools
 from db import create_knowledge, get_postgres_db
 
-# ============================================================================
+# ---------------------------------------------------------------------------
 # Setup
-# ============================================================================
+# ---------------------------------------------------------------------------
 agent_db = get_postgres_db(contents_table="pal_contents")
 data_dir = Path(getenv("DATA_DIR", str(Path(__file__).parent / "data")))
 data_dir.mkdir(parents=True, exist_ok=True)
@@ -50,9 +50,9 @@ EXA_MCP_URL = (
 # Knowledge base for semantic search and learnings
 pal_knowledge = create_knowledge("Pal Knowledge", "pal_knowledge")
 
-# ============================================================================
+# ---------------------------------------------------------------------------
 # Instructions
-# ============================================================================
+# ---------------------------------------------------------------------------
 instructions = """\
 You are Pal, a personal agent that learns.
 
@@ -151,9 +151,9 @@ Do NOT call save_learning with the note content. The note goes in DuckDB.
 - Learns from mistakes and doesn't repeat them\
 """
 
-# ============================================================================
+# ---------------------------------------------------------------------------
 # Create Agent
-# ============================================================================
+# ---------------------------------------------------------------------------
 pal = Agent(
     id="pal",
     name="Pal",
