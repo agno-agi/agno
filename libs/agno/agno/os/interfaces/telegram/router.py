@@ -1,6 +1,7 @@
 import base64
 import binascii
-from typing import Optional, Union
+import os
+from typing import Any, List, Optional, Union
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 
@@ -9,17 +10,74 @@ from agno.agent.remote import RemoteAgent
 from agno.media import Image
 from agno.team.remote import RemoteTeam
 from agno.team.team import Team
-from agno.utils.log import log_error, log_info, log_warning
-from agno.utils.telegram import (
-    get_bot_token,
-    get_file_bytes_async,
-    send_chat_action_async,
-    send_photo_message_async,
-    send_text_chunked_async,
-)
+from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.workflow import RemoteWorkflow, Workflow
 
 from .security import validate_webhook_secret_token
+
+AsyncTeleBot: Any = None
+try:
+    from telebot.async_telebot import AsyncTeleBot  # type: ignore[no-redef]
+except ImportError:
+    pass
+
+
+def _require_telebot() -> None:
+    if AsyncTeleBot is None:
+        raise ImportError(
+            "`telegram` interface requires the `pyTelegramBotAPI` package. "
+            "Run `pip install pyTelegramBotAPI` or `pip install 'agno[telegram]'` to install it."
+        )
+
+
+def _get_bot_token() -> str:
+    token = os.getenv("TELEGRAM_TOKEN")
+    if not token:
+        raise ValueError("TELEGRAM_TOKEN environment variable is not set")
+    return token
+
+
+async def _send_chat_action_async(chat_id: int, action: str, token: Optional[str] = None) -> None:
+    _require_telebot()
+    bot = AsyncTeleBot(token or _get_bot_token())
+    await bot.send_chat_action(chat_id, action)
+
+
+async def _get_file_bytes_async(file_id: str, token: Optional[str] = None) -> Optional[bytes]:
+    _require_telebot()
+    try:
+        bot = AsyncTeleBot(token or _get_bot_token())
+        file_info = await bot.get_file(file_id)
+        return await bot.download_file(file_info.file_path)
+    except Exception as e:
+        log_error(f"Error downloading file: {e}")
+        return None
+
+
+async def _send_text_message_async(chat_id: int, text: str, token: Optional[str] = None) -> None:
+    _require_telebot()
+    bot = AsyncTeleBot(token or _get_bot_token())
+    await bot.send_message(chat_id, text)
+
+
+async def _send_text_chunked_async(chat_id: int, text: str, max_chars: int = 4000, token: Optional[str] = None) -> None:
+    _require_telebot()
+    if len(text) <= 4096:
+        await _send_text_message_async(chat_id, text, token=token)
+        return
+    chunks: List[str] = [text[i : i + max_chars] for i in range(0, len(text), max_chars)]
+    bot = AsyncTeleBot(token or _get_bot_token())
+    for i, chunk in enumerate(chunks, 1):
+        await bot.send_message(chat_id, f"[{i}/{len(chunks)}] {chunk}")
+
+
+async def _send_photo_message_async(
+    chat_id: int, photo_bytes: bytes, caption: Optional[str] = None, token: Optional[str] = None
+) -> None:
+    _require_telebot()
+    bot = AsyncTeleBot(token or _get_bot_token())
+    log_debug(f"Sending photo to chat_id={chat_id}, caption={caption[:50] if caption else None}")
+    await bot.send_photo(chat_id, photo_bytes, caption=caption)
 
 
 def attach_routes(
@@ -32,7 +90,7 @@ def attach_routes(
         raise ValueError("Either agent, team, or workflow must be provided.")
 
     # Validate token is available at startup
-    get_bot_token()
+    _get_bot_token()
 
     @router.get("/status")
     async def status():
@@ -75,7 +133,7 @@ def attach_routes(
         try:
             message_image = None
 
-            await send_chat_action_async(chat_id, "typing")
+            await _send_chat_action_async(chat_id, "typing")
 
             if message.get("text"):
                 message_text = message["text"]
@@ -91,7 +149,7 @@ def attach_routes(
 
             images = None
             if message_image:
-                image_bytes = await get_file_bytes_async(message_image)
+                image_bytes = await _get_file_bytes_async(message_image)
                 if image_bytes:
                     images = [Image(content=image_bytes)]
 
@@ -122,14 +180,14 @@ def attach_routes(
                 return
 
             if response.status == "ERROR":
-                await send_text_chunked_async(
+                await _send_text_chunked_async(
                     chat_id, "Sorry, there was an error processing your message. Please try again later."
                 )
                 log_error(response.content)
                 return
 
             if response.reasoning_content:
-                await send_text_chunked_async(chat_id, f"Reasoning: \n{response.reasoning_content}")
+                await _send_text_chunked_async(chat_id, f"Reasoning: \n{response.reasoning_content}")
 
             # Outbound image handling
             if response.images:
@@ -153,7 +211,7 @@ def attach_routes(
 
                     if image_bytes_out:
                         try:
-                            await send_photo_message_async(
+                            await _send_photo_message_async(
                                 chat_id=chat_id,
                                 photo_bytes=image_bytes_out,
                                 caption=response.content[:1024] if response.content else None,
@@ -163,14 +221,14 @@ def attach_routes(
                             log_error(f"Failed to send photo to chat {chat_id}: {img_err}")
 
                 if not any_sent:
-                    await send_text_chunked_async(chat_id, response.content or "")
+                    await _send_text_chunked_async(chat_id, response.content or "")
             else:
-                await send_text_chunked_async(chat_id, response.content or "")
+                await _send_text_chunked_async(chat_id, response.content or "")
 
         except Exception as e:
             log_error(f"Error processing message: {str(e)}")
             try:
-                await send_text_chunked_async(
+                await _send_text_chunked_async(
                     chat_id, "Sorry, there was an error processing your message. Please try again later."
                 )
             except Exception as send_error:

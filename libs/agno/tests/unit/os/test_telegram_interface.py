@@ -277,8 +277,8 @@ class TestProcessMessage:
         agent.arun = AsyncMock(return_value=mock_response)
 
         with (
-            patch(f"{ROUTER_MODULE}.send_chat_action_async", new_callable=AsyncMock) as mock_action,
-            patch(f"{ROUTER_MODULE}.send_text_chunked_async", new_callable=AsyncMock) as mock_send,
+            patch(f"{ROUTER_MODULE}._send_chat_action_async", new_callable=AsyncMock) as mock_action,
+            patch(f"{ROUTER_MODULE}._send_text_chunked_async", new_callable=AsyncMock) as mock_send,
         ):
             from fastapi import APIRouter
 
@@ -330,10 +330,10 @@ class TestProcessMessage:
         agent.arun = AsyncMock(return_value=mock_response)
 
         with (
-            patch(f"{ROUTER_MODULE}.send_chat_action_async", new_callable=AsyncMock),
-            patch(f"{ROUTER_MODULE}.send_text_chunked_async", new_callable=AsyncMock),
+            patch(f"{ROUTER_MODULE}._send_chat_action_async", new_callable=AsyncMock),
+            patch(f"{ROUTER_MODULE}._send_text_chunked_async", new_callable=AsyncMock),
             patch(
-                f"{ROUTER_MODULE}.get_file_bytes_async", new_callable=AsyncMock, return_value=b"fake-image-bytes"
+                f"{ROUTER_MODULE}._get_file_bytes_async", new_callable=AsyncMock, return_value=b"fake-image-bytes"
             ) as mock_download,
         ):
             from fastapi import APIRouter
@@ -385,8 +385,8 @@ class TestProcessMessage:
         agent.arun = AsyncMock(return_value=mock_response)
 
         with (
-            patch(f"{ROUTER_MODULE}.send_chat_action_async", new_callable=AsyncMock),
-            patch(f"{ROUTER_MODULE}.send_text_chunked_async", new_callable=AsyncMock) as mock_send,
+            patch(f"{ROUTER_MODULE}._send_chat_action_async", new_callable=AsyncMock),
+            patch(f"{ROUTER_MODULE}._send_text_chunked_async", new_callable=AsyncMock) as mock_send,
         ):
             from fastapi import APIRouter
 
@@ -426,8 +426,8 @@ class TestProcessMessage:
         agent.arun = AsyncMock()
 
         with (
-            patch(f"{ROUTER_MODULE}.send_chat_action_async", new_callable=AsyncMock),
-            patch(f"{ROUTER_MODULE}.send_text_chunked_async", new_callable=AsyncMock),
+            patch(f"{ROUTER_MODULE}._send_chat_action_async", new_callable=AsyncMock),
+            patch(f"{ROUTER_MODULE}._send_text_chunked_async", new_callable=AsyncMock),
         ):
             from fastapi import APIRouter
 
@@ -463,8 +463,8 @@ class TestProcessMessage:
         agent.arun = AsyncMock()
 
         with (
-            patch(f"{ROUTER_MODULE}.send_chat_action_async", new_callable=AsyncMock),
-            patch(f"{ROUTER_MODULE}.send_text_chunked_async", new_callable=AsyncMock),
+            patch(f"{ROUTER_MODULE}._send_chat_action_async", new_callable=AsyncMock),
+            patch(f"{ROUTER_MODULE}._send_text_chunked_async", new_callable=AsyncMock),
         ):
             from fastapi import APIRouter
 
@@ -520,9 +520,9 @@ class TestOutboundImages:
         agent.arun = AsyncMock(return_value=mock_response)
 
         with (
-            patch(f"{ROUTER_MODULE}.send_chat_action_async", new_callable=AsyncMock),
-            patch(f"{ROUTER_MODULE}.send_text_chunked_async", new_callable=AsyncMock),
-            patch(f"{ROUTER_MODULE}.send_photo_message_async", new_callable=AsyncMock) as mock_photo,
+            patch(f"{ROUTER_MODULE}._send_chat_action_async", new_callable=AsyncMock),
+            patch(f"{ROUTER_MODULE}._send_text_chunked_async", new_callable=AsyncMock),
+            patch(f"{ROUTER_MODULE}._send_photo_message_async", new_callable=AsyncMock) as mock_photo,
         ):
             from fastapi import APIRouter
 
@@ -575,9 +575,9 @@ class TestOutboundImages:
         agent.arun = AsyncMock(return_value=mock_response)
 
         with (
-            patch(f"{ROUTER_MODULE}.send_chat_action_async", new_callable=AsyncMock),
-            patch(f"{ROUTER_MODULE}.send_text_chunked_async", new_callable=AsyncMock),
-            patch(f"{ROUTER_MODULE}.send_photo_message_async", new_callable=AsyncMock) as mock_photo,
+            patch(f"{ROUTER_MODULE}._send_chat_action_async", new_callable=AsyncMock),
+            patch(f"{ROUTER_MODULE}._send_text_chunked_async", new_callable=AsyncMock),
+            patch(f"{ROUTER_MODULE}._send_photo_message_async", new_callable=AsyncMock) as mock_photo,
         ):
             from fastapi import APIRouter
 
@@ -630,10 +630,10 @@ class TestOutboundImages:
         agent.arun = AsyncMock(return_value=mock_response)
 
         with (
-            patch(f"{ROUTER_MODULE}.send_chat_action_async", new_callable=AsyncMock),
-            patch(f"{ROUTER_MODULE}.send_text_chunked_async", new_callable=AsyncMock) as mock_text,
+            patch(f"{ROUTER_MODULE}._send_chat_action_async", new_callable=AsyncMock),
+            patch(f"{ROUTER_MODULE}._send_text_chunked_async", new_callable=AsyncMock) as mock_text,
             patch(
-                f"{ROUTER_MODULE}.send_photo_message_async", new_callable=AsyncMock, side_effect=Exception("API error")
+                f"{ROUTER_MODULE}._send_photo_message_async", new_callable=AsyncMock, side_effect=Exception("API error")
             ),
         ):
             from fastapi import APIRouter
@@ -666,7 +666,7 @@ class TestOutboundImages:
 
 
 # ---------------------------------------------------------------------------
-# Message splitting (now in utils, but test end-to-end)
+# Message splitting (end-to-end via process_message)
 # ---------------------------------------------------------------------------
 
 
@@ -686,8 +686,8 @@ class TestMessageSplitting:
         agent.arun = AsyncMock(return_value=mock_response)
 
         with (
-            patch(f"{ROUTER_MODULE}.send_chat_action_async", new_callable=AsyncMock),
-            patch(f"{ROUTER_MODULE}.send_text_chunked_async", new_callable=AsyncMock) as mock_send,
+            patch(f"{ROUTER_MODULE}._send_chat_action_async", new_callable=AsyncMock),
+            patch(f"{ROUTER_MODULE}._send_text_chunked_async", new_callable=AsyncMock) as mock_send,
         ):
             from fastapi import APIRouter
 
