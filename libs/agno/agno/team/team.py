@@ -621,6 +621,68 @@ class Team:
     async def acancel_run(run_id: str) -> bool:
         return await _run.acancel_run(run_id=run_id)
 
+    def _run(
+        self,
+        run_response: TeamRunOutput,
+        session: TeamSession,
+        run_context: RunContext,
+        user_id: Optional[str] = None,
+        add_history_to_context: Optional[bool] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        debug_mode: Optional[bool] = None,
+        background_tasks: Optional[Any] = None,
+        **kwargs: Any,
+    ) -> TeamRunOutput:
+        return _run._run(
+            self,
+            run_response=run_response,
+            session=session,
+            run_context=run_context,
+            user_id=user_id,
+            add_history_to_context=add_history_to_context,
+            add_dependencies_to_context=add_dependencies_to_context,
+            add_session_state_to_context=add_session_state_to_context,
+            response_format=response_format,
+            debug_mode=debug_mode,
+            background_tasks=background_tasks,
+            **kwargs,
+        )
+
+    def _run_stream(
+        self,
+        run_response: TeamRunOutput,
+        run_context: RunContext,
+        session: TeamSession,
+        user_id: Optional[str] = None,
+        add_history_to_context: Optional[bool] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        stream_events: bool = False,
+        yield_run_output: bool = False,
+        debug_mode: Optional[bool] = None,
+        background_tasks: Optional[Any] = None,
+        **kwargs: Any,
+    ) -> Iterator[Union[TeamRunOutputEvent, RunOutputEvent, TeamRunOutput]]:
+        yield from _run._run_stream(
+            self,
+            run_response=run_response,
+            run_context=run_context,
+            session=session,
+            user_id=user_id,
+            add_history_to_context=add_history_to_context,
+            add_dependencies_to_context=add_dependencies_to_context,
+            add_session_state_to_context=add_session_state_to_context,
+            response_format=response_format,
+            stream_events=stream_events,
+            yield_run_output=yield_run_output,
+            debug_mode=debug_mode,
+            background_tasks=background_tasks,
+            **kwargs,
+        )
+
     @overload
     def run(
         self,
@@ -727,6 +789,69 @@ class Team:
             output_schema=output_schema,
             **kwargs,
         )
+
+    async def _arun(
+        self,
+        run_response: TeamRunOutput,
+        run_context: RunContext,
+        session_id: str,
+        user_id: Optional[str] = None,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
+        add_history_to_context: Optional[bool] = None,
+        debug_mode: Optional[bool] = None,
+        background_tasks: Optional[Any] = None,
+        **kwargs: Any,
+    ) -> TeamRunOutput:
+        return await _run._arun(
+            self,
+            run_response=run_response,
+            run_context=run_context,
+            session_id=session_id,
+            user_id=user_id,
+            response_format=response_format,
+            add_dependencies_to_context=add_dependencies_to_context,
+            add_session_state_to_context=add_session_state_to_context,
+            add_history_to_context=add_history_to_context,
+            debug_mode=debug_mode,
+            background_tasks=background_tasks,
+            **kwargs,
+        )
+
+    async def _arun_stream(
+        self,
+        run_response: TeamRunOutput,
+        run_context: RunContext,
+        session_id: str,
+        user_id: Optional[str] = None,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        stream_events: bool = False,
+        yield_run_output: bool = False,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
+        add_history_to_context: Optional[bool] = None,
+        debug_mode: Optional[bool] = None,
+        background_tasks: Optional[Any] = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[Union[TeamRunOutputEvent, RunOutputEvent, TeamRunOutput]]:
+        async for _item_ in _run._arun_stream(
+            self,
+            run_response=run_response,
+            run_context=run_context,
+            session_id=session_id,
+            user_id=user_id,
+            response_format=response_format,
+            stream_events=stream_events,
+            yield_run_output=yield_run_output,
+            add_dependencies_to_context=add_dependencies_to_context,
+            add_session_state_to_context=add_session_state_to_context,
+            add_history_to_context=add_history_to_context,
+            debug_mode=debug_mode,
+            background_tasks=background_tasks,
+            **kwargs,
+        ):
+            yield _item_
 
     @overload
     async def arun(
