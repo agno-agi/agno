@@ -51,7 +51,7 @@ if __name__ == "__main__":
         session_id=session_id,
         stream=True,
     )
-    agent.get_learning_machine().session_context_store.print(session_id=session_id)
+    agent.learning_machine.session_context_store.print(session_id=session_id)
 
     # Turn 2: Follow-up
     print("\n" + "=" * 60)
@@ -64,7 +64,7 @@ if __name__ == "__main__":
         session_id=session_id,
         stream=True,
     )
-    agent.get_learning_machine().session_context_store.print(session_id=session_id)
+    agent.learning_machine.session_context_store.print(session_id=session_id)
 
     # Turn 3: Test recall
     print("\n" + "=" * 60)
@@ -77,4 +77,4 @@ if __name__ == "__main__":
         session_id=session_id,
         stream=True,
     )
-    agent.get_learning_machine().session_context_store.print(session_id=session_id)
+    agent.learning_machine.session_context_store.print(session_id=session_id)

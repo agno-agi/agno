@@ -603,7 +603,7 @@ class Agent:
         self.telemetry = telemetry
 
         # Internal use: _learning holds the resolved LearningMachine instance
-        # use get_learning_machine() to access it.
+        # use agent.learning_machine to access it.
         self._learning: Optional[LearningMachine] = None
 
         # If we are caching the agent session
@@ -639,15 +639,18 @@ class Agent:
     def cached_session(self) -> Optional[AgentSession]:
         return self._cached_session
 
+    @property
+    def learning_machine(self) -> Optional[LearningMachine]:
+        if self._learning is None and self.learning is not None and self.learning is not False:
+            _init.set_learning_machine(self)
+        return self._learning
+
     # ---------------------------------------------------------------
     # _init module delegates
     # ---------------------------------------------------------------
 
     def set_id(self) -> None:
         return _init.set_id(self)
-
-    def get_learning_machine(self) -> Optional[LearningMachine]:
-        return _managers.get_learning_machine(self)
 
     def initialize_agent(self, debug_mode: Optional[bool] = None) -> None:
         return _init.initialize_agent(self, debug_mode=debug_mode)

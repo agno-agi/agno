@@ -45,7 +45,7 @@ if __name__ == "__main__":
     print("=" * 60 + "\n")
 
     # Check that LearningMachine exists but has no DB
-    lm = agent.get_learning_machine()
+    lm = agent.learning_machine
     print(f"LearningMachine exists: {lm is not None}")
     if lm:
         print(f"DB is None: {lm.db is None}")

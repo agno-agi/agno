@@ -67,7 +67,7 @@ if __name__ == "__main__":
     )
     print("\n--- Entities ---")
     pprint(
-        agent.get_learning_machine().entity_memory_store.search(
+        agent.learning_machine.entity_memory_store.search(
             query="techcorp", limit=10
         )
     )
@@ -98,7 +98,7 @@ if __name__ == "__main__":
     )
     print("\n--- Updated Entities ---")
     pprint(
-        agent.get_learning_machine().entity_memory_store.search(
+        agent.learning_machine.entity_memory_store.search(
             query="techcorp", limit=10
         )
     )
