@@ -110,6 +110,8 @@ def get_system_message(
     """
 
     # Extract values from run_context
+    from agno.team._init import _has_async_db, _set_memory_manager
+
     session_state = run_context.session_state if run_context else None
     user_id = run_context.user_id if run_context else None
 
@@ -137,7 +139,8 @@ def get_system_message(
 
         # Format the system message with the session state variables
         if team.resolve_in_context:
-            sys_message_content = team._format_message_with_state_variables(
+            sys_message_content = _format_message_with_state_variables(
+                team,
                 sys_message_content,
                 run_context=run_context,
             )
@@ -268,9 +271,9 @@ def get_system_message(
         if not user_id:
             user_id = "default"
         if team.memory_manager is None:
-            team._set_memory_manager()
+            _set_memory_manager(team)
             _memory_manager_not_set = True
-        if team._has_async_db():
+        if _has_async_db(team):
             raise ValueError(
                 "Sync get_system_message cannot retrieve user memories with an async database. "
                 "Use aget_system_message instead."
@@ -362,7 +365,8 @@ def get_system_message(
 
     # Format the system message with the session state variables
     if team.resolve_in_context:
-        system_message_content = team._format_message_with_state_variables(
+        system_message_content = _format_message_with_state_variables(
+            team,
             system_message_content,
             run_context=run_context,
         )
@@ -378,7 +382,7 @@ def get_system_message(
         system_message_content += f"<additional_context>\n{team.additional_context.strip()}\n</additional_context>\n\n"
 
     if add_session_state_to_context and session_state is not None:
-        system_message_content += team._get_formatted_session_state_for_system_message(session_state)
+        system_message_content += _get_formatted_session_state_for_system_message(team, session_state)
 
     # Add the JSON output prompt if output_schema is provided and the model does not support native structured outputs
     # or JSON schema outputs, or if use_json_mode is True
@@ -391,7 +395,7 @@ def get_system_message(
             and not team.use_json_mode
         )
     ):
-        system_message_content += f"{team._get_json_output_prompt(output_schema)}"
+        system_message_content += f"{_get_json_output_prompt(team, output_schema)}"
 
     return Message(role=team.system_message_role, content=system_message_content.strip())
 
@@ -410,6 +414,8 @@ async def aget_system_message(
     """Get the system message for the team."""
 
     # Extract values from run_context
+    from agno.team._init import _has_async_db, _set_memory_manager
+
     session_state = run_context.session_state if run_context else None
     user_id = run_context.user_id if run_context else None
 
@@ -437,7 +443,8 @@ async def aget_system_message(
 
         # Format the system message with the session state variables
         if team.resolve_in_context:
-            sys_message_content = team._format_message_with_state_variables(
+            sys_message_content = _format_message_with_state_variables(
+                team,
                 sys_message_content,
                 run_context=run_context,
             )
@@ -568,10 +575,10 @@ async def aget_system_message(
         if not user_id:
             user_id = "default"
         if team.memory_manager is None:
-            team._set_memory_manager()
+            _set_memory_manager(team)
             _memory_manager_not_set = True
 
-        if team._has_async_db():
+        if _has_async_db(team):
             user_memories = await team.memory_manager.aget_user_memories(user_id=user_id)  # type: ignore
         else:
             user_memories = team.memory_manager.get_user_memories(user_id=user_id)  # type: ignore
@@ -662,7 +669,8 @@ async def aget_system_message(
 
     # Format the system message with the session state variables
     if team.resolve_in_context:
-        system_message_content = team._format_message_with_state_variables(
+        system_message_content = _format_message_with_state_variables(
+            team,
             system_message_content,
             run_context=run_context,
         )
@@ -678,7 +686,7 @@ async def aget_system_message(
         system_message_content += f"<additional_context>\n{team.additional_context.strip()}\n</additional_context>\n\n"
 
     if add_session_state_to_context and session_state is not None:
-        system_message_content += team._get_formatted_session_state_for_system_message(session_state)
+        system_message_content += _get_formatted_session_state_for_system_message(team, session_state)
 
     # Add the JSON output prompt if output_schema is provided and the model does not support native structured outputs
     # or JSON schema outputs, or if use_json_mode is True
@@ -691,7 +699,7 @@ async def aget_system_message(
             and not team.use_json_mode
         )
     ):
-        system_message_content += f"{team._get_json_output_prompt(output_schema)}"
+        system_message_content += f"{_get_json_output_prompt(team, output_schema)}"
 
     return Message(role=team.system_message_role, content=system_message_content.strip())
 
@@ -811,7 +819,8 @@ def _get_run_messages(
 
     # 5. Add user message to run_messages (message second as per Dirk's requirement)
     # 5.1 Build user message if message is None, str or list
-    user_message = team._get_user_message(
+    user_message = _get_user_message(
+        team,
         run_response=run_response,
         run_context=run_context,
         input_message=input_message,
@@ -941,7 +950,8 @@ async def _aget_run_messages(
 
     # 5. Add user message to run_messages (message second as per Dirk's requirement)
     # 5.1 Build user message if message is None, str or list
-    user_message = await team._aget_user_message(
+    user_message = await _aget_user_message(
+        team,
         run_response=run_response,
         run_context=run_context,
         input_message=input_message,
@@ -975,6 +985,8 @@ def _get_user_message(
     **kwargs,
 ):
     # Get references from the knowledge base to use in the user message
+    from agno.team._utils import _convert_dependencies_to_string, _convert_documents_to_string
+
     references = None
 
     if input_message is None:
@@ -1076,7 +1088,8 @@ def _get_user_message(
                     log_warning(f"Failed to get references: {e}")
 
             if team.resolve_in_context:
-                user_msg_content = team._format_message_with_state_variables(
+                user_msg_content = _format_message_with_state_variables(
+                    team,
                     user_msg_content,
                     run_context=run_context,
                 )
@@ -1093,12 +1106,12 @@ def _get_user_message(
             ):
                 user_msg_content_str += "\n\nUse the following references from the knowledge base if it helps:\n"
                 user_msg_content_str += "<references>\n"
-                user_msg_content_str += team._convert_documents_to_string(references.references) + "\n"
+                user_msg_content_str += _convert_documents_to_string(team, references.references) + "\n"
                 user_msg_content_str += "</references>"
             # 4.2 Add context to user message
             if add_dependencies_to_context and run_context.dependencies is not None:
                 user_msg_content_str += "\n\n<additional context>\n"
-                user_msg_content_str += team._convert_dependencies_to_string(run_context.dependencies) + "\n"
+                user_msg_content_str += _convert_dependencies_to_string(team, run_context.dependencies) + "\n"
                 user_msg_content_str += "</additional context>"
 
             # Use the string version for the final content
@@ -1130,6 +1143,8 @@ async def _aget_user_message(
     **kwargs,
 ):
     # Get references from the knowledge base to use in the user message
+    from agno.team._utils import _convert_dependencies_to_string, _convert_documents_to_string
+
     references = None
 
     if input_message is None:
@@ -1231,7 +1246,8 @@ async def _aget_user_message(
                     log_warning(f"Failed to get references: {e}")
 
             if team.resolve_in_context:
-                user_msg_content = team._format_message_with_state_variables(
+                user_msg_content = _format_message_with_state_variables(
+                    team,
                     user_msg_content,
                     run_context=run_context,
                 )
@@ -1248,12 +1264,12 @@ async def _aget_user_message(
             ):
                 user_msg_content_str += "\n\nUse the following references from the knowledge base if it helps:\n"
                 user_msg_content_str += "<references>\n"
-                user_msg_content_str += team._convert_documents_to_string(references.references) + "\n"
+                user_msg_content_str += _convert_documents_to_string(team, references.references) + "\n"
                 user_msg_content_str += "</references>"
             # 4.2 Add context to user message
             if add_dependencies_to_context and run_context.dependencies is not None:
                 user_msg_content_str += "\n\n<additional context>\n"
-                user_msg_content_str += team._convert_dependencies_to_string(run_context.dependencies) + "\n"
+                user_msg_content_str += _convert_dependencies_to_string(team, run_context.dependencies) + "\n"
                 user_msg_content_str += "</additional context>"
 
             # Use the string version for the final content

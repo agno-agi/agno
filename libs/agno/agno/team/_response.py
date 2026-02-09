@@ -146,6 +146,8 @@ def parse_response_with_parser_model(
     team: "Team", model_response: ModelResponse, run_messages: RunMessages, run_context: Optional[RunContext] = None
 ) -> None:
     """Parse the model response using the parser model."""
+    from agno.team._messages import _get_messages_for_parser_model
+
     if team.parser_model is None:
         return
 
@@ -154,8 +156,8 @@ def parse_response_with_parser_model(
 
     if output_schema is not None:
         parser_response_format = get_response_format(team, team.parser_model, run_context=run_context)
-        messages_for_parser_model = team._get_messages_for_parser_model(
-            model_response, parser_response_format, run_context=run_context
+        messages_for_parser_model = _get_messages_for_parser_model(
+            team, model_response, parser_response_format, run_context=run_context
         )
         parser_model_response: ModelResponse = team.parser_model.response(
             messages=messages_for_parser_model,
@@ -170,6 +172,8 @@ async def aparse_response_with_parser_model(
     team: "Team", model_response: ModelResponse, run_messages: RunMessages, run_context: Optional[RunContext] = None
 ) -> None:
     """Parse the model response using the parser model."""
+    from agno.team._messages import _get_messages_for_parser_model
+
     if team.parser_model is None:
         return
 
@@ -178,8 +182,8 @@ async def aparse_response_with_parser_model(
 
     if output_schema is not None:
         parser_response_format = get_response_format(team, team.parser_model, run_context=run_context)
-        messages_for_parser_model = team._get_messages_for_parser_model(
-            model_response, parser_response_format, run_context=run_context
+        messages_for_parser_model = _get_messages_for_parser_model(
+            team, model_response, parser_response_format, run_context=run_context
         )
         parser_model_response: ModelResponse = await team.parser_model.aresponse(
             messages=messages_for_parser_model,
@@ -198,6 +202,8 @@ def parse_response_with_parser_model_stream(
     run_context: Optional[RunContext] = None,
 ):
     """Parse the model response using the parser model"""
+    from agno.team._messages import _get_messages_for_parser_model_stream
+
     if team.parser_model is not None:
         # run_context override for output_schema
         # Get output_schema from run_context
@@ -214,15 +220,16 @@ def parse_response_with_parser_model_stream(
 
             parser_model_response = ModelResponse(content="")
             parser_response_format = get_response_format(team, team.parser_model, run_context=run_context)
-            messages_for_parser_model = team._get_messages_for_parser_model_stream(
-                run_response, parser_response_format, run_context=run_context
+            messages_for_parser_model = _get_messages_for_parser_model_stream(
+                team, run_response, parser_response_format, run_context=run_context
             )
             for model_response_event in team.parser_model.response_stream(
                 messages=messages_for_parser_model,
                 response_format=parser_response_format,
                 stream_model_response=False,
             ):
-                yield from team._handle_model_response_chunk(
+                yield from _handle_model_response_chunk(
+                    team,
                     session=session,
                     run_response=run_response,
                     full_model_response=parser_model_response,
@@ -265,6 +272,8 @@ async def aparse_response_with_parser_model_stream(
     run_context: Optional[RunContext] = None,
 ):
     """Parse the model response using the parser model stream."""
+    from agno.team._messages import _get_messages_for_parser_model_stream
+
     if team.parser_model is not None:
         # run_context override for output_schema
         # Get output_schema from run_context
@@ -281,8 +290,8 @@ async def aparse_response_with_parser_model_stream(
 
             parser_model_response = ModelResponse(content="")
             parser_response_format = get_response_format(team, team.parser_model, run_context=run_context)
-            messages_for_parser_model = team._get_messages_for_parser_model_stream(
-                run_response, parser_response_format, run_context=run_context
+            messages_for_parser_model = _get_messages_for_parser_model_stream(
+                team, run_response, parser_response_format, run_context=run_context
             )
             model_response_stream = team.parser_model.aresponse_stream(
                 messages=messages_for_parser_model,
@@ -290,7 +299,8 @@ async def aparse_response_with_parser_model_stream(
                 stream_model_response=False,
             )
             async for model_response_event in model_response_stream:  # type: ignore
-                for event in team._handle_model_response_chunk(
+                for event in _handle_model_response_chunk(
+                    team,
                     session=session,
                     run_response=run_response,
                     full_model_response=parser_model_response,
@@ -332,10 +342,12 @@ async def aparse_response_with_parser_model_stream(
 
 def parse_response_with_output_model(team: "Team", model_response: ModelResponse, run_messages: RunMessages) -> None:
     """Parse the model response using the output model."""
+    from agno.team._messages import _get_messages_for_output_model
+
     if team.output_model is None:
         return
 
-    messages_for_output_model = team._get_messages_for_output_model(run_messages.messages)
+    messages_for_output_model = _get_messages_for_output_model(team, run_messages.messages)
     output_model_response: ModelResponse = team.output_model.response(messages=messages_for_output_model)
     model_response.content = output_model_response.content
 
@@ -348,6 +360,7 @@ def generate_response_with_output_model_stream(
     stream_events: bool = False,
 ):
     """Parse the model response using the output model stream."""
+    from agno.team._messages import _get_messages_for_output_model
     from agno.utils.events import (
         create_team_output_model_response_completed_event,
         create_team_output_model_response_started_event,
@@ -364,11 +377,12 @@ def generate_response_with_output_model_stream(
             store_events=team.store_events,
         )
 
-    messages_for_output_model = team._get_messages_for_output_model(run_messages.messages)
+    messages_for_output_model = _get_messages_for_output_model(team, run_messages.messages)
     model_response = ModelResponse(content="")
 
     for model_response_event in team.output_model.response_stream(messages=messages_for_output_model):
-        yield from team._handle_model_response_chunk(
+        yield from _handle_model_response_chunk(
+            team,
             session=session,
             run_response=run_response,
             full_model_response=model_response,
@@ -398,10 +412,12 @@ async def agenerate_response_with_output_model(
     team: "Team", model_response: ModelResponse, run_messages: RunMessages
 ) -> None:
     """Parse the model response using the output model stream."""
+    from agno.team._messages import _get_messages_for_output_model
+
     if team.output_model is None:
         return
 
-    messages_for_output_model = team._get_messages_for_output_model(run_messages.messages)
+    messages_for_output_model = _get_messages_for_output_model(team, run_messages.messages)
     output_model_response: ModelResponse = await team.output_model.aresponse(messages=messages_for_output_model)
     model_response.content = output_model_response.content
 
@@ -414,6 +430,7 @@ async def agenerate_response_with_output_model_stream(
     stream_events: bool = False,
 ):
     """Parse the model response using the output model stream."""
+    from agno.team._messages import _get_messages_for_output_model
     from agno.utils.events import (
         create_team_output_model_response_completed_event,
         create_team_output_model_response_started_event,
@@ -430,11 +447,12 @@ async def agenerate_response_with_output_model_stream(
             store_events=team.store_events,
         )
 
-    messages_for_output_model = team._get_messages_for_output_model(run_messages.messages)
+    messages_for_output_model = _get_messages_for_output_model(team, run_messages.messages)
     model_response = ModelResponse(content="")
 
     async for model_response_event in team.output_model.aresponse_stream(messages=messages_for_output_model):
-        for event in team._handle_model_response_chunk(
+        for event in _handle_model_response_chunk(
+            team,
             session=session,
             run_response=run_response,
             full_model_response=model_response,
@@ -933,14 +951,14 @@ def _update_run_response(
     run_response.messages = messages_for_run_response
 
     # Update the TeamRunOutput metrics
-    run_response.metrics = team._calculate_metrics(messages_for_run_response, current_run_metrics=run_response.metrics)
+    run_response.metrics = calculate_metrics(team, messages_for_run_response, current_run_metrics=run_response.metrics)
 
     if model_response.tool_executions:
         for tool_call in model_response.tool_executions:
             tool_name = tool_call.tool_name
             if tool_name and tool_name.lower() in ["think", "analyze"]:
                 tool_args = tool_call.tool_args or {}
-                team._update_reasoning_content_from_tool_call(run_response, tool_name, tool_args)
+                update_reasoning_content_from_tool_call(team, run_response, tool_name, tool_args)
 
 
 # ---------------------------------------------------------------------------
@@ -1051,7 +1069,8 @@ def _handle_model_response_stream(
                     )
                 continue
 
-        yield from team._handle_model_response_chunk(
+        yield from _handle_model_response_chunk(
+            team,
             session=session,
             run_response=run_response,
             full_model_response=full_model_response,
@@ -1080,7 +1099,7 @@ def _handle_model_response_stream(
     # Update the TeamRunOutput messages
     run_response.messages = messages_for_run_response
     # Update the TeamRunOutput metrics
-    run_response.metrics = team._calculate_metrics(messages_for_run_response, current_run_metrics=run_response.metrics)
+    run_response.metrics = calculate_metrics(team, messages_for_run_response, current_run_metrics=run_response.metrics)
 
     if stream_events and reasoning_state["reasoning_started"]:
         all_reasoning_steps: List[ReasoningStep] = []
@@ -1205,7 +1224,8 @@ async def _ahandle_model_response_stream(
                     )
                 continue
 
-        for event in team._handle_model_response_chunk(
+        for event in _handle_model_response_chunk(
+            team,
             session=session,
             run_response=run_response,
             full_model_response=full_model_response,
@@ -1235,7 +1255,7 @@ async def _ahandle_model_response_stream(
     # Update the TeamRunOutput messages
     run_response.messages = messages_for_run_response
     # Update the TeamRunOutput metrics
-    run_response.metrics = team._calculate_metrics(messages_for_run_response, current_run_metrics=run_response.metrics)
+    run_response.metrics = calculate_metrics(team, messages_for_run_response, current_run_metrics=run_response.metrics)
 
     if stream_events and reasoning_state["reasoning_started"]:
         all_reasoning_steps: List[ReasoningStep] = []
@@ -1303,14 +1323,14 @@ def _handle_model_response_chunk(
             if model_response_event.content is not None:
                 if parse_structured_output:
                     full_model_response.content = model_response_event.content
-                    team._convert_response_to_structured_format(full_model_response, run_context=run_context)
+                    _convert_response_to_structured_format(team, full_model_response, run_context=run_context)
                     # Get output_schema from run_context
                     output_schema = run_context.output_schema if run_context else None
                     content_type = "dict" if isinstance(output_schema, dict) else output_schema.__name__  # type: ignore
                     run_response.content_type = content_type
                 elif team._member_response_model is not None:
                     full_model_response.content = model_response_event.content
-                    team._convert_response_to_structured_format(full_model_response, run_context=run_context)
+                    _convert_response_to_structured_format(team, full_model_response, run_context=run_context)
                     content_type = (
                         "dict"
                         if isinstance(team._member_response_model, dict)
@@ -1514,8 +1534,8 @@ def _handle_model_response_chunk(
                     if tool_name.lower() in ["think", "analyze"]:
                         tool_args = tool_call.tool_args or {}
 
-                        reasoning_step = team._update_reasoning_content_from_tool_call(
-                            run_response, tool_name, tool_args
+                        reasoning_step = update_reasoning_content_from_tool_call(
+                            team, run_response, tool_name, tool_args
                         )
 
                         metrics = tool_call.metrics

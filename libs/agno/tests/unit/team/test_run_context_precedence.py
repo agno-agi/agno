@@ -6,7 +6,7 @@ from agno.run import RunContext
 from agno.run.cancel import cleanup_run
 from agno.run.team import TeamRunOutput
 from agno.session.team import TeamSession
-from agno.team import _run
+from agno.team import _init, _response, _run, _storage, _utils
 from agno.team.team import Team
 
 
@@ -22,23 +22,23 @@ def _make_precedence_test_team() -> Team:
 
 
 def _patch_team_dispatch_dependencies(team: Team, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(team, "_has_async_db", lambda: False)
+    monkeypatch.setattr(_init, "_has_async_db", lambda team: False)
     monkeypatch.setattr(team, "initialize_team", lambda debug_mode=None: None)
-    monkeypatch.setattr(team, "_initialize_session", lambda session_id=None, user_id=None: (session_id, user_id))
+    monkeypatch.setattr(_init, "_initialize_session", lambda team, session_id=None, user_id=None: (session_id, user_id))
     monkeypatch.setattr(
-        team,
+        _storage,
         "_read_or_create_session",
-        lambda session_id, user_id: TeamSession(session_id=session_id, user_id=user_id),
+        lambda team, session_id=None, user_id=None: TeamSession(session_id=session_id, user_id=user_id),
     )
-    monkeypatch.setattr(team, "_update_metadata", lambda session: None)
-    monkeypatch.setattr(team, "_initialize_session_state", lambda session_state, **kwargs: session_state)
-    monkeypatch.setattr(team, "_load_session_state", lambda session, session_state: session_state)
-    monkeypatch.setattr(team, "_resolve_run_dependencies", lambda run_context: None)
-    monkeypatch.setattr(team, "_get_response_format", lambda run_context=None: None)
+    monkeypatch.setattr(_storage, "_update_metadata", lambda team, session=None: None)
+    monkeypatch.setattr(_init, "_initialize_session_state", lambda team, session_state=None, **kwargs: session_state)
+    monkeypatch.setattr(_storage, "_load_session_state", lambda team, session=None, session_state=None: session_state)
+    monkeypatch.setattr(_run, "_resolve_run_dependencies", lambda team, run_context: None)
+    monkeypatch.setattr(_response, "get_response_format", lambda team, run_context=None: None)
     monkeypatch.setattr(
-        team,
+        _utils,
         "_get_effective_filters",
-        lambda knowledge_filters=None: {"team_filter": "default", **(knowledge_filters or {})},
+        lambda team, knowledge_filters=None: {"team_filter": "default", **(knowledge_filters or {})},
     )
 
 
@@ -47,6 +47,7 @@ def test_run_respects_run_context_precedence(monkeypatch: pytest.MonkeyPatch):
     _patch_team_dispatch_dependencies(team, monkeypatch)
 
     def fake_run(
+        team,
         run_response: TeamRunOutput,
         run_context: RunContext,
         session: TeamSession,
@@ -63,7 +64,7 @@ def test_run_respects_run_context_precedence(monkeypatch: pytest.MonkeyPatch):
         cleanup_run(run_response.run_id)  # type: ignore[arg-type]
         return run_response
 
-    monkeypatch.setattr(team, "_run", fake_run)
+    monkeypatch.setattr(_run, "_run", fake_run)
 
     preserved_context = RunContext(
         run_id="team-preserve",
@@ -142,6 +143,7 @@ async def test_arun_respects_run_context_precedence(monkeypatch: pytest.MonkeyPa
     _patch_team_dispatch_dependencies(team, monkeypatch)
 
     async def fake_arun(
+        team,
         run_response: TeamRunOutput,
         run_context: RunContext,
         session_id: str,
@@ -157,7 +159,7 @@ async def test_arun_respects_run_context_precedence(monkeypatch: pytest.MonkeyPa
     ) -> TeamRunOutput:
         return run_response
 
-    monkeypatch.setattr(team, "_arun", fake_arun)
+    monkeypatch.setattr(_run, "_arun", fake_arun)
 
     preserved_context = RunContext(
         run_id="ateam-preserve",

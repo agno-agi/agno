@@ -40,7 +40,9 @@ def get_telemetry_data(team: "Team") -> Dict[str, Any]:
 def log_team_telemetry(team: "Team", session_id: str, run_id: Optional[str] = None) -> None:
     """Send a telemetry event to the API for a created Team run"""
 
-    team._set_telemetry()
+    from agno.team._init import _set_telemetry
+
+    _set_telemetry(team)
     if not team.telemetry:
         return
 
@@ -57,7 +59,9 @@ def log_team_telemetry(team: "Team", session_id: str, run_id: Optional[str] = No
 async def alog_team_telemetry(team: "Team", session_id: str, run_id: Optional[str] = None) -> None:
     """Send a telemetry event to the API for a created Team async run"""
 
-    team._set_telemetry()
+    from agno.team._init import _set_telemetry
+
+    _set_telemetry(team)
     if not team.telemetry:
         return
 

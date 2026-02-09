@@ -131,6 +131,9 @@ def get_session(
     Returns:
         TeamSession: The TeamSession loaded from the database or created if it does not exist.
     """
+    from agno.team._init import _has_async_db
+    from agno.team._storage import _read_session
+
     if not session_id and not team.session_id:
         raise Exception("No session_id provided")
 
@@ -141,7 +144,7 @@ def get_session(
         if team._cached_session.session_id == session_id_to_load:
             return team._cached_session
 
-    if team._has_async_db():
+    if _has_async_db(team):
         raise ValueError("Async database not supported for get_session")
 
     # Load and return the session from the database
@@ -149,12 +152,13 @@ def get_session(
         loaded_session = None
         # We have a standalone team, so we are loading a TeamSession
         if team.workflow_id is None:
-            loaded_session = cast(TeamSession, team._read_session(session_id=session_id_to_load))  # type: ignore
+            loaded_session = cast(TeamSession, _read_session(team, session_id=session_id_to_load))  # type: ignore
         # We have a workflow team, so we are loading a WorkflowSession
         else:
             loaded_session = cast(
                 WorkflowSession,
-                team._read_session(
+                _read_session(
+                    team,
                     session_id=session_id_to_load,  # type: ignore
                     session_type=SessionType.WORKFLOW,
                 ),
@@ -182,6 +186,9 @@ async def aget_session(
     Returns:
         TeamSession: The TeamSession loaded from the database or created if it does not exist.
     """
+    from agno.team._init import _has_async_db
+    from agno.team._storage import _aread_session, _read_session
+
     if not session_id and not team.session_id:
         raise Exception("No session_id provided")
 
@@ -197,16 +204,17 @@ async def aget_session(
         loaded_session = None
         # We have a standalone team, so we are loading a TeamSession
         if team.workflow_id is None:
-            if team._has_async_db():
-                loaded_session = cast(TeamSession, await team._aread_session(session_id=session_id_to_load))  # type: ignore
+            if _has_async_db(team):
+                loaded_session = cast(TeamSession, await _aread_session(team, session_id=session_id_to_load))  # type: ignore
             else:
-                loaded_session = cast(TeamSession, team._read_session(session_id=session_id_to_load))  # type: ignore
+                loaded_session = cast(TeamSession, _read_session(team, session_id=session_id_to_load))  # type: ignore
         # We have a workflow team, so we are loading a WorkflowSession
         else:
-            if team._has_async_db():
+            if _has_async_db(team):
                 loaded_session = cast(
                     WorkflowSession,
-                    await team._aread_session(
+                    await _aread_session(
+                        team,
                         session_id=session_id_to_load,  # type: ignore
                         session_type=SessionType.WORKFLOW,
                     ),
@@ -214,7 +222,8 @@ async def aget_session(
             else:
                 loaded_session = cast(
                     WorkflowSession,
-                    team._read_session(
+                    _read_session(
+                        team,
                         session_id=session_id_to_load,  # type: ignore
                         session_type=SessionType.WORKFLOW,
                     ),
@@ -237,7 +246,11 @@ def save_session(team: "Team", session: TeamSession) -> None:
     Args:
         session: The TeamSession to save.
     """
-    if team._has_async_db():
+    from agno.team._init import _has_async_db
+    from agno.team._run import _scrub_member_responses
+    from agno.team._storage import _upsert_session
+
+    if _has_async_db(team):
         raise ValueError("Async database not supported for save_session")
 
     if team.db is not None and team.parent_team_id is None and team.workflow_id is None:
@@ -255,8 +268,8 @@ def save_session(team: "Team", session: TeamSession) -> None:
                         run.member_responses = []
                     else:
                         # Scrub individual member responses based on their storage flags
-                        team._scrub_member_responses(run.member_responses)
-        team._upsert_session(session=session)
+                        _scrub_member_responses(team, run.member_responses)
+        _upsert_session(team, session=session)
         log_debug(f"Created or updated TeamSession record: {session.session_id}")
 
 
@@ -267,6 +280,10 @@ async def asave_session(team: "Team", session: TeamSession) -> None:
     Args:
         session: The TeamSession to save.
     """
+    from agno.team._init import _has_async_db
+    from agno.team._run import _scrub_member_responses
+    from agno.team._storage import _aupsert_session, _upsert_session
+
     if team.db is not None and team.parent_team_id is None and team.workflow_id is None:
         if session.session_data is not None and "session_state" in session.session_data:
             session.session_data["session_state"].pop("current_session_id", None)  # type: ignore
@@ -282,12 +299,12 @@ async def asave_session(team: "Team", session: TeamSession) -> None:
                         run.member_responses = []
                     else:
                         # Scrub individual member responses based on their storage flags
-                        team._scrub_member_responses(run.member_responses)
+                        _scrub_member_responses(team, run.member_responses)
 
-        if team._has_async_db():
-            await team._aupsert_session(session=session)
+        if _has_async_db(team):
+            await _aupsert_session(team, session=session)
         else:
-            team._upsert_session(session=session)
+            _upsert_session(team, session=session)
         log_debug(f"Created or updated TeamSession record: {session.session_id}")
 
 
@@ -564,9 +581,11 @@ def delete_session(team: "Team", session_id: str):
 
 async def adelete_session(team: "Team", session_id: str):
     """Delete the current session and save to storage"""
+    from agno.team._init import _has_async_db
+
     if team.db is None:
         return
-    if team._has_async_db():
+    if _has_async_db(team):
         await team.db.delete_session(session_id=session_id)  # type: ignore
     else:
         team.db.delete_session(session_id=session_id)
@@ -761,8 +780,10 @@ def get_user_memories(team: "Team", user_id: Optional[str] = None) -> Optional[L
     Returns:
         Optional[List[UserMemory]]: The user memories.
     """
+    from agno.team._init import _set_memory_manager
+
     if team.memory_manager is None:
-        team._set_memory_manager()
+        _set_memory_manager(team)
 
     user_id = user_id if user_id is not None else team.user_id
     if user_id is None:
@@ -779,8 +800,10 @@ async def aget_user_memories(team: "Team", user_id: Optional[str] = None) -> Opt
     Returns:
         Optional[List[UserMemory]]: The user memories.
     """
+    from agno.team._init import _set_memory_manager
+
     if team.memory_manager is None:
-        team._set_memory_manager()
+        _set_memory_manager(team)
 
     user_id = user_id if user_id is not None else team.user_id
     if user_id is None:
