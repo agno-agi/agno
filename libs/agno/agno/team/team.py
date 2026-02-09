@@ -52,7 +52,7 @@ from agno.run.team import (
 )
 from agno.session import SessionSummaryManager, TeamSession, WorkflowSession
 from agno.session.summary import SessionSummary
-from agno.team import _cli, _hooks, _init, _messages, _response, _run, _storage, _telemetry, _tools
+from agno.team import _cli, _default_tools, _hooks, _init, _messages, _response, _run, _storage, _telemetry, _tools
 from agno.tools import Toolkit
 from agno.tools.function import Function
 from agno.utils.log import (
@@ -1862,28 +1862,28 @@ class Team:
     ###########################################################################
 
     def _get_update_user_memory_function(self, user_id: Optional[str] = None, async_mode: bool = False) -> Function:
-        return _tools._get_update_user_memory_function(self, user_id=user_id, async_mode=async_mode)
+        return _default_tools._get_update_user_memory_function(self, user_id=user_id, async_mode=async_mode)
 
     def get_member_information(self) -> str:
-        return _tools.get_member_information(self)
+        return _default_tools.get_member_information(self)
 
     def _get_chat_history_function(self, session: TeamSession, async_mode: bool = False):
-        return _tools._get_chat_history_function(self, session=session, async_mode=async_mode)
+        return _default_tools._get_chat_history_function(self, session=session, async_mode=async_mode)
 
     def _update_session_state_tool(self, run_context: RunContext, session_state_updates: dict) -> str:
-        return _tools._update_session_state_tool(
+        return _default_tools._update_session_state_tool(
             self, run_context=run_context, session_state_updates=session_state_updates
         )
 
     def _get_previous_sessions_messages_function(
         self, num_history_sessions: Optional[int] = 2, user_id: Optional[str] = None, async_mode: bool = False
     ):
-        return _tools._get_previous_sessions_messages_function(
+        return _default_tools._get_previous_sessions_messages_function(
             self, num_history_sessions=num_history_sessions, user_id=user_id, async_mode=async_mode
         )
 
     def _get_history_for_member_agent(self, session: TeamSession, member_agent: Union[Agent, "Team"]) -> List[Message]:
-        return _tools._get_history_for_member_agent(self, session=session, member_agent=member_agent)
+        return _default_tools._get_history_for_member_agent(self, session=session, member_agent=member_agent)
 
     def _determine_team_member_interactions(
         self,
@@ -1893,12 +1893,12 @@ class Team:
         audio: List[Audio],
         files: List[File],
     ) -> Optional[str]:
-        return _tools._determine_team_member_interactions(
+        return _default_tools._determine_team_member_interactions(
             self, team_run_context=team_run_context, images=images, videos=videos, audio=audio, files=files
         )
 
     def _find_member_by_id(self, member_id: str) -> Optional[Tuple[int, Union[Agent, "Team"]]]:
-        return _tools._find_member_by_id(self, member_id=member_id)
+        return _default_tools._find_member_by_id(self, member_id=member_id)
 
     def _get_delegate_task_function(
         self,
@@ -1920,7 +1920,7 @@ class Team:
         add_session_state_to_context: Optional[bool] = None,
         debug_mode: Optional[bool] = None,
     ) -> Function:
-        return _tools._get_delegate_task_function(
+        return _default_tools._get_delegate_task_function(
             self,
             run_response=run_response,
             run_context=run_context,
@@ -2181,7 +2181,7 @@ class Team:
     ###########################################################################
 
     def add_to_knowledge(self, query: str, result: str) -> str:
-        return _tools.add_to_knowledge(self, query=query, result=result)
+        return _default_tools.add_to_knowledge(self, query=query, result=result)
 
     def get_relevant_docs_from_knowledge(
         self,
@@ -2191,7 +2191,7 @@ class Team:
         run_context: Optional[RunContext] = None,
         **kwargs,
     ) -> Optional[List[Union[Dict[str, Any], str]]]:
-        return _tools.get_relevant_docs_from_knowledge(
+        return _default_tools.get_relevant_docs_from_knowledge(
             self, query=query, num_documents=num_documents, filters=filters, run_context=run_context, **kwargs
         )
 
@@ -2203,17 +2203,17 @@ class Team:
         run_context: Optional[RunContext] = None,
         **kwargs,
     ) -> Optional[List[Union[Dict[str, Any], str]]]:
-        return await _tools.aget_relevant_docs_from_knowledge(
+        return await _default_tools.aget_relevant_docs_from_knowledge(
             self, query=query, num_documents=num_documents, filters=filters, run_context=run_context, **kwargs
         )
 
     def _convert_documents_to_string(self, docs: List[Union[Dict[str, Any], str]]) -> str:
-        return _tools._convert_documents_to_string(self, docs=docs)
+        return _default_tools._convert_documents_to_string(self, docs=docs)
 
     def _get_effective_filters(
         self, knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
     ) -> Optional[Any]:
-        return _tools._get_effective_filters(self, knowledge_filters=knowledge_filters)
+        return _default_tools._get_effective_filters(self, knowledge_filters=knowledge_filters)
 
     def _get_search_knowledge_base_function(
         self,
@@ -2222,7 +2222,7 @@ class Team:
         async_mode: bool = False,
         run_context: Optional[RunContext] = None,
     ) -> Function:
-        return _tools._get_search_knowledge_base_function(
+        return _default_tools._get_search_knowledge_base_function(
             self,
             run_response=run_response,
             knowledge_filters=knowledge_filters,
@@ -2237,7 +2237,7 @@ class Team:
         async_mode: bool = False,
         run_context: Optional[RunContext] = None,
     ) -> Function:
-        return _tools._get_search_knowledge_base_with_agentic_filters_function(
+        return _default_tools._get_search_knowledge_base_with_agentic_filters_function(
             self,
             run_response=run_response,
             knowledge_filters=knowledge_filters,
