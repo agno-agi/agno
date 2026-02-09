@@ -100,6 +100,30 @@ async def test_member_user_input_async(shared_db):
     assert result.content is not None
 
 
+def test_member_user_input_invalid_field_name(shared_db):
+    """Providing an invalid field name leaves the requirement unresolved."""
+    agent = _make_agent(db=shared_db)
+    team = _make_team(agent, db=shared_db)
+
+    response = team.run("Get me the weather", session_id="test_user_input_invalid_field")
+
+    assert response.is_paused
+    req = response.active_requirements[0]
+    assert req.needs_user_input
+
+    # Provide an invalid field name — should not mark as resolved
+    req.provide_user_input({"nonexistent_field": "Tokyo"})
+    assert not req.is_resolved()
+
+    # Now provide the correct field name
+    req.provide_user_input({"city": "Tokyo"})
+    assert req.is_resolved()
+
+    result = team.continue_run(response)
+    assert not result.is_paused
+    assert result.content is not None
+
+
 def test_member_user_input_streaming(shared_db):
     """Streaming user input flow."""
     agent = _make_agent(db=shared_db)

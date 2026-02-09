@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from agno.team.team import Team
 
-from copy import deepcopy
+from copy import copy, deepcopy
 from typing import (
     Any,
     Callable,
@@ -468,7 +468,7 @@ def _propagate_member_pause(
         run_response.requirements = []
     member_id = get_member_id(member_agent)
     for req in member_run_response.requirements:
-        req_copy = deepcopy(req)
+        req_copy = copy(req)
         if req_copy.member_agent_id is None:
             req_copy.member_agent_id = member_id
         if req_copy.member_agent_name is None:

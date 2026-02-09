@@ -2409,12 +2409,12 @@ def _route_requirements_to_members(
             member_reqs.setdefault(mid, []).append(req)
 
     member_results: List[str] = []
-    still_paused: List[Any] = []
 
     for member_id, reqs in member_reqs.items():
         route_result = _find_member_route_by_id(team, member_id)
         if route_result is None:
             log_warning(f"Could not find member with ID {member_id} for continue_run routing")
+            member_results.append(f"[{member_id}]: Could not route requirement — member not found")
             continue
 
         _, member = route_result
@@ -2451,7 +2451,6 @@ def _route_requirements_to_members(
             from agno.team._tools import _propagate_member_pause
 
             _propagate_member_pause(run_response, member, member_response)
-            still_paused.append(member_id)
         else:
             content = getattr(member_response, "content", None) or "Task completed"
             member_results.append(f"[{member.name or member_id}]: {content}")
@@ -2488,7 +2487,7 @@ async def _aroute_requirements_to_members(
         route_result = _find_member_route_by_id(team, member_id)
         if route_result is None:
             log_warning(f"Could not find member with ID {member_id} for continue_run routing")
-            return None
+            return f"[{member_id}]: Could not route requirement — member not found"
 
         _, member = route_result
         # Get the member's paused RunOutput from the requirement
@@ -2672,8 +2671,10 @@ def continue_run_dispatch(
         # Temporarily set member reqs for routing
         orig_reqs = run_response.requirements
         run_response.requirements = member_reqs
-        member_results = _route_requirements_to_members(team, run_response=run_response, session=team_session)
-        run_response.requirements = orig_reqs
+        try:
+            member_results = _route_requirements_to_members(team, run_response=run_response, session=team_session)
+        finally:
+            run_response.requirements = orig_reqs
 
         # Check if any members are still paused
         if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
@@ -3393,10 +3394,12 @@ async def _acontinue_run_impl(
                     ]
                     orig_reqs = run_response.requirements
                     run_response.requirements = member_reqs
-                    member_results = await _aroute_requirements_to_members(
-                        team, run_response=run_response, session=team_session
-                    )
-                    run_response.requirements = orig_reqs
+                    try:
+                        member_results = await _aroute_requirements_to_members(
+                            team, run_response=run_response, session=team_session
+                        )
+                    finally:
+                        run_response.requirements = orig_reqs
 
                     # Check if still paused
                     if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
@@ -3431,6 +3434,7 @@ async def _acontinue_run_impl(
                     )
 
                     run_response.status = RunStatus.running
+                    run_response.content = None
 
                     await aregister_run(run_response.run_id)  # type: ignore
 
@@ -3659,10 +3663,12 @@ async def _acontinue_run_stream_impl(
                     ]
                     orig_reqs = run_response.requirements
                     run_response.requirements = member_reqs
-                    member_results = await _aroute_requirements_to_members(
-                        team, run_response=run_response, session=team_session
-                    )
-                    run_response.requirements = orig_reqs
+                    try:
+                        member_results = await _aroute_requirements_to_members(
+                            team, run_response=run_response, session=team_session
+                        )
+                    finally:
+                        run_response.requirements = orig_reqs
 
                     if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
                         from agno.team import _hooks
@@ -3701,6 +3707,7 @@ async def _acontinue_run_stream_impl(
                     )
 
                     run_response.status = RunStatus.running
+                    run_response.content = None
                     await aregister_run(run_response.run_id)  # type: ignore
 
                     # Yield RunContinued event
