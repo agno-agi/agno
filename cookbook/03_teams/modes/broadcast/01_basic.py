@@ -7,7 +7,6 @@ into a unified answer.
 
 This is ideal for getting multiple perspectives on a single question.
 
-Run: .venvs/demo/bin/python cookbook/03_teams/modes/broadcast/01_basic.py
 """
 
 from agno.agent import Agent
