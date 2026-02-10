@@ -7,7 +7,6 @@ a single specialist agent and returns their response directly (no synthesis).
 This is ideal for language routing, domain dispatch, or any scenario where
 one specialist should handle the entire request.
 
-Run: .venvs/demo/bin/python cookbook/03_teams/modes/route/01_basic.py
 """
 
 from agno.agent import Agent
