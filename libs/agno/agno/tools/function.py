@@ -144,9 +144,16 @@ class Function(BaseModel):
     _files: Optional[Sequence[File]] = None
 
     def to_dict(self) -> Dict[str, Any]:
+        """Serialize the function definition for LLM API calls.
+
+        Only includes fields that are part of the standard function calling
+        schema.  Internal execution flags (requires_confirmation,
+        external_execution, etc.) are intentionally excluded because strict
+        providers like Mistral reject unknown fields with 400 Bad Request.
+        """
         return self.model_dump(
             exclude_none=True,
-            include={"name", "description", "parameters", "strict", "requires_confirmation", "external_execution"},
+            include={"name", "description", "parameters", "strict"},
         )
 
     @classmethod
