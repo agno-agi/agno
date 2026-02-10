@@ -627,7 +627,7 @@ class Function(BaseModel):
 
         try:
             with open(cache_file, "w") as f:
-                json.dump({"timestamp": time(), "result": result}, f)
+                json.dump({"timestamp": time(), "result": result}, f, default=lambda o: o.model_dump() if hasattr(o, "model_dump") else str(o))
         except Exception as e:
             log_error(f"Error writing cache: {e}")
 
