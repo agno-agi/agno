@@ -299,17 +299,35 @@ def _run_tasks(
                 )
                 accumulated_messages.append(state_message)
 
-            # Get model response
-            model_response: ModelResponse = team.model.response(
-                messages=accumulated_messages,
-                response_format=response_format,
-                tools=_tools,
-                tool_choice=team.tool_choice,
-                tool_call_limit=team.tool_call_limit,
-                run_response=run_response,
-                send_media_to_model=team.send_media_to_model,
-                compression_manager=team.compression_manager if team.compress_tool_results else None,
-            )
+            # Get model response (with retry logic)
+            num_attempts = team.retries + 1
+            for attempt in range(num_attempts):
+                try:
+                    model_response: ModelResponse = team.model.response(
+                        messages=accumulated_messages,
+                        response_format=response_format,
+                        tools=_tools,
+                        tool_choice=team.tool_choice,
+                        tool_call_limit=team.tool_call_limit,
+                        run_response=run_response,
+                        send_media_to_model=team.send_media_to_model,
+                        compression_manager=team.compression_manager if team.compress_tool_results else None,
+                    )
+                    break
+                except Exception as e:
+                    if attempt < num_attempts - 1:
+                        delay = (
+                            team.delay_between_retries * (2**attempt)
+                            if team.exponential_backoff
+                            else team.delay_between_retries
+                        )
+                        log_warning(
+                            f"Task iteration {iteration + 1}, attempt {attempt + 1}/{num_attempts} "
+                            f"failed: {e}. Retrying in {delay}s..."
+                        )
+                        time.sleep(delay)
+                        continue
+                    raise
 
             raise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -1545,17 +1563,35 @@ async def _arun_tasks(
                 )
                 accumulated_messages.append(state_message)
 
-            # Get model response
-            model_response: ModelResponse = await team.model.aresponse(
-                messages=accumulated_messages,
-                response_format=response_format,
-                tools=_tools,
-                tool_choice=team.tool_choice,
-                tool_call_limit=team.tool_call_limit,
-                run_response=run_response,
-                send_media_to_model=team.send_media_to_model,
-                compression_manager=team.compression_manager if team.compress_tool_results else None,
-            )  # type: ignore
+            # Get model response (with retry logic)
+            num_attempts = team.retries + 1
+            for attempt in range(num_attempts):
+                try:
+                    model_response: ModelResponse = await team.model.aresponse(
+                        messages=accumulated_messages,
+                        response_format=response_format,
+                        tools=_tools,
+                        tool_choice=team.tool_choice,
+                        tool_call_limit=team.tool_call_limit,
+                        run_response=run_response,
+                        send_media_to_model=team.send_media_to_model,
+                        compression_manager=team.compression_manager if team.compress_tool_results else None,
+                    )  # type: ignore
+                    break
+                except Exception as e:
+                    if attempt < num_attempts - 1:
+                        delay = (
+                            team.delay_between_retries * (2**attempt)
+                            if team.exponential_backoff
+                            else team.delay_between_retries
+                        )
+                        log_warning(
+                            f"Task iteration {iteration + 1}, attempt {attempt + 1}/{num_attempts} "
+                            f"failed: {e}. Retrying in {delay}s..."
+                        )
+                        await asyncio.sleep(delay)
+                        continue
+                    raise
 
             await araise_if_cancelled(run_response.run_id)  # type: ignore
 
