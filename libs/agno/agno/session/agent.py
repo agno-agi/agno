@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from datetime import datetime
 from typing import Any, Dict, List, Mapping, Optional, Union
 
 from agno.models.message import Message
@@ -43,11 +44,27 @@ class AgentSession:
     # The unix timestamp when this session was last updated
     updated_at: Optional[int] = None
 
+    @staticmethod
+    def _make_json_serializable(obj: Any) -> Any:
+        """Recursively convert non-JSON-serializable types in nested structures."""
+        if isinstance(obj, datetime):
+            return obj.isoformat()
+        elif isinstance(obj, dict):
+            return {k: AgentSession._make_json_serializable(v) for k, v in obj.items()}
+        elif isinstance(obj, (list, tuple)):
+            return [AgentSession._make_json_serializable(item) for item in obj]
+        return obj
+
     def to_dict(self) -> Dict[str, Any]:
         session_dict = asdict(self)
 
         session_dict["runs"] = [run.to_dict() for run in self.runs] if self.runs else None
         session_dict["summary"] = self.summary.to_dict() if self.summary else None
+
+        # Ensure JSON-serializable values in arbitrary dict fields
+        for key in ("session_data", "metadata", "agent_data"):
+            if session_dict.get(key) is not None:
+                session_dict[key] = self._make_json_serializable(session_dict[key])
 
         return session_dict
 
