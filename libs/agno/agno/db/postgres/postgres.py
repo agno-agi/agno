@@ -285,7 +285,10 @@ class PostgresDb(BaseDb):
                 # Single-column FK
                 if "foreign_key" in col_config:
                     fk_ref = self._resolve_fk_reference(col_config["foreign_key"])
-                    column_args.append(ForeignKey(fk_ref))
+                    fk_kwargs: Dict[str, Any] = {}
+                    if "ondelete" in col_config:
+                        fk_kwargs["ondelete"] = col_config["ondelete"]
+                    column_args.append(ForeignKey(fk_ref, **fk_kwargs))
 
                 columns.append(Column(*column_args, **column_kwargs))
 

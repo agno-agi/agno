@@ -260,6 +260,7 @@ def _get_schedule_runs_table_schema(
             "nullable": False,
             "index": True,
             "foreign_key": f"{db_schema}.{schedules_table_name}.id",
+            "ondelete": "CASCADE",
         },
         "attempt": {"type": BigInteger, "nullable": False},
         "triggered_at": {"type": BigInteger, "nullable": True},

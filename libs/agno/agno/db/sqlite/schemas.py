@@ -249,6 +249,7 @@ def _get_schedule_runs_table_schema(schedules_table_name: str = "agno_schedules"
             "nullable": False,
             "index": True,
             "foreign_key": f"{schedules_table_name}.id",
+            "ondelete": "CASCADE",
         },
         "attempt": {"type": BigInteger, "nullable": False},
         "triggered_at": {"type": BigInteger, "nullable": True},
