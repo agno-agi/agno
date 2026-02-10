@@ -4,7 +4,6 @@ Coordinate Mode with Structured Output
 Demonstrates coordination that produces a Pydantic-validated structured response.
 The team leader coordinates members and formats the final output to match a schema.
 
-Run: .venvs/demo/bin/python cookbook/03_teams/modes/coordinate/03_structured_output.py
 """
 
 from typing import List
