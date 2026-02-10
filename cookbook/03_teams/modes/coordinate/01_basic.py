@@ -7,7 +7,6 @@ Demonstrates the default `mode=coordinate` where the team leader:
 3. Crafts specific tasks for each selected member
 4. Synthesizes member responses into a final answer
 
-Run: .venvs/demo/bin/python cookbook/03_teams/modes/coordinate/01_basic.py
 """
 
 from agno.agent import Agent
