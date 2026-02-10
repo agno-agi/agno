@@ -9,7 +9,7 @@ from agno.models.cerebras import Cerebras
 @pytest.fixture(scope="module")
 def cerebras_model():
     """Fixture that provides a Cerebras model and reuses it across all tests in the module."""
-    return Cerebras(id="gpt-oss-120b")
+    return Cerebras(id="gpt-oss-120b", retries=3, delay_between_retries=5, exponential_backoff=True)
 
 
 def _assert_metrics(response: RunOutput):
