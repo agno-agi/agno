@@ -90,7 +90,7 @@ def get_session(
     if not session_id and not agent.session_id:
         raise Exception("No session_id provided")
 
-    session_id_to_load = session_id or agent.session_id
+    session_id_to_load: str = session_id or agent.session_id  # type: ignore[assignment]
 
     # If there is a cached session, return it
     if agent.cache_session and hasattr(agent, "_cached_session") and agent._cached_session is not None:
@@ -102,13 +102,13 @@ def get_session(
 
     # Load and return the session from the database
     if agent.db is not None:
-        loaded_session = None
+        loaded_session: Optional[Union[AgentSession, TeamSession, WorkflowSession]] = None
 
         # We have a standalone agent, so we are loading an AgentSession
         if agent.team_id is None and agent.workflow_id is None:
             loaded_session = cast(
                 AgentSession,
-                _storage.read_session(agent, session_id=session_id_to_load, session_type=SessionType.AGENT),  # type: ignore
+                _storage.read_session(agent, session_id=session_id_to_load, session_type=SessionType.AGENT),
             )
 
         # We have a team member agent, so we are loading a TeamSession
@@ -116,7 +116,7 @@ def get_session(
             # Load session for team member agents
             loaded_session = cast(
                 TeamSession,
-                _storage.read_session(agent, session_id=session_id_to_load, session_type=SessionType.TEAM),  # type: ignore
+                _storage.read_session(agent, session_id=session_id_to_load, session_type=SessionType.TEAM),
             )
 
         # We have a workflow member agent, so we are loading a WorkflowSession
@@ -124,7 +124,7 @@ def get_session(
             # Load session for workflow memberagents
             loaded_session = cast(
                 WorkflowSession,
-                _storage.read_session(agent, session_id=session_id_to_load, session_type=SessionType.WORKFLOW),  # type: ignore
+                _storage.read_session(agent, session_id=session_id_to_load, session_type=SessionType.WORKFLOW),
             )
 
         # Cache the session if relevant
@@ -155,7 +155,7 @@ async def aget_session(
     if not session_id and not agent.session_id:
         raise Exception("No session_id provided")
 
-    session_id_to_load = session_id or agent.session_id
+    session_id_to_load: str = session_id or agent.session_id  # type: ignore[assignment]
 
     # If there is a cached session, return it
     if agent.cache_session and hasattr(agent, "_cached_session") and agent._cached_session is not None:
@@ -164,13 +164,13 @@ async def aget_session(
 
     # Load and return the session from the database
     if agent.db is not None:
-        loaded_session = None
+        loaded_session: Optional[Union[AgentSession, TeamSession, WorkflowSession]] = None
 
         # We have a standalone agent, so we are loading an AgentSession
         if agent.team_id is None and agent.workflow_id is None:
             loaded_session = cast(
                 AgentSession,
-                await _storage.aread_session(agent, session_id=session_id_to_load, session_type=SessionType.AGENT),  # type: ignore
+                await _storage.aread_session(agent, session_id=session_id_to_load, session_type=SessionType.AGENT),
             )
 
         # We have a team member agent, so we are loading a TeamSession
@@ -178,7 +178,7 @@ async def aget_session(
             # Load session for team member agents
             loaded_session = cast(
                 TeamSession,
-                await _storage.aread_session(agent, session_id=session_id_to_load, session_type=SessionType.TEAM),  # type: ignore
+                await _storage.aread_session(agent, session_id=session_id_to_load, session_type=SessionType.TEAM),
             )
 
         # We have a workflow member agent, so we are loading a WorkflowSession
@@ -186,7 +186,7 @@ async def aget_session(
             # Load session for workflow memberagents
             loaded_session = cast(
                 WorkflowSession,
-                await _storage.aread_session(agent, session_id=session_id_to_load, session_type=SessionType.WORKFLOW),  # type: ignore
+                await _storage.aread_session(agent, session_id=session_id_to_load, session_type=SessionType.WORKFLOW),
             )
 
         # Cache the session if relevant
