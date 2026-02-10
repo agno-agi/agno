@@ -975,22 +975,13 @@ def run_dispatch(
             output_schema=opts.output_schema,
         )
         # Apply options with precedence: explicit args > existing run_context > resolved defaults.
-        if dependencies_provided:
-            run_context.dependencies = opts.dependencies
-        elif run_context.dependencies is None:
-            run_context.dependencies = opts.dependencies
-        if knowledge_filters_provided:
-            run_context.knowledge_filters = opts.knowledge_filters
-        elif run_context.knowledge_filters is None:
-            run_context.knowledge_filters = opts.knowledge_filters
-        if metadata_provided:
-            run_context.metadata = opts.metadata
-        elif run_context.metadata is None:
-            run_context.metadata = opts.metadata
-        if output_schema_provided:
-            run_context.output_schema = opts.output_schema
-        elif run_context.output_schema is None:
-            run_context.output_schema = opts.output_schema
+        opts.apply_to_context(
+            run_context,
+            dependencies_provided=dependencies_provided,
+            knowledge_filters_provided=knowledge_filters_provided,
+            metadata_provided=metadata_provided,
+            output_schema_provided=output_schema_provided,
+        )
 
         # Resolve callable dependencies once before retry loop
         if run_context.dependencies is not None:
@@ -1917,22 +1908,13 @@ def arun_dispatch(  # type: ignore
         output_schema=opts.output_schema,
     )
     # Apply options with precedence: explicit args > existing run_context > resolved defaults.
-    if dependencies_provided:
-        run_context.dependencies = opts.dependencies
-    elif run_context.dependencies is None:
-        run_context.dependencies = opts.dependencies
-    if knowledge_filters_provided:
-        run_context.knowledge_filters = opts.knowledge_filters
-    elif run_context.knowledge_filters is None:
-        run_context.knowledge_filters = opts.knowledge_filters
-    if metadata_provided:
-        run_context.metadata = opts.metadata
-    elif run_context.metadata is None:
-        run_context.metadata = opts.metadata
-    if output_schema_provided:
-        run_context.output_schema = opts.output_schema
-    elif run_context.output_schema is None:
-        run_context.output_schema = opts.output_schema
+    opts.apply_to_context(
+        run_context,
+        dependencies_provided=dependencies_provided,
+        knowledge_filters_provided=knowledge_filters_provided,
+        metadata_provided=metadata_provided,
+        output_schema_provided=output_schema_provided,
+    )
 
     # Configure the model for runs
     response_format: Optional[Union[Dict, Type[BaseModel]]] = (
@@ -1992,20 +1974,6 @@ def arun_dispatch(  # type: ignore
         )
 
 
-def _handle_event(
-    team: "Team",
-    event: Union[RunOutputEvent, TeamRunOutputEvent],
-    run_response: TeamRunOutput,
-):
-    # We only store events that are not run_response_content events
-    events_to_skip = [e.value for e in team.events_to_skip] if team.events_to_skip else []
-    if team.store_events and event.event not in events_to_skip:
-        if run_response.events is None:
-            run_response.events = []
-        run_response.events.append(event)
-    return event
-
-
 def _update_team_media(team: "Team", run_response: Union[TeamRunOutput, RunOutput]) -> None:
     """Update the team state with the run response."""
     if run_response.images is not None:
@@ -2037,7 +2005,7 @@ def _cleanup_and_store(team: "Team", run_response: TeamRunOutput, session: TeamS
     if run_response.metrics:
         run_response.metrics.stop_timer()
 
-    # Add RunOutput to Agent Session
+    # Add RunOutput to Team Session
     session.upsert_run(run_response=run_response)
 
     # Calculate session metrics
@@ -2057,7 +2025,7 @@ async def _acleanup_and_store(team: "Team", run_response: TeamRunOutput, session
     if run_response.metrics:
         run_response.metrics.stop_timer()
 
-    # Add RunOutput to Agent Session
+    # Add RunOutput to Team Session
     session.upsert_run(run_response=run_response)
 
     # Calculate session metrics

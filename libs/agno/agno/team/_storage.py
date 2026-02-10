@@ -153,9 +153,6 @@ def _read_session(
         session = team.db.get_session(session_id=session_id, session_type=session_type)
         return session  # type: ignore
     except Exception as e:
-        import traceback
-
-        traceback.print_exc(limit=3)
         log_warning(f"Error getting session from db: {e}")
         return None
 
@@ -171,9 +168,6 @@ async def _aread_session(
         session = await team.db.get_session(session_id=session_id, session_type=session_type)
         return session  # type: ignore
     except Exception as e:
-        import traceback
-
-        traceback.print_exc(limit=3)
         log_warning(f"Error getting session from db: {e}")
         return None
 
@@ -186,9 +180,6 @@ def _upsert_session(team: "Team", session: TeamSession) -> Optional[TeamSession]
             raise ValueError("Db not initialized")
         return team.db.upsert_session(session=session)  # type: ignore
     except Exception as e:
-        import traceback
-
-        traceback.print_exc(limit=3)
         log_warning(f"Error upserting session into db: {e}")
     return None
 
@@ -201,9 +192,6 @@ async def _aupsert_session(team: "Team", session: TeamSession) -> Optional[TeamS
             raise ValueError("Db not initialized")
         return await team.db.upsert_session(session=session)  # type: ignore
     except Exception as e:
-        import traceback
-
-        traceback.print_exc(limit=3)
         log_warning(f"Error upserting session into db: {e}")
     return None
 

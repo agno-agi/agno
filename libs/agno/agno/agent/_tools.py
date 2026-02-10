@@ -506,18 +506,18 @@ def handle_external_execution_update(agent: Agent, run_messages: RunMessages, to
             # Skip if the message is already in the run_messages
             if msg.tool_call_id == tool.tool_call_id:
                 break
-
-        run_messages.messages.append(
-            Message(
-                role=agent.model.tool_message_role,
-                content=tool.result,
-                tool_call_id=tool.tool_call_id,
-                tool_name=tool.tool_name,
-                tool_args=tool.tool_args,
-                tool_call_error=tool.tool_call_error,
-                stop_after_tool_call=tool.stop_after_tool_call,
+        else:
+            run_messages.messages.append(
+                Message(
+                    role=agent.model.tool_message_role,
+                    content=tool.result,
+                    tool_call_id=tool.tool_call_id,
+                    tool_name=tool.tool_name,
+                    tool_args=tool.tool_args,
+                    tool_call_error=tool.tool_call_error,
+                    stop_after_tool_call=tool.stop_after_tool_call,
+                )
             )
-        )
         tool.external_execution_required = False
     else:
         raise ValueError(f"Tool {tool.tool_name} requires external execution, cannot continue run")
