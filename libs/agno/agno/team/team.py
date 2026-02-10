@@ -1486,8 +1486,8 @@ class Team:
     # Built-in Tools
     ###########################################################################
 
-    def get_member_information(self, run_context: Optional[RunContext] = None) -> str:
-        return _tools.get_member_information(self, run_context=run_context)
+    def get_member_information(self) -> str:
+        return _tools.get_member_information(self)
 
     def _find_member_by_id(
         self, member_id: str, run_context: Optional[RunContext] = None
