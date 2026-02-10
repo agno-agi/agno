@@ -930,7 +930,7 @@ class Team:
             yield _item_
 
     @overload
-    async def arun(
+    def arun(
         self,
         input: Union[str, List, Dict, Message, BaseModel, List[Message]],
         *,
@@ -1113,7 +1113,7 @@ class Team:
         )
 
     @overload
-    async def acontinue_run(
+    def acontinue_run(
         self,
         run_response: Optional[TeamRunOutput] = None,
         *,
