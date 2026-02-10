@@ -596,7 +596,7 @@ class Knowledge(RemoteKnowledge):
                 return await self.vector_db.async_search(query=query, limit=_max_results, filters=search_filters)
             except NotImplementedError:
                 log_info("Vector db does not support async search")
-                return self.search(query=query, max_results=_max_results, filters=filters)
+                return self.search(query=query, max_results=_max_results, filters=search_filters)
         except Exception as e:
             log_error(f"Error searching for documents: {e}")
             return []
@@ -1301,12 +1301,12 @@ class Knowledge(RemoteKnowledge):
         """
         for document in documents:
             document.content_id = content_id
-            # Add linked_to to metadata for vector search filtering (future use)
-            document.meta_data["linked_to"] = self.name or ""
             if calculate_sizes and document.content and not document.size:
                 document.size = len(document.content.encode("utf-8"))
             if metadata:
                 document.meta_data.update(metadata)
+            # Set linked_to AFTER metadata merge so caller metadata cannot override it
+            document.meta_data["linked_to"] = self.name or ""
         return documents
 
     def _chunk_documents_sync(self, reader: Reader, documents: List[Document]) -> List[Document]:
