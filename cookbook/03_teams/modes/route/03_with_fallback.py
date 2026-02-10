@@ -4,7 +4,6 @@ Route Mode with Fallback Agent
 Demonstrates routing with a general-purpose fallback agent that handles
 requests when no specialist is a clear match.
 
-Run: .venvs/demo/bin/python cookbook/03_teams/modes/route/03_with_fallback.py
 """
 
 from agno.agent import Agent
