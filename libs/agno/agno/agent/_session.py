@@ -111,21 +111,27 @@ def get_session(
         if agent.team_id is None and agent.workflow_id is None:
             loaded_session = cast(
                 AgentSession,
-                _storage.read_session(agent, session_id=session_id_to_load, session_type=SessionType.AGENT, user_id=user_id),
+                _storage.read_session(
+                    agent, session_id=session_id_to_load, session_type=SessionType.AGENT, user_id=user_id
+                ),  # type: ignore[arg-type]
             )
 
         # We have a team member agent, so we are loading a TeamSession
         if loaded_session is None and agent.team_id is not None:
             loaded_session = cast(
                 TeamSession,
-                _storage.read_session(agent, session_id=session_id_to_load, session_type=SessionType.TEAM, user_id=user_id),
+                _storage.read_session(
+                    agent, session_id=session_id_to_load, session_type=SessionType.TEAM, user_id=user_id
+                ),  # type: ignore[arg-type]
             )
 
         # We have a workflow member agent, so we are loading a WorkflowSession
         if loaded_session is None and agent.workflow_id is not None:
             loaded_session = cast(
                 WorkflowSession,
-                _storage.read_session(agent, session_id=session_id_to_load, session_type=SessionType.WORKFLOW, user_id=user_id),
+                _storage.read_session(
+                    agent, session_id=session_id_to_load, session_type=SessionType.WORKFLOW, user_id=user_id
+                ),  # type: ignore[arg-type]
             )
 
         # Cache the session if relevant
@@ -174,21 +180,27 @@ async def aget_session(
         if agent.team_id is None and agent.workflow_id is None:
             loaded_session = cast(
                 AgentSession,
-                await _storage.aread_session(agent, session_id=session_id_to_load, session_type=SessionType.AGENT, user_id=user_id),
+                await _storage.aread_session(
+                    agent, session_id=session_id_to_load, session_type=SessionType.AGENT, user_id=user_id
+                ),  # type: ignore[arg-type]
             )
 
         # We have a team member agent, so we are loading a TeamSession
         if loaded_session is None and agent.team_id is not None:
             loaded_session = cast(
                 TeamSession,
-                await _storage.aread_session(agent, session_id=session_id_to_load, session_type=SessionType.TEAM, user_id=user_id),
+                await _storage.aread_session(
+                    agent, session_id=session_id_to_load, session_type=SessionType.TEAM, user_id=user_id
+                ),  # type: ignore[arg-type]
             )
 
         # We have a workflow member agent, so we are loading a WorkflowSession
         if loaded_session is None and agent.workflow_id is not None:
             loaded_session = cast(
                 WorkflowSession,
-                await _storage.aread_session(agent, session_id=session_id_to_load, session_type=SessionType.WORKFLOW, user_id=user_id),
+                await _storage.aread_session(
+                    agent, session_id=session_id_to_load, session_type=SessionType.WORKFLOW, user_id=user_id
+                ),  # type: ignore[arg-type]
             )
 
         # Cache the session if relevant

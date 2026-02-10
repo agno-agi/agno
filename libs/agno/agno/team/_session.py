@@ -135,7 +135,9 @@ async def aget_session(
         # We have a standalone team, so we are loading a TeamSession
         if team.workflow_id is None:
             if _has_async_db(team):
-                loaded_session = cast(TeamSession, await _aread_session(team, session_id=session_id_to_load, user_id=user_id))
+                loaded_session = cast(
+                    TeamSession, await _aread_session(team, session_id=session_id_to_load, user_id=user_id)
+                )  # type: ignore[arg-type]
             else:
                 loaded_session = cast(TeamSession, _read_session(team, session_id=session_id_to_load, user_id=user_id))
         # We have a workflow team, so we are loading a WorkflowSession
