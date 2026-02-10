@@ -23,6 +23,7 @@ from agno.os.config import (
     EvalsConfig,
     EvalsDomainConfig,
     KnowledgeConfig,
+    KnowledgeDatabaseConfig,
     KnowledgeDomainConfig,
     KnowledgeInstanceConfig,
     MemoryConfig,
@@ -1018,7 +1019,9 @@ class AgentOS:
         Raises:
             ValueError: If duplicate knowledge instance names are detected.
         """
-        seen_names: dict[str, str] = {}  # name -> first occurrence description
+        # Track seen combinations of (name, db_id, table) to detect true duplicates
+        # Same name is OK if using different contents_db or different table
+        seen_combinations: dict[tuple[str, str, str], str] = {}  # (name, db_id, table) -> description
         duplicates: list[str] = []
 
         for knowledge in self.knowledge_instances:
@@ -1026,21 +1029,29 @@ class AgentOS:
             if not contents_db:
                 continue
 
-            # Get the name (with fallback)
-            knowledge_name = getattr(knowledge, "name", None) or f"knowledge_{contents_db.id}"
+            db_id = getattr(contents_db, "id", None)
+            if not db_id:
+                continue
 
-            if knowledge_name in seen_names:
-                duplicates.append(knowledge_name)
+            # Get the name (with fallback)
+            knowledge_name = getattr(knowledge, "name", None) or f"knowledge_{db_id}"
+            table_name = getattr(contents_db, "knowledge_table_name", "unknown")
+
+            # Create unique key based on name + db + table
+            key = (knowledge_name, db_id, table_name)
+
+            if key in seen_combinations:
+                duplicates.append(f"'{knowledge_name}' in table '{table_name}'")
             else:
-                seen_names[knowledge_name] = f"db_id={contents_db.id}"
+                seen_combinations[key] = table_name
 
         if duplicates:
             unique_duplicates = list(set(duplicates))
             error_msg = (
-                f"Duplicate knowledge instance names detected: {unique_duplicates}. "
-                "Each knowledge instance must have a unique name for proper content isolation. "
-                "Content is filtered by the 'linked_to' field which uses the knowledge instance name. "
-                "Duplicate names will cause content from different instances to be mixed together."
+                f"Duplicate knowledge instances detected:\n"
+                f"  {', '.join(unique_duplicates)}\n\n"
+                "Each knowledge instance must have a unique combination of (knowledgename, database, table). "
+                "To fix this, give each knowledge instance a unique `name` parameter."
             )
             log_error(error_msg)
             raise ValueError(error_msg)
@@ -1093,40 +1104,50 @@ class AgentOS:
 
         if knowledge_config.dbs is None:
             knowledge_config.dbs = []
-
         if knowledge_config.knowledge_instances is None:
             knowledge_config.knowledge_instances = []
 
-        # Build knowledge_instances list
-        # Note: Duplicate names are caught by _validate_knowledge_instance_names() at startup
+        # Track seen knowledge IDs to deduplicate
+        seen_knowledge_ids: set[str] = set()
+
+        # Build flat list of knowledge instances
         for knowledge in self.knowledge_instances:
             contents_db = getattr(knowledge, "contents_db", None)
-            if contents_db:
-                # Use knowledge name or generate a fallback name from db_id
-                knowledge_name = getattr(knowledge, "name", None) or f"knowledge_{contents_db.id}"
+            if not contents_db:
+                continue
 
-                # Generate a deterministic ID based on name and db_id
-                knowledge_id = _generate_knowledge_id(knowledge_name, contents_db.id)
+            db_id = getattr(contents_db, "id", None)
+            if not db_id:
+                continue
 
-                knowledge_config.knowledge_instances.append(
-                    KnowledgeInstanceConfig(
-                        id=knowledge_id,
-                        name=knowledge_name,
-                        description=getattr(knowledge, "description", None),
-                        db_id=contents_db.id,
-                        table=contents_db.knowledge_table_name,
-                    )
-                )
+            table_name = getattr(contents_db, "knowledge_table_name", "unknown")
+            knowledge_name = getattr(knowledge, "name", None) or f"knowledge_{db_id}"
+            knowledge_id = _generate_knowledge_id(knowledge_name, db_id, table_name)
 
+            # Skip if already processed (deduplicate by knowledge_id)
+            if knowledge_id in seen_knowledge_ids:
+                continue
+            seen_knowledge_ids.add(knowledge_id)
+
+            instance_config = KnowledgeInstanceConfig(
+                id=knowledge_id,
+                name=knowledge_name,
+                description=getattr(knowledge, "description", None),
+                db_id=db_id,
+                table=table_name,
+            )
+            knowledge_config.knowledge_instances.append(instance_config)
+
+        # Build KnowledgeDatabaseConfig for each db with its tables (as strings)
         dbs_with_specific_config = [db.db_id for db in knowledge_config.dbs]
 
-        # Only add databases that are actually used for knowledge contents
         for db_id, dbs in self.knowledge_dbs.items():
             if db_id not in dbs_with_specific_config:
-                # Collect unique table names from all databases with the same id
+                # Get all unique table names for this db
                 unique_tables = list(set(db.knowledge_table_name for db in dbs))
+
                 knowledge_config.dbs.append(
-                    DatabaseConfig(
+                    KnowledgeDatabaseConfig(
                         db_id=db_id,
                         domain_config=KnowledgeDomainConfig(display_name=db_id),
                         tables=unique_tables,
