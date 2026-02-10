@@ -74,6 +74,8 @@ class BaseWorkflowRunOutputEvent(BaseRunOutputEvent):
     run_id: Optional[str] = None
     step_id: Optional[str] = None
     parent_step_id: Optional[str] = None
+    # This allows the FE to correlate workflow events to the workflow agent's run
+    workflow_agent_run_id: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         _dict = {k: v for k, v in asdict(self).items() if v is not None}
@@ -520,6 +522,9 @@ class WorkflowRunOutput:
     # Workflow agent run - stores the full agent RunOutput when workflow agent is used
     # The agent's parent_run_id will point to this workflow run's run_id to establish the relationship
     workflow_agent_run: Optional[RunOutput] = None
+
+    # This allows the FE to correlate workflow events to the workflow agent's run
+    workflow_agent_run_id: Optional[str] = None
 
     # Store events from workflow execution
     events: Optional[List[WorkflowRunOutputEvent]] = None
