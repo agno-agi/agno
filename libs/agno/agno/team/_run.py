@@ -1419,6 +1419,7 @@ async def _arun_tasks(
 
     log_debug(f"Team Task Run Start: {run_response.run_id}", center=True)
     memory_task = None
+    team_session: Optional[TeamSession] = None
 
     try:
         # Register run for cancellation tracking
@@ -1630,7 +1631,8 @@ async def _arun_tasks(
         log_info(f"Team task run {run_response.run_id} was cancelled")
         run_response.status = RunStatus.cancelled
         run_response.content = str(e)
-        await _acleanup_and_store(team, run_response=run_response, session=team_session)
+        if team_session is not None:
+            await _acleanup_and_store(team, run_response=run_response, session=team_session)
         return run_response
 
     except (InputCheckError, OutputCheckError) as e:
@@ -1646,7 +1648,8 @@ async def _arun_tasks(
         if run_response.content is None:
             run_response.content = str(e)
         log_error(f"Validation failed: {str(e)} | Check: {e.check_trigger}")
-        await _acleanup_and_store(team, run_response=run_response, session=team_session)
+        if team_session is not None:
+            await _acleanup_and_store(team, run_response=run_response, session=team_session)
         return run_response
 
     except (KeyboardInterrupt, asyncio.CancelledError):
@@ -1662,7 +1665,8 @@ async def _arun_tasks(
         if run_response.content is None:
             run_response.content = str(e)
         log_error(f"Error in Team task run: {str(e)}")
-        await _acleanup_and_store(team, run_response=run_response, session=team_session)
+        if team_session is not None:
+            await _acleanup_and_store(team, run_response=run_response, session=team_session)
         return run_response
 
     finally:
