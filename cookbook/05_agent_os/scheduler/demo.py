@@ -44,8 +44,11 @@ greet_schedule = mgr.create(
     endpoint="/agents/greeter/runs",
     payload={"message": "Say hello!"},
     description="Greet every 5 minutes",
+    if_exists="update",
 )
-print(f"Created: {greet_schedule['name']} (next run: {greet_schedule['next_run_at']})")
+print(
+    f"Schedule ready: {greet_schedule['name']} (next run: {greet_schedule['next_run_at']})"
+)
 
 # Create a schedule for the reporter agent (daily at 9 AM)
 report_schedule = mgr.create(
@@ -54,8 +57,11 @@ report_schedule = mgr.create(
     endpoint="/agents/reporter/runs",
     payload={"message": "Summarize today's top headlines."},
     description="Daily news summary at 9 AM UTC",
+    if_exists="update",
 )
-print(f"Created: {report_schedule['name']} (next run: {report_schedule['next_run_at']})")
+print(
+    f"Schedule ready: {report_schedule['name']} (next run: {report_schedule['next_run_at']})"
+)
 
 # --- Create AgentOS with scheduler enabled ---
 
