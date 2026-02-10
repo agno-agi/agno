@@ -33,11 +33,11 @@ Creates an approval record **after** the HITL interaction resolves. The record h
 
 | File | Description |
 |------|-------------|
-| `log_approval_confirmation.py` | Audit approval with confirmation - shows both approval and rejection paths |
-| `log_approval_user_input.py` | Audit approval with user input |
-| `log_approval_external.py` | Audit approval with external execution |
-| `log_approval_async.py` | Async variant of audit approval with confirmation |
-| `log_approval_overview.py` | Mixed overview - both `@approval` and `@approval(type="audit")` in one agent |
+| `audit_approval_confirmation.py` | Audit approval with confirmation - shows both approval and rejection paths |
+| `audit_approval_user_input.py` | Audit approval with user input |
+| `audit_approval_external.py` | Audit approval with external execution |
+| `audit_approval_async.py` | Async variant of audit approval with confirmation |
+| `audit_approval_overview.py` | Mixed overview - both `@approval` and `@approval(type="audit")` in one agent |
 
 ## Key Concepts
 

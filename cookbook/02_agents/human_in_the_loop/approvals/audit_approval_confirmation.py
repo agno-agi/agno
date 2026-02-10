@@ -4,7 +4,7 @@ This example shows how @approval(type="audit") creates an approval record AFTER 
 interaction resolves, unlike @approval (type="required") which creates it BEFORE.
 Demonstrates both approval and rejection paths.
 
-Run: .venvs/demo/bin/python cookbook/02_agents/human_in_the_loop/approvals/log_approval_confirmation.py
+Run: .venvs/demo/bin/python cookbook/02_agents/human_in_the_loop/approvals/audit_approval_confirmation.py
 """
 
 import os

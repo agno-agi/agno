@@ -3,7 +3,7 @@
 This example shows @approval(type="audit") with external execution, creating an audit record
 after the tool is executed externally and the result is provided.
 
-Run: .venvs/demo/bin/python cookbook/02_agents/human_in_the_loop/approvals/log_approval_external.py
+Run: .venvs/demo/bin/python cookbook/02_agents/human_in_the_loop/approvals/audit_approval_external.py
 """
 
 import os

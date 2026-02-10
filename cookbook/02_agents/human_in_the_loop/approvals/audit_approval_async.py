@@ -1,9 +1,9 @@
 """Async audit approval: @approval(type="audit") + @tool(requires_confirmation=True) with async.
 
-Async variant of log_approval_confirmation.py showing @approval(type="audit") works with
+Async variant of audit_approval_confirmation.py showing @approval(type="audit") works with
 agent.arun() and agent.acontinue_run().
 
-Run: .venvs/demo/bin/python cookbook/02_agents/human_in_the_loop/approvals/log_approval_async.py
+Run: .venvs/demo/bin/python cookbook/02_agents/human_in_the_loop/approvals/audit_approval_async.py
 """
 
 import asyncio

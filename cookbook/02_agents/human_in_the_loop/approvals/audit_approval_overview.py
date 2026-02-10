@@ -4,7 +4,7 @@ This example demonstrates both approval mechanisms side by side:
 - @approval (type="required"): Creates a pending approval BEFORE the tool executes (blocking).
 - @approval(type="audit"): Creates a completed record AFTER the HITL resolves (audit logging).
 
-Run: .venvs/demo/bin/python cookbook/02_agents/human_in_the_loop/approvals/log_approval_overview.py
+Run: .venvs/demo/bin/python cookbook/02_agents/human_in_the_loop/approvals/audit_approval_overview.py
 """
 
 import os

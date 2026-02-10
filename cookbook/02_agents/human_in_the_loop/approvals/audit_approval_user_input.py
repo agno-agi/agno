@@ -3,7 +3,7 @@
 This example shows @approval(type="audit") with user input, creating an audit record
 after user provides input and the tool executes.
 
-Run: .venvs/demo/bin/python cookbook/02_agents/human_in_the_loop/approvals/log_approval_user_input.py
+Run: .venvs/demo/bin/python cookbook/02_agents/human_in_the_loop/approvals/audit_approval_user_input.py
 """
 
 import os
