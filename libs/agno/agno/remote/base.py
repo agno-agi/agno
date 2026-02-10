@@ -253,6 +253,7 @@ class RemoteDb:
 class RemoteKnowledge:
     client: "AgentOSClient"
     contents_db: Optional[RemoteDb] = None
+    knowledge_id: Optional[str] = None
 
     async def get_config(self, headers: Optional[Dict[str, str]] = None) -> "ConfigResponseSchema":
         return await self.client.get_knowledge_config(
@@ -260,7 +261,7 @@ class RemoteKnowledge:
         )
 
     async def search_knowledge(self, query: str, **kwargs: Any) -> "PaginatedResponse[VectorSearchResult]":
-        return await self.client.search_knowledge(query, **kwargs)
+        return await self.client.search_knowledge(query, knowledge_id=self.knowledge_id, **kwargs)
 
     async def upload_content(
         self,
@@ -289,6 +290,7 @@ class RemoteKnowledge:
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,
             db_id=db_id,
+            knowledge_id=self.knowledge_id,
             **kwargs,
         )
 
@@ -309,6 +311,7 @@ class RemoteKnowledge:
             metadata=metadata,
             reader_id=reader_id,
             db_id=db_id,
+            knowledge_id=self.knowledge_id,
             **kwargs,
         )
 
@@ -322,24 +325,36 @@ class RemoteKnowledge:
         **kwargs: Any,
     ) -> "PaginatedResponse[ContentResponseSchema]":
         return await self.client.list_knowledge_content(
-            limit=limit, page=page, sort_by=sort_by, sort_order=sort_order, db_id=db_id, **kwargs
+            limit=limit,
+            page=page,
+            sort_by=sort_by,
+            sort_order=sort_order,
+            db_id=db_id,
+            knowledge_id=self.knowledge_id,
+            **kwargs,
         )
 
     async def get_content_by_id(
         self, content_id: str, db_id: Optional[str] = None, **kwargs: Any
     ) -> "ContentResponseSchema":
-        return await self.client.get_knowledge_content(content_id=content_id, db_id=db_id, **kwargs)
+        return await self.client.get_knowledge_content(
+            content_id=content_id, db_id=db_id, knowledge_id=self.knowledge_id, **kwargs
+        )
 
     async def delete_content_by_id(self, content_id: str, db_id: Optional[str] = None, **kwargs: Any) -> None:
-        await self.client.delete_knowledge_content(content_id=content_id, db_id=db_id, **kwargs)
+        await self.client.delete_knowledge_content(
+            content_id=content_id, db_id=db_id, knowledge_id=self.knowledge_id, **kwargs
+        )
 
     async def delete_all_content(self, db_id: Optional[str] = None, **kwargs: Any) -> None:
-        await self.client.delete_all_knowledge_content(db_id=db_id, **kwargs)
+        await self.client.delete_all_knowledge_content(db_id=db_id, knowledge_id=self.knowledge_id, **kwargs)
 
     async def get_content_status(
         self, content_id: str, db_id: Optional[str] = None, **kwargs: Any
     ) -> "ContentStatusResponse":
-        return await self.client.get_knowledge_content_status(content_id=content_id, db_id=db_id, **kwargs)
+        return await self.client.get_knowledge_content_status(
+            content_id=content_id, db_id=db_id, knowledge_id=self.knowledge_id, **kwargs
+        )
 
 
 @dataclass

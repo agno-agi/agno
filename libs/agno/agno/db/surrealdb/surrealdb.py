@@ -1183,6 +1183,7 @@ class SurrealDb(BaseDb):
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
+        linked_to: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
         """Get all knowledge contents from the database.
 
@@ -1191,6 +1192,7 @@ class SurrealDb(BaseDb):
             page (Optional[int]): The page number.
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
+            linked_to (Optional[str]): Filter by linked_to value (knowledge instance name).
 
         Returns:
             Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
@@ -1200,6 +1202,11 @@ class SurrealDb(BaseDb):
         """
         table = self._get_table("knowledge")
         where = WhereClause()
+
+        # Apply linked_to filter if provided
+        if linked_to is not None:
+            where.and_("linked_to", linked_to)
+
         where_clause, where_vars = where.build()
 
         # Total count
