@@ -4431,7 +4431,10 @@ class SqliteDb(BaseDb):
             table = self._get_table(table_type="schedules")
             if table is None:
                 return False
+            runs_table = self._get_table(table_type="schedule_runs")
             with self.Session() as sess, sess.begin():
+                if runs_table is not None:
+                    sess.execute(runs_table.delete().where(runs_table.c.schedule_id == schedule_id))
                 result = sess.execute(table.delete().where(table.c.id == schedule_id))
                 return result.rowcount > 0
         except Exception as e:

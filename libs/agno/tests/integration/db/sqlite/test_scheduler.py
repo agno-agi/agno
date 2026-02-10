@@ -305,6 +305,29 @@ class TestScheduleRuns:
         result = db.get_schedule_run("nonexistent-run-id")
         assert result is None
 
+    def test_delete_schedule_cascades_to_runs(self, db):
+        """Deleting a schedule should also delete its associated runs."""
+        sched = _make_schedule()
+        db.create_schedule(sched)
+
+        r1 = _make_run(sched["id"])
+        r2 = _make_run(sched["id"], attempt=2)
+        db.create_schedule_run(r1)
+        db.create_schedule_run(r2)
+
+        # Confirm runs exist
+        runs = db.get_schedule_runs(sched["id"])
+        assert len(runs) == 2
+
+        # Delete the schedule
+        assert db.delete_schedule(sched["id"]) is True
+        assert db.get_schedule(sched["id"]) is None
+
+        # Runs should also be gone
+        assert db.get_schedule_runs(sched["id"]) == []
+        assert db.get_schedule_run(r1["id"]) is None
+        assert db.get_schedule_run(r2["id"]) is None
+
 
 # =============================================================================
 # Full lifecycle

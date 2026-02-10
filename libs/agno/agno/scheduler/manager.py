@@ -19,6 +19,7 @@ class ScheduleManager:
     def __init__(self, db: Any) -> None:
         self.db = db
         self._is_async = asyncio.iscoroutinefunction(getattr(db, "get_schedule", None))
+        self._pool: Any = None
 
     def _call(self, method_name: str, *args: Any, **kwargs: Any) -> Any:
         """Call a DB method, handling sync/async transparently."""
@@ -26,13 +27,17 @@ class ScheduleManager:
         if fn is None:
             raise NotImplementedError(f"Database does not support {method_name}")
         if asyncio.iscoroutinefunction(fn):
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
+            try:
+                asyncio.get_running_loop()
+                # Running inside an async context — bridge via thread
                 import concurrent.futures
 
-                with concurrent.futures.ThreadPoolExecutor() as pool:
-                    return pool.submit(asyncio.run, fn(*args, **kwargs)).result()
-            return loop.run_until_complete(fn(*args, **kwargs))
+                if self._pool is None:
+                    self._pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+                return self._pool.submit(asyncio.run, fn(*args, **kwargs)).result()
+            except RuntimeError:
+                # No running loop — safe to use asyncio.run directly
+                return asyncio.run(fn(*args, **kwargs))
         return fn(*args, **kwargs)
 
     async def _acall(self, method_name: str, *args: Any, **kwargs: Any) -> Any:
