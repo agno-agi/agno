@@ -4,7 +4,6 @@ Coordinate Mode with Tools
 Demonstrates coordination where member agents have specialized tools.
 The team leader delegates to the right member based on what tools are needed.
 
-Run: .venvs/demo/bin/python cookbook/03_teams/modes/coordinate/02_with_tools.py
 """
 
 from agno.agent import Agent
