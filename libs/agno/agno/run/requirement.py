@@ -120,16 +120,6 @@ class RunRequirement:
         if self.tool_execution:
             self.tool_execution.result = result
 
-    def update_tool(self):
-        if not self.tool_execution:
-            return
-        if self.confirmation is True:
-            self.tool_execution.confirmed = True
-        elif self.confirmation is False:
-            self.tool_execution.confirmed = False
-        else:
-            raise ValueError("This requirement does not require confirmation or user input")
-
     def is_resolved(self) -> bool:
         """Return True if the requirement has been resolved"""
         return not self.needs_confirmation and not self.needs_user_input and not self.needs_external_execution

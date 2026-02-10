@@ -76,6 +76,31 @@ class TestPropagateMemberPause:
         # Original should be unaffected
         assert req.member_agent_id is None
 
+    def test_tool_execution_is_deeply_copied(self):
+        """Mutating the copied tool_execution must not affect the original."""
+        from agno.team._tools import _propagate_member_pause
+
+        member_agent = MagicMock()
+        member_agent.name = "Agent"
+
+        req = _make_requirement(requires_confirmation=True)
+        original_tool_execution = req.tool_execution
+        member_run_response = MagicMock()
+        member_run_response.requirements = [req]
+        member_run_response.run_id = "run-1"
+
+        run_response = MagicMock()
+        run_response.requirements = None
+
+        with patch("agno.team._tools.get_member_id", return_value="id-1"):
+            _propagate_member_pause(run_response, member_agent, member_run_response)
+
+        copied_req = run_response.requirements[0]
+        # Mutate the copy's tool_execution
+        copied_req.tool_execution.confirmed = True
+        # Original tool_execution should be unaffected
+        assert original_tool_execution.confirmed is None
+
     def test_empty_requirements_does_nothing(self):
         from agno.team._tools import _propagate_member_pause
 
@@ -305,3 +330,216 @@ class TestBuildContinuationMessage:
         assert "Agent B" in msg
         assert "Result 1" in msg
         assert "Result 2" in msg
+
+
+# ===========================================================================
+# 6. Chained HITL: newly propagated requirements are preserved
+# ===========================================================================
+
+
+class TestChainedHITLRequirements:
+    """Verify that after routing, newly propagated requirements from chained
+    HITL (member pausing again) are merged back with team-level requirements
+    rather than being discarded."""
+
+    def test_newly_propagated_reqs_preserved_after_routing(self):
+        """Simulate: member routing propagates new reqs back onto run_response.
+        After the routing block, those new reqs must appear alongside team-level reqs."""
+        from agno.team._run import _has_member_requirements
+
+        # Set up initial state: one team-level req and one member req
+        team_req = _make_requirement(requires_confirmation=True)
+        member_req = _make_requirement(external_execution_required=True)
+        member_req.member_agent_id = "agent-1"
+        member_req.member_agent_name = "Agent 1"
+
+        all_reqs = [team_req, member_req]
+
+        # Simulate the routing logic from continue_run_dispatch
+        member_reqs = [r for r in all_reqs if getattr(r, "member_agent_id", None) is not None]
+        team_level_reqs = [r for r in all_reqs if getattr(r, "member_agent_id", None) is None]
+
+        original_member_req_ids = {id(r) for r in member_reqs}
+
+        # Simulate _route_requirements_to_members appending a new propagated req
+        new_propagated = _make_requirement(requires_confirmation=True)
+        new_propagated.member_agent_id = "agent-2"
+        simulated_post_routing = member_reqs + [new_propagated]
+
+        # Merge logic
+        newly_propagated = [r for r in simulated_post_routing if id(r) not in original_member_req_ids]
+        final_reqs = team_level_reqs + newly_propagated
+
+        assert len(final_reqs) == 2  # team_req + new_propagated
+        assert team_req in final_reqs
+        assert new_propagated in final_reqs
+        # Original member_req should NOT be in the final set
+        assert member_req not in final_reqs
+
+    def test_no_propagated_reqs_yields_only_team_level(self):
+        """If no member pauses again, only team-level reqs remain."""
+        team_req = _make_requirement(requires_confirmation=True)
+        member_req = _make_requirement(external_execution_required=True)
+        member_req.member_agent_id = "agent-1"
+
+        all_reqs = [team_req, member_req]
+        member_reqs = [r for r in all_reqs if getattr(r, "member_agent_id", None) is not None]
+        team_level_reqs = [r for r in all_reqs if getattr(r, "member_agent_id", None) is None]
+
+        original_member_req_ids = {id(r) for r in member_reqs}
+        # Simulate routing consuming all member reqs (no new propagation)
+        simulated_post_routing = member_reqs
+
+        newly_propagated = [r for r in simulated_post_routing if id(r) not in original_member_req_ids]
+        final_reqs = team_level_reqs + newly_propagated
+
+        assert len(final_reqs) == 1
+        assert final_reqs[0] is team_req
+
+
+# ===========================================================================
+# 7. Mixed HITL types
+# ===========================================================================
+
+
+class TestMixedHITLTypes:
+    """Verify requirements of different HITL types can coexist."""
+
+    def test_mixed_confirmation_and_external_execution(self):
+        conf_req = _make_requirement(requires_confirmation=True)
+        ext_req = _make_requirement(external_execution_required=True)
+
+        assert conf_req.needs_confirmation is True
+        assert conf_req.needs_external_execution is False
+        assert ext_req.needs_confirmation is False
+        assert ext_req.needs_external_execution is True
+
+        # Both should be unresolved
+        assert conf_req.is_resolved() is False
+        assert ext_req.is_resolved() is False
+
+        # Resolve confirmation
+        conf_req.confirm()
+        assert conf_req.is_resolved() is True
+        # ext_req still unresolved
+        assert ext_req.is_resolved() is False
+
+        # Resolve external execution
+        ext_req.set_external_execution_result("done")
+        assert ext_req.is_resolved() is True
+
+    def test_mixed_member_and_team_level_requirements(self):
+        from agno.team._run import _has_member_requirements, _has_team_level_requirements
+
+        team_conf_req = _make_requirement(requires_confirmation=True)
+        member_ext_req = _make_requirement(external_execution_required=True)
+        member_ext_req.member_agent_id = "agent-1"
+
+        from agno.tools.function import UserInputField
+
+        member_input_req = _make_requirement(
+            requires_user_input=True,
+            user_input_schema=[UserInputField(name="city", field_type=str)],
+        )
+        member_input_req.member_agent_id = "agent-2"
+
+        reqs = [team_conf_req, member_ext_req, member_input_req]
+
+        assert _has_member_requirements(reqs) is True
+        assert _has_team_level_requirements(reqs) is True
+
+        # Categorize
+        team_reqs = [r for r in reqs if getattr(r, "member_agent_id", None) is None]
+        member_reqs = [r for r in reqs if getattr(r, "member_agent_id", None) is not None]
+        assert len(team_reqs) == 1
+        assert len(member_reqs) == 2
+
+
+# ===========================================================================
+# 8. Deeply nested teams (3+ levels)
+# ===========================================================================
+
+
+class TestDeeplyNestedTeams:
+    """Test _find_member_route_by_id with 3+ levels of nesting."""
+
+    def test_three_level_nesting_returns_top_sub_team(self):
+        from agno.agent import Agent
+        from agno.team._tools import _find_member_route_by_id
+        from agno.team.team import Team
+        from agno.utils.team import get_member_id
+
+        deep_agent = Agent(name="Deep Agent")
+        inner_team = Team(name="Inner Team", members=[deep_agent])
+        outer_team = Team(name="Outer Team", members=[inner_team])
+        root_team = Team(name="Root Team", members=[outer_team])
+
+        deep_agent_id = get_member_id(deep_agent)
+
+        result = _find_member_route_by_id(root_team, deep_agent_id)
+        assert result is not None
+        idx, member = result
+        # Should return outer_team (the direct child of root_team)
+        assert member is outer_team
+        assert idx == 0
+
+    def test_three_level_nesting_direct_child_match(self):
+        from agno.agent import Agent
+        from agno.team._tools import _find_member_route_by_id
+        from agno.team.team import Team
+        from agno.utils.team import get_member_id
+
+        deep_agent = Agent(name="Deep Agent")
+        inner_team = Team(name="Inner Team", members=[deep_agent])
+        mid_agent = Agent(name="Mid Agent")
+        outer_team = Team(name="Outer Team", members=[inner_team, mid_agent])
+        root_team = Team(name="Root Team", members=[outer_team])
+
+        mid_agent_id = get_member_id(mid_agent)
+
+        # mid_agent is inside outer_team, so routing should go through outer_team
+        result = _find_member_route_by_id(root_team, mid_agent_id)
+        assert result is not None
+        idx, member = result
+        assert member is outer_team
+
+    def test_deeply_nested_unknown_returns_none(self):
+        from agno.agent import Agent
+        from agno.team._tools import _find_member_route_by_id
+        from agno.team.team import Team
+
+        deep_agent = Agent(name="Deep Agent")
+        inner_team = Team(name="Inner Team", members=[deep_agent])
+        outer_team = Team(name="Outer Team", members=[inner_team])
+
+        result = _find_member_route_by_id(outer_team, "nonexistent-deep-id")
+        assert result is None
+
+
+# ===========================================================================
+# 9. _member_run_response cleanup
+# ===========================================================================
+
+
+class TestMemberRunResponseCleanup:
+    """Verify that _member_run_response is cleared after routing consumption."""
+
+    def test_propagate_sets_member_run_response(self):
+        from agno.team._tools import _propagate_member_pause
+
+        member_agent = MagicMock()
+        member_agent.name = "Agent"
+
+        member_run_response = MagicMock()
+        req = _make_requirement(requires_confirmation=True)
+        member_run_response.requirements = [req]
+        member_run_response.run_id = "run-1"
+
+        run_response = MagicMock()
+        run_response.requirements = None
+
+        with patch("agno.team._tools.get_member_id", return_value="id-1"):
+            _propagate_member_pause(run_response, member_agent, member_run_response)
+
+        # _member_run_response should be set
+        assert run_response.requirements[0]._member_run_response is member_run_response

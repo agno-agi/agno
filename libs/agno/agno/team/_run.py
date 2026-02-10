@@ -2273,6 +2273,9 @@ def _handle_team_tool_call_updates(
     """Handle tool call updates for team-level tools.
 
     Mirrors agent's handle_tool_call_updates but operates on team-level tools.
+    The agent-level functions (run_tool, reject_tool_call, etc.) accept ``Agent``
+    in their type hints but only access duck-typed attributes (``model``, ``name``,
+    etc.) that ``Team`` also provides, so passing a ``Team`` is safe at runtime.
     """
     from agno.agent._tools import (
         handle_external_execution_update,
@@ -2320,7 +2323,10 @@ async def _ahandle_team_tool_call_updates(
     run_messages: RunMessages,
     tools: List[Union[Function, dict]],
 ) -> None:
-    """Async version of _handle_team_tool_call_updates."""
+    """Async version of _handle_team_tool_call_updates.
+
+    See _handle_team_tool_call_updates docstring for the Team/Agent duck-typing note.
+    """
     from agno.agent._tools import (
         arun_tool,
         handle_external_execution_update,
@@ -2455,6 +2461,10 @@ def _route_requirements_to_members(
             content = getattr(member_response, "content", None) or "Task completed"
             member_results.append(f"[{member.name or member_id}]: {content}")
 
+        # Clear _member_run_response references to allow GC of the member RunOutput
+        for req in reqs:
+            req._member_run_response = None
+
     return member_results
 
 
@@ -2511,6 +2521,10 @@ async def _aroute_requirements_to_members(
                 requirements=reqs,
                 session_id=session.session_id,
             )
+
+        # Clear _member_run_response references to allow GC of the member RunOutput
+        for req in reqs:
+            req._member_run_response = None
 
         if getattr(member_response, "is_paused", False):
             from agno.team._tools import _propagate_member_pause
@@ -2663,18 +2677,16 @@ def continue_run_dispatch(
     # Route member requirements to member agents
     member_results: List[str] = []
     if has_member:
-        # Clear member requirements before routing (they'll be re-added if still paused)
         member_reqs = [r for r in (run_response.requirements or []) if getattr(r, "member_agent_id", None) is not None]
-        run_response.requirements = [
-            r for r in (run_response.requirements or []) if getattr(r, "member_agent_id", None) is None
-        ]
-        # Temporarily set member reqs for routing
-        orig_reqs = run_response.requirements
+        team_level_reqs = [r for r in (run_response.requirements or []) if getattr(r, "member_agent_id", None) is None]
+        # Set only member reqs for routing; _route_requirements_to_members
+        # may append newly propagated reqs via _propagate_member_pause (chained HITL).
+        original_member_req_ids = {id(r) for r in member_reqs}
         run_response.requirements = member_reqs
-        try:
-            member_results = _route_requirements_to_members(team, run_response=run_response, session=team_session)
-        finally:
-            run_response.requirements = orig_reqs
+        member_results = _route_requirements_to_members(team, run_response=run_response, session=team_session)
+        # Merge: keep team-level reqs + any newly propagated member reqs (chained HITL)
+        newly_propagated = [r for r in (run_response.requirements or []) if id(r) not in original_member_req_ids]
+        run_response.requirements = team_level_reqs + newly_propagated
 
         # Check if any members are still paused
         if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
@@ -2714,6 +2726,8 @@ def continue_run_dispatch(
 
         # Reset run state for continuation
         run_response.status = RunStatus.running
+        # Reset content before re-running the model; _update_run_response appends
+        # to existing content, so stale content from the paused run must be cleared.
         run_response.content = None
 
         log_debug(f"Team Continue Run Start: {run_response.run_id}", center=True)
@@ -2753,8 +2767,10 @@ def continue_run_dispatch(
     if member_results and not has_team_level:
         continuation_message = _build_continuation_message(member_results)
 
-        # Re-run team with the member results
-        run_response.status = RunStatus.running
+        # Mark original paused run as completed before starting a fresh run
+        run_response.status = RunStatus.completed
+        _cleanup_and_store(team, run_response=run_response, session=team_session)
+
         if opts.stream:
             return team.run(  # type: ignore
                 input=continuation_message,
@@ -3389,17 +3405,19 @@ async def _acontinue_run_impl(
                     member_reqs = [
                         r for r in (run_response.requirements or []) if getattr(r, "member_agent_id", None) is not None
                     ]
-                    run_response.requirements = [
+                    team_level_reqs = [
                         r for r in (run_response.requirements or []) if getattr(r, "member_agent_id", None) is None
                     ]
-                    orig_reqs = run_response.requirements
+                    original_member_req_ids = {id(r) for r in member_reqs}
                     run_response.requirements = member_reqs
-                    try:
-                        member_results = await _aroute_requirements_to_members(
-                            team, run_response=run_response, session=team_session
-                        )
-                    finally:
-                        run_response.requirements = orig_reqs
+                    member_results = await _aroute_requirements_to_members(
+                        team, run_response=run_response, session=team_session
+                    )
+                    # Merge: keep team-level reqs + any newly propagated member reqs (chained HITL)
+                    newly_propagated = [
+                        r for r in (run_response.requirements or []) if id(r) not in original_member_req_ids
+                    ]
+                    run_response.requirements = team_level_reqs + newly_propagated
 
                     # Check if still paused
                     if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
@@ -3480,10 +3498,10 @@ async def _acontinue_run_impl(
                     # Member-only: re-run team with results
                     continuation_message = _build_continuation_message(member_results)
 
-                    # Re-read session to avoid stale overwrites
-                    team_session = await _asetup_session(
-                        team=team, run_context=run_context, session_id=session_id, user_id=user_id, run_id=run_id
-                    )
+                    # Mark original paused run as completed before starting a fresh run
+                    run_response.status = RunStatus.completed
+                    if team_session is not None:
+                        await _acleanup_and_store(team, run_response=run_response, session=team_session)
 
                     result = await team.arun(
                         input=continuation_message,
@@ -3658,17 +3676,19 @@ async def _acontinue_run_stream_impl(
                     member_reqs = [
                         r for r in (run_response.requirements or []) if getattr(r, "member_agent_id", None) is not None
                     ]
-                    run_response.requirements = [
+                    team_level_reqs = [
                         r for r in (run_response.requirements or []) if getattr(r, "member_agent_id", None) is None
                     ]
-                    orig_reqs = run_response.requirements
+                    original_member_req_ids = {id(r) for r in member_reqs}
                     run_response.requirements = member_reqs
-                    try:
-                        member_results = await _aroute_requirements_to_members(
-                            team, run_response=run_response, session=team_session
-                        )
-                    finally:
-                        run_response.requirements = orig_reqs
+                    member_results = await _aroute_requirements_to_members(
+                        team, run_response=run_response, session=team_session
+                    )
+                    # Merge: keep team-level reqs + any newly propagated member reqs (chained HITL)
+                    newly_propagated = [
+                        r for r in (run_response.requirements or []) if id(r) not in original_member_req_ids
+                    ]
+                    run_response.requirements = team_level_reqs + newly_propagated
 
                     if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
                         from agno.team import _hooks
@@ -3793,8 +3813,11 @@ async def _acontinue_run_stream_impl(
                         yield event
 
                 elif member_results:
-                    # Member-only: re-run team
+                    # Member-only: mark original run as completed, then re-run team
                     continuation_message = _build_continuation_message(member_results)
+                    run_response.status = RunStatus.completed
+                    if team_session is not None:
+                        await _acleanup_and_store(team, run_response=run_response, session=team_session)
                     async for item in team.arun(  # type: ignore
                         input=continuation_message,
                         stream=True,
