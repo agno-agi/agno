@@ -112,7 +112,7 @@ def custom_content_planning_function(step_input: StepInput) -> StepOutput:
             - Execution Ready: Detailed action items included
             - Priority Level: {priority.upper()}
         """.strip()
-        return StepOutput(content=enhanced_content, response=response)
+        return StepOutput(content=enhanced_content)
     except Exception as e:
         return StepOutput(
             content=f"Custom content planning failed: {str(e)}",
@@ -185,7 +185,7 @@ async def custom_content_planning_function_async(
             - Execution Ready: Detailed action items included
             - Priority Level: {priority.upper()}
         """.strip()
-        yield StepOutput(content=enhanced_content, response=response)
+        yield StepOutput(content=enhanced_content)
     except Exception as e:
         yield StepOutput(
             content=f"Custom content planning failed: {str(e)}",
