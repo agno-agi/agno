@@ -1,8 +1,10 @@
 # TEST LOG
 
-Generated: 2026-02-08 15:41 UTC
+Generated: 2026-02-10 UTC
 
-Pattern Check: Checked 5 file(s) in /Users/ab/conductor/workspaces/agno/colombo/cookbook/02_agents/session. Violations: 0
+Pattern Check: Checked 5 file(s) in cookbook/02_agents/session. Violations: 0
+
+Requires: pgvector (`./cookbook/scripts/run_pgvector.sh`)
 
 ### chat_history.py
 
@@ -10,7 +12,7 @@ Pattern Check: Checked 5 file(s) in /Users/ab/conductor/workspaces/agno/colombo/
 
 **Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
 
-**Result:** Completed successfully in 7s.
+**Result:** Completed successfully.
 
 ---
 
@@ -20,7 +22,7 @@ Pattern Check: Checked 5 file(s) in /Users/ab/conductor/workspaces/agno/colombo/
 
 **Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
 
-**Result:** Failed with missing module: No module named 'aiosqlite'
+**Result:** Failed with missing dependency: `greenlet` not installed.
 
 ---
 
@@ -30,7 +32,7 @@ Pattern Check: Checked 5 file(s) in /Users/ab/conductor/workspaces/agno/colombo/
 
 **Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
 
-**Result:** Completed successfully in 3s.
+**Result:** Completed successfully.
 
 ---
 
@@ -40,7 +42,7 @@ Pattern Check: Checked 5 file(s) in /Users/ab/conductor/workspaces/agno/colombo/
 
 **Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
 
-**Result:** Completed successfully in 3s.
+**Result:** Completed successfully.
 
 ---
 
@@ -50,7 +52,6 @@ Pattern Check: Checked 5 file(s) in /Users/ab/conductor/workspaces/agno/colombo/
 
 **Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
 
-**Result:** Completed successfully in 4s.
+**Result:** Completed successfully.
 
 ---
-

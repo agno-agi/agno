@@ -1,8 +1,8 @@
 # TEST LOG
 
-Generated: 2026-02-08 15:41 UTC
+Generated: 2026-02-10 UTC
 
-Pattern Check: Checked 6 file(s) in /Users/ab/conductor/workspaces/agno/colombo/cookbook/02_agents/human_in_the_loop. Violations: 0
+Pattern Check: Checked 6 file(s) in cookbook/02_agents/human_in_the_loop. Violations: 0
 
 ### agentic_user_input.py
 
@@ -10,7 +10,7 @@ Pattern Check: Checked 6 file(s) in /Users/ab/conductor/workspaces/agno/colombo/
 
 **Description:** Interactive smoke validation (startup and first tool flow) in non-interactive terminal.
 
-**Result:** Startup and initial tool call validated; process reached interactive prompt and stopped due EOF in non-interactive execution (5s).
+**Result:** Startup and initial tool call validated; process reached interactive prompt and stopped due EOF in non-interactive execution.
 
 ---
 
@@ -30,7 +30,7 @@ Pattern Check: Checked 6 file(s) in /Users/ab/conductor/workspaces/agno/colombo/
 
 **Description:** Interactive smoke validation (startup and first tool flow) in non-interactive terminal.
 
-**Result:** Startup and initial tool call validated; process reached interactive prompt and stopped due EOF in non-interactive execution (2s).
+**Result:** Startup and initial tool call validated; process reached interactive prompt and stopped due EOF in non-interactive execution.
 
 ---
 
@@ -40,7 +40,7 @@ Pattern Check: Checked 6 file(s) in /Users/ab/conductor/workspaces/agno/colombo/
 
 **Description:** Interactive smoke validation (startup and first tool flow) in non-interactive terminal.
 
-**Result:** Startup and initial tool call validated; process reached interactive prompt and stopped due EOF in non-interactive execution (1s).
+**Result:** Startup and initial tool call validated; process reached interactive prompt and stopped due EOF in non-interactive execution.
 
 ---
 
@@ -50,7 +50,7 @@ Pattern Check: Checked 6 file(s) in /Users/ab/conductor/workspaces/agno/colombo/
 
 **Description:** Interactive smoke validation (startup and first tool flow) in non-interactive terminal.
 
-**Result:** Interactive flow completed in 3s.
+**Result:** Interactive flow completed successfully.
 
 ---
 
@@ -60,7 +60,6 @@ Pattern Check: Checked 6 file(s) in /Users/ab/conductor/workspaces/agno/colombo/
 
 **Description:** Interactive smoke validation (startup and first tool flow) in non-interactive terminal.
 
-**Result:** Interactive flow completed in 3s.
+**Result:** Interactive flow completed successfully.
 
 ---
-

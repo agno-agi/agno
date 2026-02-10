@@ -9,6 +9,10 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.team import Team
 
+# ---------------------------------------------------------------------------
+# Create the Team Members
+# ---------------------------------------------------------------------------
+
 writer = Agent(
     name="Writer",
     role="Content writer",
@@ -34,6 +38,10 @@ def pick_members(session_state: dict):
     return [writer]
 
 
+# ---------------------------------------------------------------------------
+# Create the Team
+# ---------------------------------------------------------------------------
+
 team = Team(
     name="Content Team",
     model=OpenAIChat(id="gpt-4o-mini"),
@@ -42,6 +50,10 @@ team = Team(
     instructions=["Coordinate the team to complete the task."],
 )
 
+
+# ---------------------------------------------------------------------------
+# Run the Team
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     print("=== Writer only ===")

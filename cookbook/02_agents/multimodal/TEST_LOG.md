@@ -1,8 +1,8 @@
 # TEST LOG
 
-Generated: 2026-02-08 15:41 UTC
+Generated: 2026-02-10 UTC
 
-Pattern Check: Checked 10 file(s) in /Users/ab/conductor/workspaces/agno/colombo/cookbook/02_agents/multimodal. Violations: 0
+Pattern Check: Checked 10 file(s) in cookbook/02_agents/multimodal. Violations: 0
 
 ### audio_input_output.py
 
@@ -10,7 +10,7 @@ Pattern Check: Checked 10 file(s) in /Users/ab/conductor/workspaces/agno/colombo
 
 **Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
 
-**Result:** Completed successfully in 7s.
+**Result:** Completed successfully.
 
 ---
 
@@ -20,7 +20,7 @@ Pattern Check: Checked 10 file(s) in /Users/ab/conductor/workspaces/agno/colombo
 
 **Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
 
-**Result:** Completed successfully in 18s.
+**Result:** Completed successfully.
 
 ---
 
@@ -30,7 +30,7 @@ Pattern Check: Checked 10 file(s) in /Users/ab/conductor/workspaces/agno/colombo
 
 **Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
 
-**Result:** Completed successfully in 4s.
+**Result:** Completed successfully.
 
 ---
 
@@ -40,7 +40,7 @@ Pattern Check: Checked 10 file(s) in /Users/ab/conductor/workspaces/agno/colombo
 
 **Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
 
-**Result:** Completed successfully in 9s.
+**Result:** Completed successfully.
 
 ---
 
@@ -50,7 +50,7 @@ Pattern Check: Checked 10 file(s) in /Users/ab/conductor/workspaces/agno/colombo
 
 **Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
 
-**Result:** Completed successfully in 12s.
+**Result:** Completed successfully.
 
 ---
 
@@ -60,7 +60,7 @@ Pattern Check: Checked 10 file(s) in /Users/ab/conductor/workspaces/agno/colombo
 
 **Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
 
-**Result:** Failed with import dependency error: `fal_client` not installed. Please install using `pip install fal-client`
+**Result:** Failed with import dependency error: `fal_client` not installed. Please install using `pip install fal-client`.
 
 ---
 
@@ -70,7 +70,7 @@ Pattern Check: Checked 10 file(s) in /Users/ab/conductor/workspaces/agno/colombo
 
 **Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
 
-**Result:** Completed successfully in 8s.
+**Result:** Completed successfully.
 
 ---
 
@@ -80,7 +80,7 @@ Pattern Check: Checked 10 file(s) in /Users/ab/conductor/workspaces/agno/colombo
 
 **Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
 
-**Result:** Completed successfully in 2s.
+**Result:** Completed successfully.
 
 ---
 
@@ -90,7 +90,7 @@ Pattern Check: Checked 10 file(s) in /Users/ab/conductor/workspaces/agno/colombo
 
 **Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
 
-**Result:** Completed successfully in 9s.
+**Result:** Completed successfully.
 
 ---
 
@@ -100,7 +100,6 @@ Pattern Check: Checked 10 file(s) in /Users/ab/conductor/workspaces/agno/colombo
 
 **Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
 
-**Result:** Failed with import dependency error: `moviepy` not installed. Please install using `pip install moviepy ffmpeg`
+**Result:** Failed with import dependency error: `moviepy` not installed. Please install using `pip install moviepy ffmpeg`.
 
 ---
-

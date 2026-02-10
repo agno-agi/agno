@@ -2,19 +2,9 @@
 
 Generated: 2026-02-10 UTC
 
-Pattern Check: Checked 4 file(s) in cookbook/02_agents/hooks. Violations: 0
+Pattern Check: Checked 3 file(s) in cookbook/02_agents/other. Violations: 0 (3 violations fixed: added section banners to background_execution.py, background_execution_structured.py, and custom_cancellation_manager.py)
 
-### post_hook_output.py
-
-**Status:** PASS
-
-**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
-
-**Result:** Completed successfully.
-
----
-
-### pre_hook_input.py
+### background_execution.py
 
 **Status:** PASS
 
@@ -24,7 +14,7 @@ Pattern Check: Checked 4 file(s) in cookbook/02_agents/hooks. Violations: 0
 
 ---
 
-### session_state_hooks.py
+### background_execution_structured.py
 
 **Status:** PASS
 
@@ -34,7 +24,7 @@ Pattern Check: Checked 4 file(s) in cookbook/02_agents/hooks. Violations: 0
 
 ---
 
-### stream_hook.py
+### custom_cancellation_manager.py
 
 **Status:** PASS
 

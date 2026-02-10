@@ -1,8 +1,10 @@
 # TEST LOG
 
-Generated: 2026-02-08 15:41 UTC
+Generated: 2026-02-10 UTC
 
-Pattern Check: Checked 5 file(s) in /Users/ab/conductor/workspaces/agno/colombo/cookbook/02_agents/rag. Violations: 0
+Pattern Check: Checked 5 file(s) in cookbook/02_agents/rag. Violations: 0
+
+Requires: pgvector (`./cookbook/scripts/run_pgvector.sh`)
 
 ### agentic_rag.py
 
@@ -10,7 +12,7 @@ Pattern Check: Checked 5 file(s) in /Users/ab/conductor/workspaces/agno/colombo/
 
 **Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
 
-**Result:** Completed successfully in 13s.
+**Result:** Completed successfully.
 
 ---
 
@@ -30,7 +32,7 @@ Pattern Check: Checked 5 file(s) in /Users/ab/conductor/workspaces/agno/colombo/
 
 **Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
 
-**Result:** Failed with import dependency error: cohere not installed, please run pip install cohere
+**Result:** Failed with import dependency error: `cohere` not installed. Please install using `pip install cohere`.
 
 ---
 
@@ -40,7 +42,7 @@ Pattern Check: Checked 5 file(s) in /Users/ab/conductor/workspaces/agno/colombo/
 
 **Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
 
-**Result:** Failed with import dependency error: `sentence-transformers` not installed, please run `pip install sentence-transformers`
+**Result:** Failed with import dependency error: `sentence-transformers` not installed. Please install using `pip install sentence-transformers`.
 
 ---
 
@@ -50,7 +52,6 @@ Pattern Check: Checked 5 file(s) in /Users/ab/conductor/workspaces/agno/colombo/
 
 **Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
 
-**Result:** Completed successfully in 17s.
+**Result:** Completed successfully.
 
 ---
-

@@ -2,19 +2,9 @@
 
 Generated: 2026-02-10 UTC
 
-Pattern Check: Checked 4 file(s) in cookbook/02_agents/hooks. Violations: 0
+Pattern Check: Checked 3 file(s) in cookbook/02_agents/callable_factories. Violations: 0 (2 violations fixed: added section banners to 02_session_state_tools.py and 03_team_callable_members.py)
 
-### post_hook_output.py
-
-**Status:** PASS
-
-**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
-
-**Result:** Completed successfully.
-
----
-
-### pre_hook_input.py
+### 01_callable_tools.py
 
 **Status:** PASS
 
@@ -24,7 +14,7 @@ Pattern Check: Checked 4 file(s) in cookbook/02_agents/hooks. Violations: 0
 
 ---
 
-### session_state_hooks.py
+### 02_session_state_tools.py
 
 **Status:** PASS
 
@@ -34,7 +24,7 @@ Pattern Check: Checked 4 file(s) in cookbook/02_agents/hooks. Violations: 0
 
 ---
 
-### stream_hook.py
+### 03_team_callable_members.py
 
 **Status:** PASS
 

@@ -1,8 +1,8 @@
 # TEST LOG
 
-Generated: 2026-02-08 15:41 UTC
+Generated: 2026-02-10 UTC
 
-Pattern Check: Checked 5 file(s) in /Users/ab/conductor/workspaces/agno/colombo/cookbook/02_agents/input_and_output. Violations: 0
+Pattern Check: Checked 5 file(s) in cookbook/02_agents/input_and_output. Violations: 0
 
 ### input_formats.py
 
@@ -10,17 +10,17 @@ Pattern Check: Checked 5 file(s) in /Users/ab/conductor/workspaces/agno/colombo/
 
 **Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
 
-**Result:** Completed successfully in 5s.
+**Result:** Completed successfully.
 
 ---
 
 ### input_schema.py
 
-**Status:** PASS
+**Status:** FAIL
 
 **Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
 
-**Result:** Completed successfully in 16s.
+**Result:** Failed with Anthropic API authentication error (401 Unauthorized). Environment issue -- ANTHROPIC_API_KEY is invalid.
 
 ---
 
@@ -30,7 +30,7 @@ Pattern Check: Checked 5 file(s) in /Users/ab/conductor/workspaces/agno/colombo/
 
 **Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
 
-**Result:** Completed successfully in 9s.
+**Result:** Completed successfully.
 
 ---
 
@@ -40,7 +40,7 @@ Pattern Check: Checked 5 file(s) in /Users/ab/conductor/workspaces/agno/colombo/
 
 **Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
 
-**Result:** Completed successfully in 1s.
+**Result:** Completed successfully.
 
 ---
 
@@ -50,7 +50,6 @@ Pattern Check: Checked 5 file(s) in /Users/ab/conductor/workspaces/agno/colombo/
 
 **Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
 
-**Result:** Completed successfully in 3s.
+**Result:** Completed successfully.
 
 ---
-

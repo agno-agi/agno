@@ -16,7 +16,9 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.run import RunContext
 
-# -- Define some tools -------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Tools
+# ---------------------------------------------------------------------------
 
 
 def search_web(query: str) -> str:
@@ -34,7 +36,9 @@ def get_account_balance(account_id: str) -> str:
     return f"Balance for {account_id}: $42,000"
 
 
-# -- Callable factory --------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Callable Factory
+# ---------------------------------------------------------------------------
 
 
 def tools_for_user(run_context: RunContext):
@@ -51,8 +55,9 @@ def tools_for_user(run_context: RunContext):
     return base_tools
 
 
-# -- Agent with callable tools ------------------------------------------------
-
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
     tools=tools_for_user,
@@ -63,6 +68,9 @@ agent = Agent(
 )
 
 
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     # Run 1: viewer role - only search_web available
     # Each user_id gets its own cached toolset

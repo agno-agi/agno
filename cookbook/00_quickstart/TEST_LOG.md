@@ -2,7 +2,7 @@
 
 Test results for `cookbook/00_quickstart/` examples.
 
-**Test Date:** 2026-02-10
+**Test Date:** 2026-02-10 (re-validated)
 **Environment:** `.venvs/demo/bin/python` with `direnv` exports loaded
 **Model:** `gemini-3-flash-preview` (Google Gemini)
 **Database:** SQLite (`tmp/agents.db`) and ChromaDB (`tmp/chromadb/`)
@@ -149,7 +149,7 @@ Test results for `cookbook/00_quickstart/` examples.
 
 **Description:** Three-step workflow: Data Gathering, Analysis, Report Writing for NVIDIA.
 
-**Result:** Exited `0` in ~33.6s; all three steps completed, final report included recommendation (BUY), key metrics table, and rationale.
+**Result:** Exited `0` in ~30.8s; all three steps completed, final report included recommendation (BUY), key metrics table, and rationale.
 
 ---
 
