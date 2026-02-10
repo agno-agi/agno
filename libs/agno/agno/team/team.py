@@ -1027,6 +1027,154 @@ class Team:
             **kwargs,
         )
 
+    ###########################################################################
+    # Continue Run (HITL)
+    ###########################################################################
+
+    @overload
+    def continue_run(
+        self,
+        run_response: Optional[TeamRunOutput] = None,
+        *,
+        run_id: Optional[str] = None,
+        requirements: Optional[List[Any]] = None,
+        stream: Literal[False] = False,
+        stream_events: Optional[bool] = None,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        debug_mode: Optional[bool] = None,
+        yield_run_output: bool = False,
+    ) -> TeamRunOutput: ...
+
+    @overload
+    def continue_run(
+        self,
+        run_response: Optional[TeamRunOutput] = None,
+        *,
+        run_id: Optional[str] = None,
+        requirements: Optional[List[Any]] = None,
+        stream: Literal[True] = True,
+        stream_events: Optional[bool] = False,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        debug_mode: Optional[bool] = None,
+        yield_run_output: bool = False,
+    ) -> Iterator[Union[TeamRunOutputEvent, RunOutputEvent]]: ...
+
+    def continue_run(
+        self,
+        run_response: Optional[TeamRunOutput] = None,
+        *,
+        run_id: Optional[str] = None,
+        requirements: Optional[List[Any]] = None,
+        stream: Optional[bool] = None,
+        stream_events: Optional[bool] = False,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        run_context: Optional[RunContext] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        debug_mode: Optional[bool] = None,
+        yield_run_output: bool = False,
+        **kwargs,
+    ) -> Union[TeamRunOutput, Iterator[Union[TeamRunOutputEvent, RunOutputEvent, TeamRunOutput]]]:
+        return _run.continue_run_dispatch(
+            self,
+            run_response=run_response,
+            run_id=run_id,
+            requirements=requirements,
+            stream=stream,
+            stream_events=stream_events,
+            user_id=user_id,
+            session_id=session_id,
+            run_context=run_context,
+            knowledge_filters=knowledge_filters,
+            dependencies=dependencies,
+            metadata=metadata,
+            debug_mode=debug_mode,
+            yield_run_output=yield_run_output,
+            **kwargs,
+        )
+
+    @overload
+    async def acontinue_run(
+        self,
+        run_response: Optional[TeamRunOutput] = None,
+        *,
+        stream: Literal[False] = False,
+        stream_events: Optional[bool] = None,
+        run_id: Optional[str] = None,
+        requirements: Optional[List[Any]] = None,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        debug_mode: Optional[bool] = None,
+        **kwargs: Any,
+    ) -> TeamRunOutput: ...
+
+    @overload
+    def acontinue_run(
+        self,
+        run_response: Optional[TeamRunOutput] = None,
+        *,
+        stream: Literal[True] = True,
+        stream_events: Optional[bool] = None,
+        run_id: Optional[str] = None,
+        requirements: Optional[List[Any]] = None,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        debug_mode: Optional[bool] = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[Union[TeamRunOutputEvent, RunOutputEvent, TeamRunOutput]]: ...
+
+    def acontinue_run(  # type: ignore
+        self,
+        run_response: Optional[TeamRunOutput] = None,
+        *,
+        run_id: Optional[str] = None,
+        requirements: Optional[List[Any]] = None,
+        stream: Optional[bool] = None,
+        stream_events: Optional[bool] = None,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        run_context: Optional[RunContext] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        debug_mode: Optional[bool] = None,
+        yield_run_output: bool = False,
+        **kwargs: Any,
+    ) -> Union[TeamRunOutput, AsyncIterator[Union[TeamRunOutputEvent, RunOutputEvent, TeamRunOutput]]]:
+        return _run.acontinue_run_dispatch(
+            self,
+            run_response=run_response,
+            run_id=run_id,
+            requirements=requirements,
+            stream=stream,
+            stream_events=stream_events,
+            user_id=user_id,
+            session_id=session_id,
+            run_context=run_context,
+            knowledge_filters=knowledge_filters,
+            dependencies=dependencies,
+            metadata=metadata,
+            debug_mode=debug_mode,
+            yield_run_output=yield_run_output,
+            **kwargs,
+        )
+
     def _handle_model_response_chunk(
         self,
         session: TeamSession,
@@ -1336,6 +1484,9 @@ class Team:
         self, member_id: str, run_context: Optional[RunContext] = None
     ) -> Optional[Tuple[int, Union[Agent, "Team"]]]:
         return _tools._find_member_by_id(self, member_id=member_id, run_context=run_context)
+
+    def _find_member_route_by_id(self, member_id: str) -> Optional[Tuple[int, Union[Agent, "Team"]]]:
+        return _tools._find_member_route_by_id(self, member_id=member_id)
 
     def _get_delegate_task_function(
         self,

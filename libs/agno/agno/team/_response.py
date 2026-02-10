@@ -29,6 +29,7 @@ from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
 from agno.run import RunContext
 from agno.run.agent import RunOutput, RunOutputEvent
 from agno.run.messages import RunMessages
+from agno.run.requirement import RunRequirement
 from agno.run.team import (
     TeamRunEvent,
     TeamRunOutput,
@@ -1424,6 +1425,18 @@ def _handle_model_response_chunk(
                         events_to_skip=team.events_to_skip,
                         store_events=team.store_events,
                     )
+
+        # Handle tool interruption events (HITL flow)
+        elif model_response_event.event == ModelResponseEvent.tool_call_paused.value:
+            tool_executions_list = model_response_event.tool_executions
+            if tool_executions_list is not None:
+                if run_response.tools is None:
+                    run_response.tools = tool_executions_list
+                else:
+                    run_response.tools.extend(tool_executions_list)
+                if run_response.requirements is None:
+                    run_response.requirements = []
+                run_response.requirements.append(RunRequirement(tool_execution=tool_executions_list[-1]))
 
         # If the model response is a tool_call_started, add the tool call to the run_response
         elif model_response_event.event == ModelResponseEvent.tool_call_started.value:
