@@ -9,6 +9,29 @@ from agno.utils.dttm import now_epoch_s
 from agno.utils.log import log_debug, log_warning
 
 
+def _get_pause_type(tool_execution: Any) -> str:
+    """Determine the pause type from a ToolExecution object."""
+    if getattr(tool_execution, "requires_user_input", False):
+        return "user_input"
+    if getattr(tool_execution, "external_execution_required", False):
+        return "external_execution"
+    return "confirmation"
+
+
+def _get_first_approval_tool(tools: Optional[List[Any]], requirements: Optional[List[Any]] = None) -> Any:
+    """Return the first tool execution that has requires_approval=True."""
+    if requirements:
+        for req in requirements:
+            te = getattr(req, "tool_execution", None)
+            if te and getattr(te, "requires_approval", False):
+                return te
+    if tools:
+        for tool in tools:
+            if getattr(tool, "requires_approval", False):
+                return tool
+    return None
+
+
 def _has_approval_requirement(tools: Optional[List[Any]], requirements: Optional[List[Any]] = None) -> bool:
     """Check if any paused tool execution has requires_approval=True.
 
@@ -82,6 +105,15 @@ def _build_approval_dict(
     if source_name:
         context["source_name"] = source_name
 
+    # Extract pause_type, tool_name, tool_args, and approval_mode from the first approval tool
+    tools_list = getattr(run_response, "tools", None)
+    reqs_list = getattr(run_response, "requirements", None)
+    first_tool = _get_first_approval_tool(tools_list, reqs_list)
+    pause_type = _get_pause_type(first_tool) if first_tool else "confirmation"
+    tool_name = getattr(first_tool, "tool_name", None) if first_tool else None
+    tool_args = getattr(first_tool, "tool_args", None) if first_tool else None
+    approval_mode = getattr(first_tool, "approval_mode", None) or "required"
+
     return {
         "id": str(uuid4()),
         "run_id": getattr(run_response, "run_id", None) or str(uuid4()),
@@ -95,8 +127,13 @@ def _build_approval_dict(
         "schedule_id": schedule_id,
         "schedule_run_id": schedule_run_id,
         "source_name": source_name,
+        "pause_type": pause_type,
+        "tool_name": tool_name,
+        "tool_args": tool_args,
         "requirements": requirements_data,
         "context": context if context else None,
+        "resolution": None,
+        "approval_mode": approval_mode,
         "resolved_by": None,
         "resolved_at": None,
         "created_at": now_epoch_s(),
@@ -142,7 +179,17 @@ def create_approval_from_pause(
             schedule_id=schedule_id,
             schedule_run_id=schedule_run_id,
         )
-        db.create_approval(approval_data)
+        create_fn = getattr(db, "create_approval", None)
+        if create_fn is None:
+            return
+        from inspect import iscoroutinefunction
+
+        if iscoroutinefunction(create_fn):
+            import asyncio
+
+            asyncio.get_event_loop().run_until_complete(create_fn(approval_data))
+        else:
+            create_fn(approval_data)
         log_debug(f"Created approval {approval_data['id']} for run {approval_data['run_id']}")
     except NotImplementedError:
         pass

@@ -1,4 +1,4 @@
-"""Async approval-backed HITL: requires_approval with async agent run.
+"""Async approval-backed HITL: @approval + @tool with async agent run.
 
 Same flow as approval_basic.py but uses arun() and acontinue_run().
 
@@ -14,7 +14,7 @@ import httpx
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
-from agno.tools import tool
+from agno.tools import approval, tool
 
 DB_FILE = "tmp/approvals_async_test.db"
 
@@ -23,7 +23,8 @@ if os.path.exists(DB_FILE):
 os.makedirs("tmp", exist_ok=True)
 
 
-@tool(requires_approval=True)
+@approval
+@tool(requires_confirmation=True)
 def get_top_hackernews_stories(num_stories: int) -> str:
     """Fetch top stories from Hacker News.
 

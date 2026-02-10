@@ -8,8 +8,11 @@ from pydantic import BaseModel, Field
 class ApprovalResolve(BaseModel):
     """Request body for resolving (approve/reject) an approval."""
 
-    status: str = Field(..., pattern="^(approved|rejected)$")
+    action: str = Field(..., pattern="^(approve|reject)$")
     resolved_by: Optional[str] = Field(default=None, max_length=255)
+    note: Optional[str] = None
+    values: Optional[Dict[str, Any]] = None  # for user_input approvals
+    result: Optional[str] = None  # for external_execution approvals
 
 
 class ApprovalResponse(BaseModel):
@@ -27,8 +30,13 @@ class ApprovalResponse(BaseModel):
     schedule_id: Optional[str] = None
     schedule_run_id: Optional[str] = None
     source_name: Optional[str] = None
+    pause_type: Optional[str] = None
+    tool_name: Optional[str] = None
+    tool_args: Optional[Dict[str, Any]] = None
     requirements: Optional[List[Dict[str, Any]]] = None
     context: Optional[Dict[str, Any]] = None
+    resolution: Optional[Dict[str, Any]] = None
+    approval_mode: Optional[str] = None
     resolved_by: Optional[str] = None
     resolved_at: Optional[int] = None
     created_at: Optional[int] = None

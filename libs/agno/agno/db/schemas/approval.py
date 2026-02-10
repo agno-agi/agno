@@ -20,8 +20,13 @@ class Approval:
     schedule_id: Optional[str] = None
     schedule_run_id: Optional[str] = None
     source_name: Optional[str] = None
+    pause_type: str = "confirmation"  # confirmation | user_input | external_execution
+    tool_name: Optional[str] = None
+    tool_args: Optional[Dict[str, Any]] = None
     requirements: Optional[List[Dict[str, Any]]] = None
     context: Optional[Dict[str, Any]] = None
+    resolution: Optional[Dict[str, Any]] = None
+    approval_mode: str = "required"  # required | log
     resolved_by: Optional[str] = None
     resolved_at: Optional[int] = None
     created_at: Optional[int] = None
@@ -49,8 +54,13 @@ class Approval:
             "schedule_id": self.schedule_id,
             "schedule_run_id": self.schedule_run_id,
             "source_name": self.source_name,
+            "pause_type": self.pause_type,
+            "tool_name": self.tool_name,
+            "tool_args": self.tool_args,
             "requirements": self.requirements,
             "context": self.context,
+            "resolution": self.resolution,
+            "approval_mode": self.approval_mode,
             "resolved_by": self.resolved_by,
             "resolved_at": self.resolved_at,
             "created_at": self.created_at,
@@ -73,8 +83,13 @@ class Approval:
             "schedule_id",
             "schedule_run_id",
             "source_name",
+            "pause_type",
+            "tool_name",
+            "tool_args",
             "requirements",
             "context",
+            "resolution",
+            "approval_mode",
             "resolved_by",
             "resolved_at",
             "created_at",

@@ -16,7 +16,7 @@ import time
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
-from agno.tools import tool
+from agno.tools import approval, tool
 
 DB_FILE = "tmp/approvals_lifecycle_test.db"
 
@@ -25,7 +25,8 @@ if os.path.exists(DB_FILE):
 os.makedirs("tmp", exist_ok=True)
 
 
-@tool(requires_approval=True)
+@approval
+@tool(requires_confirmation=True)
 def delete_user_data(user_id: str) -> str:
     """Permanently delete all data for a user. This is irreversible.
 
@@ -35,7 +36,8 @@ def delete_user_data(user_id: str) -> str:
     return f"All data for user {user_id} has been permanently deleted."
 
 
-@tool(requires_approval=True)
+@approval
+@tool(requires_confirmation=True)
 def send_bulk_email(subject: str, recipient_count: int) -> str:
     """Send a bulk email to many recipients.
 

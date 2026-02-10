@@ -50,7 +50,7 @@ def get_approval_router(os_db: Any, settings: Any) -> APIRouter:
 
     @router.get("/approvals", response_model=ApprovalListResponse)
     async def list_approvals(
-        status: Optional[Literal["pending", "approved", "rejected"]] = Query(None),
+        status: Optional[Literal["pending", "approved", "rejected", "expired", "cancelled"]] = Query(None),
         source_type: Optional[str] = Query(None),
         agent_id: Optional[str] = Query(None),
         team_id: Optional[str] = Query(None),
@@ -58,6 +58,7 @@ def get_approval_router(os_db: Any, settings: Any) -> APIRouter:
         user_id: Optional[str] = Query(None),
         schedule_id: Optional[str] = Query(None),
         run_id: Optional[str] = Query(None),
+        pause_type: Optional[str] = Query(None),
         limit: int = Query(100, ge=1, le=1000),
         offset: int = Query(0, ge=0),
         _: bool = Depends(auth_dependency),
@@ -72,6 +73,7 @@ def get_approval_router(os_db: Any, settings: Any) -> APIRouter:
             user_id=user_id,
             schedule_id=schedule_id,
             run_id=run_id,
+            pause_type=pause_type,
             limit=limit,
             offset=offset,
         )
@@ -111,12 +113,26 @@ def get_approval_router(os_db: Any, settings: Any) -> APIRouter:
                 detail=f"Approval is already '{existing.get('status')}' and cannot be resolved",
             )
 
+        # Map action to status
+        new_status = "approved" if body.action == "approve" else "rejected"
+
+        # Build resolution payload based on pause_type
+        pause_type = existing.get("pause_type", "confirmation")
+        resolution: Dict[str, Any] = {"action": body.action}
+        if body.note:
+            resolution["note"] = body.note
+        if pause_type == "user_input" and body.values is not None:
+            resolution["values"] = body.values
+        if pause_type == "external_execution" and body.result is not None:
+            resolution["result"] = body.result
+
         now = int(time.time())
         result = await _db_call(
             "update_approval",
             approval_id,
             expected_status="pending",
-            status=body.status,
+            status=new_status,
+            resolution=resolution,
             resolved_by=body.resolved_by,
             resolved_at=now,
         )

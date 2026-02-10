@@ -1,7 +1,8 @@
-"""Approval-backed HITL: @tool(requires_approval=True) with persistent DB record.
+"""Approval-backed HITL: @approval + @tool(requires_confirmation=True).
 
-This example shows how `requires_approval=True` builds on `requires_confirmation` by
-writing a persistent approval record to the database when the agent pauses. It:
+This example shows the @approval decorator stacked on top of @tool. When the
+agent calls the tool it pauses and a persistent approval record is written
+to the database. It:
 1. Runs an agent with a tool that requires approval.
 2. Verifies the agent pauses and an approval record is created in the DB.
 3. Confirms the requirement and continues the run.
@@ -18,7 +19,7 @@ import httpx
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
-from agno.tools import tool
+from agno.tools import approval, tool
 
 DB_FILE = "tmp/approvals_test.db"
 
@@ -28,7 +29,8 @@ if os.path.exists(DB_FILE):
 os.makedirs("tmp", exist_ok=True)
 
 
-@tool(requires_approval=True)
+@approval
+@tool(requires_confirmation=True)
 def get_top_hackernews_stories(num_stories: int) -> str:
     """Fetch top stories from Hacker News.
 

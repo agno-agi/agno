@@ -1,6 +1,6 @@
-"""Team-level approval: member agent tool with requires_approval=True.
+"""Team-level approval: @approval on a team member agent's tool.
 
-Demonstrates that when a team member's tool requires approval, the team
+Demonstrates that when a team member's tool has @approval, the team
 pauses and an approval record is written to the DB.
 
 Run: .venvs/demo/bin/python cookbook/02_agents/human_in_the_loop/approvals/approval_team.py
@@ -13,7 +13,7 @@ from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
-from agno.tools import tool
+from agno.tools import approval, tool
 
 DB_FILE = "tmp/approvals_team_test.db"
 
@@ -22,7 +22,8 @@ if os.path.exists(DB_FILE):
 os.makedirs("tmp", exist_ok=True)
 
 
-@tool(requires_approval=True)
+@approval
+@tool(requires_confirmation=True)
 def deploy_to_production(app_name: str, version: str) -> str:
     """Deploy an application to production.
 

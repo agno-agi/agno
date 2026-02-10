@@ -1045,6 +1045,7 @@ class BaseDb(ABC):
         user_id: Optional[str] = None,
         schedule_id: Optional[str] = None,
         run_id: Optional[str] = None,
+        pause_type: Optional[str] = None,
         limit: int = 100,
         offset: int = 0,
     ) -> Tuple[List[Dict[str, Any]], int]:
@@ -1732,6 +1733,7 @@ class AsyncBaseDb(ABC):
         user_id: Optional[str] = None,
         schedule_id: Optional[str] = None,
         run_id: Optional[str] = None,
+        pause_type: Optional[str] = None,
         limit: int = 100,
         offset: int = 0,
     ) -> Tuple[List[Dict[str, Any]], int]:

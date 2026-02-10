@@ -3574,6 +3574,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         user_id: Optional[str] = None,
         schedule_id: Optional[str] = None,
         run_id: Optional[str] = None,
+        pause_type: Optional[str] = None,
         limit: int = 100,
         offset: int = 0,
     ) -> Tuple[List[Dict[str, Any]], int]:
@@ -3608,6 +3609,9 @@ class AsyncSqliteDb(AsyncBaseDb):
                 if run_id is not None:
                     stmt = stmt.where(table.c.run_id == run_id)
                     count_stmt = count_stmt.where(table.c.run_id == run_id)
+                if pause_type is not None:
+                    stmt = stmt.where(table.c.pause_type == pause_type)
+                    count_stmt = count_stmt.where(table.c.pause_type == pause_type)
                 total = (await sess.execute(count_stmt)).scalar() or 0
                 stmt = stmt.order_by(table.c.created_at.desc()).limit(limit).offset(offset)
                 results = (await sess.execute(stmt)).fetchall()

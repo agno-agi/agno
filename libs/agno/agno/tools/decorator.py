@@ -273,3 +273,40 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
         return decorator(args[0])
 
     return decorator
+
+
+def approval(
+    func: Optional[Function] = None, *, mode: str = "required"
+) -> Union[Function, Callable[[Function], Function]]:
+    """Mark a tool as requiring external approval.
+
+    Must be applied after @tool (on top of @tool).
+
+    Args:
+        mode: "required" (default) -- approval must be resolved before run continues.
+              "log" -- approval record created for audit trail only.
+    """
+    if mode not in ("required", "log"):
+        raise ValueError(f"Invalid approval mode: {mode!r}. Must be 'required' or 'log'.")
+
+    def _apply(fn: Function) -> Function:
+        if not isinstance(fn, Function):
+            raise TypeError(
+                "@approval must be applied after @tool. Use @approval on top of @tool, not the other way around."
+            )
+        if not fn.requires_confirmation and not fn.requires_user_input and not fn.external_execution:
+            logger.warning(
+                f"@approval on '{fn.name}' has no effect: tool has no HITL flag set. "
+                "Add requires_confirmation, requires_user_input, or external_execution to @tool."
+            )
+            return fn
+        fn.requires_approval = True
+        fn.approval_mode = mode
+        return fn
+
+    # @approval (no parens) -- func is the Function object
+    if func is not None:
+        return _apply(func)
+
+    # @approval(mode="log") -- return the decorator
+    return _apply
