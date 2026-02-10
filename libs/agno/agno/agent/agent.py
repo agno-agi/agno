@@ -1931,8 +1931,14 @@ class Agent:
         self.model = cast(Model, self.model)
 
         # Merge agent metadata with run metadata
+        # Runtime metadata takes precedence over agent defaults
         if self.metadata is not None and metadata is not None:
-            merge_dictionaries(metadata, self.metadata)
+            from copy import deepcopy
+
+            _merged = deepcopy(self.metadata)
+            merge_dictionaries(_merged, metadata)
+            metadata.clear()
+            metadata.update(_merged)
 
         # Create a new run_response for this attempt
         run_response = RunOutput(
@@ -2979,11 +2985,17 @@ class Agent:
             knowledge_filters = self._get_effective_filters(knowledge_filters)
 
         # Merge agent metadata with run metadata
+        # Runtime metadata takes precedence over agent defaults
         if self.metadata is not None:
             if metadata is None:
                 metadata = self.metadata
             else:
-                merge_dictionaries(metadata, self.metadata)
+                from copy import deepcopy
+
+                _merged = deepcopy(self.metadata)
+                merge_dictionaries(_merged, metadata)
+                metadata.clear()
+                metadata.update(_merged)
 
         # Resolve output_schema parameter takes precedence, then fall back to self.output_schema
         if output_schema is None:
@@ -3184,12 +3196,18 @@ class Agent:
             run_context.knowledge_filters = self._get_effective_filters(knowledge_filters)
 
         # Merge agent metadata with run metadata
+        # Runtime metadata takes precedence over agent defaults
         run_context.metadata = metadata
         if self.metadata is not None:
             if run_context.metadata is None:
                 run_context.metadata = self.metadata
             else:
-                merge_dictionaries(run_context.metadata, self.metadata)
+                from copy import deepcopy
+
+                _merged = deepcopy(self.metadata)
+                merge_dictionaries(_merged, run_context.metadata)
+                run_context.metadata.clear()
+                run_context.metadata.update(_merged)
 
         # Use stream override value when necessary
         if stream is None:
@@ -3861,11 +3879,17 @@ class Agent:
             knowledge_filters = self._get_effective_filters(knowledge_filters)
 
         # Merge agent metadata with run metadata
+        # Runtime metadata takes precedence over agent defaults
         if self.metadata is not None:
             if metadata is None:
                 metadata = self.metadata
             else:
-                merge_dictionaries(metadata, self.metadata)
+                from copy import deepcopy
+
+                _merged = deepcopy(self.metadata)
+                merge_dictionaries(_merged, metadata)
+                metadata.clear()
+                metadata.update(_merged)
 
         # Prepare arguments for the model
         response_format = self._get_response_format(run_context=run_context)
