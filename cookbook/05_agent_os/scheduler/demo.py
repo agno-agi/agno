@@ -1,19 +1,19 @@
-"""Running the scheduler inside AgentOS with automatic polling.
+"""Running the scheduler inside AgentOS with programmatic schedule creation.
 
-This example demonstrates the primary DX for the scheduler:
+This example demonstrates:
 - Setting scheduler=True on AgentOS to enable cron polling
-- The poller starts automatically on app startup and stops on shutdown
-- Schedules are created via the REST API (POST /schedules)
-- The internal service token handles auth between scheduler and agent endpoints
+- Using ScheduleManager to create schedules directly (no curl needed)
+- The poller starts automatically on app startup and executes due schedules
 
 Run with:
-    .venvs/demo/bin/python cookbook/05_agent_os/scheduler/scheduler_with_agentos.py
+    .venvs/demo/bin/python cookbook/05_agent_os/scheduler/demo.py
 """
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
+from agno.scheduler import ScheduleManager
 
 # --- Setup ---
 
@@ -33,36 +33,50 @@ reporter = Agent(
     db=db,
 )
 
-# Create AgentOS with scheduler enabled.
-# This does three things:
-#   1. Registers the /schedules REST endpoints
-#   2. Starts a SchedulePoller on app startup (polls every 15s by default)
-#   3. Auto-generates an internal service token for scheduler -> agent auth
+# --- Create schedules programmatically ---
+
+mgr = ScheduleManager(db)
+
+# Create a schedule for the greeter agent (every 5 minutes)
+greet_schedule = mgr.create(
+    name="greet-every-5-min",
+    cron="* * * * *",
+    endpoint="/agents/greeter/runs",
+    payload={"message": "Say hello!"},
+    description="Greet every 5 minutes",
+    if_exists="update",
+)
+print(
+    f"Schedule ready: {greet_schedule['name']} (next run: {greet_schedule['next_run_at']})"
+)
+
+# Create a schedule for the reporter agent (daily at 9 AM)
+report_schedule = mgr.create(
+    name="daily-news-report",
+    cron="* * * * *",
+    endpoint="/agents/reporter/runs",
+    payload={"message": "Summarize today's top headlines."},
+    description="Daily news summary at 9 AM UTC",
+    if_exists="update",
+)
+print(
+    f"Schedule ready: {report_schedule['name']} (next run: {report_schedule['next_run_at']})"
+)
+
+# --- Create AgentOS with scheduler enabled ---
+
 agent_os = AgentOS(
     name="Scheduled OS",
     agents=[greeter, reporter],
     db=db,
     scheduler=True,
-    scheduler_poll_interval=15,  # seconds between poll cycles (default: 15)
-    # scheduler_base_url="http://127.0.0.1:7777",  # default
-    # internal_service_token="my-secret",  # auto-generated if omitted
+    scheduler_poll_interval=15,
 )
 
-app = agent_os.get_app()
-
 # --- Run the server ---
-# Once running, create schedules via:
-#
-#   curl -X POST http://127.0.0.1:7777/schedules \
-#     -H "Content-Type: application/json" \
-#     -d '{
-#       "name": "greet-every-5-min",
-#       "cron_expr": "*/5 * * * *",
-#       "endpoint": "/agents/greeter/runs",
-#       "payload": {"message": "Say hello!"}
-#     }'
-#
-# The poller will pick it up on the next poll cycle and run the agent.
+# The poller will automatically pick up the schedules created above.
 
 if __name__ == "__main__":
-    agent_os.serve(app="demo:app", port=7777, reload=True)
+    import uvicorn
+
+    uvicorn.run(agent_os.get_app(), host="0.0.0.0", port=7777)

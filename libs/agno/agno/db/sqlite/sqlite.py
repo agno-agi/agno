@@ -4512,14 +4512,14 @@ class SqliteDb(BaseDb):
             log_error(f"Error creating schedule run: {e}")
             raise
 
-    def update_schedule_run(self, run_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+    def update_schedule_run(self, schedule_run_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
         try:
             table = self._get_table(table_type="schedule_runs")
             if table is None:
                 return None
             with self.Session() as sess, sess.begin():
-                sess.execute(table.update().where(table.c.id == run_id).values(**kwargs))
-            return self.get_schedule_run(run_id)
+                sess.execute(table.update().where(table.c.id == schedule_run_id).values(**kwargs))
+            return self.get_schedule_run(schedule_run_id)
         except Exception as e:
             log_debug(f"Error updating schedule run: {e}")
             return None
