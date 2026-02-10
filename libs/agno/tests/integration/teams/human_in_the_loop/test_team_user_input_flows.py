@@ -124,6 +124,33 @@ def test_member_user_input_invalid_field_name(shared_db):
     assert result.content is not None
 
 
+@pytest.mark.asyncio
+async def test_member_user_input_async_streaming(shared_db):
+    """Async streaming user input flow."""
+    agent = _make_agent(db=shared_db)
+    team = _make_team(agent, db=shared_db)
+
+    paused_output = None
+    async for event in team.arun(
+        "Get me the weather", session_id="test_user_input_async_stream", stream=True, stream_events=True
+    ):
+        if hasattr(event, "is_paused") and event.is_paused:
+            paused_output = event
+            break
+
+    assert paused_output is not None
+    assert paused_output.is_paused
+
+    req = paused_output.requirements[0]
+    assert req.needs_user_input
+
+    req.provide_user_input({"city": "Berlin"})
+
+    result = await team.acontinue_run(paused_output)
+    assert not result.is_paused
+    assert result.content is not None
+
+
 def test_member_user_input_streaming(shared_db):
     """Streaming user input flow."""
     agent = _make_agent(db=shared_db)

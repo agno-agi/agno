@@ -499,9 +499,11 @@ def _propagate_member_pause(
     member_id = get_member_id(member_agent)
     for req in member_run_response.requirements:
         req_copy = copy(req)
-        # Deepcopy tool_execution to avoid shared mutable state with the original
+        # Deepcopy mutable fields to avoid shared state with the original
         if req_copy.tool_execution is not None:
             req_copy.tool_execution = deepcopy(req_copy.tool_execution)
+        if req_copy.user_input_schema is not None:
+            req_copy.user_input_schema = deepcopy(req_copy.user_input_schema)
         if req_copy.member_agent_id is None:
             req_copy.member_agent_id = member_id
         if req_copy.member_agent_name is None:

@@ -110,6 +110,36 @@ async def test_member_external_execution_async(shared_db):
     assert result.content is not None
 
 
+@pytest.mark.asyncio
+async def test_member_external_execution_async_streaming(shared_db):
+    """Async streaming external execution flow."""
+    agent = _make_agent(db=shared_db)
+    team = _make_team(agent, db=shared_db)
+
+    paused_output = None
+    async for event in team.arun(
+        "Send an email to john@example.com with subject 'Hello' and body 'Hi there'",
+        session_id="test_ext_exec_async_stream",
+        stream=True,
+        stream_events=True,
+    ):
+        if hasattr(event, "is_paused") and event.is_paused:
+            paused_output = event
+            break
+
+    assert paused_output is not None
+    assert paused_output.is_paused
+
+    req = paused_output.requirements[0]
+    assert req.needs_external_execution
+
+    req.set_external_execution_result("Email sent successfully to john@example.com")
+
+    result = await team.acontinue_run(paused_output)
+    assert not result.is_paused
+    assert result.content is not None
+
+
 def test_member_external_execution_streaming(shared_db):
     """Streaming external execution flow."""
     agent = _make_agent(db=shared_db)

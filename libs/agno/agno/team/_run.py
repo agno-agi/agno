@@ -2931,6 +2931,7 @@ def _handle_team_tool_call_updates(
         elif _t.tool_name == "get_user_input" and _t.requires_user_input is not None and _t.requires_user_input is True:
             handle_get_user_input_tool_update(team, run_messages=run_messages, tool=_t)  # type: ignore
             _t.requires_user_input = False
+            _t.answered = True
 
         # Case 4: Handle user input required tools
         elif _t.requires_user_input is not None and _t.requires_user_input is True:
@@ -3372,7 +3373,7 @@ def continue_run_dispatch(
                 **kwargs,
             )
         else:
-            return _continue_run_impl(
+            return _continue_run(
                 team,
                 run_response=run_response,
                 run_messages=run_messages,
@@ -3420,7 +3421,7 @@ def continue_run_dispatch(
     return run_response
 
 
-def _continue_run_impl(
+def _continue_run(
     team: "Team",
     run_response: TeamRunOutput,
     run_messages: RunMessages,
@@ -3858,7 +3859,7 @@ def acontinue_run_dispatch(  # type: ignore
 ) -> Union[TeamRunOutput, AsyncIterator[Union[TeamRunOutputEvent, RunOutputEvent, TeamRunOutput]]]:
     """Continue a paused team run (async entry point).
 
-    Routes to _acontinue_run_impl or _acontinue_run_stream_impl based on stream option.
+    Routes to _acontinue_run or _acontinue_run_stream based on stream option.
     """
     from agno.team._init import _initialize_session
     from agno.team._response import get_response_format
@@ -3921,7 +3922,7 @@ def acontinue_run_dispatch(  # type: ignore
     response_format = get_response_format(team, run_context=run_context) if team.parser_model is None else None
 
     if opts.stream:
-        return _acontinue_run_stream_impl(
+        return _acontinue_run_stream(
             team,
             run_response=run_response,
             run_context=run_context,
@@ -3937,7 +3938,7 @@ def acontinue_run_dispatch(  # type: ignore
             **kwargs,
         )
     else:
-        return _acontinue_run_impl(  # type: ignore
+        return _acontinue_run(  # type: ignore
             team,
             run_response=run_response,
             run_context=run_context,
@@ -3952,7 +3953,7 @@ def acontinue_run_dispatch(  # type: ignore
         )
 
 
-async def _acontinue_run_impl(
+async def _acontinue_run(
     team: "Team",
     session_id: str,
     run_context: RunContext,
@@ -4222,7 +4223,7 @@ async def _acontinue_run_impl(
     return run_response  # type: ignore
 
 
-async def _acontinue_run_stream_impl(
+async def _acontinue_run_stream(
     team: "Team",
     session_id: str,
     run_context: RunContext,
