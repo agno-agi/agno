@@ -1,6 +1,6 @@
-"""Approval + user input HITL: @tool(requires_approval=True, requires_user_input=True).
+"""Approval + user input HITL: @approval + @tool(requires_user_input=True).
 
-This example shows how requires_approval works with requires_user_input to create
+This example shows how @approval works with requires_user_input to create
 a persistent approval record AND require user input before tool execution.
 
 Run: .venvs/demo/bin/python cookbook/02_agents/human_in_the_loop/approvals/approval_user_input.py
@@ -10,6 +10,7 @@ import os
 import time
 
 from agno.agent import Agent
+from agno.approval import approval
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.tools import tool
@@ -22,7 +23,8 @@ if os.path.exists(DB_FILE):
 os.makedirs("tmp", exist_ok=True)
 
 
-@tool(requires_approval=True, requires_user_input=True, user_input_fields=["recipient"])
+@approval
+@tool(requires_user_input=True, user_input_fields=["recipient"])
 def send_money(amount: float, recipient: str, note: str) -> str:
     """Send money to a recipient.
 

@@ -1,6 +1,6 @@
-"""Logged approval with external execution: @tool(external_execution=True, log_approval=True).
+"""Audit approval with external execution: @approval(type="audit") + @tool(external_execution=True).
 
-This example shows log_approval=True with external execution, creating an audit record
+This example shows @approval(type="audit") with external execution, creating an audit record
 after the tool is executed externally and the result is provided.
 
 Run: .venvs/demo/bin/python cookbook/02_agents/human_in_the_loop/approvals/log_approval_external.py
@@ -9,6 +9,7 @@ Run: .venvs/demo/bin/python cookbook/02_agents/human_in_the_loop/approvals/log_a
 import os
 
 from agno.agent import Agent
+from agno.approval import approval
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.tools import tool
@@ -21,7 +22,8 @@ if os.path.exists(DB_FILE):
 os.makedirs("tmp", exist_ok=True)
 
 
-@tool(external_execution=True, log_approval=True)
+@approval(type="audit")
+@tool(external_execution=True)
 def run_security_scan(target: str) -> str:
     """Run a security scan against a target system.
 
@@ -76,7 +78,7 @@ assert not run_response.is_paused, "Expected run to complete, but it's still pau
 
 # Step 4: Verify logged approval record was created in DB
 print("\n--- Step 4: Verifying logged approval record in DB ---")
-approvals, total = db.get_approvals(approval_type="logged")
+approvals, total = db.get_approvals(approval_type="audit")
 print(f"Logged approvals: {total}")
 assert total >= 1, f"Expected at least 1 logged approval, got {total}"
 approval = approvals[0]
@@ -87,8 +89,8 @@ print(f"  Source:         {approval['source_type']}")
 assert approval["status"] == "approved", (
     f"Expected status 'approved', got {approval['status']}"
 )
-assert approval["approval_type"] == "logged", (
-    f"Expected type 'logged', got {approval['approval_type']}"
+assert approval["approval_type"] == "audit", (
+    f"Expected type 'audit', got {approval['approval_type']}"
 )
 
 print("\n--- All checks passed! ---")

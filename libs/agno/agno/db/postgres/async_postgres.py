@@ -3330,6 +3330,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         status: Optional[str] = None,
         source_type: Optional[str] = None,
         approval_type: Optional[str] = None,
+        pause_type: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
         workflow_id: Optional[str] = None,
@@ -3355,6 +3356,9 @@ class AsyncPostgresDb(AsyncBaseDb):
                 if approval_type is not None:
                     stmt = stmt.where(table.c.approval_type == approval_type)
                     count_stmt = count_stmt.where(table.c.approval_type == approval_type)
+                if pause_type is not None:
+                    stmt = stmt.where(table.c.pause_type == pause_type)
+                    count_stmt = count_stmt.where(table.c.pause_type == pause_type)
                 if agent_id is not None:
                     stmt = stmt.where(table.c.agent_id == agent_id)
                     count_stmt = count_stmt.where(table.c.agent_id == agent_id)

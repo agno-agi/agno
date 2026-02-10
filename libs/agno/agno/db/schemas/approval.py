@@ -6,14 +6,18 @@ from agno.utils.dttm import now_epoch_s, to_epoch_s
 
 @dataclass
 class Approval:
-    """Model for a human approval request created when a tool with requires_approval=True pauses a run."""
+    """Model for a human approval request created when a tool with approval_type set pauses a run."""
 
     id: str
     run_id: str
     session_id: str
     status: str = "pending"  # pending | approved | rejected | expired | cancelled
     source_type: str = "agent"  # agent | team | workflow
-    approval_type: Optional[str] = None  # required | logged
+    approval_type: Optional[str] = None  # required | audit
+    pause_type: str = "confirmation"  # confirmation | user_input | external_execution
+    tool_name: Optional[str] = None
+    tool_args: Optional[Dict[str, Any]] = None
+    expires_at: Optional[int] = None
     agent_id: Optional[str] = None
     team_id: Optional[str] = None
     workflow_id: Optional[str] = None
@@ -45,6 +49,10 @@ class Approval:
             "status": self.status,
             "source_type": self.source_type,
             "approval_type": self.approval_type,
+            "pause_type": self.pause_type,
+            "tool_name": self.tool_name,
+            "tool_args": self.tool_args,
+            "expires_at": self.expires_at,
             "agent_id": self.agent_id,
             "team_id": self.team_id,
             "workflow_id": self.workflow_id,
@@ -71,6 +79,10 @@ class Approval:
             "status",
             "source_type",
             "approval_type",
+            "pause_type",
+            "tool_name",
+            "tool_args",
+            "expires_at",
             "agent_id",
             "team_id",
             "workflow_id",

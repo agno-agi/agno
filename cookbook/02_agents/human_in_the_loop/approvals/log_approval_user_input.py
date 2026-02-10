@@ -1,6 +1,6 @@
-"""Logged approval with user input: @tool(requires_user_input=True, log_approval=True).
+"""Audit approval with user input: @approval(type="audit") + @tool(requires_user_input=True).
 
-This example shows log_approval=True with user input, creating an audit record
+This example shows @approval(type="audit") with user input, creating an audit record
 after user provides input and the tool executes.
 
 Run: .venvs/demo/bin/python cookbook/02_agents/human_in_the_loop/approvals/log_approval_user_input.py
@@ -9,6 +9,7 @@ Run: .venvs/demo/bin/python cookbook/02_agents/human_in_the_loop/approvals/log_a
 import os
 
 from agno.agent import Agent
+from agno.approval import approval
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.tools import tool
@@ -21,7 +22,8 @@ if os.path.exists(DB_FILE):
 os.makedirs("tmp", exist_ok=True)
 
 
-@tool(requires_user_input=True, log_approval=True, user_input_fields=["account"])
+@approval(type="audit")
+@tool(requires_user_input=True, user_input_fields=["account"])
 def transfer_funds(amount: float, account: str) -> str:
     """Transfer funds to an account.
 
@@ -54,7 +56,7 @@ print("Agent paused as expected.")
 
 # Step 2: Verify no logged approvals exist yet (log_approval creates records AFTER resolution)
 print("\n--- Step 2: Verifying no logged approvals yet ---")
-approvals, total = db.get_approvals(approval_type="logged")
+approvals, total = db.get_approvals(approval_type="audit")
 print(f"Logged approvals before resolution: {total}")
 assert total == 0, f"Expected 0 logged approvals before resolution, got {total}"
 print("No logged approvals yet (as expected).")
@@ -77,7 +79,7 @@ assert not run_response.is_paused, "Expected run to complete, but it's still pau
 
 # Step 4: Verify logged approval record was created after resolution
 print("\n--- Step 4: Verifying logged approval record ---")
-approvals, total = db.get_approvals(approval_type="logged")
+approvals, total = db.get_approvals(approval_type="audit")
 print(f"Logged approvals after resolution: {total}")
 assert total >= 1, f"Expected at least 1 logged approval, got {total}"
 approval = approvals[0]
@@ -87,8 +89,8 @@ print(f"  Type:        {approval['approval_type']}")
 assert approval["status"] == "approved", (
     f"Expected 'approved', got {approval['status']}"
 )
-assert approval["approval_type"] == "logged", (
-    f"Expected 'logged', got {approval['approval_type']}"
+assert approval["approval_type"] == "audit", (
+    f"Expected 'audit', got {approval['approval_type']}"
 )
 print("Logged approval record verified.")
 
@@ -97,7 +99,7 @@ print("\n--- Step 5: Verifying final state ---")
 pending_count = db.get_pending_approval_count()
 print(f"Pending approvals: {pending_count}")
 assert pending_count == 0, f"Expected 0 pending approvals, got {pending_count}"
-all_approvals, all_total = db.get_approvals(approval_type="logged")
+all_approvals, all_total = db.get_approvals(approval_type="audit")
 print(f"Total logged approvals: {all_total}")
 assert all_total == 1, f"Expected 1 logged approval, got {all_total}"
 

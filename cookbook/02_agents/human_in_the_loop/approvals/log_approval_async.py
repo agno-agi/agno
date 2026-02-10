@@ -1,6 +1,6 @@
-"""Async logged approval: @tool(requires_confirmation=True, log_approval=True) with async.
+"""Async audit approval: @approval(type="audit") + @tool(requires_confirmation=True) with async.
 
-Async variant of log_approval_confirmation.py showing log_approval works with
+Async variant of log_approval_confirmation.py showing @approval(type="audit") works with
 agent.arun() and agent.acontinue_run().
 
 Run: .venvs/demo/bin/python cookbook/02_agents/human_in_the_loop/approvals/log_approval_async.py
@@ -10,6 +10,7 @@ import asyncio
 import os
 
 from agno.agent import Agent
+from agno.approval import approval
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.tools import tool
@@ -22,7 +23,8 @@ if os.path.exists(DB_FILE):
 os.makedirs("tmp", exist_ok=True)
 
 
-@tool(requires_confirmation=True, log_approval=True)
+@approval(type="audit")
+@tool(requires_confirmation=True)
 def delete_user_data(user_id: str) -> str:
     """Permanently delete all data for a user.
 
@@ -76,7 +78,7 @@ async def main():
 
     # Step 4: Verify logged approval record was created in DB
     print("\n--- Step 4: Verifying logged approval record in DB ---")
-    approvals, total = db.get_approvals(approval_type="logged")
+    approvals, total = db.get_approvals(approval_type="audit")
     print(f"Logged approvals: {total}")
     assert total >= 1, f"Expected at least 1 logged approval, got {total}"
     approval = approvals[0]
@@ -86,8 +88,8 @@ async def main():
     assert approval["status"] == "approved", (
         f"Expected status 'approved', got {approval['status']}"
     )
-    assert approval["approval_type"] == "logged", (
-        f"Expected type 'logged', got {approval['approval_type']}"
+    assert approval["approval_type"] == "audit", (
+        f"Expected type 'audit', got {approval['approval_type']}"
     )
 
     print("\n--- All checks passed! ---")

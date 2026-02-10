@@ -1,7 +1,7 @@
-"""Logged approval with confirmation: @tool(requires_confirmation=True, log_approval=True).
+"""Audit approval with confirmation: @approval(type="audit") + @tool(requires_confirmation=True).
 
-This example shows how log_approval=True creates an approval record AFTER the HITL
-interaction resolves, unlike requires_approval which creates it BEFORE.
+This example shows how @approval(type="audit") creates an approval record AFTER the HITL
+interaction resolves, unlike @approval (type="required") which creates it BEFORE.
 Demonstrates both approval and rejection paths.
 
 Run: .venvs/demo/bin/python cookbook/02_agents/human_in_the_loop/approvals/log_approval_confirmation.py
@@ -10,6 +10,7 @@ Run: .venvs/demo/bin/python cookbook/02_agents/human_in_the_loop/approvals/log_a
 import os
 
 from agno.agent import Agent
+from agno.approval import approval
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.tools import tool
@@ -22,7 +23,8 @@ if os.path.exists(DB_FILE):
 os.makedirs("tmp", exist_ok=True)
 
 
-@tool(requires_confirmation=True, log_approval=True)
+@approval(type="audit")
+@tool(requires_confirmation=True)
 def delete_user_data(user_id: str) -> str:
     """Permanently delete all data for a user.
 
@@ -70,7 +72,7 @@ assert not run_response.is_paused, "Expected run to complete, but it's still pau
 
 # Step 3: Verify logged approval record was created
 print("\n--- Step 3: Verifying logged approval record (approved) ---")
-approvals, total = db.get_approvals(approval_type="logged")
+approvals, total = db.get_approvals(approval_type="audit")
 print(f"Logged approvals: {total}")
 assert total >= 1, f"Expected at least 1 logged approval, got {total}"
 approval = approvals[0]
@@ -80,8 +82,8 @@ print(f"  Type:        {approval['approval_type']}")
 assert approval["status"] == "approved", (
     f"Expected 'approved', got {approval['status']}"
 )
-assert approval["approval_type"] == "logged", (
-    f"Expected 'logged', got {approval['approval_type']}"
+assert approval["approval_type"] == "audit", (
+    f"Expected 'audit', got {approval['approval_type']}"
 )
 print("Logged approval record verified (approved).")
 
@@ -110,7 +112,7 @@ assert not run_response.is_paused, "Expected run to complete, but it's still pau
 
 # Step 6: Verify logged approval record for rejection
 print("\n--- Step 6: Verifying logged approval record (rejected) ---")
-approvals, total = db.get_approvals(approval_type="logged")
+approvals, total = db.get_approvals(approval_type="audit")
 print(f"Total logged approvals: {total}")
 assert total >= 2, f"Expected at least 2 logged approvals, got {total}"
 # Find the rejected one (most recent)
@@ -120,14 +122,12 @@ rej = rejected[0]
 print(f"  Approval ID: {rej['id']}")
 print(f"  Status:      {rej['status']}")
 print(f"  Type:        {rej['approval_type']}")
-assert rej["approval_type"] == "logged", (
-    f"Expected 'logged', got {rej['approval_type']}"
-)
+assert rej["approval_type"] == "audit", f"Expected 'audit', got {rej['approval_type']}"
 print("Logged approval record verified (rejected).")
 
 # Final check: total logged approvals
 print("\n--- Final: Checking total logged approvals ---")
-all_logged, all_total = db.get_approvals(approval_type="logged")
+all_logged, all_total = db.get_approvals(approval_type="audit")
 print(f"Total logged approvals: {all_total}")
 assert all_total == 2, f"Expected 2 total logged approvals, got {all_total}"
 

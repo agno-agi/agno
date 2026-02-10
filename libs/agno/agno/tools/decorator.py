@@ -71,8 +71,6 @@ def tool(
     user_input_fields: Optional[List[str]] = None,
     external_execution: Optional[bool] = None,
     external_execution_silent: Optional[bool] = None,
-    requires_approval: Optional[bool] = None,
-    log_approval: Optional[bool] = None,
     pre_hook: Optional[Callable] = None,
     post_hook: Optional[Callable] = None,
     tool_hooks: Optional[List[Callable]] = None,
@@ -102,7 +100,6 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
         user_input_fields: Optional[List[str]] - List of fields that will be provided to the function as user input
         external_execution: Optional[bool] - If True, the function will be executed outside of the agent's context
         external_execution_silent: Optional[bool] - If True (and external_execution=True), suppresses verbose paused messages (e.g., "I have tools to execute...")
-        requires_approval: Optional[bool] - If True, an approval record is created when this tool pauses a run. Implies requires_confirmation=True.
         pre_hook: Optional[Callable] - Hook that runs before the function is executed.
         post_hook: Optional[Callable] - Hook that runs after the function is executed.
         tool_hooks: Optional[List[Callable]] - List of hooks that run before and after the function is executed.
@@ -141,8 +138,6 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
             "user_input_fields",
             "external_execution",
             "external_execution_silent",
-            "requires_approval",
-            "log_approval",
             "pre_hook",
             "post_hook",
             "tool_hooks",
@@ -171,29 +166,6 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
         raise ValueError(
             "Only one of 'requires_user_input', 'requires_confirmation', or 'external_execution' can be set to True at the same time."
         )
-
-    # requires_approval implies requires_confirmation so the agent pauses
-    # and an approval record is written to the DB before the tool executes.
-    # If another HITL flag (requires_user_input, external_execution) is already set,
-    # the agent will pause via that mechanism instead.
-    if kwargs.get("requires_approval") and true_flags_count == 0:
-        kwargs["requires_confirmation"] = True
-
-    # log_approval requires at least one HITL flag
-    if kwargs.get("log_approval") and not kwargs.get("requires_approval"):
-        if true_flags_count == 0:
-            raise ValueError(
-                "'log_approval=True' requires at least one HITL flag "
-                "('requires_confirmation', 'requires_user_input', or 'external_execution') to be set."
-            )
-
-    # requires_approval takes precedence over log_approval
-    if kwargs.get("requires_approval") and kwargs.get("log_approval"):
-        logger.warning(
-            "Both 'requires_approval' and 'log_approval' are set. "
-            "'requires_approval' takes precedence (approval_type='required')."
-        )
-        kwargs.pop("log_approval", None)
 
     def decorator(func: F) -> Function:
         from inspect import isasyncgenfunction
@@ -241,6 +213,34 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
 
         # Preserve the original signature and metadata
         update_wrapper(wrapper, func)
+
+        # Detect sentinel from @approval decorator applied below @tool
+        _approval_type = getattr(func, "_agno_approval_type", None)
+        if _approval_type is not None:
+            if _approval_type == "required":
+                kwargs["approval_type"] = "required"
+                if not any(
+                    [
+                        kwargs.get("requires_user_input"),
+                        kwargs.get("requires_confirmation"),
+                        kwargs.get("external_execution"),
+                    ]
+                ):
+                    kwargs["requires_confirmation"] = True
+            elif _approval_type == "audit":
+                kwargs["approval_type"] = "audit"
+                if not any(
+                    [
+                        kwargs.get("requires_user_input"),
+                        kwargs.get("requires_confirmation"),
+                        kwargs.get("external_execution"),
+                    ]
+                ):
+                    raise ValueError(
+                        "@approval(type='audit') requires at least one HITL flag "
+                        "('requires_confirmation', 'requires_user_input', or 'external_execution') "
+                        "to be set on @tool()."
+                    )
 
         if kwargs.get("requires_user_input", True):
             kwargs["user_input_fields"] = kwargs.get("user_input_fields", [])

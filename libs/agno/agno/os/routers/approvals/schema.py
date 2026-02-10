@@ -22,6 +22,10 @@ class ApprovalResponse(BaseModel):
     status: str
     source_type: str
     approval_type: Optional[str] = None
+    pause_type: Optional[str] = None
+    tool_name: Optional[str] = None
+    tool_args: Optional[Dict[str, Any]] = None
+    expires_at: Optional[int] = None
     agent_id: Optional[str] = None
     team_id: Optional[str] = None
     workflow_id: Optional[str] = None

@@ -433,6 +433,14 @@ def parse_tools(
                 _function_names.append(function_name)
 
                 _func = Function.from_callable(tool, strict=strict)
+                # Detect @approval sentinel on raw callable
+                _approval_type = getattr(tool, "_agno_approval_type", None)
+                if _approval_type is not None:
+                    _func.approval_type = _approval_type
+                    if _approval_type == "required" and not any(
+                        [_func.requires_user_input, _func.requires_confirmation, _func.external_execution]
+                    ):
+                        _func.requires_confirmation = True
                 _func = _func.model_copy(deep=True)
                 _func._agent = agent
                 if strict:
@@ -706,10 +714,10 @@ def handle_tool_call_updates(
                 _t.confirmed = False
                 _t.confirmation_note = _t.confirmation_note or "Tool call was rejected"
                 _t.tool_call_error = True
-            if _t.log_approval:
-                from agno.run.approval import create_logged_approval
+            if _t.approval_type == "audit":
+                from agno.run.approval import create_audit_approval
 
-                create_logged_approval(
+                create_audit_approval(
                     db=agent.db,
                     tool_execution=_t,
                     run_response=run_response,
@@ -722,10 +730,10 @@ def handle_tool_call_updates(
         # Case 2: Handle external execution required tools
         elif _t.external_execution_required is not None and _t.external_execution_required is True:
             handle_external_execution_update(agent, run_messages=run_messages, tool=_t)
-            if _t.log_approval:
-                from agno.run.approval import create_logged_approval
+            if _t.approval_type == "audit":
+                from agno.run.approval import create_audit_approval
 
-                create_logged_approval(
+                create_audit_approval(
                     db=agent.db,
                     tool_execution=_t,
                     run_response=run_response,
@@ -746,10 +754,10 @@ def handle_tool_call_updates(
             _t.answered = True
             # Consume the generator without yielding
             deque(run_tool(agent, run_response, run_messages, _t, functions=_functions), maxlen=0)
-            if _t.log_approval:
-                from agno.run.approval import create_logged_approval
+            if _t.approval_type == "audit":
+                from agno.run.approval import create_audit_approval
 
-                create_logged_approval(
+                create_audit_approval(
                     db=agent.db,
                     tool_execution=_t,
                     run_response=run_response,
@@ -782,10 +790,10 @@ def handle_tool_call_updates_stream(
                 _t.confirmed = False
                 _t.confirmation_note = _t.confirmation_note or "Tool call was rejected"
                 _t.tool_call_error = True
-            if _t.log_approval:
-                from agno.run.approval import create_logged_approval
+            if _t.approval_type == "audit":
+                from agno.run.approval import create_audit_approval
 
-                create_logged_approval(
+                create_audit_approval(
                     db=agent.db,
                     tool_execution=_t,
                     run_response=run_response,
@@ -798,10 +806,10 @@ def handle_tool_call_updates_stream(
         # Case 2: Handle external execution required tools
         elif _t.external_execution_required is not None and _t.external_execution_required is True:
             handle_external_execution_update(agent, run_messages=run_messages, tool=_t)
-            if _t.log_approval:
-                from agno.run.approval import create_logged_approval
+            if _t.approval_type == "audit":
+                from agno.run.approval import create_audit_approval
 
-                create_logged_approval(
+                create_audit_approval(
                     db=agent.db,
                     tool_execution=_t,
                     run_response=run_response,
@@ -824,10 +832,10 @@ def handle_tool_call_updates_stream(
             )
             _t.requires_user_input = False
             _t.answered = True
-            if _t.log_approval:
-                from agno.run.approval import create_logged_approval
+            if _t.approval_type == "audit":
+                from agno.run.approval import create_audit_approval
 
-                create_logged_approval(
+                create_audit_approval(
                     db=agent.db,
                     tool_execution=_t,
                     run_response=run_response,
@@ -855,10 +863,10 @@ async def ahandle_tool_call_updates(
                 _t.confirmed = False
                 _t.confirmation_note = _t.confirmation_note or "Tool call was rejected"
                 _t.tool_call_error = True
-            if _t.log_approval:
-                from agno.run.approval import acreate_logged_approval
+            if _t.approval_type == "audit":
+                from agno.run.approval import acreate_audit_approval
 
-                await acreate_logged_approval(
+                await acreate_audit_approval(
                     db=agent.db,
                     tool_execution=_t,
                     run_response=run_response,
@@ -871,10 +879,10 @@ async def ahandle_tool_call_updates(
         # Case 2: Handle external execution required tools
         elif _t.external_execution_required is not None and _t.external_execution_required is True:
             handle_external_execution_update(agent, run_messages=run_messages, tool=_t)
-            if _t.log_approval:
-                from agno.run.approval import acreate_logged_approval
+            if _t.approval_type == "audit":
+                from agno.run.approval import acreate_audit_approval
 
-                await acreate_logged_approval(
+                await acreate_audit_approval(
                     db=agent.db,
                     tool_execution=_t,
                     run_response=run_response,
@@ -894,10 +902,10 @@ async def ahandle_tool_call_updates(
                 pass
             _t.requires_user_input = False
             _t.answered = True
-            if _t.log_approval:
-                from agno.run.approval import acreate_logged_approval
+            if _t.approval_type == "audit":
+                from agno.run.approval import acreate_audit_approval
 
-                await acreate_logged_approval(
+                await acreate_audit_approval(
                     db=agent.db,
                     tool_execution=_t,
                     run_response=run_response,
@@ -931,10 +939,10 @@ async def ahandle_tool_call_updates_stream(
                 _t.confirmed = False
                 _t.confirmation_note = _t.confirmation_note or "Tool call was rejected"
                 _t.tool_call_error = True
-            if _t.log_approval:
-                from agno.run.approval import acreate_logged_approval
+            if _t.approval_type == "audit":
+                from agno.run.approval import acreate_audit_approval
 
-                await acreate_logged_approval(
+                await acreate_audit_approval(
                     db=agent.db,
                     tool_execution=_t,
                     run_response=run_response,
@@ -947,10 +955,10 @@ async def ahandle_tool_call_updates_stream(
         # Case 2: Handle external execution required tools
         elif _t.external_execution_required is not None and _t.external_execution_required is True:
             handle_external_execution_update(agent, run_messages=run_messages, tool=_t)
-            if _t.log_approval:
-                from agno.run.approval import acreate_logged_approval
+            if _t.approval_type == "audit":
+                from agno.run.approval import acreate_audit_approval
 
-                await acreate_logged_approval(
+                await acreate_audit_approval(
                     db=agent.db,
                     tool_execution=_t,
                     run_response=run_response,
@@ -972,10 +980,10 @@ async def ahandle_tool_call_updates_stream(
                 yield event
             _t.requires_user_input = False
             _t.answered = True
-            if _t.log_approval:
-                from agno.run.approval import acreate_logged_approval
+            if _t.approval_type == "audit":
+                from agno.run.approval import acreate_audit_approval
 
-                await acreate_logged_approval(
+                await acreate_audit_approval(
                     db=agent.db,
                     tool_execution=_t,
                     run_response=run_response,

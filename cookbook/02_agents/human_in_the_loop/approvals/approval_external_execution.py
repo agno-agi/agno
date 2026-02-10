@@ -1,6 +1,6 @@
-"""Approval + external execution HITL: @tool(requires_approval=True, external_execution=True).
+"""Approval + external execution HITL: @approval + @tool(external_execution=True).
 
-This example shows how requires_approval works with external_execution to create
+This example shows how @approval works with external_execution to create
 a persistent approval record AND require external tool execution.
 
 Run: .venvs/demo/bin/python cookbook/02_agents/human_in_the_loop/approvals/approval_external_execution.py
@@ -10,6 +10,7 @@ import os
 import time
 
 from agno.agent import Agent
+from agno.approval import approval
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.tools import tool
@@ -22,7 +23,8 @@ if os.path.exists(DB_FILE):
 os.makedirs("tmp", exist_ok=True)
 
 
-@tool(requires_approval=True, external_execution=True)
+@approval
+@tool(external_execution=True)
 def deploy_to_production(service_name: str, version: str) -> str:
     """Deploy a service to production.
 

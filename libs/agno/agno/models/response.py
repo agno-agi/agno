@@ -55,11 +55,8 @@ class ToolExecution:
     # If True (and external_execution_required=True), suppresses verbose paused messages
     external_execution_silent: Optional[bool] = None
 
-    # If True, an approval record is created when this tool pauses a run
-    requires_approval: Optional[bool] = None
-
-    # If True, log the HITL resolution to the approvals table (approval_type='logged')
-    log_approval: Optional[bool] = None
+    # Approval type: "required" (blocking) or "audit" (non-blocking audit trail).
+    approval_type: Optional[str] = None
 
     @property
     def is_paused(self) -> bool:
@@ -94,8 +91,7 @@ class ToolExecution:
             else None,
             external_execution_required=data.get("external_execution_required"),
             external_execution_silent=data.get("external_execution_silent"),
-            requires_approval=data.get("requires_approval"),
-            log_approval=data.get("log_approval"),
+            approval_type=data.get("approval_type"),
             metrics=Metrics(**(data.get("metrics", {}) or {})),
             **{"created_at": data["created_at"]} if "created_at" in data else {},
         )
