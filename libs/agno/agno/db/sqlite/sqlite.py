@@ -618,7 +618,7 @@ class SqliteDb(BaseDb):
                     delete_stmt = delete_stmt.where(table.c.user_id == user_id)
                 result = sess.execute(delete_stmt)
                 if result.rowcount == 0:
-                    log_debug(f"No session found to deletewith session_id: {session_id}")
+                    log_debug(f"No session found to delete with session_id: {session_id}")
                     return False
                 else:
                     log_debug(f"Successfully deleted session with session_id: {session_id}")
