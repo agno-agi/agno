@@ -33,7 +33,6 @@ multi_language_team = Team(
     name="Multi Language Team",
     model=OpenAIChat("gpt-4o"),
     members=[english_agent, spanish_agent],
-    pass_user_input_to_members=True,
     respond_directly=True,
     markdown=True,
     instructions=[
