@@ -163,7 +163,7 @@ async def example_multiple_background_runs():
             print(f"  Status: {result.status}")
         else:
             print(f"\n  Q: {questions[i]}")
-            print(f"  Status: Still running or not found")
+            print("  Status: Still running or not found")
 
 
 async def main():
