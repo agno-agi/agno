@@ -8,26 +8,14 @@ This example demonstrates:
 - Filtered views (enabled only, disabled only)
 """
 
-from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
-from agno.os import AgentOS
+from agno.scheduler import ScheduleManager
 from agno.scheduler.cli import SchedulerConsole
 
-# --- Setup with 3 different agents ---
+# --- Setup ---
 
 db = SqliteDb(id="multi-agent-demo", db_file="tmp/multi_agent_demo.db")
-
-researcher = Agent(name="Research Agent", db=db)
-writer = Agent(name="Writer Agent", db=db)
-monitor = Agent(name="Monitor Agent", db=db)
-
-app = AgentOS(
-    name="Multi-Agent Scheduler",
-    agents=[researcher, writer, monitor],
-    db=db,
-)
-
-mgr = app.scheduler
+mgr = ScheduleManager(db)
 console = SchedulerConsole(mgr)
 
 # =============================================================================
