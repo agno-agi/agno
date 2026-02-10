@@ -33,7 +33,7 @@ def send_email(to: str, subject: str, body: str) -> str:
 # ---------------------------------------------------------------------------
 email_agent = Agent(
     name="EmailAgent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-4o"),
     tools=[send_email],
     db=db,
     telemetry=False,
@@ -44,7 +44,7 @@ email_agent = Agent(
 # ---------------------------------------------------------------------------
 team = Team(
     name="CommunicationTeam",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-4o"),
     members=[email_agent],
     db=db,
     telemetry=False,
