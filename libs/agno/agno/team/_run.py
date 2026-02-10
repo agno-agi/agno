@@ -1163,9 +1163,15 @@ async def _arun(
                     async for _ in pre_hook_iterator:
                         pass
 
-                # 2. Determine tools for model
+                # 2. Resolve callable factories and determine tools for model
                 team_run_context: Dict[str, Any] = {}
                 team.model = cast(Model, team.model)
+
+                # Resolve callable factories (tools, knowledge, members) before tool determination
+                from agno.team._tools import _aresolve_callable_resources
+
+                await _aresolve_callable_resources(team, run_context=run_context)
+
                 await _check_and_refresh_mcp_tools(
                     team,
                 )
@@ -1497,9 +1503,15 @@ async def _arun_stream(
                     async for pre_hook_event in pre_hook_iterator:
                         yield pre_hook_event
 
-                # 2. Determine tools for model
+                # 2. Resolve callable factories and determine tools for model
                 team_run_context: Dict[str, Any] = {}
                 team.model = cast(Model, team.model)
+
+                # Resolve callable factories (tools, knowledge, members) before tool determination
+                from agno.team._tools import _aresolve_callable_resources
+
+                await _aresolve_callable_resources(team, run_context=run_context)
+
                 await _check_and_refresh_mcp_tools(
                     team,
                 )

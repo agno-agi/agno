@@ -384,7 +384,7 @@ def to_dict(team: "Team") -> Dict[str, Any]:
         config["model"] = team.model.to_dict() if isinstance(team.model, Model) else str(team.model)
 
     # --- Members ---
-    if team.members:
+    if team.members and isinstance(team.members, list):
         serialized_members = []
         for member in team.members:
             if isinstance(member, Agent):
@@ -494,7 +494,7 @@ def to_dict(team: "Team") -> Dict[str, Any]:
         config["references_format"] = team.references_format
 
     # --- Tools ---
-    if team.tools:
+    if team.tools and isinstance(team.tools, list):
         serialized_tools = []
         for tool in team.tools:
             try:
@@ -989,7 +989,9 @@ def save(
         all_links: List[Dict[str, Any]] = []
 
         # Save each member (Agent or nested Team) and collect links
-        for position, member in enumerate(team.members or []):
+        # Only iterate if members is a static list (not a callable factory)
+        members_list = team.members if isinstance(team.members, list) else []
+        for position, member in enumerate(members_list):
             # Save member first - returns version
             member_version = member.save(db=db_, stage=stage, label=label, notes=notes)
 
