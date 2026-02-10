@@ -103,6 +103,18 @@ class RedisRunCancellationManager(BaseRunCancellationManager):
         # NX: only set if key does not exist, preserving cancel-before-start intent
         await client.set(key, "0", ex=self.ttl_seconds, nx=True)
 
+    # Lua script for atomic cancel: checks existence then sets to "1" with optional TTL.
+    # Returns 1 if the key already existed (run was registered), 0 otherwise.
+    _CANCEL_LUA = """
+local existed = redis.call('EXISTS', KEYS[1])
+redis.call('SET', KEYS[1], '1')
+local ttl = tonumber(ARGV[1])
+if ttl and ttl > 0 then
+    redis.call('EXPIRE', KEYS[1], ttl)
+end
+return existed
+"""
+
     def cancel_run(self, run_id: str) -> bool:
         """Cancel a run by marking it as cancelled.
 
@@ -116,10 +128,8 @@ class RedisRunCancellationManager(BaseRunCancellationManager):
         client = self._ensure_sync_client()
         key = self._get_key(run_id)
 
-        # Check if the key already exists (run was registered)
-        was_registered: bool = client.exists(key) > 0  # type: ignore[operator]
-        # Always store the cancellation — enables cancel-before-start
-        client.set(key, "1", ex=self.ttl_seconds)
+        # Atomic: check existence then set to "1" in a single round-trip
+        was_registered = bool(client.eval(self._CANCEL_LUA, 1, key, self.ttl_seconds or 0))
 
         if was_registered:
             logger.info(f"Run {run_id} marked for cancellation")
@@ -140,10 +150,8 @@ class RedisRunCancellationManager(BaseRunCancellationManager):
         client = self._ensure_async_client()
         key = self._get_key(run_id)
 
-        # Check if the key already exists (run was registered)
-        was_registered = (await client.exists(key)) > 0
-        # Always store the cancellation — enables cancel-before-start
-        await client.set(key, "1", ex=self.ttl_seconds)
+        # Atomic: check existence then set to "1" in a single round-trip
+        was_registered = bool(await client.eval(self._CANCEL_LUA, 1, key, self.ttl_seconds or 0))
 
         if was_registered:
             logger.info(f"Run {run_id} marked for cancellation")

@@ -1,7 +1,6 @@
 """Integration tests for team-level tool HITL.
 
-Tests HITL for tools provided directly to the Team (not member agents).
-This is unique to our implementation - Yash's PR #6420 does not cover this.
+Tests HITL for tools provided directly to the Team (vs. member agent tools).
 """
 
 import os

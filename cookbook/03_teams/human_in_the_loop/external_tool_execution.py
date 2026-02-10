@@ -5,6 +5,7 @@ requires external execution. The tool result is provided by the caller
 rather than being executed by the agent.
 """
 
+import shlex
 import subprocess
 
 from agno.agent import Agent
@@ -20,7 +21,7 @@ def run_shell_command(command: str) -> str:
     Args:
         command (str): The shell command to execute
     """
-    return subprocess.check_output(command, shell=True).decode("utf-8")
+    return subprocess.check_output(shlex.split(command)).decode("utf-8")
 
 
 ops_agent = Agent(
