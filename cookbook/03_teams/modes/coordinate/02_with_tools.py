@@ -7,18 +7,18 @@ The team leader delegates to the right member based on what tools are needed.
 """
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.team.mode import TeamMode
 from agno.team.team import Team
-from agno.tools.hackernews import HackerNewsTools
 from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.hackernews import HackerNewsTools
 
 # -- Member agents with tools ------------------------------------------------
 
 hn_researcher = Agent(
     name="HackerNews Researcher",
     role="Searches and summarizes stories from Hacker News",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.2"),
     tools=[HackerNewsTools()],
     instructions=[
         "You search Hacker News for relevant stories.",
@@ -29,7 +29,7 @@ hn_researcher = Agent(
 web_searcher = Agent(
     name="Web Searcher",
     role="Searches the web for general information",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.2"),
     tools=[DuckDuckGoTools()],
     instructions=[
         "You search the web for relevant information.",
@@ -42,7 +42,7 @@ web_searcher = Agent(
 team = Team(
     name="News Research Team",
     mode=TeamMode.coordinate,
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     members=[hn_researcher, web_searcher],
     instructions=[
         "You lead a news research team.",

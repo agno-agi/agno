@@ -52,43 +52,275 @@ from agno.utils.team import (
 from agno.utils.timer import Timer
 
 
+def _get_tool_names(member: Any) -> List[str]:
+    """Extract tool names from a member's tools list."""
+    tool_names: List[str] = []
+    if member.tools is None or member.tools == []:
+        return tool_names
+    for _tool in member.tools:
+        if isinstance(_tool, Toolkit):
+            for _func in _tool.functions.values():
+                if _func.entrypoint:
+                    tool_names.append(_func.name)
+        elif isinstance(_tool, Function) and _tool.entrypoint:
+            tool_names.append(_tool.name)
+        elif callable(_tool):
+            tool_names.append(_tool.__name__)
+        elif isinstance(_tool, dict) and "name" in _tool and _tool.get("name") is not None:
+            tool_names.append(_tool["name"])
+        else:
+            tool_names.append(str(_tool))
+    return tool_names
+
+
 def get_members_system_message_content(team: "Team", indent: int = 0) -> str:
     from agno.team.team import Team
 
-    system_message_content = ""
-    for idx, member in enumerate(team.members):
-        url_safe_member_id = get_member_id(member)
+    pad = " " * indent
+    content = ""
+    for member in team.members:
+        member_id = get_member_id(member)
 
         if isinstance(member, Team):
-            system_message_content += f"{indent * ' '} - Team: {member.name}\n"
-            system_message_content += f"{indent * ' '} - ID: {url_safe_member_id}\n"
+            content += f'{pad}<member id="{member_id}" name="{member.name}" type="team">\n'
+            if member.description is not None:
+                content += f"{pad}  Description: {member.description}\n"
             if member.members is not None:
-                system_message_content += member.get_members_system_message_content(indent=indent + 2)
+                content += member.get_members_system_message_content(indent=indent + 2)
+            content += f"{pad}</member>\n"
         else:
-            system_message_content += f"{indent * ' '} - Agent {idx + 1}:\n"
-            if url_safe_member_id is not None:
-                system_message_content += f"{indent * ' '}   - ID: {url_safe_member_id}\n"
-            if member.name is not None:
-                system_message_content += f"{indent * ' '}   - Name: {member.name}\n"
+            content += f'{pad}<member id="{member_id}" name="{member.name}">\n'
             if member.role is not None:
-                system_message_content += f"{indent * ' '}   - Role: {member.role}\n"
-            if member.tools is not None and member.tools != [] and team.add_member_tools_to_context:
-                system_message_content += f"{indent * ' '}   - Member tools:\n"
-                for _tool in member.tools:
-                    if isinstance(_tool, Toolkit):
-                        for _func in _tool.functions.values():
-                            if _func.entrypoint:
-                                system_message_content += f"{indent * ' '}    - {_func.name}\n"
-                    elif isinstance(_tool, Function) and _tool.entrypoint:
-                        system_message_content += f"{indent * ' '}    - {_tool.name}\n"
-                    elif callable(_tool):
-                        system_message_content += f"{indent * ' '}    - {_tool.__name__}\n"
-                    elif isinstance(_tool, dict) and "name" in _tool and _tool.get("name") is not None:
-                        system_message_content += f"{indent * ' '}    - {_tool['name']}\n"
-                    else:
-                        system_message_content += f"{indent * ' '}    - {str(_tool)}\n"
+                content += f"{pad}  Role: {member.role}\n"
+            if member.description is not None:
+                content += f"{pad}  Description: {member.description}\n"
+            if team.add_member_tools_to_context:
+                tool_names = _get_tool_names(member)
+                if tool_names:
+                    content += f"{pad}  Tools: {', '.join(tool_names)}\n"
+            content += f"{pad}</member>\n"
 
-    return system_message_content
+    return content
+
+
+def _get_opening_prompt() -> str:
+    """Opening identity statement for the team leader."""
+    return (
+        "You coordinate a team of specialized AI agents to fulfill the user's request. "
+        "Delegate to members when their expertise or tools are needed. "
+        "For straightforward requests you can handle directly — including using your own tools — respond without delegating.\n"
+    )
+
+
+def _get_mode_instructions(team: "Team") -> str:
+    """Return the mode-specific <how_to_respond> block."""
+    from agno.team.mode import TeamMode
+
+    content = "\n<how_to_respond>\n"
+
+    if team.mode == TeamMode.tasks:
+        content += (
+            "You operate in autonomous task mode. Decompose the user's goal into discrete tasks, "
+            "execute them by delegating to team members, and deliver the final result.\n\n"
+            "Planning:\n"
+            "- Break the goal into tasks with clear, actionable titles and self-contained descriptions. "
+            "Each task should be a single unit of work for one member.\n"
+            "- Assign each task to the member whose role and tools are best suited.\n"
+            "- Set `depends_on` when a task requires another task's output. "
+            "Leave tasks independent when they can run in any order.\n\n"
+            "Execution:\n"
+            "- Use `execute_task` for sequential or dependent tasks.\n"
+            "- Use `execute_tasks_parallel` for groups of independent tasks to maximize throughput.\n"
+            "- Review each result before proceeding. If a task fails, decide whether to retry with the same member, "
+            "reassign to a different member, or adjust the plan.\n\n"
+            "Completion:\n"
+            "- When all tasks are done and results are satisfactory, call `mark_all_complete` with a summary of the outcome.\n"
+            "- Use `list_tasks` to check progress at any point, and `add_task_note` to record observations.\n\n"
+            "Write task descriptions that give the member everything they need: "
+            "the objective, relevant context from the conversation or prior task results, and what a good result looks like.\n"
+        )
+    elif team.mode == TeamMode.route:
+        content += (
+            "You operate in route mode. For requests that need member expertise, "
+            "identify the single best member and delegate to them — their response is returned directly to the user. "
+            "For requests you can handle directly — simple questions, using your own tools, or general conversation — "
+            "respond without delegating.\n\n"
+            "When routing to a member:\n"
+            "- Analyze the request to determine which member's role and tools are the best match.\n"
+            "- Delegate to exactly one member. Use only the member's ID — do not prefix it with the team ID.\n"
+            "- Write the task to faithfully represent the user's full intent. Do not reinterpret or narrow the request.\n"
+            "- If no member is a clear fit, choose the closest match and include any additional context the member might need.\n"
+        )
+    elif team.mode == TeamMode.broadcast:
+        content += (
+            "You operate in broadcast mode. For requests that benefit from multiple perspectives, "
+            "send the request to all members simultaneously and synthesize their collective responses. "
+            "For requests you can handle directly — simple questions, using your own tools, or general conversation — "
+            "respond without delegating.\n\n"
+            "When broadcasting:\n"
+            "- Call `delegate_task_to_members` exactly once with a clear task description. "
+            "This sends the task to every member in parallel.\n"
+            "- Write the task so each member can respond independently from their own perspective.\n\n"
+            "After receiving member responses:\n"
+            "- Compare perspectives: note agreements, highlight complementary insights, and reconcile any contradictions.\n"
+            "- Synthesize into a unified answer that integrates the strongest contributions thematically — "
+            "do not list each member's response sequentially.\n"
+        )
+    else:
+        # coordinate mode (default)
+        content += (
+            "You operate in coordinate mode. For requests that need member expertise, "
+            "select the best member(s), delegate with clear task descriptions, and synthesize their outputs "
+            "into a unified response. For requests you can handle directly — simple questions, "
+            "using your own tools, or general conversation — respond without delegating.\n\n"
+            "Delegation:\n"
+            "- Match each sub-task to the member whose role and tools are the best fit. "
+            "Delegate to multiple members when the request spans different areas of expertise.\n"
+            "- Write task descriptions that are self-contained: state the goal, provide relevant context "
+            "from the conversation, and describe what a good result looks like.\n"
+            "- Use only the member's ID when delegating — do not prefix it with the team ID.\n\n"
+            "After receiving member responses:\n"
+            "- If a response is incomplete or off-target, re-delegate with clearer instructions or try a different member.\n"
+            "- Synthesize all results into a single coherent response. Resolve contradictions, fill gaps with your own "
+            "reasoning, and add structure — do not simply concatenate member outputs.\n"
+        )
+
+    content += "</how_to_respond>\n\n"
+    return content
+
+
+def _build_team_context(
+    team: "Team",
+) -> str:
+    """Build the opening + team_members + how_to_respond blocks.
+
+    Shared between sync and async system-message builders.
+    """
+    content = ""
+    if team.members is not None and len(team.members) > 0:
+        content += _get_opening_prompt()
+        content += "\n<team_members>\n"
+        content += team.get_members_system_message_content()
+        if team.get_member_information_tool:
+            content += "If you need to get information about your team members, you can use the `get_member_information` tool at any time.\n"
+        content += "</team_members>\n"
+        content += _get_mode_instructions(team)
+    return content
+
+
+def _build_identity_sections(
+    team: "Team",
+    instructions: List[str],
+) -> str:
+    """Build description, role, and instructions sections.
+
+    Shared between sync and async system-message builders.
+    """
+    content = ""
+    if team.description is not None:
+        content += f"<description>\n{team.description}\n</description>\n\n"
+
+    if team.role is not None:
+        content += f"<your_role>\n{team.role}\n</your_role>\n\n"
+
+    if len(instructions) > 0:
+        if team.use_instruction_tags:
+            content += "<instructions>"
+            if len(instructions) > 1:
+                for _upi in instructions:
+                    content += f"\n- {_upi}"
+            else:
+                content += "\n" + instructions[0]
+            content += "\n</instructions>\n\n"
+        else:
+            if len(instructions) > 1:
+                for _upi in instructions:
+                    content += f"- {_upi}\n"
+            else:
+                content += instructions[0] + "\n\n"
+    return content
+
+
+def _build_trailing_sections(
+    team: "Team",
+    *,
+    audio: Optional[Sequence[Audio]] = None,
+    images: Optional[Sequence[Image]] = None,
+    videos: Optional[Sequence[Video]] = None,
+    files: Optional[Sequence[File]] = None,
+    additional_information: List[str],
+    tools: Optional[List[Union[Function, dict]]] = None,
+    output_schema: Optional[Any] = None,
+    run_context: Optional[RunContext] = None,
+    session_state: Optional[Dict[str, Any]] = None,
+    add_session_state_to_context: Optional[bool] = None,
+) -> str:
+    """Build media, additional info, tool instructions, and other trailing sections.
+
+    Shared between sync and async system-message builders.
+    """
+    content = ""
+
+    # Attached media
+    if audio is not None or images is not None or videos is not None or files is not None:
+        content += "<attached_media>\n"
+        content += "You have the following media attached to your message:\n"
+        if audio is not None and len(audio) > 0:
+            content += " - Audio\n"
+        if images is not None and len(images) > 0:
+            content += " - Images\n"
+        if videos is not None and len(videos) > 0:
+            content += " - Videos\n"
+        if files is not None and len(files) > 0:
+            content += " - Files\n"
+        content += "</attached_media>\n\n"
+
+    # Additional information
+    if len(additional_information) > 0:
+        content += "<additional_information>"
+        for _ai in additional_information:
+            content += f"\n- {_ai}"
+        content += "\n</additional_information>\n\n"
+
+    # Tool instructions
+    if team._tool_instructions is not None:
+        for _ti in team._tool_instructions:
+            content += f"{_ti}\n"
+
+    # Format the system message with the session state variables
+    if team.resolve_in_context:
+        content = _format_message_with_state_variables(
+            team,
+            content,
+            run_context=run_context,
+        )
+
+    system_message_from_model = team.model.get_system_message_for_model(tools)  # type: ignore[union-attr]
+    if system_message_from_model is not None:
+        content += system_message_from_model
+
+    if team.expected_output is not None:
+        content += f"<expected_output>\n{team.expected_output.strip()}\n</expected_output>\n\n"
+
+    if team.additional_context is not None:
+        content += f"<additional_context>\n{team.additional_context.strip()}\n</additional_context>\n\n"
+
+    if add_session_state_to_context and session_state is not None:
+        content += _get_formatted_session_state_for_system_message(team, session_state)
+
+    # JSON output prompt
+    if (
+        output_schema is not None
+        and team.parser_model is None
+        and team.model
+        and not (
+            (team.model.supports_native_structured_outputs or team.model.supports_json_schema_outputs)
+            and not team.use_json_mode
+        )
+    ):
+        content += f"{_get_json_output_prompt(team, output_schema)}"
+
+    return content
 
 
 def get_system_message(
@@ -212,79 +444,26 @@ def get_system_message(
     if team.name is not None and team.add_name_to_context:
         additional_information.append(f"Your name is: {team.name}.")
 
-    # 2 Build the default system message for the Agent.
+    # 2 Build the default system message for the Team.
     system_message_content: str = ""
-    if team.members is not None and len(team.members) > 0:
-        system_message_content += "You are the leader of a team and sub-teams of AI Agents.\n"
-        system_message_content += "Your task is to coordinate the team to complete the user's request.\n"
 
-        system_message_content += "\nHere are the members in your team:\n"
-        system_message_content += "<team_members>\n"
-        system_message_content += team.get_members_system_message_content()
-        if team.get_member_information_tool:
-            system_message_content += "If you need to get information about your team members, you can use the `get_member_information` tool at any time.\n"
-        system_message_content += "</team_members>\n"
+    # 2.1 Opening + team members + mode instructions
+    system_message_content += _build_team_context(team)
 
-        system_message_content += "\n<how_to_respond>\n"
+    # 2.2 Identity sections: description, role, instructions
+    system_message_content += _build_identity_sections(team, instructions)
 
-        from agno.team.mode import TeamMode
-
-        if team.mode == TeamMode.tasks:
-            system_message_content += (
-                "You are operating in autonomous task mode. Your job is to:\n"
-                "1. Analyze the user's goal and decompose it into discrete tasks using `create_task`\n"
-                "2. Execute tasks by delegating to team members using `execute_task`\n"
-                "3. Use `execute_tasks_parallel` when multiple tasks have no dependencies on each other\n"
-                "4. Monitor progress using `list_tasks`\n"
-                "5. Use `add_task_note` to record observations or communicate about tasks\n"
-                "6. When all tasks are complete, call `mark_all_complete` with a summary\n\n"
-                "Guidelines:\n"
-                "- Create tasks with clear, actionable titles and descriptions\n"
-                "- Set dependencies (depends_on) when tasks must be done in order\n"
-                "- Assign tasks to the most capable member based on their role and tools\n"
-                "- Prefer `execute_tasks_parallel` for independent tasks to maximize throughput\n"
-                "- Review task results before marking the overall goal as complete\n"
-                "- If a task fails, decide whether to retry, reassign, or take a different approach\n"
+    # 2.3 Knowledge base instructions
+    if team.knowledge is not None and team.search_knowledge and team.add_search_knowledge_instructions:
+        build_context_fn = getattr(team.knowledge, "build_context", None)
+        if callable(build_context_fn):
+            knowledge_context = build_context_fn(
+                enable_agentic_filters=team.enable_agentic_knowledge_filters,
             )
-        elif team.delegate_to_all_members:
-            system_message_content += (
-                "- You can either respond directly or use the `delegate_task_to_members` tool to delegate a task to all members in your team to get a collaborative response.\n"
-                "- To delegate a task to all members in your team, call `delegate_task_to_members` ONLY once. This will delegate a task to all members in your team.\n"
-                "- Analyze the responses from all members and evaluate whether the task has been completed.\n"
-                "- If you feel the task has been completed, you can stop and respond to the user.\n"
-            )
-        else:
-            system_message_content += (
-                "- Your role is to delegate tasks to members in your team with the highest likelihood of completing the user's request.\n"
-                "- Carefully analyze the tools available to the members and their roles before delegating tasks.\n"
-                "- You cannot use a member tool directly. You can only delegate tasks to members.\n"
-                "- When you delegate a task to another member, make sure to include:\n"
-                "  - member_id (str): The ID of the member to delegate the task to. Use only the ID of the member, not the ID of the team followed by the ID of the member.\n"
-                "  - task (str): A clear description of the task. Determine the best way to describe the task to the member.\n"
-                "- You can delegate tasks to multiple members at once.\n"
-                "- You must always analyze the responses from members before responding to the user.\n"
-                "- After analyzing the responses from the members, if you feel the task has been completed, you can stop and respond to the user.\n"
-                "- If you are NOT satisfied with the responses from the members, you should re-assign the task to a different member.\n"
-                "- For simple greetings, thanks, or questions about the team itself, you should respond directly.\n"
-                "- For all work requests, tasks, or questions requiring expertise, route to appropriate team members.\n"
-            )
-        system_message_content += "</how_to_respond>\n\n"
+            if knowledge_context:
+                system_message_content += knowledge_context + "\n"
 
-    # Attached media
-    if audio is not None or images is not None or videos is not None or files is not None:
-        system_message_content += "<attached_media>\n"
-        system_message_content += "You have the following media attached to your message:\n"
-        if audio is not None and len(audio) > 0:
-            system_message_content += " - Audio\n"
-        if images is not None and len(images) > 0:
-            system_message_content += " - Images\n"
-        if videos is not None and len(videos) > 0:
-            system_message_content += " - Videos\n"
-        if files is not None and len(files) > 0:
-            system_message_content += " - Files\n"
-        system_message_content += "</attached_media>\n\n"
-
-    # Then add memories to the system prompt
+    # 2.4 Memories
     if team.add_memories_to_context:
         _memory_manager_not_set = False
         if not user_id:
@@ -328,7 +507,7 @@ def get_system_message(
                 "</updating_user_memories>\n\n"
             )
 
-    # Then add a summary of the interaction to the system prompt
+    # 2.5 Session summary
     if team.add_session_summary_to_context and session.summary is not None:
         system_message_content += "Here is a brief summary of your previous interactions:\n\n"
         system_message_content += "<summary_of_previous_interactions>\n"
@@ -339,82 +518,20 @@ def get_system_message(
             "You should ALWAYS prefer information from this conversation over the past summary.\n\n"
         )
 
-    # Add search_knowledge instructions to the system prompt
-    if team.knowledge is not None and team.search_knowledge and team.add_search_knowledge_instructions:
-        build_context_fn = getattr(team.knowledge, "build_context", None)
-        if callable(build_context_fn):
-            knowledge_context = build_context_fn(
-                enable_agentic_filters=team.enable_agentic_knowledge_filters,
-            )
-            if knowledge_context:
-                system_message_content += knowledge_context + "\n"
-
-    if team.description is not None:
-        system_message_content += f"<description>\n{team.description}\n</description>\n\n"
-
-    if team.role is not None:
-        system_message_content += f"\n<your_role>\n{team.role}\n</your_role>\n\n"
-
-    # 3.3.5 Then add instructions for the Team
-    if len(instructions) > 0:
-        if team.use_instruction_tags:
-            system_message_content += "<instructions>"
-            if len(instructions) > 1:
-                for _upi in instructions:
-                    system_message_content += f"\n- {_upi}"
-            else:
-                system_message_content += "\n" + instructions[0]
-            system_message_content += "\n</instructions>\n\n"
-        else:
-            if len(instructions) > 1:
-                for _upi in instructions:
-                    system_message_content += f"- {_upi}\n"
-            else:
-                system_message_content += instructions[0] + "\n\n"
-    # 3.3.6 Add additional information
-    if len(additional_information) > 0:
-        system_message_content += "<additional_information>"
-        for _ai in additional_information:
-            system_message_content += f"\n- {_ai}"
-        system_message_content += "\n</additional_information>\n\n"
-    # 3.3.7 Then add instructions for the tools
-    if team._tool_instructions is not None:
-        for _ti in team._tool_instructions:
-            system_message_content += f"{_ti}\n"
-
-    # Format the system message with the session state variables
-    if team.resolve_in_context:
-        system_message_content = _format_message_with_state_variables(
-            team,
-            system_message_content,
-            run_context=run_context,
-        )
-
-    system_message_from_model = team.model.get_system_message_for_model(tools)
-    if system_message_from_model is not None:
-        system_message_content += system_message_from_model
-
-    if team.expected_output is not None:
-        system_message_content += f"<expected_output>\n{team.expected_output.strip()}\n</expected_output>\n\n"
-
-    if team.additional_context is not None:
-        system_message_content += f"<additional_context>\n{team.additional_context.strip()}\n</additional_context>\n\n"
-
-    if add_session_state_to_context and session_state is not None:
-        system_message_content += _get_formatted_session_state_for_system_message(team, session_state)
-
-    # Add the JSON output prompt if output_schema is provided and the model does not support native structured outputs
-    # or JSON schema outputs, or if use_json_mode is True
-    if (
-        output_schema is not None
-        and team.parser_model is None
-        and team.model
-        and not (
-            (team.model.supports_native_structured_outputs or team.model.supports_json_schema_outputs)
-            and not team.use_json_mode
-        )
-    ):
-        system_message_content += f"{_get_json_output_prompt(team, output_schema)}"
+    # 2.6 Trailing sections: media, additional info, tools, expected output, etc.
+    system_message_content += _build_trailing_sections(
+        team,
+        audio=audio,
+        images=images,
+        videos=videos,
+        files=files,
+        additional_information=additional_information,
+        tools=tools,
+        output_schema=output_schema,
+        run_context=run_context,
+        session_state=session_state,
+        add_session_state_to_context=add_session_state_to_context,
+    )
 
     return Message(role=team.system_message_role, content=system_message_content.strip())
 
@@ -535,79 +652,26 @@ async def aget_system_message(
     if team.name is not None and team.add_name_to_context:
         additional_information.append(f"Your name is: {team.name}.")
 
-    # 2 Build the default system message for the Agent.
+    # 2 Build the default system message for the Team.
     system_message_content: str = ""
-    if team.members is not None and len(team.members) > 0:
-        system_message_content += "You are the leader of a team and sub-teams of AI Agents.\n"
-        system_message_content += "Your task is to coordinate the team to complete the user's request.\n"
 
-        system_message_content += "\nHere are the members in your team:\n"
-        system_message_content += "<team_members>\n"
-        system_message_content += team.get_members_system_message_content()
-        if team.get_member_information_tool:
-            system_message_content += "If you need to get information about your team members, you can use the `get_member_information` tool at any time.\n"
-        system_message_content += "</team_members>\n"
+    # 2.1 Opening + team members + mode instructions
+    system_message_content += _build_team_context(team)
 
-        system_message_content += "\n<how_to_respond>\n"
+    # 2.2 Identity sections: description, role, instructions
+    system_message_content += _build_identity_sections(team, instructions)
 
-        from agno.team.mode import TeamMode
-
-        if team.mode == TeamMode.tasks:
-            system_message_content += (
-                "You are operating in autonomous task mode. Your job is to:\n"
-                "1. Analyze the user's goal and decompose it into discrete tasks using `create_task`\n"
-                "2. Execute tasks by delegating to team members using `execute_task`\n"
-                "3. Use `execute_tasks_parallel` when multiple tasks have no dependencies on each other\n"
-                "4. Monitor progress using `list_tasks`\n"
-                "5. Use `add_task_note` to record observations or communicate about tasks\n"
-                "6. When all tasks are complete, call `mark_all_complete` with a summary\n\n"
-                "Guidelines:\n"
-                "- Create tasks with clear, actionable titles and descriptions\n"
-                "- Set dependencies (depends_on) when tasks must be done in order\n"
-                "- Assign tasks to the most capable member based on their role and tools\n"
-                "- Prefer `execute_tasks_parallel` for independent tasks to maximize throughput\n"
-                "- Review task results before marking the overall goal as complete\n"
-                "- If a task fails, decide whether to retry, reassign, or take a different approach\n"
+    # 2.3 Knowledge base instructions
+    if team.knowledge is not None and team.search_knowledge and team.add_search_knowledge_instructions:
+        build_context_fn = getattr(team.knowledge, "build_context", None)
+        if callable(build_context_fn):
+            knowledge_context = build_context_fn(
+                enable_agentic_filters=team.enable_agentic_knowledge_filters,
             )
-        elif team.delegate_to_all_members:
-            system_message_content += (
-                "- You can either respond directly or use the `delegate_task_to_members` tool to delegate a task to all members in your team to get a collaborative response.\n"
-                "- To delegate a task to all members in your team, call `delegate_task_to_members` ONLY once. This will delegate a task to all members in your team.\n"
-                "- Analyze the responses from all members and evaluate whether the task has been completed.\n"
-                "- If you feel the task has been completed, you can stop and respond to the user.\n"
-            )
-        else:
-            system_message_content += (
-                "- Your role is to delegate tasks to members in your team with the highest likelihood of completing the user's request.\n"
-                "- Carefully analyze the tools available to the members and their roles before delegating tasks.\n"
-                "- You cannot use a member tool directly. You can only delegate tasks to members.\n"
-                "- When you delegate a task to another member, make sure to include:\n"
-                "  - member_id (str): The ID of the member to delegate the task to. Use only the ID of the member, not the ID of the team followed by the ID of the member.\n"
-                "  - task (str): A clear description of the task. Determine the best way to describe the task to the member.\n"
-                "- You can delegate tasks to multiple members at once.\n"
-                "- You must always analyze the responses from members before responding to the user.\n"
-                "- After analyzing the responses from the members, if you feel the task has been completed, you can stop and respond to the user.\n"
-                "- If you are NOT satisfied with the responses from the members, you should re-assign the task to a different member.\n"
-                "- For simple greetings, thanks, or questions about the team itself, you should respond directly.\n"
-                "- For all work requests, tasks, or questions requiring expertise, route to appropriate team members.\n"
-            )
-        system_message_content += "</how_to_respond>\n\n"
+            if knowledge_context:
+                system_message_content += knowledge_context + "\n"
 
-    # Attached media
-    if audio is not None or images is not None or videos is not None or files is not None:
-        system_message_content += "<attached_media>\n"
-        system_message_content += "You have the following media attached to your message:\n"
-        if audio is not None and len(audio) > 0:
-            system_message_content += " - Audio\n"
-        if images is not None and len(images) > 0:
-            system_message_content += " - Images\n"
-        if videos is not None and len(videos) > 0:
-            system_message_content += " - Videos\n"
-        if files is not None and len(files) > 0:
-            system_message_content += " - Files\n"
-        system_message_content += "</attached_media>\n\n"
-
-    # Then add memories to the system prompt
+    # 2.4 Memories
     if team.add_memories_to_context:
         _memory_manager_not_set = False
         if not user_id:
@@ -651,7 +715,7 @@ async def aget_system_message(
                 "</updating_user_memories>\n\n"
             )
 
-    # Then add a summary of the interaction to the system prompt
+    # 2.5 Session summary
     if team.add_session_summary_to_context and session.summary is not None:
         system_message_content += "Here is a brief summary of your previous interactions:\n\n"
         system_message_content += "<summary_of_previous_interactions>\n"
@@ -662,82 +726,20 @@ async def aget_system_message(
             "You should ALWAYS prefer information from this conversation over the past summary.\n\n"
         )
 
-    # Add search_knowledge instructions to the system prompt
-    if team.knowledge is not None and team.search_knowledge and team.add_search_knowledge_instructions:
-        build_context_fn = getattr(team.knowledge, "build_context", None)
-        if callable(build_context_fn):
-            knowledge_context = build_context_fn(
-                enable_agentic_filters=team.enable_agentic_knowledge_filters,
-            )
-            if knowledge_context:
-                system_message_content += knowledge_context + "\n"
-
-    if team.description is not None:
-        system_message_content += f"<description>\n{team.description}\n</description>\n\n"
-
-    if team.role is not None:
-        system_message_content += f"\n<your_role>\n{team.role}\n</your_role>\n\n"
-
-    # 3.3.5 Then add instructions for the Team
-    if len(instructions) > 0:
-        if team.use_instruction_tags:
-            system_message_content += "<instructions>"
-            if len(instructions) > 1:
-                for _upi in instructions:
-                    system_message_content += f"\n- {_upi}"
-            else:
-                system_message_content += "\n" + instructions[0]
-            system_message_content += "\n</instructions>\n\n"
-        else:
-            if len(instructions) > 1:
-                for _upi in instructions:
-                    system_message_content += f"- {_upi}\n"
-            else:
-                system_message_content += instructions[0] + "\n\n"
-    # 3.3.6 Add additional information
-    if len(additional_information) > 0:
-        system_message_content += "<additional_information>"
-        for _ai in additional_information:
-            system_message_content += f"\n- {_ai}"
-        system_message_content += "\n</additional_information>\n\n"
-    # 3.3.7 Then add instructions for the tools
-    if team._tool_instructions is not None:
-        for _ti in team._tool_instructions:
-            system_message_content += f"{_ti}\n"
-
-    # Format the system message with the session state variables
-    if team.resolve_in_context:
-        system_message_content = _format_message_with_state_variables(
-            team,
-            system_message_content,
-            run_context=run_context,
-        )
-
-    system_message_from_model = team.model.get_system_message_for_model(tools)
-    if system_message_from_model is not None:
-        system_message_content += system_message_from_model
-
-    if team.expected_output is not None:
-        system_message_content += f"<expected_output>\n{team.expected_output.strip()}\n</expected_output>\n\n"
-
-    if team.additional_context is not None:
-        system_message_content += f"<additional_context>\n{team.additional_context.strip()}\n</additional_context>\n\n"
-
-    if add_session_state_to_context and session_state is not None:
-        system_message_content += _get_formatted_session_state_for_system_message(team, session_state)
-
-    # Add the JSON output prompt if output_schema is provided and the model does not support native structured outputs
-    # or JSON schema outputs, or if use_json_mode is True
-    if (
-        output_schema is not None
-        and team.parser_model is None
-        and team.model
-        and not (
-            (team.model.supports_native_structured_outputs or team.model.supports_json_schema_outputs)
-            and not team.use_json_mode
-        )
-    ):
-        system_message_content += f"{_get_json_output_prompt(team, output_schema)}"
+    # 2.6 Trailing sections: media, additional info, tools, expected output, etc.
+    system_message_content += _build_trailing_sections(
+        team,
+        audio=audio,
+        images=images,
+        videos=videos,
+        files=files,
+        additional_information=additional_information,
+        tools=tools,
+        output_schema=output_schema,
+        run_context=run_context,
+        session_state=session_state,
+        add_session_state_to_context=add_session_state_to_context,
+    )
 
     return Message(role=team.system_message_role, content=system_message_content.strip())
 

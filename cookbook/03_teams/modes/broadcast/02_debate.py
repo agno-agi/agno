@@ -8,7 +8,7 @@ arguments from both sides.
 """
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.team.mode import TeamMode
 from agno.team.team import Team
 
@@ -17,7 +17,7 @@ from agno.team.team import Team
 proponent = Agent(
     name="Proponent",
     role="Argues in favor of the proposition",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.2"),
     instructions=[
         "You argue in favor of the given proposition.",
         "Present strong, logical arguments with supporting evidence.",
@@ -29,7 +29,7 @@ proponent = Agent(
 opponent = Agent(
     name="Opponent",
     role="Argues against the proposition",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.2"),
     instructions=[
         "You argue against the given proposition.",
         "Present strong, logical counterarguments with supporting evidence.",
@@ -43,7 +43,7 @@ opponent = Agent(
 team = Team(
     name="Debate Team",
     mode=TeamMode.broadcast,
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     members=[proponent, opponent],
     instructions=[
         "You are a debate moderator.",

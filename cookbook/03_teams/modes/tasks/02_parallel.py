@@ -7,7 +7,7 @@ independent tasks that can run concurrently, then synthesizes results.
 """
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.team.mode import TeamMode
 from agno.team.team import Team
 
@@ -16,7 +16,7 @@ from agno.team.team import Team
 frontend_reviewer = Agent(
     name="Frontend Reviewer",
     role="Reviews frontend architecture and UI patterns",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.2"),
     instructions=[
         "You review frontend architecture decisions.",
         "Evaluate component patterns, state management, and UX considerations.",
@@ -27,7 +27,7 @@ frontend_reviewer = Agent(
 backend_reviewer = Agent(
     name="Backend Reviewer",
     role="Reviews backend architecture and API design",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.2"),
     instructions=[
         "You review backend architecture decisions.",
         "Evaluate API design, data models, scalability, and security.",
@@ -38,7 +38,7 @@ backend_reviewer = Agent(
 devops_reviewer = Agent(
     name="DevOps Reviewer",
     role="Reviews infrastructure and deployment strategy",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.2"),
     instructions=[
         "You review infrastructure and deployment decisions.",
         "Evaluate CI/CD, hosting, monitoring, and scalability strategy.",
@@ -51,7 +51,7 @@ devops_reviewer = Agent(
 team = Team(
     name="Architecture Review Team",
     mode=TeamMode.tasks,
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     members=[frontend_reviewer, backend_reviewer, devops_reviewer],
     instructions=[
         "You lead an architecture review team.",

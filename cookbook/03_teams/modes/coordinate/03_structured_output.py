@@ -8,15 +8,14 @@ The team leader coordinates members and formats the final output to match a sche
 
 from typing import List
 
-from pydantic import BaseModel, Field
-
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.team.mode import TeamMode
 from agno.team.team import Team
-
+from pydantic import BaseModel, Field
 
 # -- Output schema -----------------------------------------------------------
+
 
 class CompanyBrief(BaseModel):
     company_name: str = Field(..., description="Name of the company")
@@ -31,7 +30,7 @@ class CompanyBrief(BaseModel):
 market_analyst = Agent(
     name="Market Analyst",
     role="Analyzes market position and competitive landscape",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.2"),
     instructions=[
         "You analyze companies from a market and competitive perspective.",
         "Focus on market share, competitors, and strategic positioning.",
@@ -41,7 +40,7 @@ market_analyst = Agent(
 risk_analyst = Agent(
     name="Risk Analyst",
     role="Identifies risks and challenges facing a company",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.2"),
     instructions=[
         "You identify and assess risks facing companies.",
         "Consider regulatory, financial, operational, and market risks.",
@@ -53,7 +52,7 @@ risk_analyst = Agent(
 team = Team(
     name="Company Analysis Team",
     mode=TeamMode.coordinate,
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     members=[market_analyst, risk_analyst],
     instructions=[
         "You lead a company analysis team.",

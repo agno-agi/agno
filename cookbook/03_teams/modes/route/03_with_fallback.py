@@ -7,7 +7,7 @@ requests when no specialist is a clear match.
 """
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.team.mode import TeamMode
 from agno.team.team import Team
 
@@ -16,7 +16,7 @@ from agno.team.team import Team
 sql_agent = Agent(
     name="SQL Expert",
     role="Writes and optimizes SQL queries",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.2"),
     instructions=[
         "You are an SQL expert.",
         "Write correct, optimized SQL queries.",
@@ -27,7 +27,7 @@ sql_agent = Agent(
 python_agent = Agent(
     name="Python Expert",
     role="Writes Python code and solves Python-specific problems",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.2"),
     instructions=[
         "You are a Python expert.",
         "Write idiomatic, well-structured Python code.",
@@ -38,7 +38,7 @@ python_agent = Agent(
 general_agent = Agent(
     name="General Assistant",
     role="Handles general questions that do not match a specialist",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.2"),
     instructions=[
         "You are a helpful general assistant.",
         "Answer questions clearly and concisely.",
@@ -51,7 +51,7 @@ general_agent = Agent(
 team = Team(
     name="Dev Help Router",
     mode=TeamMode.route,
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     members=[sql_agent, python_agent, general_agent],
     instructions=[
         "You route questions to the right expert.",

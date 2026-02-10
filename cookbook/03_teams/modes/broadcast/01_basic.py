@@ -10,7 +10,7 @@ This is ideal for getting multiple perspectives on a single question.
 """
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.team.mode import TeamMode
 from agno.team.team import Team
 
@@ -19,7 +19,7 @@ from agno.team.team import Team
 optimist = Agent(
     name="Optimist",
     role="Focuses on opportunities and positive outcomes",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.2"),
     instructions=[
         "You see the bright side of every situation.",
         "Focus on opportunities, growth potential, and positive trends.",
@@ -30,7 +30,7 @@ optimist = Agent(
 pessimist = Agent(
     name="Pessimist",
     role="Focuses on risks and potential downsides",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.2"),
     instructions=[
         "You focus on risks, challenges, and potential pitfalls.",
         "Identify what could go wrong and why caution is warranted.",
@@ -41,7 +41,7 @@ pessimist = Agent(
 realist = Agent(
     name="Realist",
     role="Provides balanced, pragmatic analysis",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.2"),
     instructions=[
         "You provide balanced, evidence-based analysis.",
         "Weigh both opportunities and risks objectively.",
@@ -54,7 +54,7 @@ realist = Agent(
 team = Team(
     name="Multi-Perspective Team",
     mode=TeamMode.broadcast,
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     members=[optimist, pessimist, realist],
     instructions=[
         "You lead a multi-perspective analysis team.",

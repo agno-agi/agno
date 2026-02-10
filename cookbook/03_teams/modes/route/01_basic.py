@@ -10,7 +10,7 @@ one specialist should handle the entire request.
 """
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.team.mode import TeamMode
 from agno.team.team import Team
 
@@ -19,21 +19,21 @@ from agno.team.team import Team
 english_agent = Agent(
     name="English Agent",
     role="Responds only in English",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.2"),
     instructions=["Always respond in English, regardless of the input language."],
 )
 
 spanish_agent = Agent(
     name="Spanish Agent",
     role="Responds only in Spanish",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.2"),
     instructions=["Always respond in Spanish, regardless of the input language."],
 )
 
 french_agent = Agent(
     name="French Agent",
     role="Responds only in French",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.2"),
     instructions=["Always respond in French, regardless of the input language."],
 )
 
@@ -42,7 +42,7 @@ french_agent = Agent(
 team = Team(
     name="Language Router",
     mode=TeamMode.route,
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     members=[english_agent, spanish_agent, french_agent],
     instructions=[
         "You are a language router.",

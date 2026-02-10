@@ -7,7 +7,7 @@ the user's question and routes it to the most qualified specialist.
 """
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.team.mode import TeamMode
 from agno.team.team import Team
 
@@ -16,7 +16,7 @@ from agno.team.team import Team
 math_agent = Agent(
     name="Math Specialist",
     role="Solves mathematical problems and explains concepts",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.2"),
     instructions=[
         "You are a mathematics expert.",
         "Solve problems step by step, showing your work clearly.",
@@ -27,7 +27,7 @@ math_agent = Agent(
 code_agent = Agent(
     name="Code Specialist",
     role="Writes code and explains programming concepts",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.2"),
     instructions=[
         "You are a programming expert.",
         "Write clean, well-commented code.",
@@ -38,7 +38,7 @@ code_agent = Agent(
 science_agent = Agent(
     name="Science Specialist",
     role="Explains scientific concepts and phenomena",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.2"),
     instructions=[
         "You are a science expert covering physics, chemistry, and biology.",
         "Explain concepts clearly with real-world examples.",
@@ -50,7 +50,7 @@ science_agent = Agent(
 team = Team(
     name="Expert Router",
     mode=TeamMode.route,
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     members=[math_agent, code_agent, science_agent],
     instructions=[
         "You are an expert router.",

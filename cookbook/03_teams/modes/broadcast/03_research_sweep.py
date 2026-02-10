@@ -8,7 +8,7 @@ merges findings into a comprehensive report.
 """
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.team.mode import TeamMode
 from agno.team.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
@@ -19,7 +19,7 @@ from agno.tools.hackernews import HackerNewsTools
 web_researcher = Agent(
     name="Web Researcher",
     role="Searches the general web for information",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.2"),
     tools=[DuckDuckGoTools()],
     instructions=[
         "Search the web for the given topic.",
@@ -31,7 +31,7 @@ web_researcher = Agent(
 hn_researcher = Agent(
     name="HackerNews Researcher",
     role="Searches Hacker News for community discussions and stories",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.2"),
     tools=[HackerNewsTools()],
     instructions=[
         "Search Hacker News for stories and discussions on the topic.",
@@ -43,7 +43,7 @@ hn_researcher = Agent(
 trend_analyst = Agent(
     name="Trend Analyst",
     role="Analyzes broader trends and implications from available data",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.2"),
     instructions=[
         "Analyze the topic from a trends perspective.",
         "Identify patterns: is interest growing, plateauing, or declining?",
@@ -56,7 +56,7 @@ trend_analyst = Agent(
 team = Team(
     name="Research Sweep Team",
     mode=TeamMode.broadcast,
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     members=[web_researcher, hn_researcher, trend_analyst],
     instructions=[
         "You lead a research sweep team.",

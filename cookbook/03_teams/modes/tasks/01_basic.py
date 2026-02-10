@@ -10,7 +10,7 @@ Demonstrates `mode=tasks` where the team leader autonomously:
 """
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.team.mode import TeamMode
 from agno.team.team import Team
 
@@ -19,7 +19,7 @@ from agno.team.team import Team
 planner = Agent(
     name="Planner",
     role="Creates outlines, plans, and structures for content",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.2"),
     instructions=[
         "You are a planning specialist.",
         "Create clear, logical outlines and structures.",
@@ -30,7 +30,7 @@ planner = Agent(
 writer = Agent(
     name="Writer",
     role="Writes polished content based on outlines or instructions",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.2"),
     instructions=[
         "You are a skilled writer.",
         "Write clear, engaging content based on the provided plan or outline.",
@@ -41,7 +41,7 @@ writer = Agent(
 editor = Agent(
     name="Editor",
     role="Reviews and improves content for clarity and quality",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.2"),
     instructions=[
         "You are an editor.",
         "Review content for clarity, grammar, and logical flow.",
@@ -54,7 +54,7 @@ editor = Agent(
 team = Team(
     name="Content Pipeline Team",
     mode=TeamMode.tasks,
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     members=[planner, writer, editor],
     instructions=[
         "You are a content pipeline team leader.",

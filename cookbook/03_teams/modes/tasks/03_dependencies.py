@@ -7,7 +7,7 @@ where later tasks depend on earlier ones, ensuring correct execution order.
 """
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.team.mode import TeamMode
 from agno.team.team import Team
 
@@ -16,7 +16,7 @@ from agno.team.team import Team
 data_collector = Agent(
     name="Data Collector",
     role="Gathers raw data and facts on a topic",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.2"),
     instructions=[
         "You collect raw data and facts on the given topic.",
         "Be thorough -- gather statistics, key facts, and relevant details.",
@@ -27,7 +27,7 @@ data_collector = Agent(
 analyst = Agent(
     name="Analyst",
     role="Analyzes data and extracts insights",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.2"),
     instructions=[
         "You analyze data provided to you and extract insights.",
         "Identify trends, patterns, and notable findings.",
@@ -38,7 +38,7 @@ analyst = Agent(
 report_writer = Agent(
     name="Report Writer",
     role="Writes polished reports from analysis results",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.2"),
     instructions=[
         "You write clear, professional reports.",
         "Structure the report with an executive summary, key findings, and conclusion.",
@@ -51,7 +51,7 @@ report_writer = Agent(
 team = Team(
     name="Research Pipeline Team",
     mode=TeamMode.tasks,
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     members=[data_collector, analyst, report_writer],
     instructions=[
         "You lead a research pipeline team.",

@@ -10,7 +10,7 @@ Demonstrates the default `mode=coordinate` where the team leader:
 """
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.team.mode import TeamMode
 from agno.team.team import Team
 
@@ -19,7 +19,7 @@ from agno.team.team import Team
 researcher = Agent(
     name="Researcher",
     role="Research specialist who finds and summarizes information",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.2"),
     instructions=[
         "You are a research specialist.",
         "Provide clear, factual summaries on any topic.",
@@ -30,7 +30,7 @@ researcher = Agent(
 writer = Agent(
     name="Writer",
     role="Content writer who crafts polished, engaging text",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.2"),
     instructions=[
         "You are a skilled content writer.",
         "Transform raw information into well-structured, readable text.",
@@ -43,7 +43,7 @@ writer = Agent(
 team = Team(
     name="Research & Writing Team",
     mode=TeamMode.coordinate,
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     members=[researcher, writer],
     instructions=[
         "You lead a research and writing team.",
