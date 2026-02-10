@@ -170,7 +170,10 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
             "Only one of 'requires_user_input', 'requires_confirmation', or 'external_execution' can be set to True at the same time."
         )
 
-    # requires_approval implies requires_confirmation when no other HITL flag is set
+    # requires_approval implies requires_confirmation so the agent pauses
+    # and an approval record is written to the DB before the tool executes.
+    # If another HITL flag (requires_user_input, external_execution) is already set,
+    # the agent will pause via that mechanism instead.
     if kwargs.get("requires_approval") and true_flags_count == 0:
         kwargs["requires_confirmation"] = True
 

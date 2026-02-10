@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 class ApprovalResolve(BaseModel):
     """Request body for resolving (approve/reject) an approval."""
 
-    action: str = Field(..., pattern="^(approved|rejected)$")
+    status: str = Field(..., pattern="^(approved|rejected)$")
     resolved_by: Optional[str] = Field(default=None, max_length=255)
 
 
