@@ -10,7 +10,10 @@ Environment:
 
 Execution requirements:
 
-1. Run the structure checker and fix all violations:
+1. **Read every `.py` file** in the target cookbook directory before making any changes.
+   Do not rely solely on grep or the structure checker — open and read each file to understand its full contents. This ensures you catch issues the automated checker might miss (e.g., imports inside sections, stale model references in comments, inconsistent patterns).
+
+2. Run the structure checker and fix all violations:
    ```
    .venvs/demo/bin/python cookbook/scripts/check_cookbook_pattern.py --base-dir cookbook/00_quickstart --recursive
    ```
@@ -22,10 +25,10 @@ Execution requirements:
    - Remove emoji characters
    - Ensure section banners use `# ---------------------------------------------------------------------------` style (75 dashes)
 
-2. Ensure imports are between the module docstring and the first section banner.
+3. Ensure imports are between the module docstring and the first section banner.
    No imports should appear inside sections.
 
-3. Migrate OpenAI model references. Only change files that use OpenAI models.
+4. Migrate OpenAI model references. Only change files that use OpenAI models.
    Do NOT modify files using other providers (Gemini, Claude, Groq, Ollama, etc.).
 
    | Before | After |
@@ -37,7 +40,9 @@ Execution requirements:
 
    If a file imports both `OpenAIChat` and another provider, only change the OpenAI parts.
 
-4. Make only minimal, behavior-preserving edits.
+5. Also check non-Python files (`README.md`, etc.) in the directory for stale `OpenAIChat` references and update them.
+
+6. Make only minimal, behavior-preserving edits.
    Do not change agent logic, tool configurations, prompts, or runtime behavior.
 
 Validation commands (must all pass before finishing):
