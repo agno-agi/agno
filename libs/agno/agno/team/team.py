@@ -57,6 +57,7 @@ from agno.team import (
     _tools,
     _utils,
 )
+from agno.team.mode import TeamMode
 from agno.tools import Toolkit
 from agno.tools.function import Function
 from agno.utils.log import (
@@ -92,6 +93,8 @@ class Team:
     workflow_id: Optional[str] = None
 
     # --- Team execution settings ---
+    # Team execution mode. When set, overrides the boolean flags below.
+    mode: Optional[TeamMode] = None
     # If True, the team leader won't process responses from the members and instead will return them directly
     # Should not be used in combination with delegate_to_all_members
     respond_directly: bool = False
@@ -99,6 +102,8 @@ class Team:
     delegate_to_all_members: bool = False
     # Set to false if you want to send the run input directly to the member agents
     determine_input_for_members: bool = True
+    # Maximum number of iterations for autonomous task loop (mode=tasks)
+    max_iterations: int = 10
 
     # --- User settings ---
     # Default user ID for this team
@@ -405,9 +410,11 @@ class Team:
         model: Optional[Union[Model, str]] = None,
         name: Optional[str] = None,
         role: Optional[str] = None,
+        mode: Optional[TeamMode] = None,
         respond_directly: bool = False,
         determine_input_for_members: bool = True,
         delegate_to_all_members: bool = False,
+        max_iterations: int = 10,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
@@ -515,9 +522,11 @@ class Team:
             model=model,
             name=name,
             role=role,
+            mode=mode,
             respond_directly=respond_directly,
             determine_input_for_members=determine_input_for_members,
             delegate_to_all_members=delegate_to_all_members,
+            max_iterations=max_iterations,
             user_id=user_id,
             session_id=session_id,
             session_state=session_state,

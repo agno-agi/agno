@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from agno.team.mode import TeamMode
     from agno.team.team import Team
 
 from os import getenv
@@ -64,9 +65,11 @@ def __init__(
     model: Optional[Union[Model, str]] = None,
     name: Optional[str] = None,
     role: Optional[str] = None,
+    mode: Optional["TeamMode"] = None,
     respond_directly: bool = False,
     determine_input_for_members: bool = True,
     delegate_to_all_members: bool = False,
+    max_iterations: int = 10,
     user_id: Optional[str] = None,
     session_id: Optional[str] = None,
     session_state: Optional[Dict[str, Any]] = None,
@@ -180,6 +183,30 @@ def __init__(
     team.respond_directly = respond_directly
     team.determine_input_for_members = determine_input_for_members
     team.delegate_to_all_members = delegate_to_all_members
+    team.max_iterations = max_iterations
+
+    # Resolve TeamMode: explicit mode wins, otherwise infer from booleans
+    from agno.team.mode import TeamMode
+
+    if mode is not None:
+        team.mode = mode
+        # Normalize booleans deterministically so conflicting flags can't leak through
+        if mode == TeamMode.route:
+            team.respond_directly = True
+            team.delegate_to_all_members = False
+        elif mode == TeamMode.broadcast:
+            team.delegate_to_all_members = True
+            team.respond_directly = False
+        elif mode in (TeamMode.coordinate, TeamMode.tasks):
+            team.respond_directly = False
+            team.delegate_to_all_members = False
+    else:
+        if team.respond_directly:
+            team.mode = TeamMode.route
+        elif team.delegate_to_all_members:
+            team.mode = TeamMode.broadcast
+        else:
+            team.mode = TeamMode.coordinate
 
     team.user_id = user_id
     team.session_id = session_id

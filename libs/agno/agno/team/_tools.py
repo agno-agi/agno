@@ -208,7 +208,36 @@ def _determine_tools_for_model(
     if resolved_knowledge is not None and team.update_knowledge:
         _tools.append(team.add_to_knowledge)
 
-    if resolved_members:
+    from agno.team.mode import TeamMode
+
+    if team.mode == TeamMode.tasks:
+        # Tasks mode: provide task management tools instead of delegation tools
+        from agno.team._task_tools import _get_task_management_tools
+        from agno.team.task import load_task_list
+
+        _task_list = load_task_list(run_context.session_state)
+        task_tools = _get_task_management_tools(
+            team=team,
+            task_list=_task_list,
+            run_response=run_response,
+            run_context=run_context,
+            session=session,
+            team_run_context=team_run_context,
+            user_id=user_id,
+            stream=stream or False,
+            stream_events=stream_events or False,
+            async_mode=async_mode,
+            images=images,  # type: ignore
+            videos=videos,  # type: ignore
+            audio=audio,  # type: ignore
+            files=files,  # type: ignore
+            add_history_to_context=add_history_to_context,
+            add_dependencies_to_context=add_dependencies_to_context,
+            add_session_state_to_context=add_session_state_to_context,
+            debug_mode=debug_mode,
+        )
+        _tools.extend(task_tools)
+    elif resolved_members:
         # Get the user message if we are using the input directly
         user_message_content = None
         if team.determine_input_for_members is False:
