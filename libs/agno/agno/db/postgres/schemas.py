@@ -256,6 +256,9 @@ SCHEDULE_RUNS_TABLE_SCHEMA = {
     "run_id": {"type": String, "nullable": True},
     "session_id": {"type": String, "nullable": True},
     "error": {"type": Text, "nullable": True},
+    "input": {"type": JSONB, "nullable": True},
+    "output": {"type": JSONB, "nullable": True},
+    "requirements": {"type": JSONB, "nullable": True},
     "created_at": {"type": BigInteger, "nullable": False, "index": True},
 }
 

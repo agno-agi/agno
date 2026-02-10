@@ -1,7 +1,7 @@
 """Pydantic request/response models for the schedule API."""
 
 import re
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -131,4 +131,7 @@ class ScheduleRunResponse(BaseModel):
     run_id: Optional[str] = None
     session_id: Optional[str] = None
     error: Optional[str] = None
+    input: Optional[Dict[str, Any]] = None
+    output: Optional[Dict[str, Any]] = None
+    requirements: Optional[List[Dict[str, Any]]] = None
     created_at: Optional[int] = None
