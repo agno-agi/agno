@@ -44,7 +44,7 @@ def get_session(
     team: "Team",
     session_id: Optional[str] = None,
 ) -> Optional[TeamSession]:
-    """Load an TeamSession from database.
+    """Load a TeamSession from database.
 
     Args:
         session_id: The session_id to load from storage.
@@ -66,7 +66,7 @@ def get_session(
             return team._cached_session
 
     if _has_async_db(team):
-        raise ValueError("Async database not supported for get_session")
+        raise ValueError("Cannot use sync get_session() with an async database. Use aget_session() instead.")
 
     # Load and return the session from the database
     if team.db is not None:
@@ -99,7 +99,7 @@ async def aget_session(
     team: "Team",
     session_id: Optional[str] = None,
 ) -> Optional[TeamSession]:
-    """Load an TeamSession from database.
+    """Load a TeamSession from database.
 
     Args:
         session_id: The session_id to load from storage.
@@ -172,7 +172,7 @@ def save_session(team: "Team", session: TeamSession) -> None:
     from agno.team._storage import _upsert_session
 
     if _has_async_db(team):
-        raise ValueError("Async database not supported for save_session")
+        raise ValueError("Cannot use sync save_session() with an async database. Use asave_session() instead.")
 
     if team.db is not None and team.parent_team_id is None and team.workflow_id is None:
         if session.session_data is not None and isinstance(session.session_data.get("session_state"), dict):
