@@ -1,7 +1,7 @@
 """Example demonstrating how to set up retries with Vercel AI."""
 
 from agno.agent import Agent
-from agno.models.vercel import v0
+from agno.models.vercel import V0
 
 # ---------------------------------------------------------------------------
 # Create Agent
@@ -11,7 +11,7 @@ from agno.models.vercel import v0
 wrong_model_id = "vercel-wrong-id"
 
 agent = Agent(
-    model=v0(
+    model=V0(
         id=wrong_model_id,
         retries=3,  # Number of times to retry the request.
         delay_between_retries=1,  # Delay between retries in seconds.

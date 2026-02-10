@@ -6,19 +6,20 @@ Example demonstrating sending a notification to the user after an agent generate
 """
 
 import asyncio
-from typing import Any, Dict
-
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
+from agno.run import RunContext
 from agno.run.agent import RunOutput
 from agno.tools.yfinance import YFinanceTools
 
 
-def send_notification(run_output: RunOutput, metadata: Dict[str, Any]) -> None:
+def send_notification(run_output: RunOutput, run_context: RunContext) -> None:
     """
     Post-hook: Send a notification to the user.
     """
-    email = metadata.get("email")
+    if run_context.metadata is None:
+        return
+    email = run_context.metadata.get("email")
     if email:
         send_email(email, run_output.content)
 

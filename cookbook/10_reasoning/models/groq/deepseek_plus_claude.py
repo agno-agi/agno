@@ -17,7 +17,7 @@ def run_example() -> None:
     deepseek_plus_claude = Agent(
         model=Claude(id="claude-3-7-sonnet-20250219"),
         reasoning_model=Groq(
-            id="deepseek-r1-distill-llama-70b",
+            id="qwen/qwen3-32b",
             temperature=0.6,
             max_tokens=1024,
             top_p=0.95,

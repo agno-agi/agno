@@ -6,9 +6,9 @@ Demonstrates post-hook notifications after team response generation.
 """
 
 import asyncio
-from typing import Any
 
 from agno.models.openai import OpenAIChat
+from agno.run import RunContext
 from agno.run.team import TeamRunOutput
 from agno.team import Team
 from agno.tools.yfinance import YFinanceTools
@@ -22,9 +22,11 @@ def send_email(email: str, content: str) -> None:
     print(f"Sending email to {email}: {content}")
 
 
-def send_notification(run_output: TeamRunOutput, metadata: dict[str, Any]) -> None:
+def send_notification(run_output: TeamRunOutput, run_context: RunContext) -> None:
     """Post-hook: Send a notification to the user."""
-    email = metadata.get("email")
+    if run_context.metadata is None:
+        return
+    email = run_context.metadata.get("email")
     if email:
         send_email(email, run_output.content)
 

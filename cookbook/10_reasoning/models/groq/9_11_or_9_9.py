@@ -15,14 +15,15 @@ from agno.models.groq import Groq
 def run_example() -> None:
     agent = Agent(
         model=Groq(
-            id="deepseek-r1-distill-llama-70b",
+            id="qwen/qwen3-32b",
             temperature=0.6,
             max_tokens=1024,
             top_p=0.95,
         ),
+        reasoning=True,
         markdown=True,
     )
-    agent.print_response("9.11 and 9.9 -- which is bigger?", stream=True)
+    agent.print_response("9.11 and 9.9 -- which is bigger?", stream=True, show_full_reasoning=True)
 
 
 # ---------------------------------------------------------------------------
