@@ -9,18 +9,42 @@ sqlalchemy = pytest.importorskip("sqlalchemy")
 from agno.db.migrations.versions import v2_5_0  # noqa: E402
 
 
-def _make_sync_db(class_name: str) -> MagicMock:
-    """Create a mock sync DB whose type().__name__ returns the given class_name."""
-    db = MagicMock()
-    db.__class__ = type(class_name, (), {})
-    return db
+def _make_sync_db(class_name: str):
+    """Create a mock sync DB whose type().__name__ returns the given class_name.
+
+    We create an actual class instance (not MagicMock) so that type(db).__name__
+    returns the correct class name. The class uses MagicMock for attribute access.
+    """
+    # Create a class that delegates attribute access to a MagicMock
+    mock = MagicMock()
+
+    class FakeDb:
+        def __getattr__(self, name):
+            return getattr(mock, name)
+
+    # Rename the class to match the expected DB type
+    FakeDb.__name__ = class_name
+    FakeDb.__qualname__ = class_name
+    return FakeDb()
 
 
-def _make_async_db(class_name: str) -> MagicMock:
-    """Create a mock async DB whose type().__name__ returns the given class_name."""
-    db = MagicMock()
-    db.__class__ = type(class_name, (), {})
-    return db
+def _make_async_db(class_name: str):
+    """Create a mock async DB whose type().__name__ returns the given class_name.
+
+    We create an actual class instance (not MagicMock) so that type(db).__name__
+    returns the correct class name. The class uses MagicMock for attribute access.
+    """
+    # Create a class that delegates attribute access to a MagicMock
+    mock = MagicMock()
+
+    class FakeDb:
+        def __getattr__(self, name):
+            return getattr(mock, name)
+
+    # Rename the class to match the expected DB type
+    FakeDb.__name__ = class_name
+    FakeDb.__qualname__ = class_name
+    return FakeDb()
 
 
 # ---------------------------------------------------------------------------
