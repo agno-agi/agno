@@ -89,7 +89,7 @@ def _get_task_management_tools(
     def create_task(
         title: str,
         description: str = "",
-        assignee: Optional[str] = None,
+        assignee: str = "",
         depends_on: Optional[List[str]] = None,
     ) -> str:
         """Create a new task for the team to work on.
@@ -97,7 +97,7 @@ def _get_task_management_tools(
         Args:
             title (str): A short, actionable title for the task.
             description (str): Detailed description of what needs to be done.
-            assignee (str, optional): The member_id to assign this task to, or None to leave unassigned.
+            assignee (str): The member_id to assign this task to. Must be a valid member_id.
             depends_on (list, optional): List of task IDs that must complete before this task can start.
         Returns:
             str: Confirmation with the new task ID.
