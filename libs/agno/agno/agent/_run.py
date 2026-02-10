@@ -49,6 +49,11 @@ from agno.run.agent import (
     RunOutput,
     RunOutputEvent,
 )
+from agno.run.approval import (
+    acheck_and_apply_approval_resolution,
+    acreate_approval_from_pause,
+    create_approval_from_pause,
+)
 from agno.run.cancel import (
     acancel_run as acancel_run_global,
 )
@@ -189,8 +194,6 @@ def handle_agent_run_paused(
     session: AgentSession,
     user_id: Optional[str] = None,
 ) -> RunOutput:
-    from agno.run.approval import create_approval_from_pause
-
     run_response.status = RunStatus.paused
     if not run_response.content:
         run_response.content = get_paused_content(run_response)
@@ -212,8 +215,6 @@ def handle_agent_run_paused_stream(
     session: AgentSession,
     user_id: Optional[str] = None,
 ) -> Iterator[RunOutputEvent]:
-    from agno.run.approval import create_approval_from_pause
-
     run_response.status = RunStatus.paused
     if not run_response.content:
         run_response.content = get_paused_content(run_response)
@@ -246,8 +247,6 @@ async def ahandle_agent_run_paused(
     session: AgentSession,
     user_id: Optional[str] = None,
 ) -> RunOutput:
-    from agno.run.approval import acreate_approval_from_pause
-
     run_response.status = RunStatus.paused
     if not run_response.content:
         run_response.content = get_paused_content(run_response)
@@ -269,8 +268,6 @@ async def ahandle_agent_run_paused_stream(
     session: AgentSession,
     user_id: Optional[str] = None,
 ) -> AsyncIterator[RunOutputEvent]:
-    from agno.run.approval import acreate_approval_from_pause
-
     run_response.status = RunStatus.paused
     if not run_response.content:
         run_response.content = get_paused_content(run_response)
@@ -3469,7 +3466,6 @@ async def acontinue_run_impl(
                 run_response = cast(RunOutput, run_response)
 
                 # Gate: if any tool requires external approval, verify it's been resolved
-                from agno.run.approval import acheck_and_apply_approval_resolution
 
                 if run_response.run_id is not None:
                     await acheck_and_apply_approval_resolution(
@@ -3811,7 +3807,6 @@ async def acontinue_run_stream_impl(
                 run_response = cast(RunOutput, run_response)
 
                 # Gate: if any tool requires external approval, verify it's been resolved
-                from agno.run.approval import acheck_and_apply_approval_resolution
 
                 if run_response.run_id is not None:
                     await acheck_and_apply_approval_resolution(
