@@ -70,8 +70,8 @@ workflow = Workflow(
             name="Check If New User",
             description="Check if this is a new user who needs greeting",
             # Condition returns True if user has context, so we negate it
-            evaluator=lambda step_input, session_state: not check_user_has_context(
-                step_input, session_state
+            evaluator=lambda step_input, session_state: (
+                not check_user_has_context(step_input, session_state)
             ),
             steps=[
                 # Only execute these steps for new users
