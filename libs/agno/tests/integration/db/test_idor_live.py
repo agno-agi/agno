@@ -16,6 +16,7 @@ Individual backends:
   pytest tests/integration/db/test_idor_live.py::TestRedisIDOR -v
   pytest tests/integration/db/test_idor_live.py::TestJsonIDOR -v
   pytest tests/integration/db/test_idor_live.py::TestSurrealIDOR -v
+  pytest tests/integration/db/test_idor_live.py::TestDynamoIDOR -v
 """
 
 import shutil
@@ -872,6 +873,99 @@ class TestSurrealIDOR:
 
     def test_delete_sessions_bulk_isolation(self):
         extra_bob = f"sr-extrabob-{uuid4().hex[:8]}"
+        self.db.upsert_session(_make_agent_session(extra_bob, user_id="bob", session_name="Bob Extra"))
+        self.db.delete_sessions([self.alice_sid, extra_bob], user_id="bob")
+        assert self.db.get_session(self.alice_sid, SessionType.AGENT, user_id="alice") is not None
+
+    def test_rename_isolation_blocks_cross_user(self):
+        assert self.db.rename_session(self.alice_sid, SessionType.AGENT, "Hacked", user_id="bob") is None
+
+    def test_upsert_hijack_blocked(self):
+        hijack = _make_agent_session(self.alice_sid, user_id="bob", session_name="Hijacked")
+        assert self.db.upsert_session(hijack) is None
+        original = self.db.get_session(self.alice_sid, SessionType.AGENT, user_id="alice")
+        assert original is not None and original.user_id == "alice"
+
+    def test_rename_own_session_works(self):
+        result = self.db.rename_session(self.alice_sid, SessionType.AGENT, "Renamed", user_id="alice")
+        assert result is not None
+
+    def test_get_sessions_filters_by_user(self):
+        for s in self.db.get_sessions(SessionType.AGENT, user_id="alice"):
+            assert s.user_id == "alice"
+
+
+# ─────────────────────────────────────────────
+# DynamoDB backend
+# ─────────────────────────────────────────────
+
+
+@pytest.fixture(scope="module")
+def dynamo_client():
+    try:
+        import boto3
+
+        client = boto3.client(
+            "dynamodb",
+            endpoint_url="http://localhost:8010",
+            region_name="us-east-1",
+            aws_access_key_id="test",
+            aws_secret_access_key="test",
+        )
+        client.list_tables()
+        yield client
+        try:
+            client.delete_table(TableName="idor_sessions")
+        except Exception:
+            pass
+    except Exception:
+        pytest.skip("DynamoDB Local not available at localhost:8010")
+
+
+@pytest.fixture
+def dynamo_db(dynamo_client):
+    from agno.db.dynamo.dynamo import DynamoDb
+
+    db = DynamoDb(
+        db_client=dynamo_client,
+        session_table="idor_sessions",
+    )
+    yield db
+
+
+class TestDynamoIDOR:
+    @pytest.fixture(autouse=True)
+    def setup(self, dynamo_db):
+        self.db = dynamo_db
+        self.alice_sid = f"dy-alice-{uuid4().hex[:8]}"
+        self.bob_sid = f"dy-bob-{uuid4().hex[:8]}"
+        self.db.upsert_session(_make_agent_session(self.alice_sid, user_id="alice", session_name="Alice Dynamo"))
+        self.db.upsert_session(_make_agent_session(self.bob_sid, user_id="bob", session_name="Bob Dynamo"))
+        yield
+        self.db.delete_session(self.alice_sid)
+        self.db.delete_session(self.bob_sid)
+
+    def test_read_own_session(self):
+        result = self.db.get_session(self.alice_sid, SessionType.AGENT, user_id="alice")
+        assert result is not None and result.session_id == self.alice_sid
+
+    def test_read_isolation_blocks_cross_user(self):
+        assert self.db.get_session(self.alice_sid, SessionType.AGENT, user_id="bob") is None
+
+    def test_read_without_user_id_returns_any(self):
+        assert self.db.get_session(self.alice_sid, SessionType.AGENT, user_id=None) is not None
+
+    def test_delete_isolation_blocks_cross_user(self):
+        assert self.db.delete_session(self.alice_sid, user_id="bob") is False
+        assert self.db.get_session(self.alice_sid, SessionType.AGENT, user_id="alice") is not None
+
+    def test_delete_own_session_works(self):
+        extra = f"dy-extra-{uuid4().hex[:8]}"
+        self.db.upsert_session(_make_agent_session(extra, user_id="alice", session_name="Extra"))
+        assert self.db.delete_session(extra, user_id="alice") is True
+
+    def test_delete_sessions_bulk_isolation(self):
+        extra_bob = f"dy-extrabob-{uuid4().hex[:8]}"
         self.db.upsert_session(_make_agent_session(extra_bob, user_id="bob", session_name="Bob Extra"))
         self.db.delete_sessions([self.alice_sid, extra_bob], user_id="bob")
         assert self.db.get_session(self.alice_sid, SessionType.AGENT, user_id="alice") is not None

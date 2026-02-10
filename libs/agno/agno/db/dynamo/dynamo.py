@@ -227,8 +227,8 @@ class DynamoDb(BaseDb):
                 "Key": {"session_id": {"S": session_id}},
             }
             if user_id is not None:
-                kwargs["ConditionExpression"] = "user_id = :uid"
-                kwargs["ExpressionAttributeValues"] = {":uid": {"S": user_id}}
+                kwargs["ConditionExpression"] = "user_id = :user_id"
+                kwargs["ExpressionAttributeValues"] = {":user_id": {"S": user_id}}
             self.client.delete_item(**kwargs)
             return True
 
@@ -261,8 +261,8 @@ class DynamoDb(BaseDb):
                         self.client.delete_item(
                             TableName=self.session_table_name,
                             Key={"session_id": {"S": session_id}},
-                            ConditionExpression="user_id = :uid",
-                            ExpressionAttributeValues={":uid": {"S": user_id}},
+                            ConditionExpression="user_id = :user_id",
+                            ExpressionAttributeValues={":user_id": {"S": user_id}},
                         )
                     except self.client.exceptions.ConditionalCheckFailedException:
                         pass
@@ -316,7 +316,7 @@ class DynamoDb(BaseDb):
 
             session = deserialize_from_dynamodb_item(item)
 
-            if user_id and session.get("user_id") != user_id:
+            if user_id is not None and session.get("user_id") != user_id:
                 return None
 
             if not session:
@@ -362,7 +362,7 @@ class DynamoDb(BaseDb):
             expression_attribute_names = {}
             expression_attribute_values = {":session_type": {"S": session_type.value}}
 
-            if user_id:
+            if user_id is not None:
                 filter_expression = "#user_id = :user_id"
                 expression_attribute_names["#user_id"] = "user_id"
                 expression_attribute_values[":user_id"] = {"S": user_id}
@@ -510,8 +510,8 @@ class DynamoDb(BaseDb):
                 ":updated_at": {"N": str(int(time.time()))},
             }
             if user_id is not None:
-                condition_expr += " AND user_id = :uid"
-                attr_values[":uid"] = {"S": user_id}
+                condition_expr += " AND user_id = :user_id"
+                attr_values[":user_id"] = {"S": user_id}
             response = self.client.update_item(
                 TableName=self.session_table_name,
                 Key={"session_id": {"S": session_id}},
