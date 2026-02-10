@@ -154,7 +154,7 @@ def cache_result(enable_cache: bool = True, cache_dir: Optional[str] = None, cac
 
             try:
                 with open(cache_file, "w") as f:
-                    json.dump({"timestamp": time.time(), "result": result}, f)
+                    json.dump({"timestamp": time.time(), "result": result}, f, default=lambda o: o.model_dump() if hasattr(o, "model_dump") else str(o))
             except Exception as e:
                 log_error(f"Error writing cache: {e}")
                 # Continue even if cache write fails
