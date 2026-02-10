@@ -1,3 +1,5 @@
+import io
+import time
 from os import getenv
 from typing import Any, Dict, List, Optional, Union
 
@@ -8,17 +10,24 @@ from agno.agent import Agent, RemoteAgent
 from agno.media import Audio, File, Image, Video
 from agno.os.interfaces.discord.security import verify_discord_signature
 from agno.team import RemoteTeam, Team
-from agno.tools.discord import DiscordTools
 from agno.utils.log import log_error, log_warning
 from agno.utils.message import get_text_from_message
 from agno.workflow import RemoteWorkflow, Workflow
+
+try:
+    import aiohttp
+    import discord
+except ImportError:
+    raise ImportError(
+        "Discord interface requires `discord.py` and `aiohttp`. Install using `pip install discord.py aiohttp`"
+    )
+
+DISCORD_API_BASE = "https://discord.com/api/v10"
 
 # Discord Interaction Types
 INTERACTION_PING = 1
 INTERACTION_APPLICATION_COMMAND = 2
 INTERACTION_MESSAGE_COMPONENT = 3
-INTERACTION_MODAL_SUBMIT = 5
-
 # Discord Interaction Response Types
 RESPONSE_PONG = 1
 RESPONSE_CHANNEL_MESSAGE_WITH_SOURCE = 4
@@ -38,7 +47,83 @@ def attach_routes(
 ) -> APIRouter:
     entity_type = "agent" if agent else "team" if team else "workflow" if workflow else "unknown"
 
-    discord_tools = DiscordTools(async_mode=True)
+    # Lazy aiohttp session for webhook operations
+    _http_session: Optional[aiohttp.ClientSession] = None
+
+    async def _get_session() -> aiohttp.ClientSession:
+        nonlocal _http_session
+        if _http_session is None or _http_session.closed:
+            _http_session = aiohttp.ClientSession()
+        return _http_session
+
+    # --- Webhook I/O helpers ---
+
+    async def _edit_original(
+        application_id: str,
+        interaction_token: str,
+        content: str,
+        components: Optional[List[Dict[str, Any]]] = None,
+    ) -> None:
+        session = await _get_session()
+        url = f"{DISCORD_API_BASE}/webhooks/{application_id}/{interaction_token}/messages/@original"
+        payload: Dict[str, Any] = {"content": content}
+        if components is not None:
+            payload["components"] = components
+        async with session.patch(url, json=payload) as resp:
+            resp.raise_for_status()
+
+    async def _send_webhook(
+        application_id: str,
+        interaction_token: str,
+        content: str,
+        ephemeral: bool = False,
+    ) -> None:
+        session = await _get_session()
+        url = f"{DISCORD_API_BASE}/webhooks/{application_id}/{interaction_token}"
+        payload: Dict[str, Any] = {"content": content}
+        if ephemeral:
+            payload["flags"] = 64
+        async with session.post(url, json=payload) as resp:
+            resp.raise_for_status()
+
+    async def _download_bytes(url: str, max_size: int = 25 * 1024 * 1024) -> Optional[bytes]:
+        session = await _get_session()
+        try:
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+                resp.raise_for_status()
+                content_length = resp.content_length or 0
+                if content_length > max_size:
+                    log_warning(f"Attachment too large ({content_length} bytes), skipping")
+                    return None
+                # Read in chunks to handle chunked transfers where content_length is 0/None
+                chunks = []
+                total = 0
+                async for chunk in resp.content.iter_chunked(64 * 1024):
+                    total += len(chunk)
+                    if total > max_size:
+                        log_warning(f"Attachment exceeded max size during download ({total} bytes), aborting")
+                        return None
+                    chunks.append(chunk)
+                return b"".join(chunks)
+        except Exception as e:
+            log_error(f"Failed to download attachment: {e}")
+            return None
+
+    async def _upload_webhook_file(
+        application_id: str,
+        interaction_token: str,
+        filename: str,
+        content_bytes: bytes,
+    ) -> None:
+        session = await _get_session()
+        url = f"{DISCORD_API_BASE}/webhooks/{application_id}/{interaction_token}"
+        form = aiohttp.FormData()
+        form.add_field("payload_json", '{"content": ""}', content_type="application/json")
+        form.add_field("files[0]", content_bytes, filename=filename)
+        async with session.post(url, data=form) as resp:
+            resp.raise_for_status()
+
+    # --- Route handler ---
 
     @router.post(
         "/interactions",
@@ -118,14 +203,24 @@ def attach_routes(
 
             return JSONResponse(content={"type": RESPONSE_DEFERRED_UPDATE_MESSAGE})
 
-        # Unhandled interaction type
+        # Unhandled interaction type — return 400, not PONG (PONG is only valid for PING)
         log_warning(f"Unhandled Discord interaction type: {interaction_type}")
-        return JSONResponse(content={"type": RESPONSE_PONG})
+        return JSONResponse(
+            status_code=400,
+            content={"error": f"Unhandled interaction type: {interaction_type}"},
+        )
 
     # --- Background processing ---
 
-    # Store pending HITL runs keyed by custom_id prefix
+    # Store pending HITL runs keyed by run_id
     _pending_hitl: Dict[str, Any] = {}
+    _hitl_ttl_seconds = 15 * 60  # Discord interaction tokens expire after 15 minutes
+
+    def _cleanup_stale_hitl() -> None:
+        now = time.time()
+        stale_keys = [k for k, v in _pending_hitl.items() if now - v.get("created_at", 0) > _hitl_ttl_seconds]
+        for k in stale_keys:
+            del _pending_hitl[k]
 
     async def _process_command(data: dict, application_id: str, interaction_token: str):
         try:
@@ -206,7 +301,7 @@ def attach_routes(
 
             # Handle HITL — agent paused for confirmation
             if agent and hasattr(response, "is_paused") and response.is_paused:
-                await _send_hitl_buttons(application_id, interaction_token, response)
+                await _send_hitl_buttons(application_id, interaction_token, response, user_id)
                 return
 
             # Send reasoning content
@@ -238,6 +333,9 @@ def attach_routes(
 
     async def _process_component(custom_id: str, application_id: str, interaction_token: str, user_id: str):
         try:
+            # Sweep stale entries on each access (lazy TTL cleanup)
+            _cleanup_stale_hitl()
+
             # custom_id format: "hitl:{run_id}:{action}" where action is "confirm" or "cancel"
             parts = custom_id.split(":")
             if len(parts) != 3 or parts[0] != "hitl":
@@ -247,16 +345,30 @@ def attach_routes(
             run_id = parts[1]
             action = parts[2]
 
-            pending = _pending_hitl.pop(run_id, None)
+            pending = _pending_hitl.get(run_id)
             if not pending:
-                await _send_followup(
-                    application_id, interaction_token, "This action has expired or already been handled."
+                await _send_webhook(
+                    application_id,
+                    interaction_token,
+                    "This action has expired or already been handled.",
+                    ephemeral=True,
                 )
                 return
 
+            # C1 fix: Only the original requester can confirm/cancel
+            if pending.get("initiator_user_id") and pending["initiator_user_id"] != user_id:
+                await _send_webhook(
+                    application_id,
+                    interaction_token,
+                    "Only the original requester can confirm this action.",
+                    ephemeral=True,
+                )
+                return
+
+            # Remove from pending now that we've validated
+            _pending_hitl.pop(run_id, None)
+
             run_response = pending["run_response"]
-            orig_app_id = pending["application_id"]
-            orig_token = pending["interaction_token"]
 
             confirmed = action == "confirm"
 
@@ -266,12 +378,15 @@ def attach_routes(
             if agent:
                 continued = await agent.acontinue_run(run_response=run_response)  # type: ignore[call-overload]
 
+                # H4 fix: Use the component callback's own token for responses (not the stored originals)
                 if continued:
                     content = get_text_from_message(continued.content) if continued.content is not None else ""
                     status_msg = "Confirmed" if confirmed else "Cancelled"
-                    await _send_followup(orig_app_id, orig_token, f"*{status_msg}*\n\n{content}")
+                    await _send_followup(application_id, interaction_token, f"*{status_msg}*\n\n{content}")
                 else:
-                    await _send_followup(orig_app_id, orig_token, "Action cancelled." if not confirmed else "Done.")
+                    await _send_followup(
+                        application_id, interaction_token, "Action cancelled." if not confirmed else "Done."
+                    )
         except Exception as e:
             log_error(f"Error processing Discord component: {e}")
 
@@ -293,13 +408,13 @@ def attach_routes(
         if not guild_id:
             return f"dc:dm:{channel_id}"
 
-        # Check if this is a thread (channel type present in resolved data)
-        channel = data.get("channel", {})
-        channel_type = channel.get("type")
-
-        # Thread types: PUBLIC_THREAD=11, PRIVATE_THREAD=12, ANNOUNCEMENT_THREAD=10
-        if channel_type in (10, 11, 12):
-            return f"dc:thread:{channel_id}"
+        # Check if this is a thread (channel object may be absent in some interaction payloads)
+        channel = data.get("channel")
+        if channel:
+            channel_type = channel.get("type")
+            # Thread types: PUBLIC_THREAD=11, PRIVATE_THREAD=12, ANNOUNCEMENT_THREAD=10
+            if channel_type in (10, 11, 12):
+                return f"dc:thread:{channel_id}"
 
         # Regular guild channel — scope per user
         return f"dc:channel:{channel_id}:user:{user_id}"
@@ -323,7 +438,7 @@ def attach_routes(
             log_warning(f"Attachment too large ({size} bytes), skipping: {filename}")
             return
 
-        content_bytes = await discord_tools.download_attachment_async(url)
+        content_bytes = await _download_bytes(url)
         if not content_bytes:
             return
 
@@ -348,14 +463,14 @@ def attach_routes(
         if edit_original:
             batches = _split_message(message)
             # First batch edits the deferred "thinking..." message
-            await discord_tools.edit_webhook_message(application_id, interaction_token, batches[0])
+            await _edit_original(application_id, interaction_token, batches[0])
             # Remaining batches as new follow-ups
             for batch in batches[1:]:
-                await discord_tools.send_webhook_followup(application_id, interaction_token, batch)
+                await _send_webhook(application_id, interaction_token, batch)
         else:
             batches = _split_message(message)
             for batch in batches:
-                await discord_tools.send_webhook_followup(application_id, interaction_token, batch)
+                await _send_webhook(application_id, interaction_token, batch)
 
     def _split_message(message: str) -> List[str]:
         if len(message) <= max_message_chars:
@@ -364,7 +479,7 @@ def attach_routes(
         batches = [message[i : i + max_message_chars] for i in range(0, len(message), max_message_chars)]
         return [f"[{i}/{len(batches)}] {batch}" for i, batch in enumerate(batches, 1)]
 
-    async def _send_hitl_buttons(application_id: str, interaction_token: str, run_response):
+    async def _send_hitl_buttons(application_id: str, interaction_token: str, run_response, initiator_user_id: str):
         run_id = run_response.run_id or "unknown"
 
         tool_names = [t.tool_name for t in run_response.tools_requiring_confirmation]
@@ -375,6 +490,8 @@ def attach_routes(
             "run_response": run_response,
             "application_id": application_id,
             "interaction_token": interaction_token,
+            "initiator_user_id": initiator_user_id,
+            "created_at": time.time(),
         }
 
         components = [
@@ -397,7 +514,7 @@ def attach_routes(
             }
         ]
 
-        await discord_tools.edit_webhook_message(
+        await _edit_original(
             application_id,
             interaction_token,
             f"Tool requiring confirmation: **{tool_list}**",
@@ -406,13 +523,13 @@ def attach_routes(
 
     async def _upload_response_media(application_id: str, interaction_token: str, response):
         media_attrs = [
-            ("images", "image.png", "image/png"),
-            ("files", "file", "application/octet-stream"),
-            ("videos", "video.mp4", "video/mp4"),
-            ("audio", "audio.mp3", "audio/mpeg"),
+            ("images", "image.png"),
+            ("files", "file"),
+            ("videos", "video.mp4"),
+            ("audio", "audio.mp3"),
         ]
 
-        for attr, default_name, default_mime in media_attrs:
+        for attr, default_name in media_attrs:
             items = getattr(response, attr, None)
             if not items:
                 continue
@@ -422,9 +539,7 @@ def attach_routes(
                     continue
                 filename = getattr(item, "filename", None) or default_name
                 try:
-                    await discord_tools.upload_webhook_file(
-                        application_id, interaction_token, filename, content_bytes, default_mime
-                    )
+                    await _upload_webhook_file(application_id, interaction_token, filename, content_bytes)
                 except Exception as e:
                     log_error(f"Failed to upload {attr.rstrip('s')}: {e}")
 

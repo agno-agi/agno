@@ -1,6 +1,6 @@
 import json
 import time
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 from fastapi import FastAPI
@@ -267,13 +267,45 @@ def _make_agent_response(**overrides):
     return MagicMock(**defaults)
 
 
-def _make_mock_discord_tools():
-    mock_dt = MagicMock()
-    mock_dt.edit_webhook_message = AsyncMock()
-    mock_dt.send_webhook_followup = AsyncMock()
-    mock_dt.download_attachment_async = AsyncMock(return_value=b"file-bytes")
-    mock_dt.upload_webhook_file = AsyncMock()
-    return mock_dt
+def _make_mock_aiohttp_session(content_length=1024, chunk_data=b"file-bytes"):
+    """Create a mock aiohttp.ClientSession that supports async context managers."""
+    mock_session = MagicMock()
+    mock_session.closed = False
+
+    # Mock for PATCH (used by _edit_original)
+    mock_patch_resp = AsyncMock()
+    mock_patch_resp.raise_for_status = Mock()
+    mock_patch_ctx = AsyncMock()
+    mock_patch_ctx.__aenter__.return_value = mock_patch_resp
+    mock_patch_ctx.__aexit__.return_value = False
+    mock_session.patch.return_value = mock_patch_ctx
+
+    # Mock for POST (used by _send_webhook and _upload_webhook_file)
+    mock_post_resp = AsyncMock()
+    mock_post_resp.raise_for_status = Mock()
+    mock_post_ctx = AsyncMock()
+    mock_post_ctx.__aenter__.return_value = mock_post_resp
+    mock_post_ctx.__aexit__.return_value = False
+    mock_session.post.return_value = mock_post_ctx
+
+    # Mock for GET (used by _download_bytes with iter_chunked)
+    mock_get_resp = AsyncMock()
+    mock_get_resp.raise_for_status = Mock()
+    mock_get_resp.content_length = content_length
+
+    async def _iter_chunked(size):
+        yield chunk_data
+
+    mock_content = MagicMock()
+    mock_content.iter_chunked = _iter_chunked
+    mock_get_resp.content = mock_content
+
+    mock_get_ctx = AsyncMock()
+    mock_get_ctx.__aenter__.return_value = mock_get_resp
+    mock_get_ctx.__aexit__.return_value = False
+    mock_session.get.return_value = mock_get_ctx
+
+    return mock_session
 
 
 def _slash_command_payload(**overrides):
@@ -295,37 +327,55 @@ def _slash_command_payload(**overrides):
 
 
 class TestBackgroundDelegation:
-    """Verify router delegates API calls to DiscordTools (zero httpx in router)."""
+    """Verify router performs webhook I/O via aiohttp/discord.Webhook (no DiscordTools)."""
 
     def test_command_edits_original_with_response(self, mock_agent):
         mock_agent.arun = AsyncMock(return_value=_make_agent_response())
-        mock_dt = _make_mock_discord_tools()
+        mock_session = _make_mock_aiohttp_session()
+        mock_webhook = AsyncMock()
 
-        with patch("agno.os.interfaces.discord.router.DiscordTools", return_value=mock_dt):
+        with (
+            patch("agno.os.interfaces.discord.router.aiohttp") as mock_aiohttp,
+            patch("agno.os.interfaces.discord.router.discord") as mock_discord,
+        ):
+            mock_aiohttp.ClientSession.return_value = mock_session
+            mock_aiohttp.ClientTimeout = MagicMock()
+            mock_discord.Webhook.from_url.return_value = mock_webhook
+            mock_discord.File.return_value = MagicMock()
+
             app = _make_app(mock_agent)
             client = TestClient(app, raise_server_exceptions=False)
             resp = _post_interaction(client, _slash_command_payload())
 
         assert resp.status_code == 200
-        mock_dt.edit_webhook_message.assert_called_once()
-        args = mock_dt.edit_webhook_message.call_args
-        assert args[0][0] == "app123"
-        assert args[0][1] == "interaction_token"
-        assert "Hello from agent" in args[0][2]
+        # _edit_original calls session.patch with @original URL
+        mock_session.patch.assert_called_once()
+        call_args = mock_session.patch.call_args
+        assert "@original" in call_args[0][0]
+        assert "Hello from agent" in call_args[1]["json"]["content"]
 
     def test_long_response_splits_into_followups(self, mock_agent):
         long_text = "x" * 4000
         mock_agent.arun = AsyncMock(return_value=_make_agent_response(content=long_text))
-        mock_dt = _make_mock_discord_tools()
+        mock_session = _make_mock_aiohttp_session()
+        mock_webhook = AsyncMock()
 
-        with patch("agno.os.interfaces.discord.router.DiscordTools", return_value=mock_dt):
+        with (
+            patch("agno.os.interfaces.discord.router.aiohttp") as mock_aiohttp,
+            patch("agno.os.interfaces.discord.router.discord") as mock_discord,
+        ):
+            mock_aiohttp.ClientSession.return_value = mock_session
+            mock_aiohttp.ClientTimeout = MagicMock()
+            mock_discord.Webhook.from_url.return_value = mock_webhook
+            mock_discord.File.return_value = MagicMock()
+
             app = _make_app(mock_agent)
             client = TestClient(app, raise_server_exceptions=False)
             _post_interaction(client, _slash_command_payload())
 
-        # First batch → edit_webhook_message, remaining → send_webhook_followup
-        mock_dt.edit_webhook_message.assert_called_once()
-        assert mock_dt.send_webhook_followup.call_count >= 1
+        # First batch → session.patch (edit original), remaining → session.post (follow-ups)
+        mock_session.patch.assert_called_once()
+        assert mock_session.post.call_count >= 1
 
     def test_hitl_sends_buttons_via_edit(self, mock_agent):
         mock_tool = MagicMock()
@@ -336,21 +386,30 @@ class TestBackgroundDelegation:
             tools_requiring_confirmation=[mock_tool],
         )
         mock_agent.arun = AsyncMock(return_value=response)
-        mock_dt = _make_mock_discord_tools()
+        mock_session = _make_mock_aiohttp_session()
 
-        with patch("agno.os.interfaces.discord.router.DiscordTools", return_value=mock_dt):
+        with (
+            patch("agno.os.interfaces.discord.router.aiohttp") as mock_aiohttp,
+            patch("agno.os.interfaces.discord.router.discord") as mock_discord,
+        ):
+            mock_aiohttp.ClientSession.return_value = mock_session
+            mock_aiohttp.ClientTimeout = MagicMock()
+            mock_discord.Webhook.from_url.return_value = AsyncMock()
+            mock_discord.File.return_value = MagicMock()
+
             app = _make_app(mock_agent)
             client = TestClient(app, raise_server_exceptions=False)
             _post_interaction(client, _slash_command_payload())
 
-        mock_dt.edit_webhook_message.assert_called_once()
-        call_kwargs = mock_dt.edit_webhook_message.call_args
-        # Should include components (HITL buttons)
-        assert call_kwargs.kwargs.get("components") or (len(call_kwargs[0]) >= 4 and call_kwargs[0][3] is not None)
+        # HITL buttons sent via _edit_original (session.patch with components)
+        mock_session.patch.assert_called_once()
+        call_payload = mock_session.patch.call_args[1]["json"]
+        assert "components" in call_payload
+        assert "dangerous_tool" in call_payload["content"]
 
-    def test_attachment_download_delegates(self, mock_agent):
+    def test_attachment_download_via_aiohttp(self, mock_agent):
         mock_agent.arun = AsyncMock(return_value=_make_agent_response())
-        mock_dt = _make_mock_discord_tools()
+        mock_session = _make_mock_aiohttp_session()
 
         payload = _slash_command_payload()
         payload["data"]["options"].append({"name": "file", "value": "att123", "type": 11})
@@ -365,12 +424,23 @@ class TestBackgroundDelegation:
             }
         }
 
-        with patch("agno.os.interfaces.discord.router.DiscordTools", return_value=mock_dt):
+        with (
+            patch("agno.os.interfaces.discord.router.aiohttp") as mock_aiohttp,
+            patch("agno.os.interfaces.discord.router.discord") as mock_discord,
+        ):
+            mock_aiohttp.ClientSession.return_value = mock_session
+            mock_aiohttp.ClientTimeout = MagicMock()
+            mock_discord.Webhook.from_url.return_value = AsyncMock()
+            mock_discord.File.return_value = MagicMock()
+
             app = _make_app(mock_agent)
             client = TestClient(app, raise_server_exceptions=False)
             _post_interaction(client, payload)
 
-        mock_dt.download_attachment_async.assert_called_once_with("https://cdn.discordapp.com/file.png")
+        # Attachment downloaded via aiohttp session.get
+        mock_session.get.assert_called_once()
+        call_args = mock_session.get.call_args
+        assert "cdn.discordapp.com" in call_args[0][0]
 
     def test_response_media_uploads_via_webhook(self, mock_agent):
         mock_image = MagicMock()
@@ -379,15 +449,321 @@ class TestBackgroundDelegation:
 
         response = _make_agent_response(images=[mock_image])
         mock_agent.arun = AsyncMock(return_value=response)
-        mock_dt = _make_mock_discord_tools()
+        mock_session = _make_mock_aiohttp_session()
+        mock_webhook = AsyncMock()
 
-        with patch("agno.os.interfaces.discord.router.DiscordTools", return_value=mock_dt):
+        with (
+            patch("agno.os.interfaces.discord.router.aiohttp") as mock_aiohttp,
+            patch("agno.os.interfaces.discord.router.discord") as mock_discord,
+        ):
+            mock_aiohttp.ClientSession.return_value = mock_session
+            mock_aiohttp.ClientTimeout = MagicMock()
+            mock_discord.Webhook.from_url.return_value = mock_webhook
+            mock_discord.File.return_value = MagicMock()
+
             app = _make_app(mock_agent)
             client = TestClient(app, raise_server_exceptions=False)
             _post_interaction(client, _slash_command_payload())
 
-        mock_dt.upload_webhook_file.assert_called_once()
-        args = mock_dt.upload_webhook_file.call_args
-        assert args[0][0] == "app123"
-        assert args[0][2] == "image.png"
-        assert args[0][3] == b"png-bytes"
+        # Image uploaded via session.post with form data (_upload_webhook_file)
+        assert mock_session.post.call_count >= 1
+        # URL should target the webhooks endpoint
+        post_url = mock_session.post.call_args[0][0]
+        assert "/webhooks/" in post_url
+
+    def test_error_sends_error_message(self, mock_agent):
+        mock_agent.arun = AsyncMock(side_effect=Exception("Agent crashed"))
+        mock_session = _make_mock_aiohttp_session()
+        mock_webhook = AsyncMock()
+
+        with (
+            patch("agno.os.interfaces.discord.router.aiohttp") as mock_aiohttp,
+            patch("agno.os.interfaces.discord.router.discord") as mock_discord,
+        ):
+            mock_aiohttp.ClientSession.return_value = mock_session
+            mock_aiohttp.ClientTimeout = MagicMock()
+            mock_discord.Webhook.from_url.return_value = mock_webhook
+            mock_discord.File.return_value = MagicMock()
+
+            app = _make_app(mock_agent)
+            client = TestClient(app, raise_server_exceptions=False)
+            resp = _post_interaction(client, _slash_command_payload())
+
+        assert resp.status_code == 200
+        # Error recovery sends via session.post (_send_webhook follow-up)
+        assert mock_session.post.call_count >= 1
+
+    def test_reasoning_content_displayed(self, mock_agent):
+        response = _make_agent_response(
+            content="Final answer",
+            reasoning_content="Let me think about this...",
+        )
+        mock_agent.arun = AsyncMock(return_value=response)
+        mock_session = _make_mock_aiohttp_session()
+        mock_webhook = AsyncMock()
+
+        with (
+            patch("agno.os.interfaces.discord.router.aiohttp") as mock_aiohttp,
+            patch("agno.os.interfaces.discord.router.discord") as mock_discord,
+        ):
+            mock_aiohttp.ClientSession.return_value = mock_session
+            mock_aiohttp.ClientTimeout = MagicMock()
+            mock_discord.Webhook.from_url.return_value = mock_webhook
+            mock_discord.File.return_value = MagicMock()
+
+            app = _make_app(mock_agent)
+            client = TestClient(app, raise_server_exceptions=False)
+            _post_interaction(client, _slash_command_payload())
+
+        # Reasoning sent as edit_original (session.patch), content as session.post follow-up
+        mock_session.patch.assert_called_once()
+        patch_payload = mock_session.patch.call_args[1]["json"]["content"]
+        assert "Let me think about this..." in patch_payload
+        # Actual content sent via session.post (_send_webhook)
+        assert mock_session.post.call_count >= 1
+
+
+def _component_payload(custom_id: str, user_id: str = "user1", **overrides):
+    payload = {
+        "type": 3,  # MESSAGE_COMPONENT
+        "id": "5678",
+        "application_id": "app123",
+        "token": "component_token",
+        "guild_id": "guild1",
+        "channel_id": "channel1",
+        "member": {"user": {"id": user_id}},
+        "data": {"custom_id": custom_id},
+    }
+    payload.update(overrides)
+    return payload
+
+
+def _make_paused_response(run_id="run123", tool_name="dangerous_tool"):
+    mock_tool = MagicMock()
+    mock_tool.tool_name = tool_name
+    return _make_agent_response(
+        is_paused=True,
+        run_id=run_id,
+        tools_requiring_confirmation=[mock_tool],
+    )
+
+
+def _setup_mocks():
+    mock_session = _make_mock_aiohttp_session()
+    mock_webhook = AsyncMock()
+    return mock_session, mock_webhook
+
+
+class TestHITLSecurity:
+    """C1: HITL authorization bypass — only the original requester can confirm/cancel."""
+
+    def test_unauthorized_user_rejected(self, mock_agent):
+        mock_agent.arun = AsyncMock(return_value=_make_paused_response(run_id="run_auth"))
+        mock_session, mock_webhook = _setup_mocks()
+
+        with (
+            patch("agno.os.interfaces.discord.router.aiohttp") as mock_aiohttp,
+            patch("agno.os.interfaces.discord.router.discord") as mock_discord,
+        ):
+            mock_aiohttp.ClientSession.return_value = mock_session
+            mock_aiohttp.ClientTimeout = MagicMock()
+            mock_discord.Webhook.from_url.return_value = mock_webhook
+            mock_discord.File.return_value = MagicMock()
+
+            app = _make_app(mock_agent)
+            client = TestClient(app, raise_server_exceptions=False)
+
+            # User1 triggers a command that pauses for HITL
+            _post_interaction(client, _slash_command_payload())
+
+            # User2 clicks the confirm button
+            resp = _post_interaction(client, _component_payload("hitl:run_auth:confirm", user_id="user2"))
+
+        assert resp.status_code == 200
+        # Agent should NOT have been continued — user2 is unauthorized
+        mock_agent.acontinue_run.assert_not_called()
+        # Ephemeral rejection sent via session.post with flags=64
+        post_calls = mock_session.post.call_args_list
+        ephemeral_calls = [c for c in post_calls if c[1].get("json", {}).get("flags") == 64]
+        assert len(ephemeral_calls) >= 1
+
+    def test_authorized_user_continues_run(self, mock_agent):
+        mock_agent.arun = AsyncMock(return_value=_make_paused_response(run_id="run_auth2"))
+        continued = _make_agent_response(content="Tool executed successfully")
+        mock_agent.acontinue_run = AsyncMock(return_value=continued)
+        mock_session, mock_webhook = _setup_mocks()
+
+        with (
+            patch("agno.os.interfaces.discord.router.aiohttp") as mock_aiohttp,
+            patch("agno.os.interfaces.discord.router.discord") as mock_discord,
+        ):
+            mock_aiohttp.ClientSession.return_value = mock_session
+            mock_aiohttp.ClientTimeout = MagicMock()
+            mock_discord.Webhook.from_url.return_value = mock_webhook
+            mock_discord.File.return_value = MagicMock()
+
+            app = _make_app(mock_agent)
+            client = TestClient(app, raise_server_exceptions=False)
+
+            # User1 triggers HITL
+            _post_interaction(client, _slash_command_payload())
+
+            # Same user1 clicks confirm
+            _post_interaction(client, _component_payload("hitl:run_auth2:confirm", user_id="user1"))
+
+        # Agent should have been continued
+        mock_agent.acontinue_run.assert_called_once()
+
+
+class TestHITLCleanup:
+    """H2: Stale HITL entries are cleaned up after 15-minute TTL."""
+
+    def test_stale_entries_cleaned_on_access(self, mock_agent):
+        mock_agent.arun = AsyncMock(return_value=_make_paused_response(run_id="run_stale"))
+        mock_session, mock_webhook = _setup_mocks()
+
+        with (
+            patch("agno.os.interfaces.discord.router.aiohttp") as mock_aiohttp,
+            patch("agno.os.interfaces.discord.router.discord") as mock_discord,
+            patch("agno.os.interfaces.discord.router.time") as mock_time,
+        ):
+            mock_aiohttp.ClientSession.return_value = mock_session
+            mock_aiohttp.ClientTimeout = MagicMock()
+            mock_discord.Webhook.from_url.return_value = mock_webhook
+            mock_discord.File.return_value = MagicMock()
+
+            # Time when HITL entry is created
+            mock_time.time.return_value = 1000.0
+
+            app = _make_app(mock_agent)
+            client = TestClient(app, raise_server_exceptions=False)
+
+            # User1 triggers HITL — stored with created_at=1000.0
+            _post_interaction(client, _slash_command_payload())
+
+            # Advance time past the 15-minute TTL
+            mock_time.time.return_value = 1000.0 + 16 * 60
+
+            # User1 clicks confirm, but the entry has expired
+            _post_interaction(client, _component_payload("hitl:run_stale:confirm", user_id="user1"))
+
+        # Agent should NOT have been continued — entry was cleaned up
+        mock_agent.acontinue_run.assert_not_called()
+        # "expired or already handled" message sent via session.post
+        post_calls = mock_session.post.call_args_list
+        expired_calls = [c for c in post_calls if "expired" in str(c).lower() or "handled" in str(c).lower()]
+        assert len(expired_calls) >= 1
+
+
+class TestTokenHandling:
+    """H4: Component callback uses its own interaction token, not the stored original."""
+
+    def test_component_uses_own_token(self, mock_agent):
+        mock_agent.arun = AsyncMock(return_value=_make_paused_response(run_id="run_token"))
+        continued = _make_agent_response(content="Done")
+        mock_agent.acontinue_run = AsyncMock(return_value=continued)
+        mock_session, mock_webhook = _setup_mocks()
+
+        with (
+            patch("agno.os.interfaces.discord.router.aiohttp") as mock_aiohttp,
+            patch("agno.os.interfaces.discord.router.discord") as mock_discord,
+        ):
+            mock_aiohttp.ClientSession.return_value = mock_session
+            mock_aiohttp.ClientTimeout = MagicMock()
+            mock_discord.Webhook.from_url.return_value = mock_webhook
+            mock_discord.File.return_value = MagicMock()
+
+            app = _make_app(mock_agent)
+            client = TestClient(app, raise_server_exceptions=False)
+
+            # Command uses "interaction_token"
+            _post_interaction(client, _slash_command_payload())
+
+            # Component uses "component_token" (different!)
+            _post_interaction(client, _component_payload("hitl:run_token:confirm", user_id="user1"))
+
+        # The follow-up URL should use the component's token, not the original
+        # Check both session.post and session.patch for URLs containing "component_token"
+        all_calls = [str(c) for c in mock_session.post.call_args_list + mock_session.patch.call_args_list]
+        assert any("component_token" in url for url in all_calls)
+
+
+class TestProtocolHandling:
+    """M4/M2: Interaction type handling and session ID robustness."""
+
+    def test_unknown_interaction_type_returns_400(self, mock_agent):
+        app = _make_app(mock_agent)
+        client = TestClient(app)
+        resp = _post_interaction(client, {"type": 5})  # MODAL_SUBMIT (unsupported)
+        assert resp.status_code == 400
+
+    def test_command_without_channel_object(self, mock_agent):
+        mock_agent.arun = AsyncMock(return_value=_make_agent_response())
+        mock_session, mock_webhook = _setup_mocks()
+
+        with (
+            patch("agno.os.interfaces.discord.router.aiohttp") as mock_aiohttp,
+            patch("agno.os.interfaces.discord.router.discord") as mock_discord,
+        ):
+            mock_aiohttp.ClientSession.return_value = mock_session
+            mock_aiohttp.ClientTimeout = MagicMock()
+            mock_discord.Webhook.from_url.return_value = mock_webhook
+            mock_discord.File.return_value = MagicMock()
+
+            # Payload without "channel" key (some interaction payloads omit it)
+            payload = _slash_command_payload()
+            assert "channel" not in payload
+
+            app = _make_app(mock_agent)
+            client = TestClient(app, raise_server_exceptions=False)
+            resp = _post_interaction(client, payload)
+
+        assert resp.status_code == 200
+        # Agent was called without crashing
+        mock_agent.arun.assert_called_once()
+        # Session ID falls through to channel:user format (not thread)
+        call_kwargs = mock_agent.arun.call_args
+        session_id = call_kwargs.kwargs.get("session_id", "")
+        assert session_id.startswith("dc:channel:")
+
+
+class TestAttachmentSafety:
+    """M5: Attachment download size enforcement via Content-Length pre-check."""
+
+    def test_oversized_content_length_skips_download(self, mock_agent):
+        mock_agent.arun = AsyncMock(return_value=_make_agent_response())
+        # Content-Length reports 30MB — exceeds 25MB limit
+        mock_session = _make_mock_aiohttp_session(content_length=30 * 1024 * 1024)
+        mock_webhook = AsyncMock()
+
+        payload = _slash_command_payload()
+        payload["data"]["options"].append({"name": "file", "value": "att123", "type": 11})
+        payload["data"]["resolved"] = {
+            "attachments": {
+                "att123": {
+                    "url": "https://cdn.discordapp.com/file.bin",
+                    "content_type": "image/png",
+                    "filename": "large.png",
+                    "size": 1024,  # Metadata says small
+                }
+            }
+        }
+
+        with (
+            patch("agno.os.interfaces.discord.router.aiohttp") as mock_aiohttp,
+            patch("agno.os.interfaces.discord.router.discord") as mock_discord,
+        ):
+            mock_aiohttp.ClientSession.return_value = mock_session
+            mock_aiohttp.ClientTimeout = MagicMock()
+            mock_discord.Webhook.from_url.return_value = mock_webhook
+            mock_discord.File.return_value = MagicMock()
+
+            app = _make_app(mock_agent)
+            client = TestClient(app, raise_server_exceptions=False)
+            _post_interaction(client, payload)
+
+        # Agent was still called (the command proceeds, just without the attachment)
+        mock_agent.arun.assert_called_once()
+        # Images should be None (oversized download returned None)
+        call_kwargs = mock_agent.arun.call_args
+        assert call_kwargs.kwargs.get("images") is None
