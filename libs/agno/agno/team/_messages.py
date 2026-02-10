@@ -227,7 +227,26 @@ def get_system_message(
 
         system_message_content += "\n<how_to_respond>\n"
 
-        if team.delegate_to_all_members:
+        from agno.team.mode import TeamMode
+
+        if team.mode == TeamMode.tasks:
+            system_message_content += (
+                "You are operating in autonomous task mode. Your job is to:\n"
+                "1. Analyze the user's goal and decompose it into discrete tasks using `create_task`\n"
+                "2. Execute tasks by delegating to team members using `execute_task`\n"
+                "3. Use `execute_tasks_parallel` when multiple tasks have no dependencies on each other\n"
+                "4. Monitor progress using `list_tasks`\n"
+                "5. Use `add_task_note` to record observations or communicate about tasks\n"
+                "6. When all tasks are complete, call `mark_all_complete` with a summary\n\n"
+                "Guidelines:\n"
+                "- Create tasks with clear, actionable titles and descriptions\n"
+                "- Set dependencies (depends_on) when tasks must be done in order\n"
+                "- Assign tasks to the most capable member based on their role and tools\n"
+                "- Prefer `execute_tasks_parallel` for independent tasks to maximize throughput\n"
+                "- Review task results before marking the overall goal as complete\n"
+                "- If a task fails, decide whether to retry, reassign, or take a different approach\n"
+            )
+        elif team.delegate_to_all_members:
             system_message_content += (
                 "- You can either respond directly or use the `delegate_task_to_members` tool to delegate a task to all members in your team to get a collaborative response.\n"
                 "- To delegate a task to all members in your team, call `delegate_task_to_members` ONLY once. This will delegate a task to all members in your team.\n"
@@ -531,7 +550,26 @@ async def aget_system_message(
 
         system_message_content += "\n<how_to_respond>\n"
 
-        if team.delegate_to_all_members:
+        from agno.team.mode import TeamMode
+
+        if team.mode == TeamMode.tasks:
+            system_message_content += (
+                "You are operating in autonomous task mode. Your job is to:\n"
+                "1. Analyze the user's goal and decompose it into discrete tasks using `create_task`\n"
+                "2. Execute tasks by delegating to team members using `execute_task`\n"
+                "3. Use `execute_tasks_parallel` when multiple tasks have no dependencies on each other\n"
+                "4. Monitor progress using `list_tasks`\n"
+                "5. Use `add_task_note` to record observations or communicate about tasks\n"
+                "6. When all tasks are complete, call `mark_all_complete` with a summary\n\n"
+                "Guidelines:\n"
+                "- Create tasks with clear, actionable titles and descriptions\n"
+                "- Set dependencies (depends_on) when tasks must be done in order\n"
+                "- Assign tasks to the most capable member based on their role and tools\n"
+                "- Prefer `execute_tasks_parallel` for independent tasks to maximize throughput\n"
+                "- Review task results before marking the overall goal as complete\n"
+                "- If a task fails, decide whether to retry, reassign, or take a different approach\n"
+            )
+        elif team.delegate_to_all_members:
             system_message_content += (
                 "- You can either respond directly or use the `delegate_task_to_members` tool to delegate a task to all members in your team to get a collaborative response.\n"
                 "- To delegate a task to all members in your team, call `delegate_task_to_members` ONLY once. This will delegate a task to all members in your team.\n"
