@@ -9,18 +9,15 @@ This example demonstrates:
 
 import asyncio
 
-from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
-from agno.os import AgentOS
+from agno.scheduler import ScheduleManager
 from agno.scheduler.cli import SchedulerConsole
 
 
 async def main():
     # --- Setup ---
     db = SqliteDb(id="async-scheduler-demo", db_file="tmp/async_scheduler_demo.db")
-    agent = Agent(name="Async Agent", db=db)
-    app = AgentOS(name="Async Scheduler Demo", agents=[agent], db=db)
-    mgr = app.scheduler
+    mgr = ScheduleManager(db)
     console = SchedulerConsole(mgr)
 
     # --- Create schedules asynchronously ---

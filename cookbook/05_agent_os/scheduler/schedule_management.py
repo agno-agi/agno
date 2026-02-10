@@ -9,24 +9,14 @@ This example demonstrates the complete lifecycle:
 6. Clean up
 """
 
-from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
-from agno.os import AgentOS
+from agno.scheduler import ScheduleManager
 from agno.scheduler.cli import SchedulerConsole
 
 # --- Setup ---
 
 db = SqliteDb(id="schedule-mgmt-demo", db_file="tmp/schedule_mgmt_demo.db")
-
-agent = Agent(name="My Agent", db=db)
-
-app = AgentOS(
-    name="Schedule Management Demo",
-    agents=[agent],
-    db=db,
-)
-
-mgr = app.scheduler
+mgr = ScheduleManager(db)
 console = SchedulerConsole(mgr)
 
 # --- 1. Create schedules ---

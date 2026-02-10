@@ -4,6 +4,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple, Union, cast
 from uuid import uuid4
 
+from sqlalchemy import or_
+
 if TYPE_CHECKING:
     from agno.tracing.schemas import Span, Trace
 
