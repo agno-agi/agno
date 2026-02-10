@@ -1688,6 +1688,86 @@ async def _arun(
     return run_response
 
 
+async def _arun_background(
+    agent: Agent,
+    run_response: RunOutput,
+    run_context: RunContext,
+    session_id: str,
+    user_id: Optional[str] = None,
+    add_history_to_context: Optional[bool] = None,
+    add_dependencies_to_context: Optional[bool] = None,
+    add_session_state_to_context: Optional[bool] = None,
+    response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+    debug_mode: Optional[bool] = None,
+    background_tasks: Optional[Any] = None,
+    **kwargs: Any,
+) -> RunOutput:
+    """Start an agent run in the background and return immediately with PENDING status.
+
+    The run is persisted with PENDING status, then an asyncio task is spawned
+    to execute the actual run. The task transitions through RUNNING -> COMPLETED/ERROR.
+
+    Callers can poll for results via agent.aget_run_output(run_id, session_id).
+    """
+    from agno.agent._session import asave_session
+    from agno.agent._storage import aread_or_create_session, update_metadata
+
+    # 1. Register the run for cancellation tracking (before spawning the task)
+    await aregister_run(run_context.run_id)
+
+    # 2. Set status to PENDING
+    run_response.status = RunStatus.pending
+
+    # 3. Persist the PENDING run so polling can find it immediately
+    agent_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
+    update_metadata(agent, session=agent_session)
+    agent_session.upsert_run(run=run_response)
+    await asave_session(agent, session=agent_session)
+
+    log_info(f"Background run {run_response.run_id} created with PENDING status")
+
+    # 4. Spawn the background task
+    async def _background_task() -> None:
+        try:
+            # Transition to RUNNING
+            run_response.status = RunStatus.running
+            agent_session.upsert_run(run=run_response)
+            await asave_session(agent, session=agent_session)
+
+            # Execute the actual run — _arun handles everything including
+            # session persistence and cleanup
+            await _arun(
+                agent,
+                run_response=run_response,
+                run_context=run_context,
+                user_id=user_id,
+                response_format=response_format,
+                session_id=session_id,
+                add_history_to_context=add_history_to_context,
+                add_dependencies_to_context=add_dependencies_to_context,
+                add_session_state_to_context=add_session_state_to_context,
+                debug_mode=debug_mode,
+                background_tasks=background_tasks,
+                **kwargs,
+            )
+        except Exception:
+            log_error(f"Background run {run_response.run_id} failed", exc_info=True)
+            # Persist ERROR status
+            try:
+                run_response.status = RunStatus.error
+                agent_session.upsert_run(run=run_response)
+                await asave_session(agent, session=agent_session)
+            except Exception:
+                log_error(f"Failed to persist error state for background run {run_response.run_id}", exc_info=True)
+            # Clean up cancellation tracking
+            await acleanup_run(run_response.run_id)  # type: ignore
+
+    asyncio.create_task(_background_task())
+
+    # 5. Return immediately with the PENDING response
+    return run_response
+
+
 async def _arun_stream(
     agent: Agent,
     run_response: RunOutput,
@@ -2232,6 +2312,7 @@ def arun_dispatch(  # type: ignore
     output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
     yield_run_output: Optional[bool] = None,
     debug_mode: Optional[bool] = None,
+    background: bool = False,
     **kwargs: Any,
 ) -> Union[RunOutput, AsyncIterator[RunOutputEvent]]:
     """Async Run the Agent and return the response."""
@@ -2354,6 +2435,31 @@ def arun_dispatch(  # type: ignore
     # Start the run metrics timer, to calculate the run duration
     run_response.metrics = Metrics()
     run_response.metrics.start_timer()
+
+    # Background execution: return immediately with PENDING status
+    if background:
+        if opts.stream:
+            raise ValueError(
+                "Background execution cannot be combined with streaming. Set stream=False when using background=True."
+            )
+        if not agent.db:
+            raise ValueError(
+                "Background execution requires a database to be configured on the agent for run persistence."
+            )
+        return _arun_background(  # type: ignore[return-value]
+            agent,
+            run_response=run_response,
+            run_context=run_context,
+            user_id=user_id,
+            response_format=response_format,
+            session_id=session_id,
+            add_history_to_context=opts.add_history_to_context,
+            add_dependencies_to_context=opts.add_dependencies_to_context,
+            add_session_state_to_context=opts.add_session_state_to_context,
+            debug_mode=debug_mode,
+            background_tasks=background_tasks,
+            **kwargs,
+        )
 
     # Pass the new run_response to _arun
     if opts.stream:

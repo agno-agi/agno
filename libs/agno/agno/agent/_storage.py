@@ -139,10 +139,15 @@ async def aread_session(
     agent: Agent, session_id: str, session_type: SessionType = SessionType.AGENT
 ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession]]:
     """Get a Session from the database."""
+    from agno.agent import _init
+
     try:
         if not agent.db:
             raise ValueError("Db not initialized")
-        return await agent.db.get_session(session_id=session_id, session_type=session_type)  # type: ignore
+        if _init.has_async_db(agent):
+            return await agent.db.get_session(session_id=session_id, session_type=session_type)  # type: ignore
+        else:
+            return agent.db.get_session(session_id=session_id, session_type=session_type)  # type: ignore
     except Exception as e:
         import traceback
 
@@ -172,10 +177,15 @@ async def aupsert_session(
     agent: Agent, session: Union[AgentSession, TeamSession, WorkflowSession]
 ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession]]:
     """Upsert a Session into the database."""
+    from agno.agent import _init
+
     try:
         if not agent.db:
             raise ValueError("Db not initialized")
-        return await agent.db.upsert_session(session=session)  # type: ignore
+        if _init.has_async_db(agent):
+            return await agent.db.upsert_session(session=session)  # type: ignore
+        else:
+            return agent.db.upsert_session(session=session)  # type: ignore
     except Exception as e:
         import traceback
 

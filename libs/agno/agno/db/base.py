@@ -47,6 +47,8 @@ class BaseDb(ABC):
         component_configs_table: Optional[str] = None,
         component_links_table: Optional[str] = None,
         learnings_table: Optional[str] = None,
+        schedules_table: Optional[str] = None,
+        schedule_runs_table: Optional[str] = None,
         id: Optional[str] = None,
     ):
         self.id = id or str(uuid4())
@@ -63,6 +65,8 @@ class BaseDb(ABC):
         self.component_configs_table_name = component_configs_table or "agno_component_configs"
         self.component_links_table_name = component_links_table or "agno_component_links"
         self.learnings_table_name = learnings_table or "agno_learnings"
+        self.schedules_table_name = schedules_table or "agno_schedules"
+        self.schedule_runs_table_name = schedule_runs_table or "agno_schedule_runs"
 
     def to_dict(self) -> Dict[str, Any]:
         """
@@ -82,6 +86,9 @@ class BaseDb(ABC):
             "components_table": self.components_table_name,
             "component_configs_table": self.component_configs_table_name,
             "component_links_table": self.component_links_table_name,
+            "learnings_table": self.learnings_table_name,
+            "schedules_table": self.schedules_table_name,
+            "schedule_runs_table": self.schedule_runs_table_name,
         }
 
     @classmethod
@@ -102,6 +109,9 @@ class BaseDb(ABC):
             components_table=data.get("components_table"),
             component_configs_table=data.get("component_configs_table"),
             component_links_table=data.get("component_links_table"),
+            learnings_table=data.get("learnings_table"),
+            schedules_table=data.get("schedules_table"),
+            schedule_runs_table=data.get("schedule_runs_table"),
             id=data.get("id"),
         )
 
@@ -947,6 +957,69 @@ class BaseDb(ABC):
         """
         raise NotImplementedError
 
+    # --- Schedules (Optional) ---
+    # These methods are optional. Override in subclasses to enable scheduler persistence.
+
+    def get_schedule(self, schedule_id: str) -> Optional[Dict[str, Any]]:
+        """Get a schedule by ID."""
+        raise NotImplementedError
+
+    def get_schedule_by_name(self, name: str) -> Optional[Dict[str, Any]]:
+        """Get a schedule by name."""
+        raise NotImplementedError
+
+    def get_schedules(
+        self,
+        enabled: Optional[bool] = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> List[Dict[str, Any]]:
+        """List schedules with optional filtering."""
+        raise NotImplementedError
+
+    def create_schedule(self, schedule_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Create a new schedule."""
+        raise NotImplementedError
+
+    def update_schedule(self, schedule_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        """Update a schedule by ID."""
+        raise NotImplementedError
+
+    def delete_schedule(self, schedule_id: str) -> bool:
+        """Delete a schedule and its associated runs."""
+        raise NotImplementedError
+
+    def claim_due_schedule(self, worker_id: str, lock_grace_seconds: int = 300) -> Optional[Dict[str, Any]]:
+        """Atomically claim a due schedule for execution."""
+        raise NotImplementedError
+
+    def release_schedule(self, schedule_id: str, next_run_at: Optional[int] = None) -> bool:
+        """Release a claimed schedule and optionally update next_run_at."""
+        raise NotImplementedError
+
+    # --- Schedule Runs (Optional) ---
+
+    def create_schedule_run(self, run_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Create a schedule run record."""
+        raise NotImplementedError
+
+    def update_schedule_run(self, run_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        """Update a schedule run record."""
+        raise NotImplementedError
+
+    def get_schedule_run(self, run_id: str) -> Optional[Dict[str, Any]]:
+        """Get a schedule run by ID."""
+        raise NotImplementedError
+
+    def get_schedule_runs(
+        self,
+        schedule_id: str,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> List[Dict[str, Any]]:
+        """List runs for a schedule."""
+        raise NotImplementedError
+
 
 class AsyncBaseDb(ABC):
     """Base abstract class for all our async database implementations."""
@@ -964,6 +1037,8 @@ class AsyncBaseDb(ABC):
         culture_table: Optional[str] = None,
         versions_table: Optional[str] = None,
         learnings_table: Optional[str] = None,
+        schedules_table: Optional[str] = None,
+        schedule_runs_table: Optional[str] = None,
     ):
         self.id = id or str(uuid4())
         self.session_table_name = session_table or "agno_sessions"
@@ -976,6 +1051,8 @@ class AsyncBaseDb(ABC):
         self.culture_table_name = culture_table or "agno_culture"
         self.versions_table_name = versions_table or "agno_schema_versions"
         self.learnings_table_name = learnings_table or "agno_learnings"
+        self.schedules_table_name = schedules_table or "agno_schedules"
+        self.schedule_runs_table_name = schedule_runs_table or "agno_schedule_runs"
 
     async def _create_all_tables(self) -> None:
         """Create all tables for this database. Override in subclasses."""
@@ -1522,4 +1599,67 @@ class AsyncBaseDb(ABC):
         Returns:
             List of learning records.
         """
+        raise NotImplementedError
+
+    # --- Schedules (Optional) ---
+    # These methods are optional. Override in subclasses to enable scheduler persistence.
+
+    async def get_schedule(self, schedule_id: str) -> Optional[Dict[str, Any]]:
+        """Get a schedule by ID."""
+        raise NotImplementedError
+
+    async def get_schedule_by_name(self, name: str) -> Optional[Dict[str, Any]]:
+        """Get a schedule by name."""
+        raise NotImplementedError
+
+    async def get_schedules(
+        self,
+        enabled: Optional[bool] = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> List[Dict[str, Any]]:
+        """List schedules with optional filtering."""
+        raise NotImplementedError
+
+    async def create_schedule(self, schedule_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Create a new schedule."""
+        raise NotImplementedError
+
+    async def update_schedule(self, schedule_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        """Update a schedule by ID."""
+        raise NotImplementedError
+
+    async def delete_schedule(self, schedule_id: str) -> bool:
+        """Delete a schedule and its associated runs."""
+        raise NotImplementedError
+
+    async def claim_due_schedule(self, worker_id: str, lock_grace_seconds: int = 300) -> Optional[Dict[str, Any]]:
+        """Atomically claim a due schedule for execution."""
+        raise NotImplementedError
+
+    async def release_schedule(self, schedule_id: str, next_run_at: Optional[int] = None) -> bool:
+        """Release a claimed schedule and optionally update next_run_at."""
+        raise NotImplementedError
+
+    # --- Schedule Runs (Optional) ---
+
+    async def create_schedule_run(self, run_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Create a schedule run record."""
+        raise NotImplementedError
+
+    async def update_schedule_run(self, run_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        """Update a schedule run record."""
+        raise NotImplementedError
+
+    async def get_schedule_run(self, run_id: str) -> Optional[Dict[str, Any]]:
+        """Get a schedule run by ID."""
+        raise NotImplementedError
+
+    async def get_schedule_runs(
+        self,
+        schedule_id: str,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> List[Dict[str, Any]]:
+        """List runs for a schedule."""
         raise NotImplementedError
