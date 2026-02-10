@@ -768,14 +768,13 @@ def _run(
                 return run_response
     finally:
         # Cancel background futures on error (wait_for_open_threads handles waiting on success)
-        if memory_future is not None and not memory_future.done():
-            memory_future.cancel()
-            try:
-                memory_future.result(timeout=0)
-            except Exception:
-                pass
-        if learning_future is not None and not learning_future.done():
-            learning_future.cancel()
+        for future in (memory_future, learning_future):
+            if future is not None and not future.done():
+                future.cancel()
+                try:
+                    future.result(timeout=0)
+                except Exception:
+                    pass
 
         # Always disconnect connectable tools
         _disconnect_connectable_tools(team)
@@ -1198,14 +1197,13 @@ def _run_stream(
                 yield run_error
     finally:
         # Cancel background futures on error (wait_for_thread_tasks_stream handles waiting on success)
-        if memory_future is not None and not memory_future.done():
-            memory_future.cancel()
-            try:
-                memory_future.result(timeout=0)
-            except Exception:
-                pass
-        if learning_future is not None and not learning_future.done():
-            learning_future.cancel()
+        for future in (memory_future, learning_future):
+            if future is not None and not future.done():
+                future.cancel()
+                try:
+                    future.result(timeout=0)
+                except Exception:
+                    pass
 
         # Always disconnect connectable tools
         _disconnect_connectable_tools(team)
