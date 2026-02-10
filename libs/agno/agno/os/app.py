@@ -244,6 +244,10 @@ class AgentOS:
         self.mcp_tools: List[Any] = []
         self._mcp_app: Optional[Any] = None
 
+        # Track routes managed by AgentOS for proper cleanup during resync
+        # Stores tuples of (path, frozenset of methods) to identify routes
+        self._managed_route_paths: set[tuple[str, frozenset[str]]] = set()
+
         self._initialize_agents()
         self._initialize_teams()
         self._initialize_workflows()
@@ -324,14 +328,19 @@ class AgentOS:
         if self.registry is not None:
             updated_routers.append(get_registry_router(registry=self.registry))
 
-        # Clear all previously existing routes
-        app.router.routes = [
-            route
-            for route in app.router.routes
-            if hasattr(route, "path")
-            and route.path in ["/docs", "/redoc", "/openapi.json", "/docs/oauth2-redirect"]
-            or route.path.startswith("/mcp")  # type: ignore
-        ]
+        # Clear only AgentOS-managed routes, preserving user-defined custom routes
+        # This ensures that custom routes from base_app are not deleted during resync
+        def _is_agentos_managed_route(route) -> bool:
+            """Check if a route was added by AgentOS."""
+            if not hasattr(route, "path") or not hasattr(route, "methods"):
+                return False
+            route_key = (route.path, frozenset(route.methods))
+            return route_key in self._managed_route_paths
+
+        app.router.routes = [route for route in app.router.routes if not _is_agentos_managed_route(route)]
+
+        # Clear the managed routes set before re-adding routes
+        self._managed_route_paths.clear()
 
         # Add the built-in routes
         self._add_built_in_routes(app=app)
@@ -813,6 +822,11 @@ class AgentOS:
         else:
             # No conflicts, add router normally
             fastapi_app.include_router(router)
+
+        # Track all routes from this router as managed by AgentOS
+        for route in router.routes:
+            if hasattr(route, "path") and hasattr(route, "methods"):
+                self._managed_route_paths.add((route.path, frozenset(route.methods)))
 
     def _get_telemetry_data(self) -> Dict[str, Any]:
         """Get the telemetry data for the OS"""
