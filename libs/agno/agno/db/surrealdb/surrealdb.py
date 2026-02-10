@@ -249,10 +249,10 @@ class SurrealDb(BaseDb):
             return False
         if user_id is not None:
             res = self.client.query(
-                "DELETE FROM ONLY $record WHERE user_id = $user_id",
+                f"DELETE FROM {table} WHERE id = $record AND user_id = $user_id RETURN BEFORE",
                 {"record": RecordID(table, session_id), "user_id": user_id},
             )
-            return bool(res)
+            return isinstance(res, list) and len(res) > 0
         res = self.client.delete(RecordID(table, session_id))
         return bool(res)
 
@@ -448,17 +448,17 @@ class SurrealDb(BaseDb):
         table = self._get_table("sessions")
         vars: Dict[str, Any] = {"record": RecordID(table, session_id), "name": session_name}
 
-        where_clause = ""
         if user_id is not None:
-            where_clause = "WHERE user_id = $user_id"
             vars["user_id"] = user_id
-
-        query = dedent(f"""
-            UPDATE ONLY $record
-            SET session_name = $name
-            {where_clause}
-        """)
-        session_raw = self._query_one(query, vars, dict)
+            result = self.client.query(
+                f"UPDATE {table} SET session_name = $name WHERE id = $record AND user_id = $user_id",
+                vars,
+            )
+            session_raw = (
+                result[0] if isinstance(result, list) and len(result) > 0 and isinstance(result[0], dict) else None
+            )
+        else:
+            session_raw = self._query_one("UPDATE ONLY $record SET session_name = $name", vars, dict)
 
         if session_raw is None or not deserialize:
             return session_raw
@@ -484,6 +484,16 @@ class SurrealDb(BaseDb):
         """
         session_type = get_session_type(session)
         table = self._get_table("sessions")
+
+        existing = self.client.query(
+            f"SELECT user_id FROM {table} WHERE id = $record",
+            {"record": RecordID(table, session.session_id)},
+        )
+        if isinstance(existing, list) and len(existing) > 0:
+            existing_uid = existing[0].get("user_id") if isinstance(existing[0], dict) else None
+            if existing_uid is not None and existing_uid != session.user_id:
+                return None
+
         session_raw = self._query_one(
             "UPSERT ONLY $record CONTENT $content",
             {

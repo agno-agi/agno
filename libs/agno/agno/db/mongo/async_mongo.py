@@ -820,6 +820,12 @@ class AsyncMongoDb(AsyncBaseDb):
 
             session_dict = session.to_dict()
 
+            existing = await collection.find_one({"session_id": session_dict.get("session_id")}, {"user_id": 1})
+            if existing:
+                existing_uid = existing.get("user_id")
+                if existing_uid is not None and existing_uid != session_dict.get("user_id"):
+                    return None
+
             if isinstance(session, AgentSession):
                 record = {
                     "session_id": session_dict.get("session_id"),

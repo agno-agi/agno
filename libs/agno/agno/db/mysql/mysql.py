@@ -744,6 +744,14 @@ class MySQLDb(BaseDb):
 
             if isinstance(session, AgentSession):
                 with self.Session() as sess, sess.begin():
+                    existing_row = sess.execute(
+                        select(table.c.user_id).where(table.c.session_id == session_dict.get("session_id"))
+                    ).fetchone()
+                    if existing_row is not None:
+                        existing_uid = existing_row[0]
+                        if existing_uid is not None and existing_uid != session_dict.get("user_id"):
+                            return None
+
                     stmt = mysql.insert(table).values(
                         session_id=session_dict.get("session_id"),
                         session_type=SessionType.AGENT.value,
@@ -782,6 +790,14 @@ class MySQLDb(BaseDb):
 
             elif isinstance(session, TeamSession):
                 with self.Session() as sess, sess.begin():
+                    existing_row = sess.execute(
+                        select(table.c.user_id).where(table.c.session_id == session_dict.get("session_id"))
+                    ).fetchone()
+                    if existing_row is not None:
+                        existing_uid = existing_row[0]
+                        if existing_uid is not None and existing_uid != session_dict.get("user_id"):
+                            return None
+
                     stmt = mysql.insert(table).values(
                         session_id=session_dict.get("session_id"),
                         session_type=SessionType.TEAM.value,
@@ -820,6 +836,14 @@ class MySQLDb(BaseDb):
 
             else:
                 with self.Session() as sess, sess.begin():
+                    existing_row = sess.execute(
+                        select(table.c.user_id).where(table.c.session_id == session_dict.get("session_id"))
+                    ).fetchone()
+                    if existing_row is not None:
+                        existing_uid = existing_row[0]
+                        if existing_uid is not None and existing_uid != session_dict.get("user_id"):
+                            return None
+
                     stmt = mysql.insert(table).values(
                         session_id=session_dict.get("session_id"),
                         session_type=SessionType.WORKFLOW.value,

@@ -305,6 +305,9 @@ class InMemoryDb(BaseDb):
                 if existing_session.get("session_id") == session_dict.get("session_id") and self._matches_session_key(
                     existing_session, session
                 ):
+                    existing_uid = existing_session.get("user_id")
+                    if existing_uid is not None and existing_uid != session_dict.get("user_id"):
+                        return None
                     session_dict["updated_at"] = int(time.time())
                     self._sessions[i] = deepcopy(session_dict)
                     session_updated = True

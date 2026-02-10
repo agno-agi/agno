@@ -563,6 +563,11 @@ class DynamoDb(BaseDb):
             response = self.client.get_item(TableName=table_name, Key={"session_id": {"S": session.session_id}})
             existing_item = response.get("Item")
 
+            if existing_item:
+                existing_uid = existing_item.get("user_id", {}).get("S")
+                if existing_uid is not None and existing_uid != session.user_id:
+                    return None
+
             # Prepare the session to upsert, merging with existing session if it exists.
             serialized_session = prepare_session_data(session)
             if existing_item:

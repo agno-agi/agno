@@ -541,6 +541,14 @@ class RedisDb(BaseDb):
         try:
             session_dict = session.to_dict()
 
+            existing = self._get_record(table_type="sessions", record_id=session.session_id)
+            if (
+                existing
+                and existing.get("user_id") is not None
+                and existing.get("user_id") != session_dict.get("user_id")
+            ):
+                return None
+
             if isinstance(session, AgentSession):
                 data = {
                     "session_id": session_dict.get("session_id"),

@@ -629,7 +629,17 @@ class FirestoreDb(BaseDb):
             docs = collection_ref.where(filter=FieldFilter("session_id", "==", record["session_id"])).stream()
             doc_ref = next((doc.reference for doc in docs), None)
 
-            if doc_ref is None:
+            if doc_ref is not None:
+                existing_doc = doc_ref.get()
+                if existing_doc.exists:
+                    existing_data = existing_doc.to_dict()
+                    if (
+                        existing_data
+                        and existing_data.get("user_id") is not None
+                        and existing_data.get("user_id") != record.get("user_id")
+                    ):
+                        return None
+            else:
                 # Create new document
                 doc_ref = collection_ref.document()
 

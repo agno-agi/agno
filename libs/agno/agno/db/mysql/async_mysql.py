@@ -745,6 +745,15 @@ class AsyncMySQLDb(AsyncBaseDb):
 
             if isinstance(session, AgentSession):
                 async with self.async_session_factory() as sess, sess.begin():
+                    existing_result = await sess.execute(
+                        select(table.c.user_id).where(table.c.session_id == session_dict.get("session_id"))
+                    )
+                    existing_row = existing_result.fetchone()
+                    if existing_row is not None:
+                        existing_uid = existing_row[0]
+                        if existing_uid is not None and existing_uid != session_dict.get("user_id"):
+                            return None
+
                     current_time = int(time.time())
                     stmt = mysql.insert(table).values(
                         session_id=session_dict.get("session_id"),
@@ -787,6 +796,15 @@ class AsyncMySQLDb(AsyncBaseDb):
 
             elif isinstance(session, TeamSession):
                 async with self.async_session_factory() as sess, sess.begin():
+                    existing_result = await sess.execute(
+                        select(table.c.user_id).where(table.c.session_id == session_dict.get("session_id"))
+                    )
+                    existing_row = existing_result.fetchone()
+                    if existing_row is not None:
+                        existing_uid = existing_row[0]
+                        if existing_uid is not None and existing_uid != session_dict.get("user_id"):
+                            return None
+
                     current_time = int(time.time())
                     stmt = mysql.insert(table).values(
                         session_id=session_dict.get("session_id"),
@@ -829,6 +847,15 @@ class AsyncMySQLDb(AsyncBaseDb):
 
             elif isinstance(session, WorkflowSession):
                 async with self.async_session_factory() as sess, sess.begin():
+                    existing_result = await sess.execute(
+                        select(table.c.user_id).where(table.c.session_id == session_dict.get("session_id"))
+                    )
+                    existing_row = existing_result.fetchone()
+                    if existing_row is not None:
+                        existing_uid = existing_row[0]
+                        if existing_uid is not None and existing_uid != session_dict.get("user_id"):
+                            return None
+
                     current_time = int(time.time())
                     stmt = mysql.insert(table).values(
                         session_id=session_dict.get("session_id"),
