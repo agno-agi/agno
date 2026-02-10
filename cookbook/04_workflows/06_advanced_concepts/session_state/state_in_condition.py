@@ -60,9 +60,11 @@ workflow = Workflow(
         Condition(
             name="Check If New User",
             description="Check if this is a new user who needs greeting",
-            evaluator=lambda step_input, session_state: not check_user_has_context(
-                step_input,
-                session_state,
+            evaluator=lambda step_input, session_state: (
+                not check_user_has_context(
+                    step_input,
+                    session_state,
+                )
             ),
             steps=[
                 Step(
