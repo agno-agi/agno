@@ -109,6 +109,11 @@ class RunRequirement:
             for input_field in self.user_input_schema:
                 if input_field.name in values:
                     input_field.value = values[input_field.name]
+            # Also update tool_execution's user_input_schema so handle_user_input_update can copy to tool_args
+            if self.tool_execution and self.tool_execution.user_input_schema:
+                for tool_input_field in self.tool_execution.user_input_schema:
+                    if tool_input_field.name in values:
+                        tool_input_field.value = values[tool_input_field.name]
             # Only mark as answered when all fields have values
             if all(f.value is not None for f in self.user_input_schema) and self.tool_execution:
                 self.tool_execution.answered = True

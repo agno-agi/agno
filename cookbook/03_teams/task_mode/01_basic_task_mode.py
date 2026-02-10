@@ -66,6 +66,7 @@ content_team = Team(
     show_members_responses=True,
     markdown=True,
     max_iterations=10,
+    debug_mode=True,
 )
 
 # -- Run ---------------------------------------------------------------------
