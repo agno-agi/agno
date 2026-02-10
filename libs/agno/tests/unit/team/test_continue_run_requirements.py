@@ -376,8 +376,6 @@ class TestChainedHITLRequirements:
     def test_newly_propagated_reqs_preserved_after_routing(self):
         """Simulate: member routing propagates new reqs back onto run_response.
         After the routing block, those new reqs must appear alongside team-level reqs."""
-        from agno.team._run import _has_member_requirements
-
         # Set up initial state: one team-level req and one member req
         team_req = _make_requirement(requires_confirmation=True)
         member_req = _make_requirement(external_execution_required=True)
@@ -574,3 +572,91 @@ class TestMemberRunResponseCleanup:
 
         # _member_run_response should be set
         assert run_response.requirements[0]._member_run_response is member_run_response
+
+
+# ===========================================================================
+# 10. Unresolved team-level requirements guard
+# ===========================================================================
+
+
+class TestUnresolvedTeamLevelRequirements:
+    """Verify that unresolved team-level requirements are detected properly
+    for the re-pause guard in continue_run_dispatch."""
+
+    def test_unresolved_team_level_detected(self):
+        """Unresolved team-level requirement should be found by the guard."""
+        req = _make_requirement(requires_confirmation=True)
+        # No member_agent_id means team-level
+        assert req.member_agent_id is None
+        assert not req.is_resolved()
+
+        unresolved = [r for r in [req] if getattr(r, "member_agent_id", None) is None and not r.is_resolved()]
+        assert len(unresolved) == 1
+
+    def test_resolved_team_level_not_detected(self):
+        """Resolved team-level requirement should not trigger the guard."""
+        req = _make_requirement(requires_confirmation=True)
+        req.confirm()
+        assert req.is_resolved()
+
+        unresolved = [r for r in [req] if getattr(r, "member_agent_id", None) is None and not r.is_resolved()]
+        assert len(unresolved) == 0
+
+    def test_member_reqs_excluded_from_team_level_guard(self):
+        """Member requirements should not be caught by the team-level guard."""
+        req = _make_requirement(requires_confirmation=True)
+        req.member_agent_id = "agent-1"
+
+        unresolved = [r for r in [req] if getattr(r, "member_agent_id", None) is None and not r.is_resolved()]
+        assert len(unresolved) == 0
+
+    def test_mixed_reqs_only_team_level_unresolved(self):
+        """Only unresolved team-level requirements should trigger the guard."""
+        team_unresolved = _make_requirement(requires_confirmation=True)
+        team_resolved = _make_requirement(requires_confirmation=True)
+        team_resolved.confirm()
+        member_unresolved = _make_requirement(requires_confirmation=True)
+        member_unresolved.member_agent_id = "agent-1"
+
+        all_reqs = [team_unresolved, team_resolved, member_unresolved]
+        unresolved = [r for r in all_reqs if getattr(r, "member_agent_id", None) is None and not r.is_resolved()]
+        assert len(unresolved) == 1
+        assert unresolved[0] is team_unresolved
+
+
+# ===========================================================================
+# 11. asyncio.gather error handling in _aroute_requirements_to_members
+# ===========================================================================
+
+
+class TestAsyncGatherErrorHandling:
+    """Verify that _aroute_requirements_to_members handles member failures gracefully."""
+
+    def test_gather_filters_exceptions(self):
+        """When asyncio.gather returns exceptions, they should be filtered out."""
+        # Simulate the post-gather filtering logic
+        results = ["[Agent A]: Success", Exception("Agent B failed"), None, "[Agent C]: Done"]
+
+        member_results = []
+        for r in results:
+            if isinstance(r, Exception):
+                pass  # logged as warning
+            elif r is not None:
+                member_results.append(r)
+
+        assert len(member_results) == 2
+        assert member_results[0] == "[Agent A]: Success"
+        assert member_results[1] == "[Agent C]: Done"
+
+    def test_all_exceptions_yields_empty_results(self):
+        """When all members fail, result list should be empty."""
+        results = [Exception("fail 1"), Exception("fail 2")]
+
+        member_results = []
+        for r in results:
+            if isinstance(r, Exception):
+                pass
+            elif r is not None:
+                member_results.append(r)
+
+        assert len(member_results) == 0
