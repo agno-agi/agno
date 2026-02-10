@@ -605,6 +605,8 @@ class Agent:
         # Internal use: _learning holds the resolved LearningMachine instance
         # use agent.learning_machine to access it.
         self._learning: Optional[LearningMachine] = None
+        # Whether learning init has been attempted (prevents repeated attempts when db is None)
+        self._learning_init_attempted: bool = False
 
         # If we are caching the agent session
         self._cached_session: Optional[AgentSession] = None
@@ -641,7 +643,12 @@ class Agent:
 
     @property
     def learning_machine(self) -> Optional[LearningMachine]:
-        if self._learning is None and self.learning is not None and self.learning is not False:
+        if (
+            self._learning is None
+            and not self._learning_init_attempted
+            and self.learning is not None
+            and self.learning is not False
+        ):
             _init.set_learning_machine(self)
         return self._learning
 

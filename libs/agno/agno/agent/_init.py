@@ -123,6 +123,8 @@ def set_learning_machine(agent: Agent) -> None:
     - learning=False/None: Disabled
     - learning=LearningMachine(...): Use provided, inject db/model/knowledge
     """
+    agent._learning_init_attempted = True
+
     # Handle learning=False or learning=None
     if agent.learning is None or agent.learning is False:
         agent._learning = None

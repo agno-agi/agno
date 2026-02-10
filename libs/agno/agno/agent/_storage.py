@@ -443,6 +443,19 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
     if agent.add_memories_to_context is not None:
         config["add_memories_to_context"] = agent.add_memories_to_context
 
+    # --- Learning settings ---
+    if agent.learning is not None:
+        if agent.learning is True:
+            config["learning"] = True
+        elif agent.learning is False:
+            config["learning"] = False
+        elif hasattr(agent.learning, "to_dict"):
+            config["learning"] = agent.learning.to_dict()
+        else:
+            config["learning"] = True if agent.learning else False
+    if not agent.add_learnings_to_context:  # default is True
+        config["add_learnings_to_context"] = agent.add_learnings_to_context
+
     # --- Database settings ---
     if agent.db is not None and hasattr(agent.db, "to_dict"):
         config["db"] = agent.db.to_dict()
@@ -788,6 +801,12 @@ def from_dict(cls: Type[Agent], data: Dict[str, Any], registry: Optional[Registr
     #     from agno.compression.manager import CompressionManager
     #     config["compression_manager"] = CompressionManager.from_dict(config["compression_manager"])
 
+    # --- Handle Learning reconstruction ---
+    if "learning" in config and isinstance(config["learning"], dict):
+        from agno.learn.machine import LearningMachine
+
+        config["learning"] = LearningMachine.from_dict(config["learning"])
+
     # Remove keys that aren't constructor parameters
     config.pop("team_id", None)
     config.pop("workflow_id", None)
@@ -819,6 +838,9 @@ def from_dict(cls: Type[Agent], data: Dict[str, Any], registry: Optional[Registr
         enable_agentic_memory=config.get("enable_agentic_memory", False),
         enable_user_memories=config.get("enable_user_memories", False),
         add_memories_to_context=config.get("add_memories_to_context"),
+        # --- Learning settings ---
+        learning=config.get("learning"),
+        add_learnings_to_context=config.get("add_learnings_to_context", True),
         # --- Database settings ---
         db=config.get("db"),
         # --- History settings ---

@@ -31,6 +31,7 @@ from agno.eval.base import BaseEval
 from agno.filters import FilterExpr
 from agno.guardrails import BaseGuardrail
 from agno.knowledge.protocol import KnowledgeProtocol
+from agno.learn.machine import LearningMachine
 from agno.memory import MemoryManager
 from agno.models.base import Model
 from agno.models.message import Message
@@ -138,6 +139,8 @@ def __init__(
     enable_session_summaries: bool = False,
     session_summary_manager: Optional[SessionSummaryManager] = None,
     add_session_summary_to_context: Optional[bool] = None,
+    learning: Optional[Union[bool, LearningMachine]] = None,
+    add_learnings_to_context: bool = True,
     compress_tool_results: bool = False,
     compression_manager: Optional["CompressionManager"] = None,
     metadata: Optional[Dict[str, Any]] = None,
@@ -269,6 +272,9 @@ def __init__(
     team.session_summary_manager = session_summary_manager
     team.add_session_summary_to_context = add_session_summary_to_context
 
+    team.learning = learning
+    team.add_learnings_to_context = add_learnings_to_context
+
     # Context compression settings
     team.compress_tool_results = compress_tool_results
     team.compression_manager = compression_manager
@@ -331,6 +337,9 @@ def __init__(
     team._mcp_tools_initialized_on_run = []
     # List of connectable tools that were initialized on the last run
     team._connectable_tools_initialized_on_run = []
+
+    # Internal resolved LearningMachine instance
+    team._learning = None
 
     # Lazy-initialized shared thread pool executor for background tasks (memory, cultural knowledge, etc.)
     team._background_executor = None
@@ -499,6 +508,39 @@ def _set_compression_manager(team: "Team") -> None:
             team.compress_tool_results = True
 
 
+def _set_learning_machine(team: "Team") -> None:
+    """Initialize LearningMachine with team's db and model.
+
+    Sets the internal _learning field without modifying the public learning field.
+
+    Handles:
+    - learning=True: Create default LearningMachine
+    - learning=False/None: Disabled
+    - learning=LearningMachine(...): Use provided, inject db/model
+    """
+    team._learning_init_attempted = True
+
+    if team.learning is None or team.learning is False:
+        team._learning = None
+        return
+
+    if team.db is None:
+        log_warning("Database not provided. LearningMachine not initialized.")
+        team._learning = None
+        return
+
+    if team.learning is True:
+        team._learning = LearningMachine(db=team.db, model=team.model, user_profile=True, user_memory=True)
+        return
+
+    if isinstance(team.learning, LearningMachine):
+        if team.learning.db is None:
+            team.learning.db = team.db
+        if team.learning.model is None:
+            team.learning.model = team.model
+        team._learning = team.learning
+
+
 def _initialize_session(
     team: "Team",
     session_id: Optional[str] = None,
@@ -582,6 +624,8 @@ def initialize_team(team: "Team", debug_mode: Optional[bool] = None) -> None:
         _set_session_summary_manager(team)
     if team.compress_tool_results or team.compression_manager is not None:
         _set_compression_manager(team)
+    if team.learning is not None and team.learning is not False:
+        _set_learning_machine(team)
 
     log_debug(f"Team ID: {team.id}", center=True)
 
