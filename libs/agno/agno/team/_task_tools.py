@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from agno.team.team import Team
 
-from copy import copy, deepcopy
+from copy import deepcopy
 from typing import (
     Any,
     AsyncIterator,
@@ -232,6 +232,7 @@ def _get_task_management_tools(
         member_agent_task: Any,
         member_session_state_copy: Optional[Dict[str, Any]],
         tool_name: str = "execute_task",
+        skip_session_merge: bool = False,
     ) -> None:
         """Post-process a member run: update parent IDs, interactions, session state."""
         if member_run_response is not None:
@@ -271,7 +272,7 @@ def _get_task_management_tools(
                 scrub_run_output_for_storage(member_agent, run_response=member_run_response)  # type: ignore[arg-type]
             session.upsert_run(member_run_response)
 
-        if run_context.session_state is not None and member_session_state_copy is not None:
+        if run_context.session_state is not None and member_session_state_copy is not None and not skip_session_merge:
             merge_dictionaries(run_context.session_state, member_session_state_copy)
 
         if member_run_response is not None:
@@ -585,7 +586,7 @@ def _get_task_management_tools(
             member_agent_task, history = _setup_member_for_task(member_agent, member_task_description)
 
             use_agent_logger()
-            member_session_state_copy = copy(run_context.session_state)
+            member_session_state_copy = deepcopy(run_context.session_state)
 
             try:
                 member_run_response = member_agent.run(
@@ -644,6 +645,7 @@ def _get_task_management_tools(
                             member_task,
                             state_copy,
                             tool_name="execute_tasks_parallel",
+                            skip_session_merge=True,
                         )
                         results_text.append(
                             f"Task [{tid}]: Member '{member_agent.name}' requires human input. Task paused."
@@ -657,6 +659,7 @@ def _get_task_management_tools(
                             member_task,
                             state_copy,
                             tool_name="execute_tasks_parallel",
+                            skip_session_merge=True,
                         )
                         results_text.append(f"Task [{tid}] failed: {task_obj.result}")
                     elif member_run is not None and member_run.content:
@@ -669,6 +672,7 @@ def _get_task_management_tools(
                             member_task,
                             state_copy,
                             tool_name="execute_tasks_parallel",
+                            skip_session_merge=True,
                         )
                         results_text.append(f"Task [{tid}] completed. Result: {content}")
                     else:
@@ -680,6 +684,7 @@ def _get_task_management_tools(
                             member_task,
                             state_copy,
                             tool_name="execute_tasks_parallel",
+                            skip_session_merge=True,
                         )
                         results_text.append(f"Task [{tid}] completed with no content.")
                 except Exception as e:
@@ -741,7 +746,7 @@ def _get_task_management_tools(
             member_agent_task, history = _setup_member_for_task(member_agent, member_task_description)
 
             use_agent_logger()
-            member_session_state_copy = copy(run_context.session_state)
+            member_session_state_copy = deepcopy(run_context.session_state)
 
             try:
                 member_run_response = await member_agent.arun(
@@ -806,6 +811,7 @@ def _get_task_management_tools(
                     member_task,
                     state_copy,
                     tool_name="execute_tasks_parallel",
+                    skip_session_merge=True,
                 )
                 results_text.append(f"Task [{tid}]: Member '{member_agent.name}' requires human input. Task paused.")
             elif member_run is not None and member_run.status == RunStatus.error:
@@ -817,6 +823,7 @@ def _get_task_management_tools(
                     member_task,
                     state_copy,
                     tool_name="execute_tasks_parallel",
+                    skip_session_merge=True,
                 )
                 results_text.append(f"Task [{tid}] failed: {task_obj.result}")
             elif member_run is not None and member_run.content:
@@ -829,6 +836,7 @@ def _get_task_management_tools(
                     member_task,
                     state_copy,
                     tool_name="execute_tasks_parallel",
+                    skip_session_merge=True,
                 )
                 results_text.append(f"Task [{tid}] completed. Result: {content}")
             else:
@@ -840,6 +848,7 @@ def _get_task_management_tools(
                     member_task,
                     state_copy,
                     tool_name="execute_tasks_parallel",
+                    skip_session_merge=True,
                 )
                 results_text.append(f"Task [{tid}] completed with no content.")
 
