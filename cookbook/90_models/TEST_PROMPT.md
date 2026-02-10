@@ -9,8 +9,12 @@ Environment:
 - API keys: loaded via `direnv allow`
 
 Execution requirements:
-1. Spawn a parallel agent for each provider directory under `cookbook/90_models/`. Each agent handles one provider directory independently, including any subdirectories (e.g., `openai/chat/`, `openai/responses/`).
-2. Each agent must:
+1. **Read every `.py` file** in the target cookbook directory before making any changes.
+   Do not rely solely on grep or the structure checker — open and read each file to understand its full contents. This ensures you catch issues the automated checker might miss (e.g., imports inside sections, stale model references in comments, inconsistent patterns).
+
+2. Spawn a parallel agent for each provider directory under `cookbook/90_models/`. Each agent handles one provider directory independently, including any subdirectories (e.g., `openai/chat/`, `openai/responses/`).
+
+3. Each agent must:
    a. Run `.venvs/demo/bin/python cookbook/scripts/check_cookbook_pattern.py --base-dir cookbook/90_models/<PROVIDER> --recursive` and fix any violations.
    b. Run all `*.py` files in that provider directory using `.venvs/demo/bin/python` and capture outcomes. Skip `__init__.py`.
    c. Ensure Python examples align with `cookbook/STYLE_GUIDE.md`:
@@ -19,9 +23,11 @@ Execution requirements:
       - Imports between docstring and first banner
       - `if __name__ == "__main__":` gate
       - No emoji characters
-   d. Make only minimal, behavior-preserving edits where needed for style compliance.
-   e. Update `cookbook/90_models/<PROVIDER>/TEST_LOG.md` with fresh PASS/FAIL entries per file.
-3. After all agents complete, collect and merge results.
+   d. Also check non-Python files (`README.md`, etc.) in the directory for stale `OpenAIChat` references and update them.
+   e. Make only minimal, behavior-preserving edits where needed for style compliance.
+   f. Update `cookbook/90_models/<PROVIDER>/TEST_LOG.md` with fresh PASS/FAIL entries per file.
+
+4. After all agents complete, collect and merge results.
 
 Special cases:
 - This is the **largest cookbook section** with 44+ provider directories. Each provider requires its own API key.
@@ -34,6 +40,8 @@ Special cases:
 
 Validation commands (must all pass before finishing):
 - `.venvs/demo/bin/python cookbook/scripts/check_cookbook_pattern.py --base-dir cookbook/90_models/<PROVIDER> --recursive` (for each provider)
+- `source .venv/bin/activate && ./scripts/format.sh` — format all code (ruff format)
+- `source .venv/bin/activate && ./scripts/validate.sh` — validate all code (ruff check, mypy)
 
 Final response format:
 1. Findings (inconsistencies, failures, risks) with file references.

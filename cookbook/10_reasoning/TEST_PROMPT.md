@@ -9,8 +9,12 @@ Environment:
 - API keys: loaded via `direnv allow`
 
 Execution requirements:
-1. Spawn a parallel agent for each top-level subdirectory under `cookbook/10_reasoning/` (`agents/`, `models/`, `teams/`, `tools/`). Each agent handles one subdirectory independently, including any nested subdirectories within it.
-2. Each agent must:
+1. **Read every `.py` file** in the target cookbook directory before making any changes.
+   Do not rely solely on grep or the structure checker — open and read each file to understand its full contents. This ensures you catch issues the automated checker might miss (e.g., imports inside sections, stale model references in comments, inconsistent patterns).
+
+2. Spawn a parallel agent for each top-level subdirectory under `cookbook/10_reasoning/` (`agents/`, `models/`, `teams/`, `tools/`). Each agent handles one subdirectory independently, including any nested subdirectories within it.
+
+3. Each agent must:
    a. Run `.venvs/demo/bin/python cookbook/scripts/check_cookbook_pattern.py --base-dir cookbook/10_reasoning/<SUBDIR> --recursive` and fix any violations.
    b. Run all `*.py` files in that subdirectory (and nested subdirectories) using `.venvs/demo/bin/python` and capture outcomes. Skip `__init__.py`.
    c. Ensure Python examples align with `cookbook/STYLE_GUIDE.md`:
@@ -19,9 +23,11 @@ Execution requirements:
       - Imports between docstring and first banner
       - `if __name__ == "__main__":` gate
       - No emoji characters
-   d. Make only minimal, behavior-preserving edits where needed for style compliance.
-   e. Update `cookbook/10_reasoning/<SUBDIR>/TEST_LOG.md` with fresh PASS/FAIL entries per file. For nested subdirectories, create a TEST_LOG.md in each.
-3. After all agents complete, collect and merge results.
+   d. Also check non-Python files (`README.md`, etc.) in the directory for stale `OpenAIChat` references and update them.
+   e. Make only minimal, behavior-preserving edits where needed for style compliance.
+   f. Update `cookbook/10_reasoning/<SUBDIR>/TEST_LOG.md` with fresh PASS/FAIL entries per file. For nested subdirectories, create a TEST_LOG.md in each.
+
+4. After all agents complete, collect and merge results.
 
 Special cases:
 - Reasoning examples may produce longer outputs with chain-of-thought — use a generous timeout (120s).
@@ -30,6 +36,8 @@ Special cases:
 
 Validation commands (must all pass before finishing):
 - `.venvs/demo/bin/python cookbook/scripts/check_cookbook_pattern.py --base-dir cookbook/10_reasoning/<SUBDIR> --recursive` (for each subdirectory)
+- `source .venv/bin/activate && ./scripts/format.sh` — format all code (ruff format)
+- `source .venv/bin/activate && ./scripts/validate.sh` — validate all code (ruff check, mypy)
 
 Final response format:
 1. Findings (inconsistencies, failures, risks) with file references.
