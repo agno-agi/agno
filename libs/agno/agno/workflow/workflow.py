@@ -4854,6 +4854,10 @@ class Workflow:
             # Skip private fields (not part of __init__ signature)
             if f.name.startswith("_"):
                 continue
+            # Skip fields not part of __init__ (init=False runtime-set fields
+            # like team_id, parent_team_id, workflow_id, version)
+            if not f.init:
+                continue
 
             field_value = getattr(self, f.name)
             if field_value is not None:
