@@ -303,9 +303,14 @@ class AgentOS:
             self._setup_tracing()
 
         if self.telemetry:
+            from agno.api._executor import get_telemetry_executor
             from agno.api.os import OSLaunch, log_os_telemetry
 
-            log_os_telemetry(launch=OSLaunch(os_id=self.id, data=self._get_telemetry_data()))
+            try:
+                launch = OSLaunch(os_id=self.id, data=self._get_telemetry_data())
+                get_telemetry_executor().submit(log_os_telemetry, launch=launch)
+            except Exception:
+                pass
 
     def _add_agent_os_to_lifespan_function(self, lifespan):
         """
