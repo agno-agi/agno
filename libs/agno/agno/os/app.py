@@ -46,6 +46,7 @@ from agno.os.routers.knowledge import get_knowledge_router
 from agno.os.routers.memory import get_memory_router
 from agno.os.routers.metrics import get_metrics_router
 from agno.os.routers.registry import get_registry_router
+from agno.os.routers.schedules import get_schedule_router
 from agno.os.routers.session import get_session_router
 from agno.os.routers.teams import get_team_router
 from agno.os.routers.traces import get_traces_router
@@ -243,6 +244,7 @@ class AgentOS:
         # List of all MCP tools used inside the AgentOS
         self.mcp_tools: List[Any] = []
         self._mcp_app: Optional[Any] = None
+        self._scheduler_manager: Optional[Any] = None
 
         self._initialize_agents()
         self._initialize_teams()
@@ -258,6 +260,17 @@ class AgentOS:
             from agno.api.os import OSLaunch, log_os_telemetry
 
             log_os_telemetry(launch=OSLaunch(os_id=self.id, data=self._get_telemetry_data()))
+
+    @property
+    def scheduler(self) -> Any:
+        """Get a ScheduleManager for this AgentOS instance."""
+        if not hasattr(self, "_scheduler_manager") or self._scheduler_manager is None:
+            if self.db is None:
+                raise RuntimeError("No database configured -- cannot create ScheduleManager")
+            from agno.scheduler.manager import ScheduleManager
+
+            self._scheduler_manager = ScheduleManager(self.db)
+        return self._scheduler_manager
 
     def _add_agent_os_to_lifespan_function(self, lifespan):
         """
@@ -323,6 +336,9 @@ class AgentOS:
             updated_routers.append(get_components_router(os_db=self.db, registry=self.registry))
         if self.registry is not None:
             updated_routers.append(get_registry_router(registry=self.registry))
+        # Add schedule router if a db is available
+        if self.db is not None:
+            updated_routers.append(get_schedule_router(os_db=self.db, settings=self.settings))
 
         # Clear all previously existing routes
         app.router.routes = [
@@ -436,7 +452,7 @@ class AgentOS:
             if self.db is not None and agent.db is None:
                 agent.db = self.db
             # Track all MCP tools to later handle their connection
-            if agent.tools:
+            if agent.tools and isinstance(agent.tools, list):
                 for tool in agent.tools:
                     # Checking if the tool is an instance of MCPTools, MultiMCPTools, or a subclass of those
                     if hasattr(type(tool), "__mro__"):
@@ -471,12 +487,13 @@ class AgentOS:
 
             team.initialize_team()
 
-            for member in team.members:
-                if isinstance(member, Agent):
-                    member.team_id = None
-                    member.initialize_agent()
-                elif isinstance(member, Team):
-                    member.initialize_team()
+            if isinstance(team.members, list):
+                for member in team.members:
+                    if isinstance(member, Agent):
+                        member.team_id = None
+                        member.initialize_agent()
+                    elif isinstance(member, Team):
+                        member.initialize_team()
 
             # Required for the built-in routes to work
             team.store_events = True
@@ -636,6 +653,9 @@ class AgentOS:
             routers.append(get_components_router(os_db=self.db, registry=self.registry))
         if self.registry is not None:
             routers.append(get_registry_router(registry=self.registry))
+        # Add schedule router if a db is available
+        if self.db is not None:
+            routers.append(get_schedule_router(os_db=self.db, settings=self.settings))
 
         for router in routers:
             self._add_router(fastapi_app, router)

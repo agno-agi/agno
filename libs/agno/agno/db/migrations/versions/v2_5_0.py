@@ -60,6 +60,8 @@ async def async_up(db: AsyncBaseDb, table_type: str, table_name: str) -> bool:
 
         if db_type == "AsyncPostgresDb":
             return await _migrate_async_postgres(db, table_name)
+        elif db_type == "AsyncMySQLDb":
+            return await _migrate_async_mysql(db, table_name)
         elif db_type == "AsyncSqliteDb":
             # SQLite already has session_id as primary key
             return False
@@ -115,6 +117,8 @@ async def async_down(db: AsyncBaseDb, table_type: str, table_name: str) -> bool:
 
         if db_type == "AsyncPostgresDb":
             return await _revert_async_postgres(db, table_name)
+        elif db_type == "AsyncMySQLDb":
+            return await _revert_async_mysql(db, table_name)
         elif db_type == "AsyncSqliteDb":
             return False
         else:
@@ -171,9 +175,14 @@ def _validate_session_data(sess, full_table: str, table_name: str, db_type: str)
         return False
 
     # Check for duplicate session_id values
-    dup_count = sess.execute(
-        text(f"SELECT COUNT(*) FROM (SELECT session_id FROM {full_table} GROUP BY session_id HAVING COUNT(*) > 1) t")
-    ).scalar() or 0
+    dup_count = (
+        sess.execute(
+            text(
+                f"SELECT COUNT(*) FROM (SELECT session_id FROM {full_table} GROUP BY session_id HAVING COUNT(*) > 1) t"
+            )
+        ).scalar()
+        or 0
+    )
     if dup_count > 0:
         examples = sess.execute(
             text(f"SELECT session_id FROM {full_table} GROUP BY session_id HAVING COUNT(*) > 1 LIMIT 5")
@@ -269,7 +278,6 @@ def _migrate_postgres(db: BaseDb, table_name: str) -> bool:
             sess.execute(text(f"ALTER TABLE {full_table} DROP CONSTRAINT {quote_db_identifier(db_type, uq_name)}"))
             applied = True
 
-        sess.commit()
         return applied
 
 
@@ -335,7 +343,6 @@ async def _migrate_async_postgres(db: AsyncBaseDb, table_name: str) -> bool:
             )
             applied = True
 
-        await sess.commit()
         return applied
 
 
@@ -403,7 +410,71 @@ def _migrate_mysql(db: BaseDb, table_name: str) -> bool:
             sess.execute(text(f"ALTER TABLE {full_table} DROP INDEX {quote_db_identifier(db_type, uq_name)}"))
             applied = True
 
-        sess.commit()
+        return applied
+
+
+async def _migrate_async_mysql(db: AsyncBaseDb, table_name: str) -> bool:
+    """Add PRIMARY KEY on session_id and drop uq_session_id for async MySQL."""
+    db_schema = db.db_schema or "agno"  # type: ignore
+    db_type = type(db).__name__
+    quoted_schema = quote_db_identifier(db_type, db_schema)
+    quoted_table = quote_db_identifier(db_type, table_name)
+    full_table = f"{quoted_schema}.{quoted_table}"
+    uq_name = f"{table_name}_uq_session_id"
+
+    async with db.async_session_factory() as sess, sess.begin():  # type: ignore
+        table_exists = (
+            await sess.execute(
+                text(
+                    "SELECT EXISTS ("
+                    "  SELECT 1 FROM INFORMATION_SCHEMA.TABLES"
+                    "  WHERE TABLE_SCHEMA = :schema AND TABLE_NAME = :table_name"
+                    ")"
+                ),
+                {"schema": db_schema, "table_name": table_name},
+            )
+        ).scalar()
+
+        if not table_exists:
+            log_info(f"Table {table_name} does not exist, skipping migration")
+            return False
+
+        applied = False
+
+        pk_exists = (
+            await sess.execute(
+                text(
+                    "SELECT 1 FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS "
+                    "WHERE TABLE_SCHEMA = :schema AND TABLE_NAME = :table "
+                    "AND CONSTRAINT_TYPE = 'PRIMARY KEY'"
+                ),
+                {"schema": db_schema, "table": table_name},
+            )
+        ).scalar()
+
+        if not pk_exists:
+            if not await _async_validate_session_data(sess, full_table, table_name, db_type):
+                return False
+            log_info(f"-- Adding PRIMARY KEY on session_id to {table_name}")
+            await sess.execute(text(f"ALTER TABLE {full_table} ADD PRIMARY KEY (`session_id`)"))
+            applied = True
+
+        uq_exists = (
+            await sess.execute(
+                text(
+                    "SELECT 1 FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS "
+                    "WHERE TABLE_SCHEMA = :schema AND TABLE_NAME = :table "
+                    "AND CONSTRAINT_NAME = :constraint AND CONSTRAINT_TYPE = 'UNIQUE'"
+                ),
+                {"schema": db_schema, "table": table_name, "constraint": uq_name},
+            )
+        ).scalar()
+
+        if uq_exists:
+            log_info(f"-- Dropping redundant UNIQUE constraint {uq_name} from {table_name}")
+            await sess.execute(text(f"ALTER TABLE {full_table} DROP INDEX {quote_db_identifier(db_type, uq_name)}"))
+            applied = True
+
         return applied
 
 
@@ -471,7 +542,6 @@ def _migrate_singlestore(db: BaseDb, table_name: str) -> bool:
             sess.execute(text(f"ALTER TABLE {full_table} DROP INDEX {quote_db_identifier(db_type, uq_name)}"))
             applied = True
 
-        sess.commit()
         return applied
 
 
@@ -530,12 +600,9 @@ def _revert_postgres(db: BaseDb, table_name: str) -> bool:
         if pk_row is not None:
             pk_name = pk_row[0]
             log_info(f"-- Dropping PRIMARY KEY {pk_name} from {table_name}")
-            sess.execute(
-                text(f"ALTER TABLE {full_table} DROP CONSTRAINT {quote_db_identifier(db_type, pk_name)}")
-            )
+            sess.execute(text(f"ALTER TABLE {full_table} DROP CONSTRAINT {quote_db_identifier(db_type, pk_name)}"))
             applied = True
 
-        sess.commit()
         return applied
 
 
@@ -603,7 +670,6 @@ async def _revert_async_postgres(db: AsyncBaseDb, table_name: str) -> bool:
             )
             applied = True
 
-        await sess.commit()
         return applied
 
 
@@ -667,7 +733,73 @@ def _revert_mysql(db: BaseDb, table_name: str) -> bool:
             sess.execute(text(f"ALTER TABLE {full_table} DROP PRIMARY KEY"))
             applied = True
 
-        sess.commit()
+        return applied
+
+
+async def _revert_async_mysql(db: AsyncBaseDb, table_name: str) -> bool:
+    """Revert: drop PK and re-add UNIQUE constraint for async MySQL."""
+    db_schema = db.db_schema or "agno"  # type: ignore
+    db_type = type(db).__name__
+    quoted_schema = quote_db_identifier(db_type, db_schema)
+    quoted_table = quote_db_identifier(db_type, table_name)
+    full_table = f"{quoted_schema}.{quoted_table}"
+    uq_name = f"{table_name}_uq_session_id"
+
+    async with db.async_session_factory() as sess, sess.begin():  # type: ignore
+        table_exists = (
+            await sess.execute(
+                text(
+                    "SELECT EXISTS ("
+                    "  SELECT 1 FROM INFORMATION_SCHEMA.TABLES"
+                    "  WHERE TABLE_SCHEMA = :schema AND TABLE_NAME = :table_name"
+                    ")"
+                ),
+                {"schema": db_schema, "table_name": table_name},
+            )
+        ).scalar()
+
+        if not table_exists:
+            log_info(f"Table {table_name} does not exist, skipping revert")
+            return False
+
+        applied = False
+
+        uq_exists = (
+            await sess.execute(
+                text(
+                    "SELECT 1 FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS "
+                    "WHERE TABLE_SCHEMA = :schema AND TABLE_NAME = :table "
+                    "AND CONSTRAINT_NAME = :constraint AND CONSTRAINT_TYPE = 'UNIQUE'"
+                ),
+                {"schema": db_schema, "table": table_name, "constraint": uq_name},
+            )
+        ).scalar()
+
+        if not uq_exists:
+            log_info(f"-- Re-adding UNIQUE constraint {uq_name} to {table_name}")
+            await sess.execute(
+                text(
+                    f"ALTER TABLE {full_table} ADD UNIQUE INDEX {quote_db_identifier(db_type, uq_name)} (`session_id`)"
+                )
+            )
+            applied = True
+
+        pk_exists = (
+            await sess.execute(
+                text(
+                    "SELECT 1 FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS "
+                    "WHERE TABLE_SCHEMA = :schema AND TABLE_NAME = :table "
+                    "AND CONSTRAINT_TYPE = 'PRIMARY KEY'"
+                ),
+                {"schema": db_schema, "table": table_name},
+            )
+        ).scalar()
+
+        if pk_exists:
+            log_info(f"-- Dropping PRIMARY KEY from {table_name}")
+            await sess.execute(text(f"ALTER TABLE {full_table} DROP PRIMARY KEY"))
+            applied = True
+
         return applied
 
 
@@ -731,5 +863,4 @@ def _revert_singlestore(db: BaseDb, table_name: str) -> bool:
             sess.execute(text(f"ALTER TABLE {full_table} DROP PRIMARY KEY"))
             applied = True
 
-        sess.commit()
         return applied

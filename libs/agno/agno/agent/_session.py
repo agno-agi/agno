@@ -214,7 +214,7 @@ def save_session(agent: Agent, session: Union[AgentSession, TeamSession, Workflo
         and agent.workflow_id is None
         and session.session_data is not None
     ):
-        if session.session_data is not None and "session_state" in session.session_data:
+        if session.session_data is not None and isinstance(session.session_data.get("session_state"), dict):
             session.session_data["session_state"].pop("current_session_id", None)
             session.session_data["session_state"].pop("current_user_id", None)
             session.session_data["session_state"].pop("current_run_id", None)
@@ -236,7 +236,7 @@ async def asave_session(agent: Agent, session: Union[AgentSession, TeamSession, 
         and agent.workflow_id is None
         and session.session_data is not None
     ):
-        if session.session_data is not None and "session_state" in session.session_data:
+        if session.session_data is not None and isinstance(session.session_data.get("session_state"), dict):
             session.session_data["session_state"].pop("current_session_id", None)
             session.session_data["session_state"].pop("current_user_id", None)
             session.session_data["session_state"].pop("current_run_id", None)

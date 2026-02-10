@@ -139,10 +139,15 @@ async def aread_session(
     agent: Agent, session_id: str, session_type: SessionType = SessionType.AGENT
 ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession]]:
     """Get a Session from the database."""
+    from agno.agent import _init
+
     try:
         if not agent.db:
             raise ValueError("Db not initialized")
-        return await agent.db.get_session(session_id=session_id, session_type=session_type)  # type: ignore
+        if _init.has_async_db(agent):
+            return await agent.db.get_session(session_id=session_id, session_type=session_type)  # type: ignore
+        else:
+            return agent.db.get_session(session_id=session_id, session_type=session_type)  # type: ignore
     except Exception as e:
         import traceback
 
@@ -172,10 +177,15 @@ async def aupsert_session(
     agent: Agent, session: Union[AgentSession, TeamSession, WorkflowSession]
 ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession]]:
     """Upsert a Session into the database."""
+    from agno.agent import _init
+
     try:
         if not agent.db:
             raise ValueError("Db not initialized")
-        return await agent.db.upsert_session(session=session)  # type: ignore
+        if _init.has_async_db(agent):
+            return await agent.db.upsert_session(session=session)  # type: ignore
+        else:
+            return agent.db.upsert_session(session=session)  # type: ignore
     except Exception as e:
         import traceback
 
@@ -443,6 +453,19 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
     if agent.add_memories_to_context is not None:
         config["add_memories_to_context"] = agent.add_memories_to_context
 
+    # --- Learning settings ---
+    if agent.learning is not None:
+        if agent.learning is True:
+            config["learning"] = True
+        elif agent.learning is False:
+            config["learning"] = False
+        elif hasattr(agent.learning, "to_dict"):
+            config["learning"] = agent.learning.to_dict()
+        else:
+            config["learning"] = True if agent.learning else False
+    if not agent.add_learnings_to_context:  # default is True
+        config["add_learnings_to_context"] = agent.add_learnings_to_context
+
     # --- Database settings ---
     if agent.db is not None and hasattr(agent.db, "to_dict"):
         config["db"] = agent.db.to_dict()
@@ -476,13 +499,13 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
         config["references_format"] = agent.references_format
 
     # --- Tools ---
-    # Serialize tools to their dictionary representations
+    # Serialize tools to their dictionary representations (skip callable factories)
     _tools: List[Union[Function, dict]] = []
-    if agent.model is not None:
+    if agent.model is not None and agent.tools and isinstance(agent.tools, list):
         _tools = parse_tools(
             agent,
             model=agent.model,
-            tools=agent.tools or [],
+            tools=agent.tools,
         )
     if _tools:
         serialized_tools = []
@@ -653,6 +676,10 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
     # if agent.compression_manager is not None:
     #     config["compression_manager"] = agent.compression_manager.to_dict()
 
+    # --- Callable factory settings ---
+    if not agent.cache_callables:
+        config["cache_callables"] = agent.cache_callables
+
     # --- Debug and telemetry settings ---
     if agent.debug_mode:
         config["debug_mode"] = agent.debug_mode
@@ -788,6 +815,12 @@ def from_dict(cls: Type[Agent], data: Dict[str, Any], registry: Optional[Registr
     #     from agno.compression.manager import CompressionManager
     #     config["compression_manager"] = CompressionManager.from_dict(config["compression_manager"])
 
+    # --- Handle Learning reconstruction ---
+    if "learning" in config and isinstance(config["learning"], dict):
+        from agno.learn.machine import LearningMachine
+
+        config["learning"] = LearningMachine.from_dict(config["learning"])
+
     # Remove keys that aren't constructor parameters
     config.pop("team_id", None)
     config.pop("workflow_id", None)
@@ -819,6 +852,9 @@ def from_dict(cls: Type[Agent], data: Dict[str, Any], registry: Optional[Registr
         enable_agentic_memory=config.get("enable_agentic_memory", False),
         enable_user_memories=config.get("enable_user_memories", False),
         add_memories_to_context=config.get("add_memories_to_context"),
+        # --- Learning settings ---
+        learning=config.get("learning"),
+        add_learnings_to_context=config.get("add_learnings_to_context", True),
         # --- Database settings ---
         db=config.get("db"),
         # --- History settings ---

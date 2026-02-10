@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from agno.team.mode import TeamMode
     from agno.team.team import Team
 
 from typing import (
@@ -153,9 +154,6 @@ def _read_session(
         session = team.db.get_session(session_id=session_id, session_type=session_type)
         return session  # type: ignore
     except Exception as e:
-        import traceback
-
-        traceback.print_exc(limit=3)
         log_warning(f"Error getting session from db: {e}")
         return None
 
@@ -164,16 +162,18 @@ async def _aread_session(
     team: "Team", session_id: str, session_type: SessionType = SessionType.TEAM
 ) -> Optional[Union[TeamSession, WorkflowSession]]:
     """Get a Session from the database."""
+    from agno.team._init import _has_async_db
+
     try:
         if not team.db:
             raise ValueError("Db not initialized")
-        team.db = cast(AsyncBaseDb, team.db)
-        session = await team.db.get_session(session_id=session_id, session_type=session_type)
+        if _has_async_db(team):
+            team.db = cast(AsyncBaseDb, team.db)
+            session = await team.db.get_session(session_id=session_id, session_type=session_type)
+        else:
+            session = team.db.get_session(session_id=session_id, session_type=session_type)  # type: ignore[assignment]
         return session  # type: ignore
     except Exception as e:
-        import traceback
-
-        traceback.print_exc(limit=3)
         log_warning(f"Error getting session from db: {e}")
         return None
 
@@ -186,24 +186,22 @@ def _upsert_session(team: "Team", session: TeamSession) -> Optional[TeamSession]
             raise ValueError("Db not initialized")
         return team.db.upsert_session(session=session)  # type: ignore
     except Exception as e:
-        import traceback
-
-        traceback.print_exc(limit=3)
         log_warning(f"Error upserting session into db: {e}")
     return None
 
 
 async def _aupsert_session(team: "Team", session: TeamSession) -> Optional[TeamSession]:
     """Upsert a Session into the database."""
+    from agno.team._init import _has_async_db
 
     try:
         if not team.db:
             raise ValueError("Db not initialized")
-        return await team.db.upsert_session(session=session)  # type: ignore
+        if _has_async_db(team):
+            return await team.db.upsert_session(session=session)  # type: ignore
+        else:
+            return team.db.upsert_session(session=session)  # type: ignore
     except Exception as e:
-        import traceback
-
-        traceback.print_exc(limit=3)
         log_warning(f"Error upserting session into db: {e}")
     return None
 
@@ -396,7 +394,7 @@ def to_dict(team: "Team") -> Dict[str, Any]:
         config["model"] = team.model.to_dict() if isinstance(team.model, Model) else str(team.model)
 
     # --- Members ---
-    if team.members:
+    if team.members and isinstance(team.members, list):
         serialized_members = []
         for member in team.members:
             if isinstance(member, Agent):
@@ -405,6 +403,12 @@ def to_dict(team: "Team") -> Dict[str, Any]:
                 serialized_members.append({"type": "team", "team_id": member.id})
         if serialized_members:
             config["members"] = serialized_members
+
+    # --- Mode ---
+    if team.mode is not None:
+        config["mode"] = team.mode.value if hasattr(team.mode, "value") else str(team.mode)
+    if team.max_iterations != 10:
+        config["max_iterations"] = team.max_iterations
 
     # --- Execution settings (only if non-default) ---
     if team.respond_directly:
@@ -506,7 +510,7 @@ def to_dict(team: "Team") -> Dict[str, Any]:
         config["references_format"] = team.references_format
 
     # --- Tools ---
-    if team.tools:
+    if team.tools and isinstance(team.tools, list):
         serialized_tools = []
         for tool in team.tools:
             try:
@@ -578,6 +582,19 @@ def to_dict(team: "Team") -> Dict[str, Any]:
     # TODO: implement session summary manager serialization
     # if team.session_summary_manager is not None:
     #     config["session_summary_manager"] = team.session_summary_manager.to_dict()
+
+    # --- Learning settings ---
+    if team.learning is not None:
+        if team.learning is True:
+            config["learning"] = True
+        elif team.learning is False:
+            config["learning"] = False
+        elif hasattr(team.learning, "to_dict"):
+            config["learning"] = team.learning.to_dict()
+        else:
+            config["learning"] = True if team.learning else False
+    if not team.add_learnings_to_context:  # default is True
+        config["add_learnings_to_context"] = team.add_learnings_to_context
 
     # --- History settings ---
     if team.add_history_to_context:
@@ -656,6 +673,29 @@ def to_dict(team: "Team") -> Dict[str, Any]:
         config["telemetry"] = team.telemetry
 
     return config
+
+
+def _deserialize_learning(value: Any) -> Any:
+    """Deserialize a learning config value from to_dict output.
+
+    Returns True, False, None, or a LearningMachine instance.
+    """
+    if value is None or value is True or value is False:
+        return value
+    if isinstance(value, dict):
+        from agno.learn.machine import LearningMachine
+
+        return LearningMachine.from_dict(value)
+    return value
+
+
+def _parse_team_mode(value: Optional[str]) -> Optional["TeamMode"]:
+    """Parse a string into a TeamMode enum, returning None if not provided."""
+    if value is None:
+        return None
+    from agno.team.mode import TeamMode
+
+    return TeamMode(value)
 
 
 def from_dict(
@@ -821,6 +861,9 @@ def from_dict(
             model=config.get("model"),
             # --- Members ---
             members=members or [],
+            # --- Mode ---
+            mode=_parse_team_mode(config.get("mode")),
+            max_iterations=config.get("max_iterations", 10),
             # --- Execution settings ---
             respond_directly=config.get("respond_directly", False),
             delegate_to_all_members=config.get("delegate_to_all_members", False),
@@ -891,6 +934,9 @@ def from_dict(
             enable_session_summaries=config.get("enable_session_summaries", False),
             add_session_summary_to_context=config.get("add_session_summary_to_context"),
             # session_summary_manager=config.get("session_summary_manager"),  # TODO
+            # --- Learning settings ---
+            learning=_deserialize_learning(config.get("learning")),
+            add_learnings_to_context=config.get("add_learnings_to_context", True),
             # --- History settings ---
             add_history_to_context=config.get("add_history_to_context", False),
             num_history_runs=config.get("num_history_runs"),
@@ -971,7 +1017,9 @@ def save(
         all_links: List[Dict[str, Any]] = []
 
         # Save each member (Agent or nested Team) and collect links
-        for position, member in enumerate(team.members or []):
+        # Only iterate if members is a static list (not a callable factory)
+        members_list = team.members if isinstance(team.members, list) else []
+        for position, member in enumerate(members_list):
             # Save member first - returns version
             member_version = member.save(db=db_, stage=stage, label=label, notes=notes)
 
