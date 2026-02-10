@@ -161,7 +161,11 @@ class RemoteAgent(BaseRemote):
     def tools(self) -> Optional[List[Dict[str, Any]]]:
         if self._agent_config is not None:
             try:
-                return json.loads(self._agent_config.tools["tools"]) if self._agent_config.tools else None
+                tools_data = self._agent_config.tools["tools"] if self._agent_config.tools else None
+                if tools_data is None:
+                    return None
+                # tools_data may already be a list (deserialized) or a JSON string
+                return json.loads(tools_data) if isinstance(tools_data, str) else tools_data
             except Exception as e:
                 log_warning(f"Failed to load tools for agent {self.agent_id}: {e}")
                 return None
@@ -204,7 +208,9 @@ class RemoteAgent(BaseRemote):
 
     async def aget_tools(self, **kwargs: Any) -> List[Dict]:
         if self._agent_config is not None and self._agent_config.tools is not None:
-            return json.loads(self._agent_config.tools["tools"])
+            tools_data = self._agent_config.tools["tools"]
+            # tools_data may already be a list (deserialized) or a JSON string
+            return json.loads(tools_data) if isinstance(tools_data, str) else tools_data
         return []
 
     @overload
