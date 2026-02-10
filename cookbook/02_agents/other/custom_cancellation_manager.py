@@ -23,7 +23,6 @@ from agno.agent import Agent
 from agno.exceptions import RunCancelledException
 from agno.models.openai import OpenAIChat
 from agno.run.agent import RunEvent
-from agno.run.base import RunStatus
 from agno.run.cancel import set_cancellation_manager
 from agno.run.cancellation_management.base import BaseRunCancellationManager
 

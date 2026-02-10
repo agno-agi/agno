@@ -3393,7 +3393,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             async with self.async_session_factory() as sess:
                 async with sess.begin():
                     result = await sess.execute(table.delete().where(table.c.id == schedule_id))
-                    return result.rowcount > 0
+                    return result.rowcount > 0  # type: ignore[attr-defined]
         except Exception as e:
             log_debug(f"Error deleting schedule: {e}")
             return False
@@ -3436,7 +3436,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                         )
                         .values(locked_by=worker_id, locked_at=now)
                     )
-                    if claim_result.rowcount == 0:
+                    if claim_result.rowcount == 0:  # type: ignore[attr-defined]
                         return None
                     schedule["locked_by"] = worker_id
                     schedule["locked_at"] = now
@@ -3456,7 +3456,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             async with self.async_session_factory() as sess:
                 async with sess.begin():
                     result = await sess.execute(table.update().where(table.c.id == schedule_id).values(**updates))
-                    return result.rowcount > 0
+                    return result.rowcount > 0  # type: ignore[attr-defined]
         except Exception as e:
             log_debug(f"Error releasing schedule: {e}")
             return False
