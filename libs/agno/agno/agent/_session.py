@@ -98,7 +98,7 @@ def get_session(
             return agent._cached_session
 
     if _init.has_async_db(agent):
-        raise ValueError("Async database not supported for get_session")
+        raise ValueError("Cannot use sync get_session() with an async database. Use aget_session() instead.")
 
     # Load and return the session from the database
     if agent.db is not None:
@@ -206,7 +206,7 @@ def save_session(agent: Agent, session: Union[AgentSession, TeamSession, Workflo
     from agno.agent import _init, _storage
 
     if _init.has_async_db(agent):
-        raise ValueError("Async database not supported for save_session")
+        raise ValueError("Cannot use sync save_session() with an async database. Use asave_session() instead.")
     # If the agent is a member of a team, do not save the session to the database
     if (
         agent.db is not None

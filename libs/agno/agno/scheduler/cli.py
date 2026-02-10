@@ -148,6 +148,7 @@ class SchedulerConsole:
         timeout_seconds: int = 3600,
         max_retries: int = 0,
         retry_delay_seconds: int = 60,
+        if_exists: str = "raise",
     ) -> Dict[str, Any]:
         """Create a schedule and display it in a Rich panel."""
         schedule = self.manager.create(
@@ -161,6 +162,7 @@ class SchedulerConsole:
             timeout_seconds=timeout_seconds,
             max_retries=max_retries,
             retry_delay_seconds=retry_delay_seconds,
+            if_exists=if_exists,
         )
         self.show_schedule(schedule["id"])
         return schedule

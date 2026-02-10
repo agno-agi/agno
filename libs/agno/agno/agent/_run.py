@@ -26,6 +26,10 @@ from pydantic import BaseModel
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
 
+# Strong references to background tasks so they aren't garbage-collected mid-execution.
+# See: https://docs.python.org/3/library/asyncio-task.html#asyncio.create_task
+_background_tasks: set[asyncio.Task[None]] = set()
+
 from agno.agent._run_options import resolve_run_options
 from agno.agent._session import initialize_session, update_session_metrics
 from agno.exceptions import (
@@ -354,7 +358,7 @@ def _run(
         # Set up retry logic
         num_attempts = agent.retries + 1
         for attempt in range(num_attempts):
-            if num_attempts > 1:
+            if attempt > 0:
                 log_debug(f"Retrying Agent run {run_response.run_id}. Attempt {attempt + 1} of {num_attempts}...")
             try:
                 # 1. Read or create session. Reuse pre-read session on first attempt.
@@ -641,12 +645,13 @@ def _run(
                 return run_response
     finally:
         # Cancel background futures on error (wait_for_open_threads handles waiting on success)
-        if memory_future is not None and not memory_future.done():
-            memory_future.cancel()
-        if cultural_knowledge_future is not None and not cultural_knowledge_future.done():
-            cultural_knowledge_future.cancel()
-        if learning_future is not None and not learning_future.done():
-            learning_future.cancel()
+        for future in (memory_future, cultural_knowledge_future, learning_future):
+            if future is not None and not future.done():
+                future.cancel()
+                try:
+                    future.result(timeout=0)
+                except Exception:
+                    pass
 
         # Always disconnect connectable tools
         disconnect_connectable_tools(agent)
@@ -715,7 +720,7 @@ def _run_stream(
         # Set up retry logic
         num_attempts = agent.retries + 1
         for attempt in range(num_attempts):
-            if num_attempts > 1:
+            if attempt > 0:
                 log_debug(f"Retrying Agent run {run_response.run_id}. Attempt {attempt + 1} of {num_attempts}...")
             try:
                 # 1. Read or create session. Reuse pre-read session on first attempt.
@@ -1119,12 +1124,13 @@ def _run_stream(
                 yield run_error
     finally:
         # Cancel background futures on error (wait_for_thread_tasks_stream handles waiting on success)
-        if memory_future is not None and not memory_future.done():
-            memory_future.cancel()
-        if cultural_knowledge_future is not None and not cultural_knowledge_future.done():
-            cultural_knowledge_future.cancel()
-        if learning_future is not None and not learning_future.done():
-            learning_future.cancel()
+        for future in (memory_future, cultural_knowledge_future, learning_future):
+            if future is not None and not future.done():
+                future.cancel()
+                try:
+                    future.result(timeout=0)
+                except Exception:
+                    pass
 
         # Always disconnect connectable tools
         disconnect_connectable_tools(agent)
@@ -1375,7 +1381,7 @@ async def _arun(
 
     try:
         for attempt in range(num_attempts):
-            if num_attempts > 1:
+            if attempt > 0:
                 log_debug(f"Retrying Agent run {run_response.run_id}. Attempt {attempt + 1} of {num_attempts}...")
 
             try:
@@ -1779,10 +1785,11 @@ async def _arun_background(
                 await asave_session(agent, session=agent_session)
             except Exception:
                 log_error(f"Failed to persist error state for background run {run_response.run_id}", exc_info=True)
-            # Clean up cancellation tracking
-            await acleanup_run(run_response.run_id)  # type: ignore
+            # Note: acleanup_run is already called by _arun's finally block
 
-    asyncio.create_task(_background_task())
+    task = asyncio.create_task(_background_task())
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
 
     # 5. Return immediately with the PENDING response
     return run_response
@@ -1847,7 +1854,7 @@ async def _arun_stream(
     num_attempts = agent.retries + 1
     try:
         for attempt in range(num_attempts):
-            if num_attempts > 1:
+            if attempt > 0:
                 log_debug(f"Retrying Agent run {run_response.run_id}. Attempt {attempt + 1} of {num_attempts}...")
 
             try:
@@ -3403,7 +3410,7 @@ async def acontinue_run_impl(
         num_attempts = agent.retries + 1
         for attempt in range(num_attempts):
             try:
-                if num_attempts > 1:
+                if attempt > 0:
                     log_debug(f"Retrying Agent acontinue_run {run_id}. Attempt {attempt + 1} of {num_attempts}...")
 
                 # 1. Read existing session from db
@@ -4154,12 +4161,17 @@ def save_run_response_to_file(
         try:
             from pathlib import Path
 
+            def _sanitize(value: Any) -> str:
+                """Strip path-traversal characters from format values."""
+                s = str(value) if value is not None else ""
+                return s.replace("/", "_").replace("\\", "_").replace("..", "_")
+
             fn = agent.save_response_to_file.format(
-                name=agent.name,
-                session_id=session_id,
-                user_id=user_id,
-                message=message_str,
-                run_id=run_response.run_id,
+                name=_sanitize(agent.name),
+                session_id=_sanitize(session_id),
+                user_id=_sanitize(user_id),
+                message=_sanitize(message_str),
+                run_id=_sanitize(run_response.run_id),
             )
             fn_path = Path(fn)
             if not fn_path.parent.exists():
