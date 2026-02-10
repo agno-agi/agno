@@ -159,8 +159,10 @@ def _deep_copy_field(team: Team, field_name: str, field_value: Any) -> Any:
 
     from pydantic import BaseModel
 
-    # For members, deep copy each agent/team
+    # For members, return callable factories by reference; deep copy static lists
     if field_name == "members" and field_value is not None:
+        if callable(field_value) and not isinstance(field_value, list):
+            return field_value
         copied_members = []
         for member in field_value:
             if hasattr(member, "deep_copy"):
@@ -169,8 +171,10 @@ def _deep_copy_field(team: Team, field_name: str, field_value: Any) -> Any:
                 copied_members.append(member)
         return copied_members
 
-    # For tools, share MCP tools but copy others
+    # For tools, return callable factories by reference; share MCP tools but copy others
     if field_name == "tools" and field_value is not None:
+        if callable(field_value) and not isinstance(field_value, list):
+            return field_value
         try:
             copied_tools = []
             for tool in field_value:
@@ -207,6 +211,7 @@ def _deep_copy_field(team: Team, field_name: str, field_value: Any) -> Any:
         "output_model",
         "session_summary_manager",
         "compression_manager",
+        "learning",
     ):
         return field_value
 

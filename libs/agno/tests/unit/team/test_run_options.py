@@ -4,7 +4,6 @@ import dataclasses
 
 import pytest
 
-from agno.agent.agent import Agent
 from agno.team._run_options import ResolvedRunOptions, resolve_run_options
 from agno.team.team import Team
 

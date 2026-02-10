@@ -143,7 +143,7 @@ def resolve_run_dependencies(agent: Agent, run_context: RunContext) -> None:
 
 
 async def aresolve_run_dependencies(agent: Agent, run_context: RunContext) -> None:
-    from inspect import iscoroutine, iscoroutinefunction, signature
+    from inspect import iscoroutine, signature
 
     log_debug("Resolving context (async)")
     if not isinstance(run_context.dependencies, dict):
@@ -166,7 +166,7 @@ async def aresolve_run_dependencies(agent: Agent, run_context: RunContext) -> No
 
             # Run the function
             result = value(**kwargs)
-            if iscoroutine(result) or iscoroutinefunction(result):
+            if iscoroutine(result):
                 result = await result  # type: ignore
 
             run_context.dependencies[key] = result
@@ -285,6 +285,7 @@ def _run(
     response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
     debug_mode: Optional[bool] = None,
     background_tasks: Optional[Any] = None,
+    pre_session: Optional[AgentSession] = None,
     **kwargs: Any,
 ) -> RunOutput:
     """Run the Agent and return the RunOutput.
@@ -336,11 +337,15 @@ def _run(
             if num_attempts > 1:
                 log_debug(f"Retrying Agent run {run_response.run_id}. Attempt {attempt + 1} of {num_attempts}...")
             try:
-                # 1. Read or create session. Reads from the database if provided.
-                agent_session = read_or_create_session(agent, session_id=session_id, user_id=user_id)
+                # 1. Read or create session. Reuse pre-read session on first attempt.
+                if attempt == 0 and pre_session is not None:
+                    agent_session = pre_session
+                else:
+                    agent_session = read_or_create_session(agent, session_id=session_id, user_id=user_id)
 
                 # 2. Update metadata and session state
-                update_metadata(agent, session=agent_session)
+                if not (attempt == 0 and pre_session is not None):
+                    update_metadata(agent, session=agent_session)
 
                 # Initialize session state. Get it from DB if relevant.
                 run_context.session_state = load_session_state(
@@ -373,7 +378,7 @@ def _run(
                     # Consume the generator without yielding
                     deque(pre_hook_iterator, maxlen=0)
 
-                # 2. Determine tools for model
+                # 5. Determine tools for model
                 processed_tools = agent.get_tools(
                     run_response=run_response,
                     run_context=run_context,
@@ -389,7 +394,7 @@ def _run(
                     run_context=run_context,
                 )
 
-                # 3. Prepare run messages
+                # 6. Prepare run messages
                 run_messages: RunMessages = get_run_messages(
                     agent,
                     run_response=run_response,
@@ -645,6 +650,7 @@ def _run_stream(
     yield_run_output: Optional[bool] = None,
     debug_mode: Optional[bool] = None,
     background_tasks: Optional[Any] = None,
+    pre_session: Optional[AgentSession] = None,
     **kwargs: Any,
 ) -> Iterator[Union[RunOutputEvent, RunOutput]]:
     """Run the Agent and yield the RunOutput.
@@ -692,11 +698,15 @@ def _run_stream(
             if num_attempts > 1:
                 log_debug(f"Retrying Agent run {run_response.run_id}. Attempt {attempt + 1} of {num_attempts}...")
             try:
-                # 1. Read or create session. Reads from the database if provided.
-                agent_session = read_or_create_session(agent, session_id=session_id, user_id=user_id)
+                # 1. Read or create session. Reuse pre-read session on first attempt.
+                if attempt == 0 and pre_session is not None:
+                    agent_session = pre_session
+                else:
+                    agent_session = read_or_create_session(agent, session_id=session_id, user_id=user_id)
 
                 # 2. Update metadata and session state
-                update_metadata(agent, session=agent_session)
+                if not (attempt == 0 and pre_session is not None):
+                    update_metadata(agent, session=agent_session)
 
                 # Initialize session state. Get it from DB if relevant.
                 run_context.session_state = load_session_state(
@@ -730,7 +740,7 @@ def _run_stream(
                     for event in pre_hook_iterator:
                         yield event
 
-                # 2. Determine tools for model
+                # 5. Determine tools for model
                 processed_tools = agent.get_tools(
                     run_response=run_response,
                     run_context=run_context,
@@ -746,7 +756,7 @@ def _run_stream(
                     run_context=run_context,
                 )
 
-                # 3. Prepare run messages
+                # 6. Prepare run messages
                 run_messages: RunMessages = get_run_messages(
                     agent,
                     run_response=run_response,
@@ -767,7 +777,7 @@ def _run_stream(
                 if len(run_messages.messages) == 0:
                     log_error("No messages to be sent to the model.")
 
-                # 4. Start memory creation in background thread
+                # 7. Start memory creation in background thread
                 from agno.agent import _managers
 
                 memory_future = _managers.start_memory_future(
@@ -1215,22 +1225,13 @@ def run_dispatch(
         output_schema=opts.output_schema,
     )
     # Apply options with precedence: explicit args > existing run_context > resolved defaults.
-    if dependencies is not None:
-        run_context.dependencies = opts.dependencies
-    elif run_context.dependencies is None:
-        run_context.dependencies = opts.dependencies
-    if knowledge_filters is not None:
-        run_context.knowledge_filters = opts.knowledge_filters
-    elif run_context.knowledge_filters is None:
-        run_context.knowledge_filters = opts.knowledge_filters
-    if metadata is not None:
-        run_context.metadata = opts.metadata
-    elif run_context.metadata is None:
-        run_context.metadata = opts.metadata
-    if output_schema is not None:
-        run_context.output_schema = opts.output_schema
-    elif run_context.output_schema is None:
-        run_context.output_schema = opts.output_schema
+    opts.apply_to_context(
+        run_context,
+        dependencies_provided=dependencies is not None,
+        knowledge_filters_provided=knowledge_filters is not None,
+        metadata_provided=metadata is not None,
+        output_schema_provided=output_schema is not None,
+    )
 
     # Prepare arguments for the model (must be after run_context is fully initialized)
     response_format = get_response_format(agent, run_context=run_context) if agent.parser_model is None else None
@@ -1269,6 +1270,7 @@ def run_dispatch(
             yield_run_output=opts.yield_run_output,
             debug_mode=debug_mode,
             background_tasks=background_tasks,
+            pre_session=agent_session,
             **kwargs,
         )
         return response_iterator
@@ -1285,6 +1287,7 @@ def run_dispatch(
             response_format=response_format,
             debug_mode=debug_mode,
             background_tasks=background_tasks,
+            pre_session=agent_session,
             **kwargs,
         )
         return response
@@ -1302,6 +1305,7 @@ async def _arun(
     response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
     debug_mode: Optional[bool] = None,
     background_tasks: Optional[Any] = None,
+    pre_session: Optional[AgentSession] = None,
     **kwargs: Any,
 ) -> RunOutput:
     """Run the Agent and return the RunOutput.
@@ -1355,11 +1359,15 @@ async def _arun(
                 log_debug(f"Retrying Agent run {run_response.run_id}. Attempt {attempt + 1} of {num_attempts}...")
 
             try:
-                # 1. Read or create session. Reads from the database if provided.
-                agent_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
+                # 1. Read or create session. Reuse pre-read session on first attempt.
+                if attempt == 0 and pre_session is not None:
+                    agent_session = pre_session
+                else:
+                    agent_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
 
                 # 2. Update metadata and session state
-                update_metadata(agent, session=agent_session)
+                if not (attempt == 0 and pre_session is not None):
+                    update_metadata(agent, session=agent_session)
 
                 # Initialize session state. Get it from DB if relevant.
                 run_context.session_state = load_session_state(
@@ -1774,6 +1782,7 @@ async def _arun_stream(
     yield_run_output: Optional[bool] = None,
     debug_mode: Optional[bool] = None,
     background_tasks: Optional[Any] = None,
+    pre_session: Optional[AgentSession] = None,
     **kwargs: Any,
 ) -> AsyncIterator[Union[RunOutputEvent, RunOutput]]:
     """Run the Agent and yield the RunOutput.
@@ -1822,8 +1831,11 @@ async def _arun_stream(
                 log_debug(f"Retrying Agent run {run_response.run_id}. Attempt {attempt + 1} of {num_attempts}...")
 
             try:
-                # 1. Read or create session. Reads from the database if provided.
-                agent_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
+                # 1. Read or create session. Reuse pre-read session on first attempt.
+                if attempt == 0 and pre_session is not None:
+                    agent_session = pre_session
+                else:
+                    agent_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
 
                 # Start the Run by yielding a RunStarted event
                 if stream_events:
@@ -1835,7 +1847,8 @@ async def _arun_stream(
                     )
 
                 # 2. Update metadata and session state
-                update_metadata(agent, session=agent_session)
+                if not (attempt == 0 and pre_session is not None):
+                    update_metadata(agent, session=agent_session)
 
                 # Initialize session state. Get it from DB if relevant.
                 run_context.session_state = load_session_state(
@@ -2350,6 +2363,20 @@ def arun_dispatch(  # type: ignore
         files=file_artifacts,
     )
 
+    # Read existing session and update metadata BEFORE resolving run options,
+    # so that session-stored metadata is visible to resolve_run_options.
+    # Note: arun_dispatch is NOT async, so we can only pre-read with a sync DB.
+    # For async DB, _arun/_arun_stream will handle the session read themselves.
+    from agno.agent._init import has_async_db
+    from agno.agent._storage import update_metadata
+
+    _pre_session: Optional[AgentSession] = None
+    if not has_async_db(agent):
+        from agno.agent._storage import read_or_create_session
+
+        _pre_session = read_or_create_session(agent, session_id=session_id, user_id=user_id)
+        update_metadata(agent, session=_pre_session)
+
     # Resolve all run options centrally
     opts = resolve_run_options(
         agent,
@@ -2379,22 +2406,13 @@ def arun_dispatch(  # type: ignore
         output_schema=opts.output_schema,
     )
     # Apply options with precedence: explicit args > existing run_context > resolved defaults.
-    if dependencies is not None:
-        run_context.dependencies = opts.dependencies
-    elif run_context.dependencies is None:
-        run_context.dependencies = opts.dependencies
-    if knowledge_filters is not None:
-        run_context.knowledge_filters = opts.knowledge_filters
-    elif run_context.knowledge_filters is None:
-        run_context.knowledge_filters = opts.knowledge_filters
-    if metadata is not None:
-        run_context.metadata = opts.metadata
-    elif run_context.metadata is None:
-        run_context.metadata = opts.metadata
-    if output_schema is not None:
-        run_context.output_schema = opts.output_schema
-    elif run_context.output_schema is None:
-        run_context.output_schema = opts.output_schema
+    opts.apply_to_context(
+        run_context,
+        dependencies_provided=dependencies is not None,
+        knowledge_filters_provided=knowledge_filters is not None,
+        metadata_provided=metadata is not None,
+        output_schema_provided=output_schema is not None,
+    )
 
     # Prepare arguments for the model (must be after run_context is fully initialized)
     response_format = get_response_format(agent, run_context=run_context) if agent.parser_model is None else None
@@ -2459,6 +2477,7 @@ def arun_dispatch(  # type: ignore
             add_session_state_to_context=opts.add_session_state_to_context,
             debug_mode=debug_mode,
             background_tasks=background_tasks,
+            pre_session=_pre_session,
             **kwargs,
         )  # type: ignore[assignment]
     else:
@@ -2474,6 +2493,7 @@ def arun_dispatch(  # type: ignore
             add_session_state_to_context=opts.add_session_state_to_context,
             debug_mode=debug_mode,
             background_tasks=background_tasks,
+            pre_session=_pre_session,
             **kwargs,
         )
 
@@ -2574,18 +2594,12 @@ def continue_run_dispatch(
         metadata=opts.metadata,
     )
     # Apply options with precedence: explicit args > existing run_context > resolved defaults.
-    if dependencies is not None:
-        run_context.dependencies = opts.dependencies
-    elif run_context.dependencies is None:
-        run_context.dependencies = opts.dependencies
-    if knowledge_filters is not None:
-        run_context.knowledge_filters = opts.knowledge_filters
-    elif run_context.knowledge_filters is None:
-        run_context.knowledge_filters = opts.knowledge_filters
-    if metadata is not None:
-        run_context.metadata = opts.metadata
-    elif run_context.metadata is None:
-        run_context.metadata = opts.metadata
+    opts.apply_to_context(
+        run_context,
+        dependencies_provided=dependencies is not None,
+        knowledge_filters_provided=knowledge_filters is not None,
+        metadata_provided=metadata is not None,
+    )
 
     # Resolve dependencies
     if run_context.dependencies is not None:
@@ -3237,6 +3251,18 @@ def acontinue_run_dispatch(  # type: ignore
     # Initialize the Agent
     agent.initialize_agent(debug_mode=debug_mode)
 
+    # Read existing session and update metadata BEFORE resolving run options,
+    # so that session-stored metadata is visible to resolve_run_options.
+    from agno.agent._init import has_async_db
+
+    _session_state: Dict[str, Any] = {}
+    if not has_async_db(agent):
+        from agno.agent._storage import load_session_state, read_or_create_session, update_metadata
+
+        _pre_session = read_or_create_session(agent, session_id=session_id, user_id=user_id)
+        update_metadata(agent, session=_pre_session)
+        _session_state = load_session_state(agent, session=_pre_session, session_state={})
+
     # Resolve all run options centrally
     opts = resolve_run_options(
         agent,
@@ -3257,24 +3283,18 @@ def acontinue_run_dispatch(  # type: ignore
         run_id=run_id,  # type: ignore
         session_id=session_id,
         user_id=user_id,
-        session_state={},
+        session_state=_session_state,
         dependencies=opts.dependencies,
         knowledge_filters=opts.knowledge_filters,
         metadata=opts.metadata,
     )
     # Apply options with precedence: explicit args > existing run_context > resolved defaults.
-    if dependencies is not None:
-        run_context.dependencies = opts.dependencies
-    elif run_context.dependencies is None:
-        run_context.dependencies = opts.dependencies
-    if knowledge_filters is not None:
-        run_context.knowledge_filters = opts.knowledge_filters
-    elif run_context.knowledge_filters is None:
-        run_context.knowledge_filters = opts.knowledge_filters
-    if metadata is not None:
-        run_context.metadata = opts.metadata
-    elif run_context.metadata is None:
-        run_context.metadata = opts.metadata
+    opts.apply_to_context(
+        run_context,
+        dependencies_provided=dependencies is not None,
+        knowledge_filters_provided=knowledge_filters is not None,
+        metadata_provided=metadata is not None,
+    )
 
     if opts.stream:
         return acontinue_run_stream_impl(
