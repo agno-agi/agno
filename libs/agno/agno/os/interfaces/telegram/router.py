@@ -270,8 +270,8 @@ def attach_routes(
                         except Exception as img_err:
                             log_error(f"Failed to send photo to chat {chat_id}: {img_err}")
 
-            if response.audios:
-                for aud in response.audios:
+            if response.audio:
+                for aud in response.audio:
                     audio_data = aud.url or aud.get_content_bytes()
                     if audio_data:
                         try:

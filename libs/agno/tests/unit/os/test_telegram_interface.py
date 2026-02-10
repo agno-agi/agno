@@ -666,7 +666,7 @@ class TestInboundMedia:
         mock_response.content = "I heard audio"
         mock_response.reasoning_content = None
         mock_response.images = None
-        mock_response.audios = None
+        mock_response.audio = None
         mock_response.videos = None
         mock_response.files = None
 
@@ -711,7 +711,7 @@ class TestInboundMedia:
         mock_response.content = "I see a video"
         mock_response.reasoning_content = None
         mock_response.images = None
-        mock_response.audios = None
+        mock_response.audio = None
         mock_response.videos = None
         mock_response.files = None
 
@@ -756,7 +756,7 @@ class TestInboundMedia:
         mock_response.content = "Processed the file"
         mock_response.reasoning_content = None
         mock_response.images = None
-        mock_response.audios = None
+        mock_response.audio = None
         mock_response.videos = None
         mock_response.files = None
 
@@ -805,7 +805,7 @@ class TestInboundMedia:
         mock_response.content = "A funny sticker"
         mock_response.reasoning_content = None
         mock_response.images = None
-        mock_response.audios = None
+        mock_response.audio = None
         mock_response.videos = None
         mock_response.files = None
 
@@ -853,7 +853,7 @@ class TestOutboundAudioVideoFiles:
         r.content = "Here is media"
         r.reasoning_content = None
         r.images = None
-        r.audios = None
+        r.audio = None
         r.videos = None
         r.files = None
         for k, v in overrides.items():
@@ -870,7 +870,7 @@ class TestOutboundAudioVideoFiles:
         mock_audio.filepath = None
         mock_audio.get_content_bytes = MagicMock(return_value=None)
 
-        mock_response = self._make_response(audios=[mock_audio])
+        mock_response = self._make_response(audio=[mock_audio])
         agent = AsyncMock()
         agent.arun = AsyncMock(return_value=mock_response)
         mock_bot = AsyncMock()
@@ -980,7 +980,7 @@ class TestOutboundAudioVideoFiles:
         mock_audio.url = "https://example.com/audio.mp3"
         mock_audio.get_content_bytes = MagicMock(return_value=None)
 
-        mock_response = self._make_response(images=[mock_img], audios=[mock_audio])
+        mock_response = self._make_response(images=[mock_img], audio=[mock_audio])
         agent = AsyncMock()
         agent.arun = AsyncMock(return_value=mock_response)
         mock_bot = AsyncMock()
