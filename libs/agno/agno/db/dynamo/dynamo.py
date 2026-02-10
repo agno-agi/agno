@@ -576,9 +576,23 @@ class DynamoDb(BaseDb):
             else:
                 serialized_session["updated_at"] = serialized_session["created_at"]
 
-            # Upsert
             item = serialize_to_dynamo_item(serialized_session)
-            self.client.put_item(TableName=table_name, Item=item)
+            put_kwargs: Dict[str, Any] = {"TableName": table_name, "Item": item}
+
+            expr_names = {"#uid": "user_id"}
+            if session.user_id is not None:
+                put_kwargs["ConditionExpression"] = (
+                    "attribute_not_exists(session_id) OR #uid = :incoming_uid OR attribute_not_exists(#uid)"
+                )
+                put_kwargs["ExpressionAttributeValues"] = {":incoming_uid": {"S": session.user_id}}
+            else:
+                put_kwargs["ConditionExpression"] = "attribute_not_exists(session_id) OR attribute_not_exists(#uid)"
+            put_kwargs["ExpressionAttributeNames"] = expr_names
+
+            try:
+                self.client.put_item(**put_kwargs)
+            except self.client.exceptions.ConditionalCheckFailedException:
+                return None
 
             return deserialize_session_result(serialized_session, session, deserialize)
 

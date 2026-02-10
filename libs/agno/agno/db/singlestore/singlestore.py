@@ -813,7 +813,9 @@ class SingleStoreDb(BaseDb):
             if isinstance(session, AgentSession):
                 with self.Session() as sess, sess.begin():
                     existing_row = sess.execute(
-                        select(table.c.user_id).where(table.c.session_id == session_dict.get("session_id"))
+                        select(table.c.user_id)
+                        .where(table.c.session_id == session_dict.get("session_id"))
+                        .with_for_update()
                     ).fetchone()
                     if existing_row is not None:
                         existing_uid = existing_row[0]
@@ -862,7 +864,9 @@ class SingleStoreDb(BaseDb):
             elif isinstance(session, TeamSession):
                 with self.Session() as sess, sess.begin():
                     existing_row = sess.execute(
-                        select(table.c.user_id).where(table.c.session_id == session_dict.get("session_id"))
+                        select(table.c.user_id)
+                        .where(table.c.session_id == session_dict.get("session_id"))
+                        .with_for_update()
                     ).fetchone()
                     if existing_row is not None:
                         existing_uid = existing_row[0]
@@ -911,7 +915,9 @@ class SingleStoreDb(BaseDb):
             else:
                 with self.Session() as sess, sess.begin():
                     existing_row = sess.execute(
-                        select(table.c.user_id).where(table.c.session_id == session_dict.get("session_id"))
+                        select(table.c.user_id)
+                        .where(table.c.session_id == session_dict.get("session_id"))
+                        .with_for_update()
                     ).fetchone()
                     if existing_row is not None:
                         existing_uid = existing_row[0]

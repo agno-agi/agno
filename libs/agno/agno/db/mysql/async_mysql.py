@@ -746,7 +746,9 @@ class AsyncMySQLDb(AsyncBaseDb):
             if isinstance(session, AgentSession):
                 async with self.async_session_factory() as sess, sess.begin():
                     existing_result = await sess.execute(
-                        select(table.c.user_id).where(table.c.session_id == session_dict.get("session_id"))
+                        select(table.c.user_id)
+                        .where(table.c.session_id == session_dict.get("session_id"))
+                        .with_for_update()
                     )
                     existing_row = existing_result.fetchone()
                     if existing_row is not None:
@@ -797,7 +799,9 @@ class AsyncMySQLDb(AsyncBaseDb):
             elif isinstance(session, TeamSession):
                 async with self.async_session_factory() as sess, sess.begin():
                     existing_result = await sess.execute(
-                        select(table.c.user_id).where(table.c.session_id == session_dict.get("session_id"))
+                        select(table.c.user_id)
+                        .where(table.c.session_id == session_dict.get("session_id"))
+                        .with_for_update()
                     )
                     existing_row = existing_result.fetchone()
                     if existing_row is not None:
@@ -848,7 +852,9 @@ class AsyncMySQLDb(AsyncBaseDb):
             elif isinstance(session, WorkflowSession):
                 async with self.async_session_factory() as sess, sess.begin():
                     existing_result = await sess.execute(
-                        select(table.c.user_id).where(table.c.session_id == session_dict.get("session_id"))
+                        select(table.c.user_id)
+                        .where(table.c.session_id == session_dict.get("session_id"))
+                        .with_for_update()
                     )
                     existing_row = existing_result.fetchone()
                     if existing_row is not None:
