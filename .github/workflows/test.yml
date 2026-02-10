@@ -6,7 +6,6 @@ on:
       - "main"
       - "v2.4.0"
       - "v2.5-phase1"
-      - "fix/ci-test-failures"
   pull_request:
     types:
       - opened
