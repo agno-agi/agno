@@ -215,7 +215,7 @@ def _run(
         # Set up retry logic
         num_attempts = team.retries + 1
         for attempt in range(num_attempts):
-            if num_attempts > 1:
+            if attempt > 0:
                 log_debug(f"Retrying Team run {run_response.run_id}. Attempt {attempt + 1} of {num_attempts}...")
 
             try:
@@ -452,6 +452,10 @@ def _run(
         # Cancel background futures on error (wait_for_open_threads handles waiting on success)
         if memory_future is not None and not memory_future.done():
             memory_future.cancel()
+            try:
+                memory_future.result(timeout=0)
+            except Exception:
+                pass
 
         # Always disconnect connectable tools
         _disconnect_connectable_tools(team)
@@ -509,7 +513,7 @@ def _run_stream(
         # Set up retry logic
         num_attempts = team.retries + 1
         for attempt in range(num_attempts):
-            if num_attempts > 1:
+            if attempt > 0:
                 log_debug(f"Retrying Team run {run_response.run_id}. Attempt {attempt + 1} of {num_attempts}...")
 
             try:
@@ -836,6 +840,10 @@ def _run_stream(
         # Cancel background futures on error (wait_for_thread_tasks_stream handles waiting on success)
         if memory_future is not None and not memory_future.done():
             memory_future.cancel()
+            try:
+                memory_future.result(timeout=0)
+            except Exception:
+                pass
 
         # Always disconnect connectable tools
         _disconnect_connectable_tools(team)
@@ -1116,7 +1124,7 @@ async def _arun(
         # Set up retry logic
         num_attempts = team.retries + 1
         for attempt in range(num_attempts):
-            if num_attempts > 1:
+            if attempt > 0:
                 log_debug(f"Retrying Team run {run_response.run_id}. Attempt {attempt + 1} of {num_attempts}...")
 
             try:
@@ -1443,7 +1451,7 @@ async def _arun_stream(
         # Set up retry logic
         num_attempts = team.retries + 1
         for attempt in range(num_attempts):
-            if num_attempts > 1:
+            if attempt > 0:
                 log_debug(f"Retrying Team run {run_response.run_id}. Attempt {attempt + 1} of {num_attempts}...")
 
             try:
