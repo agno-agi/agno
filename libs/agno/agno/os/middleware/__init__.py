@@ -1,7 +1,11 @@
-from agno.os.middleware.jwt import (
-    JWTMiddleware,
-    TokenSource,
-)
+try:
+    from agno.os.middleware.jwt import (
+        JWTMiddleware,
+        TokenSource,
+    )
+except ImportError:
+    pass
+
 from agno.os.middleware.trailing_slash import TrailingSlashMiddleware
 
 __all__ = [
