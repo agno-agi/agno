@@ -175,39 +175,27 @@ COMPONENTS_TABLE_SCHEMA = {
 }
 
 COMPONENT_CONFIGS_TABLE_SCHEMA = {
-    "component_id": {"type": String, "nullable": False},
-    "version": {"type": BigInteger, "nullable": False},
+    "component_id": {"type": String, "primary_key": True, "nullable": False},
+    "version": {"type": BigInteger, "primary_key": True, "nullable": False},
     "label": {"type": String, "nullable": True},  # stable|v1.2.0|pre-refactor
     "stage": {"type": String, "nullable": False, "default": "draft", "index": True},  # draft|published
     "config": {"type": JSON, "nullable": False},
     "notes": {"type": String, "nullable": True},
     "created_at": {"type": BigInteger, "nullable": False, "index": True},
     "updated_at": {"type": BigInteger, "nullable": True},
-    "_unique_constraints": [
-        {
-            "name": "uq_config_component_version",
-            "columns": ["component_id", "version"],
-        },
-    ],
 }
 
 COMPONENT_LINKS_TABLE_SCHEMA = {
-    "parent_component_id": {"type": String, "nullable": False},
-    "parent_version": {"type": BigInteger, "nullable": False},
-    "link_kind": {"type": String, "nullable": False, "index": True},
-    "link_key": {"type": String, "nullable": False},
+    "parent_component_id": {"type": String, "primary_key": True, "nullable": False},
+    "parent_version": {"type": BigInteger, "primary_key": True, "nullable": False},
+    "link_kind": {"type": String, "primary_key": True, "nullable": False, "index": True},
+    "link_key": {"type": String, "primary_key": True, "nullable": False},
     "child_component_id": {"type": String, "nullable": False},
     "child_version": {"type": BigInteger, "nullable": True},
     "position": {"type": BigInteger, "nullable": False},
     "meta": {"type": JSON, "nullable": True},
     "created_at": {"type": BigInteger, "nullable": True, "index": True},
     "updated_at": {"type": BigInteger, "nullable": True},
-    "_unique_constraints": [
-        {
-            "name": "uq_link_parent_kind_key",
-            "columns": ["parent_component_id", "parent_version", "link_kind", "link_key"],
-        },
-    ],
 }
 
 LEARNINGS_TABLE_SCHEMA = {

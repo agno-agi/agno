@@ -2447,7 +2447,7 @@ class AgentOSClient:
         Returns available readers, chunkers, vector DBs, and filters.
 
         Args:
-            db_id: Optional database ID to use
+            db_id: Optional database ID to filter by
             headers: HTTP headers to include in the request (optional)
 
         Returns:
@@ -2458,7 +2458,6 @@ class AgentOSClient:
         """
         params: Dict[str, Any] = {"db_id": db_id}
         params = {k: v for k, v in params.items() if v is not None}
-
         data = await self._aget("/knowledge/config", params=params, headers=headers)
         return KnowledgeConfigResponse.model_validate(data)
 

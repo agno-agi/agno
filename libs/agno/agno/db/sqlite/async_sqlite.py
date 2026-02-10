@@ -91,14 +91,6 @@ class AsyncSqliteDb(AsyncBaseDb):
         Raises:
             ValueError: If none of the tables are provided.
         """
-        try:
-            import greenlet  # type: ignore[import-untyped]  # noqa: F401
-        except ImportError:
-            raise ImportError(
-                "`greenlet` not installed. Required for async database operations. "
-                "Please install it using `pip install greenlet`"
-            )
-
         if id is None:
             seed = db_url or db_file or str(db_engine.url) if db_engine else "sqlite+aiosqlite:///agno.db"
             id = generate_id(seed)

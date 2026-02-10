@@ -103,14 +103,6 @@ class AsyncPostgresDb(AsyncBaseDb):
             ValueError: If neither db_url nor db_engine is provided.
             ValueError: If none of the tables are provided.
         """
-        try:
-            import greenlet  # type: ignore[import-untyped]  # noqa: F401
-        except ImportError:
-            raise ImportError(
-                "`greenlet` not installed. Required for async database operations. "
-                "Please install it using `pip install greenlet`"
-            )
-
         super().__init__(
             id=id,
             session_table=session_table,
