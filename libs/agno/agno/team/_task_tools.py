@@ -311,14 +311,14 @@ def _get_task_management_tools(
         task.assignee = member_id
         save_task_list(run_context.session_state, task_list)
 
-        member_task_description = task.description or task.title
-        member_agent_task, history = _setup_member_for_task(member_agent, member_task_description)
-
         use_agent_logger()
         member_session_state_copy = deepcopy(run_context.session_state)
         member_run_response: Optional[Union[TeamRunOutput, RunOutput]] = None
 
         try:
+            member_task_description = task.description or task.title
+            member_agent_task, history = _setup_member_for_task(member_agent, member_task_description)
+
             if stream:
                 member_stream = member_agent.run(
                     input=member_agent_task if not history else history,
@@ -445,14 +445,14 @@ def _get_task_management_tools(
         task.assignee = member_id
         save_task_list(run_context.session_state, task_list)
 
-        member_task_description = task.description or task.title
-        member_agent_task, history = _setup_member_for_task(member_agent, member_task_description)
-
         use_agent_logger()
         member_session_state_copy = deepcopy(run_context.session_state)
         member_run_response: Optional[Union[TeamRunOutput, RunOutput]] = None
 
         try:
+            member_task_description = task.description or task.title
+            member_agent_task, history = _setup_member_for_task(member_agent, member_task_description)
+
             if stream:
                 member_stream = member_agent.arun(
                     input=member_agent_task if not history else history,
