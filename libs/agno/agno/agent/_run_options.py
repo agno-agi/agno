@@ -11,6 +11,7 @@ from agno.filters import FilterExpr
 
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
+    from agno.run import RunContext
 
 
 @dataclass(frozen=True)
@@ -32,6 +33,37 @@ class ResolvedRunOptions:
     knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]]
     metadata: Optional[Dict[str, Any]]
     output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]]
+
+    def apply_to_context(
+        self,
+        run_context: RunContext,
+        *,
+        dependencies_provided: bool = False,
+        knowledge_filters_provided: bool = False,
+        metadata_provided: bool = False,
+        output_schema_provided: bool = False,
+    ) -> None:
+        """Apply resolved options to run_context with precedence:
+        explicit args > existing run_context > resolved defaults."""
+        if dependencies_provided:
+            run_context.dependencies = self.dependencies
+        elif run_context.dependencies is None:
+            run_context.dependencies = self.dependencies
+
+        if knowledge_filters_provided:
+            run_context.knowledge_filters = self.knowledge_filters
+        elif run_context.knowledge_filters is None:
+            run_context.knowledge_filters = self.knowledge_filters
+
+        if metadata_provided:
+            run_context.metadata = self.metadata
+        elif run_context.metadata is None:
+            run_context.metadata = self.metadata
+
+        if output_schema_provided:
+            run_context.output_schema = self.output_schema
+        elif run_context.output_schema is None:
+            run_context.output_schema = self.output_schema
 
 
 def resolve_run_options(

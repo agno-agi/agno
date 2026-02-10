@@ -31,15 +31,7 @@ from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
 
 try:
-    import greenlet  # noqa: F401
-except ImportError:
-    raise ImportError(
-        "`greenlet` not installed. Required for async database operations. "
-        "Please install it using `pip install greenlet`"
-    )
-
-try:
-    from sqlalchemy import Column, ForeignKey, MetaData, String, Table, func, or_, select, text
+    from sqlalchemy import Column, ForeignKey, MetaData, String, Table, func, select, text
     from sqlalchemy.dialects import sqlite
     from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
     from sqlalchemy.schema import Index, UniqueConstraint
@@ -97,6 +89,14 @@ class AsyncSqliteDb(AsyncBaseDb):
         Raises:
             ValueError: If none of the tables are provided.
         """
+        try:
+            import greenlet  # type: ignore[import-untyped]  # noqa: F401
+        except ImportError:
+            raise ImportError(
+                "`greenlet` not installed. Required for async database operations. "
+                "Please install it using `pip install greenlet`"
+            )
+
         if id is None:
             seed = db_url or db_file or str(db_engine.url) if db_engine else "sqlite+aiosqlite:///agno.db"
             id = generate_id(seed)
