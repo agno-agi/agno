@@ -193,11 +193,29 @@ class TaskList:
                 return True
         return False
 
+    def _has_failed_dependency(self, task: "Task") -> bool:
+        """Return True if any dependency of *task* has failed."""
+        if not task.dependencies:
+            return False
+        for dep_id in task.dependencies:
+            dep = self.get_task(dep_id)
+            if dep is not None and dep.status == TaskStatus.failed:
+                return True
+        return False
+
     def _update_blocked_statuses(self) -> None:
-        """Recompute blocked status for all pending tasks."""
+        """Recompute blocked status for all pending/blocked tasks.
+
+        If a dependency has failed the dependent task is also marked failed
+        so that ``all_terminal()`` can detect completion and the loop does
+        not deadlock.
+        """
         for task in self.tasks:
             if task.status == TaskStatus.blocked:
-                if not self._is_blocked(task):
+                if self._has_failed_dependency(task):
+                    task.status = TaskStatus.failed
+                    task.result = "Automatically failed: a dependency failed."
+                elif not self._is_blocked(task):
                     task.status = TaskStatus.pending
             elif task.status == TaskStatus.pending:
                 if self._is_blocked(task):

@@ -124,6 +124,10 @@ class Function(BaseModel):
     # If True (and external_execution=True), the function will not produce verbose paused messages (e.g., "I have tools to execute...")
     external_execution_silent: Optional[bool] = None
 
+    # If True, an approval record is created when this tool pauses a run (for the Approvals inbox).
+    # Implies requires_confirmation=True when no other HITL flag is set.
+    requires_approval: Optional[bool] = None
+
     # Caching configuration
     cache_results: bool = False
     cache_dir: Optional[str] = None
@@ -146,7 +150,15 @@ class Function(BaseModel):
     def to_dict(self) -> Dict[str, Any]:
         return self.model_dump(
             exclude_none=True,
-            include={"name", "description", "parameters", "strict", "requires_confirmation", "external_execution"},
+            include={
+                "name",
+                "description",
+                "parameters",
+                "strict",
+                "requires_confirmation",
+                "external_execution",
+                "requires_approval",
+            },
         )
 
     @classmethod
@@ -160,6 +172,7 @@ class Function(BaseModel):
             strict=data.get("strict"),
             requires_confirmation=data.get("requires_confirmation", False),
             external_execution=data.get("external_execution", False),
+            requires_approval=data.get("requires_approval", False),
         )
 
     def model_copy(self, *, deep: bool = False) -> "Function":

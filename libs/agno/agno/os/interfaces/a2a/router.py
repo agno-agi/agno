@@ -241,13 +241,14 @@ def attach_routes(
         if isinstance(agent, RemoteAgent):
             raise HTTPException(status_code=400, detail="Task cancellation is not supported for remote agents")
 
-        cancelled = await agent.acancel_run(run_id=task_id)
-        if not cancelled:
-            raise HTTPException(status_code=404, detail="Task not found or already completed")
+        # cancel_run always stores cancellation intent (even for not-yet-registered runs
+        # in cancel-before-start scenarios), so we always return success.
+        await agent.acancel_run(run_id=task_id)
 
+        context_id = params.get("contextId", str(uuid4()))
         canceled_task = Task(
             id=task_id,
-            context_id=str(uuid4()),
+            context_id=context_id,
             status=TaskStatus(state=TaskState.canceled),
         )
         return SendMessageSuccessResponse(
@@ -518,13 +519,14 @@ def attach_routes(
         if isinstance(team, RemoteTeam):
             raise HTTPException(status_code=400, detail="Task cancellation is not supported for remote teams")
 
-        cancelled = await team.acancel_run(run_id=task_id)
-        if not cancelled:
-            raise HTTPException(status_code=404, detail="Task not found or already completed")
+        # cancel_run always stores cancellation intent (even for not-yet-registered runs
+        # in cancel-before-start scenarios), so we always return success.
+        await team.acancel_run(run_id=task_id)
 
+        context_id = params.get("contextId", str(uuid4()))
         canceled_task = Task(
             id=task_id,
-            context_id=str(uuid4()),
+            context_id=context_id,
             status=TaskStatus(state=TaskState.canceled),
         )
         return SendMessageSuccessResponse(

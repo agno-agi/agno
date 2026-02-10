@@ -37,6 +37,7 @@ from agno.os.config import (
 from agno.os.interfaces.base import BaseInterface
 from agno.os.router import get_base_router, get_websocket_router
 from agno.os.routers.agents import get_agent_router
+from agno.os.routers.approvals import get_approval_router
 from agno.os.routers.components import get_components_router
 from agno.os.routers.database import get_database_router
 from agno.os.routers.evals import get_eval_router
@@ -104,34 +105,6 @@ async def db_lifespan(app: FastAPI, agent_os: "AgentOS"):
     await agent_os._close_databases()
 
 
-@asynccontextmanager
-async def scheduler_lifespan(app: FastAPI, agent_os: "AgentOS"):
-    """Start and stop the scheduler poller."""
-    from agno.scheduler import ScheduleExecutor, SchedulePoller
-
-    base_url = agent_os._scheduler_base_url or "http://127.0.0.1:7777"
-    internal_token = agent_os._internal_service_token
-    assert internal_token is not None, "internal_service_token must be set when scheduler is enabled"
-
-    executor = ScheduleExecutor(
-        base_url=base_url,
-        internal_service_token=internal_token,
-    )
-    poller = SchedulePoller(
-        db=agent_os.db,
-        executor=executor,
-        poll_interval=agent_os._scheduler_poll_interval,
-    )
-
-    app.state.scheduler_executor = executor
-    app.state.scheduler_poller = poller
-    await poller.start()
-
-    yield
-
-    await poller.stop()
-
-
 def _combine_app_lifespans(lifespans: list) -> Any:
     """Combine multiple FastAPI app lifespan context managers into one."""
     if len(lifespans) == 1:
@@ -184,10 +157,6 @@ class AgentOS:
         run_hooks_in_background: bool = False,
         telemetry: bool = True,
         registry: Optional[Registry] = None,
-        scheduler: bool = False,
-        scheduler_poll_interval: int = 15,
-        scheduler_base_url: Optional[str] = None,
-        internal_service_token: Optional[str] = None,
     ):
         """Initialize AgentOS.
 
@@ -217,10 +186,6 @@ class AgentOS:
             run_hooks_in_background: If True, run agent/team pre/post hooks as FastAPI background tasks (non-blocking)
             telemetry: Whether to enable telemetry
             registry: Optional registry to use for the AgentOS
-            scheduler: Whether to enable the cron scheduler
-            scheduler_poll_interval: Seconds between scheduler poll cycles (default: 15)
-            scheduler_base_url: Base URL for scheduler HTTP calls (default: http://127.0.0.1:7777)
-            internal_service_token: Token for scheduler-to-OS auth (auto-generated if not provided)
 
         """
         if not agents and not workflows and not teams and not knowledge and not db:
@@ -277,19 +242,10 @@ class AgentOS:
         # If True, run agent/team hooks as FastAPI background tasks
         self.run_hooks_in_background = run_hooks_in_background
 
-        # Scheduler configuration
-        self.scheduler = scheduler
-        self._scheduler_poll_interval = scheduler_poll_interval
-        self._scheduler_base_url = scheduler_base_url
-        if scheduler and not internal_service_token:
-            import secrets
-
-            internal_service_token = secrets.token_urlsafe(32)
-        self._internal_service_token = internal_service_token
-
         # List of all MCP tools used inside the AgentOS
         self.mcp_tools: List[Any] = []
         self._mcp_app: Optional[Any] = None
+        self._scheduler_manager: Optional[Any] = None
 
         self._initialize_agents()
         self._initialize_teams()
@@ -305,6 +261,17 @@ class AgentOS:
             from agno.api.os import OSLaunch, log_os_telemetry
 
             log_os_telemetry(launch=OSLaunch(os_id=self.id, data=self._get_telemetry_data()))
+
+    @property
+    def scheduler(self) -> Any:
+        """Get a ScheduleManager for this AgentOS instance."""
+        if not hasattr(self, "_scheduler_manager") or self._scheduler_manager is None:
+            if self.db is None:
+                raise RuntimeError("No database configured -- cannot create ScheduleManager")
+            from agno.scheduler.manager import ScheduleManager
+
+            self._scheduler_manager = ScheduleManager(self.db)
+        return self._scheduler_manager
 
     def _add_agent_os_to_lifespan_function(self, lifespan):
         """
@@ -370,9 +337,10 @@ class AgentOS:
             updated_routers.append(get_components_router(os_db=self.db, registry=self.registry))
         if self.registry is not None:
             updated_routers.append(get_registry_router(registry=self.registry))
-        # Add schedule router if scheduler is enabled
-        if self.scheduler and self.db is not None:
+        # Add schedule and approval routers if a db is available
+        if self.db is not None:
             updated_routers.append(get_schedule_router(os_db=self.db, settings=self.settings))
+            updated_routers.append(get_approval_router(os_db=self.db, settings=self.settings))
 
         # Clear all previously existing routes
         app.router.routes = [
@@ -633,10 +601,6 @@ class AgentOS:
             # The async database lifespan
             lifespans.append(partial(db_lifespan, agent_os=self))
 
-            # The scheduler lifespan (after db so tables exist)
-            if self.scheduler and self.db is not None:
-                lifespans.append(partial(scheduler_lifespan, agent_os=self))
-
             # The httpx client cleanup lifespan (should be last to close after other lifespans)
             lifespans.append(http_client_lifespan)
 
@@ -665,10 +629,6 @@ class AgentOS:
             # Async database initialization lifespan
             lifespans.append(partial(db_lifespan, agent_os=self))  # type: ignore
 
-            # The scheduler lifespan (after db so tables exist)
-            if self.scheduler and self.db is not None:
-                lifespans.append(partial(scheduler_lifespan, agent_os=self))
-
             # The httpx client cleanup lifespan (should be last to close after other lifespans)
             lifespans.append(http_client_lifespan)
 
@@ -695,9 +655,10 @@ class AgentOS:
             routers.append(get_components_router(os_db=self.db, registry=self.registry))
         if self.registry is not None:
             routers.append(get_registry_router(registry=self.registry))
-        # Add schedule router if scheduler is enabled
-        if self.scheduler and self.db is not None:
+        # Add schedule and approval routers if a db is available
+        if self.db is not None:
             routers.append(get_schedule_router(os_db=self.db, settings=self.settings))
+            routers.append(get_approval_router(os_db=self.db, settings=self.settings))
 
         for router in routers:
             self._add_router(fastapi_app, router)
@@ -752,10 +713,6 @@ class AgentOS:
         # This allows middleware (like JWT) to access these values
         fastapi_app.state.agent_os_id = self.id
         fastapi_app.state.cors_allowed_origins = self.cors_allowed_origins
-
-        # Store internal service token for scheduler auth bypass
-        if self._internal_service_token:
-            fastapi_app.state.internal_service_token = self._internal_service_token
 
         # Add JWT middleware if authorization is enabled
         if self.authorization:

@@ -363,10 +363,9 @@ def get_team_router(
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
 
-        cancelled = await team.acancel_run(run_id=run_id)
-        if not cancelled:
-            raise HTTPException(status_code=404, detail="Run not found or already completed")
-
+        # cancel_run always stores cancellation intent (even for not-yet-registered runs
+        # in cancel-before-start scenarios), so we always return success.
+        await team.acancel_run(run_id=run_id)
         return JSONResponse(content={}, status_code=200)
 
     @router.get(
