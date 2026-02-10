@@ -245,26 +245,39 @@ SCHEDULE_TABLE_SCHEMA = {
     "updated_at": {"type": BigInteger, "nullable": True},
 }
 
-SCHEDULE_RUNS_TABLE_SCHEMA = {
-    "id": {"type": String, "primary_key": True, "nullable": False},
-    "schedule_id": {"type": String, "nullable": False, "index": True},
-    "attempt": {"type": BigInteger, "nullable": False},
-    "triggered_at": {"type": BigInteger, "nullable": True},
-    "completed_at": {"type": BigInteger, "nullable": True},
-    "status": {"type": String, "nullable": False, "index": True},
-    "status_code": {"type": BigInteger, "nullable": True},
-    "run_id": {"type": String, "nullable": True},
-    "session_id": {"type": String, "nullable": True},
-    "error": {"type": Text, "nullable": True},
-    "input": {"type": JSONB, "nullable": True},
-    "output": {"type": JSONB, "nullable": True},
-    "requirements": {"type": JSONB, "nullable": True},
-    "created_at": {"type": BigInteger, "nullable": False, "index": True},
-}
+
+def _get_schedule_runs_table_schema(
+    schedules_table_name: str = "agno_schedules", db_schema: str = "agno"
+) -> dict[str, Any]:
+    """Get the schedule runs table schema with a foreign key to the schedules table."""
+    return {
+        "id": {"type": String, "primary_key": True, "nullable": False},
+        "schedule_id": {
+            "type": String,
+            "nullable": False,
+            "index": True,
+            "foreign_key": f"{db_schema}.{schedules_table_name}.id",
+        },
+        "attempt": {"type": BigInteger, "nullable": False},
+        "triggered_at": {"type": BigInteger, "nullable": True},
+        "completed_at": {"type": BigInteger, "nullable": True},
+        "status": {"type": String, "nullable": False, "index": True},
+        "status_code": {"type": BigInteger, "nullable": True},
+        "run_id": {"type": String, "nullable": True},
+        "session_id": {"type": String, "nullable": True},
+        "error": {"type": Text, "nullable": True},
+        "input": {"type": JSONB, "nullable": True},
+        "output": {"type": JSONB, "nullable": True},
+        "requirements": {"type": JSONB, "nullable": True},
+        "created_at": {"type": BigInteger, "nullable": False, "index": True},
+    }
 
 
 def get_table_schema_definition(
-    table_type: str, traces_table_name: str = "agno_traces", db_schema: str = "agno"
+    table_type: str,
+    traces_table_name: str = "agno_traces",
+    db_schema: str = "agno",
+    schedules_table_name: str = "agno_schedules",
 ) -> dict[str, Any]:
     """
     Get the expected schema definition for the given table.
@@ -277,9 +290,11 @@ def get_table_schema_definition(
     Returns:
         Dict[str, Any]: Dictionary containing column definitions for the table
     """
-    # Handle spans table specially to resolve the foreign key reference
+    # Handle tables with dynamic foreign key references
     if table_type == "spans":
         return _get_span_table_schema(traces_table_name, db_schema)
+    if table_type == "schedule_runs":
+        return _get_schedule_runs_table_schema(schedules_table_name, db_schema)
 
     schemas = {
         "sessions": SESSION_TABLE_SCHEMA,
@@ -295,7 +310,6 @@ def get_table_schema_definition(
         "component_links": COMPONENT_LINKS_TABLE_SCHEMA,
         "learnings": LEARNINGS_TABLE_SCHEMA,
         "schedules": SCHEDULE_TABLE_SCHEMA,
-        "schedule_runs": SCHEDULE_RUNS_TABLE_SCHEMA,
     }
 
     schema = schemas.get(table_type, {})

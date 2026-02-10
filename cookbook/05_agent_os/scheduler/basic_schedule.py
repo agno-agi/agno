@@ -25,10 +25,10 @@ schedule = mgr.create(
     payload={"message": "What is the system health?"},
 )
 
-print(f"Created schedule: {schedule['name']} (id={schedule['id']})")
-print(f"  Cron: {schedule['cron_expr']}")
-print(f"  Endpoint: {schedule['endpoint']}")
-print(f"  Next run: {schedule['next_run_at']}")
+print(f"Created schedule: {schedule.name} (id={schedule.id})")
+print(f"  Cron: {schedule.cron_expr}")
+print(f"  Endpoint: {schedule.endpoint}")
+print(f"  Next run: {schedule.next_run_at}")
 
 # --- List all schedules ---
 
@@ -42,5 +42,5 @@ console.show_schedules()
 
 # --- Cleanup ---
 
-mgr.delete(schedule["id"])
+mgr.delete(schedule.id)
 print("\nSchedule deleted.")

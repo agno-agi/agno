@@ -5,7 +5,21 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from agno.db.schemas.scheduler import Schedule
 from agno.scheduler.poller import SchedulePoller
+
+
+def _make_schedule_dict(**overrides):
+    """Create a schedule dict with all required fields."""
+    d = {
+        "id": "s1",
+        "name": "test",
+        "cron_expr": "0 9 * * *",
+        "endpoint": "/test",
+        "enabled": True,
+    }
+    d.update(overrides)
+    return d
 
 
 @pytest.fixture
@@ -20,6 +34,7 @@ def mock_db():
 def mock_executor():
     executor = MagicMock()
     executor.execute = AsyncMock(return_value={"status": "success"})
+    executor.close = AsyncMock()
     return executor
 
 
@@ -92,7 +107,7 @@ class TestPollerPollOnce:
 
     @pytest.mark.asyncio
     async def test_claims_and_dispatches(self, mock_db, mock_executor):
-        schedule = {"id": "s1", "name": "test", "enabled": True}
+        schedule = _make_schedule_dict()
         call_count = 0
 
         def claim_side_effect(worker_id):
@@ -111,7 +126,11 @@ class TestPollerPollOnce:
         await asyncio.sleep(0.05)
 
         assert call_count == 2  # called until None returned
-        mock_executor.execute.assert_called_once_with(schedule, mock_db)
+        mock_executor.execute.assert_called_once()
+        # Verify the schedule was converted to a Schedule object
+        call_args = mock_executor.execute.call_args
+        assert isinstance(call_args[0][0], Schedule)
+        assert call_args[0][0].id == "s1"
 
     @pytest.mark.asyncio
     async def test_respects_concurrency_limit(self, mock_db, mock_executor):
@@ -147,7 +166,7 @@ class TestPollerPollOnce:
     @pytest.mark.asyncio
     async def test_async_db_claim(self, mock_executor):
         """Poller should support async DB adapters."""
-        schedule = {"id": "s1", "name": "async-test", "enabled": True}
+        schedule = _make_schedule_dict(name="async-test")
         call_count = 0
 
         async def async_claim(worker_id):
@@ -167,12 +186,16 @@ class TestPollerPollOnce:
         await asyncio.sleep(0.05)
         assert call_count == 2
         mock_executor.execute.assert_called_once()
+        # Verify the schedule was converted to a Schedule object
+        call_args = mock_executor.execute.call_args
+        assert isinstance(call_args[0][0], Schedule)
+        assert call_args[0][0].id == "s1"
 
 
 class TestPollerTrigger:
     @pytest.mark.asyncio
     async def test_trigger_found(self, mock_db, mock_executor):
-        schedule = {"id": "s1", "name": "test", "enabled": True}
+        schedule = _make_schedule_dict()
         mock_db.get_schedule = MagicMock(return_value=schedule)
 
         poller = SchedulePoller(db=mock_db, executor=mock_executor)
@@ -182,8 +205,12 @@ class TestPollerTrigger:
         await asyncio.sleep(0.05)
 
         mock_executor.execute.assert_called_once()
-        call_kwargs = mock_executor.execute.call_args
-        assert call_kwargs[1]["release_schedule"] is False
+        call_args = mock_executor.execute.call_args
+        # First positional arg is a Schedule object
+        assert isinstance(call_args[0][0], Schedule)
+        assert call_args[0][0].id == "s1"
+        # release_schedule=False is passed as keyword
+        assert call_args[1]["release_schedule"] is False
 
     @pytest.mark.asyncio
     async def test_trigger_not_found(self, mock_db, mock_executor):
@@ -196,7 +223,7 @@ class TestPollerTrigger:
 
     @pytest.mark.asyncio
     async def test_trigger_disabled(self, mock_db, mock_executor):
-        schedule = {"id": "s1", "name": "test", "enabled": False}
+        schedule = _make_schedule_dict(enabled=False)
         mock_db.get_schedule = MagicMock(return_value=schedule)
 
         poller = SchedulePoller(db=mock_db, executor=mock_executor)

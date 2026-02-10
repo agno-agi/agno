@@ -30,7 +30,7 @@ sched1 = mgr.create(
     description="Run agent every 5 minutes",
     payload={"message": "Quick check"},
 )
-console.show_schedule(sched1["id"])
+console.show_schedule(sched1.id)
 
 sched2 = mgr.create(
     name="daily-report",
@@ -59,23 +59,23 @@ console.show_schedules()
 # --- 3. Disable a schedule ---
 
 print("\n=== Disabling 'every-5-min' ===\n")
-mgr.disable(sched1["id"])
-disabled = mgr.get(sched1["id"])
-print(f"  enabled: {disabled['enabled']}")
+mgr.disable(sched1.id)
+disabled = mgr.get(sched1.id)
+print(f"  enabled: {disabled.enabled}")
 
 # --- 4. Re-enable ---
 
 print("\n=== Re-enabling 'every-5-min' ===\n")
-mgr.enable(sched1["id"])
-enabled = mgr.get(sched1["id"])
-print(f"  enabled: {enabled['enabled']}")
-print(f"  next_run_at: {enabled['next_run_at']}")
+mgr.enable(sched1.id)
+enabled = mgr.get(sched1.id)
+print(f"  enabled: {enabled.enabled}")
+print(f"  next_run_at: {enabled.next_run_at}")
 
 # --- 5. Update schedule ---
 
 print("\n=== Updating 'weekly-cleanup' description ===\n")
-mgr.update(sched3["id"], description="Weekly maintenance and cleanup")
-console.show_schedule(sched3["id"])
+mgr.update(sched3.id, description="Weekly maintenance and cleanup")
+console.show_schedule(sched3.id)
 
 # --- 6. Filter by enabled ---
 
@@ -87,8 +87,8 @@ print(f"  {len(enabled_schedules)} enabled schedule(s)")
 
 print("\n=== Cleaning up ===\n")
 for s in mgr.list():
-    deleted = mgr.delete(s["id"])
-    print(f"  Deleted {s['name']}: {deleted}")
+    deleted = mgr.delete(s.id)
+    print(f"  Deleted {s.name}: {deleted}")
 
 remaining = mgr.list()
 print(f"\nRemaining schedules: {len(remaining)}")

@@ -244,9 +244,12 @@ class PostgresDb(BaseDb):
         - column-level foreign_key: "logical_table.column" (resolved via _resolve_* helpers)
         """
         try:
-            # Pass traces_table_name and db_schema for spans table foreign key resolution
+            # Pass table names and db_schema for foreign key resolution
             table_schema = get_table_schema_definition(
-                table_type, traces_table_name=self.trace_table_name, db_schema=self.db_schema
+                table_type,
+                traces_table_name=self.trace_table_name,
+                db_schema=self.db_schema,
+                schedules_table_name=self.schedules_table_name,
             ).copy()
 
             columns: List[Column] = []

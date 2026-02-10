@@ -112,7 +112,8 @@ async def scheduler_lifespan(app: FastAPI, agent_os: "AgentOS"):
 
     base_url = agent_os._scheduler_base_url or "http://127.0.0.1:7777"
     internal_token = agent_os._internal_service_token
-    assert internal_token is not None, "internal_service_token must be set when scheduler is enabled"
+    if internal_token is None:
+        raise ValueError("internal_service_token must be set when scheduler is enabled")
 
     executor = ScheduleExecutor(
         base_url=base_url,

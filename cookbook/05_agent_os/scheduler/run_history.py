@@ -31,7 +31,7 @@ schedule = mgr.create(
     max_retries=2,
     retry_delay_seconds=30,
 )
-print(f"Created schedule: {schedule['name']} (id={schedule['id']})")
+print(f"Created schedule: {schedule.name} (id={schedule.id})")
 
 # --- Simulate some run records by inserting directly ---
 # In production, the ScheduleExecutor creates these automatically.
@@ -43,7 +43,7 @@ now = int(time.time())
 run_records = [
     {
         "id": str(uuid4()),
-        "schedule_id": schedule["id"],
+        "schedule_id": schedule.id,
         "attempt": 1,
         "triggered_at": now - 600,
         "completed_at": now - 590,
@@ -56,7 +56,7 @@ run_records = [
     },
     {
         "id": str(uuid4()),
-        "schedule_id": schedule["id"],
+        "schedule_id": schedule.id,
         "attempt": 1,
         "triggered_at": now - 300,
         "completed_at": now - 280,
@@ -69,7 +69,7 @@ run_records = [
     },
     {
         "id": str(uuid4()),
-        "schedule_id": schedule["id"],
+        "schedule_id": schedule.id,
         "attempt": 2,
         "triggered_at": now - 240,
         "completed_at": now - 230,
@@ -88,29 +88,29 @@ for record in run_records:
 # --- Display run history with Rich ---
 
 print("\n=== Run History (Rich Table) ===\n")
-console.show_runs(schedule["id"])
+console.show_runs(schedule.id)
 
 # --- Query runs programmatically ---
 
 print("\n=== Run History (Programmatic) ===\n")
-runs = mgr.get_runs(schedule["id"], limit=10)
+runs = mgr.get_runs(schedule.id, limit=10)
 print(f"Total runs: {len(runs)}")
 for run in runs:
-    status = run["status"]
-    attempt = run["attempt"]
-    error = run.get("error") or "-"
+    status = run.status
+    attempt = run.attempt
+    error = run.error or "-"
     print(f"  Attempt {attempt}: {status} (error={error})")
 
 # --- Pagination ---
 
 print("\n=== Paginated (limit=2, offset=0) ===\n")
-page1 = mgr.get_runs(schedule["id"], limit=2, offset=0)
+page1 = mgr.get_runs(schedule.id, limit=2, offset=0)
 print(f"Page 1: {len(page1)} runs")
 
-page2 = mgr.get_runs(schedule["id"], limit=2, offset=2)
+page2 = mgr.get_runs(schedule.id, limit=2, offset=2)
 print(f"Page 2: {len(page2)} runs")
 
 # --- Cleanup ---
 
-mgr.delete(schedule["id"])
+mgr.delete(schedule.id)
 print("\nSchedule and runs deleted.")

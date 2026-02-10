@@ -188,8 +188,12 @@ class AsyncSqliteDb(AsyncBaseDb):
             Table: SQLAlchemy Table object
         """
         try:
-            # Pass traces_table_name for spans table foreign key resolution
-            table_schema = get_table_schema_definition(table_type, traces_table_name=self.trace_table_name).copy()
+            # Pass table names for foreign key resolution
+            table_schema = get_table_schema_definition(
+                table_type,
+                traces_table_name=self.trace_table_name,
+                schedules_table_name=self.schedules_table_name,
+            ).copy()
 
             columns: List[Column] = []
             indexes: List[str] = []
