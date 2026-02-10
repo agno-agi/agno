@@ -4,7 +4,7 @@ import asyncio
 import json
 import re
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
 from agno.utils.log import log_error, log_info, log_warning
@@ -82,6 +82,9 @@ class ScheduleExecutor:
         last_status = "failed"
         last_status_code: Optional[int] = None
         last_error: Optional[str] = None
+        last_input: Optional[Dict[str, Any]] = None
+        last_output: Optional[Dict[str, Any]] = None
+        last_requirements: Optional[List[Dict[str, Any]]] = None
         run_record_id: Optional[str] = None
         run_dict: Dict[str, Any] = {}
 
@@ -104,6 +107,9 @@ class ScheduleExecutor:
                     "run_id": None,
                     "session_id": None,
                     "error": None,
+                    "input": None,
+                    "output": None,
+                    "requirements": None,
                     "created_at": now,
                 }
 
@@ -119,6 +125,9 @@ class ScheduleExecutor:
                     last_error = result.get("error")
                     run_id_value = result.get("run_id") or run_id_value
                     session_id_value = result.get("session_id") or session_id_value
+                    last_input = result.get("input")
+                    last_output = result.get("output")
+                    last_requirements = result.get("requirements")
 
                     updates: Dict[str, Any] = {
                         "completed_at": int(time.time()),
@@ -127,6 +136,9 @@ class ScheduleExecutor:
                         "run_id": run_id_value,
                         "session_id": session_id_value,
                         "error": last_error,
+                        "input": last_input,
+                        "output": last_output,
+                        "requirements": last_requirements,
                     }
                     if asyncio.iscoroutinefunction(getattr(db, "update_schedule_run", None)):
                         await db.update_schedule_run(run_record_id, **updates)
@@ -162,6 +174,9 @@ class ScheduleExecutor:
             final_run["error"] = last_error
             final_run["run_id"] = run_id_value
             final_run["session_id"] = session_id_value
+            final_run["input"] = last_input
+            final_run["output"] = last_output
+            final_run["requirements"] = last_requirements
             final_run["completed_at"] = int(time.time())
 
             return final_run
@@ -276,6 +291,9 @@ class ScheduleExecutor:
             "error": error,
             "run_id": None,
             "session_id": None,
+            "input": None,
+            "output": None,
+            "requirements": None,
         }
 
     async def _background_run(
@@ -302,6 +320,9 @@ class ScheduleExecutor:
                 "error": resp.text,
                 "run_id": None,
                 "session_id": None,
+                "input": None,
+                "output": None,
+                "requirements": None,
             }
 
         try:
@@ -313,6 +334,9 @@ class ScheduleExecutor:
                 "error": f"Invalid JSON in background run response: {resp.text[:500]}",
                 "run_id": None,
                 "session_id": None,
+                "input": None,
+                "output": None,
+                "requirements": None,
             }
 
         run_id = body.get("run_id")
@@ -325,6 +349,9 @@ class ScheduleExecutor:
                 "error": f"Missing run_id or session_id in background run response: {body}",
                 "run_id": run_id,
                 "session_id": session_id,
+                "input": None,
+                "output": None,
+                "requirements": None,
             }
 
         return await self._poll_run(
@@ -359,6 +386,9 @@ class ScheduleExecutor:
                     "error": f"Polling timed out after {timeout_seconds}s for run {run_id}",
                     "run_id": run_id,
                     "session_id": session_id,
+                    "input": None,
+                    "output": None,
+                    "requirements": None,
                 }
 
             await asyncio.sleep(self.poll_interval)
@@ -384,6 +414,9 @@ class ScheduleExecutor:
                     "error": resp.text,
                     "run_id": run_id,
                     "session_id": session_id,
+                    "input": None,
+                    "output": None,
+                    "requirements": None,
                 }
 
             try:
@@ -408,10 +441,38 @@ class ScheduleExecutor:
                     status = "failed"
                     error = data.get("error") or f"Run failed with status {run_status}"
 
+                # Extract input, output, and requirements from RunOutput
+                run_input = data.get("input") if isinstance(data.get("input"), dict) else None
+                run_output = self._extract_output(data)
+                run_requirements = self._extract_requirements(data) if run_status == "PAUSED" else None
+
                 return {
                     "status": status,
                     "status_code": resp.status_code,
                     "error": error,
                     "run_id": run_id,
                     "session_id": session_id,
+                    "input": run_input,
+                    "output": run_output,
+                    "requirements": run_requirements,
                 }
+
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _extract_output(data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Build a structured output dict from RunOutput data."""
+        content = data.get("content")
+        if content is None:
+            return None
+        return {
+            "content": content,
+            "content_type": data.get("content_type"),
+        }
+
+    @staticmethod
+    def _extract_requirements(data: Dict[str, Any]) -> Optional[List[Dict[str, Any]]]:
+        """Extract HITL requirements from RunOutput data."""
+        raw = data.get("requirements")
+        if raw and isinstance(raw, list):
+            return raw
+        return None
