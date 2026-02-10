@@ -26,6 +26,10 @@ from pydantic import BaseModel
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
 
+# Strong references to background tasks so they aren't garbage-collected mid-execution.
+# See: https://docs.python.org/3/library/asyncio-task.html#asyncio.create_task
+_background_tasks: set[asyncio.Task[None]] = set()
+
 from agno.agent._run_options import resolve_run_options
 from agno.agent._session import initialize_session, update_session_metrics
 from agno.exceptions import (
@@ -1761,10 +1765,11 @@ async def _arun_background(
                 await asave_session(agent, session=agent_session)
             except Exception:
                 log_error(f"Failed to persist error state for background run {run_response.run_id}", exc_info=True)
-            # Clean up cancellation tracking
-            await acleanup_run(run_response.run_id)  # type: ignore
+            # Note: acleanup_run is already called by _arun's finally block
 
-    asyncio.create_task(_background_task())
+    task = asyncio.create_task(_background_task())
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
 
     # 5. Return immediately with the PENDING response
     return run_response
