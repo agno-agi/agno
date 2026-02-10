@@ -175,10 +175,10 @@ def save_session(team: "Team", session: TeamSession) -> None:
         raise ValueError("Async database not supported for save_session")
 
     if team.db is not None and team.parent_team_id is None and team.workflow_id is None:
-        if session.session_data is not None and "session_state" in session.session_data:
-            session.session_data["session_state"].pop("current_session_id", None)  # type: ignore
-            session.session_data["session_state"].pop("current_user_id", None)  # type: ignore
-            session.session_data["session_state"].pop("current_run_id", None)  # type: ignore
+        if session.session_data is not None and isinstance(session.session_data.get("session_state"), dict):
+            session.session_data["session_state"].pop("current_session_id", None)
+            session.session_data["session_state"].pop("current_user_id", None)
+            session.session_data["session_state"].pop("current_run_id", None)
 
         # scrub the member responses based on storage settings
         if session.runs is not None:
@@ -206,10 +206,10 @@ async def asave_session(team: "Team", session: TeamSession) -> None:
     from agno.team._storage import _aupsert_session, _upsert_session
 
     if team.db is not None and team.parent_team_id is None and team.workflow_id is None:
-        if session.session_data is not None and "session_state" in session.session_data:
-            session.session_data["session_state"].pop("current_session_id", None)  # type: ignore
-            session.session_data["session_state"].pop("current_user_id", None)  # type: ignore
-            session.session_data["session_state"].pop("current_run_id", None)  # type: ignore
+        if session.session_data is not None and isinstance(session.session_data.get("session_state"), dict):
+            session.session_data["session_state"].pop("current_session_id", None)
+            session.session_data["session_state"].pop("current_user_id", None)
+            session.session_data["session_state"].pop("current_run_id", None)
 
         # scrub the member responses based on storage settings
         if session.runs is not None:

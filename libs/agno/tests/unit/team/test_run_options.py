@@ -4,7 +4,6 @@ import dataclasses
 
 import pytest
 
-from agno.agent.agent import Agent
 from agno.team._run_options import ResolvedRunOptions, resolve_run_options
 from agno.team.team import Team
 
@@ -379,7 +378,6 @@ class TestTeamWrappersDelegateCorrectly:
 class TestParityWithAgent:
     def test_same_fields_as_agent_run_options(self):
         from agno.agent._run_options import ResolvedRunOptions as AgentOpts
-
         from agno.team._run_options import ResolvedRunOptions as TeamOpts
 
         agent_fields = {f.name for f in dataclasses.fields(AgentOpts)}
@@ -388,7 +386,6 @@ class TestParityWithAgent:
 
     def test_same_field_types_as_agent_run_options(self):
         from agno.agent._run_options import ResolvedRunOptions as AgentOpts
-
         from agno.team._run_options import ResolvedRunOptions as TeamOpts
 
         agent_types = {f.name: f.type for f in dataclasses.fields(AgentOpts)}
