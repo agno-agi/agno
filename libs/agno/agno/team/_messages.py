@@ -52,17 +52,24 @@ from agno.utils.team import (
 from agno.utils.timer import Timer
 
 
-def get_members_system_message_content(team: "Team", indent: int = 0) -> str:
+def get_members_system_message_content(team: "Team", indent: int = 0, run_context: Optional[RunContext] = None) -> str:
     from agno.team.team import Team
+    from agno.utils.callables import get_resolved_members
+
+    resolved_members = get_resolved_members(team, run_context)
+    if resolved_members is None:
+        return ""
 
     system_message_content = ""
-    for idx, member in enumerate(team.members):
+    for idx, member in enumerate(resolved_members):
         url_safe_member_id = get_member_id(member)
 
         if isinstance(member, Team):
             system_message_content += f"{indent * ' '} - Team: {member.name}\n"
             system_message_content += f"{indent * ' '} - ID: {url_safe_member_id}\n"
             if member.members is not None:
+                # Don't pass run_context to subteams: run_context.members belongs to the
+                # parent team and would cause the subteam to show the parent's members.
                 system_message_content += member.get_members_system_message_content(indent=indent + 2)
         else:
             system_message_content += f"{indent * ' '} - Agent {idx + 1}:\n"
@@ -72,7 +79,12 @@ def get_members_system_message_content(team: "Team", indent: int = 0) -> str:
                 system_message_content += f"{indent * ' '}   - Name: {member.name}\n"
             if member.role is not None:
                 system_message_content += f"{indent * ' '}   - Role: {member.role}\n"
-            if member.tools is not None and member.tools != [] and team.add_member_tools_to_context:
+            if (
+                member.tools is not None
+                and isinstance(member.tools, list)
+                and member.tools != []
+                and team.add_member_tools_to_context
+            ):
                 system_message_content += f"{indent * ' '}   - Member tools:\n"
                 for _tool in member.tools:
                     if isinstance(_tool, Toolkit):
@@ -212,22 +224,46 @@ def get_system_message(
     if team.name is not None and team.add_name_to_context:
         additional_information.append(f"Your name is: {team.name}.")
 
+    from agno.utils.callables import get_resolved_knowledge, get_resolved_members
+
+    resolved_members = get_resolved_members(team, run_context)
+    resolved_knowledge = get_resolved_knowledge(team, run_context)
+
     # 2 Build the default system message for the Agent.
     system_message_content: str = ""
-    if team.members is not None and len(team.members) > 0:
+    if resolved_members is not None and len(resolved_members) > 0:
         system_message_content += "You are the leader of a team and sub-teams of AI Agents.\n"
         system_message_content += "Your task is to coordinate the team to complete the user's request.\n"
 
         system_message_content += "\nHere are the members in your team:\n"
         system_message_content += "<team_members>\n"
-        system_message_content += team.get_members_system_message_content()
+        system_message_content += team.get_members_system_message_content(run_context=run_context)
         if team.get_member_information_tool:
             system_message_content += "If you need to get information about your team members, you can use the `get_member_information` tool at any time.\n"
         system_message_content += "</team_members>\n"
 
         system_message_content += "\n<how_to_respond>\n"
 
-        if team.delegate_to_all_members:
+        from agno.team.mode import TeamMode
+
+        if team.mode == TeamMode.tasks:
+            system_message_content += (
+                "You are operating in autonomous task mode. Your job is to:\n"
+                "1. Analyze the user's goal and decompose it into discrete tasks using `create_task`\n"
+                "2. Execute tasks by delegating to team members using `execute_task`\n"
+                "3. Use `execute_tasks_parallel` when multiple tasks have no dependencies on each other\n"
+                "4. Monitor progress using `list_tasks`\n"
+                "5. Use `add_task_note` to record observations or communicate about tasks\n"
+                "6. When all tasks are complete, call `mark_all_complete` with a summary\n\n"
+                "Guidelines:\n"
+                "- Create tasks with clear, actionable titles and descriptions\n"
+                "- Set dependencies (depends_on) when tasks must be done in order\n"
+                "- Assign tasks to the most capable member based on their role and tools\n"
+                "- Prefer `execute_tasks_parallel` for independent tasks to maximize throughput\n"
+                "- Review task results before marking the overall goal as complete\n"
+                "- If a task fails, decide whether to retry, reassign, or take a different approach\n"
+            )
+        elif team.delegate_to_all_members:
             system_message_content += (
                 "- You can either respond directly or use the `delegate_task_to_members` tool to delegate a task to all members in your team to get a collaborative response.\n"
                 "- To delegate a task to all members in your team, call `delegate_task_to_members` ONLY once. This will delegate a task to all members in your team.\n"
@@ -320,9 +356,19 @@ def get_system_message(
             "You should ALWAYS prefer information from this conversation over the past summary.\n\n"
         )
 
+    # Add learnings to the system prompt
+    if team._learning is not None and team.add_learnings_to_context:
+        learning_context = team._learning.build_context(
+            user_id=user_id,
+            session_id=session.session_id if session else None,
+            team_id=team.id,
+        )
+        if learning_context:
+            system_message_content += learning_context + "\n"
+
     # Add search_knowledge instructions to the system prompt
-    if team.knowledge is not None and team.search_knowledge and team.add_search_knowledge_instructions:
-        build_context_fn = getattr(team.knowledge, "build_context", None)
+    if resolved_knowledge is not None and team.search_knowledge and team.add_search_knowledge_instructions:
+        build_context_fn = getattr(resolved_knowledge, "build_context", None)
         if callable(build_context_fn):
             knowledge_context = build_context_fn(
                 enable_agentic_filters=team.enable_agentic_knowledge_filters,
@@ -516,22 +562,46 @@ async def aget_system_message(
     if team.name is not None and team.add_name_to_context:
         additional_information.append(f"Your name is: {team.name}.")
 
+    from agno.utils.callables import get_resolved_knowledge, get_resolved_members
+
+    resolved_members = get_resolved_members(team, run_context)
+    resolved_knowledge = get_resolved_knowledge(team, run_context)
+
     # 2 Build the default system message for the Agent.
     system_message_content: str = ""
-    if team.members is not None and len(team.members) > 0:
+    if resolved_members is not None and len(resolved_members) > 0:
         system_message_content += "You are the leader of a team and sub-teams of AI Agents.\n"
         system_message_content += "Your task is to coordinate the team to complete the user's request.\n"
 
         system_message_content += "\nHere are the members in your team:\n"
         system_message_content += "<team_members>\n"
-        system_message_content += team.get_members_system_message_content()
+        system_message_content += team.get_members_system_message_content(run_context=run_context)
         if team.get_member_information_tool:
             system_message_content += "If you need to get information about your team members, you can use the `get_member_information` tool at any time.\n"
         system_message_content += "</team_members>\n"
 
         system_message_content += "\n<how_to_respond>\n"
 
-        if team.delegate_to_all_members:
+        from agno.team.mode import TeamMode
+
+        if team.mode == TeamMode.tasks:
+            system_message_content += (
+                "You are operating in autonomous task mode. Your job is to:\n"
+                "1. Analyze the user's goal and decompose it into discrete tasks using `create_task`\n"
+                "2. Execute tasks by delegating to team members using `execute_task`\n"
+                "3. Use `execute_tasks_parallel` when multiple tasks have no dependencies on each other\n"
+                "4. Monitor progress using `list_tasks`\n"
+                "5. Use `add_task_note` to record observations or communicate about tasks\n"
+                "6. When all tasks are complete, call `mark_all_complete` with a summary\n\n"
+                "Guidelines:\n"
+                "- Create tasks with clear, actionable titles and descriptions\n"
+                "- Set dependencies (depends_on) when tasks must be done in order\n"
+                "- Assign tasks to the most capable member based on their role and tools\n"
+                "- Prefer `execute_tasks_parallel` for independent tasks to maximize throughput\n"
+                "- Review task results before marking the overall goal as complete\n"
+                "- If a task fails, decide whether to retry, reassign, or take a different approach\n"
+            )
+        elif team.delegate_to_all_members:
             system_message_content += (
                 "- You can either respond directly or use the `delegate_task_to_members` tool to delegate a task to all members in your team to get a collaborative response.\n"
                 "- To delegate a task to all members in your team, call `delegate_task_to_members` ONLY once. This will delegate a task to all members in your team.\n"
@@ -624,9 +694,19 @@ async def aget_system_message(
             "You should ALWAYS prefer information from this conversation over the past summary.\n\n"
         )
 
+    # Add learnings to the system prompt
+    if team._learning is not None and team.add_learnings_to_context:
+        learning_context = await team._learning.abuild_context(
+            user_id=user_id,
+            session_id=session.session_id if session else None,
+            team_id=team.id,
+        )
+        if learning_context:
+            system_message_content += learning_context + "\n"
+
     # Add search_knowledge instructions to the system prompt
-    if team.knowledge is not None and team.search_knowledge and team.add_search_knowledge_instructions:
-        build_context_fn = getattr(team.knowledge, "build_context", None)
+    if resolved_knowledge is not None and team.search_knowledge and team.add_search_knowledge_instructions:
+        build_context_fn = getattr(resolved_knowledge, "build_context", None)
         if callable(build_context_fn):
             knowledge_context = build_context_fn(
                 enable_agentic_filters=team.enable_agentic_knowledge_filters,
@@ -1343,6 +1423,10 @@ def _get_messages_for_parser_model_stream(
 
 def _get_messages_for_output_model(team: "Team", messages: List[Message]) -> List[Message]:
     """Get the messages for the output model."""
+    from copy import deepcopy
+
+    # Copy the list and messages to avoid mutating the originals
+    messages = [deepcopy(m) for m in messages]
 
     if team.output_model_prompt is not None:
         system_message_exists = False
