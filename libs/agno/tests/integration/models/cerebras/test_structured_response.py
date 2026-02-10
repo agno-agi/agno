@@ -24,7 +24,7 @@ class MovieScript(BaseModel):
 
 def test_structured_response():
     structured_output_agent = Agent(
-        model=Cerebras(id="qwen-3-32b", retries=3, delay_between_retries=5, exponential_backoff=True),
+        model=Cerebras(id="qwen-3-32b"),
         description="You help people write movie scripts.",
         output_schema=MovieScript,
     )
@@ -52,7 +52,7 @@ def test_structured_response_with_enum_fields():
         rating: Grade
 
     structured_output_agent = Agent(
-        model=Cerebras(id="qwen-3-32b", retries=3, delay_between_retries=5, exponential_backoff=True),
+        model=Cerebras(id="qwen-3-32b"),
         description="You help generate recipe names and ratings.",
         output_schema=Recipe,
     )
@@ -71,7 +71,7 @@ def test_structured_response_strict_output_false():
         name: str = Field(..., description="Give a name to this movie")
 
     guided_output_agent = Agent(
-        model=Cerebras(id="qwen-3-32b", strict_output=False, retries=3, delay_between_retries=5, exponential_backoff=True),
+        model=Cerebras(id="qwen-3-32b", strict_output=False),
         description="You write movie scripts.",
         output_schema=MovieScriptWithDict,
     )
@@ -96,7 +96,7 @@ def test_structured_response_with_nested_objects():
         address: Address = Field(..., description="Person's address")
 
     agent = Agent(
-        model=Cerebras(id="zai-glm-4.7", retries=3, delay_between_retries=5, exponential_backoff=True),
+        model=Cerebras(id="zai-glm-4.7"),
         description="You generate person profiles.",
         output_schema=Person,
     )
@@ -124,7 +124,7 @@ def test_structured_response_with_list_of_objects():
         tasks: List[Task] = Field(..., description="List of tasks")
 
     agent = Agent(
-        model=Cerebras(id="zai-glm-4.7", retries=3, delay_between_retries=5, exponential_backoff=True),
+        model=Cerebras(id="zai-glm-4.7"),
         description="You create todo lists.",
         output_schema=TodoList,
     )

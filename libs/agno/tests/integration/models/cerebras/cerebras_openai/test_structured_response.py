@@ -24,7 +24,7 @@ class MovieScript(BaseModel):
 
 def test_structured_response():
     structured_output_agent = Agent(
-        model=CerebrasOpenAI(id="gpt-oss-120b", retries=3, delay_between_retries=5, exponential_backoff=True),
+        model=CerebrasOpenAI(id="gpt-oss-120b"),
         description="You help people write movie scripts.",
         output_schema=MovieScript,
     )
@@ -52,7 +52,7 @@ def test_structured_response_with_enum_fields():
         rating: Grade
 
     structured_output_agent = Agent(
-        model=CerebrasOpenAI(id="gpt-oss-120b", retries=3, delay_between_retries=5, exponential_backoff=True),
+        model=CerebrasOpenAI(id="gpt-oss-120b"),
         description="You help generate recipe names and ratings.",
         output_schema=Recipe,
     )
@@ -65,7 +65,7 @@ def test_structured_response_with_enum_fields():
 def test_structured_response_strict_output_false():
     """Test structured response with strict_output=False (guided mode)"""
     guided_output_agent = Agent(
-        model=CerebrasOpenAI(id="gpt-oss-120b", strict_output=False, retries=3, delay_between_retries=5, exponential_backoff=True),
+        model=CerebrasOpenAI(id="gpt-oss-120b", strict_output=False),
         description="You write movie scripts.",
         output_schema=MovieScript,
     )

@@ -19,7 +19,7 @@ def _assert_metrics(response: RunOutput):
 
 
 def test_basic():
-    agent = Agent(model=CerebrasOpenAI(id="gpt-oss-120b", retries=3, delay_between_retries=5, exponential_backoff=True), markdown=True, telemetry=False)
+    agent = Agent(model=CerebrasOpenAI(id="gpt-oss-120b"), markdown=True, telemetry=False)
 
     response: RunOutput = agent.run("Share a 2 sentence horror story")
 
@@ -31,7 +31,7 @@ def test_basic():
 
 
 def test_basic_stream():
-    agent = Agent(model=CerebrasOpenAI(id="gpt-oss-120b", retries=3, delay_between_retries=5, exponential_backoff=True), markdown=True, telemetry=False)
+    agent = Agent(model=CerebrasOpenAI(id="gpt-oss-120b"), markdown=True, telemetry=False)
 
     response_stream = agent.run("Share a 2 sentence horror story", stream=True)
 
@@ -46,7 +46,7 @@ def test_basic_stream():
 
 @pytest.mark.asyncio
 async def test_async_basic():
-    agent = Agent(model=CerebrasOpenAI(id="gpt-oss-120b", retries=3, delay_between_retries=5, exponential_backoff=True), markdown=True, telemetry=False)
+    agent = Agent(model=CerebrasOpenAI(id="gpt-oss-120b"), markdown=True, telemetry=False)
 
     response = await agent.arun("Share a 2 sentence horror story")
 
@@ -58,7 +58,7 @@ async def test_async_basic():
 
 @pytest.mark.asyncio
 async def test_async_basic_stream():
-    agent = Agent(model=CerebrasOpenAI(id="gpt-oss-120b", retries=3, delay_between_retries=5, exponential_backoff=True), markdown=True, telemetry=False)
+    agent = Agent(model=CerebrasOpenAI(id="gpt-oss-120b"), markdown=True, telemetry=False)
 
     async for response in agent.arun("Share a 2 sentence horror story", stream=True):
         assert response.content is not None or response.reasoning_content is not None
@@ -67,7 +67,7 @@ async def test_async_basic_stream():
 def test_with_memory():
     agent = Agent(
         db=SqliteDb(db_file="tmp/test_with_memory.db"),
-        model=CerebrasOpenAI(id="gpt-oss-120b", retries=3, delay_between_retries=5, exponential_backoff=True),
+        model=CerebrasOpenAI(id="gpt-oss-120b"),
         add_history_to_context=True,
         num_history_runs=5,
         markdown=True,
@@ -99,7 +99,7 @@ def test_structured_output():
         plot: str = Field(..., description="Brief plot summary")
 
     agent = Agent(
-        model=CerebrasOpenAI(id="gpt-oss-120b", retries=3, delay_between_retries=5, exponential_backoff=True),
+        model=CerebrasOpenAI(id="gpt-oss-120b"),
         output_schema=MovieScript,
         telemetry=False,
     )

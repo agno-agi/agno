@@ -9,7 +9,7 @@ from agno.models.cerebras import Cerebras
 @pytest.fixture(scope="module")
 def cerebras_model():
     """Fixture that provides a Cerebras model and reuses it across all tests in the module."""
-    return Cerebras(id="gpt-oss-120b", retries=3, delay_between_retries=5, exponential_backoff=True)
+    return Cerebras(id="gpt-oss-120b")
 
 
 def _assert_metrics(response: RunOutput):
@@ -124,7 +124,6 @@ def test_history(cerebras_model):
         model=cerebras_model,
         db=SqliteDb(db_file="tmp/cerebras/test_basic.db"),
         add_history_to_context=True,
-        store_history_messages=True,
         telemetry=False,
     )
     run_output = agent.run("Hello")
