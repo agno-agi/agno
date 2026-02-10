@@ -238,7 +238,7 @@ SCHEDULE_TABLE_SCHEMA = {
 
 SCHEDULE_RUNS_TABLE_SCHEMA = {
     "id": {"type": String, "primary_key": True, "nullable": False},
-    "schedule_id": {"type": String, "nullable": False, "index": True},
+    "schedule_id": {"type": String, "nullable": False, "index": True, "foreign_key": "schedules.id"},
     "attempt": {"type": BigInteger, "nullable": False},
     "triggered_at": {"type": BigInteger, "nullable": True},
     "completed_at": {"type": BigInteger, "nullable": True},
