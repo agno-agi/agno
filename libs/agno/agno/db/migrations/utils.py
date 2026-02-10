@@ -8,12 +8,10 @@ def quote_db_identifier(db_type: str, identifier: str) -> str:
     Returns:
         The properly quoted identifier string
     """
-    if db_type in ("PostgresDb", "AsyncPostgresDb"):
-        return f'"{identifier}"'
-    elif db_type in ("MySQLDb", "AsyncMySQLDb", "SingleStoreDb"):
-        return f"`{identifier}`"
-    elif db_type in ("SqliteDb", "AsyncSqliteDb"):
-        return f'"{identifier}"'
+    if db_type in ("MySQLDb", "AsyncMySQLDb", "SingleStoreDb"):
+        escaped = identifier.replace("`", "``")
+        return f"`{escaped}`"
     else:
-        # Default to double quotes for unknown types
-        return f'"{identifier}"'
+        # Postgres, SQLite, and unknown types all use double-quote identifiers
+        escaped = identifier.replace('"', '""')
+        return f'"{escaped}"'
