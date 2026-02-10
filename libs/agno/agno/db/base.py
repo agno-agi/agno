@@ -1003,7 +1003,7 @@ class BaseDb(ABC):
         """Create a schedule run record."""
         raise NotImplementedError
 
-    def update_schedule_run(self, run_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+    def update_schedule_run(self, schedule_run_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
         """Update a schedule run record."""
         raise NotImplementedError
 
@@ -1647,7 +1647,7 @@ class AsyncBaseDb(ABC):
         """Create a schedule run record."""
         raise NotImplementedError
 
-    async def update_schedule_run(self, run_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+    async def update_schedule_run(self, schedule_run_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
         """Update a schedule run record."""
         raise NotImplementedError
 
