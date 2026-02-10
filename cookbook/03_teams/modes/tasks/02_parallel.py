@@ -4,7 +4,6 @@ Parallel Tasks Execution Example
 Demonstrates task mode with parallel execution. The team leader creates
 independent tasks that can run concurrently, then synthesizes results.
 
-Run: .venvs/demo/bin/python cookbook/03_teams/modes/tasks/02_parallel.py
 """
 
 from agno.agent import Agent
