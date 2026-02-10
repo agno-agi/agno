@@ -5,7 +5,6 @@ Demonstrates broadcast mode for gathering information from multiple sources
 simultaneously. Each agent specializes in a different source, and the leader
 merges findings into a comprehensive report.
 
-Run: .venvs/demo/bin/python cookbook/03_teams/modes/broadcast/03_research_sweep.py
 """
 
 from agno.agent import Agent
