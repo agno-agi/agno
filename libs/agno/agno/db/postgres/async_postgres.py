@@ -3248,15 +3248,15 @@ class AsyncPostgresDb(AsyncBaseDb):
             log_error(f"Error creating schedule run: {e}")
             raise
 
-    async def update_schedule_run(self, run_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+    async def update_schedule_run(self, schedule_run_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
         try:
             table = await self._get_table(table_type="schedule_runs")
             if table is None:
                 return None
             async with self.async_session_factory() as sess:
                 async with sess.begin():
-                    await sess.execute(table.update().where(table.c.id == run_id).values(**kwargs))
-            return await self.get_schedule_run(run_id)
+                    await sess.execute(table.update().where(table.c.id == schedule_run_id).values(**kwargs))
+            return await self.get_schedule_run(schedule_run_id)
         except Exception as e:
             log_debug(f"Error updating schedule run: {e}")
             return None
