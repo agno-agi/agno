@@ -3001,6 +3001,7 @@ def _handle_team_tool_call_updates(
         elif _t.tool_name == "get_user_input" and _t.requires_user_input is not None and _t.requires_user_input is True:
             handle_get_user_input_tool_update(team, run_messages=run_messages, tool=_t)  # type: ignore
             _t.requires_user_input = False
+            _t.answered = True
 
         # Case 4: Handle user input required tools
         elif _t.requires_user_input is not None and _t.requires_user_input is True:
@@ -3229,9 +3230,15 @@ async def _aroute_requirements_to_members(
             return f"[{member.name or member_id}]: {content}"
 
     tasks = [_continue_member(mid, reqs) for mid, reqs in member_reqs.items()]
-    results = await asyncio.gather(*tasks)
+    results = await asyncio.gather(*tasks, return_exceptions=True)
 
-    return [r for r in results if r is not None]
+    member_results: List[str] = []
+    for r in results:
+        if isinstance(r, BaseException):
+            log_warning(f"Member continue_run failed: {r}")
+        elif isinstance(r, str):
+            member_results.append(r)
+    return member_results
 
 
 def _build_continuation_message(member_results: List[str]) -> str:
@@ -3392,6 +3399,20 @@ def continue_run_dispatch(
 
     # Handle team-level tool resolution
     if has_team_level:
+        # Guard: if team-level requirements are unresolved, re-pause instead of auto-rejecting
+        unresolved_team = [
+            r
+            for r in (run_response.requirements or [])
+            if getattr(r, "member_agent_id", None) is None and not r.is_resolved()
+        ]
+        if unresolved_team:
+            from agno.team import _hooks
+
+            if opts.stream:
+                return _hooks.handle_team_run_paused_stream(team, run_response=run_response, session=team_session)  # type: ignore
+            else:
+                return _hooks.handle_team_run_paused(team, run_response=run_response, session=team_session)
+
         response_format = get_response_format(team, run_context=run_context) if team.parser_model is None else None
         team.model = cast(Model, team.model)
 
@@ -3442,7 +3463,7 @@ def continue_run_dispatch(
                 **kwargs,
             )
         else:
-            return _continue_run_impl(
+            return _continue_run(
                 team,
                 run_response=run_response,
                 run_messages=run_messages,
@@ -3471,6 +3492,9 @@ def continue_run_dispatch(
                 stream_events=opts.stream_events,
                 session_id=session_id,
                 user_id=user_id,
+                knowledge_filters=knowledge_filters,
+                dependencies=dependencies,
+                metadata=metadata,
                 debug_mode=debug_mode,
                 **kwargs,
             )
@@ -3480,6 +3504,9 @@ def continue_run_dispatch(
                 stream=False,
                 session_id=session_id,
                 user_id=user_id,
+                knowledge_filters=knowledge_filters,
+                dependencies=dependencies,
+                metadata=metadata,
                 debug_mode=debug_mode,
                 **kwargs,
             )
@@ -3490,7 +3517,7 @@ def continue_run_dispatch(
     return run_response
 
 
-def _continue_run_impl(
+def _continue_run(
     team: "Team",
     run_response: TeamRunOutput,
     run_messages: RunMessages,
@@ -3522,8 +3549,17 @@ def _continue_run_impl(
         parse_response_with_parser_model,
     )
     from agno.team._telemetry import log_team_telemetry
+    from agno.utils.events import create_team_run_continued_event
 
     register_run(run_response.run_id)  # type: ignore
+
+    # Emit RunContinued event (matching streaming variant behaviour)
+    handle_event(
+        create_team_run_continued_event(run_response),
+        run_response,
+        events_to_skip=team.events_to_skip,
+        store_events=team.store_events,
+    )
 
     team.model = cast(Model, team.model)
 
@@ -3928,7 +3964,7 @@ def acontinue_run_dispatch(  # type: ignore
 ) -> Union[TeamRunOutput, AsyncIterator[Union[TeamRunOutputEvent, RunOutputEvent, TeamRunOutput]]]:
     """Continue a paused team run (async entry point).
 
-    Routes to _acontinue_run_impl or _acontinue_run_stream_impl based on stream option.
+    Routes to _acontinue_run or _acontinue_run_stream based on stream option.
     """
     from agno.team._init import _initialize_session
     from agno.team._response import get_response_format
@@ -3991,7 +4027,7 @@ def acontinue_run_dispatch(  # type: ignore
     response_format = get_response_format(team, run_context=run_context) if team.parser_model is None else None
 
     if opts.stream:
-        return _acontinue_run_stream_impl(
+        return _acontinue_run_stream(
             team,
             run_response=run_response,
             run_context=run_context,
@@ -4007,7 +4043,7 @@ def acontinue_run_dispatch(  # type: ignore
             **kwargs,
         )
     else:
-        return _acontinue_run_impl(  # type: ignore
+        return _acontinue_run(  # type: ignore
             team,
             run_response=run_response,
             run_context=run_context,
@@ -4022,7 +4058,7 @@ def acontinue_run_dispatch(  # type: ignore
         )
 
 
-async def _acontinue_run_impl(
+async def _acontinue_run(
     team: "Team",
     session_id: str,
     run_context: RunContext,
@@ -4089,6 +4125,18 @@ async def _acontinue_run_impl(
                     elif updated_tools:
                         run_response.tools = updated_tools
 
+                await aregister_run(run_response.run_id)  # type: ignore
+
+                # Emit RunContinued event (matching streaming variant behaviour)
+                from agno.utils.events import create_team_run_continued_event
+
+                handle_event(
+                    create_team_run_continued_event(run_response),
+                    run_response,
+                    events_to_skip=team.events_to_skip,
+                    store_events=team.store_events,
+                )
+
                 has_member = _has_member_requirements(run_response.requirements or [])
                 has_team_level = _has_team_level_requirements(run_response.requirements or [])
 
@@ -4122,6 +4170,19 @@ async def _acontinue_run_impl(
 
                 # Handle team-level tool resolution
                 if has_team_level:
+                    # Guard: if team-level requirements are unresolved, re-pause instead of auto-rejecting
+                    unresolved_team = [
+                        r
+                        for r in (run_response.requirements or [])
+                        if getattr(r, "member_agent_id", None) is None and not r.is_resolved()
+                    ]
+                    if unresolved_team:
+                        from agno.team import _hooks
+
+                        return await _hooks.ahandle_team_run_paused(
+                            team, run_response=run_response, session=team_session
+                        )
+
                     team.model = cast(Model, team.model)
                     await _check_and_refresh_mcp_tools(team)
 
@@ -4146,8 +4207,6 @@ async def _acontinue_run_impl(
 
                     run_response.status = RunStatus.running
                     run_response.content = None
-
-                    await aregister_run(run_response.run_id)  # type: ignore
 
                     # Get model response
                     model_response: ModelResponse = await team.model.aresponse(
@@ -4201,6 +4260,9 @@ async def _acontinue_run_impl(
                         stream=False,
                         session_id=session_id,
                         user_id=user_id,
+                        knowledge_filters=run_context.knowledge_filters,
+                        dependencies=run_context.dependencies,
+                        metadata=run_context.metadata,
                         debug_mode=debug_mode,
                         **kwargs,
                     )
@@ -4292,7 +4354,7 @@ async def _acontinue_run_impl(
     return run_response  # type: ignore
 
 
-async def _acontinue_run_stream_impl(
+async def _acontinue_run_stream(
     team: "Team",
     session_id: str,
     run_context: RunContext,
@@ -4360,6 +4422,8 @@ async def _acontinue_run_stream_impl(
                     elif updated_tools:
                         run_response.tools = updated_tools
 
+                await aregister_run(run_response.run_id)  # type: ignore
+
                 has_member = _has_member_requirements(run_response.requirements or [])
                 has_team_level = _has_team_level_requirements(run_response.requirements or [])
 
@@ -4395,6 +4459,23 @@ async def _acontinue_run_stream_impl(
                         return
 
                 if has_team_level:
+                    # Guard: if team-level requirements are unresolved, re-pause instead of auto-rejecting
+                    unresolved_team = [
+                        r
+                        for r in (run_response.requirements or [])
+                        if getattr(r, "member_agent_id", None) is None and not r.is_resolved()
+                    ]
+                    if unresolved_team:
+                        from agno.team import _hooks
+
+                        async for item in _hooks.ahandle_team_run_paused_stream(
+                            team, run_response=run_response, session=team_session
+                        ):
+                            yield item
+                        if yield_run_output:
+                            yield run_response
+                        return
+
                     team.model = cast(Model, team.model)
                     await _check_and_refresh_mcp_tools(team)
 
@@ -4421,7 +4502,6 @@ async def _acontinue_run_stream_impl(
 
                     run_response.status = RunStatus.running
                     run_response.content = None
-                    await aregister_run(run_response.run_id)  # type: ignore
 
                     # Yield RunContinued event
                     if stream_events:
@@ -4517,6 +4597,9 @@ async def _acontinue_run_stream_impl(
                         stream_events=stream_events,
                         session_id=session_id,
                         user_id=user_id,
+                        knowledge_filters=run_context.knowledge_filters,
+                        dependencies=run_context.dependencies,
+                        metadata=run_context.metadata,
                         debug_mode=debug_mode,
                         **kwargs,
                     ):
