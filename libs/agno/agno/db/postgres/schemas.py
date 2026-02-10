@@ -259,6 +259,27 @@ SCHEDULE_RUNS_TABLE_SCHEMA = {
     "created_at": {"type": BigInteger, "nullable": False, "index": True},
 }
 
+APPROVAL_TABLE_SCHEMA = {
+    "id": {"type": String, "primary_key": True, "nullable": False},
+    "run_id": {"type": String, "nullable": False, "index": True},
+    "session_id": {"type": String, "nullable": False, "index": True},
+    "status": {"type": String, "nullable": False, "index": True},
+    "source_type": {"type": String, "nullable": False, "index": True},
+    "agent_id": {"type": String, "nullable": True, "index": True},
+    "team_id": {"type": String, "nullable": True, "index": True},
+    "workflow_id": {"type": String, "nullable": True, "index": True},
+    "user_id": {"type": String, "nullable": True, "index": True},
+    "schedule_id": {"type": String, "nullable": True, "index": True},
+    "schedule_run_id": {"type": String, "nullable": True, "index": True},
+    "source_name": {"type": String, "nullable": True},
+    "requirements": {"type": JSONB, "nullable": True},
+    "context": {"type": JSONB, "nullable": True},
+    "resolved_by": {"type": String, "nullable": True},
+    "resolved_at": {"type": BigInteger, "nullable": True},
+    "created_at": {"type": BigInteger, "nullable": False, "index": True},
+    "updated_at": {"type": BigInteger, "nullable": True},
+}
+
 
 def get_table_schema_definition(
     table_type: str, traces_table_name: str = "agno_traces", db_schema: str = "agno"
@@ -293,6 +314,7 @@ def get_table_schema_definition(
         "learnings": LEARNINGS_TABLE_SCHEMA,
         "schedules": SCHEDULE_TABLE_SCHEMA,
         "schedule_runs": SCHEDULE_RUNS_TABLE_SCHEMA,
+        "approvals": APPROVAL_TABLE_SCHEMA,
     }
 
     schema = schemas.get(table_type, {})

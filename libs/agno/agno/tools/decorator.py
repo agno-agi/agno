@@ -71,6 +71,7 @@ def tool(
     user_input_fields: Optional[List[str]] = None,
     external_execution: Optional[bool] = None,
     external_execution_silent: Optional[bool] = None,
+    requires_approval: Optional[bool] = None,
     pre_hook: Optional[Callable] = None,
     post_hook: Optional[Callable] = None,
     tool_hooks: Optional[List[Callable]] = None,
@@ -100,6 +101,7 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
         user_input_fields: Optional[List[str]] - List of fields that will be provided to the function as user input
         external_execution: Optional[bool] - If True, the function will be executed outside of the agent's context
         external_execution_silent: Optional[bool] - If True (and external_execution=True), suppresses verbose paused messages (e.g., "I have tools to execute...")
+        requires_approval: Optional[bool] - If True, an approval record is created when this tool pauses a run. Implies requires_confirmation=True.
         pre_hook: Optional[Callable] - Hook that runs before the function is executed.
         post_hook: Optional[Callable] - Hook that runs after the function is executed.
         tool_hooks: Optional[List[Callable]] - List of hooks that run before and after the function is executed.
@@ -138,6 +140,7 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
             "user_input_fields",
             "external_execution",
             "external_execution_silent",
+            "requires_approval",
             "pre_hook",
             "post_hook",
             "tool_hooks",
@@ -166,6 +169,10 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
         raise ValueError(
             "Only one of 'requires_user_input', 'requires_confirmation', or 'external_execution' can be set to True at the same time."
         )
+
+    # requires_approval implies requires_confirmation when no other HITL flag is set
+    if kwargs.get("requires_approval") and true_flags_count == 0:
+        kwargs["requires_confirmation"] = True
 
     def decorator(func: F) -> Function:
         from inspect import isasyncgenfunction

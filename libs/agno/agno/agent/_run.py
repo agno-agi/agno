@@ -185,11 +185,16 @@ def handle_agent_run_paused(
     session: AgentSession,
     user_id: Optional[str] = None,
 ) -> RunOutput:
+    from agno.run.approval import create_approval_from_pause
+
     run_response.status = RunStatus.paused
     if not run_response.content:
         run_response.content = get_paused_content(run_response)
 
     cleanup_and_store(agent, run_response=run_response, session=session, user_id=user_id)
+    create_approval_from_pause(
+        db=agent.db, run_response=run_response, agent_id=agent.id, agent_name=agent.name, user_id=user_id
+    )
 
     log_debug(f"Agent Run Paused: {run_response.run_id}", center=True, symbol="*")
 
@@ -203,6 +208,8 @@ def handle_agent_run_paused_stream(
     session: AgentSession,
     user_id: Optional[str] = None,
 ) -> Iterator[RunOutputEvent]:
+    from agno.run.approval import create_approval_from_pause
+
     run_response.status = RunStatus.paused
     if not run_response.content:
         run_response.content = get_paused_content(run_response)
@@ -220,6 +227,9 @@ def handle_agent_run_paused_stream(
     )
 
     cleanup_and_store(agent, run_response=run_response, session=session, user_id=user_id)
+    create_approval_from_pause(
+        db=agent.db, run_response=run_response, agent_id=agent.id, agent_name=agent.name, user_id=user_id
+    )
 
     yield pause_event  # type: ignore
 
@@ -232,11 +242,16 @@ async def ahandle_agent_run_paused(
     session: AgentSession,
     user_id: Optional[str] = None,
 ) -> RunOutput:
+    from agno.run.approval import acreate_approval_from_pause
+
     run_response.status = RunStatus.paused
     if not run_response.content:
         run_response.content = get_paused_content(run_response)
 
     await acleanup_and_store(agent, run_response=run_response, session=session, user_id=user_id)
+    await acreate_approval_from_pause(
+        db=agent.db, run_response=run_response, agent_id=agent.id, agent_name=agent.name, user_id=user_id
+    )
 
     log_debug(f"Agent Run Paused: {run_response.run_id}", center=True, symbol="*")
 
@@ -250,6 +265,8 @@ async def ahandle_agent_run_paused_stream(
     session: AgentSession,
     user_id: Optional[str] = None,
 ) -> AsyncIterator[RunOutputEvent]:
+    from agno.run.approval import acreate_approval_from_pause
+
     run_response.status = RunStatus.paused
     if not run_response.content:
         run_response.content = get_paused_content(run_response)
@@ -267,6 +284,9 @@ async def ahandle_agent_run_paused_stream(
     )
 
     await acleanup_and_store(agent, run_response=run_response, session=session, user_id=user_id)
+    await acreate_approval_from_pause(
+        db=agent.db, run_response=run_response, agent_id=agent.id, agent_name=agent.name, user_id=user_id
+    )
 
     yield pause_event  # type: ignore
 

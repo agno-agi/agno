@@ -49,6 +49,7 @@ class BaseDb(ABC):
         learnings_table: Optional[str] = None,
         schedules_table: Optional[str] = None,
         schedule_runs_table: Optional[str] = None,
+        approvals_table: Optional[str] = None,
         id: Optional[str] = None,
     ):
         self.id = id or str(uuid4())
@@ -67,6 +68,7 @@ class BaseDb(ABC):
         self.learnings_table_name = learnings_table or "agno_learnings"
         self.schedules_table_name = schedules_table or "agno_schedules"
         self.schedule_runs_table_name = schedule_runs_table or "agno_schedule_runs"
+        self.approvals_table_name = approvals_table or "agno_approvals"
 
     def to_dict(self) -> Dict[str, Any]:
         """
@@ -89,6 +91,7 @@ class BaseDb(ABC):
             "learnings_table": self.learnings_table_name,
             "schedules_table": self.schedules_table_name,
             "schedule_runs_table": self.schedule_runs_table_name,
+            "approvals_table": self.approvals_table_name,
         }
 
     @classmethod
@@ -112,6 +115,7 @@ class BaseDb(ABC):
             learnings_table=data.get("learnings_table"),
             schedules_table=data.get("schedules_table"),
             schedule_runs_table=data.get("schedule_runs_table"),
+            approvals_table=data.get("approvals_table"),
             id=data.get("id"),
         )
 
@@ -1020,6 +1024,47 @@ class BaseDb(ABC):
         """List runs for a schedule."""
         raise NotImplementedError
 
+    # --- Approvals (Optional) ---
+    # These methods are optional. Override in subclasses to enable approval persistence.
+
+    def create_approval(self, approval_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Create an approval record."""
+        raise NotImplementedError
+
+    def get_approval(self, approval_id: str) -> Optional[Dict[str, Any]]:
+        """Get an approval by ID."""
+        raise NotImplementedError
+
+    def get_approvals(
+        self,
+        status: Optional[str] = None,
+        source_type: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        schedule_id: Optional[str] = None,
+        run_id: Optional[str] = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """List approvals with optional filtering. Returns (items, total_count)."""
+        raise NotImplementedError
+
+    def update_approval(
+        self, approval_id: str, expected_status: Optional[str] = None, **kwargs: Any
+    ) -> Optional[Dict[str, Any]]:
+        """Update an approval. If expected_status is set, only updates if current status matches (atomic guard)."""
+        raise NotImplementedError
+
+    def delete_approval(self, approval_id: str) -> bool:
+        """Delete an approval by ID."""
+        raise NotImplementedError
+
+    def get_pending_approval_count(self, user_id: Optional[str] = None) -> int:
+        """Get count of pending approvals."""
+        raise NotImplementedError
+
 
 class AsyncBaseDb(ABC):
     """Base abstract class for all our async database implementations."""
@@ -1039,6 +1084,7 @@ class AsyncBaseDb(ABC):
         learnings_table: Optional[str] = None,
         schedules_table: Optional[str] = None,
         schedule_runs_table: Optional[str] = None,
+        approvals_table: Optional[str] = None,
     ):
         self.id = id or str(uuid4())
         self.session_table_name = session_table or "agno_sessions"
@@ -1053,6 +1099,7 @@ class AsyncBaseDb(ABC):
         self.learnings_table_name = learnings_table or "agno_learnings"
         self.schedules_table_name = schedules_table or "agno_schedules"
         self.schedule_runs_table_name = schedule_runs_table or "agno_schedule_runs"
+        self.approvals_table_name = approvals_table or "agno_approvals"
 
     async def _create_all_tables(self) -> None:
         """Create all tables for this database. Override in subclasses."""
@@ -1662,4 +1709,45 @@ class AsyncBaseDb(ABC):
         offset: int = 0,
     ) -> List[Dict[str, Any]]:
         """List runs for a schedule."""
+        raise NotImplementedError
+
+    # --- Approvals (Optional) ---
+    # These methods are optional. Override in subclasses to enable approval persistence.
+
+    async def create_approval(self, approval_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Create an approval record."""
+        raise NotImplementedError
+
+    async def get_approval(self, approval_id: str) -> Optional[Dict[str, Any]]:
+        """Get an approval by ID."""
+        raise NotImplementedError
+
+    async def get_approvals(
+        self,
+        status: Optional[str] = None,
+        source_type: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        schedule_id: Optional[str] = None,
+        run_id: Optional[str] = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """List approvals with optional filtering. Returns (items, total_count)."""
+        raise NotImplementedError
+
+    async def update_approval(
+        self, approval_id: str, expected_status: Optional[str] = None, **kwargs: Any
+    ) -> Optional[Dict[str, Any]]:
+        """Update an approval. If expected_status is set, only updates if current status matches (atomic guard)."""
+        raise NotImplementedError
+
+    async def delete_approval(self, approval_id: str) -> bool:
+        """Delete an approval by ID."""
+        raise NotImplementedError
+
+    async def get_pending_approval_count(self, user_id: Optional[str] = None) -> int:
+        """Get count of pending approvals."""
         raise NotImplementedError
