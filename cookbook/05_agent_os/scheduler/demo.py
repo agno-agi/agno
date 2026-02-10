@@ -14,22 +14,30 @@ from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.scheduler import ScheduleManager
+from agno.tools.websearch import WebSearchTools
 
 # --- Setup ---
+from agno.db.postgres import PostgresDb
+# --- Setup ---
 
-db = SqliteDb(id="scheduler-os-demo", db_file="tmp/scheduler_os_demo.db")
+db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
+
+db = PostgresDb(db_url=db_url)
 
 greeter = Agent(
-    name="Greeter",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    name="Greeter Agent",
+    id="greeter",
+    model=OpenAIChat(id="gpt-5"),
     instructions=["You are a friendly greeter."],
     db=db,
 )
 
 reporter = Agent(
-    name="Reporter",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    name="Reporter Agent",
+    id="reporter",
+    model=OpenAIChat(id="gpt-5"),
     instructions=["You summarize news headlines in 2-3 sentences."],
+    tools =[WebSearchTools()],
     db=db,
 )
 
@@ -40,7 +48,7 @@ mgr = ScheduleManager(db)
 # Create a schedule for the greeter agent (every 5 minutes)
 greet_schedule = mgr.create(
     name="greet-every-5-min",
-    cron="* * * * *",
+    cron="*/5 * * * *",
     endpoint="/agents/greeter/runs",
     payload={"message": "Say hello!"},
     description="Greet every 5 minutes",
@@ -53,7 +61,7 @@ print(
 # Create a schedule for the reporter agent (daily at 9 AM)
 report_schedule = mgr.create(
     name="daily-news-report",
-    cron="* * * * *",
+    cron="0 9 * * *",
     endpoint="/agents/reporter/runs",
     payload={"message": "Summarize today's top headlines."},
     description="Daily news summary at 9 AM UTC",
