@@ -4,7 +4,6 @@ Specialist Router Example
 Demonstrates routing to domain specialist agents. The team leader analyzes
 the user's question and routes it to the most qualified specialist.
 
-Run: .venvs/demo/bin/python cookbook/03_teams/modes/route/02_specialist_router.py
 """
 
 from agno.agent import Agent
