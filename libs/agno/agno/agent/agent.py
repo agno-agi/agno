@@ -1359,6 +1359,7 @@ class Agent:
         metadata: Optional[Dict[str, Any]] = None,
         output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
         debug_mode: Optional[bool] = None,
+        background: bool = False,
         **kwargs: Any,
     ) -> RunOutput: ...
 
@@ -1413,6 +1414,7 @@ class Agent:
         output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
         yield_run_output: Optional[bool] = None,
         debug_mode: Optional[bool] = None,
+        background: bool = False,
         **kwargs: Any,
     ) -> Union[RunOutput, AsyncIterator[RunOutputEvent]]:
         return _run.arun_dispatch(
@@ -1438,6 +1440,7 @@ class Agent:
             output_schema=output_schema,
             yield_run_output=yield_run_output,
             debug_mode=debug_mode,
+            background=background,
             **kwargs,
         )
 
