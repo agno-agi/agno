@@ -4,7 +4,6 @@ Tasks with Dependencies Example
 Demonstrates task mode with dependency chains. The team leader creates tasks
 where later tasks depend on earlier ones, ensuring correct execution order.
 
-Run: .venvs/demo/bin/python cookbook/03_teams/modes/tasks/03_dependencies.py
 """
 
 from agno.agent import Agent
