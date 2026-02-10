@@ -3,6 +3,7 @@
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+from agno.db.schemas.scheduler import Schedule, ScheduleRun
 from agno.scheduler.manager import ScheduleManager
 
 
@@ -42,7 +43,7 @@ class SchedulerConsole:
         """Create a SchedulerConsole from a database instance."""
         return cls(ScheduleManager(db))
 
-    def show_schedules(self, enabled: Optional[bool] = None) -> List[Dict[str, Any]]:
+    def show_schedules(self, enabled: Optional[bool] = None) -> List[Schedule]:
         """Display all schedules in a Rich table."""
         from rich.console import Console
         from rich.table import Table
@@ -59,20 +60,20 @@ class SchedulerConsole:
         table.add_column("ID", style="dim")
 
         for s in schedules:
-            enabled_str = "[green]Yes[/green]" if s.get("enabled") else "[red]No[/red]"
+            enabled_str = "[green]Yes[/green]" if s.enabled else "[red]No[/red]"
             table.add_row(
-                s["name"],
-                s["cron_expr"],
-                f"{s['method']} {s['endpoint']}",
+                s.name,
+                s.cron_expr,
+                f"{s.method} {s.endpoint}",
                 enabled_str,
-                _ts(s.get("next_run_at")),
-                s["id"][:8] + "...",
+                _ts(s.next_run_at),
+                s.id[:8] + "...",
             )
 
         console.print(table)
         return schedules
 
-    def show_schedule(self, schedule_id: str) -> Optional[Dict[str, Any]]:
+    def show_schedule(self, schedule_id: str) -> Optional[Schedule]:
         """Display a single schedule in a Rich panel."""
         from rich.console import Console
         from rich.panel import Panel
@@ -87,23 +88,23 @@ class SchedulerConsole:
         info = Table.grid(padding=(0, 2))
         info.add_column(style="bold")
         info.add_column()
-        info.add_row("ID:", schedule["id"])
-        info.add_row("Name:", schedule["name"])
-        info.add_row("Description:", schedule.get("description") or "-")
-        info.add_row("Cron:", schedule["cron_expr"])
-        info.add_row("Timezone:", schedule.get("timezone", "UTC"))
-        info.add_row("Endpoint:", f"{schedule['method']} {schedule['endpoint']}")
-        info.add_row("Enabled:", "[green]Yes[/green]" if schedule.get("enabled") else "[red]No[/red]")
-        info.add_row("Next Run:", _ts(schedule.get("next_run_at")))
-        info.add_row("Timeout:", f"{schedule.get('timeout_seconds', 3600)}s")
-        info.add_row("Max Retries:", str(schedule.get("max_retries", 0)))
-        info.add_row("Created:", _ts(schedule.get("created_at")))
-        info.add_row("Updated:", _ts(schedule.get("updated_at")))
+        info.add_row("ID:", schedule.id)
+        info.add_row("Name:", schedule.name)
+        info.add_row("Description:", schedule.description or "-")
+        info.add_row("Cron:", schedule.cron_expr)
+        info.add_row("Timezone:", schedule.timezone or "UTC")
+        info.add_row("Endpoint:", f"{schedule.method} {schedule.endpoint}")
+        info.add_row("Enabled:", "[green]Yes[/green]" if schedule.enabled else "[red]No[/red]")
+        info.add_row("Next Run:", _ts(schedule.next_run_at))
+        info.add_row("Timeout:", f"{schedule.timeout_seconds or 3600}s")
+        info.add_row("Max Retries:", str(schedule.max_retries or 0))
+        info.add_row("Created:", _ts(schedule.created_at))
+        info.add_row("Updated:", _ts(schedule.updated_at))
 
-        console.print(Panel(info, title=f"Schedule: {schedule['name']}", border_style="cyan"))
+        console.print(Panel(info, title=f"Schedule: {schedule.name}", border_style="cyan"))
         return schedule
 
-    def show_runs(self, schedule_id: str, limit: int = 20) -> List[Dict[str, Any]]:
+    def show_runs(self, schedule_id: str, limit: int = 20) -> List[ScheduleRun]:
         """Display run history for a schedule in a Rich table."""
         from rich.console import Console
         from rich.table import Table
@@ -121,16 +122,16 @@ class SchedulerConsole:
         table.add_column("Error", style="red")
 
         for r in runs:
-            status = r.get("status", "UNKNOWN")
+            status = r.status or "UNKNOWN"
             style = _status_style(status)
             table.add_row(
-                r["id"][:8] + "...",
-                str(r.get("attempt", 0)),
+                r.id[:8] + "...",
+                str(r.attempt or 0),
                 f"[{style}]{status}[/{style}]",
-                str(r.get("status_code") or "-"),
-                _ts(r.get("triggered_at")),
-                _ts(r.get("completed_at")),
-                (r.get("error") or "-")[:60],
+                str(r.status_code or "-"),
+                _ts(r.triggered_at),
+                _ts(r.completed_at),
+                (r.error or "-")[:60],
             )
 
         console.print(table)
@@ -149,7 +150,7 @@ class SchedulerConsole:
         max_retries: int = 0,
         retry_delay_seconds: int = 60,
         if_exists: str = "raise",
-    ) -> Dict[str, Any]:
+    ) -> Schedule:
         """Create a schedule and display it in a Rich panel."""
         schedule = self.manager.create(
             name=name,
@@ -164,5 +165,5 @@ class SchedulerConsole:
             retry_delay_seconds=retry_delay_seconds,
             if_exists=if_exists,
         )
-        self.show_schedule(schedule["id"])
+        self.show_schedule(schedule.id)
         return schedule

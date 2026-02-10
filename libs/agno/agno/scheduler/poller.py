@@ -1,10 +1,14 @@
 """Schedule poller -- periodically claims and executes due schedules."""
 
 import asyncio
-from typing import Any, Optional, Set
+from typing import Any, Dict, Optional, Set, Union
 from uuid import uuid4
 
+from agno.db.schemas.scheduler import Schedule
 from agno.utils.log import log_error, log_info, log_warning
+
+# Default timeout (in seconds) when stopping the poller
+_DEFAULT_STOP_TIMEOUT = 30
 
 
 class SchedulePoller:
@@ -22,12 +26,14 @@ class SchedulePoller:
         poll_interval: int = 15,
         worker_id: Optional[str] = None,
         max_concurrent: int = 10,
+        stop_timeout: int = _DEFAULT_STOP_TIMEOUT,
     ) -> None:
         self.db = db
         self.executor = executor
         self.poll_interval = poll_interval
         self.worker_id = worker_id or f"worker-{uuid4().hex[:8]}"
         self.max_concurrent = max_concurrent
+        self.stop_timeout = stop_timeout
         self._task: Optional[asyncio.Task] = None  # type: ignore[type-arg]
         self._running = False
         self._in_flight: Set[asyncio.Task] = set()  # type: ignore[type-arg]
@@ -46,16 +52,25 @@ class SchedulePoller:
         if self._task is not None:
             self._task.cancel()
             try:
-                await self._task
-            except asyncio.CancelledError:
+                await asyncio.wait_for(self._task, timeout=self.stop_timeout)
+            except (asyncio.CancelledError, asyncio.TimeoutError):
                 pass
             self._task = None
         # Cancel and await all in-flight execution tasks
         for task in list(self._in_flight):
             task.cancel()
         if self._in_flight:
-            await asyncio.gather(*self._in_flight, return_exceptions=True)
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(*self._in_flight, return_exceptions=True),
+                    timeout=self.stop_timeout,
+                )
+            except asyncio.TimeoutError:
+                log_warning(f"Timed out waiting for {len(self._in_flight)} in-flight tasks during shutdown")
             self._in_flight.clear()
+        # Close the executor's httpx client
+        if hasattr(self.executor, "close"):
+            await self.executor.close()
         log_info("Scheduler poller stopped")
 
     async def _poll_loop(self) -> None:
@@ -90,20 +105,22 @@ class SchedulePoller:
                 if schedule is None:
                     break
 
-                log_info(f"Claimed schedule: {schedule.get('name', schedule['id'])}")
-                task = asyncio.create_task(self._execute_safe(schedule))
+                sched = Schedule.from_dict(schedule) if isinstance(schedule, dict) else schedule
+                log_info(f"Claimed schedule: {sched.name or sched.id}")
+                task = asyncio.create_task(self._execute_safe(sched))
                 self._in_flight.add(task)
                 task.add_done_callback(lambda t: self._in_flight.discard(t))
             except Exception as exc:
                 log_error(f"Error claiming schedule: {exc}")
                 break
 
-    async def _execute_safe(self, schedule: dict) -> None:  # type: ignore[type-arg]
+    async def _execute_safe(self, schedule: Union[Schedule, Dict[str, Any]]) -> None:
         """Execute a schedule, catching all errors."""
         try:
             await self.executor.execute(schedule, self.db)
         except Exception as exc:
-            log_error(f"Error executing schedule {schedule.get('id')}: {exc}")
+            sched_id = schedule.id if isinstance(schedule, Schedule) else schedule.get("id")
+            log_error(f"Error executing schedule {sched_id}: {exc}")
 
     async def trigger(self, schedule_id: str) -> None:
         """Manually trigger a schedule by ID (immediate execution)."""
@@ -117,12 +134,14 @@ class SchedulePoller:
                 log_error(f"Schedule not found: {schedule_id}")
                 return
 
-            if not schedule.get("enabled", True):
+            sched = Schedule.from_dict(schedule) if isinstance(schedule, dict) else schedule
+
+            if not sched.enabled:
                 log_warning(f"Schedule {schedule_id} is disabled, skipping trigger")
                 return
 
-            log_info(f"Manually triggering schedule: {schedule.get('name', schedule_id)}")
-            task = asyncio.create_task(self.executor.execute(schedule, self.db, release_schedule=False))
+            log_info(f"Manually triggering schedule: {sched.name or schedule_id}")
+            task = asyncio.create_task(self.executor.execute(sched, self.db, release_schedule=False))
             self._in_flight.add(task)
             task.add_done_callback(self._in_flight.discard)
         except Exception as exc:

@@ -20,6 +20,7 @@ Examples for the AgentOS cron scheduler.
 | `run_history.py` | Viewing run history with Rich, pagination, status analysis |
 | `scheduler_with_agentos.py` | Full AgentOS with `scheduler=True` -- automatic polling and REST API |
 | `rest_api_schedules.py` | Using the REST API directly (requires running server) |
+| `demo.py` | Running the scheduler inside AgentOS with programmatic schedule creation |
 
 ## Running
 
