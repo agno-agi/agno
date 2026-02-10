@@ -132,6 +132,7 @@ async def scheduler_lifespan(app: FastAPI, agent_os: "AgentOS"):
     yield
 
     await poller.stop()
+    await executor.close()
 
 
 def _combine_app_lifespans(lifespans: list) -> Any:

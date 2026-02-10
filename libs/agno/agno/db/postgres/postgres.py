@@ -4553,12 +4553,13 @@ class PostgresDb(BaseDb):
         self,
         enabled: Optional[bool] = None,
         limit: int = 100,
-        offset: int = 0,
+        page: int = 1,
     ) -> List[Dict[str, Any]]:
         try:
             table = self._get_table(table_type="schedules")
             if table is None:
                 return []
+            offset = (page - 1) * limit
             with self.Session() as sess:
                 stmt = select(table)
                 if enabled is not None:
@@ -4704,12 +4705,13 @@ class PostgresDb(BaseDb):
         self,
         schedule_id: str,
         limit: int = 100,
-        offset: int = 0,
+        page: int = 1,
     ) -> List[Dict[str, Any]]:
         try:
             table = self._get_table(table_type="schedule_runs")
             if table is None:
                 return []
+            offset = (page - 1) * limit
             with self.Session() as sess:
                 stmt = (
                     select(table)

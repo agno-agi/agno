@@ -188,9 +188,9 @@ class ScheduleManager:
         log_debug(f"Schedule '{name}' created (id={result.id}, cron={cron})")
         return result
 
-    def list(self, enabled: Optional[bool] = None, limit: int = 100, offset: int = 0) -> List[Schedule]:
+    def list(self, enabled: Optional[bool] = None, limit: int = 100, page: int = 1) -> List[Schedule]:
         """List all schedules."""
-        return self._to_schedule_list(self._call("get_schedules", enabled=enabled, limit=limit, offset=offset))
+        return self._to_schedule_list(self._call("get_schedules", enabled=enabled, limit=limit, page=page))
 
     def get(self, schedule_id: str) -> Optional[Schedule]:
         """Get a schedule by ID."""
@@ -231,9 +231,9 @@ class ScheduleManager:
             "SchedulePoller.trigger() with a running executor."
         )
 
-    def get_runs(self, schedule_id: str, limit: int = 20, offset: int = 0) -> List[ScheduleRun]:
+    def get_runs(self, schedule_id: str, limit: int = 20, page: int = 1) -> List[ScheduleRun]:
         """Get run history for a schedule."""
-        return self._to_run_list(self._call("get_schedule_runs", schedule_id, limit=limit, offset=offset))
+        return self._to_run_list(self._call("get_schedule_runs", schedule_id, limit=limit, page=page))
 
     # --- Async API ---
 
@@ -326,9 +326,9 @@ class ScheduleManager:
         log_debug(f"Schedule '{name}' created (id={result.id}, cron={cron})")
         return result
 
-    async def alist(self, enabled: Optional[bool] = None, limit: int = 100, offset: int = 0) -> List[Schedule]:
+    async def alist(self, enabled: Optional[bool] = None, limit: int = 100, page: int = 1) -> List[Schedule]:
         """Async list all schedules."""
-        return self._to_schedule_list(await self._acall("get_schedules", enabled=enabled, limit=limit, offset=offset))
+        return self._to_schedule_list(await self._acall("get_schedules", enabled=enabled, limit=limit, page=page))
 
     async def aget(self, schedule_id: str) -> Optional[Schedule]:
         """Async get a schedule by ID."""
@@ -358,6 +358,6 @@ class ScheduleManager:
         """Async disable a schedule."""
         return self._to_schedule(await self._acall("update_schedule", schedule_id, enabled=False))
 
-    async def aget_runs(self, schedule_id: str, limit: int = 20, offset: int = 0) -> List[ScheduleRun]:
+    async def aget_runs(self, schedule_id: str, limit: int = 20, page: int = 1) -> List[ScheduleRun]:
         """Async get run history for a schedule."""
-        return self._to_run_list(await self._acall("get_schedule_runs", schedule_id, limit=limit, offset=offset))
+        return self._to_run_list(await self._acall("get_schedule_runs", schedule_id, limit=limit, page=page))
