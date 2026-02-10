@@ -7,7 +7,6 @@ Demonstrates `mode=tasks` where the team leader autonomously:
 3. Executes tasks sequentially
 4. Synthesizes results into a final response
 
-Run: .venvs/demo/bin/python cookbook/03_teams/modes/tasks/01_basic.py
 """
 
 from agno.agent import Agent
