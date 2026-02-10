@@ -8,17 +8,14 @@ This example demonstrates:
 - Method auto-uppercasing
 """
 
-from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
-from agno.os import AgentOS
+from agno.scheduler import ScheduleManager
 from agno.scheduler.cli import SchedulerConsole
 
 # --- Setup ---
 
 db = SqliteDb(id="validation-demo", db_file="tmp/validation_demo.db")
-agent = Agent(name="Validation Agent", db=db)
-app = AgentOS(name="Validation Demo", agents=[agent], db=db)
-mgr = app.scheduler
+mgr = ScheduleManager(db)
 
 # =============================================================================
 # 1. Invalid cron expression
