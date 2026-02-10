@@ -259,6 +259,7 @@ class PostgresDb(BaseDb):
             schema_unique_constraints = table_schema.pop("_unique_constraints", [])
             schema_primary_key = table_schema.pop("__primary_key__", None)
             schema_foreign_keys = table_schema.pop("__foreign_keys__", [])
+            schema_composite_indexes = table_schema.pop("__composite_indexes__", [])
 
             # Build columns
             for col_name, col_config in table_schema.items():
@@ -346,6 +347,12 @@ class PostgresDb(BaseDb):
                     raise ValueError(f"Index references missing column in {table_name}: {idx_col}")
                 idx_name = f"idx_{table_name}_{idx_col}"
                 Index(idx_name, table.c[idx_col])  # Correct way; do NOT append as constraint
+
+            # Composite indexes
+            for idx_config in schema_composite_indexes:
+                idx_name = f"idx_{table_name}_{'_'.join(idx_config['columns'])}"
+                idx_cols = [table.c[c] for c in idx_config["columns"]]
+                Index(idx_name, *idx_cols)
 
             # Create schema if requested
             if self.create_schema:

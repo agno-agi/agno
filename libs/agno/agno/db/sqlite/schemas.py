@@ -234,6 +234,9 @@ SCHEDULE_TABLE_SCHEMA = {
     "locked_at": {"type": BigInteger, "nullable": True},
     "created_at": {"type": BigInteger, "nullable": False, "index": True},
     "updated_at": {"type": BigInteger, "nullable": True},
+    "__composite_indexes__": [
+        {"name": "enabled_next_run_at", "columns": ["enabled", "next_run_at"]},
+    ],
 }
 
 
