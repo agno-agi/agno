@@ -342,6 +342,11 @@ def _run_tasks(
                     break
                 # If there are failures, continue to let model handle them
                 log_debug("All tasks terminal but some failed, continuing to let model handle.")
+        else:
+            # Loop exhausted without completing
+            task_list = load_task_list(run_context.session_state)
+            if not task_list.goal_complete:
+                log_warning(f"Reached max_iterations ({team.max_iterations}) without completing all tasks.")
 
         # === Post-loop ===
 
@@ -1573,6 +1578,11 @@ async def _arun_tasks(
                     log_debug("All tasks completed successfully, finishing task loop.")
                     break
                 log_debug("All tasks terminal but some failed, continuing to let model handle.")
+        else:
+            # Loop exhausted without completing
+            task_list = load_task_list(run_context.session_state)
+            if not task_list.goal_complete:
+                log_warning(f"Reached max_iterations ({team.max_iterations}) without completing all tasks.")
 
         # === Post-loop ===
 
