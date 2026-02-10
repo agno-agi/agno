@@ -1356,9 +1356,11 @@ class MemoryManager:
                 db.upsert_user_memory(
                     UserMemory(
                         memory_id=memory_id,
+                        user_id=user_id,
+                        agent_id=agent_id,
+                        team_id=team_id,
                         memory=memory,
                         topics=topics,
-                        user_id=user_id,
                         input=input_string,
                     )
                 )
@@ -1479,6 +1481,9 @@ class MemoryManager:
                     await db.upsert_user_memory(
                         UserMemory(
                             memory_id=memory_id,
+                            user_id=user_id,
+                            agent_id=agent_id,
+                            team_id=team_id,
                             memory=memory,
                             topics=topics,
                             input=input_string,
@@ -1488,6 +1493,9 @@ class MemoryManager:
                     db.upsert_user_memory(
                         UserMemory(
                             memory_id=memory_id,
+                            user_id=user_id,
+                            agent_id=agent_id,
+                            team_id=team_id,
                             memory=memory,
                             topics=topics,
                             input=input_string,
