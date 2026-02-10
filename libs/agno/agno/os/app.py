@@ -1018,9 +1018,7 @@ class AgentOS:
         Raises:
             ValueError: If duplicate knowledge instance names are detected.
         """
-        # Track seen combinations of (name, db_id, table) to detect true duplicates
-        # Same name is OK if using different contents_db or different table
-        seen_combinations: dict[tuple[str, str, str], str] = {}  # (name, db_id, table) -> description
+        seen_names: dict[str, int] = {}
         duplicates: list[str] = []
 
         for knowledge in self.knowledge_instances:
@@ -1034,22 +1032,18 @@ class AgentOS:
 
             # Get the name (with fallback)
             knowledge_name = getattr(knowledge, "name", None) or f"knowledge_{db_id}"
-            table_name = getattr(contents_db, "knowledge_table_name", "unknown")
 
-            # Create unique key based on name + db + table
-            key = (knowledge_name, db_id, table_name)
-
-            if key in seen_combinations:
-                duplicates.append(f"'{knowledge_name}' in table '{table_name}'")
+            if knowledge_name in seen_names:
+                duplicates.append(f"'{knowledge_name}'")
             else:
-                seen_combinations[key] = table_name
+                seen_names[knowledge_name] = 1
 
         if duplicates:
             unique_duplicates = list(set(duplicates))
             error_msg = (
-                f"Duplicate knowledge instances detected:\n"
+                f"Duplicate knowledge instance names detected:\n"
                 f"  {', '.join(unique_duplicates)}\n\n"
-                "Each knowledge instance must have a unique combination of (knowledgename, database, table). "
+                "Each knowledge instance must have a unique name. "
                 "To fix this, give each knowledge instance a unique `name` parameter."
             )
             log_error(error_msg)
