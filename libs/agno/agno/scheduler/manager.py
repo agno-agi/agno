@@ -5,7 +5,7 @@ import time
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
-from agno.utils.log import log_warning
+from agno.utils.log import log_debug, log_warning
 
 
 class ScheduleManager:
@@ -58,9 +58,21 @@ class ScheduleManager:
         timeout_seconds: int = 3600,
         max_retries: int = 0,
         retry_delay_seconds: int = 60,
+        if_exists: str = "raise",
     ) -> Dict[str, Any]:
-        """Create a new schedule."""
+        """Create a new schedule.
+
+        Args:
+            if_exists: Behaviour when a schedule with the same name already
+                exists.  ``"raise"`` (default) raises ``ValueError``,
+                ``"skip"`` returns the existing schedule unchanged,
+                ``"update"`` overwrites the existing schedule with the
+                supplied values.
+        """
         from agno.scheduler.cron import compute_next_run, validate_cron_expr, validate_timezone
+
+        if if_exists not in ("raise", "skip", "update"):
+            raise ValueError(f"if_exists must be 'raise', 'skip', or 'update', got '{if_exists}'")
 
         if not validate_cron_expr(cron):
             raise ValueError(f"Invalid cron expression: {cron}")
@@ -69,6 +81,27 @@ class ScheduleManager:
 
         existing = self._call("get_schedule_by_name", name)
         if existing is not None:
+            if if_exists == "skip":
+                log_debug(f"Schedule '{name}' already exists, skipping")
+                return existing
+            if if_exists == "update":
+                log_debug(f"Schedule '{name}' already exists, updating")
+                next_run_at = compute_next_run(cron, timezone)
+                updated = self._call(
+                    "update_schedule",
+                    existing["id"],
+                    cron_expr=cron,
+                    endpoint=endpoint,
+                    method=method.upper(),
+                    description=description,
+                    payload=payload,
+                    timezone=timezone,
+                    timeout_seconds=timeout_seconds,
+                    max_retries=max_retries,
+                    retry_delay_seconds=retry_delay_seconds,
+                    next_run_at=next_run_at,
+                )
+                return updated or existing
             raise ValueError(f"Schedule with name '{name}' already exists")
 
         next_run_at = compute_next_run(cron, timezone)
@@ -97,6 +130,7 @@ class ScheduleManager:
         result = self._call("create_schedule", schedule_dict)
         if result is None:
             raise RuntimeError("Failed to create schedule")
+        log_debug(f"Schedule '{name}' created (id={result['id']}, cron={cron})")
         return result
 
     def list(self, enabled: Optional[bool] = None, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
@@ -154,9 +188,21 @@ class ScheduleManager:
         timeout_seconds: int = 3600,
         max_retries: int = 0,
         retry_delay_seconds: int = 60,
+        if_exists: str = "raise",
     ) -> Dict[str, Any]:
-        """Async create a new schedule."""
+        """Async create a new schedule.
+
+        Args:
+            if_exists: Behaviour when a schedule with the same name already
+                exists.  ``"raise"`` (default) raises ``ValueError``,
+                ``"skip"`` returns the existing schedule unchanged,
+                ``"update"`` overwrites the existing schedule with the
+                supplied values.
+        """
         from agno.scheduler.cron import compute_next_run, validate_cron_expr, validate_timezone
+
+        if if_exists not in ("raise", "skip", "update"):
+            raise ValueError(f"if_exists must be 'raise', 'skip', or 'update', got '{if_exists}'")
 
         if not validate_cron_expr(cron):
             raise ValueError(f"Invalid cron expression: {cron}")
@@ -165,6 +211,27 @@ class ScheduleManager:
 
         existing = await self._acall("get_schedule_by_name", name)
         if existing is not None:
+            if if_exists == "skip":
+                log_debug(f"Schedule '{name}' already exists, skipping")
+                return existing
+            if if_exists == "update":
+                log_debug(f"Schedule '{name}' already exists, updating")
+                next_run_at = compute_next_run(cron, timezone)
+                updated = await self._acall(
+                    "update_schedule",
+                    existing["id"],
+                    cron_expr=cron,
+                    endpoint=endpoint,
+                    method=method.upper(),
+                    description=description,
+                    payload=payload,
+                    timezone=timezone,
+                    timeout_seconds=timeout_seconds,
+                    max_retries=max_retries,
+                    retry_delay_seconds=retry_delay_seconds,
+                    next_run_at=next_run_at,
+                )
+                return updated or existing
             raise ValueError(f"Schedule with name '{name}' already exists")
 
         next_run_at = compute_next_run(cron, timezone)
@@ -193,6 +260,7 @@ class ScheduleManager:
         result = await self._acall("create_schedule", schedule_dict)
         if result is None:
             raise RuntimeError("Failed to create schedule")
+        log_debug(f"Schedule '{name}' created (id={result['id']}, cron={cron})")
         return result
 
     async def alist(self, enabled: Optional[bool] = None, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
