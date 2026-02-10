@@ -76,6 +76,37 @@ class TestPropagateMemberPause:
         # Original should be unaffected
         assert req.member_agent_id is None
 
+    def test_user_input_schema_is_deeply_copied(self):
+        """Mutating the copied user_input_schema must not affect the original."""
+        from agno.team._tools import _propagate_member_pause
+        from agno.tools.function import UserInputField
+
+        member_agent = MagicMock()
+        member_agent.name = "Agent"
+
+        req = _make_requirement(
+            requires_user_input=True,
+            user_input_schema=[UserInputField(name="city", field_type=str)],
+        )
+        original_schema = req.tool_execution.user_input_schema
+        member_run_response = MagicMock()
+        member_run_response.requirements = [req]
+        member_run_response.run_id = "run-1"
+
+        run_response = MagicMock()
+        run_response.requirements = None
+
+        with patch("agno.team._tools.get_member_id", return_value="id-1"):
+            _propagate_member_pause(run_response, member_agent, member_run_response)
+
+        copied_req = run_response.requirements[0]
+        # Mutate the copy's user_input_schema
+        copied_req.user_input_schema[0].value = "Tokyo"
+        # Original user_input_schema should be unaffected
+        assert original_schema[0].value is None
+        # The requirement-level schema should also be isolated
+        assert req.user_input_schema[0].value is None
+
     def test_tool_execution_is_deeply_copied(self):
         """Mutating the copied tool_execution must not affect the original."""
         from agno.team._tools import _propagate_member_pause

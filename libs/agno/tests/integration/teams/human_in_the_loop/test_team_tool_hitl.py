@@ -121,6 +121,32 @@ def test_team_tool_confirmation_streaming(shared_db):
     assert result.content is not None
 
 
+@pytest.mark.asyncio
+async def test_team_tool_confirmation_async_streaming(shared_db):
+    """Async streaming team-level tool confirmation flow."""
+    team = _make_team(db=shared_db)
+
+    paused_output = None
+    async for event in team.arun(
+        "Deploy myapp to staging", session_id="test_team_tool_async_stream", stream=True, stream_events=True
+    ):
+        if hasattr(event, "is_paused") and event.is_paused:
+            paused_output = event
+            break
+
+    assert paused_output is not None
+    assert paused_output.is_paused
+
+    req = paused_output.active_requirements[0]
+    assert req.needs_confirmation
+    assert req.member_agent_id is None
+    req.confirm()
+
+    result = await team.acontinue_run(paused_output)
+    assert not result.is_paused
+    assert result.content is not None
+
+
 def test_team_tool_rejection(shared_db):
     """Team-level tool: reject -> continue handles gracefully."""
     team = _make_team(db=shared_db)
