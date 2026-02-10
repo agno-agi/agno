@@ -1,3 +1,10 @@
+"""
+Single Tool Call Reliability Evaluation
+=======================================
+
+Demonstrates reliability checks for one expected tool call.
+"""
+
 from typing import Optional
 
 from agno.agent import Agent
@@ -7,6 +14,9 @@ from agno.run.agent import RunOutput
 from agno.tools.calculator import CalculatorTools
 
 
+# ---------------------------------------------------------------------------
+# Create Evaluation Function
+# ---------------------------------------------------------------------------
 def factorial():
     agent = Agent(
         model=OpenAIChat(id="gpt-5.2"),
@@ -19,10 +29,12 @@ def factorial():
         expected_tool_calls=["factorial"],
     )
     result: Optional[ReliabilityResult] = evaluation.run(print_results=True)
-
     if result:
         result.assert_passed()
 
 
+# ---------------------------------------------------------------------------
+# Run Evaluation
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     factorial()

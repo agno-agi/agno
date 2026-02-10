@@ -1,53 +1,83 @@
-"""Team HITL: Member agent tool requiring user input.
+"""
+User Input Required
+=============================
 
-This example demonstrates how a team pauses when a member agent's tool
-needs additional information from the user before it can be executed.
+Demonstrates collecting required user input during paused team tool execution.
 """
 
 from agno.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
-from agno.team.team import Team
+from agno.team import Team
 from agno.tools import tool
+from agno.utils import pprint
+from rich.console import Console
+from rich.prompt import Prompt
+
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
+console = Console()
+
+db = SqliteDb(session_table="team_user_input_sessions", db_file="tmp/team_hitl.db")
 
 
-@tool(requires_user_input=True, user_input_fields=["passenger_name"])
-def book_flight(destination: str, date: str, passenger_name: str) -> str:
-    """Book a flight to a destination.
-
-    Args:
-        destination (str): The destination city
-        date (str): Travel date
-        passenger_name (str): Full name of the passenger
-    """
-    return f"Booked flight to {destination} on {date} for {passenger_name}"
+@tool(requires_user_input=True, user_input_fields=["destination", "budget"])
+def plan_trip(destination: str = "", budget: str = "") -> str:
+    """Plan a trip based on user preferences."""
+    return (
+        f"Trip planned to {destination} with a budget of {budget}. "
+        "Includes flights, hotel, and activities."
+    )
 
 
-booking_agent = Agent(
-    name="Booking Agent",
-    role="Books travel arrangements",
+# ---------------------------------------------------------------------------
+# Create Members
+# ---------------------------------------------------------------------------
+travel_agent = Agent(
+    name="TravelAgent",
     model=OpenAIChat(id="gpt-4o-mini"),
-    tools=[book_flight],
+    tools=[plan_trip],
+    db=db,
+    telemetry=False,
 )
 
+# ---------------------------------------------------------------------------
+# Create Team
+# ---------------------------------------------------------------------------
 team = Team(
-    name="Travel Team",
-    members=[booking_agent],
+    name="TravelTeam",
     model=OpenAIChat(id="gpt-4o-mini"),
+    members=[travel_agent],
+    db=db,
+    telemetry=False,
+    add_history_to_context=True,
 )
 
-response = team.run("Book a flight to Tokyo for next Friday")
+# ---------------------------------------------------------------------------
+# Run Team
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    session_id = "team_travel_session"
+    run_response = team.run("Help me plan a vacation", session_id=session_id)
 
-if response.is_paused:
-    print("Team paused - requires user input")
-    for req in response.requirements:
-        if req.needs_user_input:
-            print(f"  Tool: {req.tool_execution.tool_name}")
-            for field in req.user_input_schema or []:
-                print(f"  Field needed: {field.name} - {field.description}")
+    if run_response.is_paused:
+        console.print("[bold yellow]Team is paused - user input needed[/]")
 
-            req.provide_user_input({"passenger_name": "John Smith"})
+        for requirement in run_response.active_requirements:
+            if requirement.needs_user_input:
+                console.print(
+                    f"Member [bold cyan]{requirement.member_agent_name}[/] needs input for "
+                    f"[bold blue]{requirement.tool_execution.tool_name}[/]"
+                )
 
-    response = team.continue_run(response)
-    print(f"Result: {response.content}")
-else:
-    print(f"Result: {response.content}")
+                values = {}
+                for field in requirement.user_input_schema or []:
+                    values[field.name] = Prompt.ask(
+                        f"  {field.name}", default=field.value or ""
+                    )
+                requirement.provide_user_input(values)
+
+        run_response = team.continue_run(run_response)
+
+    pprint.pprint_run_response(run_response)

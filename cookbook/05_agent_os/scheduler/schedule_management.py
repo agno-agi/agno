@@ -1,95 +1,113 @@
-"""Full schedule management demo using the Pythonic API and Rich CLI.
+"""Schedule management via REST API.
 
-This example demonstrates the complete lifecycle:
-1. Create schedules
-2. List and display schedules
-3. Disable/enable schedules
-4. Update schedule properties
-5. View schedule details
-6. Clean up
+Demonstrates creating, listing, updating, enabling/disabling,
+manually triggering, and deleting schedules.
+
+Prerequisites:
+    pip install agno[scheduler] httpx
+
+Usage:
+    # First, start the server:
+    python cookbook/05_agent_os/scheduler/basic_schedule.py
+
+    # Then run this script:
+    python cookbook/05_agent_os/scheduler/schedule_management.py
 """
 
-from agno.db.sqlite import SqliteDb
-from agno.scheduler import ScheduleManager
-from agno.scheduler.cli import SchedulerConsole
+import httpx
 
-# --- Setup ---
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
 
-db = SqliteDb(id="schedule-mgmt-demo", db_file="tmp/schedule_mgmt_demo.db")
-mgr = ScheduleManager(db)
-console = SchedulerConsole(mgr)
+BASE_URL = "http://localhost:7777"
 
-# --- 1. Create schedules ---
 
-print("=== Creating schedules ===\n")
+def main():
+    client = httpx.Client(base_url=BASE_URL, timeout=30)
 
-sched1 = mgr.create(
-    name="every-5-min",
-    cron="*/5 * * * *",
-    endpoint="/agents/my-agent/runs",
-    description="Run agent every 5 minutes",
-    payload={"message": "Quick check"},
-)
-console.show_schedule(sched1["id"])
+    # 1. Create a schedule
+    print("--- Creating schedule ---")
+    resp = client.post(
+        "/schedules",
+        json={
+            "name": "hourly-greeting",
+            "cron_expr": "0 * * * *",
+            "endpoint": "/agents/greeter/runs",
+            "payload": {"message": "Hourly check-in"},
+            "timezone": "UTC",
+            "max_retries": 2,
+            "retry_delay_seconds": 30,
+        },
+    )
+    print(f"  Status: {resp.status_code}")
+    schedule = resp.json()
+    schedule_id = schedule["id"]
+    print(f"  ID: {schedule_id}")
+    print(f"  Next run at: {schedule['next_run_at']}")
+    print()
 
-sched2 = mgr.create(
-    name="daily-report",
-    cron="0 18 * * 1-5",
-    endpoint="/agents/my-agent/runs",
-    description="Generate daily report at 6 PM on weekdays",
-    payload={"message": "Generate the daily report"},
-    timezone="America/New_York",
-)
+    # 2. List all schedules
+    print("--- Listing schedules ---")
+    resp = client.get("/schedules")
+    schedules = resp.json()
+    for s in schedules:
+        print(f"  {s['name']} (enabled={s['enabled']}, next_run={s['next_run_at']})")
+    print()
 
-sched3 = mgr.create(
-    name="weekly-cleanup",
-    cron="0 3 * * 0",
-    endpoint="/agents/my-agent/runs",
-    description="Weekly cleanup on Sunday at 3 AM",
-    method="POST",
-    max_retries=2,
-    retry_delay_seconds=120,
-)
+    # 3. Update the schedule
+    print("--- Updating schedule ---")
+    resp = client.patch(
+        f"/schedules/{schedule_id}",
+        json={"description": "Runs every hour on the hour", "max_retries": 3},
+    )
+    print(f"  Updated description: {resp.json()['description']}")
+    print()
 
-# --- 2. List all schedules ---
+    # 4. Disable the schedule
+    print("--- Disabling schedule ---")
+    resp = client.post(f"/schedules/{schedule_id}/disable")
+    print(f"  Enabled: {resp.json()['enabled']}")
+    print()
 
-print("\n=== All schedules ===\n")
-console.show_schedules()
+    # 5. Re-enable the schedule
+    print("--- Enabling schedule ---")
+    resp = client.post(f"/schedules/{schedule_id}/enable")
+    print(f"  Enabled: {resp.json()['enabled']}")
+    print(f"  Next run at: {resp.json()['next_run_at']}")
+    print()
 
-# --- 3. Disable a schedule ---
+    # 6. Manually trigger
+    print("--- Triggering schedule ---")
+    resp = client.post(f"/schedules/{schedule_id}/trigger")
+    print(f"  Trigger status: {resp.status_code}")
+    print(f"  Run: {resp.json()}")
+    print()
 
-print("\n=== Disabling 'every-5-min' ===\n")
-mgr.disable(sched1["id"])
-disabled = mgr.get(sched1["id"])
-print(f"  enabled: {disabled['enabled']}")
+    # 7. View run history
+    print("--- Run history ---")
+    resp = client.get(f"/schedules/{schedule_id}/runs")
+    runs = resp.json()
+    print(f"  Total runs: {len(runs)}")
+    for run in runs:
+        print(
+            f"    attempt={run['attempt']} status={run['status']} triggered_at={run['triggered_at']}"
+        )
+    print()
 
-# --- 4. Re-enable ---
+    # 8. Delete the schedule
+    print("--- Deleting schedule ---")
+    resp = client.delete(f"/schedules/{schedule_id}")
+    print(f"  Delete status: {resp.status_code}")
 
-print("\n=== Re-enabling 'every-5-min' ===\n")
-mgr.enable(sched1["id"])
-enabled = mgr.get(sched1["id"])
-print(f"  enabled: {enabled['enabled']}")
-print(f"  next_run_at: {enabled['next_run_at']}")
+    # Verify deletion
+    resp = client.get(f"/schedules/{schedule_id}")
+    print(f"  Get after delete: {resp.status_code} (expected 404)")
 
-# --- 5. Update schedule ---
 
-print("\n=== Updating 'weekly-cleanup' description ===\n")
-mgr.update(sched3["id"], description="Weekly maintenance and cleanup")
-console.show_schedule(sched3["id"])
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
-# --- 6. Filter by enabled ---
-
-print("\n=== Only enabled schedules ===\n")
-enabled_schedules = mgr.list(enabled=True)
-print(f"  {len(enabled_schedules)} enabled schedule(s)")
-
-# --- 7. Cleanup ---
-
-print("\n=== Cleaning up ===\n")
-for s in mgr.list():
-    deleted = mgr.delete(s["id"])
-    print(f"  Deleted {s['name']}: {deleted}")
-
-remaining = mgr.list()
-print(f"\nRemaining schedules: {len(remaining)}")
-print("\nDone.")
+if __name__ == "__main__":
+    main()

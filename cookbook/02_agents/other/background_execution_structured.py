@@ -21,6 +21,10 @@ from agno.models.openai import OpenAIChat
 from agno.run.base import RunStatus
 from pydantic import BaseModel, Field
 
+# ---------------------------------------------------------------------------
+# Output Schema
+# ---------------------------------------------------------------------------
+
 
 class CityFact(BaseModel):
     city: str = Field(..., description="Name of the city")
@@ -33,10 +37,19 @@ class CityFactsResponse(BaseModel):
     cities: List[CityFact] = Field(..., description="List of city facts")
 
 
+# ---------------------------------------------------------------------------
+# Config
+# ---------------------------------------------------------------------------
+
 db = PostgresDb(
     db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
     session_table="bg_structured_sessions",
 )
+
+
+# ---------------------------------------------------------------------------
+# Create and Run Background Examples
+# ---------------------------------------------------------------------------
 
 
 async def example_structured_background_run():

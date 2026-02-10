@@ -1,37 +1,50 @@
-# Scheduler Cookbooks
+# Scheduler Cookbook
 
-Examples for the AgentOS cron scheduler.
+Examples for `scheduler` in AgentOS.
+
+## Files
+- `basic_schedule.py` — Basic scheduled agent run.
+- `schedule_management.py` — Schedule management via REST API.
 
 ## Prerequisites
+- Load environment variables with `direnv allow` (requires `.envrc`).
+- Run examples with `.venvs/demo/bin/python <path-to-file>.py`.
+- Some examples require local services (for example Postgres, Redis, Slack, or MCP servers).
 
-- Python 3.12+
-- Optional deps: `pip install agno[scheduler]` (croniter, pytz)
+Install scheduler dependencies:
+
+```bash
+pip install agno[scheduler]
+```
+
+This installs `croniter` and `pytz`.
 
 ## Examples
 
-| File | Description |
-|------|-------------|
-| `basic_schedule.py` | Create a schedule, list schedules, display with Rich |
-| `async_schedule.py` | Full async API: acreate, alist, aget, aupdate, adelete |
-| `schedule_management.py` | Full CRUD lifecycle: create, list, disable, enable, update, delete |
-| `schedule_validation.py` | Error handling: invalid cron, bad timezone, duplicate names, complex patterns |
-| `multi_agent_schedules.py` | Multiple agents with different cron patterns, retries, timeouts |
-| `team_workflow_schedules.py` | Scheduling teams, workflows, and non-run endpoints |
-| `run_history.py` | Viewing run history with Rich, pagination, status analysis |
-| `scheduler_with_agentos.py` | Full AgentOS with `scheduler=True` -- automatic polling and REST API |
-| `rest_api_schedules.py` | Using the REST API directly (requires running server) |
+### basic_schedule.py
 
-## Running
+Minimal example: creates an AgentOS with a single agent and enables the scheduler. A schedule is created via the API that triggers the agent every 5 minutes.
 
-```bash
-# Standalone examples (no server needed)
-.venvs/demo/bin/python cookbook/05_agent_os/scheduler/basic_schedule.py
-.venvs/demo/bin/python cookbook/05_agent_os/scheduler/schedule_management.py
-.venvs/demo/bin/python cookbook/05_agent_os/scheduler/run_history.py
+### schedule_management.py
 
-# Server example (runs uvicorn)
-.venvs/demo/bin/python cookbook/05_agent_os/scheduler/scheduler_with_agentos.py
+Demonstrates full CRUD lifecycle: creating, listing, updating, enabling/disabling, triggering, and deleting schedules via the REST API.
 
-# REST API example (requires server running in another terminal)
-.venvs/demo/bin/python cookbook/05_agent_os/scheduler/rest_api_schedules.py
+## Key Concepts
+
+- **Cron expressions**: Standard 5-field cron syntax (minute, hour, day-of-month, month, day-of-week)
+- **Timezones**: All schedules support timezone-aware scheduling via pytz
+- **Retries**: Configurable retry count and delay for failed executions
+- **Internal auth**: The scheduler authenticates to AgentOS using an auto-generated internal service token
+- **Run history**: Every execution is tracked with status, timing, and error details
+
+## Configuration
+
+```python
+AgentOS(
+    agents=[my_agent],
+    db=db,
+    scheduler=True,                  # Enable the scheduler
+    scheduler_poll_interval=15,      # Poll every 15 seconds (default)
+    scheduler_base_url="http://127.0.0.1:7777",  # AgentOS base URL
+)
 ```

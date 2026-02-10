@@ -11,6 +11,11 @@ from pathlib import Path
 from agno.agent import Agent
 from agno.tools.nano_banana import NanoBananaTools
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
+
 # Example 1: Basic NanoBanana agent with default settings
 agent = Agent(tools=[NanoBananaTools()], name="NanoBanana Image Generator")
 
@@ -35,21 +40,26 @@ widescreen_agent = Agent(
 )
 
 # Test basic generation
-agent.print_response(
-    "Generate an image of a futuristic city with flying cars",
-    markdown=True,
-)
 
-# Generate and save an image
-response = widescreen_agent.run(
-    "Create a panoramic nature scene with mountains and a lake at sunset",
-    markdown=True,
-)
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    agent.print_response(
+        "Generate an image of a futuristic city with flying cars",
+        markdown=True,
+    )
 
-# Save the generated image if available
-if response.images and response.images[0].content:
-    output_path = Path("generated_image.png")
-    with open(output_path, "wb") as f:
-        f.write(response.images[0].content)
+    # Generate and save an image
+    response = widescreen_agent.run(
+        "Create a panoramic nature scene with mountains and a lake at sunset",
+        markdown=True,
+    )
 
-    print(f"Image was succesfully generated and saved to: {output_path}")
+    # Save the generated image if available
+    if response.images and response.images[0].content:
+        output_path = Path("generated_image.png")
+        with open(output_path, "wb") as f:
+            f.write(response.images[0].content)
+
+        print(f"Image was succesfully generated and saved to: {output_path}")

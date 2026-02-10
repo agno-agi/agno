@@ -1,4 +1,4 @@
-"""🔑 Supabase MCP Agent - Showcase Supabase MCP Capabilities
+"""Supabase MCP Agent - Showcase Supabase MCP Capabilities
 
 This example demonstrates how to use the Supabase MCP server to create create projects, database schemas, edge functions, and more.
 
@@ -21,6 +21,10 @@ from agno.models.openai import OpenAIChat
 from agno.tools.mcp import MCPTools
 from agno.tools.reasoning import ReasoningTools
 from agno.utils.log import log_error, log_exception, log_info
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 
 async def run_agent(task: str) -> None:
@@ -67,6 +71,10 @@ async def run_agent(task: str) -> None:
     except Exception as e:
         log_exception(f"Unexpected error: {e}")
 
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     demo_description = (

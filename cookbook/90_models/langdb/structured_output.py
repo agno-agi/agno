@@ -1,9 +1,20 @@
+"""
+Langdb Structured Output
+========================
+
+Cookbook example for `langdb/structured_output.py`.
+"""
+
 from typing import List
 
 from agno.agent import Agent, RunOutput  # noqa
 from agno.models.langdb import LangDB
 from pydantic import BaseModel, Field
 from rich.pretty import pprint  # noqa
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 
 class MovieScript(BaseModel):
@@ -40,7 +51,6 @@ structured_output_agent = Agent(
     output_schema=MovieScript,
 )
 
-
 # Get the response in a variable
 # json_mode_response: RunOutput = json_mode_agent.run("New York")
 # pprint(json_mode_response.content)
@@ -49,3 +59,10 @@ structured_output_agent = Agent(
 
 json_mode_agent.print_response("New York")
 structured_output_agent.print_response("New York")
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

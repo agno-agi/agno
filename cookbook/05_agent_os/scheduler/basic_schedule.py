@@ -1,46 +1,63 @@
-"""Basic schedule creation and display using the Pythonic API.
+"""Basic scheduled agent run.
 
-This example demonstrates:
-- Creating a ScheduleManager from a database
-- Creating and listing schedules
-- Using SchedulerConsole for Rich-formatted output
+Starts an AgentOS with the scheduler enabled. After the server is running,
+use the REST API to create a schedule that triggers an agent every 5 minutes.
+
+Prerequisites:
+    pip install agno[scheduler]
+    # Start postgres: ./cookbook/scripts/run_pgvector.sh
+
+Usage:
+    python cookbook/05_agent_os/scheduler/basic_schedule.py
+
+Then, in another terminal, create a schedule:
+    curl -X POST http://localhost:7777/schedules \
+        -H "Content-Type: application/json" \
+        -d '{
+            "name": "greeting-every-5m",
+            "cron_expr": "*/5 * * * *",
+            "endpoint": "/agents/greeter/runs",
+            "payload": {"message": "Say hello!"}
+        }'
 """
 
-from agno.db.sqlite import SqliteDb
-from agno.scheduler import ScheduleManager
-from agno.scheduler.cli import SchedulerConsole
+from agno.agent import Agent
+from agno.db.postgres import PostgresDb
+from agno.models.openai import OpenAIChat
+from agno.os import AgentOS
 
-# --- Setup ---
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
 
-db = SqliteDb(id="scheduler-demo", db_file="tmp/scheduler_demo.db")
-mgr = ScheduleManager(db)
-
-# --- Create a schedule via the Pythonic API ---
-
-schedule = mgr.create(
-    name="daily-health-check",
-    cron="0 9 * * *",
-    endpoint="/agents/scheduled-agent/runs",
-    description="Run the scheduled agent every day at 9 AM UTC",
-    payload={"message": "What is the system health?"},
+db = PostgresDb(
+    id="scheduler-demo-db",
+    db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
 )
 
-print(f"Created schedule: {schedule['name']} (id={schedule['id']})")
-print(f"  Cron: {schedule['cron_expr']}")
-print(f"  Endpoint: {schedule['endpoint']}")
-print(f"  Next run: {schedule['next_run_at']}")
+greeter = Agent(
+    id="greeter",
+    name="Greeter Agent",
+    model=OpenAIChat(id="gpt-4o-mini"),
+    instructions=[
+        "You are a friendly greeter. Say hello and include the current time."
+    ],
+    db=db,
+    markdown=True,
+)
 
-# --- List all schedules ---
+app = AgentOS(
+    agents=[greeter],
+    db=db,
+    scheduler=True,
+    scheduler_poll_interval=15,
+).get_app()
 
-schedules = mgr.list()
-print(f"\nTotal schedules: {len(schedules)}")
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
-# --- Display with Rich console ---
+if __name__ == "__main__":
+    import uvicorn
 
-console = SchedulerConsole(mgr)
-console.show_schedules()
-
-# --- Cleanup ---
-
-mgr.delete(schedule["id"])
-print("\nSchedule deleted.")
+    uvicorn.run(app, host="0.0.0.0", port=7777)

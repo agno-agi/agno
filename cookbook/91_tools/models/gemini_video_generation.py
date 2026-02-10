@@ -17,20 +17,29 @@ from agno.models.openai import OpenAIChat
 from agno.tools.models.gemini import GeminiTools
 from agno.utils.media import save_base64_data
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
+
 agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     tools=[GeminiTools(vertexai=True)],  # Video Generation only works on VertexAI mode
     debug_mode=True,
 )
 
-agent.print_response(
-    "create a video of a cat driving at top speed",
-)
-response = agent.get_last_run_output()
-if response and response.videos:
-    for video in response.videos:
-        if video.content:
-            save_base64_data(
-                base64_data=str(video.content),
-                output_path=f"tmp/cat_driving_{video.id}.mp4",
-            )
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    agent.print_response(
+        "create a video of a cat driving at top speed",
+    )
+    response = agent.get_last_run_output()
+    if response and response.videos:
+        for video in response.videos:
+            if video.content:
+                save_base64_data(
+                    base64_data=str(video.content),
+                    output_path=f"tmp/cat_driving_{video.id}.mp4",
+                )

@@ -11,6 +11,10 @@ picking up any session_state changes between runs.
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 
+# ---------------------------------------------------------------------------
+# Tools
+# ---------------------------------------------------------------------------
+
 
 def get_greeting(name: str) -> str:
     """Greet someone by name."""
@@ -33,6 +37,10 @@ def get_tools(session_state: dict):
         return [get_farewell]
 
 
+# ---------------------------------------------------------------------------
+# Create the Agent
+# ---------------------------------------------------------------------------
+
 agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
     tools=get_tools,
@@ -40,6 +48,10 @@ agent = Agent(
     instructions=["Use the available tool to respond."],
 )
 
+
+# ---------------------------------------------------------------------------
+# Run the Agent
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     print("=== Greet mode ===")

@@ -20,10 +20,19 @@ from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIChat
 from agno.run.base import RunStatus
 
+# ---------------------------------------------------------------------------
+# Config
+# ---------------------------------------------------------------------------
+
 db = PostgresDb(
     db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
     session_table="background_exec_sessions",
 )
+
+
+# ---------------------------------------------------------------------------
+# Create and Run Background Examples
+# ---------------------------------------------------------------------------
 
 
 async def example_background_run_with_polling():
