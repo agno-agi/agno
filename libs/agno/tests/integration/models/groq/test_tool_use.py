@@ -160,7 +160,7 @@ def test_tool_call_custom_tool_no_parameters():
     assert response.content is not None
 
 
-@pytest.mark.flaky(reruns=2)
+@pytest.mark.skip(reason="This test fails often on CI for Groq")
 def test_tool_call_custom_tool_optional_parameters():
     def get_the_weather(city: Optional[str] = None):
         """

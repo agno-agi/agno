@@ -3,7 +3,7 @@ import pytest
 
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_makereport(item, call):
-    """Skip tests that hit Google rate limits (429) instead of failing.
+    """Skip tests that hit Groq rate limits (429) instead of failing.
 
     Checks both the exception message and the full test report (which includes
     captured stdout/stderr with agent error logs) for rate limit indicators.
@@ -17,4 +17,4 @@ def pytest_runtest_makereport(item, call):
             combined = (error_msg + full_repr).lower()
             if any(p in combined for p in ["429", "rate limit", "rate_limit", "quota", "resource_exhausted"]):
                 report.outcome = "skipped"
-                report.longrepr = ("", -1, "Skipped: Google rate limit (429)")
+                report.longrepr = ("", -1, "Skipped: Groq rate limit (429)")
