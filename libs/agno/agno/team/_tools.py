@@ -397,9 +397,9 @@ def _determine_tools_for_model(
     return _functions
 
 
-def get_member_information(team: "Team", run_context: Optional["RunContext"] = None) -> str:
+def get_member_information(team: "Team") -> str:
     """Get information about the members of the team, including their IDs, names, and roles."""
-    return team.get_members_system_message_content(indent=0, run_context=run_context)
+    return team.get_members_system_message_content(indent=0)
 
 
 def _get_history_for_member_agent(
@@ -516,7 +516,7 @@ def _find_member_route_by_id(team: "Team", member_id: str) -> Optional[Tuple[int
     """
     from agno.team.team import Team
 
-    for i, member in enumerate(team.members):
+    for i, member in enumerate(team.members):  # type: ignore[arg-type]
         url_safe_member_id = get_member_id(member)
         if url_safe_member_id == member_id:
             return i, member

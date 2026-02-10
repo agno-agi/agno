@@ -78,7 +78,7 @@ def get_members_system_message_content(team: "Team", indent: int = 0) -> str:
 
     pad = " " * indent
     content = ""
-    for member in team.members:
+    for member in team.members:  # type: ignore[union-attr]
         member_id = get_member_id(member)
 
         if isinstance(member, Team):
@@ -197,7 +197,7 @@ def _build_team_context(
     Shared between sync and async system-message builders.
     """
     content = ""
-    if team.members is not None and len(team.members) > 0:
+    if team.members is not None and len(team.members) > 0:  # type: ignore[arg-type]
         content += _get_opening_prompt()
         content += "\n<team_members>\n"
         content += team.get_members_system_message_content()
