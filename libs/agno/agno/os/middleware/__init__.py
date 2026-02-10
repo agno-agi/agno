@@ -4,12 +4,17 @@ try:
         TokenSource,
     )
 except ImportError:
+    # PyJWT is an optional dependency (agno[os])
     pass
 
 from agno.os.middleware.trailing_slash import TrailingSlashMiddleware
 
 __all__ = [
-    "JWTMiddleware",
-    "TokenSource",
-    "TrailingSlashMiddleware",
+    name
+    for name in (
+        "JWTMiddleware",
+        "TokenSource",
+        "TrailingSlashMiddleware",
+    )
+    if name in globals()
 ]
