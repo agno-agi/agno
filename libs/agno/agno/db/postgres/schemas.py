@@ -225,6 +225,41 @@ LEARNINGS_TABLE_SCHEMA = {
 }
 
 
+SCHEDULE_TABLE_SCHEMA = {
+    "id": {"type": String, "primary_key": True, "nullable": False},
+    "name": {"type": String, "nullable": False, "index": True},
+    "description": {"type": Text, "nullable": True},
+    "method": {"type": String, "nullable": False},
+    "endpoint": {"type": String, "nullable": False},
+    "payload": {"type": JSONB, "nullable": True},
+    "cron_expr": {"type": String, "nullable": False},
+    "timezone": {"type": String, "nullable": False},
+    "timeout_seconds": {"type": BigInteger, "nullable": False},
+    "max_retries": {"type": BigInteger, "nullable": False},
+    "retry_delay_seconds": {"type": BigInteger, "nullable": False},
+    "enabled": {"type": Boolean, "nullable": False, "default": True},
+    "next_run_at": {"type": BigInteger, "nullable": True, "index": True},
+    "locked_by": {"type": String, "nullable": True},
+    "locked_at": {"type": BigInteger, "nullable": True},
+    "created_at": {"type": BigInteger, "nullable": False, "index": True},
+    "updated_at": {"type": BigInteger, "nullable": True},
+}
+
+SCHEDULE_RUNS_TABLE_SCHEMA = {
+    "id": {"type": String, "primary_key": True, "nullable": False},
+    "schedule_id": {"type": String, "nullable": False, "index": True},
+    "attempt": {"type": BigInteger, "nullable": False},
+    "triggered_at": {"type": BigInteger, "nullable": True},
+    "completed_at": {"type": BigInteger, "nullable": True},
+    "status": {"type": String, "nullable": False, "index": True},
+    "status_code": {"type": BigInteger, "nullable": True},
+    "run_id": {"type": String, "nullable": True},
+    "session_id": {"type": String, "nullable": True},
+    "error": {"type": Text, "nullable": True},
+    "created_at": {"type": BigInteger, "nullable": False, "index": True},
+}
+
+
 def get_table_schema_definition(
     table_type: str, traces_table_name: str = "agno_traces", db_schema: str = "agno"
 ) -> dict[str, Any]:
@@ -256,6 +291,8 @@ def get_table_schema_definition(
         "component_configs": COMPONENT_CONFIGS_TABLE_SCHEMA,
         "component_links": COMPONENT_LINKS_TABLE_SCHEMA,
         "learnings": LEARNINGS_TABLE_SCHEMA,
+        "schedules": SCHEDULE_TABLE_SCHEMA,
+        "schedule_runs": SCHEDULE_RUNS_TABLE_SCHEMA,
     }
 
     schema = schemas.get(table_type, {})
