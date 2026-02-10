@@ -14,7 +14,8 @@ def pytest_runtest_makereport(item, call):
         if call.excinfo is not None:
             error_msg = str(call.excinfo.value)
             full_repr = str(report.longrepr) if report.longrepr else ""
-            combined = (error_msg + full_repr).lower()
+            sections_text = " ".join(content for _, content in report.sections)
+            combined = (error_msg + full_repr + sections_text).lower()
             if any(p in combined for p in ["429", "rate limit", "rate_limit", "quota", "resource_exhausted"]):
                 report.outcome = "skipped"
                 report.longrepr = ("", -1, "Skipped: Cerebras rate limit (429)")
