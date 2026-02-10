@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import Any, Callable, Optional, Union, overload
 
 from agno.approval.types import ApprovalType
-from agno.utils.log import logger
 
 # Sentinel attribute stamped on raw callables when @approval is below @tool
 _APPROVAL_ATTR = "_agno_approval_type"
