@@ -119,18 +119,15 @@ def _get_chat_history_function(team: "Team", session: TeamSession, async_mode: b
         """
         import json
 
-        history: List[Dict[str, Any]] = []
-
         all_chats = session.get_messages(team_id=team.id)
 
         if len(all_chats) == 0:
             return ""
 
-        for chat in all_chats[::-1]:  # type: ignore
-            history.insert(0, chat.to_dict())  # type: ignore
+        history: List[Dict[str, Any]] = [chat.to_dict() for chat in all_chats]  # type: ignore
 
         if num_chats is not None:
-            history = history[:num_chats]
+            history = history[-num_chats:]
 
         return json.dumps(history)
 
@@ -153,18 +150,15 @@ def _get_chat_history_function(team: "Team", session: TeamSession, async_mode: b
         """
         import json
 
-        history: List[Dict[str, Any]] = []
-
         all_chats = session.get_messages(team_id=team.id)
 
         if len(all_chats) == 0:
             return ""
 
-        for chat in all_chats[::-1]:  # type: ignore
-            history.insert(0, chat.to_dict())  # type: ignore
+        history: List[Dict[str, Any]] = [chat.to_dict() for chat in all_chats]  # type: ignore
 
         if num_chats is not None:
-            history = history[:num_chats]
+            history = history[-num_chats:]
 
         return json.dumps(history)
 
