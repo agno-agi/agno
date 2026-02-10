@@ -3160,8 +3160,11 @@ class AsyncPostgresDb(AsyncBaseDb):
             table = await self._get_table(table_type="schedules")
             if table is None:
                 return False
+            runs_table = await self._get_table(table_type="schedule_runs")
             async with self.async_session_factory() as sess:
                 async with sess.begin():
+                    if runs_table is not None:
+                        await sess.execute(runs_table.delete().where(runs_table.c.schedule_id == schedule_id))
                     result = await sess.execute(table.delete().where(table.c.id == schedule_id))
                     return result.rowcount > 0  # type: ignore[attr-defined]
         except Exception as e:
