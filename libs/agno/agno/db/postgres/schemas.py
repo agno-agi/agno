@@ -278,6 +278,7 @@ APPROVAL_TABLE_SCHEMA = {
     "source_name": {"type": String, "nullable": True},
     "requirements": {"type": JSONB, "nullable": True},
     "context": {"type": JSONB, "nullable": True},
+    "resolution_data": {"type": JSONB, "nullable": True},
     "resolved_by": {"type": String, "nullable": True},
     "resolved_at": {"type": BigInteger, "nullable": True},
     "created_at": {"type": BigInteger, "nullable": False, "index": True},

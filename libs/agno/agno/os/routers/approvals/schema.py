@@ -10,6 +10,7 @@ class ApprovalResolve(BaseModel):
 
     status: str = Field(..., pattern="^(approved|rejected)$")
     resolved_by: Optional[str] = Field(default=None, max_length=255)
+    resolution_data: Optional[Dict[str, Any]] = Field(default=None)
 
 
 class ApprovalResponse(BaseModel):
@@ -30,6 +31,7 @@ class ApprovalResponse(BaseModel):
     source_name: Optional[str] = None
     requirements: Optional[List[Dict[str, Any]]] = None
     context: Optional[Dict[str, Any]] = None
+    resolution_data: Optional[Dict[str, Any]] = None
     resolved_by: Optional[str] = None
     resolved_at: Optional[int] = None
     created_at: Optional[int] = None

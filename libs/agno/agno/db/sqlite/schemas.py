@@ -269,6 +269,7 @@ APPROVAL_TABLE_SCHEMA = {
     "source_name": {"type": String, "nullable": True},
     "requirements": {"type": JSON, "nullable": True},
     "context": {"type": JSON, "nullable": True},
+    "resolution_data": {"type": JSON, "nullable": True},
     "resolved_by": {"type": String, "nullable": True},
     "resolved_at": {"type": BigInteger, "nullable": True},
     "created_at": {"type": BigInteger, "nullable": False, "index": True},

@@ -23,6 +23,7 @@ class Approval:
     source_name: Optional[str] = None
     requirements: Optional[List[Dict[str, Any]]] = None
     context: Optional[Dict[str, Any]] = None
+    resolution_data: Optional[Dict[str, Any]] = None
     resolved_by: Optional[str] = None
     resolved_at: Optional[int] = None
     created_at: Optional[int] = None
@@ -53,6 +54,7 @@ class Approval:
             "source_name": self.source_name,
             "requirements": self.requirements,
             "context": self.context,
+            "resolution_data": self.resolution_data,
             "resolved_by": self.resolved_by,
             "resolved_at": self.resolved_at,
             "created_at": self.created_at,
@@ -78,6 +80,7 @@ class Approval:
             "source_name",
             "requirements",
             "context",
+            "resolution_data",
             "resolved_by",
             "resolved_at",
             "created_at",

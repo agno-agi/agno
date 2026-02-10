@@ -1,4 +1,4 @@
-"""Approval record creation for HITL tool runs with requires_approval=True and log_approval=True."""
+"""Approval record creation and resolution gating for HITL tool runs."""
 
 from __future__ import annotations
 
@@ -256,7 +256,117 @@ def create_logged_approval(
     except NotImplementedError:
         pass
     except Exception as e:
-        log_warning(f"Error creating logged approval record: {e}")
+        log_warning(f"Error creating async logged approval record: {e}")
+
+
+# ---------------------------------------------------------------------------
+# Approval gate: enforce external resolution before continue
+# ---------------------------------------------------------------------------
+
+
+def _apply_approval_to_tools(tools: List[Any], approval_status: str, resolution_data: Optional[Dict[str, Any]]) -> None:
+    """Apply approval resolution status to tools that require approval.
+
+    For 'approved': sets confirmed=True, applies resolution_data to user_input/external_execution fields.
+    For 'rejected': sets confirmed=False.
+    """
+    for tool in tools:
+        if not getattr(tool, "requires_approval", False):
+            continue
+
+        if approval_status == "approved":
+            # Confirmation tools
+            if getattr(tool, "requires_confirmation", False):
+                tool.confirmed = True
+
+            # User input tools: apply resolution_data values to user_input_schema
+            if getattr(tool, "requires_user_input", False) and resolution_data:
+                for ufield in tool.user_input_schema or []:
+                    if ufield.name in resolution_data:
+                        ufield.value = resolution_data[ufield.name]
+
+            # External execution tools: apply resolution_data result
+            if getattr(tool, "external_execution_required", False) and resolution_data:
+                if "result" in resolution_data:
+                    tool.result = resolution_data["result"]
+
+        elif approval_status == "rejected":
+            if getattr(tool, "requires_confirmation", False):
+                tool.confirmed = False
+
+
+def _get_approval_for_run(db: Any, run_id: str) -> Optional[Dict[str, Any]]:
+    """Look up the most recent 'required' approval for a run_id (sync)."""
+    try:
+        approvals, _ = db.get_approvals(run_id=run_id, approval_type="required", limit=1)
+        return approvals[0] if approvals else None
+    except (NotImplementedError, Exception):
+        return None
+
+
+async def _aget_approval_for_run(db: Any, run_id: str) -> Optional[Dict[str, Any]]:
+    """Look up the most recent 'required' approval for a run_id (async)."""
+    try:
+        get_fn = getattr(db, "get_approvals", None)
+        if get_fn is None:
+            return None
+        from inspect import iscoroutinefunction
+
+        if iscoroutinefunction(get_fn):
+            approvals, _ = await get_fn(run_id=run_id, approval_type="required", limit=1)
+        else:
+            approvals, _ = get_fn(run_id=run_id, approval_type="required", limit=1)
+        return approvals[0] if approvals else None
+    except (NotImplementedError, Exception):
+        return None
+
+
+def check_and_apply_approval_resolution(db: Any, run_id: str, run_response: Any) -> None:
+    """Gate: if any tool has requires_approval=True, verify the approval is resolved before continuing.
+
+    Raises RuntimeError if the approval is still pending or not found.
+    No-op if no tools require approval or if db is None.
+    """
+    if db is None:
+        return
+
+    tools = getattr(run_response, "tools", None)
+    if not tools or not any(getattr(t, "requires_approval", False) for t in tools):
+        return
+
+    approval = _get_approval_for_run(db, run_id)
+    if approval is None:
+        raise RuntimeError(
+            "No approval record found for this run. Cannot continue a run that requires external approval."
+        )
+
+    status = approval.get("status", "pending")
+    if status == "pending":
+        raise RuntimeError("Approval is still pending. Resolve the approval before continuing this run.")
+
+    _apply_approval_to_tools(tools, status, approval.get("resolution_data"))
+
+
+async def acheck_and_apply_approval_resolution(db: Any, run_id: str, run_response: Any) -> None:
+    """Async variant of check_and_apply_approval_resolution."""
+    if db is None:
+        return
+
+    tools = getattr(run_response, "tools", None)
+    if not tools or not any(getattr(t, "requires_approval", False) for t in tools):
+        return
+
+    approval = await _aget_approval_for_run(db, run_id)
+    if approval is None:
+        raise RuntimeError(
+            "No approval record found for this run. Cannot continue a run that requires external approval."
+        )
+
+    status = approval.get("status", "pending")
+    if status == "pending":
+        raise RuntimeError("Approval is still pending. Resolve the approval before continuing this run.")
+
+    _apply_approval_to_tools(tools, status, approval.get("resolution_data"))
 
 
 async def acreate_logged_approval(

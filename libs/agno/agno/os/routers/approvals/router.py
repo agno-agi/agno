@@ -114,13 +114,18 @@ def get_approval_router(os_db: Any, settings: Any) -> APIRouter:
             )
 
         now = int(time.time())
+        update_kwargs: Dict[str, Any] = {
+            "status": body.status,
+            "resolved_by": body.resolved_by,
+            "resolved_at": now,
+        }
+        if body.resolution_data is not None:
+            update_kwargs["resolution_data"] = body.resolution_data
         result = await _db_call(
             "update_approval",
             approval_id,
             expected_status="pending",
-            status=body.status,
-            resolved_by=body.resolved_by,
-            resolved_at=now,
+            **update_kwargs,
         )
         if result is None:
             raise HTTPException(
