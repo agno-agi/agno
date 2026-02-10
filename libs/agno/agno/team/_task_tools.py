@@ -575,6 +575,10 @@ def _get_task_management_tools(
                 return
             tasks_to_run.append((task, member_result[1]))
 
+        if not tasks_to_run:
+            yield "No valid tasks to execute."
+            return
+
         # Mark all in_progress
         for task_obj, _ in tasks_to_run:
             task_obj.status = TaskStatus.in_progress
@@ -734,6 +738,10 @@ def _get_task_management_tools(
                 yield f"Member '{task.assignee}' not found for task [{tid}]."
                 return
             tasks_to_run.append((task, member_result[1]))
+
+        if not tasks_to_run:
+            yield "No valid tasks to execute."
+            return
 
         # Mark all in_progress
         for task_obj, _ in tasks_to_run:
