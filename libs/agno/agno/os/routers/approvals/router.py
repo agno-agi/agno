@@ -52,6 +52,7 @@ def get_approval_router(os_db: Any, settings: Any) -> APIRouter:
     async def list_approvals(
         status: Optional[Literal["pending", "approved", "rejected"]] = Query(None),
         source_type: Optional[str] = Query(None),
+        approval_type: Optional[Literal["required", "logged"]] = Query(None),
         agent_id: Optional[str] = Query(None),
         team_id: Optional[str] = Query(None),
         workflow_id: Optional[str] = Query(None),
@@ -66,6 +67,7 @@ def get_approval_router(os_db: Any, settings: Any) -> APIRouter:
             "get_approvals",
             status=status,
             source_type=source_type,
+            approval_type=approval_type,
             agent_id=agent_id,
             team_id=team_id,
             workflow_id=workflow_id,

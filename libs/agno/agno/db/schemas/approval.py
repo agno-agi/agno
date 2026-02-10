@@ -13,6 +13,7 @@ class Approval:
     session_id: str
     status: str = "pending"  # pending | approved | rejected | expired | cancelled
     source_type: str = "agent"  # agent | team | workflow
+    approval_type: Optional[str] = None  # required | logged
     agent_id: Optional[str] = None
     team_id: Optional[str] = None
     workflow_id: Optional[str] = None
@@ -42,6 +43,7 @@ class Approval:
             "session_id": self.session_id,
             "status": self.status,
             "source_type": self.source_type,
+            "approval_type": self.approval_type,
             "agent_id": self.agent_id,
             "team_id": self.team_id,
             "workflow_id": self.workflow_id,
@@ -66,6 +68,7 @@ class Approval:
             "session_id",
             "status",
             "source_type",
+            "approval_type",
             "agent_id",
             "team_id",
             "workflow_id",

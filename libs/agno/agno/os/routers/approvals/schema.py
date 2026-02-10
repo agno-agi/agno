@@ -20,6 +20,7 @@ class ApprovalResponse(BaseModel):
     session_id: str
     status: str
     source_type: str
+    approval_type: Optional[str] = None
     agent_id: Optional[str] = None
     team_id: Optional[str] = None
     workflow_id: Optional[str] = None

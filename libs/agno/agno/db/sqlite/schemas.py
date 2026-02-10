@@ -259,6 +259,7 @@ APPROVAL_TABLE_SCHEMA = {
     "session_id": {"type": String, "nullable": False, "index": True},
     "status": {"type": String, "nullable": False, "index": True},
     "source_type": {"type": String, "nullable": False, "index": True},
+    "approval_type": {"type": String, "nullable": True, "index": True},
     "agent_id": {"type": String, "nullable": True, "index": True},
     "team_id": {"type": String, "nullable": True, "index": True},
     "workflow_id": {"type": String, "nullable": True, "index": True},

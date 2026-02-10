@@ -72,6 +72,7 @@ def tool(
     external_execution: Optional[bool] = None,
     external_execution_silent: Optional[bool] = None,
     requires_approval: Optional[bool] = None,
+    log_approval: Optional[bool] = None,
     pre_hook: Optional[Callable] = None,
     post_hook: Optional[Callable] = None,
     tool_hooks: Optional[List[Callable]] = None,
@@ -141,6 +142,7 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
             "external_execution",
             "external_execution_silent",
             "requires_approval",
+            "log_approval",
             "pre_hook",
             "post_hook",
             "tool_hooks",
@@ -176,6 +178,22 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
     # the agent will pause via that mechanism instead.
     if kwargs.get("requires_approval") and true_flags_count == 0:
         kwargs["requires_confirmation"] = True
+
+    # log_approval requires at least one HITL flag
+    if kwargs.get("log_approval") and not kwargs.get("requires_approval"):
+        if true_flags_count == 0:
+            raise ValueError(
+                "'log_approval=True' requires at least one HITL flag "
+                "('requires_confirmation', 'requires_user_input', or 'external_execution') to be set."
+            )
+
+    # requires_approval takes precedence over log_approval
+    if kwargs.get("requires_approval") and kwargs.get("log_approval"):
+        logger.warning(
+            "Both 'requires_approval' and 'log_approval' are set. "
+            "'requires_approval' takes precedence (approval_type='required')."
+        )
+        kwargs.pop("log_approval", None)
 
     def decorator(func: F) -> Function:
         from inspect import isasyncgenfunction

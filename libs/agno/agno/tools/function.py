@@ -128,6 +128,9 @@ class Function(BaseModel):
     # Implies requires_confirmation=True when no other HITL flag is set.
     requires_approval: Optional[bool] = None
 
+    # If True, the HITL resolution result is logged to the approvals table (approval_type='logged').
+    log_approval: Optional[bool] = None
+
     # Caching configuration
     cache_results: bool = False
     cache_dir: Optional[str] = None
@@ -158,6 +161,7 @@ class Function(BaseModel):
                 "requires_confirmation",
                 "external_execution",
                 "requires_approval",
+                "log_approval",
             },
         )
 
@@ -173,6 +177,7 @@ class Function(BaseModel):
             requires_confirmation=data.get("requires_confirmation", False),
             external_execution=data.get("external_execution", False),
             requires_approval=data.get("requires_approval", False),
+            log_approval=data.get("log_approval", False),
         )
 
     def model_copy(self, *, deep: bool = False) -> "Function":

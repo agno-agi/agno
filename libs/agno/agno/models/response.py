@@ -58,6 +58,9 @@ class ToolExecution:
     # If True, an approval record is created when this tool pauses a run
     requires_approval: Optional[bool] = None
 
+    # If True, log the HITL resolution to the approvals table (approval_type='logged')
+    log_approval: Optional[bool] = None
+
     @property
     def is_paused(self) -> bool:
         return bool(self.requires_confirmation or self.requires_user_input or self.external_execution_required)
@@ -92,6 +95,7 @@ class ToolExecution:
             external_execution_required=data.get("external_execution_required"),
             external_execution_silent=data.get("external_execution_silent"),
             requires_approval=data.get("requires_approval"),
+            log_approval=data.get("log_approval"),
             metrics=Metrics(**(data.get("metrics", {}) or {})),
             **{"created_at": data["created_at"]} if "created_at" in data else {},
         )

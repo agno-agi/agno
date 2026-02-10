@@ -1,4 +1,4 @@
-"""Approval record creation for HITL tool runs with requires_approval=True."""
+"""Approval record creation for HITL tool runs with requires_approval=True and log_approval=True."""
 
 from __future__ import annotations
 
@@ -87,6 +87,7 @@ def _build_approval_dict(
         "run_id": getattr(run_response, "run_id", None) or str(uuid4()),
         "session_id": getattr(run_response, "session_id", None) or "",
         "status": "pending",
+        "approval_type": "required",
         "source_type": source_type,
         "agent_id": agent_id,
         "team_id": team_id,
@@ -147,7 +148,7 @@ def create_approval_from_pause(
     except NotImplementedError:
         pass
     except Exception as e:
-        log_warning(f"Error creating approval record: {e}")
+        log_warning(f"Error creating approval record (sync): {e}")
 
 
 async def acreate_approval_from_pause(
@@ -199,4 +200,119 @@ async def acreate_approval_from_pause(
     except NotImplementedError:
         pass
     except Exception as e:
-        log_warning(f"Error creating approval record: {e}")
+        log_warning(f"Error creating approval record (async): {e}")
+
+
+def create_logged_approval(
+    db: Any,
+    tool_execution: Any,
+    run_response: Any,
+    status: str,  # "approved" or "rejected"
+    agent_id: Optional[str] = None,
+    agent_name: Optional[str] = None,
+    team_id: Optional[str] = None,
+    team_name: Optional[str] = None,
+    user_id: Optional[str] = None,
+) -> None:
+    """Create a logged approval record AFTER a HITL interaction resolves.
+
+    Unlike create_approval_from_pause (which creates a 'pending' record before resolution),
+    this creates a completed record (status='approved'/'rejected') for audit logging.
+    Only called for tools with log_approval=True.
+    """
+    if db is None:
+        return
+    try:
+        source_type = "agent"
+        source_name = agent_name
+        if team_id:
+            source_type = "team"
+
+        tool_name = getattr(tool_execution, "tool_name", None)
+        context: Dict[str, Any] = {}
+        if tool_name:
+            context["tool_names"] = [tool_name]
+        if source_name:
+            context["source_name"] = source_name
+
+        approval_data = {
+            "id": str(uuid4()),
+            "run_id": getattr(run_response, "run_id", None) or str(uuid4()),
+            "session_id": getattr(run_response, "session_id", None) or "",
+            "status": status,
+            "approval_type": "logged",
+            "source_type": source_type,
+            "agent_id": agent_id,
+            "team_id": team_id,
+            "user_id": user_id,
+            "source_name": source_name,
+            "context": context if context else None,
+            "resolved_at": now_epoch_s(),
+            "created_at": now_epoch_s(),
+            "updated_at": None,
+        }
+        db.create_approval(approval_data)
+        log_debug(f"Logged approval {approval_data['id']} for tool {tool_name}")
+    except NotImplementedError:
+        pass
+    except Exception as e:
+        log_warning(f"Error creating logged approval record: {e}")
+
+
+async def acreate_logged_approval(
+    db: Any,
+    tool_execution: Any,
+    run_response: Any,
+    status: str,  # "approved" or "rejected"
+    agent_id: Optional[str] = None,
+    agent_name: Optional[str] = None,
+    team_id: Optional[str] = None,
+    team_name: Optional[str] = None,
+    user_id: Optional[str] = None,
+) -> None:
+    """Async variant of create_logged_approval."""
+    if db is None:
+        return
+    try:
+        source_type = "agent"
+        source_name = agent_name
+        if team_id:
+            source_type = "team"
+
+        tool_name = getattr(tool_execution, "tool_name", None)
+        context: Dict[str, Any] = {}
+        if tool_name:
+            context["tool_names"] = [tool_name]
+        if source_name:
+            context["source_name"] = source_name
+
+        approval_data = {
+            "id": str(uuid4()),
+            "run_id": getattr(run_response, "run_id", None) or str(uuid4()),
+            "session_id": getattr(run_response, "session_id", None) or "",
+            "status": status,
+            "approval_type": "logged",
+            "source_type": source_type,
+            "agent_id": agent_id,
+            "team_id": team_id,
+            "user_id": user_id,
+            "source_name": source_name,
+            "context": context if context else None,
+            "resolved_at": now_epoch_s(),
+            "created_at": now_epoch_s(),
+            "updated_at": None,
+        }
+        create_fn = getattr(db, "create_approval", None)
+        if create_fn is None:
+            return
+        from inspect import iscoroutinefunction
+
+        if iscoroutinefunction(create_fn):
+            await create_fn(approval_data)
+        else:
+            create_fn(approval_data)
+        log_debug(f"Logged approval {approval_data['id']} for tool {tool_name}")
+    except NotImplementedError:
+        pass
+    except Exception as e:
+        log_warning(f"Error creating logged approval record: {e}")

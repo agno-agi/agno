@@ -706,11 +706,33 @@ def handle_tool_call_updates(
                 _t.confirmed = False
                 _t.confirmation_note = _t.confirmation_note or "Tool call was rejected"
                 _t.tool_call_error = True
+            if _t.log_approval:
+                from agno.run.approval import create_logged_approval
+
+                create_logged_approval(
+                    db=agent.db,
+                    tool_execution=_t,
+                    run_response=run_response,
+                    status="approved" if _t.confirmed is True else "rejected",
+                    agent_id=agent.id,
+                    agent_name=agent.name,
+                )
             _t.requires_confirmation = False
 
         # Case 2: Handle external execution required tools
         elif _t.external_execution_required is not None and _t.external_execution_required is True:
             handle_external_execution_update(agent, run_messages=run_messages, tool=_t)
+            if _t.log_approval:
+                from agno.run.approval import create_logged_approval
+
+                create_logged_approval(
+                    db=agent.db,
+                    tool_execution=_t,
+                    run_response=run_response,
+                    status="approved",
+                    agent_id=agent.id,
+                    agent_name=agent.name,
+                )
 
         # Case 3: Agentic user input required
         elif _t.tool_name == "get_user_input" and _t.requires_user_input is not None and _t.requires_user_input is True:
@@ -724,6 +746,17 @@ def handle_tool_call_updates(
             _t.answered = True
             # Consume the generator without yielding
             deque(run_tool(agent, run_response, run_messages, _t, functions=_functions), maxlen=0)
+            if _t.log_approval:
+                from agno.run.approval import create_logged_approval
+
+                create_logged_approval(
+                    db=agent.db,
+                    tool_execution=_t,
+                    run_response=run_response,
+                    status="approved",
+                    agent_id=agent.id,
+                    agent_name=agent.name,
+                )
 
 
 def handle_tool_call_updates_stream(
@@ -749,11 +782,33 @@ def handle_tool_call_updates_stream(
                 _t.confirmed = False
                 _t.confirmation_note = _t.confirmation_note or "Tool call was rejected"
                 _t.tool_call_error = True
+            if _t.log_approval:
+                from agno.run.approval import create_logged_approval
+
+                create_logged_approval(
+                    db=agent.db,
+                    tool_execution=_t,
+                    run_response=run_response,
+                    status="approved" if _t.confirmed is True else "rejected",
+                    agent_id=agent.id,
+                    agent_name=agent.name,
+                )
             _t.requires_confirmation = False
 
         # Case 2: Handle external execution required tools
         elif _t.external_execution_required is not None and _t.external_execution_required is True:
             handle_external_execution_update(agent, run_messages=run_messages, tool=_t)
+            if _t.log_approval:
+                from agno.run.approval import create_logged_approval
+
+                create_logged_approval(
+                    db=agent.db,
+                    tool_execution=_t,
+                    run_response=run_response,
+                    status="approved",
+                    agent_id=agent.id,
+                    agent_name=agent.name,
+                )
 
         # Case 3: Agentic user input required
         elif _t.tool_name == "get_user_input" and _t.requires_user_input is not None and _t.requires_user_input is True:
@@ -769,6 +824,17 @@ def handle_tool_call_updates_stream(
             )
             _t.requires_user_input = False
             _t.answered = True
+            if _t.log_approval:
+                from agno.run.approval import create_logged_approval
+
+                create_logged_approval(
+                    db=agent.db,
+                    tool_execution=_t,
+                    run_response=run_response,
+                    status="approved",
+                    agent_id=agent.id,
+                    agent_name=agent.name,
+                )
 
 
 async def ahandle_tool_call_updates(
@@ -789,11 +855,33 @@ async def ahandle_tool_call_updates(
                 _t.confirmed = False
                 _t.confirmation_note = _t.confirmation_note or "Tool call was rejected"
                 _t.tool_call_error = True
+            if _t.log_approval:
+                from agno.run.approval import acreate_logged_approval
+
+                await acreate_logged_approval(
+                    db=agent.db,
+                    tool_execution=_t,
+                    run_response=run_response,
+                    status="approved" if _t.confirmed is True else "rejected",
+                    agent_id=agent.id,
+                    agent_name=agent.name,
+                )
             _t.requires_confirmation = False
 
         # Case 2: Handle external execution required tools
         elif _t.external_execution_required is not None and _t.external_execution_required is True:
             handle_external_execution_update(agent, run_messages=run_messages, tool=_t)
+            if _t.log_approval:
+                from agno.run.approval import acreate_logged_approval
+
+                await acreate_logged_approval(
+                    db=agent.db,
+                    tool_execution=_t,
+                    run_response=run_response,
+                    status="approved",
+                    agent_id=agent.id,
+                    agent_name=agent.name,
+                )
         # Case 3: Agentic user input required
         elif _t.tool_name == "get_user_input" and _t.requires_user_input is not None and _t.requires_user_input is True:
             handle_get_user_input_tool_update(agent, run_messages=run_messages, tool=_t)
@@ -806,6 +894,17 @@ async def ahandle_tool_call_updates(
                 pass
             _t.requires_user_input = False
             _t.answered = True
+            if _t.log_approval:
+                from agno.run.approval import acreate_logged_approval
+
+                await acreate_logged_approval(
+                    db=agent.db,
+                    tool_execution=_t,
+                    run_response=run_response,
+                    status="approved",
+                    agent_id=agent.id,
+                    agent_name=agent.name,
+                )
 
 
 async def ahandle_tool_call_updates_stream(
@@ -832,11 +931,33 @@ async def ahandle_tool_call_updates_stream(
                 _t.confirmed = False
                 _t.confirmation_note = _t.confirmation_note or "Tool call was rejected"
                 _t.tool_call_error = True
+            if _t.log_approval:
+                from agno.run.approval import acreate_logged_approval
+
+                await acreate_logged_approval(
+                    db=agent.db,
+                    tool_execution=_t,
+                    run_response=run_response,
+                    status="approved" if _t.confirmed is True else "rejected",
+                    agent_id=agent.id,
+                    agent_name=agent.name,
+                )
             _t.requires_confirmation = False
 
         # Case 2: Handle external execution required tools
         elif _t.external_execution_required is not None and _t.external_execution_required is True:
             handle_external_execution_update(agent, run_messages=run_messages, tool=_t)
+            if _t.log_approval:
+                from agno.run.approval import acreate_logged_approval
+
+                await acreate_logged_approval(
+                    db=agent.db,
+                    tool_execution=_t,
+                    run_response=run_response,
+                    status="approved",
+                    agent_id=agent.id,
+                    agent_name=agent.name,
+                )
         # Case 3: Agentic user input required
         elif _t.tool_name == "get_user_input" and _t.requires_user_input is not None and _t.requires_user_input is True:
             handle_get_user_input_tool_update(agent, run_messages=run_messages, tool=_t)
@@ -851,3 +972,14 @@ async def ahandle_tool_call_updates_stream(
                 yield event
             _t.requires_user_input = False
             _t.answered = True
+            if _t.log_approval:
+                from agno.run.approval import acreate_logged_approval
+
+                await acreate_logged_approval(
+                    db=agent.db,
+                    tool_execution=_t,
+                    run_response=run_response,
+                    status="approved",
+                    agent_id=agent.id,
+                    agent_name=agent.name,
+                )
