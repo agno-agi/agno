@@ -258,8 +258,8 @@ class TestLinkedToMetadata:
 
         assert result[0].meta_data["linked_to"] == ""
 
-    def test_linked_to_does_not_override_existing(self):
-        """Test that linked_to from metadata doesn't get overwritten if already set."""
+    def test_linked_to_always_uses_knowledge_name(self):
+        """Test that linked_to always uses the knowledge instance name, overriding any caller-supplied value."""
         mock_db = MockVectorDb()
         knowledge = Knowledge(
             name="New KB",
