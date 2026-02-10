@@ -5,7 +5,6 @@ Demonstrates broadcast mode for a structured debate between agents with
 opposing viewpoints. The team leader acts as moderator, synthesizing
 arguments from both sides.
 
-Run: .venvs/demo/bin/python cookbook/03_teams/modes/broadcast/02_debate.py
 """
 
 from agno.agent import Agent
