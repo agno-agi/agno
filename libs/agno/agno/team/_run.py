@@ -283,6 +283,8 @@ def _run_tasks(
         # Use accumulated messages for the iterative loop
         accumulated_messages = run_messages.messages
 
+        model_response: Optional[ModelResponse] = None
+
         # === Iterative task loop ===
         for iteration in range(team.max_iterations):
             log_debug(f"Task iteration {iteration + 1}/{team.max_iterations}")
@@ -300,7 +302,7 @@ def _run_tasks(
                 accumulated_messages.append(state_message)
 
             # Get model response
-            model_response: ModelResponse = team.model.response(
+            model_response = team.model.response(
                 messages=accumulated_messages,
                 response_format=response_format,
                 tools=_tools,
@@ -351,7 +353,7 @@ def _run_tasks(
         # === Post-loop ===
 
         # Store media if enabled
-        if team.store_media:
+        if team.store_media and model_response is not None:
             store_media_util(run_response, model_response)
 
         # Convert response to structured format
@@ -1548,6 +1550,8 @@ async def _arun_tasks(
         # Use accumulated messages for the iterative loop
         accumulated_messages = run_messages.messages
 
+        model_response: Optional[ModelResponse] = None
+
         # === Iterative task loop ===
         for iteration in range(team.max_iterations):
             log_debug(f"Task iteration {iteration + 1}/{team.max_iterations}")
@@ -1565,7 +1569,7 @@ async def _arun_tasks(
                 accumulated_messages.append(state_message)
 
             # Get model response
-            model_response: ModelResponse = await team.model.aresponse(
+            model_response = await team.model.aresponse(
                 messages=accumulated_messages,
                 response_format=response_format,
                 tools=_tools,
@@ -1614,7 +1618,7 @@ async def _arun_tasks(
         # === Post-loop ===
 
         # Store media if enabled
-        if team.store_media:
+        if team.store_media and model_response is not None:
             store_media_util(run_response, model_response)
 
         # Convert response to structured format
