@@ -2505,9 +2505,15 @@ async def _aroute_requirements_to_members(
             return f"[{member.name or member_id}]: {content}"
 
     tasks = [_continue_member(mid, reqs) for mid, reqs in member_reqs.items()]
-    results = await asyncio.gather(*tasks)
+    results = await asyncio.gather(*tasks, return_exceptions=True)
 
-    return [r for r in results if r is not None]
+    member_results: List[str] = []
+    for r in results:
+        if isinstance(r, BaseException):
+            log_warning(f"Member continue_run failed: {r}")
+        elif isinstance(r, str):
+            member_results.append(r)
+    return member_results
 
 
 def _build_continuation_message(member_results: List[str]) -> str:
@@ -2668,6 +2674,20 @@ def continue_run_dispatch(
 
     # Handle team-level tool resolution
     if has_team_level:
+        # Guard: if team-level requirements are unresolved, re-pause instead of auto-rejecting
+        unresolved_team = [
+            r
+            for r in (run_response.requirements or [])
+            if getattr(r, "member_agent_id", None) is None and not r.is_resolved()
+        ]
+        if unresolved_team:
+            from agno.team import _hooks
+
+            if opts.stream:
+                return _hooks.handle_team_run_paused_stream(team, run_response=run_response, session=team_session)  # type: ignore
+            else:
+                return _hooks.handle_team_run_paused(team, run_response=run_response, session=team_session)
+
         response_format = get_response_format(team, run_context=run_context) if team.parser_model is None else None
         team.model = cast(Model, team.model)
 
@@ -2747,6 +2767,9 @@ def continue_run_dispatch(
                 stream_events=opts.stream_events,
                 session_id=session_id,
                 user_id=user_id,
+                knowledge_filters=knowledge_filters,
+                dependencies=dependencies,
+                metadata=metadata,
                 debug_mode=debug_mode,
                 **kwargs,
             )
@@ -2756,6 +2779,9 @@ def continue_run_dispatch(
                 stream=False,
                 session_id=session_id,
                 user_id=user_id,
+                knowledge_filters=knowledge_filters,
+                dependencies=dependencies,
+                metadata=metadata,
                 debug_mode=debug_mode,
                 **kwargs,
             )
@@ -2798,8 +2824,17 @@ def _continue_run(
         parse_response_with_parser_model,
     )
     from agno.team._telemetry import log_team_telemetry
+    from agno.utils.events import create_team_run_continued_event
 
     register_run(run_response.run_id)  # type: ignore
+
+    # Emit RunContinued event (matching streaming variant behaviour)
+    handle_event(
+        create_team_run_continued_event(run_response),
+        run_response,
+        events_to_skip=team.events_to_skip,
+        store_events=team.store_events,
+    )
 
     team.model = cast(Model, team.model)
 
@@ -3365,6 +3400,18 @@ async def _acontinue_run(
                     elif updated_tools:
                         run_response.tools = updated_tools
 
+                await aregister_run(run_response.run_id)  # type: ignore
+
+                # Emit RunContinued event (matching streaming variant behaviour)
+                from agno.utils.events import create_team_run_continued_event
+
+                handle_event(
+                    create_team_run_continued_event(run_response),
+                    run_response,
+                    events_to_skip=team.events_to_skip,
+                    store_events=team.store_events,
+                )
+
                 has_member = _has_member_requirements(run_response.requirements or [])
                 has_team_level = _has_team_level_requirements(run_response.requirements or [])
 
@@ -3398,6 +3445,19 @@ async def _acontinue_run(
 
                 # Handle team-level tool resolution
                 if has_team_level:
+                    # Guard: if team-level requirements are unresolved, re-pause instead of auto-rejecting
+                    unresolved_team = [
+                        r
+                        for r in (run_response.requirements or [])
+                        if getattr(r, "member_agent_id", None) is None and not r.is_resolved()
+                    ]
+                    if unresolved_team:
+                        from agno.team import _hooks
+
+                        return await _hooks.ahandle_team_run_paused(
+                            team, run_response=run_response, session=team_session
+                        )
+
                     team.model = cast(Model, team.model)
                     await _check_and_refresh_mcp_tools(team)
 
@@ -3422,8 +3482,6 @@ async def _acontinue_run(
 
                     run_response.status = RunStatus.running
                     run_response.content = None
-
-                    await aregister_run(run_response.run_id)  # type: ignore
 
                     # Get model response
                     model_response: ModelResponse = await team.model.aresponse(
@@ -3477,6 +3535,9 @@ async def _acontinue_run(
                         stream=False,
                         session_id=session_id,
                         user_id=user_id,
+                        knowledge_filters=run_context.knowledge_filters,
+                        dependencies=run_context.dependencies,
+                        metadata=run_context.metadata,
                         debug_mode=debug_mode,
                         **kwargs,
                     )
@@ -3636,6 +3697,8 @@ async def _acontinue_run_stream(
                     elif updated_tools:
                         run_response.tools = updated_tools
 
+                await aregister_run(run_response.run_id)  # type: ignore
+
                 has_member = _has_member_requirements(run_response.requirements or [])
                 has_team_level = _has_team_level_requirements(run_response.requirements or [])
 
@@ -3671,6 +3734,23 @@ async def _acontinue_run_stream(
                         return
 
                 if has_team_level:
+                    # Guard: if team-level requirements are unresolved, re-pause instead of auto-rejecting
+                    unresolved_team = [
+                        r
+                        for r in (run_response.requirements or [])
+                        if getattr(r, "member_agent_id", None) is None and not r.is_resolved()
+                    ]
+                    if unresolved_team:
+                        from agno.team import _hooks
+
+                        async for item in _hooks.ahandle_team_run_paused_stream(
+                            team, run_response=run_response, session=team_session
+                        ):
+                            yield item
+                        if yield_run_output:
+                            yield run_response
+                        return
+
                     team.model = cast(Model, team.model)
                     await _check_and_refresh_mcp_tools(team)
 
@@ -3697,7 +3777,6 @@ async def _acontinue_run_stream(
 
                     run_response.status = RunStatus.running
                     run_response.content = None
-                    await aregister_run(run_response.run_id)  # type: ignore
 
                     # Yield RunContinued event
                     if stream_events:
@@ -3793,6 +3872,9 @@ async def _acontinue_run_stream(
                         stream_events=stream_events,
                         session_id=session_id,
                         user_id=user_id,
+                        knowledge_filters=run_context.knowledge_filters,
+                        dependencies=run_context.dependencies,
+                        metadata=run_context.metadata,
                         debug_mode=debug_mode,
                         **kwargs,
                     ):
