@@ -1740,7 +1740,38 @@ class Model(ABC):
         if model_response_delta.response_usage is not None:
             if stream_data.response_metrics is None:
                 stream_data.response_metrics = Metrics()
-            stream_data.response_metrics += model_response_delta.response_usage
+            # Use max() for token counts instead of += to avoid double-counting
+            # when providers (e.g. Anthropic) report cumulative usage in
+            # multiple streaming events (message_start + message_delta).
+            usage = model_response_delta.response_usage
+            metrics = stream_data.response_metrics
+            for _field in (
+                "input_tokens",
+                "output_tokens",
+                "total_tokens",
+                "cache_read_tokens",
+                "cache_write_tokens",
+                "reasoning_tokens",
+                "audio_input_tokens",
+                "audio_output_tokens",
+                "audio_total_tokens",
+            ):
+                _new = getattr(usage, _field, 0) or 0
+                _cur = getattr(metrics, _field, 0) or 0
+                if _new > _cur:
+                    setattr(metrics, _field, _new)
+            # Cost: take latest non-None value
+            if usage.cost is not None:
+                metrics.cost = usage.cost
+            # Merge provider-specific and additional metrics
+            if usage.provider_metrics:
+                if metrics.provider_metrics is None:
+                    metrics.provider_metrics = {}
+                metrics.provider_metrics.update(usage.provider_metrics)
+            if usage.additional_metrics:
+                if metrics.additional_metrics is None:
+                    metrics.additional_metrics = {}
+                metrics.additional_metrics.update(usage.additional_metrics)
 
         # Update stream_data content
         if model_response_delta.content is not None:
