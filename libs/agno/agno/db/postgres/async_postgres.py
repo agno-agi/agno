@@ -197,15 +197,19 @@ class AsyncPostgresDb(AsyncBaseDb):
             Table: SQLAlchemy Table object
         """
         try:
-            # Pass traces_table_name and db_schema for spans table foreign key resolution
+            # Pass table names and db_schema for foreign key resolution
             table_schema = get_table_schema_definition(
-                table_type, traces_table_name=self.trace_table_name, db_schema=self.db_schema
+                table_type,
+                traces_table_name=self.trace_table_name,
+                db_schema=self.db_schema,
+                schedules_table_name=self.schedules_table_name,
             ).copy()
 
             columns: List[Column] = []
             indexes: List[str] = []
             unique_constraints: List[str] = []
             schema_unique_constraints = table_schema.pop("_unique_constraints", [])
+            schema_composite_indexes = table_schema.pop("__composite_indexes__", [])
 
             # Get the columns, indexes, and unique constraints from the table schema
             for col_name, col_config in table_schema.items():
@@ -223,7 +227,10 @@ class AsyncPostgresDb(AsyncBaseDb):
 
                 # Handle foreign key constraint
                 if "foreign_key" in col_config:
-                    column_args.append(ForeignKey(col_config["foreign_key"]))
+                    fk_kwargs = {}
+                    if "ondelete" in col_config:
+                        fk_kwargs["ondelete"] = col_config["ondelete"]
+                    column_args.append(ForeignKey(col_config["foreign_key"], **fk_kwargs))
 
                 columns.append(Column(*column_args, **column_kwargs))  # type: ignore
 
@@ -240,6 +247,11 @@ class AsyncPostgresDb(AsyncBaseDb):
             for idx_col in indexes:
                 idx_name = f"idx_{table_name}_{idx_col}"
                 table.append_constraint(Index(idx_name, idx_col))
+
+            # Composite indexes
+            for idx_config in schema_composite_indexes:
+                idx_name = f"idx_{table_name}_{'_'.join(idx_config['columns'])}"
+                table.append_constraint(Index(idx_name, *idx_config["columns"]))
 
             if self.create_schema:
                 async with self.async_session_factory() as sess, sess.begin():

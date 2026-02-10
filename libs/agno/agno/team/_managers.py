@@ -190,7 +190,7 @@ def _process_learnings(
         return
 
     try:
-        messages = run_messages.messages if run_messages else []
+        messages = list(run_messages.messages) if run_messages else []
         team._learning.process(
             messages=messages,
             user_id=user_id,
@@ -213,7 +213,7 @@ async def _aprocess_learnings(
         return
 
     try:
-        messages = run_messages.messages if run_messages else []
+        messages = list(run_messages.messages) if run_messages else []
         await team._learning.aprocess(
             messages=messages,
             user_id=user_id,
