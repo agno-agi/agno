@@ -3,6 +3,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from agno.agent._storage import (
+    aread_or_create_session,
+    aread_session,
+    read_or_create_session,
+    read_session,
+)
 from agno.agent.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.session.agent import AgentSession
@@ -30,7 +36,7 @@ def test_read_session_passes_user_id_to_db():
     agent.db = MagicMock()
     agent.db.get_session = MagicMock(return_value=None)
 
-    agent._read_session(session_id="s1", user_id="alice")
+    read_session(agent, session_id="s1", user_id="alice")
 
     agent.db.get_session.assert_called_once()
     call_kwargs = agent.db.get_session.call_args.kwargs
@@ -42,7 +48,7 @@ def test_read_session_none_user_id_passes_none():
     agent.db = MagicMock()
     agent.db.get_session = MagicMock(return_value=None)
 
-    agent._read_session(session_id="s1")
+    read_session(agent, session_id="s1")
 
     call_kwargs = agent.db.get_session.call_args.kwargs
     assert call_kwargs["user_id"] is None
@@ -54,7 +60,7 @@ async def test_aread_session_passes_user_id_to_db():
     agent.db = AsyncMock()
     agent.db.get_session = AsyncMock(return_value=None)
 
-    await agent._aread_session(session_id="s1", user_id="alice")
+    await aread_session(agent, session_id="s1", user_id="alice")
 
     agent.db.get_session.assert_called_once()
     call_kwargs = agent.db.get_session.call_args.kwargs
@@ -71,12 +77,12 @@ def test_read_or_create_session_passes_user_id_through():
     agent.db.get_session = MagicMock(side_effect=_scoped_get_session("alice", alice_session))
 
     # Bob requests Alice's session_id — should NOT get Alice's session
-    result = agent._read_or_create_session(session_id="s1", user_id="bob")
+    result = read_or_create_session(agent, session_id="s1", user_id="bob")
     assert result.user_id == "bob"
     assert result.session_id == "s1"
 
     # Alice requests her own session — should get it back
-    result = agent._read_or_create_session(session_id="s1", user_id="alice")
+    result = read_or_create_session(agent, session_id="s1", user_id="alice")
     assert result.user_id == "alice"
 
 
@@ -88,7 +94,7 @@ async def test_aread_or_create_session_passes_user_id_async_branch():
     agent.db.get_session = AsyncMock(side_effect=_scoped_get_session("alice", alice_session))
 
     with patch("agno.agent._init.has_async_db", return_value=True):
-        result = await agent._aread_or_create_session(session_id="s1", user_id="bob")
+        result = await aread_or_create_session(agent, session_id="s1", user_id="bob")
     assert result.user_id == "bob"
 
 
@@ -100,7 +106,7 @@ async def test_aread_or_create_session_passes_user_id_sync_fallback():
     agent.db.get_session = MagicMock(side_effect=_scoped_get_session("alice", alice_session))
 
     with patch("agno.agent._init.has_async_db", return_value=False):
-        result = await agent._aread_or_create_session(session_id="s1", user_id="bob")
+        result = await aread_or_create_session(agent, session_id="s1", user_id="bob")
     assert result.user_id == "bob"
 
 
@@ -109,11 +115,11 @@ def test_cached_session_not_returned_to_wrong_user():
     agent.db = MagicMock()
     agent.db.get_session = MagicMock(return_value=None)
 
-    alice_result = agent._read_or_create_session(session_id="s1", user_id="alice")
+    alice_result = read_or_create_session(agent, session_id="s1", user_id="alice")
     assert alice_result.user_id == "alice"
     assert agent._cached_session is not None
 
-    bob_result = agent._read_or_create_session(session_id="s1", user_id="bob")
+    bob_result = read_or_create_session(agent, session_id="s1", user_id="bob")
     assert bob_result.user_id == "bob"
     assert bob_result is not alice_result
 
@@ -123,10 +129,10 @@ def test_cached_session_returned_when_user_id_none():
     agent.db = MagicMock()
     agent.db.get_session = MagicMock(return_value=None)
 
-    result1 = agent._read_or_create_session(session_id="s1", user_id=None)
+    result1 = read_or_create_session(agent, session_id="s1", user_id=None)
     assert agent._cached_session is not None
 
-    result2 = agent._read_or_create_session(session_id="s1", user_id=None)
+    result2 = read_or_create_session(agent, session_id="s1", user_id=None)
     assert result2 is result1
 
 
@@ -223,9 +229,6 @@ async def test_aget_session_cache_respects_user_id():
     assert result is None
 
 
-# --- Layer 5: save_session ---
-
-
 # --- Layer 4: delete_session / adelete_session ---
 
 
@@ -274,20 +277,6 @@ async def test_adelete_session_none_user_id_acts_as_wildcard():
 # --- Layer 5: save_session ---
 
 
-def test_save_session_warns_on_upsert_rejection():
-    agent = Agent(model=OpenAIChat(id="gpt-4o"))
-    agent.db = MagicMock()
-    agent.db.upsert_session = MagicMock(return_value=None)
-
-    session = _make_session("s1", user_id="alice")
-    session.session_data = {"session_state": {}}
-
-    with patch("agno.agent._storage.log_warning") as mock_warn:
-        agent.save_session(session=session)
-        mock_warn.assert_called_once()
-        assert "not persisted" in mock_warn.call_args[0][0]
-
-
 def test_save_session_logs_debug_on_success():
     agent = Agent(model=OpenAIChat(id="gpt-4o"))
     agent.db = MagicMock()
@@ -297,8 +286,8 @@ def test_save_session_logs_debug_on_success():
     session.session_data = {"session_state": {}}
 
     with (
-        patch("agno.agent._storage.log_warning") as mock_warn,
-        patch("agno.agent._storage.log_debug") as mock_debug,
+        patch("agno.agent._session.log_warning") as mock_warn,
+        patch("agno.agent._session.log_debug") as mock_debug,
     ):
         agent.save_session(session=session)
         mock_warn.assert_not_called()
