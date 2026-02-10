@@ -3308,13 +3308,14 @@ class AsyncPostgresDb(AsyncBaseDb):
             table = await self._get_table(table_type="approvals", create_table_if_not_found=True)
             if table is None:
                 raise RuntimeError("Failed to get or create approvals table")
+            data = {**approval_data}
             now = int(time.time())
-            approval_data.setdefault("created_at", now)
-            approval_data.setdefault("updated_at", now)
+            data.setdefault("created_at", now)
+            data.setdefault("updated_at", now)
             async with self.async_session_factory() as sess:
                 async with sess.begin():
-                    await sess.execute(table.insert().values(**approval_data))
-            return approval_data
+                    await sess.execute(table.insert().values(**data))
+            return data
         except Exception as e:
             log_error(f"Error creating approval: {e}")
             raise

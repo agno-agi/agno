@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
 from agno.utils.dttm import now_epoch_s
-from agno.utils.log import log_debug
+from agno.utils.log import log_debug, log_warning
 
 
 def _has_approval_requirement(tools: Optional[List[Any]], requirements: Optional[List[Any]] = None) -> bool:
@@ -34,6 +34,7 @@ def _build_approval_dict(
     team_id: Optional[str] = None,
     team_name: Optional[str] = None,
     workflow_id: Optional[str] = None,
+    workflow_name: Optional[str] = None,
     user_id: Optional[str] = None,
     schedule_id: Optional[str] = None,
     schedule_run_id: Optional[str] = None,
@@ -47,6 +48,7 @@ def _build_approval_dict(
         source_name = team_name
     elif workflow_id:
         source_type = "workflow"
+        source_name = workflow_name
 
     # Serialize requirements
     requirements_data: Optional[List[Dict[str, Any]]] = None
@@ -110,6 +112,7 @@ def create_approval_from_pause(
     team_id: Optional[str] = None,
     team_name: Optional[str] = None,
     workflow_id: Optional[str] = None,
+    workflow_name: Optional[str] = None,
     user_id: Optional[str] = None,
     schedule_id: Optional[str] = None,
     schedule_run_id: Optional[str] = None,
@@ -134,6 +137,7 @@ def create_approval_from_pause(
             team_id=team_id,
             team_name=team_name,
             workflow_id=workflow_id,
+            workflow_name=workflow_name,
             user_id=user_id,
             schedule_id=schedule_id,
             schedule_run_id=schedule_run_id,
@@ -143,7 +147,7 @@ def create_approval_from_pause(
     except NotImplementedError:
         pass
     except Exception as e:
-        log_debug(f"Error creating approval record: {e}")
+        log_warning(f"Error creating approval record: {e}")
 
 
 async def acreate_approval_from_pause(
@@ -154,6 +158,7 @@ async def acreate_approval_from_pause(
     team_id: Optional[str] = None,
     team_name: Optional[str] = None,
     workflow_id: Optional[str] = None,
+    workflow_name: Optional[str] = None,
     user_id: Optional[str] = None,
     schedule_id: Optional[str] = None,
     schedule_run_id: Optional[str] = None,
@@ -175,6 +180,7 @@ async def acreate_approval_from_pause(
             team_id=team_id,
             team_name=team_name,
             workflow_id=workflow_id,
+            workflow_name=workflow_name,
             user_id=user_id,
             schedule_id=schedule_id,
             schedule_run_id=schedule_run_id,
@@ -193,4 +199,4 @@ async def acreate_approval_from_pause(
     except NotImplementedError:
         pass
     except Exception as e:
-        log_debug(f"Error creating approval record: {e}")
+        log_warning(f"Error creating approval record: {e}")

@@ -2,7 +2,7 @@
 
 import asyncio
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
@@ -50,7 +50,7 @@ def get_approval_router(os_db: Any, settings: Any) -> APIRouter:
 
     @router.get("/approvals", response_model=ApprovalListResponse)
     async def list_approvals(
-        status: Optional[str] = Query(None),
+        status: Optional[Literal["pending", "approved", "rejected"]] = Query(None),
         source_type: Optional[str] = Query(None),
         agent_id: Optional[str] = Query(None),
         team_id: Optional[str] = Query(None),
@@ -116,7 +116,7 @@ def get_approval_router(os_db: Any, settings: Any) -> APIRouter:
             "update_approval",
             approval_id,
             expected_status="pending",
-            status=body.action,
+            status=body.status,
             resolved_by=body.resolved_by,
             resolved_at=now,
         )

@@ -1045,7 +1045,7 @@ class BaseDb(ABC):
         user_id: Optional[str] = None,
         schedule_id: Optional[str] = None,
         run_id: Optional[str] = None,
-        limit: int = 50,
+        limit: int = 100,
         offset: int = 0,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """List approvals with optional filtering. Returns (items, total_count)."""
@@ -1732,7 +1732,7 @@ class AsyncBaseDb(ABC):
         user_id: Optional[str] = None,
         schedule_id: Optional[str] = None,
         run_id: Optional[str] = None,
-        limit: int = 50,
+        limit: int = 100,
         offset: int = 0,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """List approvals with optional filtering. Returns (items, total_count)."""
