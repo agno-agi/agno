@@ -716,6 +716,7 @@ def handle_tool_call_updates(
         elif _t.tool_name == "get_user_input" and _t.requires_user_input is not None and _t.requires_user_input is True:
             handle_get_user_input_tool_update(agent, run_messages=run_messages, tool=_t)
             _t.requires_user_input = False
+            _t.answered = True
 
         # Case 4: Handle user input required tools
         elif _t.requires_user_input is not None and _t.requires_user_input is True:

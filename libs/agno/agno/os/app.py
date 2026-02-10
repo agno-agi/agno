@@ -106,6 +106,36 @@ async def db_lifespan(app: FastAPI, agent_os: "AgentOS"):
     await agent_os._close_databases()
 
 
+@asynccontextmanager
+async def scheduler_lifespan(app: FastAPI, agent_os: "AgentOS"):
+    """Start and stop the scheduler poller."""
+    from agno.scheduler import ScheduleExecutor, SchedulePoller
+
+    base_url = agent_os._scheduler_base_url or "http://127.0.0.1:7777"
+    internal_token = agent_os._internal_service_token
+    if internal_token is None:
+        raise ValueError("internal_service_token must be set when scheduler is enabled")
+
+    executor = ScheduleExecutor(
+        base_url=base_url,
+        internal_service_token=internal_token,
+    )
+    poller = SchedulePoller(
+        db=agent_os.db,
+        executor=executor,
+        poll_interval=agent_os._scheduler_poll_interval,
+    )
+
+    app.state.scheduler_executor = executor
+    app.state.scheduler_poller = poller
+    await poller.start()
+
+    yield
+
+    await poller.stop()
+
+
+
 def _combine_app_lifespans(lifespans: list) -> Any:
     """Combine multiple FastAPI app lifespan context managers into one."""
     if len(lifespans) == 1:

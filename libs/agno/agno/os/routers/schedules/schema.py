@@ -120,6 +120,16 @@ class ScheduleResponse(BaseModel):
     updated_at: Optional[int] = None
 
 
+class ScheduleStateResponse(BaseModel):
+    """Trimmed response for state-changing operations (enable/disable)."""
+
+    id: str
+    name: str
+    enabled: bool
+    next_run_at: Optional[int] = None
+    updated_at: Optional[int] = None
+
+
 class ScheduleRunResponse(BaseModel):
     id: str
     schedule_id: str

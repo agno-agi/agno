@@ -38,7 +38,7 @@ reporter = Agent(
 #   1. Registers the /schedules REST endpoints
 #   2. Starts a SchedulePoller on app startup (polls every 15s by default)
 #   3. Auto-generates an internal service token for scheduler -> agent auth
-app = AgentOS(
+agent_os = AgentOS(
     name="Scheduled OS",
     agents=[greeter, reporter],
     db=db,
@@ -47,6 +47,7 @@ app = AgentOS(
     # scheduler_base_url="http://127.0.0.1:7777",  # default
     # internal_service_token="my-secret",  # auto-generated if omitted
 )
+app = agent_os.get_app()
 
 # --- Run the server ---
 # Once running, create schedules via:
@@ -63,6 +64,4 @@ app = AgentOS(
 # The poller will pick it up on the next poll cycle and run the agent.
 
 if __name__ == "__main__":
-    import uvicorn
-
-    uvicorn.run(app.get_app(), host="0.0.0.0", port=7777)
+    app.serve(app="test:app", reload=True)

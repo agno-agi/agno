@@ -47,7 +47,7 @@ try:
     mgr.create(name="unique-schedule", cron="0 10 * * *", endpoint="/test")
 except ValueError as e:
     print(f"   Caught ValueError: {e}")
-mgr.delete(s["id"])
+mgr.delete(s.id)
 
 # =============================================================================
 # 4. Complex cron patterns
@@ -57,15 +57,15 @@ print("\n4. Complex cron patterns:")
 
 # Every 5 minutes
 s1 = mgr.create(name="every-5-min", cron="*/5 * * * *", endpoint="/test")
-print(f"   */5 * * * * -> Created: {s1['name']}")
+print(f"   */5 * * * * -> Created: {s1.name}")
 
 # Weekdays 9-17
 s2 = mgr.create(name="business-hours", cron="0 9-17 * * 1-5", endpoint="/test")
-print(f"   0 9-17 * * 1-5 -> Created: {s2['name']}")
+print(f"   0 9-17 * * 1-5 -> Created: {s2.name}")
 
 # First day of month at midnight
 s3 = mgr.create(name="monthly-report", cron="0 0 1 * *", endpoint="/test")
-print(f"   0 0 1 * * -> Created: {s3['name']}")
+print(f"   0 0 1 * * -> Created: {s3.name}")
 
 # =============================================================================
 # 5. Method auto-uppercasing
@@ -75,7 +75,7 @@ print("\n5. Method auto-uppercasing:")
 s4 = mgr.create(
     name="lowercase-method", cron="0 9 * * *", endpoint="/test", method="get"
 )
-print(f"   Input: 'get' -> Stored: '{s4['method']}'")
+print(f"   Input: 'get' -> Stored: '{s4.method}'")
 
 # =============================================================================
 # 6. Display all valid schedules
@@ -90,5 +90,5 @@ console.show_schedules()
 # =============================================================================
 
 for s in [s1, s2, s3, s4]:
-    mgr.delete(s["id"])
+    mgr.delete(s.id)
 print("All schedules cleaned up.")

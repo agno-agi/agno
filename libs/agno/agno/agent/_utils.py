@@ -109,6 +109,10 @@ def convert_dependencies_to_string(agent: Agent, context: Dict[str, Any]) -> str
 # ---------------------------------------------------------------------------
 
 
+# Fields that are dataclass fields but not __init__ parameters
+_DEEP_COPY_EXCLUDE = {"team_id", "workflow_id"}
+
+
 def deep_copy(agent: Agent, *, update: Optional[Dict[str, Any]] = None) -> Agent:
     """Create and return a deep copy of this Agent, optionally updating fields.
 
@@ -128,6 +132,9 @@ def deep_copy(agent: Agent, *, update: Optional[Dict[str, Any]] = None) -> Agent
         # Skip private fields (not part of __init__ signature)
         if f.name.startswith("_"):
             continue
+        # Skip fields that are not __init__ parameters
+        if f.name in _DEEP_COPY_EXCLUDE:
+            continue
 
         field_value = getattr(agent, f.name)
         if field_value is not None:
@@ -145,6 +152,11 @@ def deep_copy(agent: Agent, *, update: Optional[Dict[str, Any]] = None) -> Agent
     try:
         new_agent = agent.__class__(**fields_for_new_agent)
         log_debug(f"Created new {agent.__class__.__name__}")
+        # Restore fields that aren't part of __init__
+        for field_name in _DEEP_COPY_EXCLUDE:
+            value = getattr(agent, field_name, None)
+            if value is not None:
+                setattr(new_agent, field_name, value)
         return new_agent
     except Exception as e:
         log_error(f"Failed to create deep copy of {agent.__class__.__name__}: {e}")

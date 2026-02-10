@@ -105,10 +105,12 @@ class TestListSchedules:
 
 
 class TestCreateSchedule:
+    @patch("agno.scheduler.cron._require_pytz")
+    @patch("agno.scheduler.cron._require_croniter")
     @patch("agno.scheduler.cron.validate_cron_expr", return_value=True)
     @patch("agno.scheduler.cron.validate_timezone", return_value=True)
     @patch("agno.scheduler.cron.compute_next_run", return_value=int(time.time()) + 60)
-    def test_create_success(self, mock_compute, mock_tz, mock_cron, client, mock_db):
+    def test_create_success(self, mock_compute, mock_tz, mock_cron, mock_req_cron, mock_req_pytz, client, mock_db):
         mock_db.get_schedule_by_name = MagicMock(return_value=None)
         created = _make_schedule_dict(name="new-sched")
         mock_db.create_schedule = MagicMock(return_value=created)
@@ -125,8 +127,10 @@ class TestCreateSchedule:
         assert resp.json()["name"] == "new-sched"
         mock_db.create_schedule.assert_called_once()
 
+    @patch("agno.scheduler.cron._require_pytz")
+    @patch("agno.scheduler.cron._require_croniter")
     @patch("agno.scheduler.cron.validate_cron_expr", return_value=False)
-    def test_create_invalid_cron(self, mock_cron, client, mock_db):
+    def test_create_invalid_cron(self, mock_cron, mock_req_cron, mock_req_pytz, client, mock_db):
         resp = client.post(
             "/schedules",
             json={
@@ -137,10 +141,14 @@ class TestCreateSchedule:
         )
         assert resp.status_code == 422
 
+    @patch("agno.scheduler.cron._require_pytz")
+    @patch("agno.scheduler.cron._require_croniter")
     @patch("agno.scheduler.cron.validate_cron_expr", return_value=True)
     @patch("agno.scheduler.cron.validate_timezone", return_value=True)
     @patch("agno.scheduler.cron.compute_next_run", return_value=int(time.time()) + 60)
-    def test_create_duplicate_name(self, mock_compute, mock_tz, mock_cron, client, mock_db):
+    def test_create_duplicate_name(
+        self, mock_compute, mock_tz, mock_cron, mock_req_cron, mock_req_pytz, client, mock_db
+    ):
         mock_db.get_schedule_by_name = MagicMock(return_value=_make_schedule_dict())
         resp = client.post(
             "/schedules",
@@ -227,8 +235,10 @@ class TestDeleteSchedule:
 
 
 class TestEnableSchedule:
+    @patch("agno.scheduler.cron._require_pytz")
+    @patch("agno.scheduler.cron._require_croniter")
     @patch("agno.scheduler.cron.compute_next_run", return_value=int(time.time()) + 60)
-    def test_enable_success(self, mock_compute, client, mock_db):
+    def test_enable_success(self, mock_compute, mock_req_cron, mock_req_pytz, client, mock_db):
         existing = _make_schedule_dict(enabled=False)
         enabled = _make_schedule_dict(enabled=True)
         mock_db.get_schedule = MagicMock(return_value=existing)

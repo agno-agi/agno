@@ -78,7 +78,10 @@ def get_members_system_message_content(team: "Team", indent: int = 0) -> str:
 
     pad = " " * indent
     content = ""
-    for member in team.members:  # type: ignore[union-attr]
+    # Only iterate if members is a static list (not a callable factory)
+    if not isinstance(team.members, list):
+        return content
+    for member in team.members:
         member_id = get_member_id(member)
 
         if isinstance(member, Team):
@@ -197,7 +200,8 @@ def _build_team_context(
     Shared between sync and async system-message builders.
     """
     content = ""
-    if team.members is not None and len(team.members) > 0:  # type: ignore[arg-type]
+    # Check if members is a non-empty list (not a callable factory)
+    if team.members is not None and isinstance(team.members, list) and len(team.members) > 0:
         content += _get_opening_prompt()
         content += "\n<team_members>\n"
         content += team.get_members_system_message_content()
