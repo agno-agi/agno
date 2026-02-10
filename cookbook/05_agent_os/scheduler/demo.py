@@ -40,7 +40,7 @@ mgr = ScheduleManager(db)
 # Create a schedule for the greeter agent (every 5 minutes)
 greet_schedule = mgr.create(
     name="greet-every-5-min",
-    cron="*/5 * * * *",
+    cron="* * * * *",
     endpoint="/agents/greeter/runs",
     payload={"message": "Say hello!"},
     description="Greet every 5 minutes",
@@ -53,7 +53,7 @@ print(
 # Create a schedule for the reporter agent (daily at 9 AM)
 report_schedule = mgr.create(
     name="daily-news-report",
-    cron="0 9 * * *",
+    cron="* * * * *",
     endpoint="/agents/reporter/runs",
     payload={"message": "Summarize today's top headlines."},
     description="Daily news summary at 9 AM UTC",
