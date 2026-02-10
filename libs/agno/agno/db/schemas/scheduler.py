@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from agno.utils.dttm import now_epoch_s, to_epoch_s
 
@@ -97,6 +97,9 @@ class ScheduleRun:
     run_id: Optional[str] = None
     session_id: Optional[str] = None
     error: Optional[str] = None
+    input: Optional[Dict[str, Any]] = None
+    output: Optional[Dict[str, Any]] = None
+    requirements: Optional[List[Dict[str, Any]]] = None
     created_at: Optional[int] = None
 
     def __post_init__(self) -> None:
@@ -119,6 +122,9 @@ class ScheduleRun:
             "run_id": self.run_id,
             "session_id": self.session_id,
             "error": self.error,
+            "input": self.input,
+            "output": self.output,
+            "requirements": self.requirements,
             "created_at": self.created_at,
         }
 
@@ -136,6 +142,9 @@ class ScheduleRun:
             "run_id",
             "session_id",
             "error",
+            "input",
+            "output",
+            "requirements",
             "created_at",
         }
         filtered = {k: v for k, v in data.items() if k in valid_keys}
