@@ -107,11 +107,11 @@ class TestManagerList:
     def test_list_all(self, mgr, mock_db):
         result = mgr.list()
         assert len(result) == 1
-        mock_db.get_schedules.assert_called_once_with(enabled=None, limit=100, page=1)
+        mock_db.get_schedules.assert_called_once_with(enabled=None, limit=100, offset=0)
 
     def test_list_with_filters(self, mgr, mock_db):
-        mgr.list(enabled=True, limit=10, page=2)
-        mock_db.get_schedules.assert_called_once_with(enabled=True, limit=10, page=2)
+        mgr.list(enabled=True, limit=10, offset=5)
+        mock_db.get_schedules.assert_called_once_with(enabled=True, limit=10, offset=5)
 
 
 class TestManagerGet:
@@ -168,9 +168,9 @@ class TestManagerTrigger:
 
 class TestManagerGetRuns:
     def test_get_runs(self, mgr, mock_db):
-        result = mgr.get_runs("sched-1", limit=5, page=2)
+        result = mgr.get_runs("sched-1", limit=5, offset=1)
         assert result == []
-        mock_db.get_schedule_runs.assert_called_once_with("sched-1", limit=5, page=2)
+        mock_db.get_schedule_runs.assert_called_once_with("sched-1", limit=5, offset=1)
 
 
 class TestManagerCallMissingMethod:

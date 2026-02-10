@@ -972,7 +972,7 @@ class BaseDb(ABC):
         self,
         enabled: Optional[bool] = None,
         limit: int = 100,
-        page: int = 1,
+        offset: int = 0,
     ) -> List[Dict[str, Any]]:
         """List schedules with optional filtering."""
         raise NotImplementedError
@@ -1015,7 +1015,7 @@ class BaseDb(ABC):
         self,
         schedule_id: str,
         limit: int = 20,
-        page: int = 1,
+        offset: int = 0,
     ) -> List[Dict[str, Any]]:
         """List runs for a schedule."""
         raise NotImplementedError
@@ -1616,7 +1616,7 @@ class AsyncBaseDb(ABC):
         self,
         enabled: Optional[bool] = None,
         limit: int = 100,
-        page: int = 1,
+        offset: int = 0,
     ) -> List[Dict[str, Any]]:
         """List schedules with optional filtering."""
         raise NotImplementedError
@@ -1659,7 +1659,7 @@ class AsyncBaseDb(ABC):
         self,
         schedule_id: str,
         limit: int = 20,
-        page: int = 1,
+        offset: int = 0,
     ) -> List[Dict[str, Any]]:
         """List runs for a schedule."""
         raise NotImplementedError

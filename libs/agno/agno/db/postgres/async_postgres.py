@@ -3115,13 +3115,12 @@ class AsyncPostgresDb(AsyncBaseDb):
         self,
         enabled: Optional[bool] = None,
         limit: int = 100,
-        page: int = 1,
+        offset: int = 0,
     ) -> List[Dict[str, Any]]:
         try:
             table = await self._get_table(table_type="schedules")
             if table is None:
                 return []
-            offset = (page - 1) * limit
             async with self.async_session_factory() as sess:
                 stmt = select(table)
                 if enabled is not None:
@@ -3275,13 +3274,12 @@ class AsyncPostgresDb(AsyncBaseDb):
         self,
         schedule_id: str,
         limit: int = 100,
-        page: int = 1,
+        offset: int = 0,
     ) -> List[Dict[str, Any]]:
         try:
             table = await self._get_table(table_type="schedule_runs")
             if table is None:
                 return []
-            offset = (page - 1) * limit
             async with self.async_session_factory() as sess:
                 stmt = (
                     select(table)

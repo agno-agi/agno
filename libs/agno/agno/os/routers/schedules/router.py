@@ -80,7 +80,8 @@ def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
         page: int = Query(1, ge=1),
         _: bool = Depends(auth_dependency),
     ) -> List[Dict[str, Any]]:
-        return await _db_call("get_schedules", enabled=enabled, limit=limit, page=page)
+        offset = (page - 1) * limit
+        return await _db_call("get_schedules", enabled=enabled, limit=limit, offset=offset)
 
     @router.post("/schedules", response_model=ScheduleResponse, status_code=201)
     async def create_schedule(
@@ -254,7 +255,8 @@ def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
         existing = await _db_call("get_schedule", schedule_id)
         if existing is None:
             raise HTTPException(status_code=404, detail="Schedule not found")
-        return await _db_call("get_schedule_runs", schedule_id, limit=limit, page=page)
+        offset = (page - 1) * limit
+        return await _db_call("get_schedule_runs", schedule_id, limit=limit, offset=offset)
 
     @router.get("/schedules/{schedule_id}/runs/{run_id}", response_model=ScheduleRunResponse)
     async def get_schedule_run(
