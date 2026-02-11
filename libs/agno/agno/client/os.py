@@ -1684,6 +1684,7 @@ class AgentOSClient:
         db_id: Optional[str] = None,
         table: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
+        user_id: Optional[str] = None,
     ) -> None:
         """Delete a specific session.
 
@@ -1711,6 +1712,7 @@ class AgentOSClient:
         db_id: Optional[str] = None,
         table: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
+        user_id: Optional[str] = None,
     ) -> None:
         """Delete multiple sessions.
 
@@ -1744,6 +1746,7 @@ class AgentOSClient:
         db_id: Optional[str] = None,
         table: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
+        user_id: Optional[str] = None,
     ) -> Union[AgentSessionDetailSchema, TeamSessionDetailSchema, WorkflowSessionDetailSchema]:
         """Rename a session.
 

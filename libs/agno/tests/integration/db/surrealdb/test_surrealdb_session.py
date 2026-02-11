@@ -79,7 +79,7 @@ def test_crud_sessions(db: SurrealDb):
     assert wrong is None
 
     # rename
-    renamed = db.rename_session("1", SessionType.AGENT, "new name", False)
+    renamed = db.rename_session("1", SessionType.AGENT, "new name", deserialize=False)
     assert (
         isinstance(renamed, dict)
         and renamed.get("agent") == RecordID(db.table_names["agents"], "1")
