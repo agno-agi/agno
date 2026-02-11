@@ -1,20 +1,14 @@
-"""Approval-backed HITL: @approval + @tool(requires_confirmation=True) with persistent DB record.
+"""Approval + external execution HITL: @approval + @tool(external_execution=True).
 
-This example shows how the @approval decorator builds on requires_confirmation by
-writing a persistent approval record to the database when the agent pauses. It:
-1. Runs an agent with a tool that requires approval.
-2. Verifies the agent pauses and an approval record is created in the DB.
-3. Confirms the requirement and continues the run.
-4. Verifies the approval record can be resolved in the DB.
+This example shows how @approval works with external_execution to create
+a persistent approval record AND require external tool execution.
 
-Run: .venvs/demo/bin/python cookbook/02_agents/human_in_the_loop/approvals/approval_basic.py
+Run: .venvs/demo/bin/python cookbook/02_agents/human_in_the_loop/approvals/approval_external_execution.py
 """
 
-import json
 import os
 import time
 
-import httpx
 from agno.agent import Agent
 from agno.approval import approval
 from agno.db.sqlite import SqliteDb
@@ -30,26 +24,18 @@ os.makedirs("tmp", exist_ok=True)
 
 
 @approval
-@tool(requires_confirmation=True)
-def get_top_hackernews_stories(num_stories: int) -> str:
-    """Fetch top stories from Hacker News.
+@tool(external_execution=True)
+def deploy_to_production(service_name: str, version: str) -> str:
+    """Deploy a service to production.
 
     Args:
-        num_stories (int): Number of stories to retrieve.
+        service_name (str): The name of the service to deploy.
+        version (str): The version to deploy.
 
     Returns:
-        str: JSON string of story details.
+        str: Confirmation of the deployment.
     """
-    response = httpx.get("https://hacker-news.firebaseio.com/v0/topstories.json")
-    story_ids = response.json()
-    stories = []
-    for story_id in story_ids[:num_stories]:
-        story = httpx.get(
-            f"https://hacker-news.firebaseio.com/v0/item/{story_id}.json"
-        ).json()
-        story.pop("text", None)
-        stories.append(story)
-    return json.dumps(stories)
+    return f"Deployed {service_name} v{version}"
 
 
 db = SqliteDb(
@@ -57,21 +43,21 @@ db = SqliteDb(
 )
 agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
-    tools=[get_top_hackernews_stories],
+    tools=[deploy_to_production],
     markdown=True,
     db=db,
 )
 
-# Step 1: Run - agent will pause because the tool requires approval
+# Step 1: Run - agent will pause because the tool requires approval and external execution
 print("--- Step 1: Running agent (expects pause) ---")
-run_response = agent.run("Fetch the top 2 hackernews stories.")
+run_response = agent.run("Deploy the auth-service version 2.1.0 to production.")
 print(f"Run status: {run_response.status}")
 assert run_response.is_paused, f"Expected paused, got {run_response.status}"
 print("Agent paused as expected.")
 
 # Step 2: Check that an approval record was created in the DB
 print("\n--- Step 2: Checking approval record in DB ---")
-approvals, total = db.get_approvals(status="pending")
+approvals, total = db.get_approvals(status="pending", approval_type="required")
 print(f"Pending approvals: {total}")
 assert total >= 1, f"Expected at least 1 pending approval, got {total}"
 approval = approvals[0]
@@ -81,12 +67,12 @@ print(f"  Status:      {approval['status']}")
 print(f"  Source:      {approval['source_type']}")
 print(f"  Context:     {approval.get('context')}")
 
-# Step 3: Confirm the requirement and continue the run
-print("\n--- Step 3: Confirming and continuing ---")
+# Step 3: Set external execution result and continue
+print("\n--- Step 3: Setting external result and continuing ---")
 for requirement in run_response.active_requirements:
-    if requirement.needs_confirmation:
-        print(f"  Confirming tool: {requirement.tool_execution.tool_name}")
-        requirement.confirm()
+    if requirement.needs_external_execution:
+        print(f"  Setting result for tool: {requirement.tool_execution.tool_name}")
+        requirement.set_external_execution_result("Deployed auth-service v2.1.0")
 
 run_response = agent.continue_run(
     run_id=run_response.run_id,

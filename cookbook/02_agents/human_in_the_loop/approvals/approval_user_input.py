@@ -1,20 +1,14 @@
-"""Approval-backed HITL: @approval + @tool(requires_confirmation=True) with persistent DB record.
+"""Approval + user input HITL: @approval + @tool(requires_user_input=True).
 
-This example shows how the @approval decorator builds on requires_confirmation by
-writing a persistent approval record to the database when the agent pauses. It:
-1. Runs an agent with a tool that requires approval.
-2. Verifies the agent pauses and an approval record is created in the DB.
-3. Confirms the requirement and continues the run.
-4. Verifies the approval record can be resolved in the DB.
+This example shows how @approval works with requires_user_input to create
+a persistent approval record AND require user input before tool execution.
 
-Run: .venvs/demo/bin/python cookbook/02_agents/human_in_the_loop/approvals/approval_basic.py
+Run: .venvs/demo/bin/python cookbook/02_agents/human_in_the_loop/approvals/approval_user_input.py
 """
 
-import json
 import os
 import time
 
-import httpx
 from agno.agent import Agent
 from agno.approval import approval
 from agno.db.sqlite import SqliteDb
@@ -30,26 +24,19 @@ os.makedirs("tmp", exist_ok=True)
 
 
 @approval
-@tool(requires_confirmation=True)
-def get_top_hackernews_stories(num_stories: int) -> str:
-    """Fetch top stories from Hacker News.
+@tool(requires_user_input=True, user_input_fields=["recipient"])
+def send_money(amount: float, recipient: str, note: str) -> str:
+    """Send money to a recipient.
 
     Args:
-        num_stories (int): Number of stories to retrieve.
+        amount (float): The amount of money to send.
+        recipient (str): The recipient to send money to (provided by user).
+        note (str): A note to include with the transfer.
 
     Returns:
-        str: JSON string of story details.
+        str: Confirmation of the transfer.
     """
-    response = httpx.get("https://hacker-news.firebaseio.com/v0/topstories.json")
-    story_ids = response.json()
-    stories = []
-    for story_id in story_ids[:num_stories]:
-        story = httpx.get(
-            f"https://hacker-news.firebaseio.com/v0/item/{story_id}.json"
-        ).json()
-        story.pop("text", None)
-        stories.append(story)
-    return json.dumps(stories)
+    return f"Sent ${amount} to {recipient}: {note}"
 
 
 db = SqliteDb(
@@ -57,21 +44,21 @@ db = SqliteDb(
 )
 agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
-    tools=[get_top_hackernews_stories],
+    tools=[send_money],
     markdown=True,
     db=db,
 )
 
-# Step 1: Run - agent will pause because the tool requires approval
+# Step 1: Run - agent will pause because the tool requires approval and user input
 print("--- Step 1: Running agent (expects pause) ---")
-run_response = agent.run("Fetch the top 2 hackernews stories.")
+run_response = agent.run("Send $50 to someone with the note 'lunch money'.")
 print(f"Run status: {run_response.status}")
 assert run_response.is_paused, f"Expected paused, got {run_response.status}"
 print("Agent paused as expected.")
 
 # Step 2: Check that an approval record was created in the DB
 print("\n--- Step 2: Checking approval record in DB ---")
-approvals, total = db.get_approvals(status="pending")
+approvals, total = db.get_approvals(status="pending", approval_type="required")
 print(f"Pending approvals: {total}")
 assert total >= 1, f"Expected at least 1 pending approval, got {total}"
 approval = approvals[0]
@@ -81,9 +68,14 @@ print(f"  Status:      {approval['status']}")
 print(f"  Source:      {approval['source_type']}")
 print(f"  Context:     {approval.get('context')}")
 
-# Step 3: Confirm the requirement and continue the run
-print("\n--- Step 3: Confirming and continuing ---")
+# Step 3: Provide user input for recipient and confirm
+print("\n--- Step 3: Providing user input and confirming ---")
 for requirement in run_response.active_requirements:
+    if requirement.needs_user_input:
+        print(
+            f"  Providing user input for tool: {requirement.tool_execution.tool_name}"
+        )
+        requirement.provide_user_input({"recipient": "Alice"})
     if requirement.needs_confirmation:
         print(f"  Confirming tool: {requirement.tool_execution.tool_name}")
         requirement.confirm()
