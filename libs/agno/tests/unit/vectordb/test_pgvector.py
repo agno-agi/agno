@@ -791,3 +791,96 @@ def test_insert_merges_filters_into_metadata(mock_pgvector, mock_embedder):
         assert batch_records[0]["meta_data"]["doc_key"] == "doc_value"
         assert batch_records[0]["meta_data"]["knowledge_base_id"] == "kb-123"
         assert batch_records[0]["meta_data"]["source"] == "test"
+
+
+def test_create_filters_index_no_fields(mock_pgvector):
+    """Test create_filters_index does nothing when no fields are provided."""
+    with patch.object(mock_pgvector, "_index_exists") as mock_index_exists:
+        mock_pgvector.create_filters_index()
+        mock_index_exists.assert_not_called()
+
+    with patch.object(mock_pgvector, "_index_exists") as mock_index_exists:
+        mock_pgvector.create_filters_index(fields=[])
+        mock_index_exists.assert_not_called()
+
+
+def test_create_filters_index_single_field(mock_pgvector):
+    """Test create_filters_index creates a BTREE index for a single field."""
+    sess = MagicMock()
+    cm = MagicMock()
+    cm.__enter__.return_value = sess
+    mock_pgvector.Session.return_value = cm
+
+    with patch.object(mock_pgvector, "_index_exists", return_value=False):
+        mock_pgvector.create_filters_index(fields=["user_id"])
+
+        # Verify execute was called with the correct SQL
+        assert sess.execute.call_count == 1
+        sql_arg = sess.execute.call_args[0][0]
+        sql_text = sql_arg.text
+        assert "CREATE INDEX" in sql_text
+        assert f"{TEST_TABLE}_filters_user_id_index" in sql_text
+        assert "USING BTREE" in sql_text
+        assert "filters->>'user_id'" in sql_text
+
+
+def test_create_filters_index_multiple_fields(mock_pgvector):
+    """Test create_filters_index creates indexes for multiple fields."""
+    sess = MagicMock()
+    cm = MagicMock()
+    cm.__enter__.return_value = sess
+    mock_pgvector.Session.return_value = cm
+
+    with patch.object(mock_pgvector, "_index_exists", return_value=False):
+        mock_pgvector.create_filters_index(fields=["user_id", "category"])
+
+        # Should create two indexes
+        assert sess.execute.call_count == 2
+
+
+def test_create_filters_index_skips_existing(mock_pgvector):
+    """Test create_filters_index skips fields that already have an index."""
+    sess = MagicMock()
+    cm = MagicMock()
+    cm.__enter__.return_value = sess
+    mock_pgvector.Session.return_value = cm
+
+    with patch.object(mock_pgvector, "_index_exists", return_value=True):
+        mock_pgvector.create_filters_index(fields=["user_id"])
+
+        # Should not execute any SQL
+        sess.execute.assert_not_called()
+
+
+def test_create_filters_index_force_recreate(mock_pgvector):
+    """Test create_filters_index drops and recreates when force_recreate is True."""
+    sess = MagicMock()
+    cm = MagicMock()
+    cm.__enter__.return_value = sess
+    mock_pgvector.Session.return_value = cm
+
+    with (
+        patch.object(mock_pgvector, "_index_exists", return_value=True),
+        patch.object(mock_pgvector, "_drop_index") as mock_drop,
+    ):
+        mock_pgvector.create_filters_index(fields=["user_id"], force_recreate=True)
+
+        # Should drop the existing index
+        expected_index_name = f"{TEST_TABLE}_filters_user_id_index"
+        mock_drop.assert_called_once_with(expected_index_name)
+
+        # Should create the new index
+        assert sess.execute.call_count == 1
+
+
+def test_create_filters_index_error_handling(mock_pgvector):
+    """Test create_filters_index raises on database error."""
+    sess = MagicMock()
+    sess.execute.side_effect = Exception("DB error")
+    cm = MagicMock()
+    cm.__enter__.return_value = sess
+    mock_pgvector.Session.return_value = cm
+
+    with patch.object(mock_pgvector, "_index_exists", return_value=False):
+        with pytest.raises(Exception, match="DB error"):
+            mock_pgvector.create_filters_index(fields=["user_id"])
