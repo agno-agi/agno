@@ -431,7 +431,7 @@ class MySQLDb(BaseDb):
 
         Args:
             session_id (str): ID of the session to delete
-            user_id (Optional[str]): The ID of the user to filter by.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
 
         Returns:
             bool: True if the session was deleted, False otherwise.
@@ -466,7 +466,7 @@ class MySQLDb(BaseDb):
 
         Args:
             session_ids (List[str]): The IDs of the sessions to delete.
-            user_id (Optional[str]): The ID of the user to filter by.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
 
         Raises:
             Exception: If an error occurs during deletion.
@@ -562,7 +562,7 @@ class MySQLDb(BaseDb):
 
         Args:
             session_type (Optional[SessionType]): The type of sessions to get.
-            user_id (Optional[str]): The ID of the user to filter by.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
             component_id (Optional[str]): The ID of the agent / workflow to filter by.
             start_timestamp (Optional[int]): The start timestamp to filter by.
             end_timestamp (Optional[int]): The end timestamp to filter by.
@@ -662,7 +662,7 @@ class MySQLDb(BaseDb):
             session_id (str): The ID of the session to rename.
             session_type (SessionType): The type of session to rename.
             session_name (str): The new name for the session.
-            user_id (Optional[str]): The ID of the user to filter by.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
             deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
 
         Returns:
@@ -1263,7 +1263,7 @@ class MySQLDb(BaseDb):
         """Get all memories from the database as MemoryRow objects.
 
         Args:
-            user_id (Optional[str]): The ID of the user to filter by.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
             agent_id (Optional[str]): The ID of the agent to filter by.
             team_id (Optional[str]): The ID of the team to filter by.
             topics (Optional[List[str]]): The topics to filter by.

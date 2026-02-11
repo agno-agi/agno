@@ -520,7 +520,7 @@ class AsyncMongoDb(AsyncBaseDb):
 
         Args:
             session_id (str): The ID of the session to delete.
-            user_id (Optional[str]): The ID of the user to filter by.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
 
         Returns:
             bool: True if the session was deleted, False otherwise.
@@ -553,7 +553,7 @@ class AsyncMongoDb(AsyncBaseDb):
 
         Args:
             session_ids (List[str]): The IDs of the sessions to delete.
-            user_id (Optional[str]): The ID of the user to filter by.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
         """
         try:
             collection = await self._get_collection(table_type="sessions")
@@ -582,7 +582,7 @@ class AsyncMongoDb(AsyncBaseDb):
         Args:
             session_id (str): The ID of the session to get.
             session_type (SessionType): The type of session to get.
-            user_id (Optional[str]): The ID of the user to get the session for.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
             deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
 
         Returns:
@@ -643,7 +643,7 @@ class AsyncMongoDb(AsyncBaseDb):
 
         Args:
             session_type (Optional[SessionType]): The type of session to get.
-            user_id (Optional[str]): The ID of the user to get the session for.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
             component_id (Optional[str]): The ID of the component to get the session for.
             session_name (Optional[str]): The name of the session to filter by.
             start_timestamp (Optional[int]): The start timestamp to filter sessions by.
@@ -750,7 +750,7 @@ class AsyncMongoDb(AsyncBaseDb):
             session_id (str): The ID of the session to rename.
             session_type (SessionType): The type of session to rename.
             session_name (str): The new name of the session.
-            user_id (Optional[str]): The ID of the user to filter by.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
             deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
 
         Returns:
@@ -1094,7 +1094,7 @@ class AsyncMongoDb(AsyncBaseDb):
 
         Args:
             memory_id (str): The ID of the memory to delete.
-            user_id (Optional[str]): The ID of the user to verify ownership. If provided, only delete if the memory belongs to this user.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
 
         Returns:
             bool: True if the memory was deleted, False otherwise.
@@ -1128,7 +1128,7 @@ class AsyncMongoDb(AsyncBaseDb):
 
         Args:
             memory_ids (List[str]): The IDs of the memories to delete.
-            user_id (Optional[str]): The ID of the user to verify ownership. If provided, only delete memories that belong to this user.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
 
         Raises:
             Exception: If there is an error deleting the memories.
@@ -1155,7 +1155,7 @@ class AsyncMongoDb(AsyncBaseDb):
         """Get all memory topics from the database.
 
         Args:
-            user_id (Optional[str]): The ID of the user to filter by. Defaults to None.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
 
         Returns:
             List[str]: The topics.
@@ -1187,7 +1187,7 @@ class AsyncMongoDb(AsyncBaseDb):
         Args:
             memory_id (str): The ID of the memory to get.
             deserialize (Optional[bool]): Whether to serialize the memory. Defaults to True.
-            user_id (Optional[str]): The ID of the user to verify ownership. If provided, only return the memory if it belongs to this user.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
 
         Returns:
             Optional[UserMemory]:
@@ -1234,7 +1234,7 @@ class AsyncMongoDb(AsyncBaseDb):
         """Get all memories from the database as UserMemory objects.
 
         Args:
-            user_id (Optional[str]): The ID of the user to get the memories for.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
             agent_id (Optional[str]): The ID of the agent to get the memories for.
             team_id (Optional[str]): The ID of the team to get the memories for.
             topics (Optional[List[str]]): The topics to filter the memories by.
@@ -1309,7 +1309,7 @@ class AsyncMongoDb(AsyncBaseDb):
         Args:
             limit (Optional[int]): The limit of the memories to get.
             page (Optional[int]): The page number to get.
-            user_id (Optional[str]): The ID of the user to filter by. Defaults to None.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
 
         Returns:
             Tuple[List[Dict[str, Any]], int]: A tuple containing the memories stats and the total count.

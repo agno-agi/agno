@@ -748,7 +748,7 @@ class PostgresDb(BaseDb):
 
         Args:
             session_type (Optional[SessionType]): The type of session to get.
-            user_id (Optional[str]): The ID of the user to filter by.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
             component_id (Optional[str]): The ID of the agent / workflow to filter by.
             start_timestamp (Optional[int]): The start timestamp to filter by.
             end_timestamp (Optional[int]): The end timestamp to filter by.
@@ -1292,7 +1292,7 @@ class PostgresDb(BaseDb):
 
         Args:
             memory_id (str): The ID of the memory to delete.
-            user_id (Optional[str]): The ID of the user to filter by. Defaults to None.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
 
         Returns:
             bool: True if deletion was successful, False otherwise.
@@ -1328,7 +1328,7 @@ class PostgresDb(BaseDb):
 
         Args:
             memory_ids (List[str]): The IDs of the memories to delete.
-            user_id (Optional[str]): The ID of the user to filter by. Defaults to None.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
 
         Raises:
             Exception: If an error occurs during deletion.
@@ -1409,7 +1409,7 @@ class PostgresDb(BaseDb):
         Args:
             memory_id (str): The ID of the memory to get.
             deserialize (Optional[bool]): Whether to serialize the memory. Defaults to True.
-            user_id (Optional[str]): The ID of the user to filter by. Defaults to None.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
 
         Returns:
             Union[UserMemory, Dict[str, Any], None]:
@@ -1460,7 +1460,7 @@ class PostgresDb(BaseDb):
         """Get all memories from the database as UserMemory objects.
 
         Args:
-            user_id (Optional[str]): The ID of the user to filter by.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
             agent_id (Optional[str]): The ID of the agent to filter by.
             team_id (Optional[str]): The ID of the team to filter by.
             topics (Optional[List[str]]): The topics to filter by.

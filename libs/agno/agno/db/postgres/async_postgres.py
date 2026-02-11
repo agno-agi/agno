@@ -590,7 +590,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         Get all sessions in the given table. Can filter by user_id and entity_id.
 
         Args:
-            user_id (Optional[str]): The ID of the user to filter by.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
             component_id (Optional[str]): The ID of the agent / workflow to filter by.
             start_timestamp (Optional[int]): The start timestamp to filter by.
             end_timestamp (Optional[int]): The end timestamp to filter by.
@@ -973,7 +973,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         """Get all memory topics from the database.
 
         Args:
-            user_id (Optional[str]): The ID of the user to filter by.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
 
         Returns:
             List[str]: List of memory topics.
@@ -1032,7 +1032,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         Args:
             memory_id (str): The ID of the memory to get.
             deserialize (Optional[bool]): Whether to serialize the memory. Defaults to True.
-            user_id (Optional[str]): The ID of the user to filter by.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
 
         Returns:
             Union[UserMemory, Dict[str, Any], None]:
@@ -1081,7 +1081,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         """Get all memories from the database as UserMemory objects.
 
         Args:
-            user_id (Optional[str]): The ID of the user to filter by.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
             agent_id (Optional[str]): The ID of the agent to filter by.
             team_id (Optional[str]): The ID of the team to filter by.
             topics (Optional[List[str]]): The topics to filter by.

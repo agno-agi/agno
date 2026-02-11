@@ -284,7 +284,7 @@ class RedisDb(BaseDb):
 
         Args:
             session_id (str): The ID of the session to delete.
-            user_id (Optional[str]): The ID of the user who owns the session.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
 
         Raises:
             Exception: If any error occurs while deleting the session.
@@ -315,7 +315,7 @@ class RedisDb(BaseDb):
 
         Args:
             session_ids (List[str]): The IDs of the sessions to delete.
-            user_id (Optional[str]): The ID of the user who owns the sessions.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
 
         Raises:
             Exception: If any error occurs while deleting the sessions.
@@ -351,7 +351,7 @@ class RedisDb(BaseDb):
         Args:
             session_id (str): The ID of the session to get.
             session_type (SessionType): The type of session to get.
-            user_id (Optional[str]): The ID of the user to filter by.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
 
         Returns:
             Optional[Union[AgentSession, TeamSession, WorkflowSession]]: The session if found, None otherwise.
@@ -404,7 +404,7 @@ class RedisDb(BaseDb):
 
         Args:
             session_type (Optional[SessionType]): The type of session to filter by.
-            user_id (Optional[str]): The ID of the user to filter by.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
             component_id (Optional[str]): The ID of the component to filter by.
             session_name (Optional[str]): The name of the session to filter by.
             limit (Optional[int]): The maximum number of sessions to return.
@@ -479,7 +479,7 @@ class RedisDb(BaseDb):
             session_id (str): The ID of the session to rename.
             session_type (SessionType): The type of session to rename.
             session_name (str): The new name of the session.
-            user_id (Optional[str]): The ID of the user who owns the session.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
 
         Returns:
             Optional[Session]: The renamed session if successful, None otherwise.
@@ -696,7 +696,7 @@ class RedisDb(BaseDb):
 
         Args:
             memory_id (str): The ID of the memory to delete.
-            user_id (Optional[str]): The ID of the user. If provided, verifies the memory belongs to this user before deleting.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
 
         Returns:
             bool: True if the memory was deleted, False otherwise.
@@ -731,7 +731,7 @@ class RedisDb(BaseDb):
 
         Args:
             memory_ids (List[str]): The IDs of the memories to delete.
-            user_id (Optional[str]): The ID of the user. If provided, only deletes memories belonging to this user.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
         """
         try:
             # TODO: cant we optimize this?
@@ -784,7 +784,7 @@ class RedisDb(BaseDb):
         Args:
             memory_id (str): The ID of the memory to get.
             deserialize (Optional[bool]): Whether to deserialize the memory. Defaults to True.
-            user_id (Optional[str]): The ID of the user. If provided, only returns the memory if it belongs to this user.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
 
         Returns:
             Optional[UserMemory]: The memory data if found, None otherwise.
@@ -823,7 +823,7 @@ class RedisDb(BaseDb):
         """Get all memories from Redis as UserMemory objects.
 
         Args:
-            user_id (Optional[str]): The ID of the user to filter by.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
             agent_id (Optional[str]): The ID of the agent to filter by.
             team_id (Optional[str]): The ID of the team to filter by.
             topics (Optional[List[str]]): The topics to filter by.

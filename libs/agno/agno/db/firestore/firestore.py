@@ -240,7 +240,7 @@ class FirestoreDb(BaseDb):
 
         Args:
             session_id (str): The ID of the session to delete.
-            user_id (Optional[str]): The ID of the user who owns the session.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
 
         Returns:
             bool: True if the session was deleted, False otherwise.
@@ -280,7 +280,7 @@ class FirestoreDb(BaseDb):
 
         Args:
             session_ids (List[str]): The IDs of the sessions to delete.
-            user_id (Optional[str]): The ID of the user who owns the sessions.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
         """
         try:
             collection_ref = self._get_collection(table_type="sessions")
@@ -316,7 +316,7 @@ class FirestoreDb(BaseDb):
         Args:
             session_id (str): The ID of the session to get.
             session_type (SessionType): The type of session to get.
-            user_id (Optional[str]): The ID of the user to get the session for.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
             deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
 
         Returns:
@@ -379,7 +379,7 @@ class FirestoreDb(BaseDb):
 
         Args:
             session_type (Optional[SessionType]): The type of session to get.
-            user_id (Optional[str]): The ID of the user to get the session for.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
             component_id (Optional[str]): The ID of the component to get the session for.
             session_name (Optional[str]): The name of the session to filter by.
             start_timestamp (Optional[int]): The start timestamp to filter sessions by.
@@ -489,7 +489,7 @@ class FirestoreDb(BaseDb):
             session_id (str): The ID of the session to rename.
             session_type (SessionType): The type of session to rename.
             session_name (str): The new name of the session.
-            user_id (Optional[str]): The ID of the user who owns the session.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
             deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
 
         Returns:
@@ -713,7 +713,7 @@ class FirestoreDb(BaseDb):
 
         Args:
             memory_id (str): The ID of the memory to delete.
-            user_id (Optional[str]): The ID of the user (optional, for filtering).
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
 
         Returns:
             bool: True if the memory was deleted, False otherwise.
@@ -757,7 +757,7 @@ class FirestoreDb(BaseDb):
 
         Args:
             memory_ids (List[str]): The IDs of the memories to delete.
-            user_id (Optional[str]): The ID of the user (optional, for filtering).
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
 
         Raises:
             Exception: If there is an error deleting the memories.
@@ -831,7 +831,7 @@ class FirestoreDb(BaseDb):
         Args:
             memory_id (str): The ID of the memory to get.
             deserialize (Optional[bool]): Whether to serialize the memory. Defaults to True.
-            user_id (Optional[str]): The ID of the user (optional, for filtering).
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
 
         Returns:
             Optional[UserMemory]:
@@ -882,7 +882,7 @@ class FirestoreDb(BaseDb):
         """Get all memories from the database as UserMemory objects.
 
         Args:
-            user_id (Optional[str]): The ID of the user to get the memories for.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
             agent_id (Optional[str]): The ID of the agent to get the memories for.
             team_id (Optional[str]): The ID of the team to get the memories for.
             topics (Optional[List[str]]): The topics to filter the memories by.

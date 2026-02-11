@@ -166,7 +166,7 @@ class GcsJsonDb(BaseDb):
 
         Args:
             session_id (str): The ID of the session to delete.
-            user_id (Optional[str]): The ID of the user who owns the session.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
 
         Returns:
             bool: True if the session was deleted, False otherwise.
@@ -201,7 +201,7 @@ class GcsJsonDb(BaseDb):
 
         Args:
             session_ids (List[str]): The IDs of the sessions to delete.
-            user_id (Optional[str]): The ID of the user who owns the sessions.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
 
         Raises:
             Exception: If an error occurs during deletion.
@@ -232,7 +232,7 @@ class GcsJsonDb(BaseDb):
         Args:
             session_id (str): The ID of the session to read.
             session_type (SessionType): The type of the session to read.
-            user_id (Optional[str]): The ID of the user to read the session for.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
             deserialize (Optional[bool]): Whether to deserialize the session.
 
         Returns:
@@ -287,7 +287,7 @@ class GcsJsonDb(BaseDb):
 
         Args:
             session_type (Optional[SessionType]): The type of the sessions to read.
-            user_id (Optional[str]): The ID of the user to read the sessions for.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
             component_id (Optional[str]): The ID of the component to read the sessions for.
             session_name (Optional[str]): The name of the session to read.
             start_timestamp (Optional[int]): The start timestamp of the sessions to read.
@@ -507,7 +507,7 @@ class GcsJsonDb(BaseDb):
 
         Args:
             memory_id (str): The ID of the memory to delete.
-            user_id (Optional[str]): The ID of the user. If provided, verifies ownership before deletion.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
         """
         try:
             memories = self._read_json_file(self.memory_table_name)
@@ -536,7 +536,7 @@ class GcsJsonDb(BaseDb):
 
         Args:
             memory_ids (List[str]): The IDs of the memories to delete.
-            user_id (Optional[str]): The ID of the user. If provided, verifies ownership before deletion.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
         """
         try:
             memories = self._read_json_file(self.memory_table_name)
@@ -581,7 +581,7 @@ class GcsJsonDb(BaseDb):
         Args:
             memory_id (str): The ID of the memory to retrieve.
             deserialize (Optional[bool]): Whether to deserialize to UserMemory object. Defaults to True.
-            user_id (Optional[str]): The ID of the user. If provided, verifies ownership before returning.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
 
         Returns:
             Optional[Union[UserMemory, Dict[str, Any]]]: The memory if found and ownership matches, None otherwise.
