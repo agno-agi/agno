@@ -86,7 +86,14 @@ def test_member_confirmation_continue(shared_db):
 
 
 def test_member_rejection_flow(shared_db):
-    """Pause -> reject with note -> continue_run completes gracefully."""
+    """Pause -> reject with note -> continue_run processes the rejection.
+    
+    Note: After rejection, the model may either:
+    1. Complete with a message acknowledging the rejection, OR
+    2. Retry by calling the member agent again (which triggers another pause)
+    
+    This test verifies that the original rejection is processed correctly.
+    """
     agent = _make_agent(db=shared_db)
     team = _make_team(agent, db=shared_db)
 
@@ -95,11 +102,20 @@ def test_member_rejection_flow(shared_db):
     assert response.is_paused
     req = response.active_requirements[0]
     assert req.needs_confirmation
+    original_tool_call_id = req.tool_execution.tool_call_id
     req.reject(note="User does not want weather data")
 
     result = team.continue_run(response)
-    assert not result.is_paused
+    # The original requirement should be resolved (rejected)
+    assert req.is_resolved()
+    assert req.confirmation is False  # Was rejected, not confirmed
     assert result.content is not None
+    
+    # If model retried and we paused again, verify it's a NEW tool call, not the same one
+    if result.is_paused and result.active_requirements:
+        new_req = result.active_requirements[0]
+        # Should be a different tool call (model retried)
+        assert new_req.tool_execution.tool_call_id != original_tool_call_id
 
 
 def test_member_confirmation_streaming(shared_db):

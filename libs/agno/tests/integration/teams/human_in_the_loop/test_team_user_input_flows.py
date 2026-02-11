@@ -57,7 +57,7 @@ def test_member_user_input_pause(shared_db):
     agent = _make_agent(db=shared_db)
     team = _make_team(agent, db=shared_db)
 
-    response = team.run("Get me the weather", session_id="test_user_input_pause")
+    response = team.run("Get me the weather for any city", session_id="test_user_input_pause")
 
     assert response.is_paused
     assert len(response.active_requirements) >= 1
@@ -74,7 +74,7 @@ def test_member_user_input_continue(shared_db):
     agent = _make_agent(db=shared_db)
     team = _make_team(agent, db=shared_db)
 
-    response = team.run("Get me the weather", session_id="test_user_input_continue")
+    response = team.run("Get me the weather for any city", session_id="test_user_input_continue")
 
     assert response.is_paused
     req = response.active_requirements[0]
@@ -93,7 +93,7 @@ async def test_member_user_input_async(shared_db):
     agent = _make_agent(db=shared_db)
     team = _make_team(agent, db=shared_db)
 
-    response = await team.arun("Get me the weather", session_id="test_user_input_async")
+    response = await team.arun("Get me the weather for any city", session_id="test_user_input_async")
 
     assert response.is_paused
     req = response.active_requirements[0]
@@ -111,7 +111,7 @@ def test_member_user_input_invalid_field_name(shared_db):
     agent = _make_agent(db=shared_db)
     team = _make_team(agent, db=shared_db)
 
-    response = team.run("Get me the weather", session_id="test_user_input_invalid_field")
+    response = team.run("Get me the weather for any city", session_id="test_user_input_invalid_field")
 
     assert response.is_paused
     req = response.active_requirements[0]
@@ -138,7 +138,7 @@ async def test_member_user_input_async_streaming(shared_db):
 
     paused_event = None
     async for event in team.arun(
-        "Get me the weather",
+        "Get me the weather for any city",
         session_id="test_user_input_async_stream",
         stream=True,
         stream_events=True,
@@ -172,7 +172,7 @@ def test_member_user_input_streaming(shared_db):
 
     paused_event = None
     for event in team.run(
-        "Get me the weather",
+        "Get me the weather for any city",
         session_id="test_user_input_stream",
         stream=True,
         stream_events=True,
