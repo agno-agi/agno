@@ -276,12 +276,18 @@ def _get_schedule_runs_table_schema(
         "created_at": {"type": BigInteger, "nullable": False, "index": True},
     }
 
+
 APPROVAL_TABLE_SCHEMA = {
     "id": {"type": String, "primary_key": True, "nullable": False},
     "run_id": {"type": String, "nullable": False, "index": True},
     "session_id": {"type": String, "nullable": False, "index": True},
     "status": {"type": String, "nullable": False, "index": True},
     "source_type": {"type": String, "nullable": False, "index": True},
+    "approval_type": {"type": String, "nullable": True, "index": True},
+    "pause_type": {"type": String, "nullable": False, "index": True},
+    "tool_name": {"type": String, "nullable": True},
+    "tool_args": {"type": JSONB, "nullable": True},
+    "expires_at": {"type": BigInteger, "nullable": True},
     "agent_id": {"type": String, "nullable": True, "index": True},
     "team_id": {"type": String, "nullable": True, "index": True},
     "workflow_id": {"type": String, "nullable": True, "index": True},
@@ -291,6 +297,7 @@ APPROVAL_TABLE_SCHEMA = {
     "source_name": {"type": String, "nullable": True},
     "requirements": {"type": JSONB, "nullable": True},
     "context": {"type": JSONB, "nullable": True},
+    "resolution_data": {"type": JSONB, "nullable": True},
     "resolved_by": {"type": String, "nullable": True},
     "resolved_at": {"type": BigInteger, "nullable": True},
     "created_at": {"type": BigInteger, "nullable": False, "index": True},
@@ -335,7 +342,6 @@ def get_table_schema_definition(
         "component_links": COMPONENT_LINKS_TABLE_SCHEMA,
         "learnings": LEARNINGS_TABLE_SCHEMA,
         "schedules": SCHEDULE_TABLE_SCHEMA,
-        "schedule_runs": SCHEDULE_RUNS_TABLE_SCHEMA,
         "approvals": APPROVAL_TABLE_SCHEMA,
     }
 

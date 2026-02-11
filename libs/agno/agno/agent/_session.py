@@ -75,6 +75,7 @@ def initialize_session(
 def get_session(
     agent: Agent,
     session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
 ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession]]:
     """Load an AgentSession from database or cache.
 
@@ -94,7 +95,9 @@ def get_session(
 
     # If there is a cached session, return it
     if agent.cache_session and hasattr(agent, "_cached_session") and agent._cached_session is not None:
-        if agent._cached_session.session_id == session_id_to_load:
+        if agent._cached_session.session_id == session_id_to_load and (
+            user_id is None or agent._cached_session.user_id == user_id
+        ):
             return agent._cached_session
 
     if _init.has_async_db(agent):
@@ -108,23 +111,27 @@ def get_session(
         if agent.team_id is None and agent.workflow_id is None:
             loaded_session = cast(
                 AgentSession,
-                _storage.read_session(agent, session_id=session_id_to_load, session_type=SessionType.AGENT),
+                _storage.read_session(
+                    agent, session_id=session_id_to_load, session_type=SessionType.AGENT, user_id=user_id
+                ),  # type: ignore[arg-type]
             )
 
         # We have a team member agent, so we are loading a TeamSession
         if loaded_session is None and agent.team_id is not None:
-            # Load session for team member agents
             loaded_session = cast(
                 TeamSession,
-                _storage.read_session(agent, session_id=session_id_to_load, session_type=SessionType.TEAM),
+                _storage.read_session(
+                    agent, session_id=session_id_to_load, session_type=SessionType.TEAM, user_id=user_id
+                ),  # type: ignore[arg-type]
             )
 
         # We have a workflow member agent, so we are loading a WorkflowSession
         if loaded_session is None and agent.workflow_id is not None:
-            # Load session for workflow memberagents
             loaded_session = cast(
                 WorkflowSession,
-                _storage.read_session(agent, session_id=session_id_to_load, session_type=SessionType.WORKFLOW),
+                _storage.read_session(
+                    agent, session_id=session_id_to_load, session_type=SessionType.WORKFLOW, user_id=user_id
+                ),  # type: ignore[arg-type]
             )
 
         # Cache the session if relevant
@@ -140,6 +147,7 @@ def get_session(
 async def aget_session(
     agent: Agent,
     session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
 ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession]]:
     """Load an AgentSession from database or cache.
 
@@ -159,7 +167,9 @@ async def aget_session(
 
     # If there is a cached session, return it
     if agent.cache_session and hasattr(agent, "_cached_session") and agent._cached_session is not None:
-        if agent._cached_session.session_id == session_id_to_load:
+        if agent._cached_session.session_id == session_id_to_load and (
+            user_id is None or agent._cached_session.user_id == user_id
+        ):
             return agent._cached_session
 
     # Load and return the session from the database
@@ -170,23 +180,27 @@ async def aget_session(
         if agent.team_id is None and agent.workflow_id is None:
             loaded_session = cast(
                 AgentSession,
-                await _storage.aread_session(agent, session_id=session_id_to_load, session_type=SessionType.AGENT),
+                await _storage.aread_session(
+                    agent, session_id=session_id_to_load, session_type=SessionType.AGENT, user_id=user_id
+                ),  # type: ignore[arg-type]
             )
 
         # We have a team member agent, so we are loading a TeamSession
         if loaded_session is None and agent.team_id is not None:
-            # Load session for team member agents
             loaded_session = cast(
                 TeamSession,
-                await _storage.aread_session(agent, session_id=session_id_to_load, session_type=SessionType.TEAM),
+                await _storage.aread_session(
+                    agent, session_id=session_id_to_load, session_type=SessionType.TEAM, user_id=user_id
+                ),  # type: ignore[arg-type]
             )
 
         # We have a workflow member agent, so we are loading a WorkflowSession
         if loaded_session is None and agent.workflow_id is not None:
-            # Load session for workflow memberagents
             loaded_session = cast(
                 WorkflowSession,
-                await _storage.aread_session(agent, session_id=session_id_to_load, session_type=SessionType.WORKFLOW),
+                await _storage.aread_session(
+                    agent, session_id=session_id_to_load, session_type=SessionType.WORKFLOW, user_id=user_id
+                ),  # type: ignore[arg-type]
             )
 
         # Cache the session if relevant
@@ -247,24 +261,24 @@ async def asave_session(agent: Agent, session: Union[AgentSession, TeamSession, 
         log_debug(f"Created or updated AgentSession record: {session.session_id}")
 
 
-def delete_session(agent: Agent, session_id: str):
+def delete_session(agent: Agent, session_id: str, user_id: Optional[str] = None):
     """Delete the current session and save to storage"""
     if agent.db is None:
         return
 
-    agent.db.delete_session(session_id=session_id)
+    agent.db.delete_session(session_id=session_id, user_id=user_id)
 
 
-async def adelete_session(agent: Agent, session_id: str):
+async def adelete_session(agent: Agent, session_id: str, user_id: Optional[str] = None):
     """Delete the current session and save to storage"""
     from agno.agent import _init
 
     if agent.db is None:
         return
     if _init.has_async_db(agent):
-        await agent.db.delete_session(session_id=session_id)  # type: ignore
+        await agent.db.delete_session(session_id=session_id, user_id=user_id)  # type: ignore
     else:
-        agent.db.delete_session(session_id=session_id)
+        agent.db.delete_session(session_id=session_id, user_id=user_id)
 
 
 # ---------------------------------------------------------------------------

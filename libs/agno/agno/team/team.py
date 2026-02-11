@@ -1483,14 +1483,16 @@ class Team:
     def get_session(
         self,
         session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> Optional[TeamSession]:
-        return _session.get_session(self, session_id=session_id)
+        return _session.get_session(self, session_id=session_id, user_id=user_id)
 
     async def aget_session(
         self,
         session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> Optional[TeamSession]:
-        return await _session.aget_session(self, session_id=session_id)
+        return await _session.aget_session(self, session_id=session_id, user_id=user_id)
 
     def save_session(self, session: TeamSession) -> None:
         return _session.save_session(self, session=session)
@@ -1543,11 +1545,11 @@ class Team:
     async def aget_session_metrics(self, session_id: Optional[str] = None) -> Optional[Metrics]:
         return await _session.aget_session_metrics(self, session_id=session_id)
 
-    def delete_session(self, session_id: str):
-        return _session.delete_session(self, session_id=session_id)
+    def delete_session(self, session_id: str, user_id: Optional[str] = None):
+        return _session.delete_session(self, session_id=session_id, user_id=user_id)
 
-    async def adelete_session(self, session_id: str):
-        return await _session.adelete_session(self, session_id=session_id)
+    async def adelete_session(self, session_id: str, user_id: Optional[str] = None):
+        return await _session.adelete_session(self, session_id=session_id, user_id=user_id)
 
     def get_session_messages(
         self,

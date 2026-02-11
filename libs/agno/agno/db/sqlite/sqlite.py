@@ -4586,7 +4586,7 @@ class SqliteDb(BaseDb):
                 return [dict(row._mapping) for row in results]
         except Exception as e:
             log_debug(f"Error getting schedule runs: {e}")
-            return []
+            return [], 0
 
     # -- Approval methods --
 
@@ -4622,6 +4622,8 @@ class SqliteDb(BaseDb):
         self,
         status: Optional[str] = None,
         source_type: Optional[str] = None,
+        approval_type: Optional[str] = None,
+        pause_type: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
         workflow_id: Optional[str] = None,
@@ -4644,6 +4646,12 @@ class SqliteDb(BaseDb):
                 if source_type is not None:
                     stmt = stmt.where(table.c.source_type == source_type)
                     count_stmt = count_stmt.where(table.c.source_type == source_type)
+                if approval_type is not None:
+                    stmt = stmt.where(table.c.approval_type == approval_type)
+                    count_stmt = count_stmt.where(table.c.approval_type == approval_type)
+                if pause_type is not None:
+                    stmt = stmt.where(table.c.pause_type == pause_type)
+                    count_stmt = count_stmt.where(table.c.pause_type == pause_type)
                 if agent_id is not None:
                     stmt = stmt.where(table.c.agent_id == agent_id)
                     count_stmt = count_stmt.where(table.c.agent_id == agent_id)

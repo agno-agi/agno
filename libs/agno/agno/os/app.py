@@ -135,7 +135,6 @@ async def scheduler_lifespan(app: FastAPI, agent_os: "AgentOS"):
     await poller.stop()
 
 
-
 def _combine_app_lifespans(lifespans: list) -> Any:
     """Combine multiple FastAPI app lifespan context managers into one."""
     if len(lifespans) == 1:

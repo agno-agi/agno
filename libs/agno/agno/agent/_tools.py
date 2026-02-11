@@ -433,6 +433,22 @@ def parse_tools(
                 _function_names.append(function_name)
 
                 _func = Function.from_callable(tool, strict=strict)
+                # Detect @approval sentinel on raw callable
+                _approval_type = getattr(tool, "_agno_approval_type", None)
+                if _approval_type is not None:
+                    _func.approval_type = _approval_type
+                    if _approval_type == "required" and not any(
+                        [_func.requires_user_input, _func.requires_confirmation, _func.external_execution]
+                    ):
+                        _func.requires_confirmation = True
+                    elif _approval_type == "audit" and not any(
+                        [_func.requires_user_input, _func.requires_confirmation, _func.external_execution]
+                    ):
+                        raise ValueError(
+                            "@approval(type='audit') requires at least one HITL flag "
+                            "('requires_confirmation', 'requires_user_input', or 'external_execution') "
+                            "to be set on @tool()."
+                        )
                 _func = _func.model_copy(deep=True)
                 _func._agent = agent
                 if strict:
@@ -552,6 +568,40 @@ def handle_get_user_input_tool_update(agent: Agent, run_messages: RunMessages, t
             metrics=Metrics(duration=0),
         )
     )
+
+
+def _maybe_create_audit_approval(
+    agent: "Agent", tool_execution: ToolExecution, run_response: RunOutput, status: str
+) -> None:
+    """Create an audit approval record if the tool has approval_type='audit'."""
+    if getattr(tool_execution, "approval_type", None) == "audit":
+        from agno.run.approval import create_audit_approval
+
+        create_audit_approval(
+            db=agent.db,
+            tool_execution=tool_execution,
+            run_response=run_response,
+            status=status,
+            agent_id=agent.id,
+            agent_name=agent.name,
+        )
+
+
+async def _amaybe_create_audit_approval(
+    agent: "Agent", tool_execution: ToolExecution, run_response: RunOutput, status: str
+) -> None:
+    """Async: create an audit approval record if the tool has approval_type='audit'."""
+    if getattr(tool_execution, "approval_type", None) == "audit":
+        from agno.run.approval import acreate_audit_approval
+
+        await acreate_audit_approval(
+            db=agent.db,
+            tool_execution=tool_execution,
+            run_response=run_response,
+            status=status,
+            agent_id=agent.id,
+            agent_name=agent.name,
+        )
 
 
 def run_tool(
@@ -706,11 +756,13 @@ def handle_tool_call_updates(
                 _t.confirmed = False
                 _t.confirmation_note = _t.confirmation_note or "Tool call was rejected"
                 _t.tool_call_error = True
+            _maybe_create_audit_approval(agent, _t, run_response, "approved" if _t.confirmed is True else "rejected")
             _t.requires_confirmation = False
 
         # Case 2: Handle external execution required tools
         elif _t.external_execution_required is not None and _t.external_execution_required is True:
             handle_external_execution_update(agent, run_messages=run_messages, tool=_t)
+            _maybe_create_audit_approval(agent, _t, run_response, "approved")
 
         # Case 3: Agentic user input required
         elif _t.tool_name == "get_user_input" and _t.requires_user_input is not None and _t.requires_user_input is True:
@@ -725,6 +777,7 @@ def handle_tool_call_updates(
             _t.answered = True
             # Consume the generator without yielding
             deque(run_tool(agent, run_response, run_messages, _t, functions=_functions), maxlen=0)
+            _maybe_create_audit_approval(agent, _t, run_response, "approved")
 
 
 def handle_tool_call_updates_stream(
@@ -750,11 +803,13 @@ def handle_tool_call_updates_stream(
                 _t.confirmed = False
                 _t.confirmation_note = _t.confirmation_note or "Tool call was rejected"
                 _t.tool_call_error = True
+            _maybe_create_audit_approval(agent, _t, run_response, "approved" if _t.confirmed is True else "rejected")
             _t.requires_confirmation = False
 
         # Case 2: Handle external execution required tools
         elif _t.external_execution_required is not None and _t.external_execution_required is True:
             handle_external_execution_update(agent, run_messages=run_messages, tool=_t)
+            _maybe_create_audit_approval(agent, _t, run_response, "approved")
 
         # Case 3: Agentic user input required
         elif _t.tool_name == "get_user_input" and _t.requires_user_input is not None and _t.requires_user_input is True:
@@ -770,6 +825,7 @@ def handle_tool_call_updates_stream(
             )
             _t.requires_user_input = False
             _t.answered = True
+            _maybe_create_audit_approval(agent, _t, run_response, "approved")
 
 
 async def ahandle_tool_call_updates(
@@ -790,11 +846,15 @@ async def ahandle_tool_call_updates(
                 _t.confirmed = False
                 _t.confirmation_note = _t.confirmation_note or "Tool call was rejected"
                 _t.tool_call_error = True
+            await _amaybe_create_audit_approval(
+                agent, _t, run_response, "approved" if _t.confirmed is True else "rejected"
+            )
             _t.requires_confirmation = False
 
         # Case 2: Handle external execution required tools
         elif _t.external_execution_required is not None and _t.external_execution_required is True:
             handle_external_execution_update(agent, run_messages=run_messages, tool=_t)
+            await _amaybe_create_audit_approval(agent, _t, run_response, "approved")
         # Case 3: Agentic user input required
         elif _t.tool_name == "get_user_input" and _t.requires_user_input is not None and _t.requires_user_input is True:
             handle_get_user_input_tool_update(agent, run_messages=run_messages, tool=_t)
@@ -807,6 +867,7 @@ async def ahandle_tool_call_updates(
                 pass
             _t.requires_user_input = False
             _t.answered = True
+            await _amaybe_create_audit_approval(agent, _t, run_response, "approved")
 
 
 async def ahandle_tool_call_updates_stream(
@@ -833,11 +894,15 @@ async def ahandle_tool_call_updates_stream(
                 _t.confirmed = False
                 _t.confirmation_note = _t.confirmation_note or "Tool call was rejected"
                 _t.tool_call_error = True
+            await _amaybe_create_audit_approval(
+                agent, _t, run_response, "approved" if _t.confirmed is True else "rejected"
+            )
             _t.requires_confirmation = False
 
         # Case 2: Handle external execution required tools
         elif _t.external_execution_required is not None and _t.external_execution_required is True:
             handle_external_execution_update(agent, run_messages=run_messages, tool=_t)
+            await _amaybe_create_audit_approval(agent, _t, run_response, "approved")
         # Case 3: Agentic user input required
         elif _t.tool_name == "get_user_input" and _t.requires_user_input is not None and _t.requires_user_input is True:
             handle_get_user_input_tool_update(agent, run_messages=run_messages, tool=_t)
@@ -852,3 +917,4 @@ async def ahandle_tool_call_updates_stream(
                 yield event
             _t.requires_user_input = False
             _t.answered = True
+            await _amaybe_create_audit_approval(agent, _t, run_response, "approved")

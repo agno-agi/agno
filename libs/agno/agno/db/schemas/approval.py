@@ -6,13 +6,18 @@ from agno.utils.dttm import now_epoch_s, to_epoch_s
 
 @dataclass
 class Approval:
-    """Model for a human approval request created when a tool with requires_approval=True pauses a run."""
+    """Model for a human approval request created when a tool with approval_type set pauses a run."""
 
     id: str
     run_id: str
     session_id: str
     status: str = "pending"  # pending | approved | rejected | expired | cancelled
     source_type: str = "agent"  # agent | team | workflow
+    approval_type: Optional[str] = None  # required | audit
+    pause_type: str = "confirmation"  # confirmation | user_input | external_execution
+    tool_name: Optional[str] = None
+    tool_args: Optional[Dict[str, Any]] = None
+    expires_at: Optional[int] = None
     agent_id: Optional[str] = None
     team_id: Optional[str] = None
     workflow_id: Optional[str] = None
@@ -22,6 +27,7 @@ class Approval:
     source_name: Optional[str] = None
     requirements: Optional[List[Dict[str, Any]]] = None
     context: Optional[Dict[str, Any]] = None
+    resolution_data: Optional[Dict[str, Any]] = None
     resolved_by: Optional[str] = None
     resolved_at: Optional[int] = None
     created_at: Optional[int] = None
@@ -32,7 +38,7 @@ class Approval:
         if self.updated_at is not None:
             self.updated_at = to_epoch_s(self.updated_at)
         if self.resolved_at is not None:
-            self.resolved_at = int(self.resolved_at)
+            self.resolved_at = to_epoch_s(self.resolved_at)
 
     def to_dict(self) -> Dict[str, Any]:
         """Serialize to dict. Preserves None values (important for DB updates)."""
@@ -42,6 +48,11 @@ class Approval:
             "session_id": self.session_id,
             "status": self.status,
             "source_type": self.source_type,
+            "approval_type": self.approval_type,
+            "pause_type": self.pause_type,
+            "tool_name": self.tool_name,
+            "tool_args": self.tool_args,
+            "expires_at": self.expires_at,
             "agent_id": self.agent_id,
             "team_id": self.team_id,
             "workflow_id": self.workflow_id,
@@ -51,6 +62,7 @@ class Approval:
             "source_name": self.source_name,
             "requirements": self.requirements,
             "context": self.context,
+            "resolution_data": self.resolution_data,
             "resolved_by": self.resolved_by,
             "resolved_at": self.resolved_at,
             "created_at": self.created_at,
@@ -66,6 +78,11 @@ class Approval:
             "session_id",
             "status",
             "source_type",
+            "approval_type",
+            "pause_type",
+            "tool_name",
+            "tool_args",
+            "expires_at",
             "agent_id",
             "team_id",
             "workflow_id",
@@ -75,6 +92,7 @@ class Approval:
             "source_name",
             "requirements",
             "context",
+            "resolution_data",
             "resolved_by",
             "resolved_at",
             "created_at",

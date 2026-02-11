@@ -1,4 +1,4 @@
-"""Team-level approval: member agent tool with requires_approval=True.
+"""Team-level approval: member agent tool with @approval.
 
 Demonstrates that when a team member's tool requires approval, the team
 pauses and an approval record is written to the DB.
@@ -10,6 +10,7 @@ import os
 import time
 
 from agno.agent import Agent
+from agno.approval import approval
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
@@ -22,7 +23,8 @@ if os.path.exists(DB_FILE):
 os.makedirs("tmp", exist_ok=True)
 
 
-@tool(requires_approval=True)
+@approval
+@tool(requires_confirmation=True)
 def deploy_to_production(app_name: str, version: str) -> str:
     """Deploy an application to production.
 

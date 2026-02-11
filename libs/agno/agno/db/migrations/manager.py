@@ -41,23 +41,24 @@ class MigrationManager:
         else:
             _target_version = packaging_version.parse(target_version)
 
+        # Mapping from table_type to db attribute name
+        _table_type_to_attr = {
+            "memories": "memory_table_name",
+            "sessions": "session_table_name",
+            "metrics": "metrics_table_name",
+            "evals": "eval_table_name",
+            "knowledge": "knowledge_table_name",
+            "culture": "culture_table_name",
+        }
+
         # Select tables to migrate
         if table_type:
-            if table_type not in ["memory", "session", "metrics", "eval", "knowledge", "culture"]:
-                log_warning(
-                    f"Invalid table type: {table_type}. Use one of: memory, session, metrics, eval, knowledge, culture"
-                )
+            if table_type not in _table_type_to_attr:
+                log_warning(f"Invalid table type: {table_type}. Use one of: {', '.join(_table_type_to_attr.keys())}")
                 return
-            tables = [(table_type, getattr(self.db, f"{table_type}_table_name"))]
+            tables = [(table_type, getattr(self.db, _table_type_to_attr[table_type]))]
         else:
-            tables = [
-                ("memories", self.db.memory_table_name),
-                ("sessions", self.db.session_table_name),
-                ("metrics", self.db.metrics_table_name),
-                ("evals", self.db.eval_table_name),
-                ("knowledge", self.db.knowledge_table_name),
-                ("culture", self.db.culture_table_name),
-            ]
+            tables = [(tt, getattr(self.db, attr)) for tt, attr in _table_type_to_attr.items()]
 
         # Handle migrations for each table separately (extend in future if needed):
         for table_type, table_name in tables:
@@ -93,11 +94,10 @@ class MigrationManager:
                     migration_executed = await self._up_migration(version, table_type, table_name)
                     if migration_executed:
                         any_migration_executed = True
+                        latest_version = normalised_version.public
                         log_info(f"Successfully applied migration {normalised_version} on table {table_name}")
                     else:
                         log_info(f"Skipping application of migration {normalised_version} on table {table_name}")
-
-                    latest_version = normalised_version.public
 
             if any_migration_executed and latest_version:
                 log_info(f"Storing version {latest_version} in database for table {table_name}")
@@ -134,23 +134,24 @@ class MigrationManager:
         """
         _target_version = packaging_version.parse(target_version)
 
+        # Mapping from table_type to db attribute name
+        _table_type_to_attr = {
+            "memories": "memory_table_name",
+            "sessions": "session_table_name",
+            "metrics": "metrics_table_name",
+            "evals": "eval_table_name",
+            "knowledge": "knowledge_table_name",
+            "culture": "culture_table_name",
+        }
+
         # Select tables to migrate
         if table_type:
-            if table_type not in ["memory", "session", "metrics", "eval", "knowledge", "culture"]:
-                log_warning(
-                    f"Invalid table type: {table_type}. Use one of: memory, session, metrics, eval, knowledge, culture"
-                )
+            if table_type not in _table_type_to_attr:
+                log_warning(f"Invalid table type: {table_type}. Use one of: {', '.join(_table_type_to_attr.keys())}")
                 return
-            tables = [(table_type, getattr(self.db, f"{table_type}_table_name"))]
+            tables = [(table_type, getattr(self.db, _table_type_to_attr[table_type]))]
         else:
-            tables = [
-                ("memories", self.db.memory_table_name),
-                ("sessions", self.db.session_table_name),
-                ("metrics", self.db.metrics_table_name),
-                ("evals", self.db.eval_table_name),
-                ("knowledge", self.db.knowledge_table_name),
-                ("culture", self.db.culture_table_name),
-            ]
+            tables = [(tt, getattr(self.db, attr)) for tt, attr in _table_type_to_attr.items()]
 
         for table_type, table_name in tables:
             if isinstance(self.db, AsyncBaseDb):
