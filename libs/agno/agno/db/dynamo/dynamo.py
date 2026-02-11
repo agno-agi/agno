@@ -652,7 +652,7 @@ class DynamoDb(BaseDb):
         """
         try:
             # If user_id is provided, verify the memory belongs to the user before deleting
-            if user_id:
+            if user_id is not None:
                 response = self.client.get_item(
                     TableName=self.memory_table_name,
                     Key={"memory_id": {"S": memory_id}},
@@ -688,7 +688,7 @@ class DynamoDb(BaseDb):
 
         try:
             # If user_id is provided, filter memory_ids to only those belonging to the user
-            if user_id:
+            if user_id is not None:
                 filtered_memory_ids = []
                 for memory_id in memory_ids:
                     response = self.client.get_item(
@@ -858,7 +858,7 @@ class DynamoDb(BaseDb):
                 filter_expression = f"{filter_expression} AND {search_filter}" if filter_expression else search_filter
 
             # Determine whether to use GSI query or table scan
-            if user_id:
+            if user_id is not None:
                 # Use GSI query when user_id is provided
                 key_condition_expression = "#user_id = :user_id"
 
@@ -952,7 +952,7 @@ class DynamoDb(BaseDb):
             # Build filter expression for user_id if provided
             filter_expression = None
             expression_attribute_values = {}
-            if user_id:
+            if user_id is not None:
                 filter_expression = "user_id = :user_id"
                 expression_attribute_values[":user_id"] = {"S": user_id}
 
@@ -2360,7 +2360,7 @@ class DynamoDb(BaseDb):
                 gsi_name = "session_id-start_time-index"
                 key_condition = "session_id = :session_id"
                 key_values[":session_id"] = {"S": session_id}
-            elif user_id:
+            elif user_id is not None:
                 use_gsi = True
                 gsi_name = "user_id-start_time-index"
                 key_condition = "user_id = :user_id"
@@ -2516,7 +2516,7 @@ class DynamoDb(BaseDb):
             filter_parts = []
             filter_values: Dict[str, Any] = {}
 
-            if user_id:
+            if user_id is not None:
                 filter_parts.append("user_id = :user_id")
                 filter_values[":user_id"] = {"S": user_id}
             if agent_id:

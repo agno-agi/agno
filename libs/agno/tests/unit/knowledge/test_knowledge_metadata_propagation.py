@@ -147,19 +147,16 @@ def test_prepare_documents_for_insert_with_metadata():
         "document_id": "123",
         "knowledge_base_id": "456",
         "filename": "test.txt",
-        "linked_to": "",
     }
     assert result[1].meta_data == {
         "document_id": "123",
         "knowledge_base_id": "456",
         "filename": "test.txt",
-        "linked_to": "",
     }
     assert result[2].meta_data == {
         "document_id": "123",
         "knowledge_base_id": "456",
         "filename": "test.txt",
-        "linked_to": "",
     }
 
     # Verify content_id was set
@@ -317,7 +314,7 @@ def test_load_from_path_without_metadata(temp_text_file, mock_vector_db):
     # Verify documents were inserted with original metadata preserved (linked_to is always added, empty string for unnamed knowledge)
     assert len(mock_vector_db.inserted_documents) == 1
     doc = mock_vector_db.inserted_documents[0]
-    assert doc.meta_data == {"original": "data", "linked_to": ""}
+    assert doc.meta_data == {"original": "data"}
 
 
 def test_metadata_merges_with_existing_document_metadata(temp_text_file, mock_vector_db):

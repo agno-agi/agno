@@ -465,7 +465,7 @@ def fetch_all_sessions_data_by_type(
         expression_attribute_names = {}
         expression_attribute_values = {":session_type": {"S": session_type}}
 
-        if user_id:
+        if user_id is not None:
             filter_expression = "#user_id = :user_id"
             expression_attribute_names["#user_id"] = "user_id"
             expression_attribute_values[":user_id"] = {"S": user_id}
