@@ -2,7 +2,7 @@
 1. Run: `python cookbook/07_knowledge/basic_operations/async/01_from_path.py` to run the cookbook
 """
 
-import asyncio  # noqa: F401
+import asyncio
 
 from agno.agent import Agent  # noqa
 from agno.db.postgres.postgres import PostgresDb
