@@ -498,7 +498,7 @@ class JsonDb(BaseDb):
             original_count = len(memories)
 
             # If user_id is provided, verify the memory belongs to the user before deleting
-            if user_id:
+            if user_id is not None:
                 memory_to_delete = None
                 for m in memories:
                     if m.get("memory_id") == memory_id:
@@ -532,7 +532,7 @@ class JsonDb(BaseDb):
             memories = self._read_json_file(self.memory_table_name)
 
             # If user_id is provided, filter memory_ids to only those belonging to the user
-            if user_id:
+            if user_id is not None:
                 filtered_memory_ids: List[str] = []
                 for memory in memories:
                     if memory.get("memory_id") in memory_ids and memory.get("user_id") == user_id:
