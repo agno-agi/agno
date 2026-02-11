@@ -5,6 +5,7 @@ on:
     branches:
       - "main"
       - "v2.4.0"
+      - "v2.5-phase1"
   pull_request:
     types:
       - opened
@@ -13,6 +14,7 @@ on:
     branches:
       - "main"
       - "v2.4.0"
+      - "v2.5-phase1"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

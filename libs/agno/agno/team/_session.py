@@ -58,7 +58,7 @@ def get_session(
     if not session_id and not team.session_id:
         raise Exception("No session_id provided")
 
-    session_id_to_load = session_id or team.session_id
+    session_id_to_load: str = session_id or team.session_id  # type: ignore[assignment]
 
     # If there is a cached session, return it
     if team.cache_session and hasattr(team, "_cached_session") and team._cached_session is not None:
@@ -73,14 +73,14 @@ def get_session(
         loaded_session = None
         # We have a standalone team, so we are loading a TeamSession
         if team.workflow_id is None:
-            loaded_session = cast(TeamSession, _read_session(team, session_id=session_id_to_load))  # type: ignore
+            loaded_session = cast(TeamSession, _read_session(team, session_id=session_id_to_load))
         # We have a workflow team, so we are loading a WorkflowSession
         else:
-            loaded_session = cast(
+            loaded_session = cast(  # type: ignore[assignment]
                 WorkflowSession,
                 _read_session(
                     team,
-                    session_id=session_id_to_load,  # type: ignore
+                    session_id=session_id_to_load,
                     session_type=SessionType.WORKFLOW,
                 ),
             )
@@ -89,7 +89,7 @@ def get_session(
         if loaded_session is not None and team.cache_session:
             team._cached_session = loaded_session
 
-        return loaded_session
+        return loaded_session  # type: ignore[return-value]
 
     log_debug(f"TeamSession {session_id_to_load} not found in db")
     return None
@@ -113,7 +113,7 @@ async def aget_session(
     if not session_id and not team.session_id:
         raise Exception("No session_id provided")
 
-    session_id_to_load = session_id or team.session_id
+    session_id_to_load: str = session_id or team.session_id  # type: ignore[assignment]
 
     # If there is a cached session, return it
     if team.cache_session and hasattr(team, "_cached_session") and team._cached_session is not None:
@@ -126,26 +126,26 @@ async def aget_session(
         # We have a standalone team, so we are loading a TeamSession
         if team.workflow_id is None:
             if _has_async_db(team):
-                loaded_session = cast(TeamSession, await _aread_session(team, session_id=session_id_to_load))  # type: ignore
+                loaded_session = cast(TeamSession, await _aread_session(team, session_id=session_id_to_load))
             else:
-                loaded_session = cast(TeamSession, _read_session(team, session_id=session_id_to_load))  # type: ignore
+                loaded_session = cast(TeamSession, _read_session(team, session_id=session_id_to_load))
         # We have a workflow team, so we are loading a WorkflowSession
         else:
             if _has_async_db(team):
-                loaded_session = cast(
+                loaded_session = cast(  # type: ignore[assignment]
                     WorkflowSession,
                     await _aread_session(
                         team,
-                        session_id=session_id_to_load,  # type: ignore
+                        session_id=session_id_to_load,
                         session_type=SessionType.WORKFLOW,
                     ),
                 )
             else:
-                loaded_session = cast(
+                loaded_session = cast(  # type: ignore[assignment]
                     WorkflowSession,
                     _read_session(
                         team,
-                        session_id=session_id_to_load,  # type: ignore
+                        session_id=session_id_to_load,
                         session_type=SessionType.WORKFLOW,
                     ),
                 )
@@ -154,7 +154,7 @@ async def aget_session(
         if loaded_session is not None and team.cache_session:
             team._cached_session = loaded_session
 
-        return loaded_session
+        return loaded_session  # type: ignore[return-value]
 
     log_debug(f"TeamSession {session_id_to_load} not found in db")
     return None

@@ -757,8 +757,6 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
                 max_results=request.max_results,
                 filters=request.filters,
                 search_type=request.search_type,
-                db_id=request.db_id,
-                knowledge_id=request.knowledge_id,
                 headers=headers,
             )
 
