@@ -66,8 +66,8 @@ async def alog_agent_telemetry(agent: Agent, session_id: str, run_id: Optional[s
     if not agent.telemetry:
         return
 
-    from agno.api._executor import get_telemetry_executor
-    from agno.api.agent import AgentRunCreate, create_agent_run
+    from agno.api._executor import fire_and_forget_async
+    from agno.api.agent import AgentRunCreate, acreate_agent_run
 
     try:
         run = AgentRunCreate(
@@ -75,6 +75,6 @@ async def alog_agent_telemetry(agent: Agent, session_id: str, run_id: Optional[s
             run_id=run_id,
             data=get_telemetry_data(agent),
         )
-        get_telemetry_executor().submit(create_agent_run, run)
+        fire_and_forget_async(acreate_agent_run(run))
     except Exception as e:
         log_debug(f"Could not submit Agent run telemetry event: {e}")

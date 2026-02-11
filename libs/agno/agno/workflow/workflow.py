@@ -4684,12 +4684,12 @@ class Workflow:
         if not self.telemetry:
             return
 
-        from agno.api._executor import get_telemetry_executor
-        from agno.api.workflow import WorkflowRunCreate, create_workflow_run
+        from agno.api._executor import fire_and_forget_async
+        from agno.api.workflow import WorkflowRunCreate, acreate_workflow_run
 
         try:
             workflow = WorkflowRunCreate(session_id=session_id, run_id=run_id, data=self._get_telemetry_data())
-            get_telemetry_executor().submit(create_workflow_run, workflow)
+            fire_and_forget_async(acreate_workflow_run(workflow))
         except Exception as e:
             log_debug(f"Could not submit Workflow run telemetry event: {e}")
 
