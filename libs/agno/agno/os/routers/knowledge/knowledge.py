@@ -20,6 +20,10 @@ from agno.os.routers.knowledge.schemas import (
     ContentStatusResponse,
     ContentUpdateSchema,
     ReaderSchema,
+    RemoteContentSourceSchema,
+    SourceFileSchema,
+    SourceFilesResponseSchema,
+    SourceFolderSchema,
     VectorDbSchema,
     VectorSearchRequestSchema,
     VectorSearchResult,
@@ -1190,6 +1194,166 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
             chunkers=chunkers_dict,
             filters=filters,
             remote_content_sources=remote_content_sources,
+        )
+
+    @router.get(
+        "/knowledge/{knowledge_id}/sources",
+        response_model=List[RemoteContentSourceSchema],
+        status_code=200,
+        operation_id="list_content_sources",
+        summary="List Content Sources",
+        description="List all registered content sources (S3, GCS, SharePoint, GitHub) for the knowledge base.",
+        responses={
+            200: {
+                "description": "Content sources retrieved successfully",
+                "content": {
+                    "application/json": {
+                        "example": [
+                            {
+                                "id": "company-s3",
+                                "name": "Company Documents",
+                                "type": "s3",
+                                "prefix": "documents/",
+                            }
+                        ]
+                    }
+                },
+            },
+            404: {"description": "Knowledge base not found", "model": NotFoundResponse},
+        },
+    )
+    async def list_sources(
+        request: Request,
+        knowledge_id: str = Path(..., description="ID of the knowledge base"),
+        db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
+    ) -> List[RemoteContentSourceSchema]:
+        knowledge = get_knowledge_instance(knowledge_instances, db_id, knowledge_id)
+
+        if isinstance(knowledge, RemoteKnowledge):
+            raise HTTPException(status_code=501, detail="Source listing not yet supported for RemoteKnowledge")
+
+        if not hasattr(knowledge, "_get_remote_configs") or not callable(knowledge._get_remote_configs):
+            return []
+
+        remote_configs = knowledge._get_remote_configs()
+        if not remote_configs:
+            return []
+
+        return [
+            RemoteContentSourceSchema(
+                id=config.id,
+                name=config.name,
+                type=config.__class__.__name__.replace("Config", "").lower(),
+                prefix=getattr(config, "prefix", None),
+            )
+            for config in remote_configs
+        ]
+
+    @router.get(
+        "/knowledge/{knowledge_id}/sources/{source_id}/files",
+        response_model=SourceFilesResponseSchema,
+        status_code=200,
+        operation_id="list_source_files",
+        summary="List Files in Source",
+        description=(
+            "List available files and folders in a specific content source. Supports pagination and folder navigation."
+        ),
+        responses={
+            200: {
+                "description": "Files listed successfully",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "source_id": "company-s3",
+                            "source_name": "Company Documents",
+                            "prefix": "reports/",
+                            "folders": [{"prefix": "reports/2024/", "name": "2024", "is_empty": False}],
+                            "files": [
+                                {
+                                    "key": "reports/annual-summary.pdf",
+                                    "name": "annual-summary.pdf",
+                                    "size": 102400,
+                                    "last_modified": "2024-01-15T10:30:00Z",
+                                    "content_type": "application/pdf",
+                                }
+                            ],
+                            "meta": {"page": 1, "limit": 100, "total_pages": 1, "total_count": 1},
+                        }
+                    }
+                },
+            },
+            404: {"description": "Knowledge base or content source not found", "model": NotFoundResponse},
+            400: {"description": "Unsupported source type", "model": BadRequestResponse},
+        },
+    )
+    async def list_source_files(
+        request: Request,
+        knowledge_id: str = Path(..., description="ID of the knowledge base"),
+        source_id: str = Path(..., description="ID of the content source"),
+        prefix: Optional[str] = Query(default=None, description="Path prefix to filter files"),
+        limit: int = Query(default=100, ge=1, le=1000, description="Number of files per page"),
+        page: int = Query(default=1, ge=1, description="Page number (1-indexed)"),
+        delimiter: str = Query(default="/", description="Folder delimiter (enables folder grouping)"),
+        db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
+    ) -> SourceFilesResponseSchema:
+        knowledge = get_knowledge_instance(knowledge_instances, db_id, knowledge_id)
+
+        if isinstance(knowledge, RemoteKnowledge):
+            raise HTTPException(status_code=501, detail="Source file listing not yet supported for RemoteKnowledge")
+
+        # Get the config for this source
+        config = knowledge._get_remote_config_by_id(source_id)
+        if config is None:
+            raise HTTPException(status_code=404, detail=f"Content source not found: {source_id}")
+
+        # Check if this config type supports list_files
+        if not hasattr(config, "list_files"):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Source type '{type(config).__name__}' does not support file listing.",
+            )
+
+        try:
+            result = config.list_files(
+                prefix=prefix,
+                delimiter=delimiter,
+                limit=limit,
+                page=page,
+            )
+        except ImportError as e:
+            raise HTTPException(status_code=500, detail=str(e))
+        except Exception as e:
+            log_error(f"Error listing files from {type(config).__name__}: {e}")
+            raise HTTPException(status_code=500, detail=f"Failed to list files: {str(e)}")
+
+        return SourceFilesResponseSchema(
+            source_id=source_id,
+            source_name=config.name,
+            prefix=prefix or "",
+            folders=[
+                SourceFolderSchema(
+                    prefix=folder["prefix"],
+                    name=folder["name"],
+                    is_empty=folder["is_empty"],
+                )
+                for folder in result.folders
+            ],
+            files=[
+                SourceFileSchema(
+                    key=file["key"],
+                    name=file["name"],
+                    size=file["size"],
+                    last_modified=file["last_modified"],
+                    content_type=file["content_type"],
+                )
+                for file in result.files
+            ],
+            meta=PaginationInfo(
+                page=result.page,
+                limit=result.limit,
+                total_count=result.total_count,
+                total_pages=result.total_pages,
+            ),
         )
 
     return router
