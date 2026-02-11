@@ -93,6 +93,11 @@ class InfraSettings(BaseModel):
     # AWS Security Groups
     aws_security_group_ids: List[str] = []
 
+    # AWS EFS (Elastic File System) for persistent storage
+    efs_file_system_id: Optional[str] = None
+    # EFS Access Point ID (for user/permission mapping)
+    efs_access_point_id: Optional[str] = None
+
     @model_validator(mode="after")
     def validate_and_set_computed_fields(self) -> "InfraSettings":
         """Validate and set computed fields after initialization."""

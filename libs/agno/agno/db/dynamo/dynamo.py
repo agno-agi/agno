@@ -948,7 +948,7 @@ class DynamoDb(BaseDb):
             # Convert to list and apply sorting
             stats_list = list(user_stats.values())
             stats_list.sort(
-                key=lambda x: (x["last_memory_updated_at"] if x["last_memory_updated_at"] is not None else 0),
+                key=lambda x: x["last_memory_updated_at"] if x["last_memory_updated_at"] is not None else 0,
                 reverse=True,
             )
 
@@ -1621,6 +1621,7 @@ class DynamoDb(BaseDb):
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
+        linked_to: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
         """Get all knowledge contents from the database.
 
@@ -1629,7 +1630,7 @@ class DynamoDb(BaseDb):
             page (Optional[int]): The page number.
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
-            create_table_if_not_found (Optional[bool]): Whether to create the table if it doesn't exist.
+            linked_to (Optional[str]): Filter by linked_to value (knowledge instance name).
 
         Returns:
             Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
@@ -1661,6 +1662,10 @@ class DynamoDb(BaseDb):
                     knowledge_rows.append(knowledge_row)
                 except Exception as e:
                     log_error(f"Failed to deserialize knowledge row: {e}")
+
+            # Apply linked_to filter if provided
+            if linked_to is not None:
+                knowledge_rows = [row for row in knowledge_rows if row.linked_to == linked_to]
 
             # Apply sorting
             if sort_by:
