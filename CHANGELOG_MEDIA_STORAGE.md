@@ -128,6 +128,88 @@ When `media_reference` is set, `to_dict()` emits all class-specific fields (form
 3. **No automatic propagation**: `media_storage` does not propagate from Team to member agents. Configure each independently, or rely on team-level offloading for `member_responses`.
 4. **Sync/async must match**: Use `MediaStorage` with `run()`, `AsyncMediaStorage` with `arun()`.
 
+## User-Facing Metadata on All Media Types
+
+As part of this feature, a new `metadata: Optional[Dict[str, Any]]` field was added to **all four media classes** — `Image`, `Audio`, `Video`, and `File`. This is a general-purpose field unrelated to storage, available whether or not `media_storage` is configured.
+
+### Why
+
+Previously there was no standard way to attach custom context to media objects. Users needed to track things like original filenames, departments, processing flags, or source information out-of-band. Now this context travels with the media throughout its lifecycle.
+
+### Usage
+
+```python
+from agno.media import Image, File
+
+# Attach arbitrary key-value metadata to any media object
+img = Image(
+    filepath="photo.jpg",
+    metadata={"source": "camera", "location": "warehouse-3"},
+)
+
+f = File(
+    filepath="report.pdf",
+    metadata={"department": "finance", "quarter": "Q4-2025"},
+)
+```
+
+### What Happens With It
+
+- **Serialized in `to_dict()`**: Metadata is included in the dict output, so it persists to the database alongside the media or media reference.
+- **Deserialized in `from_dict()`**: When media is reconstructed from DB, the metadata field is restored.
+- **Stored in `MediaReference`**: When media is offloaded, user metadata is also saved inside the `MediaReference` object and (for S3) as S3 object metadata. For `LocalMediaStorage`, it is written to a `.meta.json` sidecar file.
+- **Available to frontends**: Since metadata flows through `to_dict()` into the session JSON, frontends and AgentOS can read and display it.
+- **Excluded when empty**: If `metadata` is `None`, it is omitted from serialized output to keep payloads clean.
+
+### Scope
+
+This is a purely additive change. No existing behavior is altered. The field defaults to `None` and is completely optional.
+
+## Per-File Metadata in Run Creation Endpoints
+
+The `POST /v1/agents/{agent_id}/runs` and `POST /v1/teams/{team_id}/runs` endpoints now accept an optional `files_metadata` form field. This allows clients to attach per-file metadata when uploading files via multipart form data.
+
+### Usage
+
+Send a JSON array as the `files_metadata` form field. Each element maps positionally to the corresponding `files[]` upload:
+
+```javascript
+const formData = new FormData();
+formData.append('message', 'Analyze these documents');
+formData.append('files', imageFile);
+formData.append('files', pdfFile);
+formData.append('files_metadata', JSON.stringify([
+  {"source": "camera", "location": "warehouse-3"},
+  {"department": "finance", "quarter": "Q4"}
+]));
+
+fetch('/v1/agents/my-agent/runs', { method: 'POST', body: formData });
+```
+
+Or with curl:
+
+```bash
+curl -X POST http://localhost:7777/v1/agents/my-agent/runs \
+  -F "message=Describe this image" \
+  -F "files=@photo.jpg" \
+  -F 'files_metadata=[{"source": "camera", "location": "warehouse"}]'
+```
+
+### Rules
+
+- **Positional mapping**: `files_metadata[0]` applies to `files[0]`, `files_metadata[1]` to `files[1]`, etc.
+- **Shorter array**: If the metadata array is shorter than `files[]`, remaining files get no metadata.
+- **Omitted entirely**: If `files_metadata` is not sent, behavior is unchanged (fully backward compatible).
+- **Invalid JSON**: If the value is not valid JSON, a warning is logged and no metadata is applied.
+
+### Modified Files
+
+| File | Change |
+|---|---|
+| `agno/os/utils.py` | Added `metadata` parameter to `process_image`, `process_audio`, `process_video`, `process_document` |
+| `agno/os/routers/agents/router.py` | Parse `files_metadata` from kwargs, pass per-file metadata to `process_*()` calls |
+| `agno/os/routers/teams/router.py` | Same as agent router |
+
 ## Installation
 
 ```bash
