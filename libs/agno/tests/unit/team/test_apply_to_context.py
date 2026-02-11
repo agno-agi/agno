@@ -1,8 +1,8 @@
 """Tests for ResolvedRunOptions.apply_to_context() — team version.
 
-NOTE: Unlike the agent version, team's apply_to_context() always sets output_schema
-from resolved options. This is intentional because the same run_context may be reused
-across workflow steps with different teams, each with their own output_schema.
+NOTE: apply_to_context() always sets output_schema from resolved options.
+This is intentional because the same run_context may be reused across workflow
+steps with different teams, each with their own output_schema.
 """
 
 from pydantic import BaseModel
