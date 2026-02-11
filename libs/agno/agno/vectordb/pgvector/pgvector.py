@@ -1213,6 +1213,7 @@ class PgVector(VectorDb):
 
         Raises:
             ValueError: If fields is empty.
+            Exception: If index creation fails.
         """
         if not fields:
             raise ValueError("At least one field must be specified for filters index creation.")
