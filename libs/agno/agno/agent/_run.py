@@ -50,7 +50,6 @@ from agno.run.agent import (
     RunOutputEvent,
 )
 from agno.run.approval import (
-    acheck_and_apply_approval_resolution,
     acreate_approval_from_pause,
     create_approval_from_pause,
 )
@@ -3465,13 +3464,6 @@ async def acontinue_run_impl(
 
                 run_response = cast(RunOutput, run_response)
 
-                # Gate: if any tool requires external approval, verify it's been resolved
-
-                if run_response.run_id is not None:
-                    await acheck_and_apply_approval_resolution(
-                        db=agent.db, run_id=run_response.run_id, run_response=run_response
-                    )
-
                 run_response.status = RunStatus.running
 
                 # 5. Determine tools for model
@@ -3805,13 +3797,6 @@ async def acontinue_run_stream_impl(
                     raise ValueError("Either run_response or run_id must be provided.")
 
                 run_response = cast(RunOutput, run_response)
-
-                # Gate: if any tool requires external approval, verify it's been resolved
-
-                if run_response.run_id is not None:
-                    await acheck_and_apply_approval_resolution(
-                        db=agent.db, run_id=run_response.run_id, run_response=run_response
-                    )
 
                 run_response.status = RunStatus.running
 

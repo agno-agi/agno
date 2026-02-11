@@ -38,7 +38,8 @@ def _has_approval_requirement(tools: Optional[List[Any]], requirements: Optional
     Checks both run_response.tools (agent-level) and run_response.requirements
     (team-level, where member tools are propagated via requirements).
     """
-    return _get_first_approval_tool(tools, requirements) is not None
+    tool = _get_first_approval_tool(tools, requirements)
+    return tool is not None and getattr(tool, "approval_type", None) == "required"
 
 
 def _build_approval_dict(
@@ -324,6 +325,10 @@ def _apply_approval_to_tools(tools: List[Any], approval_status: str, resolution_
 
         elif approval_status == "rejected":
             if getattr(tool, "requires_confirmation", False):
+                tool.confirmed = False
+            if getattr(tool, "requires_user_input", False):
+                tool.confirmed = False
+            if getattr(tool, "external_execution_required", False):
                 tool.confirmed = False
 
 

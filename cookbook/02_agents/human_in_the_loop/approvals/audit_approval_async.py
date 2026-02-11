@@ -60,7 +60,7 @@ async def main():
     approvals, total = db.get_approvals()
     print(f"Total approvals before resolution: {total}")
     assert total == 0, f"Expected 0 approvals before resolution, got {total}"
-    print("No approval records yet (as expected for log_approval).")
+    print("No approval records yet (as expected for audit approval).")
 
     # Step 3: Confirm and continue async
     print("\n--- Step 3: Confirming and continuing async ---")

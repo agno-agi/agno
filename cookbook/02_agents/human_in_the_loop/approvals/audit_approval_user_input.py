@@ -54,7 +54,7 @@ print(f"Run status: {run_response.status}")
 assert run_response.is_paused, f"Expected paused, got {run_response.status}"
 print("Agent paused as expected.")
 
-# Step 2: Verify no logged approvals exist yet (log_approval creates records AFTER resolution)
+# Step 2: Verify no logged approvals exist yet (audit approval creates records AFTER resolution)
 print("\n--- Step 2: Verifying no logged approvals yet ---")
 approvals, total = db.get_approvals(approval_type="audit")
 print(f"Logged approvals before resolution: {total}")
