@@ -7,6 +7,7 @@ on:
       - "release/*" # Run on release/1.2.3 branch format
       - "v2.5-phase1"
       - "fix/ci-test-failures"
+      - "fix/v2.5-rbac-issues"
       - "fix/session-user-isolation"
   workflow_dispatch: # Allows manual triggering
     inputs:
