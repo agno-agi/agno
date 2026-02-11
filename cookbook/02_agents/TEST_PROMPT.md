@@ -6,6 +6,7 @@ Context files (read these first):
 
 Environment:
 - Python: `.venvs/demo/bin/python`
+  - Created using `./scripts/demo_setup.sh`
 - API keys: loaded via `direnv allow`
 - Database: `./cookbook/scripts/run_pgvector.sh` (needed for RAG, session, knowledge examples)
 
