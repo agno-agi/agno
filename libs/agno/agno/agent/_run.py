@@ -26,6 +26,7 @@ from pydantic import BaseModel
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
 
+from agno.agent._init import _initialize_session_state
 from agno.agent._run_options import resolve_run_options
 from agno.agent._session import initialize_session, update_session_metrics
 from agno.exceptions import (
@@ -352,6 +353,12 @@ def _run(
                     agent,
                     session=agent_session,
                     session_state=run_context.session_state if run_context.session_state is not None else {},
+                )
+                _initialize_session_state(
+                    run_context.session_state,
+                    user_id=user_id,
+                    session_id=session_id,
+                    run_id=run_context.run_id,
                 )
 
                 # 3. Resolve dependencies
@@ -714,6 +721,12 @@ def _run_stream(
                     agent,
                     session=agent_session,
                     session_state=run_context.session_state if run_context.session_state is not None else {},
+                )
+                _initialize_session_state(
+                    run_context.session_state,
+                    user_id=user_id,
+                    session_id=session_id,
+                    run_id=run_context.run_id,
                 )
 
                 # 3. Resolve dependencies
@@ -1376,6 +1389,12 @@ async def _arun(
                     session=agent_session,
                     session_state=run_context.session_state if run_context.session_state is not None else {},
                 )
+                _initialize_session_state(
+                    run_context.session_state,
+                    user_id=user_id,
+                    session_id=session_id,
+                    run_id=run_context.run_id,
+                )
 
                 # 3. Resolve dependencies
                 if run_context.dependencies is not None:
@@ -1776,6 +1795,12 @@ async def _arun_stream(
                     agent,
                     session=agent_session,
                     session_state=run_context.session_state if run_context.session_state is not None else {},
+                )
+                _initialize_session_state(
+                    run_context.session_state,
+                    user_id=user_id,
+                    session_id=session_id,
+                    run_id=run_context.run_id,
                 )
 
                 # 3. Resolve dependencies
@@ -2571,7 +2596,7 @@ def continue_run_dispatch(
     run_response.status = RunStatus.running
 
     if opts.stream:
-        response_iterator = continue_run_stream_impl(
+        response_iterator = _continue_run_stream(
             agent,
             run_response=run_response,
             run_messages=run_messages,
@@ -2588,7 +2613,7 @@ def continue_run_dispatch(
         )
         return response_iterator
     else:
-        response = continue_run_impl(
+        response = _continue_run(
             agent,
             run_response=run_response,
             run_messages=run_messages,
@@ -2604,7 +2629,7 @@ def continue_run_dispatch(
         return response
 
 
-def continue_run_impl(
+def _continue_run(
     agent: Agent,
     run_response: RunOutput,
     run_messages: RunMessages,
@@ -2805,7 +2830,7 @@ def continue_run_impl(
     return run_response
 
 
-def continue_run_stream_impl(
+def _continue_run_stream(
     agent: Agent,
     run_response: RunOutput,
     run_messages: RunMessages,
@@ -3192,7 +3217,7 @@ def acontinue_run_dispatch(  # type: ignore
     response_format = get_response_format(agent, run_context=run_context)
 
     if opts.stream:
-        return acontinue_run_stream_impl(
+        return _acontinue_run_stream(
             agent,
             run_response=run_response,
             run_context=run_context,
@@ -3209,7 +3234,7 @@ def acontinue_run_dispatch(  # type: ignore
             **kwargs,
         )
     else:
-        return acontinue_run_impl(  # type: ignore
+        return _acontinue_run(  # type: ignore
             agent,
             session_id=session_id,
             run_response=run_response,
@@ -3225,7 +3250,7 @@ def acontinue_run_dispatch(  # type: ignore
         )
 
 
-async def acontinue_run_impl(
+async def _acontinue_run(
     agent: Agent,
     session_id: str,
     run_context: RunContext,
@@ -3296,6 +3321,12 @@ async def acontinue_run_impl(
                     agent,
                     session=agent_session,
                     session_state=run_context.session_state if run_context.session_state is not None else {},
+                )
+                _initialize_session_state(
+                    run_context.session_state,
+                    user_id=user_id,
+                    session_id=session_id,
+                    run_id=run_context.run_id,
                 )
 
                 # 4. Prepare run response
@@ -3561,7 +3592,7 @@ async def acontinue_run_impl(
     return run_response  # type: ignore
 
 
-async def acontinue_run_stream_impl(
+async def _acontinue_run_stream(
     agent: Agent,
     session_id: str,
     run_context: RunContext,
@@ -3624,6 +3655,12 @@ async def acontinue_run_stream_impl(
                     agent,
                     session=agent_session,
                     session_state=run_context.session_state if run_context.session_state is not None else {},
+                )
+                _initialize_session_state(
+                    run_context.session_state,
+                    user_id=user_id,
+                    session_id=session_id,
+                    run_id=run_context.run_id,
                 )
 
                 # 3. Resolve dependencies

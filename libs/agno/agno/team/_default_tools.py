@@ -119,18 +119,15 @@ def _get_chat_history_function(team: "Team", session: TeamSession, async_mode: b
         """
         import json
 
-        history: List[Dict[str, Any]] = []
-
         all_chats = session.get_messages(team_id=team.id)
 
         if len(all_chats) == 0:
             return ""
 
-        for chat in all_chats[::-1]:  # type: ignore
-            history.insert(0, chat.to_dict())  # type: ignore
+        history: List[Dict[str, Any]] = [chat.to_dict() for chat in all_chats]  # type: ignore
 
         if num_chats is not None:
-            history = history[:num_chats]
+            history = history[-num_chats:]
 
         return json.dumps(history)
 
@@ -153,18 +150,15 @@ def _get_chat_history_function(team: "Team", session: TeamSession, async_mode: b
         """
         import json
 
-        history: List[Dict[str, Any]] = []
-
         all_chats = session.get_messages(team_id=team.id)
 
         if len(all_chats) == 0:
             return ""
 
-        for chat in all_chats[::-1]:  # type: ignore
-            history.insert(0, chat.to_dict())  # type: ignore
+        history: List[Dict[str, Any]] = [chat.to_dict() for chat in all_chats]  # type: ignore
 
         if num_chats is not None:
-            history = history[:num_chats]
+            history = history[-num_chats:]
 
         return json.dumps(history)
 
@@ -350,6 +344,7 @@ def _get_delegate_task_function(
         _determine_team_member_interactions,
         _find_member_by_id,
         _get_history_for_member_agent,
+        _propagate_member_pause,
     )
 
     if not images:
@@ -489,7 +484,7 @@ def _get_delegate_task_function(
         """
 
         # Find the member agent using the helper function
-        result = _find_member_by_id(team, member_id)
+        result = _find_member_by_id(team, member_id, run_context=run_context)
         if result is None:
             yield f"Member with ID {member_id} not found in the team or any subteams. Please choose the correct member from the list of members:\n\n{team.get_members_system_message_content(indent=0)}"
             return
@@ -564,6 +559,20 @@ def _get_delegate_task_function(
 
             check_if_run_cancelled(member_agent_run_response)  # type: ignore
 
+        # Check if the member run is paused (HITL)
+        if member_agent_run_response is not None and member_agent_run_response.is_paused:
+            _propagate_member_pause(run_response, member_agent, member_agent_run_response)
+            use_team_logger()
+            _process_delegate_task_to_member(
+                member_agent_run_response,
+                member_agent,
+                member_agent_task,  # type: ignore
+                member_session_state_copy,  # type: ignore
+            )
+            yield f"Member '{member_agent.name}' requires human input before continuing."
+            return
+
+        if not stream:
             try:
                 if member_agent_run_response.content is None and (  # type: ignore
                     member_agent_run_response.tools is None or len(member_agent_run_response.tools) == 0  # type: ignore
@@ -615,7 +624,7 @@ def _get_delegate_task_function(
         """
 
         # Find the member agent using the helper function
-        result = _find_member_by_id(team, member_id)
+        result = _find_member_by_id(team, member_id, run_context=run_context)
         if result is None:
             yield f"Member with ID {member_id} not found in the team or any subteams. Please choose the correct member from the list of members:\n\n{team.get_members_system_message_content(indent=0)}"
             return
@@ -689,6 +698,20 @@ def _get_delegate_task_function(
             )
             check_if_run_cancelled(member_agent_run_response)  # type: ignore
 
+        # Check if the member run is paused (HITL)
+        if member_agent_run_response is not None and member_agent_run_response.is_paused:
+            _propagate_member_pause(run_response, member_agent, member_agent_run_response)
+            use_team_logger()
+            _process_delegate_task_to_member(
+                member_agent_run_response,
+                member_agent,
+                member_agent_task,  # type: ignore
+                member_session_state_copy,  # type: ignore
+            )
+            yield f"Member '{member_agent.name}' requires human input before continuing."
+            return
+
+        if not stream:
             try:
                 if member_agent_run_response.content is None and (  # type: ignore
                     member_agent_run_response.tools is None or len(member_agent_run_response.tools) == 0  # type: ignore
@@ -734,9 +757,12 @@ def _get_delegate_task_function(
         Returns:
             str: The result of the delegated task.
         """
+        from agno.utils.callables import get_resolved_members
+
+        resolved_members = get_resolved_members(team, run_context) or []
 
         # Run all the members sequentially
-        for _, member_agent in enumerate(team.members):
+        for _, member_agent in enumerate(resolved_members):
             member_agent_task, history = _setup_delegate_task_to_member(member_agent=member_agent, task=task)
 
             member_session_state_copy = copy(run_context.session_state)
@@ -803,6 +829,20 @@ def _get_delegate_task_function(
 
                 check_if_run_cancelled(member_agent_run_response)  # type: ignore
 
+            # Check if the member run is paused (HITL)
+            if member_agent_run_response is not None and member_agent_run_response.is_paused:
+                _propagate_member_pause(run_response, member_agent, member_agent_run_response)
+                use_team_logger()
+                _process_delegate_task_to_member(
+                    member_agent_run_response,
+                    member_agent,
+                    member_agent_task,  # type: ignore
+                    member_session_state_copy,  # type: ignore
+                )
+                yield f"Agent {member_agent.name}: Requires human input before continuing."
+                continue
+
+            if not stream:
                 try:
                     if member_agent_run_response.content is None and (  # type: ignore
                         member_agent_run_response.tools is None or len(member_agent_run_response.tools) == 0  # type: ignore
@@ -844,6 +884,9 @@ def _get_delegate_task_function(
         Returns:
             str: The result of the delegated task.
         """
+        from agno.utils.callables import get_resolved_members
+
+        resolved_members = get_resolved_members(team, run_context) or []
 
         if stream:
             # Concurrent streaming: launch each member as a streaming worker and merge events
@@ -877,29 +920,43 @@ def _get_delegate_task_function(
                 )
                 member_agent_run_response = None
                 try:
-                    async for member_agent_run_output_event in member_stream:
-                        # Do NOT break out of the loop, AsyncIterator need to exit properly
-                        if isinstance(member_agent_run_output_event, (TeamRunOutput, RunOutput)):
-                            member_agent_run_response = member_agent_run_output_event  # type: ignore
-                            continue  # Don't yield TeamRunOutput or RunOutput, only yield events
+                    try:
+                        async for member_agent_run_output_event in member_stream:
+                            # Do NOT break out of the loop, AsyncIterator need to exit properly
+                            if isinstance(member_agent_run_output_event, (TeamRunOutput, RunOutput)):
+                                member_agent_run_response = member_agent_run_output_event  # type: ignore
+                                continue  # Don't yield TeamRunOutput or RunOutput, only yield events
 
-                        check_if_run_cancelled(member_agent_run_output_event)
-                        member_agent_run_output_event.parent_run_id = member_agent_run_output_event.parent_run_id or (
-                            run_response.run_id if run_response is not None else None
-                        )
-                        await queue.put(member_agent_run_output_event)
+                            check_if_run_cancelled(member_agent_run_output_event)
+                            member_agent_run_output_event.parent_run_id = (
+                                member_agent_run_output_event.parent_run_id
+                                or (run_response.run_id if run_response is not None else None)
+                            )
+                            await queue.put(member_agent_run_output_event)
+                    finally:
+                        # Check if the member run is paused (HITL)
+                        if member_agent_run_response is not None and member_agent_run_response.is_paused:
+                            _propagate_member_pause(run_response, agent, member_agent_run_response)
+                            _process_delegate_task_to_member(
+                                member_agent_run_response,
+                                agent,
+                                member_agent_task,  # type: ignore
+                                member_session_state_copy,  # type: ignore
+                            )
+                            await queue.put(f"Agent {agent.name}: Requires human input before continuing.")
+                        else:
+                            _process_delegate_task_to_member(
+                                member_agent_run_response,
+                                agent,
+                                member_agent_task,  # type: ignore
+                                member_session_state_copy,  # type: ignore
+                            )
                 finally:
-                    _process_delegate_task_to_member(
-                        member_agent_run_response,
-                        agent,
-                        member_agent_task,  # type: ignore
-                        member_session_state_copy,  # type: ignore
-                    )
                     await queue.put(done_marker)
 
             # Initialize and launch all members
             tasks: List[asyncio.Task[None]] = []
-            for member_agent in team.members:
+            for member_agent in resolved_members:
                 current_agent = member_agent
                 _initialize_member(team, current_agent)
                 tasks.append(asyncio.create_task(stream_member(current_agent)))
@@ -925,7 +982,7 @@ def _get_delegate_task_function(
         else:
             # Non-streaming concurrent run of members; collect results when done
             tasks = []
-            for member_agent_index, member_agent in enumerate(team.members):
+            for member_agent_index, member_agent in enumerate(resolved_members):
                 current_agent = member_agent
                 member_agent_task, history = _setup_delegate_task_to_member(member_agent=current_agent, task=task)
 
@@ -934,7 +991,7 @@ def _get_delegate_task_function(
                     member_agent_task=member_agent_task,
                     history=history,
                     member_agent_index=member_agent_index,
-                ) -> str:
+                ) -> tuple[str, Optional[Union[Agent, "Team"]], Optional[Union[RunOutput, TeamRunOutput]]]:
                     member_session_state_copy = copy(run_context.session_state)
 
                     member_agent_run_response = await member_agent.arun(
@@ -960,6 +1017,22 @@ def _get_delegate_task_function(
                     )
                     check_if_run_cancelled(member_agent_run_response)
 
+                    member_name = member_agent.name if member_agent.name else f"agent_{member_agent_index}"
+
+                    # Check if the member run is paused (HITL) before processing
+                    if member_agent_run_response is not None and member_agent_run_response.is_paused:
+                        _process_delegate_task_to_member(
+                            member_agent_run_response,
+                            member_agent,
+                            member_agent_task,  # type: ignore
+                            member_session_state_copy,  # type: ignore
+                        )
+                        return (
+                            f"Agent {member_name}: Requires human input before continuing.",
+                            member_agent,
+                            member_agent_run_response,
+                        )
+
                     _process_delegate_task_to_member(
                         member_agent_run_response,
                         member_agent,
@@ -967,35 +1040,49 @@ def _get_delegate_task_function(
                         member_session_state_copy,  # type: ignore
                     )
 
-                    member_name = member_agent.name if member_agent.name else f"agent_{member_agent_index}"
                     try:
                         if member_agent_run_response.content is None and (
                             member_agent_run_response.tools is None or len(member_agent_run_response.tools) == 0
                         ):
-                            return f"Agent {member_name}: No response from the member agent."
+                            return (f"Agent {member_name}: No response from the member agent.", None, None)
                         elif isinstance(member_agent_run_response.content, str):
                             if len(member_agent_run_response.content.strip()) > 0:
-                                return f"Agent {member_name}: {member_agent_run_response.content}"
+                                return (f"Agent {member_name}: {member_agent_run_response.content}", None, None)
                             elif (
                                 member_agent_run_response.tools is not None and len(member_agent_run_response.tools) > 0
                             ):
-                                return f"Agent {member_name}: {','.join([tool.result for tool in member_agent_run_response.tools])}"
+                                return (
+                                    f"Agent {member_name}: {','.join([tool.result for tool in member_agent_run_response.tools])}",
+                                    None,
+                                    None,
+                                )
                         elif issubclass(type(member_agent_run_response.content), BaseModel):
-                            return f"Agent {member_name}: {member_agent_run_response.content.model_dump_json(indent=2)}"  # type: ignore
+                            return (
+                                f"Agent {member_name}: {member_agent_run_response.content.model_dump_json(indent=2)}",  # type: ignore
+                                None,
+                                None,
+                            )
                         else:
                             import json
 
-                            return f"Agent {member_name}: {json.dumps(member_agent_run_response.content, indent=2)}"
+                            return (
+                                f"Agent {member_name}: {json.dumps(member_agent_run_response.content, indent=2)}",
+                                None,
+                                None,
+                            )
                     except Exception as e:
-                        return f"Agent {member_name}: Error - {str(e)}"
+                        return (f"Agent {member_name}: Error - {str(e)}", None, None)
 
-                    return f"Agent {member_name}: No Response"
+                    return (f"Agent {member_name}: No Response", None, None)
 
                 tasks.append(run_member_agent)  # type: ignore
 
             results = await asyncio.gather(*[task() for task in tasks])  # type: ignore
-            for result in results:
-                yield result
+            # Propagate pauses sequentially after all members complete
+            for result_text, paused_agent, paused_run_response in results:
+                if paused_agent is not None and paused_run_response is not None:
+                    _propagate_member_pause(run_response, paused_agent, paused_run_response)
+                yield result_text
 
         # After all the member runs, switch back to the team logger
         use_team_logger()
@@ -1032,11 +1119,14 @@ def add_to_knowledge(team: "Team", query: str, result: str) -> str:
     Returns:
         str: A string indicating the status of the addition.
     """
-    if team.knowledge is None:
+    from agno.utils.callables import get_resolved_knowledge
+
+    knowledge = get_resolved_knowledge(team, None)
+    if knowledge is None:
         log_warning("Knowledge is not set, cannot add to knowledge")
         return "Knowledge is not set, cannot add to knowledge"
 
-    insert_method = getattr(team.knowledge, "insert", None)
+    insert_method = getattr(knowledge, "insert", None)
     if not callable(insert_method):
         log_warning("Knowledge base does not support adding content")
         return "Knowledge base does not support adding content"
@@ -1060,16 +1150,19 @@ def get_relevant_docs_from_knowledge(
 ) -> Optional[List[Union[Dict[str, Any], str]]]:
     """Return a list of references from the knowledge base"""
     from agno.knowledge.document import Document
+    from agno.utils.callables import get_resolved_knowledge
+
+    knowledge = get_resolved_knowledge(team, run_context)
 
     # Extract dependencies from run_context if available
     dependencies = run_context.dependencies if run_context else None
 
-    if num_documents is None and team.knowledge is not None:
-        num_documents = getattr(team.knowledge, "max_results", None)
+    if num_documents is None and knowledge is not None:
+        num_documents = getattr(knowledge, "max_results", None)
 
     # Validate the filters against known valid filter keys
-    if team.knowledge is not None and filters is not None:
-        validate_filters_method = getattr(team.knowledge, "validate_filters", None)
+    if knowledge is not None and filters is not None:
+        validate_filters_method = getattr(knowledge, "validate_filters", None)
         if callable(validate_filters_method):
             valid_filters, invalid_keys = validate_filters_method(filters)
 
@@ -1108,17 +1201,17 @@ def get_relevant_docs_from_knowledge(
             raise e
     # Use knowledge protocol's retrieve method
     try:
-        if team.knowledge is None:
+        if knowledge is None:
             return None
 
         # Use protocol retrieve() method if available
-        retrieve_fn = getattr(team.knowledge, "retrieve", None)
+        retrieve_fn = getattr(knowledge, "retrieve", None)
         if not callable(retrieve_fn):
             log_debug("Knowledge does not implement retrieve()")
             return None
 
         if num_documents is None:
-            num_documents = getattr(team.knowledge, "max_results", 10)
+            num_documents = getattr(knowledge, "max_results", 10)
 
         log_debug(f"Retrieving from knowledge base with filters: {filters}")
         relevant_docs: List[Document] = retrieve_fn(query=query, max_results=num_documents, filters=filters)
@@ -1143,16 +1236,19 @@ async def aget_relevant_docs_from_knowledge(
 ) -> Optional[List[Union[Dict[str, Any], str]]]:
     """Get relevant documents from knowledge base asynchronously."""
     from agno.knowledge.document import Document
+    from agno.utils.callables import get_resolved_knowledge
+
+    knowledge = get_resolved_knowledge(team, run_context)
 
     # Extract dependencies from run_context if available
     dependencies = run_context.dependencies if run_context else None
 
-    if num_documents is None and team.knowledge is not None:
-        num_documents = getattr(team.knowledge, "max_results", None)
+    if num_documents is None and knowledge is not None:
+        num_documents = getattr(knowledge, "max_results", None)
 
     # Validate the filters against known valid filter keys
-    if team.knowledge is not None and filters is not None:
-        avalidate_filters_method = getattr(team.knowledge, "avalidate_filters", None)
+    if knowledge is not None and filters is not None:
+        avalidate_filters_method = getattr(knowledge, "avalidate_filters", None)
         if callable(avalidate_filters_method):
             valid_filters, invalid_keys = await avalidate_filters_method(filters)
 
@@ -1198,19 +1294,19 @@ async def aget_relevant_docs_from_knowledge(
 
     # Use knowledge protocol's retrieve method
     try:
-        if team.knowledge is None:
+        if knowledge is None:
             return None
 
         # Use protocol aretrieve() or retrieve() method if available
-        aretrieve_fn = getattr(team.knowledge, "aretrieve", None)
-        retrieve_fn = getattr(team.knowledge, "retrieve", None)
+        aretrieve_fn = getattr(knowledge, "aretrieve", None)
+        retrieve_fn = getattr(knowledge, "retrieve", None)
 
         if not callable(aretrieve_fn) and not callable(retrieve_fn):
             log_debug("Knowledge does not implement retrieve()")
             return None
 
         if num_documents is None:
-            num_documents = getattr(team.knowledge, "max_results", 10)
+            num_documents = getattr(knowledge, "max_results", 10)
 
         log_debug(f"Retrieving from knowledge base with filters: {filters}")
 

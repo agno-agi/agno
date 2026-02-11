@@ -9,6 +9,7 @@ on:
       - "fix/ci-test-failures"
       - "fix/v2.5-rbac-issues"
       - "fix/session-user-isolation"
+      - "v2.5-phase2"
   workflow_dispatch: # Allows manual triggering
     inputs:
       branch:
