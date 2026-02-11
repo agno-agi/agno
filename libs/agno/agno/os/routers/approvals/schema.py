@@ -48,7 +48,7 @@ class ApprovalListResponse(BaseModel):
     approvals: List[ApprovalResponse]
     total: int
     limit: int
-    offset: int
+    page: int
 
 
 class ApprovalCountResponse(BaseModel):

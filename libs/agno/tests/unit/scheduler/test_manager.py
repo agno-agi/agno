@@ -66,9 +66,9 @@ def mgr(mock_db):
 class TestManagerCreate:
     def test_create_success(self, mgr, mock_db):
         result = mgr.create(name="new-sched", cron="0 9 * * *", endpoint="/test")
-        assert result["name"] == "new-sched"
-        assert result["cron_expr"] == "0 9 * * *"
-        assert result["enabled"] is True
+        assert result.name == "new-sched"
+        assert result.cron_expr == "0 9 * * *"
+        assert result.enabled is True
         mock_db.create_schedule.assert_called_once()
 
     def test_create_invalid_cron(self, mgr):
@@ -86,7 +86,7 @@ class TestManagerCreate:
 
     def test_create_sets_method_uppercase(self, mgr, mock_db):
         result = mgr.create(name="new-sched", cron="0 9 * * *", endpoint="/test", method="get")
-        assert result["method"] == "GET"
+        assert result.method == "GET"
 
     def test_create_with_payload(self, mgr, mock_db):
         result = mgr.create(
@@ -95,7 +95,7 @@ class TestManagerCreate:
             endpoint="/test",
             payload={"key": "value"},
         )
-        assert result["payload"] == {"key": "value"}
+        assert result.payload == {"key": "value"}
 
     def test_create_db_returns_none(self, mgr, mock_db):
         mock_db.create_schedule = MagicMock(return_value=None)
@@ -117,7 +117,7 @@ class TestManagerList:
 class TestManagerGet:
     def test_get_found(self, mgr, mock_db):
         result = mgr.get("sched-1")
-        assert result["id"] == "sched-1"
+        assert result.id == "sched-1"
         mock_db.get_schedule.assert_called_once_with("sched-1")
 
     def test_get_not_found(self, mgr, mock_db):
@@ -161,9 +161,9 @@ class TestManagerDisable:
 
 
 class TestManagerTrigger:
-    def test_trigger_returns_schedule(self, mgr, mock_db):
+    def test_trigger_returns_none(self, mgr, mock_db):
         result = mgr.trigger("sched-1")
-        assert result["id"] == "sched-1"
+        assert result is None
 
 
 class TestManagerGetRuns:
@@ -211,7 +211,7 @@ class TestAsyncCreate:
     @pytest.mark.asyncio
     async def test_acreate_success(self, async_mgr, mock_async_db):
         result = await async_mgr.acreate(name="async-sched", cron="0 9 * * *", endpoint="/test")
-        assert result["name"] == "async-sched"
+        assert result.name == "async-sched"
         mock_async_db.create_schedule.assert_called_once()
 
     @pytest.mark.asyncio
@@ -237,7 +237,7 @@ class TestAsyncGet:
     @pytest.mark.asyncio
     async def test_aget(self, async_mgr, mock_async_db):
         result = await async_mgr.aget("sched-1")
-        assert result["id"] == "sched-1"
+        assert result.id == "sched-1"
 
 
 class TestAsyncUpdate:

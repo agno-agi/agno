@@ -361,7 +361,7 @@ def get_agent_router(
 
             run_response = cast(
                 RunOutput,
-                await agent.arun(
+                await agent.arun(  # type: ignore[misc]
                     input=message,
                     session_id=session_id,
                     user_id=user_id,
@@ -408,7 +408,7 @@ def get_agent_router(
             try:
                 run_response = cast(
                     RunOutput,
-                    await agent.arun(
+                    await agent.arun(  # type: ignore[misc]
                         input=message,
                         session_id=session_id,
                         user_id=user_id,
@@ -532,7 +532,8 @@ def get_agent_router(
                         RunStatus.pending: "run is already pending",
                     }
                     detail = _status_to_detail.get(
-                        status, f"run is not paused (status={getattr(status, 'value', status)})"
+                        status,  # type: ignore[arg-type]
+                        f"run is not paused (status={getattr(status, 'value', status)})",
                     )
                     raise HTTPException(
                         status_code=409,
