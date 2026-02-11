@@ -207,7 +207,8 @@ def handle_agent_run_paused_stream(
     run_response: RunOutput,
     session: AgentSession,
     user_id: Optional[str] = None,
-) -> Iterator[RunOutputEvent]:
+    yield_run_output: bool = False,
+) -> Iterator[Union[RunOutputEvent, RunOutput]]:
     run_response.status = RunStatus.paused
     if not run_response.content:
         run_response.content = get_paused_content(run_response)
@@ -227,6 +228,10 @@ def handle_agent_run_paused_stream(
     cleanup_and_store(agent, run_response=run_response, session=session, user_id=user_id)
 
     yield pause_event  # type: ignore
+
+    # Also yield the run_response if requested, so callers can capture it
+    if yield_run_output:
+        yield run_response
 
     log_debug(f"Agent Run Paused: {run_response.run_id}", center=True, symbol="*")
 
@@ -254,7 +259,8 @@ async def ahandle_agent_run_paused_stream(
     run_response: RunOutput,
     session: AgentSession,
     user_id: Optional[str] = None,
-) -> AsyncIterator[RunOutputEvent]:
+    yield_run_output: bool = False,
+) -> AsyncIterator[Union[RunOutputEvent, RunOutput]]:
     run_response.status = RunStatus.paused
     if not run_response.content:
         run_response.content = get_paused_content(run_response)
@@ -274,6 +280,10 @@ async def ahandle_agent_run_paused_stream(
     await acleanup_and_store(agent, run_response=run_response, session=session, user_id=user_id)
 
     yield pause_event  # type: ignore
+
+    # Also yield the run_response if requested, so callers can capture it
+    if yield_run_output:
+        yield run_response
 
     log_debug(f"Agent Run Paused: {run_response.run_id}", center=True, symbol="*")
 
@@ -922,7 +932,8 @@ def _run_stream(
 
                     # Handle the paused run
                     yield from handle_agent_run_paused_stream(
-                        agent, run_response=run_response, session=agent_session, user_id=user_id
+                        agent, run_response=run_response, session=agent_session, user_id=user_id,
+                        yield_run_output=yield_run_output or False,
                     )
                     return
 
@@ -2081,7 +2092,8 @@ async def _arun_stream(
                         yield item
 
                     async for item in ahandle_agent_run_paused_stream(
-                        agent, run_response=run_response, session=agent_session, user_id=user_id
+                        agent, run_response=run_response, session=agent_session, user_id=user_id,
+                        yield_run_output=yield_run_output or False,
                     ):
                         yield item
                     return
@@ -3037,7 +3049,8 @@ def _continue_run_stream(
                 # We should break out of the run function
                 if any(tool_call.is_paused for tool_call in run_response.tools or []):
                     yield from handle_agent_run_paused_stream(
-                        agent, run_response=run_response, session=session, user_id=user_id
+                        agent, run_response=run_response, session=session, user_id=user_id,
+                        yield_run_output=yield_run_output or False,
                     )
                     return
 
@@ -3942,7 +3955,8 @@ async def _acontinue_run_stream(
                 # Break out of the run function if a tool call is paused
                 if any(tool_call.is_paused for tool_call in run_response.tools or []):
                     async for item in ahandle_agent_run_paused_stream(
-                        agent, run_response=run_response, session=agent_session, user_id=user_id
+                        agent, run_response=run_response, session=agent_session, user_id=user_id,
+                        yield_run_output=yield_run_output or False,
                     ):
                         yield item
                     return
