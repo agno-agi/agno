@@ -47,7 +47,7 @@ class RunRequirement:
         if not self.tool_execution:
             return False
         if self.tool_execution.confirmed is True:
-            return True
+            return False
 
         return self.tool_execution.requires_confirmation or False
 
@@ -67,7 +67,7 @@ class RunRequirement:
         if not self.tool_execution:
             return False
         if self.external_execution_result is not None:
-            return True
+            return False
 
         return self.tool_execution.external_execution_required or False
 
