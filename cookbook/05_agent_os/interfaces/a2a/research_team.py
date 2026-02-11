@@ -1,8 +1,19 @@
+"""
+Research Team
+=============
+
+Demonstrates research team.
+"""
+
 from agno.agent.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.os.app import AgentOS
 from agno.team.team import Team
 from agno.tools.websearch import WebSearchTools
+
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
 
 researcher = Agent(
     name="researcher",
@@ -47,6 +58,10 @@ agent_os = AgentOS(
 )
 app = agent_os.get_app()
 
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     """Run your AgentOS with A2A interface.

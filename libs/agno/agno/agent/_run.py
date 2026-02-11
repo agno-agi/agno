@@ -26,6 +26,11 @@ from pydantic import BaseModel
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
 
+# Strong references to background tasks so they aren't garbage-collected mid-execution.
+# See: https://docs.python.org/3/library/asyncio-task.html#asyncio.create_task
+_background_tasks: set[asyncio.Task[None]] = set()
+
+from agno.agent._init import _initialize_session_state
 from agno.agent._run_options import resolve_run_options
 from agno.agent._session import initialize_session, update_session_metrics
 from agno.exceptions import (
@@ -44,6 +49,10 @@ from agno.run.agent import (
     RunInput,
     RunOutput,
     RunOutputEvent,
+)
+from agno.run.approval import (
+    acreate_approval_from_pause,
+    create_approval_from_pause,
 )
 from agno.run.cancel import (
     acancel_run as acancel_run_global,
@@ -190,6 +199,9 @@ def handle_agent_run_paused(
         run_response.content = get_paused_content(run_response)
 
     cleanup_and_store(agent, run_response=run_response, session=session, user_id=user_id)
+    create_approval_from_pause(
+        db=agent.db, run_response=run_response, agent_id=agent.id, agent_name=agent.name, user_id=user_id
+    )
 
     log_debug(f"Agent Run Paused: {run_response.run_id}", center=True, symbol="*")
 
@@ -202,7 +214,8 @@ def handle_agent_run_paused_stream(
     run_response: RunOutput,
     session: AgentSession,
     user_id: Optional[str] = None,
-) -> Iterator[RunOutputEvent]:
+    yield_run_output: bool = False,
+) -> Iterator[Union[RunOutputEvent, RunOutput]]:
     run_response.status = RunStatus.paused
     if not run_response.content:
         run_response.content = get_paused_content(run_response)
@@ -220,8 +233,15 @@ def handle_agent_run_paused_stream(
     )
 
     cleanup_and_store(agent, run_response=run_response, session=session, user_id=user_id)
+    create_approval_from_pause(
+        db=agent.db, run_response=run_response, agent_id=agent.id, agent_name=agent.name, user_id=user_id
+    )
 
     yield pause_event  # type: ignore
+
+    # Also yield the run_response if requested, so callers can capture it
+    if yield_run_output:
+        yield run_response
 
     log_debug(f"Agent Run Paused: {run_response.run_id}", center=True, symbol="*")
 
@@ -237,6 +257,9 @@ async def ahandle_agent_run_paused(
         run_response.content = get_paused_content(run_response)
 
     await acleanup_and_store(agent, run_response=run_response, session=session, user_id=user_id)
+    await acreate_approval_from_pause(
+        db=agent.db, run_response=run_response, agent_id=agent.id, agent_name=agent.name, user_id=user_id
+    )
 
     log_debug(f"Agent Run Paused: {run_response.run_id}", center=True, symbol="*")
 
@@ -249,7 +272,8 @@ async def ahandle_agent_run_paused_stream(
     run_response: RunOutput,
     session: AgentSession,
     user_id: Optional[str] = None,
-) -> AsyncIterator[RunOutputEvent]:
+    yield_run_output: bool = False,
+) -> AsyncIterator[Union[RunOutputEvent, RunOutput]]:
     run_response.status = RunStatus.paused
     if not run_response.content:
         run_response.content = get_paused_content(run_response)
@@ -267,8 +291,15 @@ async def ahandle_agent_run_paused_stream(
     )
 
     await acleanup_and_store(agent, run_response=run_response, session=session, user_id=user_id)
+    await acreate_approval_from_pause(
+        db=agent.db, run_response=run_response, agent_id=agent.id, agent_name=agent.name, user_id=user_id
+    )
 
     yield pause_event  # type: ignore
+
+    # Also yield the run_response if requested, so callers can capture it
+    if yield_run_output:
+        yield run_response
 
     log_debug(f"Agent Run Paused: {run_response.run_id}", center=True, symbol="*")
 
@@ -352,6 +383,12 @@ def _run(
                     agent,
                     session=agent_session,
                     session_state=run_context.session_state if run_context.session_state is not None else {},
+                )
+                _initialize_session_state(
+                    run_context.session_state,
+                    user_id=user_id,
+                    session_id=session_id,
+                    run_id=run_context.run_id,
                 )
 
                 # 3. Resolve dependencies
@@ -715,6 +752,12 @@ def _run_stream(
                     session=agent_session,
                     session_state=run_context.session_state if run_context.session_state is not None else {},
                 )
+                _initialize_session_state(
+                    run_context.session_state,
+                    user_id=user_id,
+                    session_id=session_id,
+                    run_id=run_context.run_id,
+                )
 
                 # 3. Resolve dependencies
                 if run_context.dependencies is not None:
@@ -905,7 +948,8 @@ def _run_stream(
 
                     # Handle the paused run
                     yield from handle_agent_run_paused_stream(
-                        agent, run_response=run_response, session=agent_session, user_id=user_id
+                        agent, run_response=run_response, session=agent_session, user_id=user_id,
+                        yield_run_output=yield_run_output or False,
                     )
                     return
 
@@ -1376,6 +1420,12 @@ async def _arun(
                     session=agent_session,
                     session_state=run_context.session_state if run_context.session_state is not None else {},
                 )
+                _initialize_session_state(
+                    run_context.session_state,
+                    user_id=user_id,
+                    session_id=session_id,
+                    run_id=run_context.run_id,
+                )
 
                 # 3. Resolve dependencies
                 if run_context.dependencies is not None:
@@ -1689,6 +1739,87 @@ async def _arun(
     return run_response
 
 
+async def _arun_background(
+    agent: Agent,
+    run_response: RunOutput,
+    run_context: RunContext,
+    session_id: str,
+    user_id: Optional[str] = None,
+    add_history_to_context: Optional[bool] = None,
+    add_dependencies_to_context: Optional[bool] = None,
+    add_session_state_to_context: Optional[bool] = None,
+    response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+    debug_mode: Optional[bool] = None,
+    background_tasks: Optional[Any] = None,
+    **kwargs: Any,
+) -> RunOutput:
+    """Start an agent run in the background and return immediately with PENDING status.
+
+    The run is persisted with PENDING status, then an asyncio task is spawned
+    to execute the actual run. The task transitions through RUNNING -> COMPLETED/ERROR.
+
+    Callers can poll for results via agent.aget_run_output(run_id, session_id).
+    """
+    from agno.agent._session import asave_session
+    from agno.agent._storage import aread_or_create_session, update_metadata
+
+    # 1. Register the run for cancellation tracking (before spawning the task)
+    await aregister_run(run_context.run_id)
+
+    # 2. Set status to PENDING
+    run_response.status = RunStatus.pending
+
+    # 3. Persist the PENDING run so polling can find it immediately
+    agent_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
+    update_metadata(agent, session=agent_session)
+    agent_session.upsert_run(run=run_response)
+    await asave_session(agent, session=agent_session)
+
+    log_info(f"Background run {run_response.run_id} created with PENDING status")
+
+    # 4. Spawn the background task
+    async def _background_task() -> None:
+        try:
+            # Transition to RUNNING
+            run_response.status = RunStatus.running
+            agent_session.upsert_run(run=run_response)
+            await asave_session(agent, session=agent_session)
+
+            # Execute the actual run — _arun handles everything including
+            # session persistence and cleanup
+            await _arun(
+                agent,
+                run_response=run_response,
+                run_context=run_context,
+                user_id=user_id,
+                response_format=response_format,
+                session_id=session_id,
+                add_history_to_context=add_history_to_context,
+                add_dependencies_to_context=add_dependencies_to_context,
+                add_session_state_to_context=add_session_state_to_context,
+                debug_mode=debug_mode,
+                background_tasks=background_tasks,
+                **kwargs,
+            )
+        except Exception:
+            log_error(f"Background run {run_response.run_id} failed", exc_info=True)
+            # Persist ERROR status
+            try:
+                run_response.status = RunStatus.error
+                agent_session.upsert_run(run=run_response)
+                await asave_session(agent, session=agent_session)
+            except Exception:
+                log_error(f"Failed to persist error state for background run {run_response.run_id}", exc_info=True)
+            # Note: acleanup_run is already called by _arun's finally block
+
+    task = asyncio.create_task(_background_task())
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+
+    # 5. Return immediately with the PENDING response
+    return run_response
+
+
 async def _arun_stream(
     agent: Agent,
     run_response: RunOutput,
@@ -1776,6 +1907,12 @@ async def _arun_stream(
                     agent,
                     session=agent_session,
                     session_state=run_context.session_state if run_context.session_state is not None else {},
+                )
+                _initialize_session_state(
+                    run_context.session_state,
+                    user_id=user_id,
+                    session_id=session_id,
+                    run_id=run_context.run_id,
                 )
 
                 # 3. Resolve dependencies
@@ -1971,7 +2108,8 @@ async def _arun_stream(
                         yield item
 
                     async for item in ahandle_agent_run_paused_stream(
-                        agent, run_response=run_response, session=agent_session, user_id=user_id
+                        agent, run_response=run_response, session=agent_session, user_id=user_id,
+                        yield_run_output=yield_run_output or False,
                     ):
                         yield item
                     return
@@ -2233,6 +2371,7 @@ def arun_dispatch(  # type: ignore
     output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
     yield_run_output: Optional[bool] = None,
     debug_mode: Optional[bool] = None,
+    background: bool = False,
     **kwargs: Any,
 ) -> Union[RunOutput, AsyncIterator[RunOutputEvent]]:
     """Async Run the Agent and return the response."""
@@ -2354,6 +2493,31 @@ def arun_dispatch(  # type: ignore
     # Start the run metrics timer, to calculate the run duration
     run_response.metrics = Metrics()
     run_response.metrics.start_timer()
+
+    # Background execution: return immediately with PENDING status
+    if background:
+        if opts.stream:
+            raise ValueError(
+                "Background execution cannot be combined with streaming. Set stream=False when using background=True."
+            )
+        if not agent.db:
+            raise ValueError(
+                "Background execution requires a database to be configured on the agent for run persistence."
+            )
+        return _arun_background(  # type: ignore[return-value]
+            agent,
+            run_response=run_response,
+            run_context=run_context,
+            user_id=user_id,
+            response_format=response_format,
+            session_id=session_id,
+            add_history_to_context=opts.add_history_to_context,
+            add_dependencies_to_context=opts.add_dependencies_to_context,
+            add_session_state_to_context=opts.add_session_state_to_context,
+            debug_mode=debug_mode,
+            background_tasks=background_tasks,
+            **kwargs,
+        )
 
     # Pass the new run_response to _arun
     if opts.stream:
@@ -2571,7 +2735,7 @@ def continue_run_dispatch(
     run_response.status = RunStatus.running
 
     if opts.stream:
-        response_iterator = continue_run_stream_impl(
+        response_iterator = _continue_run_stream(
             agent,
             run_response=run_response,
             run_messages=run_messages,
@@ -2588,7 +2752,7 @@ def continue_run_dispatch(
         )
         return response_iterator
     else:
-        response = continue_run_impl(
+        response = _continue_run(
             agent,
             run_response=run_response,
             run_messages=run_messages,
@@ -2604,7 +2768,7 @@ def continue_run_dispatch(
         return response
 
 
-def continue_run_impl(
+def _continue_run(
     agent: Agent,
     run_response: RunOutput,
     run_messages: RunMessages,
@@ -2805,7 +2969,7 @@ def continue_run_impl(
     return run_response
 
 
-def continue_run_stream_impl(
+def _continue_run_stream(
     agent: Agent,
     run_response: RunOutput,
     run_messages: RunMessages,
@@ -2901,7 +3065,8 @@ def continue_run_stream_impl(
                 # We should break out of the run function
                 if any(tool_call.is_paused for tool_call in run_response.tools or []):
                     yield from handle_agent_run_paused_stream(
-                        agent, run_response=run_response, session=session, user_id=user_id
+                        agent, run_response=run_response, session=session, user_id=user_id,
+                        yield_run_output=yield_run_output or False,
                     )
                     return
 
@@ -3192,7 +3357,7 @@ def acontinue_run_dispatch(  # type: ignore
     response_format = get_response_format(agent, run_context=run_context)
 
     if opts.stream:
-        return acontinue_run_stream_impl(
+        return _acontinue_run_stream(
             agent,
             run_response=run_response,
             run_context=run_context,
@@ -3209,7 +3374,7 @@ def acontinue_run_dispatch(  # type: ignore
             **kwargs,
         )
     else:
-        return acontinue_run_impl(  # type: ignore
+        return _acontinue_run(  # type: ignore
             agent,
             session_id=session_id,
             run_response=run_response,
@@ -3225,7 +3390,7 @@ def acontinue_run_dispatch(  # type: ignore
         )
 
 
-async def acontinue_run_impl(
+async def _acontinue_run(
     agent: Agent,
     session_id: str,
     run_context: RunContext,
@@ -3297,6 +3462,12 @@ async def acontinue_run_impl(
                     session=agent_session,
                     session_state=run_context.session_state if run_context.session_state is not None else {},
                 )
+                _initialize_session_state(
+                    run_context.session_state,
+                    user_id=user_id,
+                    session_id=session_id,
+                    run_id=run_context.run_id,
+                )
 
                 # 4. Prepare run response
                 if run_response is not None:
@@ -3335,6 +3506,7 @@ async def acontinue_run_impl(
                     raise ValueError("Either run_response or run_id must be provided.")
 
                 run_response = cast(RunOutput, run_response)
+
                 run_response.status = RunStatus.running
 
                 # 5. Determine tools for model
@@ -3561,7 +3733,7 @@ async def acontinue_run_impl(
     return run_response  # type: ignore
 
 
-async def acontinue_run_stream_impl(
+async def _acontinue_run_stream(
     agent: Agent,
     session_id: str,
     run_context: RunContext,
@@ -3625,6 +3797,12 @@ async def acontinue_run_stream_impl(
                     session=agent_session,
                     session_state=run_context.session_state if run_context.session_state is not None else {},
                 )
+                _initialize_session_state(
+                    run_context.session_state,
+                    user_id=user_id,
+                    session_id=session_id,
+                    run_id=run_context.run_id,
+                )
 
                 # 3. Resolve dependencies
                 if run_context.dependencies is not None:
@@ -3668,6 +3846,7 @@ async def acontinue_run_stream_impl(
                     raise ValueError("Either run_response or run_id must be provided.")
 
                 run_response = cast(RunOutput, run_response)
+
                 run_response.status = RunStatus.running
 
                 # 5. Determine tools for model
@@ -3794,7 +3973,8 @@ async def acontinue_run_stream_impl(
                 # Break out of the run function if a tool call is paused
                 if any(tool_call.is_paused for tool_call in run_response.tools or []):
                     async for item in ahandle_agent_run_paused_stream(
-                        agent, run_response=run_response, session=agent_session, user_id=user_id
+                        agent, run_response=run_response, session=agent_session, user_id=user_id,
+                        yield_run_output=yield_run_output or False,
                     ):
                         yield item
                     return

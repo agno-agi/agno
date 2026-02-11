@@ -22,6 +22,11 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.unsplash import UnsplashTools
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
+
 # Example 1: Basic usage with default tools
 # By default, search_photos, get_photo, and get_random_photo are enabled
 agent = Agent(
@@ -61,6 +66,10 @@ agent_search_only = Agent(
 )
 
 # Run examples
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
 if __name__ == "__main__":
     # Search for photos
     print("=" * 60)

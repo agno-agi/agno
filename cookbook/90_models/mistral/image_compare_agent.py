@@ -1,6 +1,17 @@
+"""
+Mistral Image Compare Agent
+===========================
+
+Cookbook example for `mistral/image_compare_agent.py`.
+"""
+
 from agno.agent import Agent
 from agno.media import Image
 from agno.models.mistral.mistral import MistralChat
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 agent = Agent(
     model=MistralChat(id="pixtral-12b-2409"),
@@ -19,3 +30,10 @@ agent.print_response(
     ],
     stream=True,
 )
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

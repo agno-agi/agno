@@ -27,6 +27,7 @@ from agno.eval.base import BaseEval
 from agno.filters import FilterExpr
 from agno.guardrails import BaseGuardrail
 from agno.knowledge.protocol import KnowledgeProtocol
+from agno.learn.machine import LearningMachine
 from agno.media import Audio, File, Image, Video
 from agno.memory import MemoryManager
 from agno.models.base import Model
@@ -56,6 +57,7 @@ from agno.team import (
     _tools,
     _utils,
 )
+from agno.team.mode import TeamMode
 from agno.tools import Toolkit
 from agno.tools.function import Function
 from agno.utils.log import (
@@ -69,7 +71,7 @@ class Team:
     A class representing a team of agents.
     """
 
-    members: List[Union[Agent, "Team"]]
+    members: Union[List[Union[Agent, "Team"]], Callable[..., List]]
 
     # Model for this Team
     model: Optional[Model] = None
@@ -91,6 +93,8 @@ class Team:
     workflow_id: Optional[str] = None
 
     # --- Team execution settings ---
+    # Team execution mode. When set, overrides the boolean flags below.
+    mode: Optional[TeamMode] = None
     # If True, the team leader won't process responses from the members and instead will return them directly
     # Should not be used in combination with delegate_to_all_members
     respond_directly: bool = False
@@ -98,6 +102,8 @@ class Team:
     delegate_to_all_members: bool = False
     # Set to false if you want to send the run input directly to the member agents
     determine_input_for_members: bool = True
+    # Maximum number of iterations for autonomous task loop (mode=tasks)
+    max_iterations: int = 10
 
     # --- User settings ---
     # Default user ID for this team
@@ -187,7 +193,7 @@ class Team:
     add_dependencies_to_context: bool = False
 
     # --- Agent Knowledge ---
-    knowledge: Optional[KnowledgeProtocol] = None
+    knowledge: Optional[Union[KnowledgeProtocol, Callable[..., KnowledgeProtocol]]] = None
     # Add knowledge_filters to the Agent class attributes
     knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
     # Let the agent choose the knowledge filters
@@ -225,7 +231,8 @@ class Team:
     # --- Team Tools ---
     # A list of tools provided to the Model.
     # Tools are functions the model may generate JSON inputs for.
-    tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]] = None
+    # Can also be a callable factory that returns a list of tools at runtime.
+    tools: Optional[Union[List[Union[Toolkit, Callable, Function, Dict]], Callable[..., List]]] = None
 
     # Controls which (if any) tool is called by the team model.
     # "none" means the model will not call a tool and instead generates a message.
@@ -284,6 +291,12 @@ class Team:
     session_summary_manager: Optional[SessionSummaryManager] = None
     # If True, the team adds session summaries to the context
     add_session_summary_to_context: Optional[bool] = None
+
+    # --- Learning Machine ---
+    # LearningMachine for unified learning capabilities
+    learning: Optional[Union[bool, LearningMachine]] = None
+    # Add learnings context to system prompt
+    add_learnings_to_context: bool = True
 
     # --- Context Compression ---
     # If True, compress tool call results to save context
@@ -350,6 +363,16 @@ class Team:
     # This helps us improve the Teams implementation and provide better support
     telemetry: bool = True
 
+    # --- Callable factory settings ---
+    # Enable caching of callable factory results
+    cache_callables: bool = True
+    # Custom cache key function for tools callable factory
+    callable_tools_cache_key: Optional[Callable[..., Optional[str]]] = None
+    # Custom cache key function for knowledge callable factory
+    callable_knowledge_cache_key: Optional[Callable[..., Optional[str]]] = None
+    # Custom cache key function for members callable factory
+    callable_members_cache_key: Optional[Callable[..., Optional[str]]] = None
+
     # --- Internal attributes (set during __init__, not user-facing) ---
     # Media generated during this session (TODO: Remove these)
     images: Optional[List[Image]] = None
@@ -369,19 +392,29 @@ class Team:
     _mcp_tools_initialized_on_run: Optional[List[Any]] = None
     # Connectable tools initialized on the last run
     _connectable_tools_initialized_on_run: Optional[List[Any]] = None
+    # Internal resolved LearningMachine instance
+    _learning: Optional[LearningMachine] = None
+    # Whether learning init has been attempted (prevents repeated attempts when db is None)
+    _learning_init_attempted: bool = False
     # Lazy-initialized shared thread pool executor for background tasks
     _background_executor: Optional[Any] = None
+    # Callable factory caches
+    _callable_tools_cache: Dict[str, List[Any]] = None  # type: ignore[assignment]
+    _callable_knowledge_cache: Dict[str, Any] = None  # type: ignore[assignment]
+    _callable_members_cache: Dict[str, List[Any]] = None  # type: ignore[assignment]
 
     def __init__(
         self,
-        members: List[Union[Agent, "Team"]],
+        members: Union[List[Union[Agent, "Team"]], Callable[..., List]],
         id: Optional[str] = None,
         model: Optional[Union[Model, str]] = None,
         name: Optional[str] = None,
         role: Optional[str] = None,
+        mode: Optional[TeamMode] = None,
         respond_directly: bool = False,
         determine_input_for_members: bool = True,
         delegate_to_all_members: bool = False,
+        max_iterations: int = 10,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
@@ -411,7 +444,7 @@ class Team:
         additional_input: Optional[List[Union[str, Dict, BaseModel, Message]]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: bool = False,
-        knowledge: Optional[KnowledgeProtocol] = None,
+        knowledge: Optional[Union[KnowledgeProtocol, Callable[..., KnowledgeProtocol]]] = None,
         knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         add_knowledge_to_context: bool = False,
         enable_agentic_knowledge_filters: Optional[bool] = False,
@@ -431,7 +464,7 @@ class Team:
         num_history_runs: Optional[int] = None,
         num_history_messages: Optional[int] = None,
         max_tool_calls_from_history: Optional[int] = None,
-        tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]] = None,
+        tools: Optional[Union[List[Union[Toolkit, Callable, Function, Dict]], Callable[..., List]]] = None,
         tool_call_limit: Optional[int] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_hooks: Optional[List[Callable]] = None,
@@ -454,6 +487,8 @@ class Team:
         enable_session_summaries: bool = False,
         session_summary_manager: Optional[SessionSummaryManager] = None,
         add_session_summary_to_context: Optional[bool] = None,
+        learning: Optional[Union[bool, LearningMachine]] = None,
+        add_learnings_to_context: bool = True,
         compress_tool_results: bool = False,
         compression_manager: Optional["CompressionManager"] = None,
         metadata: Optional[Dict[str, Any]] = None,
@@ -475,6 +510,10 @@ class Team:
         delay_between_retries: int = 1,
         exponential_backoff: bool = False,
         telemetry: bool = True,
+        cache_callables: bool = True,
+        callable_tools_cache_key: Optional[Callable[..., Optional[str]]] = None,
+        callable_knowledge_cache_key: Optional[Callable[..., Optional[str]]] = None,
+        callable_members_cache_key: Optional[Callable[..., Optional[str]]] = None,
     ):
         _init.__init__(
             self,
@@ -483,9 +522,11 @@ class Team:
             model=model,
             name=name,
             role=role,
+            mode=mode,
             respond_directly=respond_directly,
             determine_input_for_members=determine_input_for_members,
             delegate_to_all_members=delegate_to_all_members,
+            max_iterations=max_iterations,
             user_id=user_id,
             session_id=session_id,
             session_state=session_state,
@@ -558,6 +599,8 @@ class Team:
             enable_session_summaries=enable_session_summaries,
             session_summary_manager=session_summary_manager,
             add_session_summary_to_context=add_session_summary_to_context,
+            learning=learning,
+            add_learnings_to_context=add_learnings_to_context,
             compress_tool_results=compress_tool_results,
             compression_manager=compression_manager,
             metadata=metadata,
@@ -579,6 +622,10 @@ class Team:
             delay_between_retries=delay_between_retries,
             exponential_backoff=exponential_backoff,
             telemetry=telemetry,
+            cache_callables=cache_callables,
+            callable_tools_cache_key=callable_tools_cache_key,
+            callable_knowledge_cache_key=callable_knowledge_cache_key,
+            callable_members_cache_key=callable_members_cache_key,
         )
 
     @property
@@ -607,11 +654,40 @@ class Team:
         # Make sure for the team, we are using the team logger
         return _init.initialize_team(self, debug_mode=debug_mode)
 
+    @property
+    def learning_machine(self) -> Optional[LearningMachine]:
+        if (
+            self._learning is None
+            and not self._learning_init_attempted
+            and self.learning is not None
+            and self.learning is not False
+        ):
+            _init._set_learning_machine(self)
+        return self._learning
+
     def add_tool(self, tool: Union[Toolkit, Callable, Function, Dict]):
         return _init.add_tool(self, tool=tool)
 
-    def set_tools(self, tools: List[Union[Toolkit, Callable, Function, Dict]]):
+    def set_tools(self, tools: Union[List[Union[Toolkit, Callable, Function, Dict]], Callable[..., List]]):
         return _init.set_tools(self, tools=tools)
+
+    def clear_callable_cache(
+        self,
+        kind: Optional[Literal["tools", "knowledge", "members"]] = None,
+        close: bool = False,
+    ) -> None:
+        from agno.utils.callables import clear_callable_cache
+
+        clear_callable_cache(self, kind=kind, close=close)
+
+    async def aclear_callable_cache(
+        self,
+        kind: Optional[Literal["tools", "knowledge", "members"]] = None,
+        close: bool = False,
+    ) -> None:
+        from agno.utils.callables import aclear_callable_cache
+
+        await aclear_callable_cache(self, kind=kind, close=close)
 
     @staticmethod
     def cancel_run(run_id: str) -> bool:
@@ -620,68 +696,6 @@ class Team:
     @staticmethod
     async def acancel_run(run_id: str) -> bool:
         return await _run.acancel_run(run_id=run_id)
-
-    def _run(
-        self,
-        run_response: TeamRunOutput,
-        session: TeamSession,
-        run_context: RunContext,
-        user_id: Optional[str] = None,
-        add_history_to_context: Optional[bool] = None,
-        add_dependencies_to_context: Optional[bool] = None,
-        add_session_state_to_context: Optional[bool] = None,
-        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        debug_mode: Optional[bool] = None,
-        background_tasks: Optional[Any] = None,
-        **kwargs: Any,
-    ) -> TeamRunOutput:
-        return _run._run(
-            self,
-            run_response=run_response,
-            session=session,
-            run_context=run_context,
-            user_id=user_id,
-            add_history_to_context=add_history_to_context,
-            add_dependencies_to_context=add_dependencies_to_context,
-            add_session_state_to_context=add_session_state_to_context,
-            response_format=response_format,
-            debug_mode=debug_mode,
-            background_tasks=background_tasks,
-            **kwargs,
-        )
-
-    def _run_stream(
-        self,
-        run_response: TeamRunOutput,
-        run_context: RunContext,
-        session: TeamSession,
-        user_id: Optional[str] = None,
-        add_history_to_context: Optional[bool] = None,
-        add_dependencies_to_context: Optional[bool] = None,
-        add_session_state_to_context: Optional[bool] = None,
-        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        stream_events: bool = False,
-        yield_run_output: bool = False,
-        debug_mode: Optional[bool] = None,
-        background_tasks: Optional[Any] = None,
-        **kwargs: Any,
-    ) -> Iterator[Union[TeamRunOutputEvent, RunOutputEvent, TeamRunOutput]]:
-        yield from _run._run_stream(
-            self,
-            run_response=run_response,
-            run_context=run_context,
-            session=session,
-            user_id=user_id,
-            add_history_to_context=add_history_to_context,
-            add_dependencies_to_context=add_dependencies_to_context,
-            add_session_state_to_context=add_session_state_to_context,
-            response_format=response_format,
-            stream_events=stream_events,
-            yield_run_output=yield_run_output,
-            debug_mode=debug_mode,
-            background_tasks=background_tasks,
-            **kwargs,
-        )
 
     @overload
     def run(
@@ -790,71 +804,8 @@ class Team:
             **kwargs,
         )
 
-    async def _arun(
-        self,
-        run_response: TeamRunOutput,
-        run_context: RunContext,
-        session_id: str,
-        user_id: Optional[str] = None,
-        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        add_dependencies_to_context: Optional[bool] = None,
-        add_session_state_to_context: Optional[bool] = None,
-        add_history_to_context: Optional[bool] = None,
-        debug_mode: Optional[bool] = None,
-        background_tasks: Optional[Any] = None,
-        **kwargs: Any,
-    ) -> TeamRunOutput:
-        return await _run._arun(
-            self,
-            run_response=run_response,
-            run_context=run_context,
-            session_id=session_id,
-            user_id=user_id,
-            response_format=response_format,
-            add_dependencies_to_context=add_dependencies_to_context,
-            add_session_state_to_context=add_session_state_to_context,
-            add_history_to_context=add_history_to_context,
-            debug_mode=debug_mode,
-            background_tasks=background_tasks,
-            **kwargs,
-        )
-
-    async def _arun_stream(
-        self,
-        run_response: TeamRunOutput,
-        run_context: RunContext,
-        session_id: str,
-        user_id: Optional[str] = None,
-        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        stream_events: bool = False,
-        yield_run_output: bool = False,
-        add_dependencies_to_context: Optional[bool] = None,
-        add_session_state_to_context: Optional[bool] = None,
-        add_history_to_context: Optional[bool] = None,
-        debug_mode: Optional[bool] = None,
-        background_tasks: Optional[Any] = None,
-        **kwargs: Any,
-    ) -> AsyncIterator[Union[TeamRunOutputEvent, RunOutputEvent, TeamRunOutput]]:
-        async for _item_ in _run._arun_stream(
-            self,
-            run_response=run_response,
-            run_context=run_context,
-            session_id=session_id,
-            user_id=user_id,
-            response_format=response_format,
-            stream_events=stream_events,
-            yield_run_output=yield_run_output,
-            add_dependencies_to_context=add_dependencies_to_context,
-            add_session_state_to_context=add_session_state_to_context,
-            add_history_to_context=add_history_to_context,
-            debug_mode=debug_mode,
-            background_tasks=background_tasks,
-            **kwargs,
-        ):
-            yield _item_
-
     @overload
-    async def arun(
+    def arun(
         self,
         input: Union[str, List, Dict, Message, BaseModel, List[Message]],
         *,
@@ -877,6 +828,7 @@ class Team:
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
         output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
+        background: bool = False,
         **kwargs: Any,
     ) -> TeamRunOutput: ...
 
@@ -932,6 +884,7 @@ class Team:
         debug_mode: Optional[bool] = None,
         yield_run_output: bool = False,
         output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
+        background: bool = False,
         **kwargs: Any,
     ) -> Union[TeamRunOutput, AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent]]]:
         return _run.arun_dispatch(
@@ -957,6 +910,155 @@ class Team:
             debug_mode=debug_mode,
             yield_run_output=yield_run_output,
             output_schema=output_schema,
+            background=background,
+            **kwargs,
+        )
+
+    ###########################################################################
+    # Continue Run (HITL)
+    ###########################################################################
+
+    @overload
+    def continue_run(
+        self,
+        run_response: Optional[TeamRunOutput] = None,
+        *,
+        run_id: Optional[str] = None,
+        requirements: Optional[List[Any]] = None,
+        stream: Literal[False] = False,
+        stream_events: Optional[bool] = None,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        debug_mode: Optional[bool] = None,
+        yield_run_output: bool = False,
+    ) -> TeamRunOutput: ...
+
+    @overload
+    def continue_run(
+        self,
+        run_response: Optional[TeamRunOutput] = None,
+        *,
+        run_id: Optional[str] = None,
+        requirements: Optional[List[Any]] = None,
+        stream: Literal[True] = True,
+        stream_events: Optional[bool] = False,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        debug_mode: Optional[bool] = None,
+        yield_run_output: bool = False,
+    ) -> Iterator[Union[TeamRunOutputEvent, RunOutputEvent]]: ...
+
+    def continue_run(
+        self,
+        run_response: Optional[TeamRunOutput] = None,
+        *,
+        run_id: Optional[str] = None,
+        requirements: Optional[List[Any]] = None,
+        stream: Optional[bool] = None,
+        stream_events: Optional[bool] = False,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        run_context: Optional[RunContext] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        debug_mode: Optional[bool] = None,
+        yield_run_output: bool = False,
+        **kwargs,
+    ) -> Union[TeamRunOutput, Iterator[Union[TeamRunOutputEvent, RunOutputEvent, TeamRunOutput]]]:
+        return _run.continue_run_dispatch(
+            self,
+            run_response=run_response,
+            run_id=run_id,
+            requirements=requirements,
+            stream=stream,
+            stream_events=stream_events,
+            user_id=user_id,
+            session_id=session_id,
+            run_context=run_context,
+            knowledge_filters=knowledge_filters,
+            dependencies=dependencies,
+            metadata=metadata,
+            debug_mode=debug_mode,
+            yield_run_output=yield_run_output,
+            **kwargs,
+        )
+
+    @overload
+    def acontinue_run(
+        self,
+        run_response: Optional[TeamRunOutput] = None,
+        *,
+        stream: Literal[False] = False,
+        stream_events: Optional[bool] = None,
+        run_id: Optional[str] = None,
+        requirements: Optional[List[Any]] = None,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        debug_mode: Optional[bool] = None,
+        **kwargs: Any,
+    ) -> TeamRunOutput: ...
+
+    @overload
+    def acontinue_run(
+        self,
+        run_response: Optional[TeamRunOutput] = None,
+        *,
+        stream: Literal[True] = True,
+        stream_events: Optional[bool] = None,
+        run_id: Optional[str] = None,
+        requirements: Optional[List[Any]] = None,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        debug_mode: Optional[bool] = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[Union[TeamRunOutputEvent, RunOutputEvent, TeamRunOutput]]: ...
+
+    def acontinue_run(  # type: ignore
+        self,
+        run_response: Optional[TeamRunOutput] = None,
+        *,
+        run_id: Optional[str] = None,
+        requirements: Optional[List[Any]] = None,
+        stream: Optional[bool] = None,
+        stream_events: Optional[bool] = None,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        run_context: Optional[RunContext] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        debug_mode: Optional[bool] = None,
+        yield_run_output: bool = False,
+        **kwargs: Any,
+    ) -> Union[TeamRunOutput, AsyncIterator[Union[TeamRunOutputEvent, RunOutputEvent, TeamRunOutput]]]:
+        return _run.acontinue_run_dispatch(
+            self,
+            run_response=run_response,
+            run_id=run_id,
+            requirements=requirements,
+            stream=stream,
+            stream_events=stream_events,
+            user_id=user_id,
+            session_id=session_id,
+            run_context=run_context,
+            knowledge_filters=knowledge_filters,
+            dependencies=dependencies,
+            metadata=metadata,
+            debug_mode=debug_mode,
+            yield_run_output=yield_run_output,
             **kwargs,
         )
 
@@ -1209,8 +1311,8 @@ class Team:
             check_mcp_tools=check_mcp_tools,
         )
 
-    def get_members_system_message_content(self, indent: int = 0) -> str:
-        return _messages.get_members_system_message_content(self, indent=indent)
+    def get_members_system_message_content(self, indent: int = 0, run_context: Optional[RunContext] = None) -> str:
+        return _messages.get_members_system_message_content(self, indent=indent, run_context=run_context)
 
     def get_system_message(
         self,
@@ -1262,11 +1364,18 @@ class Team:
     # Built-in Tools
     ###########################################################################
 
-    def get_member_information(self) -> str:
-        return _tools.get_member_information(self)
+    def get_member_information(self, run_context: Optional[RunContext] = None) -> str:
+        return _tools.get_member_information(self, run_context=run_context)
 
-    def _find_member_by_id(self, member_id: str) -> Optional[Tuple[int, Union[Agent, "Team"]]]:
-        return _tools._find_member_by_id(self, member_id=member_id)
+    def _find_member_by_id(
+        self, member_id: str, run_context: Optional[RunContext] = None
+    ) -> Optional[Tuple[int, Union[Agent, "Team"]]]:
+        return _tools._find_member_by_id(self, member_id=member_id, run_context=run_context)
+
+    def _find_member_route_by_id(
+        self, member_id: str, run_context: Optional[RunContext] = None
+    ) -> Optional[Tuple[int, Union[Agent, "Team"]]]:
+        return _tools._find_member_route_by_id(self, member_id=member_id, run_context=run_context)
 
     def _get_delegate_task_function(
         self,
