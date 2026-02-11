@@ -31,11 +31,10 @@ vector_db = PgVector(
 # ---------------------------------------------------------------------------
 def create_sync_knowledge() -> Knowledge:
     return Knowledge(
-        # name="Basic SDK Knowledge Base",
+        name="Basic SDK Knowledge Base",
         description="Agno 2.0 Knowledge Implementation",
         vector_db=vector_db,
         contents_db=contents_db,
-        isolate_vector_search=True,
     )
 
 
@@ -96,4 +95,4 @@ async def run_async() -> None:
 
 if __name__ == "__main__":
     run_sync()
-    # asyncio.run(run_async())
+    asyncio.run(run_async())
