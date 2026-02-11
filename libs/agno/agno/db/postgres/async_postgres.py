@@ -245,13 +245,16 @@ class AsyncPostgresDb(AsyncBaseDb):
 
             # Add indexes to the table definition
             for idx_col in indexes:
+                if idx_col not in table.c:
+                    raise ValueError(f"Index references missing column in {table_name}: {idx_col}")
                 idx_name = f"idx_{table_name}_{idx_col}"
-                table.append_constraint(Index(idx_name, idx_col))
+                Index(idx_name, table.c[idx_col])
 
             # Composite indexes
             for idx_config in schema_composite_indexes:
                 idx_name = f"idx_{table_name}_{'_'.join(idx_config['columns'])}"
-                table.append_constraint(Index(idx_name, *idx_config["columns"]))
+                idx_cols = [table.c[c] for c in idx_config["columns"]]
+                Index(idx_name, *idx_cols)
 
             if self.create_schema:
                 async with self.async_session_factory() as sess, sess.begin():
@@ -499,12 +502,13 @@ class AsyncPostgresDb(AsyncBaseDb):
             await sess.execute(stmt)
 
     # -- Session methods --
-    async def delete_session(self, session_id: str) -> bool:
+    async def delete_session(self, session_id: str, user_id: Optional[str] = None) -> bool:
         """
         Delete a session from the database.
 
         Args:
             session_id (str): ID of the session to delete
+            user_id (str, optional): If provided, only delete if session belongs to this user.
 
         Returns:
             bool: True if the session was deleted, False otherwise.
@@ -517,6 +521,8 @@ class AsyncPostgresDb(AsyncBaseDb):
 
             async with self.async_session_factory() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.session_id == session_id)
+                if user_id is not None:
+                    delete_stmt = delete_stmt.where(table.c.user_id == user_id)
                 result = await sess.execute(delete_stmt)
 
                 if result.rowcount == 0:  # type: ignore
@@ -531,12 +537,13 @@ class AsyncPostgresDb(AsyncBaseDb):
             log_error(f"Error deleting session: {e}")
             return False
 
-    async def delete_sessions(self, session_ids: List[str]) -> None:
+    async def delete_sessions(self, session_ids: List[str], user_id: Optional[str] = None) -> None:
         """Delete all given sessions from the database.
         Can handle multiple session types in the same run.
 
         Args:
             session_ids (List[str]): The IDs of the sessions to delete.
+            user_id (str, optional): If provided, only delete sessions belonging to this user.
 
         Raises:
             Exception: If an error occurs during deletion.
@@ -546,6 +553,8 @@ class AsyncPostgresDb(AsyncBaseDb):
 
             async with self.async_session_factory() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.session_id.in_(session_ids))
+                if user_id is not None:
+                    delete_stmt = delete_stmt.where(table.c.user_id == user_id)
                 result = await sess.execute(delete_stmt)
 
             log_debug(f"Successfully deleted {result.rowcount} sessions")  # type: ignore
