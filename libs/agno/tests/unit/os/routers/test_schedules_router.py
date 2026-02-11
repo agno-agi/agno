@@ -77,22 +77,22 @@ def client(mock_db, settings):
 
 class TestListSchedules:
     def test_empty_list(self, client, mock_db):
-        mock_db.get_schedules = MagicMock(return_value=[])
+        mock_db.get_schedules = MagicMock(return_value=([], 0))
         resp = client.get("/schedules")
         assert resp.status_code == 200
-        assert resp.json() == []
+        assert resp.json()["data"] == []
 
     def test_returns_schedules(self, client, mock_db):
         schedules = [_make_schedule_dict(id="s1"), _make_schedule_dict(id="s2", name="second")]
-        mock_db.get_schedules = MagicMock(return_value=schedules)
+        mock_db.get_schedules = MagicMock(return_value=(schedules, 2))
         resp = client.get("/schedules")
         assert resp.status_code == 200
-        data = resp.json()
+        data = resp.json()["data"]
         assert len(data) == 2
         assert data[0]["id"] == "s1"
 
     def test_filter_enabled(self, client, mock_db):
-        mock_db.get_schedules = MagicMock(return_value=[])
+        mock_db.get_schedules = MagicMock(return_value=([], 0))
         client.get("/schedules?enabled=true")
         mock_db.get_schedules.assert_called_once()
         call_kwargs = mock_db.get_schedules.call_args[1]
@@ -319,10 +319,10 @@ class TestListScheduleRuns:
             }
         ]
         mock_db.get_schedule = MagicMock(return_value=_make_schedule_dict())
-        mock_db.get_schedule_runs = MagicMock(return_value=runs)
+        mock_db.get_schedule_runs = MagicMock(return_value=(runs, 1))
         resp = client.get("/schedules/sched-1/runs")
         assert resp.status_code == 200
-        assert len(resp.json()) == 1
+        assert len(resp.json()["data"]) == 1
 
     def test_list_runs_schedule_not_found(self, client, mock_db):
         mock_db.get_schedule = MagicMock(return_value=None)
