@@ -152,13 +152,56 @@ class Parallel:
 
         self.steps = prepared_steps
 
+    def _isolate_steps_for_parallel(self) -> WorkflowSteps:
+        """Create isolated copies of steps for thread-safe parallel execution.
+
+        Each Step's Agent or Team is deep_copied so that mutable state
+        (session_id, retry_count, etc.) doesn't leak across threads.
+        Returns a new list of Step objects with isolated executors.
+        The original self.steps is not mutated.
+        """
+        from agno.workflow.step import Step
+
+        isolated: WorkflowSteps = []
+        for step in self.steps:
+            if isinstance(step, Step):
+                if step.agent is not None:
+                    new_step = Step(
+                        name=step.name,
+                        agent=step.agent.deep_copy(),
+                        description=step.description,
+                        max_retries=step.max_retries,
+                        skip_on_failure=step.skip_on_failure,
+                        strict_input_validation=step.strict_input_validation,
+                        add_workflow_history=step.add_workflow_history,
+                        num_history_runs=step.num_history_runs,
+                    )
+                    isolated.append(new_step)
+                elif step.team is not None:
+                    new_step = Step(
+                        name=step.name,
+                        team=step.team.deep_copy(),
+                        description=step.description,
+                        max_retries=step.max_retries,
+                        skip_on_failure=step.skip_on_failure,
+                        strict_input_validation=step.strict_input_validation,
+                        add_workflow_history=step.add_workflow_history,
+                        num_history_runs=step.num_history_runs,
+                    )
+                    isolated.append(new_step)
+                else:
+                    isolated.append(step)
+            else:
+                isolated.append(step)
+        return isolated
+
     def _aggregate_results(self, step_outputs: List[StepOutput]) -> StepOutput:
         """Aggregate multiple step outputs into a single StepOutput"""
         if not step_outputs:
             return StepOutput(
                 step_name=self.name or "Parallel",
                 step_id=str(uuid4()),
-                step_type="Parallel",
+                step_type=StepType.PARALLEL,
                 content="No parallel steps executed",
                 steps=[],
             )
@@ -285,10 +328,14 @@ class Parallel:
         log_debug(f"Parallel Start: {self.name} ({len(self.steps)} steps)", center=True, symbol="=")
 
         self._prepare_steps()
+        isolated_steps = self._isolate_steps_for_parallel()
+
+        if not isolated_steps:
+            return self._aggregate_results([])
 
         # Create individual session_state copies for each step to prevent race conditions
         session_state_copies = []
-        for _ in range(len(self.steps)):
+        for _ in range(len(isolated_steps)):
             # If using run context, no need to deepcopy the state. We want the direct reference.
             if run_context is not None and run_context.session_state is not None:
                 session_state_copies.append(run_context.session_state)
@@ -334,9 +381,9 @@ class Parallel:
                 )
 
         # Use index to preserve order
-        indexed_steps = list(enumerate(self.steps))
+        indexed_steps = list(enumerate(isolated_steps))
 
-        with ThreadPoolExecutor(max_workers=len(self.steps)) as executor:
+        with ThreadPoolExecutor(max_workers=len(isolated_steps)) as executor:
             # Submit all tasks with their original indices
             # Use copy_context().run to propagate context variables to child threads
             future_to_index = {
@@ -352,11 +399,11 @@ class Parallel:
                     index, result, modified_session_state = future.result()
                     results_with_indices.append((index, result))
                     modified_session_states.append(modified_session_state)
-                    step_name = getattr(self.steps[index], "name", f"step_{index}")
+                    step_name = getattr(isolated_steps[index], "name", f"step_{index}")
                     log_debug(f"Parallel step {step_name} completed")
                 except Exception as e:
                     index = future_to_index[future]
-                    step_name = getattr(self.steps[index], "name", f"step_{index}")
+                    step_name = getattr(isolated_steps[index], "name", f"step_{index}")
                     logger.error(f"Parallel step {step_name} failed: {e}")
                     results_with_indices.append(
                         (
@@ -389,7 +436,7 @@ class Parallel:
         aggregated_result = self._aggregate_results(flattened_results)
 
         # Use workflow logger for parallel completion
-        log_debug(f"Parallel End: {self.name} ({len(self.steps)} steps)", center=True, symbol="=")
+        log_debug(f"Parallel End: {self.name} ({len(isolated_steps)} steps)", center=True, symbol="=")
 
         return aggregated_result
 
@@ -417,10 +464,15 @@ class Parallel:
         parallel_step_id = str(uuid4())
 
         self._prepare_steps()
+        isolated_steps = self._isolate_steps_for_parallel()
+
+        if not isolated_steps:
+            yield self._aggregate_results([])
+            return
 
         # Create individual session_state copies for each step to prevent race conditions
         session_state_copies = []
-        for _ in range(len(self.steps)):
+        for _ in range(len(isolated_steps)):
             # If using run context, no need to deepcopy the state. We want the direct reference.
             if run_context is not None and run_context.session_state is not None:
                 session_state_copies.append(run_context.session_state)
@@ -439,7 +491,7 @@ class Parallel:
                 session_id=workflow_run_response.session_id or "",
                 step_name=self.name,
                 step_index=step_index,
-                parallel_step_count=len(self.steps),
+                parallel_step_count=len(isolated_steps),
                 step_id=parallel_step_id,
                 parent_step_id=parent_step_id,
             )
@@ -508,9 +560,9 @@ class Parallel:
                 return idx, [error_event], step_session_state
 
         # Submit all parallel tasks
-        indexed_steps = list(enumerate(self.steps))
+        indexed_steps = list(enumerate(isolated_steps))
 
-        with ThreadPoolExecutor(max_workers=len(self.steps)) as executor:
+        with ThreadPoolExecutor(max_workers=len(isolated_steps)) as executor:
             # Submit all tasks
             # Use copy_context().run to propagate context variables to child threads
             futures = [
@@ -520,7 +572,7 @@ class Parallel:
 
             # Process events from queue as they arrive
             completed_steps = 0
-            total_steps = len(self.steps)
+            total_steps = len(isolated_steps)
 
             while completed_steps < total_steps:
                 try:
@@ -538,7 +590,7 @@ class Parallel:
                         modified_session_states.append(step_session_state)
                         completed_steps += 1
 
-                        step_name = getattr(self.steps[step_idx], "name", f"step_{step_idx}")
+                        step_name = getattr(isolated_steps[step_idx], "name", f"step_{step_idx}")
                         log_debug(f"Parallel step {step_name} streaming completed")
 
                 except queue.Empty:
@@ -575,7 +627,7 @@ class Parallel:
         # Yield the final aggregated StepOutput
         yield aggregated_result
 
-        log_debug(f"Parallel End: {self.name} ({len(self.steps)} steps)", center=True, symbol="=")
+        log_debug(f"Parallel End: {self.name} ({len(isolated_steps)} steps)", center=True, symbol="=")
 
         if stream_events and workflow_run_response:
             # Yield parallel step completed event
@@ -586,7 +638,7 @@ class Parallel:
                 session_id=workflow_run_response.session_id or "",
                 step_name=self.name,
                 step_index=step_index,
-                parallel_step_count=len(self.steps),
+                parallel_step_count=len(isolated_steps),
                 step_results=flattened_step_results,
                 step_id=parallel_step_id,
                 parent_step_id=parent_step_id,
@@ -611,10 +663,14 @@ class Parallel:
         log_debug(f"Parallel Start: {self.name} ({len(self.steps)} steps)", center=True, symbol="=")
 
         self._prepare_steps()
+        isolated_steps = self._isolate_steps_for_parallel()
+
+        if not isolated_steps:
+            return self._aggregate_results([])
 
         # Create individual session_state copies for each step to prevent race conditions
         session_state_copies = []
-        for _ in range(len(self.steps)):
+        for _ in range(len(isolated_steps)):
             # If using run context, no need to deepcopy the state. We want the direct reference.
             if run_context is not None and run_context.session_state is not None:
                 session_state_copies.append(run_context.session_state)
@@ -660,7 +716,7 @@ class Parallel:
                 )
 
         # Use index to preserve order
-        indexed_steps = list(enumerate(self.steps))
+        indexed_steps = list(enumerate(isolated_steps))
 
         # Create tasks for all steps with their indices
         tasks = [execute_step_async_with_index(indexed_step) for indexed_step in indexed_steps]
@@ -673,7 +729,7 @@ class Parallel:
         modified_session_states = []
         for i, result in enumerate(results_with_indices):
             if isinstance(result, Exception):
-                step_name = getattr(self.steps[i], "name", f"step_{i}")
+                step_name = getattr(isolated_steps[i], "name", f"step_{i}")
                 logger.error(f"Parallel step {step_name} failed: {result}")
                 processed_results_with_indices.append(
                     (
@@ -692,7 +748,7 @@ class Parallel:
                 index, step_result, modified_session_state = result  # type: ignore[misc]
                 processed_results_with_indices.append((index, step_result))
                 modified_session_states.append(modified_session_state)
-                step_name = getattr(self.steps[index], "name", f"step_{index}")
+                step_name = getattr(isolated_steps[index], "name", f"step_{index}")
                 log_debug(f"Parallel step {step_name} completed")
 
         # Smart merge all session_state changes back into the original session_state
@@ -715,7 +771,7 @@ class Parallel:
         aggregated_result = self._aggregate_results(flattened_results)
 
         # Use workflow logger for async parallel completion
-        log_debug(f"Parallel End: {self.name} ({len(self.steps)} steps)", center=True, symbol="=")
+        log_debug(f"Parallel End: {self.name} ({len(isolated_steps)} steps)", center=True, symbol="=")
 
         return aggregated_result
 
@@ -743,10 +799,15 @@ class Parallel:
         parallel_step_id = str(uuid4())
 
         self._prepare_steps()
+        isolated_steps = self._isolate_steps_for_parallel()
+
+        if not isolated_steps:
+            yield self._aggregate_results([])
+            return
 
         # Create individual session_state copies for each step to prevent race conditions
         session_state_copies = []
-        for _ in range(len(self.steps)):
+        for _ in range(len(isolated_steps)):
             # If using run context, no need to deepcopy the state. We want the direct reference.
             if run_context is not None and run_context.session_state is not None:
                 session_state_copies.append(run_context.session_state)
@@ -765,7 +826,7 @@ class Parallel:
                 session_id=workflow_run_response.session_id or "",
                 step_name=self.name,
                 step_index=step_index,
-                parallel_step_count=len(self.steps),
+                parallel_step_count=len(isolated_steps),
                 step_id=parallel_step_id,
                 parent_step_id=parent_step_id,
             )
@@ -834,14 +895,14 @@ class Parallel:
                 return idx, [error_event], step_session_state
 
         # Start all parallel tasks
-        indexed_steps = list(enumerate(self.steps))
+        indexed_steps = list(enumerate(isolated_steps))
         tasks = [
             asyncio.create_task(execute_step_stream_async_with_index(indexed_step)) for indexed_step in indexed_steps
         ]
 
         # Process events as they arrive and track completion
         completed_steps = 0
-        total_steps = len(self.steps)
+        total_steps = len(isolated_steps)
 
         while completed_steps < total_steps:
             try:
@@ -858,7 +919,7 @@ class Parallel:
                     modified_session_states.append(step_session_state)
                     completed_steps += 1
 
-                    step_name = getattr(self.steps[step_idx], "name", f"step_{step_idx}")
+                    step_name = getattr(isolated_steps[step_idx], "name", f"step_{step_idx}")
                     log_debug(f"Parallel step {step_name} async streaming completed")
 
             except Exception as e:
@@ -885,7 +946,7 @@ class Parallel:
         # Yield the final aggregated StepOutput
         yield aggregated_result
 
-        log_debug(f"Parallel End: {self.name} ({len(self.steps)} steps)", center=True, symbol="=")
+        log_debug(f"Parallel End: {self.name} ({len(isolated_steps)} steps)", center=True, symbol="=")
 
         if stream_events and workflow_run_response:
             # Yield parallel step completed event
@@ -896,7 +957,7 @@ class Parallel:
                 session_id=workflow_run_response.session_id or "",
                 step_name=self.name,
                 step_index=step_index,
-                parallel_step_count=len(self.steps),
+                parallel_step_count=len(isolated_steps),
                 step_results=flattened_step_results,
                 step_id=parallel_step_id,
                 parent_step_id=parent_step_id,

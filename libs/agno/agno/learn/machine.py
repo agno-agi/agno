@@ -277,11 +277,14 @@ class LearningMachine:
                 config.model = self.model
             if config.knowledge is None and self.knowledge is not None:
                 config.knowledge = self.knowledge
+            if config.namespace == "global" and self.namespace != "global":
+                config.namespace = self.namespace
         else:
             config = LearnedKnowledgeConfig(
                 model=self.model,
                 knowledge=self.knowledge,
                 mode=LearningMode.AGENTIC,
+                namespace=self.namespace,
             )
 
         return LearnedKnowledgeStore(config=config, debug_mode=self.debug_mode)
