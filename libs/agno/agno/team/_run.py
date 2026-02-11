@@ -421,6 +421,10 @@ def _run(
                 run_response = cast(TeamRunOutput, run_response)
                 run_response.status = RunStatus.cancelled
                 run_response.content = "Operation cancelled by user"
+                try:
+                    _cleanup_and_store(team, run_response=run_response, session=session)
+                except Exception:
+                    pass
                 return run_response
             except Exception as e:
                 if attempt < num_attempts - 1:
@@ -805,6 +809,10 @@ def _run_stream(
 
             except KeyboardInterrupt:
                 run_response = cast(TeamRunOutput, run_response)
+                try:
+                    _cleanup_and_store(team, run_response=run_response, session=session)
+                except Exception:
+                    pass
                 yield handle_event(  # type: ignore
                     create_team_run_cancelled_event(
                         from_run_response=run_response, reason="Operation cancelled by user"
@@ -967,7 +975,6 @@ def run_dispatch(
         dependencies_provided = dependencies is not None
         knowledge_filters_provided = knowledge_filters is not None
         metadata_provided = metadata is not None
-        output_schema_provided = output_schema is not None
 
         team.model = cast(Model, team.model)
 
@@ -988,7 +995,6 @@ def run_dispatch(
             dependencies_provided=dependencies_provided,
             knowledge_filters_provided=knowledge_filters_provided,
             metadata_provided=metadata_provided,
-            output_schema_provided=output_schema_provided,
         )
 
         # Resolve callable dependencies once before retry loop
@@ -1333,6 +1339,10 @@ async def _arun(
                 run_response = cast(TeamRunOutput, run_response)
                 run_response.status = RunStatus.cancelled
                 run_response.content = "Operation cancelled by user"
+                try:
+                    await _acleanup_and_store(team, run_response=run_response, session=team_session)
+                except Exception:
+                    pass
                 return run_response
 
             except Exception as e:
@@ -1742,6 +1752,10 @@ async def _arun_stream(
 
             except (KeyboardInterrupt, asyncio.CancelledError):
                 run_response = cast(TeamRunOutput, run_response)
+                try:
+                    await _acleanup_and_store(team, run_response=run_response, session=team_session)
+                except Exception:
+                    pass
                 yield handle_event(  # type: ignore
                     create_team_run_cancelled_event(
                         from_run_response=run_response, reason="Operation cancelled by user"
@@ -1879,7 +1893,6 @@ def arun_dispatch(  # type: ignore
     dependencies_provided = dependencies is not None
     knowledge_filters_provided = knowledge_filters is not None
     metadata_provided = metadata is not None
-    output_schema_provided = output_schema is not None
 
     # Create RunInput to capture the original user input
     run_input = TeamRunInput(
@@ -1909,7 +1922,6 @@ def arun_dispatch(  # type: ignore
         dependencies_provided=dependencies_provided,
         knowledge_filters_provided=knowledge_filters_provided,
         metadata_provided=metadata_provided,
-        output_schema_provided=output_schema_provided,
     )
 
     # Configure the model for runs

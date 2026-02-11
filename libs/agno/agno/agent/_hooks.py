@@ -35,6 +35,7 @@ from agno.utils.hooks import (
 from agno.utils.log import (
     log_error,
     log_exception,
+    log_warning,
 )
 
 
@@ -105,6 +106,12 @@ def execute_pre_hooks(
         try:
             # Filter arguments to only include those that the hook accepts
             filtered_args = filter_hook_args(hook, all_args)
+
+            if iscoroutinefunction(hook):
+                log_warning(
+                    f"Async hook '{hook.__name__}' cannot be used with sync run(). Use arun() instead. Skipping hook."
+                )
+                continue
 
             hook(**filtered_args)
 
@@ -297,6 +304,12 @@ def execute_post_hooks(
         try:
             # Filter arguments to only include those that the hook accepts
             filtered_args = filter_hook_args(hook, all_args)
+
+            if iscoroutinefunction(hook):
+                log_warning(
+                    f"Async hook '{hook.__name__}' cannot be used with sync run(). Use arun() instead. Skipping hook."
+                )
+                continue
 
             hook(**filtered_args)
 
