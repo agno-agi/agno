@@ -855,10 +855,6 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             )
             return
 
-        user_id: Optional[str] = None
-        if hasattr(http_request.state, "user_id") and http_request.state.user_id is not None:
-            user_id = http_request.state.user_id
-
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
             await db.delete_sessions(session_ids=request.session_ids, user_id=user_id)
