@@ -6,10 +6,14 @@ from pydantic import BaseModel
 from agno.utils.log import log_warning
 
 
-def get_json_output_prompt(output_schema: Union[str, list, dict, BaseModel]) -> str:
+def get_json_output_prompt(output_schema: Union[str, list, dict, BaseModel], add_required: bool = False) -> str:
     """Return the JSON output prompt for the Agent.
 
     This is added to the system prompt when the output_schema is set and structured_outputs is False.
+
+    Args:
+        output_schema: The output schema
+        add_required: If True, add 'required' arrays to nested objects in $defs
     """
 
     json_output_prompt = "Provide your output as a JSON containing the following fields:"
@@ -73,7 +77,14 @@ def get_json_output_prompt(output_schema: Union[str, list, dict, BaseModel]) -> 
                                         if prop_name != "title"
                                     }
                                     formatted_def_properties[field_name] = formatted_field_properties
-                            if len(formatted_def_properties) > 0:
+
+                            # Add required array if add_required is True
+                            if add_required and len(formatted_def_properties) > 0:
+                                def_result = {"properties": formatted_def_properties}
+                                if "required" in def_properties:
+                                    def_result["required"] = def_properties["required"]
+                                response_model_properties["$defs"][def_name] = def_result
+                            elif len(formatted_def_properties) > 0:
                                 response_model_properties["$defs"][def_name] = formatted_def_properties
 
                 if len(response_model_properties) > 0:

@@ -9068,7 +9068,9 @@ class Agent:
                 and (not self.use_json_mode or self.structured_outputs is True)
             )
         ):
-            system_message_content += f"{get_json_output_prompt(output_schema)}"  # type: ignore
+            # Check if model wants required arrays in nested objects
+            add_required = getattr(self.model, "add_required_to_prompt", False)
+            system_message_content += f"{get_json_output_prompt(output_schema, add_required=add_required)}"  # type: ignore
 
         # 3.3.16 Add the response model format prompt if output_schema is provided (Pydantic only)
         if output_schema is not None and self.parser_model is not None and not isinstance(output_schema, dict):
@@ -9416,7 +9418,9 @@ class Agent:
                 and (not self.use_json_mode or self.structured_outputs is True)
             )
         ):
-            system_message_content += f"{get_json_output_prompt(output_schema)}"  # type: ignore
+            # Check if model wants required arrays in nested objects
+            add_required = getattr(self.model, "add_required_to_prompt", False)
+            system_message_content += f"{get_json_output_prompt(output_schema, add_required=add_required)}"  # type: ignore
 
         # 3.3.16 Add the response model format prompt if output_schema is provided (Pydantic only)
         if output_schema is not None and self.parser_model is not None and not isinstance(output_schema, dict):
