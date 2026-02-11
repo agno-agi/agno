@@ -163,7 +163,7 @@ async def test_acontinue_run_dispatch_handles_none_session_runs(monkeypatch: pyt
 
 
 @pytest.mark.asyncio
-async def test_acontinue_run_stream_impl_yields_error_event_without_attribute_error(
+async def test_acontinue_run_stream_yields_error_event_without_attribute_error(
     monkeypatch: pytest.MonkeyPatch,
 ):
     agent = Agent(name="test-agent")
@@ -189,7 +189,7 @@ async def test_acontinue_run_stream_impl_yields_error_event_without_attribute_er
     )
 
     events = []
-    async for event in _run.acontinue_run_stream_impl(
+    async for event in _run._acontinue_run_stream(
         agent=agent,
         session_id="session-1",
         run_context=run_context,
@@ -281,7 +281,7 @@ async def test_arun_impl_preserves_original_error_when_session_read_fails(monkey
 
 
 @pytest.mark.asyncio
-async def test_acontinue_run_impl_preserves_original_error_when_session_read_fails(monkeypatch: pytest.MonkeyPatch):
+async def test_acontinue_run_preserves_original_error_when_session_read_fails(monkeypatch: pytest.MonkeyPatch):
     agent = Agent(name="test-agent")
     run_id = "acontinue-session-fail"
     cleanup_calls = []
@@ -303,7 +303,7 @@ async def test_acontinue_run_impl_preserves_original_error_when_session_read_fai
 
     run_context = RunContext(run_id=run_id, session_id="session-1", session_state={})
 
-    response = await _run.acontinue_run_impl(
+    response = await _run._acontinue_run(
         agent=agent,
         session_id="session-1",
         run_context=run_context,
@@ -317,7 +317,7 @@ async def test_acontinue_run_impl_preserves_original_error_when_session_read_fai
     assert run_id not in get_active_runs()
 
 
-def test_continue_run_stream_impl_registers_run_for_cancellation():
+def test_continue_run_stream_registers_run_for_cancellation():
     agent = Agent(name="test-agent")
     run_id = "continue-stream-register"
 
@@ -326,7 +326,7 @@ def test_continue_run_stream_impl_registers_run_for_cancellation():
     run_context = RunContext(run_id=run_id, session_id="session-1", session_state={})
     session = AgentSession(session_id="session-1")
 
-    response_stream = _run.continue_run_stream_impl(
+    response_stream = _run._continue_run_stream(
         agent=agent,
         run_response=run_response,
         run_messages=run_messages,
@@ -570,7 +570,7 @@ def test_continue_run_dispatch_respects_run_context_precedence(monkeypatch: pyte
     agent = _make_precedence_test_agent()
     _patch_continue_dispatch_dependencies(agent, monkeypatch)
 
-    def fake_continue_run_impl(
+    def fake_continue_run(
         agent: Agent,
         run_response: RunOutput,
         run_messages: RunMessages,
@@ -585,7 +585,7 @@ def test_continue_run_dispatch_respects_run_context_precedence(monkeypatch: pyte
     ) -> RunOutput:
         return run_response
 
-    monkeypatch.setattr(_run, "continue_run_impl", fake_continue_run_impl)
+    monkeypatch.setattr(_run, "_continue_run", fake_continue_run)
 
     preserved_context = RunContext(
         run_id="continue-preserve",
@@ -651,7 +651,7 @@ async def test_acontinue_run_dispatch_respects_run_context_precedence(monkeypatc
     monkeypatch.setattr(agent, "initialize_agent", lambda debug_mode=None: None)
     monkeypatch.setattr(_response, "get_response_format", lambda agent, run_context=None: None)
 
-    async def fake_acontinue_run_impl(
+    async def fake_acontinue_run(
         agent: Agent,
         session_id: str,
         run_context: RunContext,
@@ -667,7 +667,7 @@ async def test_acontinue_run_dispatch_respects_run_context_precedence(monkeypatc
     ) -> RunOutput:
         return run_response if run_response is not None else RunOutput(run_id=run_id, session_id=session_id)  # type: ignore[arg-type]
 
-    monkeypatch.setattr(_run, "acontinue_run_impl", fake_acontinue_run_impl)
+    monkeypatch.setattr(_run, "_acontinue_run", fake_acontinue_run)
 
     preserved_context = RunContext(
         run_id="acontinue-preserve",

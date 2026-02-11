@@ -790,6 +790,13 @@ class Model(ABC):
                     if any(tc.requires_user_input for tc in model_response.tool_executions or []):
                         break
 
+                    # Check if run_response has requirements (e.g., from member agent HITL)
+                    # This handles cases where a tool (like delegate_task_to_member) propagates
+                    # HITL requirements from a member agent to the team's run_response
+                    if run_response is not None and run_response.requirements:
+                        if any(not req.is_resolved() for req in run_response.requirements):
+                            break
+
                     # Continue loop to get next response
                     continue
 
@@ -993,6 +1000,13 @@ class Model(ABC):
                     # If we have any tool calls that require user input, break the loop
                     if any(tc.requires_user_input for tc in model_response.tool_executions or []):
                         break
+
+                    # Check if run_response has requirements (e.g., from member agent HITL)
+                    # This handles cases where a tool (like delegate_task_to_member) propagates
+                    # HITL requirements from a member agent to the team's run_response
+                    if run_response is not None and run_response.requirements:
+                        if any(not req.is_resolved() for req in run_response.requirements):
+                            break
 
                     # Continue loop to get next response
                     continue
@@ -1429,6 +1443,13 @@ class Model(ABC):
                     if any(fc.function.requires_user_input for fc in function_calls_to_run):
                         break
 
+                    # Check if run_response has requirements (e.g., from member agent HITL)
+                    # This handles cases where a tool (like delegate_task_to_member) propagates
+                    # HITL requirements from a member agent to the team's run_response
+                    if run_response is not None and run_response.requirements:
+                        if any(not req.is_resolved() for req in run_response.requirements):
+                            break
+
                     # Continue loop to get next response
                     continue
 
@@ -1672,6 +1693,13 @@ class Model(ABC):
                     # If we have any tool calls that require user input, break the loop
                     if any(fc.function.requires_user_input for fc in function_calls_to_run):
                         break
+
+                    # Check if run_response has requirements (e.g., from member agent HITL)
+                    # This handles cases where a tool (like delegate_task_to_member) propagates
+                    # HITL requirements from a member agent to the team's run_response
+                    if run_response is not None and run_response.requirements:
+                        if any(not req.is_resolved() for req in run_response.requirements):
+                            break
 
                     # Continue loop to get next response
                     continue

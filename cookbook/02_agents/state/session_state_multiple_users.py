@@ -20,11 +20,11 @@ from agno.run import RunContext
 shopping_list = {}
 
 
-def add_item(session_state, item: str) -> str:
+def add_item(run_context: RunContext, item: str) -> str:
     """Add an item to the current user's shopping list."""
 
-    current_user_id = session_state["current_user_id"]
-    current_session_id = session_state["current_session_id"]
+    current_user_id = run_context.session_state["current_user_id"]
+    current_session_id = run_context.session_state["current_session_id"]
     shopping_list.setdefault(current_user_id, {}).setdefault(
         current_session_id, []
     ).append(item)
@@ -32,11 +32,11 @@ def add_item(session_state, item: str) -> str:
     return f"Item {item} added to the shopping list"
 
 
-def remove_item(session_state, item: str) -> str:
+def remove_item(run_context: RunContext, item: str) -> str:
     """Remove an item from the current user's shopping list."""
 
-    current_user_id = session_state["current_user_id"]
-    current_session_id = session_state["current_session_id"]
+    current_user_id = run_context.session_state["current_user_id"]
+    current_session_id = run_context.session_state["current_session_id"]
 
     if (
         current_user_id not in shopping_list
