@@ -28,7 +28,7 @@ from agno.vectordb.search import SearchType
 agent_db = SqliteDb(db_file="tmp/agents.db")
 
 knowledge = Knowledge(
-    name="Agno Documentation",
+    # name="Agno Documentation",
     vector_db=ChromaDb(
         name="agno_docs",
         collection="agno_docs",
@@ -46,6 +46,7 @@ knowledge = Knowledge(
     max_results=5,
     # Store metadata about the contents in the agent database, table_name="agno_knowledge"
     contents_db=agent_db,
+    isolate_vector_search=True,
 )
 
 # ---------------------------------------------------------------------------
@@ -80,9 +81,11 @@ You are an expert on the Agno framework and building AI agents.
 # ---------------------------------------------------------------------------
 # Create Agent
 # ---------------------------------------------------------------------------
+from agno.models.openai import OpenAIChat
 agent_with_knowledge = Agent(
     name="Agent with Knowledge",
-    model=Gemini(id="gemini-3-flash-preview"),
+    # model=Gemini(id="gemini-3-flash-preview"),
+    model=OpenAIChat(id="gpt-4o-mini"),
     instructions=instructions,
     knowledge=knowledge,
     search_knowledge=True,
