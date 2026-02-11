@@ -1698,6 +1698,7 @@ class AgentOSClient:
             HTTPStatusError: On HTTP errors
         """
         params: Dict[str, Any] = {
+            "user_id": user_id,
             "db_id": db_id,
             "table": table,
         }
@@ -1727,6 +1728,7 @@ class AgentOSClient:
             HTTPStatusError: On HTTP errors
         """
         params: Dict[str, Any] = {
+            "user_id": user_id,
             "db_id": db_id,
             "table": table,
         }
@@ -1766,6 +1768,7 @@ class AgentOSClient:
         """
         params: Dict[str, Any] = {
             "type": session_type.value,
+            "user_id": user_id,
             "db_id": db_id,
             "table": table,
         }

@@ -788,12 +788,12 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
     async def delete_session(
         request: Request,
         session_id: str = Path(description="Session ID to delete"),
+        user_id: Optional[str] = Query(default=None, description="User ID to scope deletion to"),
         db_id: Optional[str] = Query(default=None, description="Database ID to use for deletion"),
         table: Optional[str] = Query(default=None, description="Table to use for deletion"),
     ) -> None:
         db = await get_db(dbs, db_id, table)
 
-        user_id: Optional[str] = None
         if hasattr(request.state, "user_id") and request.state.user_id is not None:
             user_id = request.state.user_id
 
@@ -830,6 +830,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
     async def delete_sessions(
         http_request: Request,
         request: DeleteSessionRequest,
+        user_id: Optional[str] = Query(default=None, description="User ID to scope deletion to"),
         db_id: Optional[str] = Query(default=None, description="Database ID to use for deletion"),
         table: Optional[str] = Query(default=None, description="Table to use for deletion"),
     ) -> None:
@@ -838,7 +839,6 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
 
         db = await get_db(dbs, db_id, table)
 
-        user_id: Optional[str] = None
         if hasattr(http_request.state, "user_id") and http_request.state.user_id is not None:
             user_id = http_request.state.user_id
 
@@ -956,12 +956,12 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             default=SessionType.AGENT, description="Session type (agent, team, or workflow)", alias="type"
         ),
         session_name: str = Body(embed=True, description="New name for the session"),
+        user_id: Optional[str] = Query(default=None, description="User ID to scope rename to"),
         db_id: Optional[str] = Query(default=None, description="Database ID to use for rename operation"),
         table: Optional[str] = Query(default=None, description="Table to use for rename operation"),
     ) -> Union[AgentSessionDetailSchema, TeamSessionDetailSchema, WorkflowSessionDetailSchema]:
         db = await get_db(dbs, db_id, table)
 
-        user_id: Optional[str] = None
         if hasattr(request.state, "user_id") and request.state.user_id is not None:
             user_id = request.state.user_id
 
