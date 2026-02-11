@@ -9,6 +9,8 @@ import pytest
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
+from agno.run.team import RunPausedEvent as TeamRunPausedEvent
+from agno.run.team import TeamRunOutput
 from agno.team.team import Team
 from agno.tools.decorator import tool
 
@@ -28,8 +30,8 @@ def get_the_weather(city: str) -> str:
 def _make_agent(db=None):
     return Agent(
         name="Weather Agent",
-        role="Provides weather information",
-        model=OpenAIChat(id="gpt-5-mini"),
+        role="Provides weather information. Use the get_the_weather tool to get weather data.",
+        model=OpenAIChat(id="gpt-4o-mini"),
         tools=[get_the_weather],
         db=db,
         telemetry=False,
@@ -39,10 +41,14 @@ def _make_agent(db=None):
 def _make_team(agent, db=None):
     return Team(
         name="Weather Team",
-        model=OpenAIChat(id="gpt-5-mini"),
+        model=OpenAIChat(id="gpt-4o-mini"),
         members=[agent],
         db=db,
         telemetry=False,
+        instructions=[
+            "You MUST delegate all weather-related tasks to the Weather Agent.",
+            "Do NOT try to answer weather questions yourself - always use the Weather Agent member.",
+        ],
     )
 
 
@@ -130,23 +136,31 @@ async def test_member_user_input_async_streaming(shared_db):
     agent = _make_agent(db=shared_db)
     team = _make_team(agent, db=shared_db)
 
-    paused_output = None
+    paused_event = None
     async for event in team.arun(
-        "Get me the weather", session_id="test_user_input_async_stream", stream=True, stream_events=True
+        "Get me the weather",
+        session_id="test_user_input_async_stream",
+        stream=True,
+        stream_events=True,
     ):
-        if hasattr(event, "is_paused") and event.is_paused:
-            paused_output = event
+        # Use isinstance to check for team's pause event (not the member agent's)
+        if isinstance(event, TeamRunPausedEvent):
+            paused_event = event
             break
 
-    assert paused_output is not None
-    assert paused_output.is_paused
+    assert paused_event is not None
+    assert paused_event.is_paused
 
-    req = paused_output.requirements[0]
+    req = paused_event.requirements[0]
     assert req.needs_user_input
 
     req.provide_user_input({"city": "Berlin"})
 
-    result = await team.acontinue_run(paused_output)
+    result = await team.acontinue_run(
+        run_id=paused_event.run_id,
+        session_id=paused_event.session_id,
+        requirements=paused_event.requirements,
+    )
     assert not result.is_paused
     assert result.content is not None
 
@@ -156,20 +170,30 @@ def test_member_user_input_streaming(shared_db):
     agent = _make_agent(db=shared_db)
     team = _make_team(agent, db=shared_db)
 
-    paused_output = None
-    for event in team.run("Get me the weather", session_id="test_user_input_stream", stream=True, stream_events=True):
-        if hasattr(event, "is_paused") and event.is_paused:
-            paused_output = event
+    paused_event = None
+    for event in team.run(
+        "Get me the weather",
+        session_id="test_user_input_stream",
+        stream=True,
+        stream_events=True,
+    ):
+        # Use isinstance to check for team's pause event (not the member agent's)
+        if isinstance(event, TeamRunPausedEvent):
+            paused_event = event
             break
 
-    assert paused_output is not None
-    assert paused_output.is_paused
+    assert paused_event is not None
+    assert paused_event.is_paused
 
-    req = paused_output.requirements[0]
+    req = paused_event.requirements[0]
     assert req.needs_user_input
 
     req.provide_user_input({"city": "London"})
 
-    result = team.continue_run(paused_output)
+    result = team.continue_run(
+        run_id=paused_event.run_id,
+        session_id=paused_event.session_id,
+        requirements=paused_event.requirements,
+    )
     assert not result.is_paused
     assert result.content is not None
