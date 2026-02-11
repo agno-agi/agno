@@ -217,6 +217,9 @@ class Team:
     send_media_to_model: bool = True
     # If True, store media in run output
     store_media: bool = True
+    # If set, media content is uploaded to this storage backend before DB persistence.
+    # Only references (URLs) are stored in the database. Requires store_media=True.
+    media_storage: Optional[Any] = None  # MediaStorage or AsyncMediaStorage
     # If True, store tool results in run output
     store_tool_messages: bool = True
     # If True, store history messages in run output

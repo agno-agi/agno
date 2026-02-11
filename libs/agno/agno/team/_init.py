@@ -108,6 +108,7 @@ def __init__(
     add_search_knowledge_instructions: bool = True,
     read_chat_history: bool = False,
     store_media: bool = True,
+    media_storage: Optional[Any] = None,
     store_tool_messages: bool = True,
     store_history_messages: bool = False,
     send_media_to_model: bool = True,
@@ -231,6 +232,7 @@ def __init__(
     team.read_chat_history = read_chat_history
 
     team.store_media = store_media
+    team.media_storage = media_storage
     team.store_tool_messages = store_tool_messages
     team.store_history_messages = store_history_messages
     team.send_media_to_model = send_media_to_model

@@ -193,6 +193,26 @@ def save_session(team: "Team", session: TeamSession) -> None:
             session.session_data["session_state"].pop("current_user_id", None)
             session.session_data["session_state"].pop("current_run_id", None)
 
+        # Offload member response media to external storage before scrubbing
+        if team.media_storage is not None and team.store_media and session.runs is not None:
+            from agno.media_storage.base import AsyncMediaStorage
+
+            if not isinstance(team.media_storage, AsyncMediaStorage):
+                from agno.utils.media_offload import offload_run_media
+
+                for run in session.runs:
+                    if hasattr(run, "member_responses") and run.member_responses:
+                        for member_response in run.member_responses:
+                            try:
+                                offload_run_media(
+                                    member_response,
+                                    team.media_storage,
+                                    session.session_id,
+                                    getattr(run, "run_id", "") or "",
+                                )
+                            except Exception as e:
+                                log_warning(f"Member response media offload failed: {e}")
+
         # scrub the member responses based on storage settings
         if session.runs is not None:
             for run in session.runs:
@@ -223,6 +243,41 @@ async def asave_session(team: "Team", session: TeamSession) -> None:
             session.session_data["session_state"].pop("current_session_id", None)
             session.session_data["session_state"].pop("current_user_id", None)
             session.session_data["session_state"].pop("current_run_id", None)
+
+        # Offload member response media to external storage before scrubbing
+        if team.media_storage is not None and team.store_media and session.runs is not None:
+            from agno.media_storage.base import AsyncMediaStorage
+
+            if isinstance(team.media_storage, AsyncMediaStorage):
+                from agno.utils.media_offload import aoffload_run_media
+
+                for run in session.runs:
+                    if hasattr(run, "member_responses") and run.member_responses:
+                        for member_response in run.member_responses:
+                            try:
+                                await aoffload_run_media(
+                                    member_response,
+                                    team.media_storage,
+                                    session.session_id,
+                                    getattr(run, "run_id", "") or "",
+                                )
+                            except Exception as e:
+                                log_warning(f"Member response media offload failed: {e}")
+            else:
+                from agno.utils.media_offload import offload_run_media
+
+                for run in session.runs:
+                    if hasattr(run, "member_responses") and run.member_responses:
+                        for member_response in run.member_responses:
+                            try:
+                                offload_run_media(
+                                    member_response,
+                                    team.media_storage,
+                                    session.session_id,
+                                    getattr(run, "run_id", "") or "",
+                                )
+                            except Exception as e:
+                                log_warning(f"Member response media offload failed: {e}")
 
         # scrub the member responses based on storage settings
         if session.runs is not None:

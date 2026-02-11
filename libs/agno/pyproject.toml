@@ -76,6 +76,9 @@ openlit = ["openlit", "agno[opentelemetry]"]
 arize = ["arize-phoenix", "agno[opentelemetry]", "opentelemetry-exporter-otlp-proto-grpc", "opentelemetry-distro"]
 langfuse = ["langfuse"]
 
+# Dependencies for Media Storage
+media-storage-s3 = ["boto3", "aioboto3"]
+
 # Dependencies for Models
 aws-bedrock = ["boto3", "aioboto3"]
 anthropic = ["anthropic"]

@@ -4075,6 +4075,20 @@ def cleanup_and_store(
 ) -> None:
     from agno.agent import _session
 
+    # Offload media to external storage before scrubbing
+    if agent.media_storage is not None and agent.store_media:
+        from agno.media_storage.base import AsyncMediaStorage
+
+        if isinstance(agent.media_storage, AsyncMediaStorage):
+            log_warning("AsyncMediaStorage provided but sync run() called. Skipping media offload.")
+        else:
+            try:
+                from agno.utils.media_offload import offload_run_media
+
+                offload_run_media(run_response, agent.media_storage, session.session_id, run_response.run_id or "")
+            except Exception as e:
+                log_warning(f"Media offload failed, falling back to inline storage: {e}")
+
     # Scrub the stored run based on storage flags
     scrub_run_output_for_storage(agent, run_response)
 
@@ -4121,6 +4135,31 @@ async def acleanup_and_store(
     user_id: Optional[str] = None,
 ) -> None:
     from agno.agent import _session
+
+    # Offload media to external storage before scrubbing
+    if agent.media_storage is not None and agent.store_media:
+        from agno.media_storage.base import AsyncMediaStorage, MediaStorage
+
+        if not isinstance(agent.media_storage, AsyncMediaStorage):
+            if isinstance(agent.media_storage, MediaStorage):
+                # Sync storage in async context — run synchronously as fallback
+                try:
+                    from agno.utils.media_offload import offload_run_media
+
+                    offload_run_media(run_response, agent.media_storage, session.session_id, run_response.run_id or "")
+                except Exception as e:
+                    log_warning(f"Media offload failed, falling back to inline storage: {e}")
+            else:
+                log_warning("Sync MediaStorage provided but async arun() called. Skipping media offload.")
+        else:
+            try:
+                from agno.utils.media_offload import aoffload_run_media
+
+                await aoffload_run_media(
+                    run_response, agent.media_storage, session.session_id, run_response.run_id or ""
+                )
+            except Exception as e:
+                log_warning(f"Media offload failed, falling back to inline storage: {e}")
 
     # Scrub the stored run based on storage flags
     scrub_run_output_for_storage(agent, run_response)

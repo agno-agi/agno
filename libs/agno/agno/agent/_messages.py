@@ -1243,6 +1243,16 @@ def get_run_messages(
             for _msg in history_copy:
                 _msg.from_history = True
 
+            # Refresh pre-signed URLs for media loaded from history
+            if agent.media_storage is not None:
+                from agno.media_storage.base import AsyncMediaStorage
+
+                if not isinstance(agent.media_storage, AsyncMediaStorage):
+                    from agno.utils.media_offload import refresh_message_media_urls
+
+                    for _msg in history_copy:
+                        refresh_message_media_urls(_msg, agent.media_storage)
+
             # Filter tool calls from history if limit is set (before adding to run_messages)
             if agent.max_tool_calls_from_history is not None:
                 filter_tool_calls(history_copy, agent.max_tool_calls_from_history)
@@ -1444,6 +1454,16 @@ async def aget_run_messages(
             # Tag each message as coming from history
             for _msg in history_copy:
                 _msg.from_history = True
+
+            # Refresh pre-signed URLs for media loaded from history
+            if agent.media_storage is not None:
+                from agno.media_storage.base import AsyncMediaStorage
+
+                if not isinstance(agent.media_storage, AsyncMediaStorage):
+                    from agno.utils.media_offload import refresh_message_media_urls
+
+                    for _msg in history_copy:
+                        refresh_message_media_urls(_msg, agent.media_storage)
 
             # Filter tool calls from history if limit is set (before adding to run_messages)
             if agent.max_tool_calls_from_history is not None:

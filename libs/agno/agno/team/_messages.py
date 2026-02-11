@@ -808,6 +808,16 @@ def _get_run_messages(
             for _msg in history_copy:
                 _msg.from_history = True
 
+            # Refresh pre-signed URLs for media loaded from history
+            if team.media_storage is not None:
+                from agno.media_storage.base import AsyncMediaStorage
+
+                if not isinstance(team.media_storage, AsyncMediaStorage):
+                    from agno.utils.media_offload import refresh_message_media_urls
+
+                    for _msg in history_copy:
+                        refresh_message_media_urls(_msg, team.media_storage)
+
             # Filter tool calls from history messages
             if team.max_tool_calls_from_history is not None:
                 filter_tool_calls(history_copy, team.max_tool_calls_from_history)
@@ -938,6 +948,16 @@ async def _aget_run_messages(
             # Tag each message as coming from history
             for _msg in history_copy:
                 _msg.from_history = True
+
+            # Refresh pre-signed URLs for media loaded from history
+            if team.media_storage is not None:
+                from agno.media_storage.base import AsyncMediaStorage
+
+                if not isinstance(team.media_storage, AsyncMediaStorage):
+                    from agno.utils.media_offload import refresh_message_media_urls
+
+                    for _msg in history_copy:
+                        refresh_message_media_urls(_msg, team.media_storage)
 
             # Filter tool calls from history messages
             if team.max_tool_calls_from_history is not None:
