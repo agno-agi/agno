@@ -1540,7 +1540,7 @@ class Knowledge(RemoteKnowledge):
 
         bytes_content = None
         if file_extension:
-            async with AsyncClient() as client:
+            async with AsyncClient(follow_redirects=True) as client:
                 response = await async_fetch_with_retry(content.url, client=client)
             bytes_content = BytesIO(response.content)
 

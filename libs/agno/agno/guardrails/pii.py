@@ -38,7 +38,7 @@ class PIIDetectionGuardrail(BaseGuardrail):
         if enable_credit_card_check:
             self.pii_patterns["Credit Card"] = re.compile(r"\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b")
         if enable_email_check:
-            self.pii_patterns["Email"] = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b")
+            self.pii_patterns["Email"] = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
         if enable_phone_check:
             self.pii_patterns["Phone"] = re.compile(r"\b\d{3}[\s.-]?\d{3}[\s.-]?\d{4}\b")
 
@@ -53,7 +53,7 @@ class PIIDetectionGuardrail(BaseGuardrail):
             if pattern.search(content):
                 detected_pii.append(pii_type)
         if detected_pii:
-            if self.mask_pii:
+            if self.mask_pii and isinstance(run_input.input_content, str):
                 for pii_type in detected_pii:
 
                     def mask_match(match):
@@ -77,7 +77,7 @@ class PIIDetectionGuardrail(BaseGuardrail):
             if pattern.search(content):
                 detected_pii.append(pii_type)
         if detected_pii:
-            if self.mask_pii:
+            if self.mask_pii and isinstance(run_input.input_content, str):
                 for pii_type in detected_pii:
 
                     def mask_match(match):

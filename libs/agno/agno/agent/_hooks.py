@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from agno.agent.agent import Agent
 
 from agno.exceptions import InputCheckError, OutputCheckError
+from agno.guardrails.base import BaseGuardrail
 from agno.run import RunContext
 from agno.run.agent import RunInput, RunOutput, RunOutputEvent
 from agno.session import AgentSession
@@ -36,6 +37,19 @@ from agno.utils.log import (
     log_error,
     log_exception,
 )
+
+
+def _is_guardrail_hook(hook: Callable[..., Any]) -> bool:
+    """Check if a hook is a bound method from a BaseGuardrail instance.
+
+    Handles both direct bound methods (guardrail.check) and functools.partial wrappers.
+    """
+    import functools
+
+    target = hook
+    while isinstance(target, functools.partial):
+        target = target.func
+    return isinstance(getattr(target, "__self__", None), BaseGuardrail)
 
 
 def execute_pre_hooks(
@@ -64,6 +78,7 @@ def execute_pre_hooks(
         "session": session,
         "user_id": user_id,
         "debug_mode": debug_mode or agent.debug_mode,
+        "metadata": run_context.metadata if run_context else None,
     }
 
     # Check if background_tasks is available and ALL hooks should run in background
@@ -73,6 +88,11 @@ def execute_pre_hooks(
         # Copy args to prevent race conditions
         bg_args = copy_args_for_background(all_args)
         for hook in hooks:
+            # Guardrails must run inline — their InputCheckError must propagate
+            if _is_guardrail_hook(hook):
+                filtered_args = filter_hook_args(hook, all_args)
+                hook(**filtered_args)
+                continue
             # Filter arguments to only include those that the hook accepts
             filtered_args = filter_hook_args(hook, bg_args)
 
@@ -84,7 +104,8 @@ def execute_pre_hooks(
 
     for i, hook in enumerate(hooks):
         # Check if this specific hook should run in background (via @hook decorator)
-        if should_run_hook_in_background(hook) and background_tasks is not None:
+        # Guardrails are never backgrounded — their errors must propagate
+        if should_run_hook_in_background(hook) and not _is_guardrail_hook(hook) and background_tasks is not None:
             # Copy args to prevent race conditions
             bg_args = copy_args_for_background(all_args)
             filtered_args = filter_hook_args(hook, bg_args)
@@ -159,6 +180,7 @@ async def aexecute_pre_hooks(
         "run_context": run_context,
         "user_id": user_id,
         "debug_mode": debug_mode or agent.debug_mode,
+        "metadata": run_context.metadata if run_context else None,
     }
 
     # Check if background_tasks is available and ALL hooks should run in background
@@ -168,6 +190,14 @@ async def aexecute_pre_hooks(
         # Copy args to prevent race conditions
         bg_args = copy_args_for_background(all_args)
         for hook in hooks:
+            # Guardrails must run inline — their InputCheckError must propagate
+            if _is_guardrail_hook(hook):
+                filtered_args = filter_hook_args(hook, all_args)
+                if iscoroutinefunction(hook):
+                    await hook(**filtered_args)
+                else:
+                    hook(**filtered_args)
+                continue
             # Filter arguments to only include those that the hook accepts
             filtered_args = filter_hook_args(hook, bg_args)
 
@@ -179,7 +209,8 @@ async def aexecute_pre_hooks(
 
     for i, hook in enumerate(hooks):
         # Check if this specific hook should run in background (via @hook decorator)
-        if should_run_hook_in_background(hook) and background_tasks is not None:
+        # Guardrails are never backgrounded — their errors must propagate
+        if should_run_hook_in_background(hook) and not _is_guardrail_hook(hook) and background_tasks is not None:
             # Copy args to prevent race conditions
             bg_args = copy_args_for_background(all_args)
             filtered_args = filter_hook_args(hook, bg_args)
@@ -258,6 +289,7 @@ def execute_post_hooks(
         "user_id": user_id,
         "run_context": run_context,
         "debug_mode": debug_mode or agent.debug_mode,
+        "metadata": run_context.metadata if run_context else None,
     }
 
     # Check if background_tasks is available and ALL hooks should run in background
@@ -266,6 +298,11 @@ def execute_post_hooks(
         # Copy args to prevent race conditions
         bg_args = copy_args_for_background(all_args)
         for hook in hooks:
+            # Guardrails must run inline — their OutputCheckError must propagate
+            if _is_guardrail_hook(hook):
+                filtered_args = filter_hook_args(hook, all_args)
+                hook(**filtered_args)
+                continue
             # Filter arguments to only include those that the hook accepts
             filtered_args = filter_hook_args(hook, bg_args)
 
@@ -277,7 +314,8 @@ def execute_post_hooks(
 
     for i, hook in enumerate(hooks):
         # Check if this specific hook should run in background (via @hook decorator)
-        if should_run_hook_in_background(hook) and background_tasks is not None:
+        # Guardrails are never backgrounded — their errors must propagate
+        if should_run_hook_in_background(hook) and not _is_guardrail_hook(hook) and background_tasks is not None:
             # Copy args to prevent race conditions
             bg_args = copy_args_for_background(all_args)
             filtered_args = filter_hook_args(hook, bg_args)
@@ -346,12 +384,21 @@ async def aexecute_post_hooks(
         "run_context": run_context,
         "user_id": user_id,
         "debug_mode": debug_mode or agent.debug_mode,
+        "metadata": run_context.metadata if run_context else None,
     }
     # Check if background_tasks is available and ALL hooks should run in background
     if agent._run_hooks_in_background is True and background_tasks is not None:
         # Copy args to prevent race conditions
         bg_args = copy_args_for_background(all_args)
         for hook in hooks:
+            # Guardrails must run inline — their OutputCheckError must propagate
+            if _is_guardrail_hook(hook):
+                filtered_args = filter_hook_args(hook, all_args)
+                if iscoroutinefunction(hook):
+                    await hook(**filtered_args)
+                else:
+                    hook(**filtered_args)
+                continue
             # Filter arguments to only include those that the hook accepts
             filtered_args = filter_hook_args(hook, bg_args)
 
@@ -363,7 +410,8 @@ async def aexecute_post_hooks(
 
     for i, hook in enumerate(hooks):
         # Check if this specific hook should run in background (via @hook decorator)
-        if should_run_hook_in_background(hook) and background_tasks is not None:
+        # Guardrails are never backgrounded — their errors must propagate
+        if should_run_hook_in_background(hook) and not _is_guardrail_hook(hook) and background_tasks is not None:
             # Copy args to prevent race conditions
             bg_args = copy_args_for_background(all_args)
             filtered_args = filter_hook_args(hook, bg_args)
