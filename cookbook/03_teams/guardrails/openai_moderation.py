@@ -1,15 +1,12 @@
 """
-Example demonstrating how to use OpenAI moderation guardrails with Agno Team.
+OpenAI Moderation
+=============================
 
-This example shows how to:
-1. Detect and block content that violates OpenAI's content policy
-2. Handle both text and image content moderation
-3. Configure moderation for specific categories
-4. Use both sync and async moderation checks
-5. Customize moderation models and sensitivity settings
+Demonstrates OpenAI moderation guardrails for team inputs.
 """
 
 import asyncio
+import json
 
 from agno.exceptions import InputCheckError
 from agno.guardrails import OpenAIModerationGuardrail
@@ -17,22 +14,45 @@ from agno.media import Image
 from agno.models.openai import OpenAIChat
 from agno.team import Team
 
+# ---------------------------------------------------------------------------
+# Create Team
+# ---------------------------------------------------------------------------
+basic_team = Team(
+    name="Basic Moderated Team",
+    members=[],
+    model=OpenAIChat(id="gpt-5.2"),
+    pre_hooks=[OpenAIModerationGuardrail()],
+    description="A team with basic OpenAI content moderation.",
+    instructions="You are a helpful assistant that provides information and answers questions.",
+)
 
-async def main():
+custom_team = Team(
+    name="Custom Moderated Team",
+    members=[],
+    model=OpenAIChat(id="gpt-5.2"),
+    pre_hooks=[
+        OpenAIModerationGuardrail(
+            raise_for_categories=[
+                "violence",
+                "violence/graphic",
+                "hate",
+                "hate/threatening",
+            ]
+        )
+    ],
+    description="A team that only moderates violence and hate speech.",
+    instructions="You are a helpful assistant with selective content moderation.",
+)
+
+
+# ---------------------------------------------------------------------------
+# Run Team
+# ---------------------------------------------------------------------------
+async def main() -> None:
     """Demonstrate OpenAI moderation guardrails functionality."""
     print("OpenAI Moderation Guardrails Demo")
     print("=" * 50)
 
-    basic_team = Team(
-        name="Basic Moderated Team",
-        members=[],
-        model=OpenAIChat(id="gpt-5.2"),
-        pre_hooks=[OpenAIModerationGuardrail()],
-        description="A team with basic OpenAI content moderation.",
-        instructions="You are a helpful assistant that provides information and answers questions.",
-    )
-
-    # Test 1: Basic text moderation with default settings
     print("\n[TEST 1] Normal request without policy violations")
     print("-" * 50)
 
@@ -44,7 +64,6 @@ async def main():
     except InputCheckError as e:
         print(f"[ERROR] Unexpected moderation error: {e.message}")
 
-    # Test 2: Text that might trigger violence category
     print("\n[TEST 2] Content with potential violence references")
     print("-" * 50)
     try:
@@ -56,7 +75,6 @@ async def main():
         print(f"[BLOCKED] Violent content blocked: {e.message[:100]}...")
         print(f"   Trigger: {e.check_trigger}")
 
-    # Test 3: Text that might trigger hate speech category
     print("\n[TEST 3] Content with potential hate speech")
     print("-" * 50)
     try:
@@ -68,27 +86,8 @@ async def main():
         print(f"[BLOCKED] Hate speech blocked: {e.message[:100]}...")
         print(f"   Trigger: {e.check_trigger}")
 
-    # Test 4: Custom categories - only moderate specific categories
     print("\n[TEST 4] Custom moderation categories (violence only)")
     print("-" * 50)
-
-    custom_team = Team(
-        name="Custom Moderated Team",
-        members=[],
-        model=OpenAIChat(id="gpt-5.2"),
-        pre_hooks=[
-            OpenAIModerationGuardrail(
-                raise_for_categories=[
-                    "violence",
-                    "violence/graphic",
-                    "hate",
-                    "hate/threatening",
-                ]
-            )
-        ],
-        description="A team that only moderates violence and hate speech.",
-        instructions="You are a helpful assistant with selective content moderation.",
-    )
 
     try:
         unsafe_image = Image(
@@ -98,13 +97,10 @@ async def main():
             input="What do you see in this image?", images=[unsafe_image]
         )
     except InputCheckError as e:
-        import json
-
         print(f"[BLOCKED] Violence blocked: {e.message[:100]}...")
         print(f"   {json.dumps(e.additional_data, indent=2)}")
         print(f"   Trigger: {e.check_trigger}")
 
 
 if __name__ == "__main__":
-    # Run async main demo
     asyncio.run(main())

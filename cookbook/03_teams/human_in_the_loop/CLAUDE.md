@@ -1,6 +1,6 @@
 # CLAUDE.md - Team Human-in-the-Loop Cookbook
 
-Instructions for testing the Team HITL cookbooks.
+Instructions for Claude Code when testing the Team HITL cookbooks.
 
 ---
 
@@ -10,42 +10,58 @@ Instructions for testing the Team HITL cookbooks.
 ```bash
 # Virtual environment with all dependencies
 .venvs/demo/bin/python
-
-# Required environment variable
-export OPENAI_API_KEY=your-key
 ```
 
 **Run a cookbook:**
 ```bash
 .venvs/demo/bin/python cookbook/03_teams/human_in_the_loop/confirmation_required.py
+.venvs/demo/bin/python cookbook/03_teams/human_in_the_loop/external_tool_execution.py
+.venvs/demo/bin/python cookbook/03_teams/human_in_the_loop/user_input_required.py
+```
+
+**Test results file:**
+```
+cookbook/03_teams/human_in_the_loop/TEST_LOG.md
 ```
 
 ---
 
-## Cookbook Files
+## Testing Workflow
 
-| File | What It Tests |
-|------|---------------|
-| `confirmation_required.py` | Member agent tool pause + confirm + continue_run |
-| `confirmation_required_async.py` | Async variant of confirmation flow |
-| `confirmation_rejected.py` | Member agent tool pause + reject with note + continue_run |
-| `user_input_required.py` | Member agent tool pause + provide_user_input + continue_run |
-| `external_tool_execution.py` | Member agent tool pause + set_external_execution_result + continue_run |
-| `team_tool_confirmation.py` | Team-level tool pause + confirm + continue_run |
+### 1. Before Testing
+
+- Ensure the virtual environment exists (run `./scripts/demo_setup.sh` if needed)
+- Set `OPENAI_API_KEY` environment variable
+
+### 2. Running Tests
+
+Each script is interactive and requires terminal input:
+- **confirmation_required.py** -- Prompts y/n to approve/deny a weather lookup
+- **external_tool_execution.py** -- Prompts for the result of an external email send
+- **user_input_required.py** -- Prompts for destination and budget values
+
+### 3. Expected Behavior
+
+All three examples follow the same pattern:
+1. Team delegates task to a member agent
+2. Member encounters a HITL tool and pauses
+3. Pause propagates to the team level with member context
+4. User resolves the requirement (confirm/reject, provide input, or provide result)
+5. `team.continue_run()` routes the resolution back to the member and completes
+
+### 4. Known Issues
+
+- These examples use SQLite (`tmp/team_hitl.db`) for session persistence
+- The `tmp/` directory must be writable (created automatically)
 
 ---
 
-## Expected Behavior
+## Code Locations
 
-Each cookbook should:
-1. Print that the team is paused
-2. Show the tool name and arguments (or fields needed)
-3. Print the final result after continue_run completes
-
-If the model does not invoke the HITL tool, the response will print directly without pausing. This depends on model behavior.
-
----
-
-## No Database Required
-
-These examples do not require a database. They use in-memory sessions only.
+| What | Where |
+|------|-------|
+| RunRequirement | `libs/agno/agno/run/requirement.py` |
+| Team HITL pause handlers | `libs/agno/agno/team/_hooks.py` |
+| Team continue_run dispatch | `libs/agno/agno/team/_run.py` |
+| Member pause propagation | `libs/agno/agno/team/_tools.py` |
+| Integration tests | `libs/agno/tests/integration/teams/human_in_the_loop/` |

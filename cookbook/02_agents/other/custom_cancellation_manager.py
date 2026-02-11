@@ -26,6 +26,10 @@ from agno.run.agent import RunEvent
 from agno.run.cancel import set_cancellation_manager
 from agno.run.cancellation_management.base import BaseRunCancellationManager
 
+# ---------------------------------------------------------------------------
+# Create Custom Cancellation Manager
+# ---------------------------------------------------------------------------
+
 
 class FileBasedCancellationManager(BaseRunCancellationManager):
     """A cancellation manager that persists state to a JSON file.
@@ -101,6 +105,11 @@ class FileBasedCancellationManager(BaseRunCancellationManager):
 
     async def aget_active_runs(self) -> Dict[str, bool]:
         return self.get_active_runs()
+
+
+# ---------------------------------------------------------------------------
+# Run the Example
+# ---------------------------------------------------------------------------
 
 
 def main():

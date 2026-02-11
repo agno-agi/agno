@@ -1,9 +1,20 @@
+"""
+Anthropic Structured Output
+===========================
+
+Cookbook example for `anthropic/structured_output.py`.
+"""
+
 from typing import List
 
 from agno.agent import Agent, RunOutput  # noqa
 from agno.models.anthropic import Claude
 from pydantic import BaseModel, Field
 from rich.pretty import pprint  # noqa
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 
 class MovieScript(BaseModel):
@@ -31,7 +42,15 @@ movie_agent = Agent(
     output_schema=MovieScript,
 )
 
-movie_agent.print_response("New York")
-
 # You can also get the response in a variable:
 # run: RunOutput = movie_agent.run("New York")
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    # --- Sync ---
+    movie_agent.print_response("New York")
+
+    # --- Sync + Streaming ---
+    movie_agent.print_response("New York", stream=True)

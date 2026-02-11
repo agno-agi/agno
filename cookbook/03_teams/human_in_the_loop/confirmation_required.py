@@ -1,51 +1,87 @@
-"""Team HITL: Member agent tool requiring confirmation before execution.
+"""
+Confirmation Required
+=============================
 
-This example demonstrates how a team pauses when a member agent's tool
-requires human confirmation. After confirmation the team resumes with
-continue_run().
+Demonstrates team-level pause/continue flow for confirmation-required member tools.
 """
 
 from agno.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
-from agno.team.team import Team
+from agno.team import Team
 from agno.tools import tool
+from agno.utils import pprint
+from rich.console import Console
+from rich.prompt import Prompt
+
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
+console = Console()
+
+db = SqliteDb(session_table="team_hitl_sessions", db_file="tmp/team_hitl.db")
 
 
 @tool(requires_confirmation=True)
-def deploy_to_production(app_name: str, version: str) -> str:
-    """Deploy an application to production.
-
-    Args:
-        app_name (str): Name of the application
-        version (str): Version to deploy
-    """
-    return f"Successfully deployed {app_name} v{version} to production"
+def get_the_weather(city: str) -> str:
+    """Get the current weather for a city."""
+    return f"It is currently 70 degrees and cloudy in {city}"
 
 
-deploy_agent = Agent(
-    name="Deploy Agent",
-    role="Handles deployments to production",
-    model=OpenAIChat(id="gpt-4o-mini"),
-    tools=[deploy_to_production],
+# ---------------------------------------------------------------------------
+# Create Members
+# ---------------------------------------------------------------------------
+weather_agent = Agent(
+    name="WeatherAgent",
+    model=OpenAIChat(id="gpt-4o"),
+    tools=[get_the_weather],
+    db=db,
+    telemetry=False,
 )
 
+# ---------------------------------------------------------------------------
+# Create Team
+# ---------------------------------------------------------------------------
 team = Team(
-    name="DevOps Team",
-    members=[deploy_agent],
-    model=OpenAIChat(id="gpt-4o-mini"),
+    name="WeatherTeam",
+    model=OpenAIChat(id="gpt-4o"),
+    members=[weather_agent],
+    db=db,
+    telemetry=False,
+    add_history_to_context=True,
 )
 
-response = team.run("Deploy the payments app version 2.1 to production")
+# ---------------------------------------------------------------------------
+# Run Team
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    session_id = "team_weather_session"
+    run_response = team.run("What is the weather in Tokyo?", session_id=session_id)
 
-if response.is_paused:
-    print("Team paused - requires confirmation")
-    for req in response.requirements:
-        if req.needs_confirmation:
-            print(f"  Tool: {req.tool_execution.tool_name}")
-            print(f"  Args: {req.tool_execution.tool_args}")
-            req.confirm()
+    if run_response.is_paused:
+        console.print("[bold yellow]Team is paused - member needs confirmation[/]")
 
-    response = team.continue_run(response)
-    print(f"Result: {response.content}")
-else:
-    print(f"Result: {response.content}")
+        for requirement in run_response.active_requirements:
+            if requirement.needs_confirmation:
+                console.print(
+                    f"Member [bold cyan]{requirement.member_agent_name}[/] wants to call "
+                    f"[bold blue]{requirement.tool_execution.tool_name}"
+                    f"({requirement.tool_execution.tool_args})[/]"
+                )
+
+                message = (
+                    Prompt.ask(
+                        "Do you want to approve?", choices=["y", "n"], default="y"
+                    )
+                    .strip()
+                    .lower()
+                )
+
+                if message == "n":
+                    requirement.reject(note="User declined")
+                else:
+                    requirement.confirm()
+
+        run_response = team.continue_run(run_response)
+
+    pprint.pprint_run_response(run_response)

@@ -355,6 +355,7 @@ integration-tests = [
 # Dependencies for demo application
 demo = [
     "agno[dev]",
+    "agno[scheduler]",
     "anthropic",
     "chromadb",
     "ddgs",
