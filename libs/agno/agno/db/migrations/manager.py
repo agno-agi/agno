@@ -93,6 +93,8 @@ class MigrationManager:
                     migration_executed = await self._up_migration(version, table_type, table_name)
                     latest_version = normalised_version.public
                     if migration_executed:
+                        any_migration_executed = True
+                        latest_version = normalised_version.public
                         log_info(f"Successfully applied migration {normalised_version} on table {table_name}")
                     else:
                         log_info(f"Skipping application of migration {normalised_version} on table {table_name}")
