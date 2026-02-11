@@ -323,7 +323,6 @@ def get_table_schema_definition(
         "component_links": COMPONENT_LINKS_TABLE_SCHEMA,
         "learnings": LEARNINGS_TABLE_SCHEMA,
         "schedules": SCHEDULE_TABLE_SCHEMA,
-        "schedule_runs": SCHEDULE_RUNS_TABLE_SCHEMA,
         "approvals": APPROVAL_TABLE_SCHEMA,
     }
     schema = schemas.get(table_type, {})
