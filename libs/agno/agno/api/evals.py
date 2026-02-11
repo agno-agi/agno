@@ -20,3 +20,13 @@ async def async_create_eval_run_telemetry(eval_run: EvalRunCreate) -> None:
             await api_client.post(ApiRoutes.EVAL_RUN_CREATE, json=eval_run.model_dump(exclude_none=True))
         except Exception as e:
             log_debug(f"Could not create evaluation run: {e}")
+
+
+def fire_and_forget_eval_telemetry(eval_run: EvalRunCreate) -> None:
+    """Fire-and-forget eval telemetry. Works from both sync and async contexts."""
+    from agno.api._executor import get_telemetry_executor
+
+    try:
+        get_telemetry_executor().submit(create_eval_run_telemetry, eval_run)
+    except Exception as e:
+        log_debug(f"Could not submit eval telemetry event: {e}")

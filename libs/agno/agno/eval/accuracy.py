@@ -457,9 +457,9 @@ Remember: You must only compare the agent_output to the expected_output. The exp
             )
 
         if self.telemetry:
-            from agno.api.evals import EvalRunCreate, create_eval_run_telemetry
+            from agno.api.evals import EvalRunCreate, fire_and_forget_eval_telemetry
 
-            create_eval_run_telemetry(
+            fire_and_forget_eval_telemetry(
                 eval_run=EvalRunCreate(
                     run_id=self.eval_id,
                     eval_type=EvalType.ACCURACY,
@@ -602,9 +602,9 @@ Remember: You must only compare the agent_output to the expected_output. The exp
             )
 
         if self.telemetry:
-            from agno.api.evals import EvalRunCreate, async_create_eval_run_telemetry
+            from agno.api.evals import EvalRunCreate, fire_and_forget_eval_telemetry
 
-            await async_create_eval_run_telemetry(
+            fire_and_forget_eval_telemetry(
                 eval_run=EvalRunCreate(run_id=self.eval_id, eval_type=EvalType.ACCURACY),
             )
 
@@ -721,9 +721,9 @@ Remember: You must only compare the agent_output to the expected_output. The exp
                 )
 
         if self.telemetry:
-            from agno.api.evals import EvalRunCreate, create_eval_run_telemetry
+            from agno.api.evals import EvalRunCreate, fire_and_forget_eval_telemetry
 
-            create_eval_run_telemetry(
+            fire_and_forget_eval_telemetry(
                 eval_run=EvalRunCreate(
                     run_id=self.eval_id,
                     eval_type=EvalType.ACCURACY,

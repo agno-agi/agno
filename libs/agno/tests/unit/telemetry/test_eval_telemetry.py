@@ -16,7 +16,7 @@ def test_accuracy_evals_telemetry():
     assert accuracy_eval.telemetry
 
     # Mock the API call that gets made when telemetry is enabled
-    with patch("agno.api.evals.create_eval_run_telemetry") as mock_create:
+    with patch("agno.api.evals.fire_and_forget_eval_telemetry") as mock_create:
         agent.model = MagicMock()
         accuracy_eval.run(print_summary=False, print_results=False)
 
@@ -39,7 +39,7 @@ def test_performance_evals_telemetry():
     assert performance_eval.telemetry
 
     # Mock the API call that gets made when telemetry is enabled
-    with patch("agno.api.evals.create_eval_run_telemetry") as mock_create:
+    with patch("agno.api.evals.fire_and_forget_eval_telemetry") as mock_create:
         performance_eval.run()
 
         # Verify API was called with correct parameters
@@ -67,7 +67,7 @@ def test_reliability_evals_telemetry():
     assert reliability_eval.telemetry
 
     # Mock the API call that gets made when telemetry is enabled
-    with patch("agno.api.evals.create_eval_run_telemetry") as mock_create:
+    with patch("agno.api.evals.fire_and_forget_eval_telemetry") as mock_create:
         reliability_eval.run(print_results=False)
 
         # Verify API was called with correct parameters
@@ -92,7 +92,7 @@ def test_agent_as_judge_numeric_telemetry():
     evaluator.model = MagicMock()
 
     # Mock the API call that gets made when telemetry is enabled
-    with patch("agno.api.evals.create_eval_run_telemetry") as mock_create:
+    with patch("agno.api.evals.fire_and_forget_eval_telemetry") as mock_create:
         eval.run(input="What is Python?", output="Python is a programming language.", print_results=False)
 
         # Verify API was called with correct parameters
@@ -115,7 +115,7 @@ def test_agent_as_judge_binary_telemetry():
     evaluator.model = MagicMock()
 
     # Mock the API call that gets made when telemetry is enabled
-    with patch("agno.api.evals.create_eval_run_telemetry") as mock_create:
+    with patch("agno.api.evals.fire_and_forget_eval_telemetry") as mock_create:
         eval.run(input="Tell me about privacy", output="Privacy is important.", print_results=False)
 
         # Verify API was called with correct parameters

@@ -39,7 +39,7 @@ def get_telemetry_data(team: "Team") -> Dict[str, Any]:
 
 
 def log_team_telemetry(team: "Team", session_id: str, run_id: Optional[str] = None) -> None:
-    """Send a telemetry event to the API for a created Team run"""
+    """Fire-and-forget telemetry event for a created Team run."""
 
     from agno.team._init import _set_telemetry
 
@@ -47,18 +47,18 @@ def log_team_telemetry(team: "Team", session_id: str, run_id: Optional[str] = No
     if not team.telemetry:
         return
 
+    from agno.api._executor import get_telemetry_executor
     from agno.api.team import TeamRunCreate, create_team_run
 
     try:
-        create_team_run(
-            run=TeamRunCreate(session_id=session_id, run_id=run_id, data=get_telemetry_data(team)),
-        )
+        run = TeamRunCreate(session_id=session_id, run_id=run_id, data=get_telemetry_data(team))
+        get_telemetry_executor().submit(create_team_run, run)
     except Exception as e:
-        log_debug(f"Could not create Team run telemetry event: {e}")
+        log_debug(f"Could not submit Team run telemetry event: {e}")
 
 
 async def alog_team_telemetry(team: "Team", session_id: str, run_id: Optional[str] = None) -> None:
-    """Send a telemetry event to the API for a created Team async run"""
+    """Fire-and-forget telemetry event for a created Team async run."""
 
     from agno.team._init import _set_telemetry
 
@@ -66,9 +66,11 @@ async def alog_team_telemetry(team: "Team", session_id: str, run_id: Optional[st
     if not team.telemetry:
         return
 
-    from agno.api.team import TeamRunCreate, acreate_team_run
+    from agno.api._executor import get_telemetry_executor
+    from agno.api.team import TeamRunCreate, create_team_run
 
     try:
-        await acreate_team_run(run=TeamRunCreate(session_id=session_id, run_id=run_id, data=get_telemetry_data(team)))
+        run = TeamRunCreate(session_id=session_id, run_id=run_id, data=get_telemetry_data(team))
+        get_telemetry_executor().submit(create_team_run, run)
     except Exception as e:
-        log_debug(f"Could not create Team run telemetry event: {e}")
+        log_debug(f"Could not submit Team run telemetry event: {e}")

@@ -37,44 +37,44 @@ def get_telemetry_data(agent: Agent) -> Dict[str, Any]:
 
 
 def log_agent_telemetry(agent: Agent, session_id: str, run_id: Optional[str] = None) -> None:
-    """Send a telemetry event to the API for a created Agent run."""
+    """Fire-and-forget telemetry event for a created Agent run."""
     from agno.agent import _init
 
     _init.set_telemetry(agent)
     if not agent.telemetry:
         return
 
+    from agno.api._executor import get_telemetry_executor
     from agno.api.agent import AgentRunCreate, create_agent_run
 
     try:
-        create_agent_run(
-            run=AgentRunCreate(
-                session_id=session_id,
-                run_id=run_id,
-                data=get_telemetry_data(agent),
-            ),
+        run = AgentRunCreate(
+            session_id=session_id,
+            run_id=run_id,
+            data=get_telemetry_data(agent),
         )
+        get_telemetry_executor().submit(create_agent_run, run)
     except Exception as e:
-        log_debug(f"Could not create Agent run telemetry event: {e}")
+        log_debug(f"Could not submit Agent run telemetry event: {e}")
 
 
 async def alog_agent_telemetry(agent: Agent, session_id: str, run_id: Optional[str] = None) -> None:
-    """Send a telemetry event to the API for a created Agent async run."""
+    """Fire-and-forget telemetry event for a created Agent async run."""
     from agno.agent import _init
 
     _init.set_telemetry(agent)
     if not agent.telemetry:
         return
 
-    from agno.api.agent import AgentRunCreate, acreate_agent_run
+    from agno.api._executor import get_telemetry_executor
+    from agno.api.agent import AgentRunCreate, create_agent_run
 
     try:
-        await acreate_agent_run(
-            run=AgentRunCreate(
-                session_id=session_id,
-                run_id=run_id,
-                data=get_telemetry_data(agent),
-            )
+        run = AgentRunCreate(
+            session_id=session_id,
+            run_id=run_id,
+            data=get_telemetry_data(agent),
         )
+        get_telemetry_executor().submit(create_agent_run, run)
     except Exception as e:
-        log_debug(f"Could not create Agent run telemetry event: {e}")
+        log_debug(f"Could not submit Agent run telemetry event: {e}")

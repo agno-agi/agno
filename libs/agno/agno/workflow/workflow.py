@@ -4682,36 +4682,36 @@ class Workflow:
         }
 
     def _log_workflow_telemetry(self, session_id: str, run_id: Optional[str] = None) -> None:
-        """Send a telemetry event to the API for a created Workflow run"""
+        """Fire-and-forget telemetry event for a created Workflow run."""
 
         self._set_telemetry()
         if not self.telemetry:
             return
 
+        from agno.api._executor import get_telemetry_executor
         from agno.api.workflow import WorkflowRunCreate, create_workflow_run
 
         try:
-            create_workflow_run(
-                workflow=WorkflowRunCreate(session_id=session_id, run_id=run_id, data=self._get_telemetry_data()),
-            )
+            workflow = WorkflowRunCreate(session_id=session_id, run_id=run_id, data=self._get_telemetry_data())
+            get_telemetry_executor().submit(create_workflow_run, workflow)
         except Exception as e:
-            log_debug(f"Could not create Workflow run telemetry event: {e}")
+            log_debug(f"Could not submit Workflow run telemetry event: {e}")
 
     async def _alog_workflow_telemetry(self, session_id: str, run_id: Optional[str] = None) -> None:
-        """Send a telemetry event to the API for a created Workflow async run"""
+        """Fire-and-forget telemetry event for a created Workflow async run."""
 
         self._set_telemetry()
         if not self.telemetry:
             return
 
-        from agno.api.workflow import WorkflowRunCreate, acreate_workflow_run
+        from agno.api._executor import get_telemetry_executor
+        from agno.api.workflow import WorkflowRunCreate, create_workflow_run
 
         try:
-            await acreate_workflow_run(
-                workflow=WorkflowRunCreate(session_id=session_id, run_id=run_id, data=self._get_telemetry_data())
-            )
+            workflow = WorkflowRunCreate(session_id=session_id, run_id=run_id, data=self._get_telemetry_data())
+            get_telemetry_executor().submit(create_workflow_run, workflow)
         except Exception as e:
-            log_debug(f"Could not create Workflow run telemetry event: {e}")
+            log_debug(f"Could not submit Workflow run telemetry event: {e}")
 
     def cli_app(
         self,

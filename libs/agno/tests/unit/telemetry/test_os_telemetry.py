@@ -1,4 +1,4 @@
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from agno.agent.agent import Agent
 from agno.os import AgentOS
@@ -8,14 +8,17 @@ def test_accuracy_evals_telemetry():
     """Test that telemetry logging is called when initializing an AgentOS instance."""
     agent = Agent()
 
-    # Mock the API call that gets made when telemetry is enabled
-    with patch("agno.api.os.log_os_telemetry") as mock_create:
+    mock_executor = MagicMock()
+
+    # Mock the executor so we can verify submit was called
+    with patch("agno.api._executor.get_telemetry_executor", return_value=mock_executor):
         os = AgentOS(id="test", agents=[agent])
 
         # Assert telemetry is active by default
         assert os.telemetry
 
-        # Verify API was called with correct parameters
-        mock_create.assert_called_once()
-        call_args = mock_create.call_args[1]["launch"]
-        assert call_args.os_id == "test"
+        # Verify submit was called on the executor
+        mock_executor.submit.assert_called_once()
+        call_args = mock_executor.submit.call_args
+        # First positional arg is the function, keyword arg is launch
+        assert call_args.kwargs["launch"].os_id == "test"
