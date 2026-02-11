@@ -277,7 +277,7 @@ def get_team_router(
                     status_code=400, detail="Background execution requires a database to be configured on the team"
                 )
 
-            run_response = await team.arun(
+            run_response = await team.arun(  # type: ignore[misc]
                 input=message,
                 session_id=session_id,
                 user_id=user_id,
@@ -321,7 +321,7 @@ def get_team_router(
                 kwargs["auth_token"] = auth_token
 
             try:
-                run_response = await team.arun(
+                run_response = await team.arun(  # type: ignore[misc]
                     input=message,
                     session_id=session_id,
                     user_id=user_id,

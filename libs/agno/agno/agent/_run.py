@@ -2110,7 +2110,7 @@ async def _arun_stream(
                     ):
                         yield item
 
-                    async for item in ahandle_agent_run_paused_stream(
+                    async for item in ahandle_agent_run_paused_stream(  # type: ignore[assignment]
                         agent,
                         run_response=run_response,
                         session=agent_session,

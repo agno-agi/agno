@@ -151,7 +151,7 @@ return existed
         key = self._get_key(run_id)
 
         # Atomic: check existence then set to "1" in a single round-trip
-        was_registered = bool(await client.eval(self._CANCEL_LUA, 1, key, self.ttl_seconds or 0))
+        was_registered = bool(await client.eval(self._CANCEL_LUA, 1, key, self.ttl_seconds or 0))  # type: ignore[misc]
 
         if was_registered:
             logger.info(f"Run {run_id} marked for cancellation")
