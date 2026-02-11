@@ -14,7 +14,7 @@ Environment:
 """
 
 from agno.agent import Agent
-from agno.db.postgres import PostgresDb
+# from agno.db.postgres import PostgresDb
 from agno.db.sqlite import SqliteDb
 from agno.media import Image
 from agno.media_storage.s3 import S3MediaStorage
