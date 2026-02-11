@@ -25,6 +25,18 @@ if TYPE_CHECKING:
 from agno.utils.log import log_debug, log_warning
 
 
+def _get_or_create_cache(entity: Any, attr: str) -> Dict[str, Any]:
+    """Get or create a cache dict on the entity, ensuring it persists across calls."""
+    cache = getattr(entity, attr, None)
+    if cache is None:
+        cache = {}
+        try:
+            object.__setattr__(entity, attr, cache)
+        except (AttributeError, TypeError):
+            pass  # Entity doesn't support attribute setting; cache will be per-call
+    return cache
+
+
 def is_callable_factory(value: Any, excluded_types: Tuple[type, ...] = ()) -> bool:
     """Check if a value is a callable factory (not a tool/knowledge instance).
 
@@ -208,7 +220,7 @@ def resolve_callable_tools(entity: Any, run_context: "RunContext") -> None:
 
     custom_key_fn = getattr(entity, "callable_tools_cache_key", None)
     cache_enabled = getattr(entity, "cache_callables", True)
-    cache = getattr(entity, "_callable_tools_cache", {})
+    cache = _get_or_create_cache(entity, "_callable_tools_cache")
 
     cache_key = _compute_cache_key(entity, run_context, custom_key_fn)
 
@@ -246,7 +258,7 @@ async def aresolve_callable_tools(entity: Any, run_context: "RunContext") -> Non
 
     custom_key_fn = getattr(entity, "callable_tools_cache_key", None)
     cache_enabled = getattr(entity, "cache_callables", True)
-    cache = getattr(entity, "_callable_tools_cache", {})
+    cache = _get_or_create_cache(entity, "_callable_tools_cache")
 
     cache_key = await _acompute_cache_key(entity, run_context, custom_key_fn)
 
@@ -289,7 +301,7 @@ def resolve_callable_knowledge(entity: Any, run_context: "RunContext") -> None:
 
     custom_key_fn = getattr(entity, "callable_knowledge_cache_key", None)
     cache_enabled = getattr(entity, "cache_callables", True)
-    cache = getattr(entity, "_callable_knowledge_cache", {})
+    cache = _get_or_create_cache(entity, "_callable_knowledge_cache")
 
     cache_key = _compute_cache_key(entity, run_context, custom_key_fn)
 
@@ -327,7 +339,7 @@ async def aresolve_callable_knowledge(entity: Any, run_context: "RunContext") ->
 
     custom_key_fn = getattr(entity, "callable_knowledge_cache_key", None)
     cache_enabled = getattr(entity, "cache_callables", True)
-    cache = getattr(entity, "_callable_knowledge_cache", {})
+    cache = _get_or_create_cache(entity, "_callable_knowledge_cache")
 
     cache_key = await _acompute_cache_key(entity, run_context, custom_key_fn)
 
@@ -368,7 +380,7 @@ def resolve_callable_members(entity: Any, run_context: "RunContext") -> None:
 
     custom_key_fn = getattr(entity, "callable_members_cache_key", None)
     cache_enabled = getattr(entity, "cache_callables", True)
-    cache = getattr(entity, "_callable_members_cache", {})
+    cache = _get_or_create_cache(entity, "_callable_members_cache")
 
     cache_key = _compute_cache_key(entity, run_context, custom_key_fn)
 
@@ -405,7 +417,7 @@ async def aresolve_callable_members(entity: Any, run_context: "RunContext") -> N
 
     custom_key_fn = getattr(entity, "callable_members_cache_key", None)
     cache_enabled = getattr(entity, "cache_callables", True)
-    cache = getattr(entity, "_callable_members_cache", {})
+    cache = _get_or_create_cache(entity, "_callable_members_cache")
 
     cache_key = await _acompute_cache_key(entity, run_context, custom_key_fn)
 

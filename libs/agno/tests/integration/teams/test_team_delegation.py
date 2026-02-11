@@ -181,7 +181,8 @@ async def test_async_delegate_to_all_members_agent_identity():
         model=OpenAIChat("gpt-4o-mini"),
         members=agents,
         delegate_to_all_members=True,
-        respond_directly=True,
+        # Force the model to use the delegation tool
+        tool_choice={"type": "function", "function": {"name": "delegate_task_to_members"}},
         instructions=[
             "Delegate to all members and collect their responses.",
             "Do not modify their responses.",
@@ -194,15 +195,16 @@ async def test_async_delegate_to_all_members_agent_identity():
     assert response is not None
     assert response.content is not None
 
-    # The tool result should contain responses from all 3 agents
-    # Each response should include the correct agent name
+    # Delegation should have happened since we forced tool_choice
     content = str(response.content)
+    tool_results = " ".join(str(t.result) for t in response.tools if t.result) if response.tools else ""
+    combined = content + " " + tool_results
 
     # Verify all three agent identities appear in the response
-    # Before the fix, all would show "Worker3"
-    assert "Worker1" in content, f"Worker1 not found in response: {content}"
-    assert "Worker2" in content, f"Worker2 not found in response: {content}"
-    assert "Worker3" in content, f"Worker3 not found in response: {content}"
+    # Before the fix, all would show "Worker3" - now each should have correct identity
+    assert "Worker1" in combined, f"Worker1 not found in response: {combined}"
+    assert "Worker2" in combined, f"Worker2 not found in response: {combined}"
+    assert "Worker3" in combined, f"Worker3 not found in response: {combined}"
 
 
 @pytest.mark.asyncio
@@ -233,7 +235,8 @@ async def test_async_delegate_to_all_members_streaming_agent_identity():
         model=OpenAIChat("gpt-4o-mini"),
         members=agents,
         delegate_to_all_members=True,
-        respond_directly=True,
+        # Force the model to use the delegation tool
+        tool_choice={"type": "function", "function": {"name": "delegate_task_to_members"}},
         instructions=[
             "Delegate to all members and collect their responses.",
             "Do not modify their responses.",
@@ -250,10 +253,10 @@ async def test_async_delegate_to_all_members_streaming_agent_identity():
     full_content = " ".join(collected_content)
 
     # Verify all three agent identities appear
-    # Before the fix in streaming mode, knowledge_filters check would use wrong agent
-    assert "StreamWorker1" in full_content or len(collected_content) > 0, (
-        f"StreamWorker1 not found. Content: {full_content}"
-    )
+    # Before the fix in streaming mode, all would show "StreamWorker3"
+    assert "StreamWorker1" in full_content, f"StreamWorker1 not found in response: {full_content}"
+    assert "StreamWorker2" in full_content, f"StreamWorker2 not found in response: {full_content}"
+    assert "StreamWorker3" in full_content, f"StreamWorker3 not found in response: {full_content}"
 
 
 @pytest.mark.asyncio
@@ -298,12 +301,22 @@ async def test_async_delegate_to_all_members_with_tools():
         model=OpenAIChat("gpt-4o-mini"),
         members=agents,
         delegate_to_all_members=True,
-        respond_directly=True,
+        # Force the model to use the delegation tool
+        tool_choice={"type": "function", "function": {"name": "delegate_task_to_members"}},
         instructions=["Delegate to all members."],
     )
 
     response = await team.arun("Use your identify tool.", stream=False)
 
     assert response is not None
-    # The test passes if we get a valid response without errors
-    # The specific content depends on whether agents use their tools
+    assert response.content is not None
+
+    # Check that delegation happened and tools were called
+    content = str(response.content)
+    tool_results = " ".join(str(t.result) for t in response.tools if t.result) if response.tools else ""
+    combined = content + " " + tool_results
+
+    # Verify agent identities appear (tools should have been called)
+    assert "ToolAgent1" in combined or "ToolAgent2" in combined or "ToolAgent3" in combined, (
+        f"No ToolAgent identity found in response: {combined}"
+    )
