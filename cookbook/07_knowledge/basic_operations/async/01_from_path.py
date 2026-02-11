@@ -25,7 +25,6 @@ knowledge = Knowledge(
     description="Agno 2.0 Knowledge Implementation",
     vector_db=vector_db,
     contents_db=contents_db,
-    isolate_vector_search=True,
 )
 
 
