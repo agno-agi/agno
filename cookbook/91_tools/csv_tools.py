@@ -54,8 +54,6 @@ if __name__ == "__main__":
                 enable_list_csv_files=True,
                 enable_get_columns=True,
                 enable_query_csv_file=True,
-                enable_create_csv=False,  # Disable CSV creation
-                enable_modify_csv=False,  # Disable CSV modification
             )
         ],
         description="You are a CSV data analyst focused on reading and analyzing existing data.",

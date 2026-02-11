@@ -39,10 +39,7 @@ agent_basic = Agent(
     tools=[
         Crawl4aiTools(
             use_pruning=True,
-            enable_crawl_page=True,
-            enable_extract_content=True,
-            enable_extract_links=False,  # Disable link extraction
-            enable_take_screenshot=False,  # Disable screenshot functionality
+            enable_crawl=True,
         )
     ],
     description="You are a basic web content extractor focused on page content only.",
@@ -74,11 +71,8 @@ agent_visual = Agent(
     model=OpenAIChat(id="gpt-4o"),
     tools=[
         Crawl4aiTools(
-            use_pruning=False,  # Don't prune for visual analysis
-            enable_crawl_page=True,
-            enable_take_screenshot=True,
-            enable_extract_content=False,  # Focus on visual, not text
-            enable_analyze_layout=True,  # Assuming this function exists
+            use_pruning=False,
+            enable_crawl=True,
         )
     ],
     description="You are a web visual analyst focused on page screenshots and layout analysis.",

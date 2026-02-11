@@ -125,9 +125,7 @@ async def async_reasoning_demo() -> None:
     print("=" * 60)
 
     query = "What are Agents and how do they work with tools? Explain the reasoning behind their design."
-    await knowledge.ainsert_many(
-        urls=["https://docs.agno.com/basics/agents/overview.md"]
-    )
+    await knowledge.ainsert_many(urls=["https://docs.agno.com/agents/overview.md"])
 
     await coordinated_reasoning_team.aprint_response(
         query,
@@ -141,7 +139,7 @@ def sync_reasoning_demo() -> None:
     print("=" * 50)
 
     query = "What are Agents and how do they work with tools? Explain the reasoning behind their design."
-    knowledge.insert_many(urls=["https://docs.agno.com/basics/agents/overview.md"])
+    knowledge.insert_many(urls=["https://docs.agno.com/agents/overview.md"])
 
     coordinated_reasoning_team.print_response(
         query,

@@ -42,7 +42,7 @@ multi_lingual_q_and_a_team = Team(
     db=SqliteDb(
         db_file="tmp/multi_lingual_q_and_a_team.db"
     ),  # Add a database to store the conversation history. This is a requirement for history to work correctly.
-    pass_user_input_to_members=True,  # Send input directly to members (replaces determine_input_for_members=False).
+    determine_input_for_members=False,  # Send input directly to members without leader reformulation.
     respond_directly=True,
     add_team_history_to_members=True,  # Send all interactions between the user and the team to the member agents.
 )

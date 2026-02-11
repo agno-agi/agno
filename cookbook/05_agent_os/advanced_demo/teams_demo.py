@@ -135,7 +135,7 @@ multimodal_team = Team(
     description="A team of agents that can handle multiple modalities",
     members=[file_agent, audio_agent, video_agent],
     model=OpenAIChat(id="gpt-4o"),
-    pass_user_input_to_members=True,
+    determine_input_for_members=False,
     respond_directly=True,
     id="multimodal_team",
     instructions=[

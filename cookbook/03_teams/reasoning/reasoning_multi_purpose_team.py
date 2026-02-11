@@ -118,15 +118,7 @@ github_agent = Agent(
         "Use your tools to answer questions about the repo: agno-agi/agno",
         "Do not create any issues or pull requests unless explicitly asked to do so",
     ],
-    tools=[
-        GithubTools(
-            list_issues=True,
-            list_issue_comments=True,
-            get_pull_request=True,
-            get_issue=True,
-            get_pull_request_comments=True,
-        )
-    ],
+    tools=[GithubTools()],
 )
 
 local_python_agent = Agent(
@@ -136,12 +128,7 @@ local_python_agent = Agent(
     instructions=["Use your tools to run Python code locally"],
     tools=[
         FileTools(base_dir=cwd),
-        PythonTools(
-            base_dir=Path(cwd),
-            list_files=True,
-            run_files=True,
-            uv_pip_install=True,
-        ),
+        PythonTools(base_dir=Path(cwd)),
     ],
 )
 
