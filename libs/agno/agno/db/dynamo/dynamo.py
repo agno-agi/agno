@@ -948,7 +948,7 @@ class DynamoDb(BaseDb):
             # Convert to list and apply sorting
             stats_list = list(user_stats.values())
             stats_list.sort(
-                key=lambda x: (x["last_memory_updated_at"] if x["last_memory_updated_at"] is not None else 0),
+                key=lambda x: x["last_memory_updated_at"] if x["last_memory_updated_at"] is not None else 0,
                 reverse=True,
             )
 
