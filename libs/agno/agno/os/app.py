@@ -234,7 +234,6 @@ class AgentOS:
         self.agents: Optional[List[Union[Agent, RemoteAgent]]] = agents
         self.workflows: Optional[List[Union[Workflow, RemoteWorkflow]]] = workflows
         self.teams: Optional[List[Union[Team, RemoteTeam]]] = teams
-        self.interfaces = interfaces or []
         self.a2a_interface = a2a_interface
         self.knowledge = knowledge
         self.settings: AgnoAPISettings = settings or AgnoAPISettings()
@@ -451,24 +450,6 @@ class AgentOS:
             raise ValueError(f"Duplicate IDs found in AgentOS: {', '.join(repr(id_) for id_ in duplicate_ids)}")
 
     def _make_app(self, lifespan: Optional[Any] = None) -> FastAPI:
-        # Adjust the FastAPI app lifespan to handle MCP connections if relevant
-        app_lifespan = lifespan
-        if self.mcp_tools is not None:
-            mcp_tools_lifespan = partial(mcp_lifespan, mcp_tools=self.mcp_tools)
-            # If there is already a lifespan, combine it with the MCP lifespan
-            if lifespan is not None:
-                # Combine both lifespans
-                @asynccontextmanager
-                async def combined_lifespan(app: FastAPI):
-                    # Run both lifespans
-                    async with lifespan(app):  # type: ignore
-                        async with mcp_tools_lifespan(app):  # type: ignore
-                            yield
-
-                app_lifespan = combined_lifespan
-            else:
-                app_lifespan = mcp_tools_lifespan
-
         return FastAPI(
             title=self.name or "Agno AgentOS",
             version=self.version or "1.0.0",
@@ -476,7 +457,7 @@ class AgentOS:
             docs_url="/docs" if self.settings.docs_enabled else None,
             redoc_url="/redoc" if self.settings.docs_enabled else None,
             openapi_url="/openapi.json" if self.settings.docs_enabled else None,
-            lifespan=app_lifespan,
+            lifespan=lifespan,
         )
 
     def _initialize_agents(self) -> None:
