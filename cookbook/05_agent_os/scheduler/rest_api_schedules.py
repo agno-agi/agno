@@ -56,7 +56,11 @@ def main():
     print("\n=== List Schedules ===\n")
     resp = client.get("/schedules")
     resp.raise_for_status()
-    for s in resp.json():
+    result = resp.json()
+    schedules = result["data"]
+    meta = result["meta"]
+    print(f"Page {meta['page']} of {meta['total_pages']} (total: {meta['total_count']})\n")
+    for s in schedules:
         status = "enabled" if s["enabled"] else "disabled"
         print(f"  {s['name']} [{status}] -> {s['endpoint']}")
 
@@ -121,10 +125,13 @@ def main():
     # 7. View run history
     # =========================================================================
     print("\n=== Run History ===\n")
-    resp = client.get(f"/schedules/{schedule_id}/runs", params={"limit": 5})
+    resp = client.get(f"/schedules/{schedule_id}/runs", params={"limit": 5, "page": 1})
     resp.raise_for_status()
-    runs = resp.json()
+    result = resp.json()
+    runs = result["data"]
+    meta = result["meta"]
     if runs:
+        print(f"Showing {len(runs)} of {meta['total_count']} total runs\n")
         for run in runs:
             print(
                 f"  Run {run['id'][:8]}... status={run['status']} attempt={run['attempt']}"
