@@ -2,7 +2,7 @@
 1. Run: `python cookbook/07_knowledge/basic_operations/async/01_from_path.py` to run the cookbook
 """
 
-import asyncio
+import asyncio  # noqa: F401
 
 from agno.agent import Agent  # noqa
 from agno.db.postgres.postgres import PostgresDb
@@ -25,6 +25,7 @@ knowledge = Knowledge(
     description="Agno 2.0 Knowledge Implementation",
     vector_db=vector_db,
     contents_db=contents_db,
+    isolate_vector_search=True,
 )
 
 
