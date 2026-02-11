@@ -297,14 +297,6 @@ def _build_trailing_sections(
         for _ti in team._tool_instructions:
             content += f"{_ti}\n"
 
-    # Format the system message with the session state variables
-    if team.resolve_in_context:
-        content = _format_message_with_state_variables(
-            team,
-            content,
-            run_context=run_context,
-        )
-
     system_message_from_model = team.model.get_system_message_for_model(tools)  # type: ignore[union-attr]
     if system_message_from_model is not None:
         content += system_message_from_model
@@ -543,6 +535,14 @@ def get_system_message(
         add_session_state_to_context=add_session_state_to_context,
     )
 
+    # Format the full system message with dependencies and session state variables
+    if team.resolve_in_context:
+        system_message_content = _format_message_with_state_variables(
+            team,
+            system_message_content,
+            run_context=run_context,
+        )
+
     return Message(role=team.system_message_role, content=system_message_content.strip())
 
 
@@ -750,6 +750,14 @@ async def aget_system_message(
         session_state=session_state,
         add_session_state_to_context=add_session_state_to_context,
     )
+
+    # Format the full system message with dependencies and session state variables
+    if team.resolve_in_context:
+        system_message_content = _format_message_with_state_variables(
+            team,
+            system_message_content,
+            run_context=run_context,
+        )
 
     return Message(role=team.system_message_role, content=system_message_content.strip())
 
