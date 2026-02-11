@@ -3039,6 +3039,73 @@ def _handle_team_tool_call_updates(
             deque(run_tool(team, run_response, run_messages, _t, functions=_functions), maxlen=0)  # type: ignore
 
 
+def _handle_team_tool_call_updates_stream(
+    team: "Team",
+    run_response: TeamRunOutput,
+    run_messages: RunMessages,
+    tools: List[Union[Function, dict]],
+    stream_events: bool = False,
+) -> Iterator[Union[TeamRunOutputEvent, RunOutputEvent]]:
+    """Handle tool call updates for team-level tools (sync streaming).
+
+    Mirrors agent's handle_tool_call_updates_stream but operates on team-level tools.
+    Yields events during tool execution for streaming responses.
+    """
+    from agno.agent._tools import (
+        handle_external_execution_update,
+        handle_get_user_input_tool_update,
+        handle_user_input_update,
+        reject_tool_call,
+        run_tool,
+    )
+
+    team.model = cast(Model, team.model)
+    _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)}
+
+    for _t in run_response.tools or []:
+        # Case 1: Handle confirmed tools and execute them
+        if _t.requires_confirmation is not None and _t.requires_confirmation is True and _functions:
+            if _t.confirmed is not None and _t.confirmed is True and _t.result is None:
+                yield from run_tool(
+                    team,
+                    run_response,
+                    run_messages,
+                    _t,
+                    functions=_functions,
+                    stream_events=stream_events,  # type: ignore
+                )
+            else:
+                reject_tool_call(team, run_messages, _t, functions=_functions)  # type: ignore
+                _t.confirmed = False
+                _t.confirmation_note = _t.confirmation_note or "Tool call was rejected"
+                _t.tool_call_error = True
+            _t.requires_confirmation = False
+
+        # Case 2: Handle external execution required tools
+        elif _t.external_execution_required is not None and _t.external_execution_required is True:
+            handle_external_execution_update(team, run_messages=run_messages, tool=_t)  # type: ignore
+
+        # Case 3: Agentic user input required
+        elif _t.tool_name == "get_user_input" and _t.requires_user_input is not None and _t.requires_user_input is True:
+            handle_get_user_input_tool_update(team, run_messages=run_messages, tool=_t)  # type: ignore
+            _t.requires_user_input = False
+            _t.answered = True
+
+        # Case 4: Handle user input required tools
+        elif _t.requires_user_input is not None and _t.requires_user_input is True:
+            handle_user_input_update(team, tool=_t)  # type: ignore
+            yield from run_tool(
+                team,
+                run_response,
+                run_messages,
+                _t,
+                functions=_functions,
+                stream_events=stream_events,  # type: ignore
+            )
+            _t.requires_user_input = False
+            _t.answered = True
+
+
 async def _ahandle_team_tool_call_updates(
     team: "Team",
     run_response: TeamRunOutput,
@@ -3088,6 +3155,75 @@ async def _ahandle_team_tool_call_updates(
                 pass
 
 
+async def _ahandle_team_tool_call_updates_stream(
+    team: "Team",
+    run_response: TeamRunOutput,
+    run_messages: RunMessages,
+    tools: List[Union[Function, dict]],
+    stream_events: bool = False,
+) -> AsyncIterator[Union[TeamRunOutputEvent, RunOutputEvent]]:
+    """Async streaming version of _handle_team_tool_call_updates.
+
+    Mirrors agent's ahandle_tool_call_updates_stream but operates on team-level tools.
+    Yields events during tool execution for async streaming responses.
+    """
+    from agno.agent._tools import (
+        arun_tool,
+        handle_external_execution_update,
+        handle_get_user_input_tool_update,
+        handle_user_input_update,
+        reject_tool_call,
+    )
+
+    team.model = cast(Model, team.model)
+    _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)}
+
+    for _t in run_response.tools or []:
+        # Case 1: Handle confirmed tools and execute them
+        if _t.requires_confirmation is not None and _t.requires_confirmation is True and _functions:
+            if _t.confirmed is not None and _t.confirmed is True and _t.result is None:
+                async for event in arun_tool(
+                    team,
+                    run_response,
+                    run_messages,
+                    _t,
+                    functions=_functions,
+                    stream_events=stream_events,  # type: ignore
+                ):
+                    yield event  # type: ignore
+            else:
+                reject_tool_call(team, run_messages, _t, functions=_functions)  # type: ignore
+                _t.confirmed = False
+                _t.confirmation_note = _t.confirmation_note or "Tool call was rejected"
+                _t.tool_call_error = True
+            _t.requires_confirmation = False
+
+        # Case 2: Handle external execution required tools
+        elif _t.external_execution_required is not None and _t.external_execution_required is True:
+            handle_external_execution_update(team, run_messages=run_messages, tool=_t)  # type: ignore
+
+        # Case 3: Agentic user input required
+        elif _t.tool_name == "get_user_input" and _t.requires_user_input is not None and _t.requires_user_input is True:
+            handle_get_user_input_tool_update(team, run_messages=run_messages, tool=_t)  # type: ignore
+            _t.requires_user_input = False
+            _t.answered = True
+
+        # Case 4: Handle user input required tools
+        elif _t.requires_user_input is not None and _t.requires_user_input is True:
+            handle_user_input_update(team, tool=_t)  # type: ignore
+            async for event in arun_tool(
+                team,
+                run_response,
+                run_messages,
+                _t,
+                functions=_functions,
+                stream_events=stream_events,  # type: ignore
+            ):
+                yield event  # type: ignore
+            _t.requires_user_input = False
+            _t.answered = True
+
+
 def _normalize_requirements_payload(
     requirements: List[Any],
 ) -> List[Any]:
@@ -3117,6 +3253,7 @@ def _route_requirements_to_members(
     team: "Team",
     run_response: TeamRunOutput,
     session: TeamSession,
+    run_context: Optional[RunContext] = None,
 ) -> List[str]:
     """Route member requirements back to the appropriate member agents (sync).
 
@@ -3139,7 +3276,7 @@ def _route_requirements_to_members(
     member_results: List[str] = []
 
     for member_id, reqs in member_reqs.items():
-        route_result = _find_member_route_by_id(team, member_id)
+        route_result = _find_member_route_by_id(team, member_id, run_context=run_context)
         if route_result is None:
             log_warning(f"Could not find member with ID {member_id} for continue_run routing")
             member_results.append(f"[{member_id}]: Could not route requirement — member not found")
@@ -3194,6 +3331,7 @@ async def _aroute_requirements_to_members(
     team: "Team",
     run_response: TeamRunOutput,
     session: TeamSession,
+    run_context: Optional[RunContext] = None,
 ) -> List[str]:
     """Route member requirements back to the appropriate member agents (async).
 
@@ -3216,7 +3354,7 @@ async def _aroute_requirements_to_members(
         return []
 
     async def _continue_member(member_id: str, reqs: List[RunRequirement]) -> Optional[str]:
-        route_result = _find_member_route_by_id(team, member_id)
+        route_result = _find_member_route_by_id(team, member_id, run_context=run_context)
         if route_result is None:
             log_warning(f"Could not find member with ID {member_id} for continue_run routing")
             return f"[{member_id}]: Could not route requirement — member not found"
@@ -3411,7 +3549,9 @@ def continue_run_dispatch(
         # may append newly propagated reqs via _propagate_member_pause (chained HITL).
         original_member_req_ids = {id(r) for r in member_reqs}
         run_response.requirements = member_reqs
-        member_results = _route_requirements_to_members(team, run_response=run_response, session=team_session)
+        member_results = _route_requirements_to_members(
+            team, run_response=run_response, session=team_session, run_context=run_context
+        )
         # Merge: keep team-level reqs + any newly propagated member reqs (chained HITL)
         newly_propagated = [r for r in (run_response.requirements or []) if id(r) not in original_member_req_ids]
         run_response.requirements = team_level_reqs + newly_propagated
@@ -3765,6 +3905,15 @@ def _continue_run_stream(
                     )
 
                 raise_if_cancelled(run_response.run_id)  # type: ignore
+
+                # Handle the updated tools (execute confirmed tools, etc.) with streaming
+                yield from _handle_team_tool_call_updates_stream(
+                    team,
+                    run_response=run_response,
+                    run_messages=run_messages,
+                    tools=tools,
+                    stream_events=stream_events,
+                )
 
                 # Stream model response
                 if team.output_model is None:
@@ -4180,7 +4329,7 @@ async def _acontinue_run(
                     original_member_req_ids = {id(r) for r in member_reqs}
                     run_response.requirements = member_reqs
                     member_results = await _aroute_requirements_to_members(
-                        team, run_response=run_response, session=team_session
+                        team, run_response=run_response, session=team_session, run_context=run_context
                     )
                     # Merge: keep team-level reqs + any newly propagated member reqs (chained HITL)
                     newly_propagated = [
@@ -4467,7 +4616,7 @@ async def _acontinue_run_stream(
                     original_member_req_ids = {id(r) for r in member_reqs}
                     run_response.requirements = member_reqs
                     member_results = await _aroute_requirements_to_members(
-                        team, run_response=run_response, session=team_session
+                        team, run_response=run_response, session=team_session, run_context=run_context
                     )
                     # Merge: keep team-level reqs + any newly propagated member reqs (chained HITL)
                     newly_propagated = [
@@ -4524,10 +4673,6 @@ async def _acontinue_run_stream(
                     input_messages = run_response.messages or []
                     run_messages = _get_continue_run_messages(team, input=input_messages)
 
-                    await _ahandle_team_tool_call_updates(
-                        team, run_response=run_response, run_messages=run_messages, tools=_tools
-                    )
-
                     run_response.status = RunStatus.running
                     run_response.content = None
 
@@ -4539,6 +4684,17 @@ async def _acontinue_run_stream(
                             events_to_skip=team.events_to_skip,
                             store_events=team.store_events,
                         )
+
+                    # Handle the updated tools (execute confirmed tools, etc.) with streaming
+                    async for event in _ahandle_team_tool_call_updates_stream(
+                        team,
+                        run_response=run_response,
+                        run_messages=run_messages,
+                        tools=_tools,
+                        stream_events=stream_events,
+                    ):
+                        await araise_if_cancelled(run_response.run_id)  # type: ignore
+                        yield event
 
                     # Stream model response
                     if team.output_model is None:
