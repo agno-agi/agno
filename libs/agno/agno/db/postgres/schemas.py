@@ -176,7 +176,12 @@ COMPONENT_TABLE_SCHEMA = {
 }
 
 COMPONENT_CONFIGS_TABLE_SCHEMA = {
-    "component_id": {"type": String, "primary_key": True, "foreign_key": "components.component_id"},
+    "component_id": {
+        "type": String,
+        "primary_key": True,
+        "foreign_key": "components.component_id",
+        "ondelete": "CASCADE",
+    },
     "version": {"type": Integer, "primary_key": True},
     "label": {"type": String, "nullable": True},  # stable|v1.2.0|pre-refactor
     "stage": {"type": String, "nullable": False, "default": "draft", "index": True},  # draft|published
@@ -192,7 +197,12 @@ COMPONENT_LINKS_TABLE_SCHEMA = {
     "parent_version": {"type": Integer, "nullable": False},
     "link_kind": {"type": String, "nullable": False, "index": True},
     "link_key": {"type": String, "nullable": False},
-    "child_component_id": {"type": String, "nullable": False, "foreign_key": "components.component_id"},
+    "child_component_id": {
+        "type": String,
+        "nullable": False,
+        "foreign_key": "components.component_id",
+        "ondelete": "CASCADE",
+    },
     "child_version": {"type": Integer, "nullable": True},
     "position": {"type": Integer, "nullable": False},
     "meta": {"type": JSONB, "nullable": True},
@@ -204,6 +214,7 @@ COMPONENT_LINKS_TABLE_SCHEMA = {
             "columns": ["parent_component_id", "parent_version"],
             "ref_table": "component_configs",
             "ref_columns": ["component_id", "version"],
+            "ondelete": "CASCADE",
         }
     ],
 }

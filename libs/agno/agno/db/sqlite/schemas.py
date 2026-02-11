@@ -175,7 +175,13 @@ COMPONENTS_TABLE_SCHEMA = {
 }
 
 COMPONENT_CONFIGS_TABLE_SCHEMA = {
-    "component_id": {"type": String, "primary_key": True, "nullable": False},
+    "component_id": {
+        "type": String,
+        "primary_key": True,
+        "nullable": False,
+        "foreign_key": "components.component_id",
+        "ondelete": "CASCADE",
+    },
     "version": {"type": BigInteger, "primary_key": True, "nullable": False},
     "label": {"type": String, "nullable": True},  # stable|v1.2.0|pre-refactor
     "stage": {"type": String, "nullable": False, "default": "draft", "index": True},  # draft|published
@@ -190,12 +196,26 @@ COMPONENT_LINKS_TABLE_SCHEMA = {
     "parent_version": {"type": BigInteger, "primary_key": True, "nullable": False},
     "link_kind": {"type": String, "primary_key": True, "nullable": False, "index": True},
     "link_key": {"type": String, "primary_key": True, "nullable": False},
-    "child_component_id": {"type": String, "nullable": False},
+    "child_component_id": {
+        "type": String,
+        "nullable": False,
+        "foreign_key": "components.component_id",
+        "ondelete": "CASCADE",
+    },
     "child_version": {"type": BigInteger, "nullable": True},
     "position": {"type": BigInteger, "nullable": False},
     "meta": {"type": JSON, "nullable": True},
     "created_at": {"type": BigInteger, "nullable": True, "index": True},
     "updated_at": {"type": BigInteger, "nullable": True},
+    "__primary_key__": ["parent_component_id", "parent_version", "link_kind", "link_key"],
+    "__foreign_keys__": [
+        {
+            "columns": ["parent_component_id", "parent_version"],
+            "ref_table": "component_configs",
+            "ref_columns": ["component_id", "version"],
+            "ondelete": "CASCADE",
+        }
+    ],
 }
 
 LEARNINGS_TABLE_SCHEMA = {

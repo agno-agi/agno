@@ -328,11 +328,14 @@ class PostgresDb(BaseDb):
                 # IMPORTANT: since Table(schema=self.db_schema) is used, do NOT schema-qualify these targets.
                 ref_column_strings = [f"{resolved_ref_table}.{col}" for col in ref_columns]
 
+                fk_constraint_kwargs: Dict[str, Any] = {"name": fk_constraint_name}
+                if "ondelete" in fk_config:
+                    fk_constraint_kwargs["ondelete"] = fk_config["ondelete"]
                 table.append_constraint(
                     ForeignKeyConstraint(
                         fk_columns,
                         ref_column_strings,
-                        name=fk_constraint_name,
+                        **fk_constraint_kwargs,
                     )
                 )
 
