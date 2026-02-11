@@ -10,7 +10,6 @@ import pytest
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.run.team import RunPausedEvent as TeamRunPausedEvent
-from agno.run.team import TeamRunOutput
 from agno.team.team import Team
 from agno.tools.decorator import tool
 
