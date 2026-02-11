@@ -97,7 +97,9 @@ def handle_team_run_paused(
     )
 
     _cleanup_and_store(team, run_response=run_response, session=session)
-    create_approval_from_pause(db=team.db, run_response=run_response, team_id=team.id, team_name=team.name)
+    create_approval_from_pause(
+        db=team.db, run_response=run_response, team_id=team.id, team_name=team.name, user_id=team.user_id
+    )
 
     log_debug(f"Team Run Paused: {run_response.run_id}", center=True, symbol="*")
     return run_response
@@ -127,7 +129,9 @@ def handle_team_run_paused_stream(
     )
 
     _cleanup_and_store(team, run_response=run_response, session=session)
-    create_approval_from_pause(db=team.db, run_response=run_response, team_id=team.id, team_name=team.name)
+    create_approval_from_pause(
+        db=team.db, run_response=run_response, team_id=team.id, team_name=team.name, user_id=team.user_id
+    )
 
     if pause_event is not None:
         yield pause_event
@@ -159,7 +163,9 @@ async def ahandle_team_run_paused(
     )
 
     await _acleanup_and_store(team, run_response=run_response, session=session)
-    await acreate_approval_from_pause(db=team.db, run_response=run_response, team_id=team.id, team_name=team.name)
+    await acreate_approval_from_pause(
+        db=team.db, run_response=run_response, team_id=team.id, team_name=team.name, user_id=team.user_id
+    )
 
     log_debug(f"Team Run Paused: {run_response.run_id}", center=True, symbol="*")
     return run_response
@@ -189,7 +195,9 @@ async def ahandle_team_run_paused_stream(
     )
 
     await _acleanup_and_store(team, run_response=run_response, session=session)
-    await acreate_approval_from_pause(db=team.db, run_response=run_response, team_id=team.id, team_name=team.name)
+    await acreate_approval_from_pause(
+        db=team.db, run_response=run_response, team_id=team.id, team_name=team.name, user_id=team.user_id
+    )
 
     if pause_event is not None:
         yield pause_event

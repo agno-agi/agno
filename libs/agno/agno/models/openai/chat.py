@@ -253,7 +253,7 @@ class OpenAIChat(Model):
             if self.provider in ["AIMLAPI", "Fireworks", "Nvidia", "VLLM"]:
                 for tool in tools:
                     if tool.get("type") == "function":
-                        for _internal_key in ("requires_confirmation", "external_execution", "approval_type"):
+                        for _internal_key in ("requires_confirmation", "external_execution"):
                             tool["function"].pop(_internal_key, None)
 
             request_params["tools"] = tools

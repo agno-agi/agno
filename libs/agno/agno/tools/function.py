@@ -157,7 +157,6 @@ class Function(BaseModel):
                 "strict",
                 "requires_confirmation",
                 "external_execution",
-                "approval_type",
             },
         )
 

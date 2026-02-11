@@ -246,7 +246,7 @@ APPROVAL_TABLE_SCHEMA = {
     "status": {"type": String, "nullable": False, "index": True},
     "source_type": {"type": String, "nullable": False, "index": True},
     "approval_type": {"type": String, "nullable": True, "index": True},
-    "pause_type": {"type": String, "nullable": False, "index": True, "server_default": "'confirmation'"},
+    "pause_type": {"type": String, "nullable": False, "index": True},
     "tool_name": {"type": String, "nullable": True},
     "tool_args": {"type": JSON, "nullable": True},
     "expires_at": {"type": BigInteger, "nullable": True},
