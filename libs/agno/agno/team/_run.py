@@ -975,7 +975,6 @@ def run_dispatch(
         dependencies_provided = dependencies is not None
         knowledge_filters_provided = knowledge_filters is not None
         metadata_provided = metadata is not None
-        output_schema_provided = output_schema is not None
 
         team.model = cast(Model, team.model)
 
@@ -996,7 +995,6 @@ def run_dispatch(
             dependencies_provided=dependencies_provided,
             knowledge_filters_provided=knowledge_filters_provided,
             metadata_provided=metadata_provided,
-            output_schema_provided=output_schema_provided,
         )
 
         # Resolve callable dependencies once before retry loop
@@ -1895,7 +1893,6 @@ def arun_dispatch(  # type: ignore
     dependencies_provided = dependencies is not None
     knowledge_filters_provided = knowledge_filters is not None
     metadata_provided = metadata is not None
-    output_schema_provided = output_schema is not None
 
     # Create RunInput to capture the original user input
     run_input = TeamRunInput(
@@ -1925,7 +1922,6 @@ def arun_dispatch(  # type: ignore
         dependencies_provided=dependencies_provided,
         knowledge_filters_provided=knowledge_filters_provided,
         metadata_provided=metadata_provided,
-        output_schema_provided=output_schema_provided,
     )
 
     # Configure the model for runs

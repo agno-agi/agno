@@ -1232,7 +1232,6 @@ def run_dispatch(
         dependencies_provided=dependencies is not None,
         knowledge_filters_provided=knowledge_filters is not None,
         metadata_provided=metadata is not None,
-        output_schema_provided=output_schema is not None,
     )
 
     # Prepare arguments for the model (must be after run_context is fully initialized)
@@ -2332,7 +2331,6 @@ def arun_dispatch(  # type: ignore
         dependencies_provided=dependencies is not None,
         knowledge_filters_provided=knowledge_filters is not None,
         metadata_provided=metadata is not None,
-        output_schema_provided=output_schema is not None,
     )
 
     # Prepare arguments for the model (must be after run_context is fully initialized)
