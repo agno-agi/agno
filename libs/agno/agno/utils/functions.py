@@ -42,6 +42,10 @@ def get_function_call(
             )
             return function_call
 
+        # Handle empty array as no arguments (models may pass [] for no-param tools)
+        if isinstance(_arguments, list) and len(_arguments) == 0:
+            return function_call
+
         if not isinstance(_arguments, dict):
             log_error(f"Function arguments are not a valid JSON object: {arguments}")
             function_call.error = "Function arguments are not a valid JSON object.\n\n Please fix and retry."
