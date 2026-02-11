@@ -1311,8 +1311,8 @@ class Team:
             check_mcp_tools=check_mcp_tools,
         )
 
-    def get_members_system_message_content(self, indent: int = 0) -> str:
-        return _messages.get_members_system_message_content(self, indent=indent)
+    def get_members_system_message_content(self, indent: int = 0, run_context: Optional[RunContext] = None) -> str:
+        return _messages.get_members_system_message_content(self, indent=indent, run_context=run_context)
 
     def get_system_message(
         self,
@@ -1364,16 +1364,18 @@ class Team:
     # Built-in Tools
     ###########################################################################
 
-    def get_member_information(self) -> str:
-        return _tools.get_member_information(self)
+    def get_member_information(self, run_context: Optional[RunContext] = None) -> str:
+        return _tools.get_member_information(self, run_context=run_context)
 
     def _find_member_by_id(
         self, member_id: str, run_context: Optional[RunContext] = None
     ) -> Optional[Tuple[int, Union[Agent, "Team"]]]:
         return _tools._find_member_by_id(self, member_id=member_id, run_context=run_context)
 
-    def _find_member_route_by_id(self, member_id: str) -> Optional[Tuple[int, Union[Agent, "Team"]]]:
-        return _tools._find_member_route_by_id(self, member_id=member_id)
+    def _find_member_route_by_id(
+        self, member_id: str, run_context: Optional[RunContext] = None
+    ) -> Optional[Tuple[int, Union[Agent, "Team"]]]:
+        return _tools._find_member_route_by_id(self, member_id=member_id, run_context=run_context)
 
     def _get_delegate_task_function(
         self,

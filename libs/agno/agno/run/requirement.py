@@ -65,12 +65,12 @@ class RunRequirement:
             return False
         if self.tool_execution.answered is True:
             return False
-        if self.user_input_schema:
-            if not all(field.value is not None for field in self.user_input_schema):
-                return True
-            return False
+        if self.tool_execution.requires_user_input:
+            return True
+        if self.user_input_schema and not all(field.value is not None for field in self.user_input_schema):
+            return True
 
-        return self.tool_execution.requires_user_input or False
+        return False
 
     @property
     def needs_external_execution(self) -> bool:

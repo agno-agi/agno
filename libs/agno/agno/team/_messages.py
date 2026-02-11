@@ -55,7 +55,7 @@ from agno.utils.timer import Timer
 def _get_tool_names(member: Any) -> List[str]:
     """Extract tool names from a member's tools list."""
     tool_names: List[str] = []
-    if member.tools is None or member.tools == []:
+    if member.tools is None or not isinstance(member.tools, list):
         return tool_names
     for _tool in member.tools:
         if isinstance(_tool, Toolkit):
@@ -73,15 +73,18 @@ def _get_tool_names(member: Any) -> List[str]:
     return tool_names
 
 
-def get_members_system_message_content(team: "Team", indent: int = 0) -> str:
+def get_members_system_message_content(
+    team: "Team", indent: int = 0, run_context: Optional["RunContext"] = None
+) -> str:
     from agno.team.team import Team
+    from agno.utils.callables import get_resolved_members
 
     pad = " " * indent
     content = ""
-    # Only iterate if members is a static list (not a callable factory)
-    if not isinstance(team.members, list):
+    resolved_members = get_resolved_members(team, run_context)
+    if resolved_members is None or len(resolved_members) == 0:
         return content
-    for member in team.members:
+    for member in resolved_members:
         member_id = get_member_id(member)
 
         if isinstance(member, Team):
@@ -89,7 +92,7 @@ def get_members_system_message_content(team: "Team", indent: int = 0) -> str:
             if member.description is not None:
                 content += f"{pad}  Description: {member.description}\n"
             if member.members is not None:
-                content += member.get_members_system_message_content(indent=indent + 2)
+                content += member.get_members_system_message_content(indent=indent + 2, run_context=run_context)
             content += f"{pad}</member>\n"
         else:
             content += f'{pad}<member id="{member_id}" name="{member.name}">\n'
@@ -194,17 +197,20 @@ def _get_mode_instructions(team: "Team") -> str:
 
 def _build_team_context(
     team: "Team",
+    run_context: Optional["RunContext"] = None,
 ) -> str:
     """Build the opening + team_members + how_to_respond blocks.
 
     Shared between sync and async system-message builders.
     """
+    from agno.utils.callables import get_resolved_members
+
     content = ""
-    # Check if members is a non-empty list (not a callable factory)
-    if team.members is not None and isinstance(team.members, list) and len(team.members) > 0:
+    resolved_members = get_resolved_members(team, run_context)
+    if resolved_members is not None and len(resolved_members) > 0:
         content += _get_opening_prompt()
         content += "\n<team_members>\n"
-        content += team.get_members_system_message_content()
+        content += team.get_members_system_message_content(run_context=run_context)
         if team.get_member_information_tool:
             content += "If you need to get information about your team members, you can use the `get_member_information` tool at any time.\n"
         content += "</team_members>\n"
@@ -290,14 +296,6 @@ def _build_trailing_sections(
     if team._tool_instructions is not None:
         for _ti in team._tool_instructions:
             content += f"{_ti}\n"
-
-    # Format the system message with the session state variables
-    if team.resolve_in_context:
-        content = _format_message_with_state_variables(
-            team,
-            content,
-            run_context=run_context,
-        )
 
     system_message_from_model = team.model.get_system_message_for_model(tools)  # type: ignore[union-attr]
     if system_message_from_model is not None:
@@ -452,7 +450,7 @@ def get_system_message(
     system_message_content: str = ""
 
     # 2.1 Opening + team members + mode instructions
-    system_message_content += _build_team_context(team)
+    system_message_content += _build_team_context(team, run_context=run_context)
 
     # 2.2 Identity sections: description, role, instructions
     system_message_content += _build_identity_sections(team, instructions)
@@ -536,6 +534,14 @@ def get_system_message(
         session_state=session_state,
         add_session_state_to_context=add_session_state_to_context,
     )
+
+    # Format the full system message with dependencies and session state variables
+    if team.resolve_in_context:
+        system_message_content = _format_message_with_state_variables(
+            team,
+            system_message_content,
+            run_context=run_context,
+        )
 
     return Message(role=team.system_message_role, content=system_message_content.strip())
 
@@ -660,7 +666,7 @@ async def aget_system_message(
     system_message_content: str = ""
 
     # 2.1 Opening + team members + mode instructions
-    system_message_content += _build_team_context(team)
+    system_message_content += _build_team_context(team, run_context=run_context)
 
     # 2.2 Identity sections: description, role, instructions
     system_message_content += _build_identity_sections(team, instructions)
@@ -744,6 +750,14 @@ async def aget_system_message(
         session_state=session_state,
         add_session_state_to_context=add_session_state_to_context,
     )
+
+    # Format the full system message with dependencies and session state variables
+    if team.resolve_in_context:
+        system_message_content = _format_message_with_state_variables(
+            team,
+            system_message_content,
+            run_context=run_context,
+        )
 
     return Message(role=team.system_message_role, content=system_message_content.strip())
 
