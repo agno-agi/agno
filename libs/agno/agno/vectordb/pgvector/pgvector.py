@@ -1198,23 +1198,24 @@ class PgVector(VectorDb):
 
     def create_filters_index(
         self,
+        fields: List[str],
         force_recreate: bool = False,
-        fields: Optional[List[str]] = None,
     ) -> None:
         """
         Create BTREE indexes on specific fields within the "filters" JSONB column.
 
         For each field, creates a BTREE index on `filters->>'{field}'`
         Skips fields that already have an index unless force_recreate is True.
-        Does nothing if no fields are provided.
 
         Args:
+            fields (List[str]): JSONB field names to index (e.g. ["user_id", "category"]).
             force_recreate (bool): If True, drop and recreate existing indexes.
-            fields (Optional[List[str]]): JSONB field names to index (e.g. ["user_id", "category"]).
+
+        Raises:
+            ValueError: If fields is empty.
         """
         if not fields:
-            log_warning("No fields specified, skipping filters index creation.")
-            return
+            raise ValueError("At least one field must be specified for filters index creation.")
 
         for field in fields:
             index_name = f"{self.table_name}_filters_{field}_index"

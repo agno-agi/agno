@@ -794,14 +794,12 @@ def test_insert_merges_filters_into_metadata(mock_pgvector, mock_embedder):
 
 
 def test_create_filters_index_no_fields(mock_pgvector):
-    """Test create_filters_index does nothing when no fields are provided."""
-    with patch.object(mock_pgvector, "_index_exists") as mock_index_exists:
+    """Test create_filters_index raises ValueError when no fields are provided."""
+    with pytest.raises(TypeError):
         mock_pgvector.create_filters_index()
-        mock_index_exists.assert_not_called()
 
-    with patch.object(mock_pgvector, "_index_exists") as mock_index_exists:
+    with pytest.raises(ValueError, match="At least one field must be specified"):
         mock_pgvector.create_filters_index(fields=[])
-        mock_index_exists.assert_not_called()
 
 
 def test_create_filters_index_single_field(mock_pgvector):
