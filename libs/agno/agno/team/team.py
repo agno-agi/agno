@@ -10172,29 +10172,49 @@ class Team:
         """
         from dataclasses import fields
 
-        # Extract the fields to set for the new Team
+        from agno.utils.deep_copy import get_init_params
+
+        init_params = get_init_params(self.__class__)
+
         fields_for_new_team: Dict[str, Any] = {}
+        non_init_fields: Dict[str, Any] = {}
 
         for f in fields(self):
-            # Skip private fields (not part of __init__ signature)
             if f.name.startswith("_"):
                 continue
 
             field_value = getattr(self, f.name)
+            is_init = f.name in init_params
+
             if field_value is not None:
                 try:
-                    fields_for_new_team[f.name] = self._deep_copy_field(f.name, field_value)
+                    copied = self._deep_copy_field(f.name, field_value)
                 except Exception as e:
                     log_warning(f"Failed to deep copy field '{f.name}': {e}. Using original value.")
-                    fields_for_new_team[f.name] = field_value
+                    copied = field_value
+            elif is_init:
+                # Preserve explicit None for init fields (avoids inheriting non-None defaults)
+                copied = None
+            else:
+                # Non-init fields default to None on new instances, no need to copy
+                continue
 
-        # Update fields if provided
+            if is_init:
+                fields_for_new_team[f.name] = copied
+            else:
+                non_init_fields[f.name] = copied
+
         if update:
-            fields_for_new_team.update(update)
+            for key, value in update.items():
+                if key in init_params:
+                    fields_for_new_team[key] = value
+                else:
+                    non_init_fields[key] = value
 
-        # Create a new Team
         try:
             new_team = self.__class__(**fields_for_new_team)
+            for field_name, field_value in non_init_fields.items():
+                setattr(new_team, field_name, field_value)
             log_debug(f"Created new {self.__class__.__name__}")
             return new_team
         except Exception as e:
