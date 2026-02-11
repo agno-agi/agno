@@ -179,14 +179,15 @@ class TestKnowledgeIsolation:
 
 
 class TestLinkedToMetadata:
-    """Tests for linked_to metadata being added to documents."""
+    """Tests for linked_to metadata being added to documents when isolation is enabled."""
 
-    def test_prepare_documents_adds_linked_to_with_name(self):
-        """Test that linked_to is set to knowledge name."""
+    def test_prepare_documents_adds_linked_to_with_isolation(self):
+        """Test that linked_to is set to knowledge name when isolation is enabled."""
         mock_db = MockVectorDb()
         knowledge = Knowledge(
             name="My Knowledge Base",
             vector_db=mock_db,
+            isolate_vector_search=True,
         )
 
         documents = [Document(name="doc1", content="content")]
@@ -197,7 +198,24 @@ class TestLinkedToMetadata:
     def test_prepare_documents_adds_empty_linked_to_without_name(self):
         """Test that linked_to is set to empty string when knowledge has no name."""
         mock_db = MockVectorDb()
-        knowledge = Knowledge(vector_db=mock_db)
+        knowledge = Knowledge(
+            name="My Knowledge Base",
+            vector_db=mock_db,
+            # isolate_vector_search defaults to False
+        )
+
+        documents = [Document(name="doc1", content="content")]
+        result = knowledge._prepare_documents_for_insert(documents, "content-id")
+
+        assert "linked_to" not in result[0].meta_data
+
+    def test_prepare_documents_adds_empty_linked_to_without_name(self):
+        """Test that linked_to is set to empty string when knowledge has no name but isolation enabled."""
+        mock_db = MockVectorDb()
+        knowledge = Knowledge(
+            vector_db=mock_db,
+            isolate_vector_search=True,
+        )
 
         documents = [Document(name="doc1", content="content")]
         result = knowledge._prepare_documents_for_insert(documents, "content-id")
@@ -210,6 +228,7 @@ class TestLinkedToMetadata:
         knowledge = Knowledge(
             name="New KB",
             vector_db=mock_db,
+            isolate_vector_search=True,
         )
 
         # Document already has linked_to in metadata

@@ -187,6 +187,10 @@ class AgentOS:
         run_hooks_in_background: bool = False,
         telemetry: bool = True,
         registry: Optional[Registry] = None,
+        scheduler: bool = False,
+        scheduler_poll_interval: int = 15,
+        scheduler_base_url: Optional[str] = None,
+        internal_service_token: Optional[str] = None,
     ):
         """Initialize AgentOS.
 
@@ -216,6 +220,10 @@ class AgentOS:
             run_hooks_in_background: If True, run agent/team pre/post hooks as FastAPI background tasks (non-blocking)
             telemetry: Whether to enable telemetry
             registry: Optional registry to use for the AgentOS
+            scheduler: Whether to enable the cron scheduler
+            scheduler_poll_interval: Seconds between scheduler poll cycles (default: 15)
+            scheduler_base_url: Base URL for scheduler HTTP calls (default: http://127.0.0.1:7777)
+            internal_service_token: Token for scheduler-to-OS auth (auto-generated if not provided)
 
         """
         if not agents and not workflows and not teams and not knowledge and not db:
@@ -271,6 +279,16 @@ class AgentOS:
 
         # If True, run agent/team hooks as FastAPI background tasks
         self.run_hooks_in_background = run_hooks_in_background
+
+        # Scheduler configuration
+        self.scheduler = scheduler
+        self._scheduler_poll_interval = scheduler_poll_interval
+        self._scheduler_base_url = scheduler_base_url
+        if scheduler and not internal_service_token:
+            import secrets
+
+            internal_service_token = secrets.token_urlsafe(32)
+        self._internal_service_token = internal_service_token
 
         # List of all MCP tools used inside the AgentOS
         self.mcp_tools: List[Any] = []
@@ -631,6 +649,10 @@ class AgentOS:
             # The async database lifespan
             lifespans.append(partial(db_lifespan, agent_os=self))
 
+            # The scheduler lifespan (after db so tables exist)
+            if self.scheduler and self.db is not None:
+                lifespans.append(partial(scheduler_lifespan, agent_os=self))
+
             # The httpx client cleanup lifespan (should be last to close after other lifespans)
             lifespans.append(http_client_lifespan)
 
@@ -658,6 +680,10 @@ class AgentOS:
 
             # Async database initialization lifespan
             lifespans.append(partial(db_lifespan, agent_os=self))  # type: ignore
+
+            # The scheduler lifespan (after db so tables exist)
+            if self.scheduler and self.db is not None:
+                lifespans.append(partial(scheduler_lifespan, agent_os=self))
 
             # The httpx client cleanup lifespan (should be last to close after other lifespans)
             lifespans.append(http_client_lifespan)
@@ -743,6 +769,10 @@ class AgentOS:
         # This allows middleware (like JWT) to access these values
         fastapi_app.state.agent_os_id = self.id
         fastapi_app.state.cors_allowed_origins = self.cors_allowed_origins
+
+        # Store internal service token for scheduler auth bypass
+        if self._internal_service_token:
+            fastapi_app.state.internal_service_token = self._internal_service_token
 
         # Add JWT middleware if authorization is enabled
         if self.authorization:

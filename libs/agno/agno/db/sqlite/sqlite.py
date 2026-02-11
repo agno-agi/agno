@@ -645,12 +645,13 @@ class SqliteDb(BaseDb):
 
     # -- Session methods --
 
-    def delete_session(self, session_id: str) -> bool:
+    def delete_session(self, session_id: str, user_id: Optional[str] = None) -> bool:
         """
         Delete a session from the database.
 
         Args:
             session_id (str): ID of the session to delete
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
 
         Raises:
             Exception: If an error occurs during deletion.
@@ -662,9 +663,11 @@ class SqliteDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.session_id == session_id)
+                if user_id is not None:
+                    delete_stmt = delete_stmt.where(table.c.user_id == user_id)
                 result = sess.execute(delete_stmt)
                 if result.rowcount == 0:
-                    log_debug(f"No session found to deletewith session_id: {session_id}")
+                    log_debug(f"No session found to delete with session_id: {session_id}")
                     return False
                 else:
                     log_debug(f"Successfully deleted session with session_id: {session_id}")
@@ -674,12 +677,13 @@ class SqliteDb(BaseDb):
             log_error(f"Error deleting session: {e}")
             raise e
 
-    def delete_sessions(self, session_ids: List[str]) -> None:
+    def delete_sessions(self, session_ids: List[str], user_id: Optional[str] = None) -> None:
         """Delete all given sessions from the database.
         Can handle multiple session types in the same run.
 
         Args:
             session_ids (List[str]): The IDs of the sessions to delete.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
 
         Raises:
             Exception: If an error occurs during deletion.
@@ -691,6 +695,8 @@ class SqliteDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.session_id.in_(session_ids))
+                if user_id is not None:
+                    delete_stmt = delete_stmt.where(table.c.user_id == user_id)
                 result = sess.execute(delete_stmt)
 
             log_debug(f"Successfully deleted {result.rowcount} sessions")
@@ -862,6 +868,7 @@ class SqliteDb(BaseDb):
         session_id: str,
         session_type: SessionType,
         session_name: str,
+        user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         """
@@ -871,6 +878,7 @@ class SqliteDb(BaseDb):
             session_id (str): The ID of the session to rename.
             session_type (SessionType): The type of session to rename.
             session_name (str): The new name for the session.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
             deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
 
         Returns:
@@ -884,7 +892,7 @@ class SqliteDb(BaseDb):
         try:
             # Get the current session as a deserialized object
             # Get the session record
-            session = self.get_session(session_id, session_type, deserialize=True)
+            session = self.get_session(session_id, session_type, user_id=user_id, deserialize=True)
             if session is None:
                 return None
 
@@ -953,6 +961,7 @@ class SqliteDb(BaseDb):
                             metadata=serialized_session.get("metadata"),
                             updated_at=int(time.time()),
                         ),
+                        where=(table.c.user_id == serialized_session.get("user_id")) | (table.c.user_id.is_(None)),
                     )
                     stmt = stmt.returning(*table.columns)  # type: ignore
                     result = sess.execute(stmt)
@@ -991,6 +1000,7 @@ class SqliteDb(BaseDb):
                             metadata=serialized_session.get("metadata"),
                             updated_at=int(time.time()),
                         ),
+                        where=(table.c.user_id == serialized_session.get("user_id")) | (table.c.user_id.is_(None)),
                     )
                     stmt = stmt.returning(*table.columns)  # type: ignore
                     result = sess.execute(stmt)
@@ -1028,6 +1038,7 @@ class SqliteDb(BaseDb):
                             metadata=serialized_session.get("metadata"),
                             updated_at=int(time.time()),
                         ),
+                        where=(table.c.user_id == serialized_session.get("user_id")) | (table.c.user_id.is_(None)),
                     )
                     stmt = stmt.returning(*table.columns)  # type: ignore
                     result = sess.execute(stmt)
@@ -2613,7 +2624,7 @@ class SqliteDb(BaseDb):
                     base_stmt = base_stmt.where(table.c.run_id == run_id)
                 if session_id:
                     base_stmt = base_stmt.where(table.c.session_id == session_id)
-                if user_id:
+                if user_id is not None:
                     base_stmt = base_stmt.where(table.c.user_id == user_id)
                 if agent_id:
                     base_stmt = base_stmt.where(table.c.agent_id == agent_id)
@@ -2701,7 +2712,7 @@ class SqliteDb(BaseDb):
                 )
 
                 # Apply filters
-                if user_id:
+                if user_id is not None:
                     base_stmt = base_stmt.where(table.c.user_id == user_id)
                 if workflow_id:
                     base_stmt = base_stmt.where(table.c.workflow_id == workflow_id)
