@@ -120,13 +120,13 @@ async def aget_last_run_output(agent: Agent, session_id: Optional[str] = None) -
 
 
 def read_session(
-    agent: Agent, session_id: str, session_type: SessionType = SessionType.AGENT
+    agent: Agent, session_id: str, session_type: SessionType = SessionType.AGENT, user_id: Optional[str] = None
 ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession]]:
     """Get a Session from the database."""
     try:
         if not agent.db:
             raise ValueError("Db not initialized")
-        return agent.db.get_session(session_id=session_id, session_type=session_type)  # type: ignore
+        return agent.db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)  # type: ignore
     except Exception as e:
         import traceback
 
@@ -136,13 +136,13 @@ def read_session(
 
 
 async def aread_session(
-    agent: Agent, session_id: str, session_type: SessionType = SessionType.AGENT
+    agent: Agent, session_id: str, session_type: SessionType = SessionType.AGENT, user_id: Optional[str] = None
 ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession]]:
     """Get a Session from the database."""
     try:
         if not agent.db:
             raise ValueError("Db not initialized")
-        return await agent.db.get_session(session_id=session_id, session_type=session_type)  # type: ignore
+        return await agent.db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)  # type: ignore
     except Exception as e:
         import traceback
 
@@ -250,7 +250,11 @@ def read_or_create_session(
     from uuid import uuid4
 
     # Returning cached session if we have one
-    if agent._cached_session is not None and agent._cached_session.session_id == session_id:
+    if (
+        agent._cached_session is not None
+        and agent._cached_session.session_id == session_id
+        and (user_id is None or agent._cached_session.user_id == user_id)
+    ):
         return agent._cached_session
 
     # Try to load from database
@@ -258,7 +262,7 @@ def read_or_create_session(
     if agent.db is not None and agent.team_id is None and agent.workflow_id is None:
         log_debug(f"Reading AgentSession: {session_id}")
 
-        agent_session = cast(AgentSession, read_session(agent, session_id=session_id))
+        agent_session = cast(AgentSession, read_session(agent, session_id=session_id, user_id=user_id))
 
     if agent_session is None:
         # Creating new session if none found
@@ -309,7 +313,11 @@ async def aread_or_create_session(
     from agno.agent import _init
 
     # Returning cached session if we have one
-    if agent._cached_session is not None and agent._cached_session.session_id == session_id:
+    if (
+        agent._cached_session is not None
+        and agent._cached_session.session_id == session_id
+        and (user_id is None or agent._cached_session.user_id == user_id)
+    ):
         return agent._cached_session
 
     # Try to load from database
@@ -317,9 +325,9 @@ async def aread_or_create_session(
     if agent.db is not None and agent.team_id is None and agent.workflow_id is None:
         log_debug(f"Reading AgentSession: {session_id}")
         if _init.has_async_db(agent):
-            agent_session = cast(AgentSession, await aread_session(agent, session_id=session_id))
+            agent_session = cast(AgentSession, await aread_session(agent, session_id=session_id, user_id=user_id))
         else:
-            agent_session = cast(AgentSession, read_session(agent, session_id=session_id))
+            agent_session = cast(AgentSession, read_session(agent, session_id=session_id, user_id=user_id))
 
     if agent_session is None:
         # Creating new session if none found
