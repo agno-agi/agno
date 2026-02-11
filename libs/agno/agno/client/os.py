@@ -570,9 +570,9 @@ class AgentOSClient:
         """
         endpoint = f"/agents/{agent_id}/runs"
         data: Dict[str, Any] = {"message": message, "stream": "false"}
-        if session_id:
+        if session_id is not None:
             data["session_id"] = session_id
-        if user_id:
+        if user_id is not None:
             data["user_id"] = user_id
         if images:
             data["images"] = json.dumps([img.model_dump() for img in images])
@@ -630,9 +630,9 @@ class AgentOSClient:
         """
         endpoint = f"/agents/{agent_id}/runs"
         data: Dict[str, Any] = {"message": message, "stream": "true"}
-        if session_id:
+        if session_id is not None:
             data["session_id"] = session_id
-        if user_id:
+        if user_id is not None:
             data["user_id"] = user_id
         if images:
             data["images"] = json.dumps([img.model_dump() for img in images])
@@ -685,9 +685,9 @@ class AgentOSClient:
         """
         endpoint = f"/agents/{agent_id}/runs/{run_id}/continue"
         data: Dict[str, Any] = {"tools": json.dumps([tool.to_dict() for tool in tools]), "stream": "false"}
-        if session_id:
+        if session_id is not None:
             data["session_id"] = session_id
-        if user_id:
+        if user_id is not None:
             data["user_id"] = user_id
 
         for key, value in kwargs.items():
@@ -727,9 +727,9 @@ class AgentOSClient:
         """
         endpoint = f"/agents/{agent_id}/runs/{run_id}/continue"
         data: Dict[str, Any] = {"tools": json.dumps([tool.to_dict() for tool in tools]), "stream": "true"}
-        if session_id:
+        if session_id is not None:
             data["session_id"] = session_id
-        if user_id:
+        if user_id is not None:
             data["user_id"] = user_id
 
         for key, value in kwargs.items():
@@ -842,9 +842,9 @@ class AgentOSClient:
         """
         endpoint = f"/teams/{team_id}/runs"
         data: Dict[str, Any] = {"message": message, "stream": "false"}
-        if session_id:
+        if session_id is not None:
             data["session_id"] = session_id
-        if user_id:
+        if user_id is not None:
             data["user_id"] = user_id
         if images:
             data["images"] = json.dumps(images)
@@ -902,9 +902,9 @@ class AgentOSClient:
         """
         endpoint = f"/teams/{team_id}/runs"
         data: Dict[str, Any] = {"message": message, "stream": "true"}
-        if session_id:
+        if session_id is not None:
             data["session_id"] = session_id
-        if user_id:
+        if user_id is not None:
             data["user_id"] = user_id
         if images:
             data["images"] = json.dumps(images)
@@ -1027,9 +1027,9 @@ class AgentOSClient:
         """
         endpoint = f"/workflows/{workflow_id}/runs"
         data: Dict[str, Any] = {"message": message, "stream": "false"}
-        if session_id:
+        if session_id is not None:
             data["session_id"] = session_id
-        if user_id:
+        if user_id is not None:
             data["user_id"] = user_id
         if images:
             data["images"] = json.dumps(images)
@@ -1087,9 +1087,9 @@ class AgentOSClient:
         """
         endpoint = f"/workflows/{workflow_id}/runs"
         data: Dict[str, Any] = {"message": message, "stream": "true"}
-        if session_id:
+        if session_id is not None:
             data["session_id"] = session_id
-        if user_id:
+        if user_id is not None:
             data["user_id"] = user_id
         if images:
             data["images"] = json.dumps(images)
