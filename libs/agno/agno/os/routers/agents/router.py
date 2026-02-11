@@ -41,6 +41,7 @@ from agno.os.utils import (
     process_video,
 )
 from agno.registry import Registry
+from agno.run.base import RunStatus
 from agno.run.agent import RunErrorEvent, RunOutput
 from agno.utils.log import log_debug, log_error, log_warning
 
@@ -480,6 +481,9 @@ def get_agent_router(
             },
             400: {"description": "Invalid JSON in tools field or invalid tool structure", "model": BadRequestResponse},
             404: {"description": "Agent not found", "model": NotFoundResponse},
+            409: {
+                "description": "Run is not paused (e.g. run is already running, continued, or errored). Only PAUSED runs can be continued.",
+            },
         },
         dependencies=[Depends(require_resource_access("agents", "run", "agent_id"))],
     )
@@ -512,6 +516,29 @@ def get_agent_router(
             log_warning(
                 "Continuing run without session_id. This might lead to unexpected behavior if session context is important."
             )
+
+        # Only allow /continue when the run is in a paused state. If running, continued, or errored, return 409.
+        if session_id and not isinstance(agent, RemoteAgent):
+            existing_run = await agent.aget_run_output(run_id=run_id, session_id=session_id)
+            if existing_run is not None:
+                is_paused = getattr(existing_run, "is_paused", False)
+                if not is_paused:
+                    status = getattr(existing_run, "status", None)
+                    _status_to_detail = {
+                        RunStatus.running: "run is already running",
+                        RunStatus.completed: "run is already continued",
+                        RunStatus.error: "run is already errored",
+                        RunStatus.cancelled: "run is already cancelled",
+                        RunStatus.pending: "run is already pending",
+                    }
+                    detail = _status_to_detail.get(
+                        status, f"run is not paused (status={getattr(status, 'value', status)})"
+                    )
+                    raise HTTPException(
+                        status_code=409,
+                        detail=detail,
+                    )
+
 
         # Convert tools dict to ToolExecution objects if provided
         updated_tools = []
