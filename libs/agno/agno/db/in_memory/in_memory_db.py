@@ -116,7 +116,7 @@ class InMemoryDb(BaseDb):
         Args:
             session_id (str): The ID of the session to read.
             session_type (SessionType): The type of the session to read.
-            user_id (Optional[str]): User ID to filter by. Defaults to None.
+            user_id (Optional[str]): The ID of the user to read the session for.
             deserialize (Optional[bool]): Whether to deserialize the session.
 
         Returns:
@@ -172,7 +172,7 @@ class InMemoryDb(BaseDb):
 
         Args:
             session_type (SessionType): The type of the sessions to read.
-            user_id (Optional[str]): User ID to filter by. Defaults to None.
+            user_id (Optional[str]): The ID of the user to read the sessions for.
             component_id (Optional[str]): The ID of the component to read the sessions for.
             session_name (Optional[str]): The name of the session to read.
             start_timestamp (Optional[int]): The start timestamp of the sessions to read.
@@ -383,7 +383,7 @@ class InMemoryDb(BaseDb):
 
         Args:
             memory_id (str): The ID of the memory to delete.
-            user_id (Optional[str]): User ID to filter by. Defaults to None.
+            user_id (Optional[str]): The ID of the user. If provided, verifies the memory belongs to this user before deletion.
 
         Raises:
             Exception: If an error occurs during deletion.
@@ -413,7 +413,7 @@ class InMemoryDb(BaseDb):
 
         Args:
             memory_ids (List[str]): The IDs of the memories to delete.
-            user_id (Optional[str]): User ID to filter by. Defaults to None.
+            user_id (Optional[str]): The ID of the user. If provided, only deletes memories belonging to this user.
 
         Raises:
             Exception: If an error occurs during deletion.
@@ -461,7 +461,7 @@ class InMemoryDb(BaseDb):
         Args:
             memory_id (str): The ID of the memory to retrieve.
             deserialize (Optional[bool]): Whether to deserialize the memory. Defaults to True.
-            user_id (Optional[str]): User ID to filter by. Defaults to None.
+            user_id (Optional[str]): The ID of the user. If provided, only returns the memory if it belongs to this user.
 
         Returns:
             Optional[Union[UserMemory, Dict[str, Any]]]: The memory object or dictionary, or None if not found.

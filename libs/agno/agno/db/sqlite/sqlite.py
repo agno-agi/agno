@@ -731,7 +731,7 @@ class SqliteDb(BaseDb):
         Get all sessions in the given table. Can filter by user_id and entity_id.
         Args:
             session_type (Optional[SessionType]): The type of session to get.
-            user_id (Optional[str]): User ID to filter by. Defaults to None.
+            user_id (Optional[str]): The ID of the user to filter by.
             component_id (Optional[str]): The ID of the agent / workflow to filter by.
             session_name (Optional[str]): The name of the session to filter by.
             start_timestamp (Optional[int]): The start timestamp to filter by.
@@ -1378,7 +1378,7 @@ class SqliteDb(BaseDb):
         """Get all memories from the database as UserMemory objects.
 
         Args:
-            user_id (Optional[str]): User ID to filter by. Defaults to None.
+            user_id (Optional[str]): The ID of the user to filter by.
             agent_id (Optional[str]): The ID of the agent to filter by.
             team_id (Optional[str]): The ID of the team to filter by.
             topics (Optional[List[str]]): The topics to filter by.

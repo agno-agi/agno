@@ -567,7 +567,7 @@ class AsyncMySQLDb(AsyncBaseDb):
         Get all sessions in the given table. Can filter by user_id and entity_id.
 
         Args:
-            user_id (Optional[str]): User ID to filter by. Defaults to None.
+            user_id (Optional[str]): The ID of the user to filter by.
             component_id (Optional[str]): The ID of the agent / workflow to filter by.
             start_timestamp (Optional[int]): The start timestamp to filter by.
             end_timestamp (Optional[int]): The end timestamp to filter by.
@@ -1269,7 +1269,7 @@ class AsyncMySQLDb(AsyncBaseDb):
         """Get all memories from the database as UserMemory objects.
 
         Args:
-            user_id (Optional[str]): User ID to filter by. Defaults to None.
+            user_id (Optional[str]): The ID of the user to filter by.
             agent_id (Optional[str]): The ID of the agent to filter by.
             team_id (Optional[str]): The ID of the team to filter by.
             topics (Optional[List[str]]): The topics to filter by.

@@ -342,7 +342,7 @@ class SurrealDb(BaseDb):
 
         Args:
             session_type (SessionType): The type of session to get.
-            user_id (Optional[str]): User ID to filter by. Defaults to None.
+            user_id (Optional[str]): The ID of the user to filter by.
             component_id (Optional[str]): The ID of the agent / team / workflow to filter by.
             session_name (Optional[str]): The name of the session to filter by.
             start_timestamp (Optional[int]): The start timestamp to filter by.
@@ -709,7 +709,7 @@ class SurrealDb(BaseDb):
 
         Args:
             memory_id (str): The ID of the memory to delete.
-            user_id (Optional[str]): User ID to filter by. Defaults to None.
+            user_id (Optional[str]): The ID of the user to filter by. Defaults to None.
 
         Returns:
             bool: True if deletion was successful, False otherwise.
@@ -733,7 +733,7 @@ class SurrealDb(BaseDb):
 
         Args:
             memory_ids (List[str]): The IDs of the memories to delete.
-            user_id (Optional[str]): User ID to filter by. Defaults to None.
+            user_id (Optional[str]): The ID of the user to filter by. Defaults to None.
 
         Raises:
             Exception: If an error occurs during deletion.
@@ -752,7 +752,7 @@ class SurrealDb(BaseDb):
         """Get all memory topics from the database.
 
         Args:
-            user_id (Optional[str]): User ID to filter by. Defaults to None.
+            user_id (Optional[str]): The ID of the user to filter by. Defaults to None.
 
         Returns:
             List[str]: List of memory topics.
@@ -793,7 +793,7 @@ class SurrealDb(BaseDb):
         Args:
             memory_id (str): The ID of the memory to get.
             deserialize (Optional[bool]): Whether to serialize the memory. Defaults to True.
-            user_id (Optional[str]): User ID to filter by. Defaults to None.
+            user_id (Optional[str]): The ID of the user to filter by. Defaults to None.
 
         Returns:
             Optional[Union[UserMemory, Dict[str, Any]]]:
@@ -834,7 +834,7 @@ class SurrealDb(BaseDb):
         """Get all memories from the database as UserMemory objects.
 
         Args:
-            user_id (Optional[str]): User ID to filter by. Defaults to None.
+            user_id (Optional[str]): The ID of the user to filter by.
             agent_id (Optional[str]): The ID of the agent to filter by.
             team_id (Optional[str]): The ID of the team to filter by.
             topics (Optional[List[str]]): The topics to filter by.
@@ -898,7 +898,7 @@ class SurrealDb(BaseDb):
         Args:
             limit (Optional[int]): The maximum number of user stats to return.
             page (Optional[int]): The page number.
-            user_id (Optional[str]): User ID to filter by. Defaults to None.
+            user_id (Optional[str]): The ID of the user to filter by. Defaults to None.
 
         Returns:
             Tuple[List[Dict[str, Any]], int]: A list of dictionaries containing user stats and total count.
