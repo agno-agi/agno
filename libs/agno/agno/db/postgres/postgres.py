@@ -624,7 +624,7 @@ class PostgresDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.session_id == session_id)
-                if user_id:
+                if user_id is not None:
                     delete_stmt = delete_stmt.where(table.c.user_id == user_id)
                 result = sess.execute(delete_stmt)
 
@@ -658,7 +658,7 @@ class PostgresDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.session_id.in_(session_ids))
-                if user_id:
+                if user_id is not None:
                     delete_stmt = delete_stmt.where(table.c.user_id == user_id)
                 result = sess.execute(delete_stmt)
 
@@ -880,7 +880,7 @@ class PostgresDb(BaseDb):
                     )
                     .returning(*table.c)
                 )
-                if user_id:
+                if user_id is not None:
                     stmt = stmt.where(table.c.user_id == user_id)
                 result = sess.execute(stmt)
                 row = result.fetchone()
@@ -974,9 +974,12 @@ class PostgresDb(BaseDb):
                             runs=session_dict.get("runs"),
                             updated_at=int(time.time()),
                         ),
+                        where=(table.c.user_id == session_dict.get("user_id")) | (table.c.user_id.is_(None)),
                     ).returning(table)
                     result = sess.execute(stmt)
                     row = result.fetchone()
+                    if row is None:
+                        return None
                     session_dict = dict(row._mapping)
 
                     if session_dict is None or not deserialize:
@@ -1010,9 +1013,12 @@ class PostgresDb(BaseDb):
                             runs=session_dict.get("runs"),
                             updated_at=int(time.time()),
                         ),
+                        where=(table.c.user_id == session_dict.get("user_id")) | (table.c.user_id.is_(None)),
                     ).returning(table)
                     result = sess.execute(stmt)
                     row = result.fetchone()
+                    if row is None:
+                        return None
                     session_dict = dict(row._mapping)
 
                     if session_dict is None or not deserialize:
@@ -1046,9 +1052,12 @@ class PostgresDb(BaseDb):
                             runs=session_dict.get("runs"),
                             updated_at=int(time.time()),
                         ),
+                        where=(table.c.user_id == session_dict.get("user_id")) | (table.c.user_id.is_(None)),
                     ).returning(table)
                     result = sess.execute(stmt)
                     row = result.fetchone()
+                    if row is None:
+                        return None
                     session_dict = dict(row._mapping)
 
                     if session_dict is None or not deserialize:
@@ -1136,9 +1145,11 @@ class PostgresDb(BaseDb):
                         for col in table.columns
                         if col.name not in ["id", "session_id", "created_at"]
                     }
-                    stmt = stmt.on_conflict_do_update(index_elements=["session_id"], set_=update_columns).returning(
-                        table
-                    )
+                    stmt = stmt.on_conflict_do_update(
+                        index_elements=["session_id"],
+                        set_=update_columns,
+                        where=(table.c.user_id == stmt.excluded.user_id) | (table.c.user_id.is_(None)),
+                    ).returning(table)
 
                     result = sess.execute(stmt, session_records)
                     for row in result.fetchall():
@@ -1193,9 +1204,11 @@ class PostgresDb(BaseDb):
                         for col in table.columns
                         if col.name not in ["id", "session_id", "created_at"]
                     }
-                    stmt = stmt.on_conflict_do_update(index_elements=["session_id"], set_=update_columns).returning(
-                        table
-                    )
+                    stmt = stmt.on_conflict_do_update(
+                        index_elements=["session_id"],
+                        set_=update_columns,
+                        where=(table.c.user_id == stmt.excluded.user_id) | (table.c.user_id.is_(None)),
+                    ).returning(table)
 
                     result = sess.execute(stmt, session_records)
                     for row in result.fetchall():
@@ -1250,9 +1263,11 @@ class PostgresDb(BaseDb):
                         for col in table.columns
                         if col.name not in ["id", "session_id", "created_at"]
                     }
-                    stmt = stmt.on_conflict_do_update(index_elements=["session_id"], set_=update_columns).returning(
-                        table
-                    )
+                    stmt = stmt.on_conflict_do_update(
+                        index_elements=["session_id"],
+                        set_=update_columns,
+                        where=(table.c.user_id == stmt.excluded.user_id) | (table.c.user_id.is_(None)),
+                    ).returning(table)
 
                     result = sess.execute(stmt, session_records)
                     for row in result.fetchall():
@@ -2958,7 +2973,7 @@ class PostgresDb(BaseDb):
                     base_stmt = base_stmt.where(table.c.run_id == run_id)
                 if session_id:
                     base_stmt = base_stmt.where(table.c.session_id == session_id)
-                if user_id:
+                if user_id is not None:
                     base_stmt = base_stmt.where(table.c.user_id == user_id)
                 if agent_id:
                     base_stmt = base_stmt.where(table.c.agent_id == agent_id)
@@ -3046,7 +3061,7 @@ class PostgresDb(BaseDb):
                 )
 
                 # Apply filters
-                if user_id:
+                if user_id is not None:
                     base_stmt = base_stmt.where(table.c.user_id == user_id)
                 if workflow_id:
                     base_stmt = base_stmt.where(table.c.workflow_id == workflow_id)

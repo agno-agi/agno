@@ -449,7 +449,7 @@ class AsyncSqliteDb(AsyncBaseDb):
 
             async with self.async_session_factory() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.session_id == session_id)
-                if user_id:
+                if user_id is not None:
                     delete_stmt = delete_stmt.where(table.c.user_id == user_id)
                 result = await sess.execute(delete_stmt)
                 if result.rowcount == 0:  # type: ignore
@@ -481,7 +481,7 @@ class AsyncSqliteDb(AsyncBaseDb):
 
             async with self.async_session_factory() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.session_id.in_(session_ids))
-                if user_id:
+                if user_id is not None:
                     delete_stmt = delete_stmt.where(table.c.user_id == user_id)
                 result = await sess.execute(delete_stmt)
 
@@ -747,6 +747,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                             metadata=serialized_session.get("metadata"),
                             updated_at=int(time.time()),
                         ),
+                        where=(table.c.user_id == serialized_session.get("user_id")) | (table.c.user_id.is_(None)),
                     )
                     stmt = stmt.returning(*table.columns)  # type: ignore
                     result = await sess.execute(stmt)
@@ -785,6 +786,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                             metadata=serialized_session.get("metadata"),
                             updated_at=int(time.time()),
                         ),
+                        where=(table.c.user_id == serialized_session.get("user_id")) | (table.c.user_id.is_(None)),
                     )
                     stmt = stmt.returning(*table.columns)  # type: ignore
                     result = await sess.execute(stmt)
@@ -822,6 +824,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                             metadata=serialized_session.get("metadata"),
                             updated_at=int(time.time()),
                         ),
+                        where=(table.c.user_id == serialized_session.get("user_id")) | (table.c.user_id.is_(None)),
                     )
                     stmt = stmt.returning(*table.columns)  # type: ignore
                     result = await sess.execute(stmt)
@@ -2687,7 +2690,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                     base_stmt = base_stmt.where(table.c.run_id == run_id)
                 if session_id:
                     base_stmt = base_stmt.where(table.c.session_id == session_id)
-                if user_id:
+                if user_id is not None:
                     base_stmt = base_stmt.where(table.c.user_id == user_id)
                 if agent_id:
                     base_stmt = base_stmt.where(table.c.agent_id == agent_id)
@@ -2776,7 +2779,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                 )
 
                 # Apply filters
-                if user_id:
+                if user_id is not None:
                     base_stmt = base_stmt.where(table.c.user_id == user_id)
                 if workflow_id:
                     base_stmt = base_stmt.where(table.c.workflow_id == workflow_id)

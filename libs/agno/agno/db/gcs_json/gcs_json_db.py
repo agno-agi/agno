@@ -382,7 +382,7 @@ class GcsJsonDb(BaseDb):
                     and session_data.get("session_type") == session_type.value
                 ):
                     if user_id is not None and session_data.get("user_id") != user_id:
-                        return None
+                        continue
                     # Update session name in session_data
                     if "session_data" not in session_data:
                         session_data["session_data"] = {}
@@ -428,6 +428,9 @@ class GcsJsonDb(BaseDb):
                 if existing_session.get("session_id") == session_dict.get("session_id") and self._matches_session_key(
                     existing_session, session
                 ):
+                    existing_uid = existing_session.get("user_id")
+                    if existing_uid is not None and existing_uid != session_dict.get("user_id"):
+                        return None
                     # Update existing session
                     session_dict["updated_at"] = int(time.time())
                     sessions[i] = session_dict

@@ -195,7 +195,7 @@ class TestLinkedToMetadata:
         assert result[0].meta_data["linked_to"] == "My Knowledge Base"
 
     def test_prepare_documents_adds_empty_linked_to_without_name(self):
-        """Test that linked_to is empty string when knowledge has no name."""
+        """Test that linked_to is set to empty string when knowledge has no name."""
         mock_db = MockVectorDb()
         knowledge = Knowledge(vector_db=mock_db)
 

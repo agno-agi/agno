@@ -247,14 +247,12 @@ class SurrealDb(BaseDb):
         table = self._get_table(table_type="sessions")
         if table is None:
             return False
-
         if user_id is not None:
             res = self.client.query(
-                f"DELETE FROM {table} WHERE id = $record AND user_id = $user_id",
+                f"DELETE FROM {table} WHERE id = $record AND user_id = $user_id RETURN BEFORE",
                 {"record": RecordID(table, session_id), "user_id": user_id},
             )
-            return bool(res)
-
+            return isinstance(res, list) and len(res) > 0
         res = self.client.delete(RecordID(table, session_id))
         return bool(res)
 
@@ -264,13 +262,12 @@ class SurrealDb(BaseDb):
             return
 
         records = [RecordID(table, id) for id in session_ids]
+        query = f"DELETE FROM {table} WHERE id IN $records"
+        params: Dict[str, Any] = {"records": records}
         if user_id is not None:
-            self.client.query(
-                f"DELETE FROM {table} WHERE id IN $records AND user_id = $user_id",
-                {"records": records, "user_id": user_id},
-            )
-        else:
-            self.client.query(f"DELETE FROM {table} WHERE id IN $records", {"records": records})
+            query += " AND user_id = $user_id"
+            params["user_id"] = user_id
+        self.client.query(query, params)
 
     def get_session(
         self,
@@ -452,18 +449,16 @@ class SurrealDb(BaseDb):
         vars: Dict[str, Any] = {"record": RecordID(table, session_id), "name": session_name}
 
         if user_id is not None:
-            query = dedent("""
-                UPDATE ONLY $record
-                SET session_name = $name
-                WHERE user_id = $user_id
-            """)
             vars["user_id"] = user_id
+            result = self.client.query(
+                f"UPDATE {table} SET session_name = $name WHERE id = $record AND user_id = $user_id",
+                vars,
+            )
+            session_raw = (
+                result[0] if isinstance(result, list) and len(result) > 0 and isinstance(result[0], dict) else None
+            )
         else:
-            query = dedent("""
-                UPDATE ONLY $record
-                SET session_name = $name
-            """)
-        session_raw = self._query_one(query, vars, dict)
+            session_raw = self._query_one("UPDATE ONLY $record SET session_name = $name", vars, dict)
 
         if session_raw is None or not deserialize:
             return session_raw
@@ -489,6 +484,16 @@ class SurrealDb(BaseDb):
         """
         session_type = get_session_type(session)
         table = self._get_table("sessions")
+
+        existing = self.client.query(
+            f"SELECT user_id FROM {table} WHERE id = $record",
+            {"record": RecordID(table, session.session_id)},
+        )
+        if isinstance(existing, list) and len(existing) > 0:
+            existing_uid = existing[0].get("user_id") if isinstance(existing[0], dict) else None
+            if existing_uid is not None and existing_uid != session.user_id:
+                return None
+
         session_raw = self._query_one(
             "UPSERT ONLY $record CONTENT $content",
             {
@@ -1643,7 +1648,7 @@ class SurrealDb(BaseDb):
                 where.and_("run_id", run_id)
             if session_id:
                 where.and_("session_id", session_id)
-            if user_id:
+            if user_id is not None:
                 where.and_("user_id", user_id)
             if agent_id:
                 where.and_("agent_id", agent_id)
@@ -1728,7 +1733,7 @@ class SurrealDb(BaseDb):
             # Build where clause
             where = WhereClause()
             where.and_("!!session_id", True, "=")  # Ensure session_id is not null
-            if user_id:
+            if user_id is not None:
                 where.and_("user_id", user_id)
             if agent_id:
                 where.and_("agent_id", agent_id)

@@ -423,7 +423,8 @@ def test_run_dispatch_respects_run_context_precedence(monkeypatch: pytest.Monkey
     assert preserved_context.dependencies == {"ctx_dep": "keep"}
     assert preserved_context.knowledge_filters == {"ctx_filter": "keep"}
     assert preserved_context.metadata == {"ctx_meta": "keep"}
-    assert preserved_context.output_schema == {"ctx_schema": "keep"}
+    # output_schema is always set from resolved options (for workflow reuse)
+    assert preserved_context.output_schema == {"type": "object", "properties": {"agent": {"type": "string"}}}
 
     override_context = RunContext(
         run_id="ctx-override",
@@ -515,7 +516,8 @@ async def test_arun_dispatch_respects_run_context_precedence(monkeypatch: pytest
     assert preserved_context.dependencies == {"ctx_dep": "keep"}
     assert preserved_context.knowledge_filters == {"ctx_filter": "keep"}
     assert preserved_context.metadata == {"ctx_meta": "keep"}
-    assert preserved_context.output_schema == {"ctx_schema": "keep"}
+    # output_schema is always set from resolved options (for workflow reuse)
+    assert preserved_context.output_schema == {"type": "object", "properties": {"agent": {"type": "string"}}}
 
     override_context = RunContext(
         run_id="actx-override",

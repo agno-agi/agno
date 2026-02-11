@@ -453,7 +453,7 @@ class AsyncMySQLDb(AsyncBaseDb):
 
             async with self.async_session_factory() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.session_id == session_id)
-                if user_id:
+                if user_id is not None:
                     delete_stmt = delete_stmt.where(table.c.user_id == user_id)
                 result = await sess.execute(delete_stmt)
 
@@ -485,7 +485,7 @@ class AsyncMySQLDb(AsyncBaseDb):
 
             async with self.async_session_factory() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.session_id.in_(session_ids))
-                if user_id:
+                if user_id is not None:
                     delete_stmt = delete_stmt.where(table.c.user_id == user_id)
                 result = await sess.execute(delete_stmt)
 
@@ -688,13 +688,13 @@ class AsyncMySQLDb(AsyncBaseDb):
                     .where(table.c.session_type == session_type.value)
                     .values(session_data=func.json_set(table.c.session_data, "$.session_name", session_name))
                 )
-                if user_id:
+                if user_id is not None:
                     stmt = stmt.where(table.c.user_id == user_id)
                 await sess.execute(stmt)
 
                 # Fetch the updated row
                 select_stmt = select(table).where(table.c.session_id == session_id)
-                if user_id:
+                if user_id is not None:
                     select_stmt = select_stmt.where(table.c.user_id == user_id)
                 result = await sess.execute(select_stmt)
                 row = result.fetchone()
@@ -745,6 +745,17 @@ class AsyncMySQLDb(AsyncBaseDb):
 
             if isinstance(session, AgentSession):
                 async with self.async_session_factory() as sess, sess.begin():
+                    existing_result = await sess.execute(
+                        select(table.c.user_id)
+                        .where(table.c.session_id == session_dict.get("session_id"))
+                        .with_for_update()
+                    )
+                    existing_row = existing_result.fetchone()
+                    if existing_row is not None:
+                        existing_uid = existing_row[0]
+                        if existing_uid is not None and existing_uid != session_dict.get("user_id"):
+                            return None
+
                     current_time = int(time.time())
                     stmt = mysql.insert(table).values(
                         session_id=session_dict.get("session_id"),
@@ -787,6 +798,17 @@ class AsyncMySQLDb(AsyncBaseDb):
 
             elif isinstance(session, TeamSession):
                 async with self.async_session_factory() as sess, sess.begin():
+                    existing_result = await sess.execute(
+                        select(table.c.user_id)
+                        .where(table.c.session_id == session_dict.get("session_id"))
+                        .with_for_update()
+                    )
+                    existing_row = existing_result.fetchone()
+                    if existing_row is not None:
+                        existing_uid = existing_row[0]
+                        if existing_uid is not None and existing_uid != session_dict.get("user_id"):
+                            return None
+
                     current_time = int(time.time())
                     stmt = mysql.insert(table).values(
                         session_id=session_dict.get("session_id"),
@@ -829,6 +851,17 @@ class AsyncMySQLDb(AsyncBaseDb):
 
             elif isinstance(session, WorkflowSession):
                 async with self.async_session_factory() as sess, sess.begin():
+                    existing_result = await sess.execute(
+                        select(table.c.user_id)
+                        .where(table.c.session_id == session_dict.get("session_id"))
+                        .with_for_update()
+                    )
+                    existing_row = existing_result.fetchone()
+                    if existing_row is not None:
+                        existing_uid = existing_row[0]
+                        if existing_uid is not None and existing_uid != session_dict.get("user_id"):
+                            return None
+
                     current_time = int(time.time())
                     stmt = mysql.insert(table).values(
                         session_id=session_dict.get("session_id"),
@@ -2673,7 +2706,7 @@ class AsyncMySQLDb(AsyncBaseDb):
                     base_stmt = base_stmt.where(table.c.run_id == run_id)
                 if session_id:
                     base_stmt = base_stmt.where(table.c.session_id == session_id)
-                if user_id:
+                if user_id is not None:
                     base_stmt = base_stmt.where(table.c.user_id == user_id)
                 if agent_id:
                     base_stmt = base_stmt.where(table.c.agent_id == agent_id)
@@ -2763,7 +2796,7 @@ class AsyncMySQLDb(AsyncBaseDb):
                 )
 
                 # Apply filters
-                if user_id:
+                if user_id is not None:
                     base_stmt = base_stmt.where(table.c.user_id == user_id)
                 if workflow_id:
                     base_stmt = base_stmt.where(table.c.workflow_id == workflow_id)

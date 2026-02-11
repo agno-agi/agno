@@ -446,7 +446,7 @@ class MySQLDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.session_id == session_id)
-                if user_id:
+                if user_id is not None:
                     delete_stmt = delete_stmt.where(table.c.user_id == user_id)
                 result = sess.execute(delete_stmt)
                 if result.rowcount == 0:
@@ -478,7 +478,7 @@ class MySQLDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.session_id.in_(session_ids))
-                if user_id:
+                if user_id is not None:
                     delete_stmt = delete_stmt.where(table.c.user_id == user_id)
                 result = sess.execute(delete_stmt)
 
@@ -686,13 +686,13 @@ class MySQLDb(BaseDb):
                     .where(table.c.session_type == session_type.value)
                     .values(session_data=func.json_set(table.c.session_data, "$.session_name", session_name))
                 )
-                if user_id:
+                if user_id is not None:
                     stmt = stmt.where(table.c.user_id == user_id)
                 sess.execute(stmt)
 
                 # Fetch the updated row
                 select_stmt = select(table).where(table.c.session_id == session_id)
-                if user_id:
+                if user_id is not None:
                     select_stmt = select_stmt.where(table.c.user_id == user_id)
                 result = sess.execute(select_stmt)
                 row = result.fetchone()
@@ -744,6 +744,16 @@ class MySQLDb(BaseDb):
 
             if isinstance(session, AgentSession):
                 with self.Session() as sess, sess.begin():
+                    existing_row = sess.execute(
+                        select(table.c.user_id)
+                        .where(table.c.session_id == session_dict.get("session_id"))
+                        .with_for_update()
+                    ).fetchone()
+                    if existing_row is not None:
+                        existing_uid = existing_row[0]
+                        if existing_uid is not None and existing_uid != session_dict.get("user_id"):
+                            return None
+
                     stmt = mysql.insert(table).values(
                         session_id=session_dict.get("session_id"),
                         session_type=SessionType.AGENT.value,
@@ -782,6 +792,16 @@ class MySQLDb(BaseDb):
 
             elif isinstance(session, TeamSession):
                 with self.Session() as sess, sess.begin():
+                    existing_row = sess.execute(
+                        select(table.c.user_id)
+                        .where(table.c.session_id == session_dict.get("session_id"))
+                        .with_for_update()
+                    ).fetchone()
+                    if existing_row is not None:
+                        existing_uid = existing_row[0]
+                        if existing_uid is not None and existing_uid != session_dict.get("user_id"):
+                            return None
+
                     stmt = mysql.insert(table).values(
                         session_id=session_dict.get("session_id"),
                         session_type=SessionType.TEAM.value,
@@ -820,6 +840,16 @@ class MySQLDb(BaseDb):
 
             else:
                 with self.Session() as sess, sess.begin():
+                    existing_row = sess.execute(
+                        select(table.c.user_id)
+                        .where(table.c.session_id == session_dict.get("session_id"))
+                        .with_for_update()
+                    ).fetchone()
+                    if existing_row is not None:
+                        existing_uid = existing_row[0]
+                        if existing_uid is not None and existing_uid != session_dict.get("user_id"):
+                            return None
+
                     stmt = mysql.insert(table).values(
                         session_id=session_dict.get("session_id"),
                         session_type=SessionType.WORKFLOW.value,
@@ -2697,7 +2727,7 @@ class MySQLDb(BaseDb):
                     base_stmt = base_stmt.where(table.c.run_id == run_id)
                 if session_id:
                     base_stmt = base_stmt.where(table.c.session_id == session_id)
-                if user_id:
+                if user_id is not None:
                     base_stmt = base_stmt.where(table.c.user_id == user_id)
                 if agent_id:
                     base_stmt = base_stmt.where(table.c.agent_id == agent_id)
@@ -2785,7 +2815,7 @@ class MySQLDb(BaseDb):
                 )
 
                 # Apply filters
-                if user_id:
+                if user_id is not None:
                     base_stmt = base_stmt.where(table.c.user_id == user_id)
                 if workflow_id:
                     base_stmt = base_stmt.where(table.c.workflow_id == workflow_id)

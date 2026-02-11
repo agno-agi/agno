@@ -200,6 +200,7 @@ def initialize_agent(agent: Agent, debug_mode: Optional[bool] = None) -> None:
     set_default_model(agent)
     set_debug(agent, debug_mode=debug_mode)
     set_id(agent)
+    set_telemetry(agent)
     if agent.update_memory_on_run or agent.enable_agentic_memory or agent.memory_manager is not None:
         set_memory_manager(agent)
     if (

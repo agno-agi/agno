@@ -293,8 +293,8 @@ class RedisDb(BaseDb):
             if user_id is not None:
                 session = self._get_record("sessions", session_id)
                 if session is None or session.get("user_id") != user_id:
+                    log_debug(f"No session found to delete with session_id: {session_id} and user_id: {user_id}")
                     return False
-
             if self._delete_record(
                 table_type="sessions",
                 record_id=session_id,
@@ -327,7 +327,6 @@ class RedisDb(BaseDb):
                     session = self._get_record("sessions", session_id)
                     if session is None or session.get("user_id") != user_id:
                         continue
-
                 if self._delete_record(
                     "sessions",
                     session_id,
@@ -541,6 +540,14 @@ class RedisDb(BaseDb):
         """
         try:
             session_dict = session.to_dict()
+
+            existing = self._get_record(table_type="sessions", record_id=session.session_id)
+            if (
+                existing
+                and existing.get("user_id") is not None
+                and existing.get("user_id") != session_dict.get("user_id")
+            ):
+                return None
 
             if isinstance(session, AgentSession):
                 data = {

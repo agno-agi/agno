@@ -291,8 +291,8 @@ def get_knowledge_instance(
     Raises:
         HTTPException: If no matching instance is found or parameters are invalid
     """
-    # If only one instance, return it (backwards compatible)
-    if len(knowledge_instances) == 1:
+    # If only one instance and no specific identifier requested, return it (backwards compatible)
+    if len(knowledge_instances) == 1 and not knowledge_id and not db_id:
         return next(iter(knowledge_instances))
 
     # If knowledge_id provided, find by unique ID (preferred)
@@ -525,7 +525,11 @@ def get_agent_by_id(
         for agent in agents:
             if agent.id == agent_id:
                 if create_fresh and isinstance(agent, Agent):
-                    return agent.deep_copy()
+                    fresh_agent = agent.deep_copy()
+                    # Clear team/workflow context — this is a standalone agent copy
+                    fresh_agent.team_id = None
+                    fresh_agent.workflow_id = None
+                    return fresh_agent
                 return agent
 
     # Try to get the agent from the database
