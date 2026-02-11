@@ -4409,22 +4409,32 @@ class SqliteDb(BaseDb):
         self,
         enabled: Optional[bool] = None,
         limit: int = 100,
-        offset: int = 0,
-    ) -> List[Dict[str, Any]]:
+        page: int = 1,
+    ) -> Tuple[List[Dict[str, Any]], int]:
         try:
             table = self._get_table(table_type="schedules")
             if table is None:
-                return []
+                return [], 0
             with self.Session() as sess:
-                stmt = select(table)
+                # Build base query with filters
+                base_query = select(table)
                 if enabled is not None:
-                    stmt = stmt.where(table.c.enabled == enabled)
-                stmt = stmt.order_by(table.c.created_at.desc()).limit(limit).offset(offset)
+                    base_query = base_query.where(table.c.enabled == enabled)
+
+                # Get total count
+                count_stmt = select(func.count()).select_from(base_query.alias())
+                total_count = sess.execute(count_stmt).scalar() or 0
+
+                # Calculate offset from page
+                offset = (page - 1) * limit
+
+                # Get paginated results
+                stmt = base_query.order_by(table.c.created_at.desc()).limit(limit).offset(offset)
                 results = sess.execute(stmt).fetchall()
-                return [dict(row._mapping) for row in results]
+                return [dict(row._mapping) for row in results], total_count
         except Exception as e:
             log_debug(f"Error listing schedules: {e}")
-            return []
+            return [], 0
 
     def create_schedule(self, schedule_data: Dict[str, Any]) -> Dict[str, Any]:
         try:
@@ -4567,14 +4577,22 @@ class SqliteDb(BaseDb):
     def get_schedule_runs(
         self,
         schedule_id: str,
-        limit: int = 100,
-        offset: int = 0,
-    ) -> List[Dict[str, Any]]:
+        limit: int = 20,
+        page: int = 1,
+    ) -> Tuple[List[Dict[str, Any]], int]:
         try:
             table = self._get_table(table_type="schedule_runs")
             if table is None:
-                return []
+                return [], 0
             with self.Session() as sess:
+                # Get total count
+                count_stmt = select(func.count()).select_from(table).where(table.c.schedule_id == schedule_id)
+                total_count = sess.execute(count_stmt).scalar() or 0
+
+                # Calculate offset from page
+                offset = (page - 1) * limit
+
+                # Get paginated results
                 stmt = (
                     select(table)
                     .where(table.c.schedule_id == schedule_id)
@@ -4583,7 +4601,7 @@ class SqliteDb(BaseDb):
                     .offset(offset)
                 )
                 results = sess.execute(stmt).fetchall()
-                return [dict(row._mapping) for row in results]
+                return [dict(row._mapping) for row in results], total_count
         except Exception as e:
             log_debug(f"Error getting schedule runs: {e}")
             return [], 0
