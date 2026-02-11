@@ -22,10 +22,6 @@ from uuid import uuid4
 
 from pydantic import BaseModel
 
-# Strong references to background tasks so they aren't garbage-collected mid-execution.
-# See: https://docs.python.org/3/library/asyncio-task.html#asyncio.create_task
-_background_tasks: set[asyncio.Task[None]] = set()
-
 from agno.exceptions import (
     InputCheckError,
     OutputCheckError,
@@ -91,6 +87,10 @@ from agno.utils.log import (
     log_info,
     log_warning,
 )
+
+# Strong references to background tasks so they aren't garbage-collected mid-execution.
+# See: https://docs.python.org/3/library/asyncio-task.html#asyncio.create_task
+_background_tasks: set[asyncio.Task[None]] = set()
 
 if TYPE_CHECKING:
     from agno.team.team import Team
