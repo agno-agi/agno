@@ -3105,6 +3105,7 @@ def _route_requirements_to_members(
     team: "Team",
     run_response: TeamRunOutput,
     session: TeamSession,
+    run_context: Optional[RunContext] = None,
 ) -> List[str]:
     """Route member requirements back to the appropriate member agents (sync).
 
@@ -3127,7 +3128,7 @@ def _route_requirements_to_members(
     member_results: List[str] = []
 
     for member_id, reqs in member_reqs.items():
-        route_result = _find_member_route_by_id(team, member_id)
+        route_result = _find_member_route_by_id(team, member_id, run_context=run_context)
         if route_result is None:
             log_warning(f"Could not find member with ID {member_id} for continue_run routing")
             member_results.append(f"[{member_id}]: Could not route requirement — member not found")
@@ -3182,6 +3183,7 @@ async def _aroute_requirements_to_members(
     team: "Team",
     run_response: TeamRunOutput,
     session: TeamSession,
+    run_context: Optional[RunContext] = None,
 ) -> List[str]:
     """Route member requirements back to the appropriate member agents (async).
 
@@ -3204,7 +3206,7 @@ async def _aroute_requirements_to_members(
         return []
 
     async def _continue_member(member_id: str, reqs: List[RunRequirement]) -> Optional[str]:
-        route_result = _find_member_route_by_id(team, member_id)
+        route_result = _find_member_route_by_id(team, member_id, run_context=run_context)
         if route_result is None:
             log_warning(f"Could not find member with ID {member_id} for continue_run routing")
             return f"[{member_id}]: Could not route requirement — member not found"
@@ -3399,7 +3401,9 @@ def continue_run_dispatch(
         # may append newly propagated reqs via _propagate_member_pause (chained HITL).
         original_member_req_ids = {id(r) for r in member_reqs}
         run_response.requirements = member_reqs
-        member_results = _route_requirements_to_members(team, run_response=run_response, session=team_session)
+        member_results = _route_requirements_to_members(
+            team, run_response=run_response, session=team_session, run_context=run_context
+        )
         # Merge: keep team-level reqs + any newly propagated member reqs (chained HITL)
         newly_propagated = [r for r in (run_response.requirements or []) if id(r) not in original_member_req_ids]
         run_response.requirements = team_level_reqs + newly_propagated
@@ -4168,7 +4172,7 @@ async def _acontinue_run(
                     original_member_req_ids = {id(r) for r in member_reqs}
                     run_response.requirements = member_reqs
                     member_results = await _aroute_requirements_to_members(
-                        team, run_response=run_response, session=team_session
+                        team, run_response=run_response, session=team_session, run_context=run_context
                     )
                     # Merge: keep team-level reqs + any newly propagated member reqs (chained HITL)
                     newly_propagated = [
@@ -4455,7 +4459,7 @@ async def _acontinue_run_stream(
                     original_member_req_ids = {id(r) for r in member_reqs}
                     run_response.requirements = member_reqs
                     member_results = await _aroute_requirements_to_members(
-                        team, run_response=run_response, session=team_session
+                        team, run_response=run_response, session=team_session, run_context=run_context
                     )
                     # Merge: keep team-level reqs + any newly propagated member reqs (chained HITL)
                     newly_propagated = [

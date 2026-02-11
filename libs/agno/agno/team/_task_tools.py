@@ -592,16 +592,22 @@ def _get_task_management_tools(
             use_agent_logger()
             member_session_state_copy = deepcopy(run_context.session_state)
 
+            # Copy media lists per-thread to avoid concurrent mutation
+            thread_images = list(_images)
+            thread_videos = list(_videos)
+            thread_audio = list(_audio)
+            thread_files = list(_files)
+
             try:
                 member_run_response = member_agent.run(
                     input=member_agent_task if not history else history,
                     user_id=user_id,
                     session_id=session.session_id,
                     session_state=member_session_state_copy,
-                    images=_images,
-                    videos=_videos,
-                    audio=_audio,
-                    files=_files,
+                    images=thread_images,
+                    videos=thread_videos,
+                    audio=thread_audio,
+                    files=thread_files,
                     stream=False,
                     debug_mode=debug_mode,
                     dependencies=run_context.dependencies,
@@ -613,6 +619,8 @@ def _get_task_management_tools(
                     else None,
                 )
                 return (task_obj.id, member_run_response, member_session_state_copy, member_agent_task, None)
+            except RunCancelledException:
+                raise
             except Exception as e:
                 return (task_obj.id, None, member_session_state_copy, member_agent_task, e)
 
@@ -756,16 +764,22 @@ def _get_task_management_tools(
             use_agent_logger()
             member_session_state_copy = deepcopy(run_context.session_state)
 
+            # Copy media lists to avoid concurrent mutation across coroutines
+            task_images = list(_images)
+            task_videos = list(_videos)
+            task_audio = list(_audio)
+            task_files = list(_files)
+
             try:
                 member_run_response = await member_agent.arun(
                     input=member_agent_task if not history else history,
                     user_id=user_id,
                     session_id=session.session_id,
                     session_state=member_session_state_copy,
-                    images=_images,
-                    videos=_videos,
-                    audio=_audio,
-                    files=_files,
+                    images=task_images,
+                    videos=task_videos,
+                    audio=task_audio,
+                    files=task_files,
                     stream=False,
                     debug_mode=debug_mode,
                     dependencies=run_context.dependencies,
@@ -777,6 +791,8 @@ def _get_task_management_tools(
                     else None,
                 )
                 return (task_obj.id, member_run_response, member_session_state_copy, member_agent_task, None)
+            except RunCancelledException:
+                raise
             except Exception as e:
                 return (task_obj.id, None, member_session_state_copy, member_agent_task, e)
 

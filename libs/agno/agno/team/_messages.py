@@ -55,7 +55,7 @@ from agno.utils.timer import Timer
 def _get_tool_names(member: Any) -> List[str]:
     """Extract tool names from a member's tools list."""
     tool_names: List[str] = []
-    if member.tools is None or member.tools == []:
+    if member.tools is None or not isinstance(member.tools, list):
         return tool_names
     for _tool in member.tools:
         if isinstance(_tool, Toolkit):
