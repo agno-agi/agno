@@ -1476,23 +1476,13 @@ class Step:
                     if inner_content:
                         step_name = inner_step.step_name or f"Step {i + 1}"
                         aggregated_parts.append(f"=== {step_name} ===\n{inner_content}")
-                if aggregated_parts:
-                    return "\n\n".join(aggregated_parts)
-                content = step_output.content
-                if isinstance(content, BaseModel):
-                    return content.model_dump_json(indent=2)
-                return content  # type: ignore
+                return "\n\n".join(aggregated_parts) if aggregated_parts else step_output.content  # type: ignore
 
             # For other nested step types, recursively get content from the last nested step
             return self._get_deepest_content_from_step_output(step_output.steps[-1])
 
         # For regular steps, return their content
-        content = step_output.content
-        # Serialize BaseModel content to JSON string so the next step's agent
-        # receives a string input rather than a raw BaseModel object.
-        if isinstance(content, BaseModel):
-            return content.model_dump_json(indent=2)
-        return content  # type: ignore
+        return step_output.content  # type: ignore
 
     def _prepare_message(
         self,

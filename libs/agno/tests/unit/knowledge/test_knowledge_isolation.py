@@ -194,15 +194,15 @@ class TestLinkedToMetadata:
 
         assert result[0].meta_data["linked_to"] == "My Knowledge Base"
 
-    def test_prepare_documents_adds_no_linked_to_without_name(self):
-        """Test that linked_to is not added when knowledge has no name."""
+    def test_prepare_documents_adds_empty_linked_to_without_name(self):
+        """Test that linked_to is set to empty string when knowledge has no name."""
         mock_db = MockVectorDb()
         knowledge = Knowledge(vector_db=mock_db)
 
         documents = [Document(name="doc1", content="content")]
         result = knowledge._prepare_documents_for_insert(documents, "content-id")
 
-        assert "linked_to" not in result[0].meta_data
+        assert result[0].meta_data["linked_to"] == ""
 
     def test_linked_to_always_uses_knowledge_name(self):
         """Test that linked_to always uses the knowledge instance name, overriding any caller-supplied value."""
