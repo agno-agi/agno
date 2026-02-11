@@ -1338,80 +1338,88 @@ class Knowledge(RemoteKnowledge):
     ):
         from agno.vectordb import VectorDb
 
-        self.vector_db = cast(VectorDb, self.vector_db)
+        try:
+            self.vector_db = cast(VectorDb, self.vector_db)
 
-        log_info(f"Adding content from path, {content.id}, {content.name}, {content.path}, {content.description}")
-        path = Path(content.path)  # type: ignore
+            log_info(f"Adding content from path, {content.id}, {content.name}, {content.path}, {content.description}")
+            path = Path(content.path)  # type: ignore
 
-        if path.is_file():
-            if self._should_include_file(str(path), include, exclude):
-                log_debug(f"Adding file {path} due to include/exclude filters")
+            if path.is_file():
+                if self._should_include_file(str(path), include, exclude):
+                    log_debug(f"Adding file {path} due to include/exclude filters")
 
-                # Set name from path if not provided
-                if not content.name:
-                    content.name = path.name
+                    # Set name from path if not provided
+                    if not content.name:
+                        content.name = path.name
 
-                await self._ainsert_contents_db(content)
-                if self._should_skip(content.content_hash, skip_if_exists):  # type: ignore[arg-type]
-                    content.status = ContentStatus.COMPLETED
-                    await self._aupdate_content(content)
-                    return
+                    await self._ainsert_contents_db(content)
+                    if self._should_skip(content.content_hash, skip_if_exists):  # type: ignore[arg-type]
+                        content.status = ContentStatus.COMPLETED
+                        await self._aupdate_content(content)
+                        return
 
-                # Handle LightRAG special case - read file and upload directly
-                if self.vector_db.__class__.__name__ == "LightRag":
-                    await self._aprocess_lightrag_content(content, KnowledgeContentOrigin.PATH)
-                    return
+                    # Handle LightRAG special case - read file and upload directly
+                    if self.vector_db.__class__.__name__ == "LightRag":
+                        await self._aprocess_lightrag_content(content, KnowledgeContentOrigin.PATH)
+                        return
 
-                if content.reader:
-                    reader = content.reader
-                else:
-                    reader = ReaderFactory.get_reader_for_extension(path.suffix)
-                    log_debug(f"Using Reader: {reader.__class__.__name__}")
+                    if content.reader:
+                        reader = content.reader
+                    else:
+                        reader = ReaderFactory.get_reader_for_extension(path.suffix)
+                        log_debug(f"Using Reader: {reader.__class__.__name__}")
 
-                if reader:
-                    password = content.auth.password if content.auth and content.auth.password is not None else None
-                    read_documents = await self._aread(reader, path, name=content.name or path.name, password=password)
-                else:
-                    read_documents = []
+                    if reader:
+                        password = content.auth.password if content.auth and content.auth.password is not None else None
+                        read_documents = await self._aread(
+                            reader, path, name=content.name or path.name, password=password
+                        )
+                    else:
+                        read_documents = []
 
-                if not content.file_type:
-                    content.file_type = path.suffix
+                    if not content.file_type:
+                        content.file_type = path.suffix
 
-                if not content.size and content.file_data:
-                    content.size = len(content.file_data.content)  # type: ignore
-                if not content.size:
-                    try:
-                        content.size = path.stat().st_size
-                    except (OSError, IOError) as e:
-                        log_warning(f"Could not get file size for {path}: {e}")
-                        content.size = 0
+                    if not content.size and content.file_data:
+                        content.size = len(content.file_data.content)  # type: ignore
+                    if not content.size:
+                        try:
+                            content.size = path.stat().st_size
+                        except (OSError, IOError) as e:
+                            log_warning(f"Could not get file size for {path}: {e}")
+                            content.size = 0
 
-                if not content.id:
-                    content.id = generate_id(content.content_hash or "")
-                self._prepare_documents_for_insert(read_documents, content.id, metadata=content.metadata)
+                    if not content.id:
+                        content.id = generate_id(content.content_hash or "")
+                    self._prepare_documents_for_insert(read_documents, content.id, metadata=content.metadata)
 
-                await self._ahandle_vector_db_insert(content, read_documents, upsert)
+                    await self._ahandle_vector_db_insert(content, read_documents, upsert)
 
-        elif path.is_dir():
-            for file_path in path.iterdir():
-                # Apply include/exclude filtering
-                if not self._should_include_file(str(file_path), include, exclude):
-                    log_debug(f"Skipping file {file_path} due to include/exclude filters")
-                    continue
+            elif path.is_dir():
+                for file_path in path.iterdir():
+                    # Apply include/exclude filtering
+                    if not self._should_include_file(str(file_path), include, exclude):
+                        log_debug(f"Skipping file {file_path} due to include/exclude filters")
+                        continue
 
-                file_content = Content(
-                    name=content.name,
-                    path=str(file_path),
-                    metadata=content.metadata,
-                    description=content.description,
-                    reader=content.reader,
-                )
-                file_content.content_hash = self._build_content_hash(file_content)
-                file_content.id = generate_id(file_content.content_hash)
+                    file_content = Content(
+                        name=content.name,
+                        path=str(file_path),
+                        metadata=content.metadata,
+                        description=content.description,
+                        reader=content.reader,
+                    )
+                    file_content.content_hash = self._build_content_hash(file_content)
+                    file_content.id = generate_id(file_content.content_hash)
 
-                await self._aload_from_path(file_content, upsert, skip_if_exists, include, exclude)
-        else:
-            log_warning(f"Invalid path: {path}")
+                    await self._aload_from_path(file_content, upsert, skip_if_exists, include, exclude)
+            else:
+                log_warning(f"Invalid path: {path}")
+        except Exception as e:
+            log_error(f"Error loading content from path {content.path}: {e}")
+            content.status = ContentStatus.FAILED
+            content.status_message = f"Failed to load from path: {str(e)}"
+            await self._aupdate_content(content)
 
     def _load_from_path(
         self,
@@ -1423,80 +1431,86 @@ class Knowledge(RemoteKnowledge):
     ):
         from agno.vectordb import VectorDb
 
-        self.vector_db = cast(VectorDb, self.vector_db)
+        try:
+            self.vector_db = cast(VectorDb, self.vector_db)
 
-        log_info(f"Adding content from path, {content.id}, {content.name}, {content.path}, {content.description}")
-        path = Path(content.path)  # type: ignore
+            log_info(f"Adding content from path, {content.id}, {content.name}, {content.path}, {content.description}")
+            path = Path(content.path)  # type: ignore
 
-        if path.is_file():
-            if self._should_include_file(str(path), include, exclude):
-                log_debug(f"Adding file {path} due to include/exclude filters")
+            if path.is_file():
+                if self._should_include_file(str(path), include, exclude):
+                    log_debug(f"Adding file {path} due to include/exclude filters")
 
-                # Set name from path if not provided
-                if not content.name:
-                    content.name = path.name
+                    # Set name from path if not provided
+                    if not content.name:
+                        content.name = path.name
 
-                self._insert_contents_db(content)
-                if self._should_skip(content.content_hash, skip_if_exists):  # type: ignore[arg-type]
-                    content.status = ContentStatus.COMPLETED
-                    self._update_content(content)
-                    return
+                    self._insert_contents_db(content)
+                    if self._should_skip(content.content_hash, skip_if_exists):  # type: ignore[arg-type]
+                        content.status = ContentStatus.COMPLETED
+                        self._update_content(content)
+                        return
 
-                # Handle LightRAG special case - read file and upload directly
-                if self.vector_db.__class__.__name__ == "LightRag":
-                    self._process_lightrag_content(content, KnowledgeContentOrigin.PATH)
-                    return
+                    # Handle LightRAG special case - read file and upload directly
+                    if self.vector_db.__class__.__name__ == "LightRag":
+                        self._process_lightrag_content(content, KnowledgeContentOrigin.PATH)
+                        return
 
-                if content.reader:
-                    reader = content.reader
-                else:
-                    reader = ReaderFactory.get_reader_for_extension(path.suffix)
-                    log_debug(f"Using Reader: {reader.__class__.__name__}")
+                    if content.reader:
+                        reader = content.reader
+                    else:
+                        reader = ReaderFactory.get_reader_for_extension(path.suffix)
+                        log_debug(f"Using Reader: {reader.__class__.__name__}")
 
-                if reader:
-                    password = content.auth.password if content.auth and content.auth.password is not None else None
-                    read_documents = self._read(reader, path, name=content.name or path.name, password=password)
-                else:
-                    read_documents = []
+                    if reader:
+                        password = content.auth.password if content.auth and content.auth.password is not None else None
+                        read_documents = self._read(reader, path, name=content.name or path.name, password=password)
+                    else:
+                        read_documents = []
 
-                if not content.file_type:
-                    content.file_type = path.suffix
+                    if not content.file_type:
+                        content.file_type = path.suffix
 
-                if not content.size and content.file_data:
-                    content.size = len(content.file_data.content)  # type: ignore
-                if not content.size:
-                    try:
-                        content.size = path.stat().st_size
-                    except (OSError, IOError) as e:
-                        log_warning(f"Could not get file size for {path}: {e}")
-                        content.size = 0
+                    if not content.size and content.file_data:
+                        content.size = len(content.file_data.content)  # type: ignore
+                    if not content.size:
+                        try:
+                            content.size = path.stat().st_size
+                        except (OSError, IOError) as e:
+                            log_warning(f"Could not get file size for {path}: {e}")
+                            content.size = 0
 
-                if not content.id:
-                    content.id = generate_id(content.content_hash or "")
-                self._prepare_documents_for_insert(read_documents, content.id, metadata=content.metadata)
+                    if not content.id:
+                        content.id = generate_id(content.content_hash or "")
+                    self._prepare_documents_for_insert(read_documents, content.id, metadata=content.metadata)
 
-                self._handle_vector_db_insert(content, read_documents, upsert)
+                    self._handle_vector_db_insert(content, read_documents, upsert)
 
-        elif path.is_dir():
-            for file_path in path.iterdir():
-                # Apply include/exclude filtering
-                if not self._should_include_file(str(file_path), include, exclude):
-                    log_debug(f"Skipping file {file_path} due to include/exclude filters")
-                    continue
+            elif path.is_dir():
+                for file_path in path.iterdir():
+                    # Apply include/exclude filtering
+                    if not self._should_include_file(str(file_path), include, exclude):
+                        log_debug(f"Skipping file {file_path} due to include/exclude filters")
+                        continue
 
-                file_content = Content(
-                    name=content.name,
-                    path=str(file_path),
-                    metadata=content.metadata,
-                    description=content.description,
-                    reader=content.reader,
-                )
-                file_content.content_hash = self._build_content_hash(file_content)
-                file_content.id = generate_id(file_content.content_hash)
+                    file_content = Content(
+                        name=content.name,
+                        path=str(file_path),
+                        metadata=content.metadata,
+                        description=content.description,
+                        reader=content.reader,
+                    )
+                    file_content.content_hash = self._build_content_hash(file_content)
+                    file_content.id = generate_id(file_content.content_hash)
 
-                self._load_from_path(file_content, upsert, skip_if_exists, include, exclude)
-        else:
-            log_warning(f"Invalid path: {path}")
+                    self._load_from_path(file_content, upsert, skip_if_exists, include, exclude)
+            else:
+                log_warning(f"Invalid path: {path}")
+        except Exception as e:
+            log_error(f"Error loading content from path {content.path}: {e}")
+            content.status = ContentStatus.FAILED
+            content.status_message = f"Failed to load from path: {str(e)}"
+            self._update_content(content)
 
     async def _aload_from_url(
         self,
@@ -1799,103 +1813,109 @@ class Knowledge(RemoteKnowledge):
     ):
         from agno.vectordb import VectorDb
 
-        self.vector_db = cast(VectorDb, self.vector_db)
+        try:
+            self.vector_db = cast(VectorDb, self.vector_db)
 
-        if content.name:
-            name = content.name
-        elif content.file_data and content.file_data.filename:
-            name = content.file_data.filename
-        elif content.file_data and content.file_data.content:
-            if isinstance(content.file_data.content, bytes):
-                name = content.file_data.content[:10].decode("utf-8", errors="ignore")
-            elif isinstance(content.file_data.content, str):
-                name = (
-                    content.file_data.content[:10]
-                    if len(content.file_data.content) >= 10
-                    else content.file_data.content
-                )
-            else:
-                name = str(content.file_data.content)[:10]
-        else:
-            name = None
-
-        if name is not None:
-            content.name = name
-
-        log_info(f"Adding content from {content.name}")
-
-        await self._ainsert_contents_db(content)
-        if self._should_skip(content.content_hash, skip_if_exists):  # type: ignore[arg-type]
-            content.status = ContentStatus.COMPLETED
-            await self._aupdate_content(content)
-            return
-
-        if content.file_data and self.vector_db.__class__.__name__ == "LightRag":
-            await self._aprocess_lightrag_content(content, KnowledgeContentOrigin.CONTENT)
-            return
-
-        read_documents = []
-
-        if isinstance(content.file_data, str):
-            content_bytes = content.file_data.encode("utf-8", errors="replace")
-            content_io = io.BytesIO(content_bytes)
-
-            if content.reader:
-                log_debug(f"Using reader: {content.reader.__class__.__name__} to read content")
-                read_documents = await content.reader.async_read(content_io, name=name)
-            else:
-                text_reader = self.text_reader
-                if text_reader:
-                    read_documents = await text_reader.async_read(content_io, name=name)
-                else:
-                    content.status = ContentStatus.FAILED
-                    content.status_message = "Text reader not available"
-                    await self._aupdate_content(content)
-                    return
-
-        elif isinstance(content.file_data, FileData):
-            if content.file_data.type:
+            if content.name:
+                name = content.name
+            elif content.file_data and content.file_data.filename:
+                name = content.file_data.filename
+            elif content.file_data and content.file_data.content:
                 if isinstance(content.file_data.content, bytes):
-                    content_io = io.BytesIO(content.file_data.content)
+                    name = content.file_data.content[:10].decode("utf-8", errors="ignore")
                 elif isinstance(content.file_data.content, str):
-                    content_bytes = content.file_data.content.encode("utf-8", errors="replace")
-                    content_io = io.BytesIO(content_bytes)
+                    name = (
+                        content.file_data.content[:10]
+                        if len(content.file_data.content) >= 10
+                        else content.file_data.content
+                    )
                 else:
-                    content_io = content.file_data.content  # type: ignore
+                    name = str(content.file_data.content)[:10]
+            else:
+                name = None
 
-                # Respect an explicitly provided reader; otherwise select based on file type
+            if name is not None:
+                content.name = name
+
+            log_info(f"Adding content from {content.name}")
+
+            await self._ainsert_contents_db(content)
+            if self._should_skip(content.content_hash, skip_if_exists):  # type: ignore[arg-type]
+                content.status = ContentStatus.COMPLETED
+                await self._aupdate_content(content)
+                return
+
+            if content.file_data and self.vector_db.__class__.__name__ == "LightRag":
+                await self._aprocess_lightrag_content(content, KnowledgeContentOrigin.CONTENT)
+                return
+
+            read_documents = []
+
+            if isinstance(content.file_data, str):
+                content_bytes = content.file_data.encode("utf-8", errors="replace")
+                content_io = io.BytesIO(content_bytes)
+
                 if content.reader:
                     log_debug(f"Using reader: {content.reader.__class__.__name__} to read content")
-                    reader = content.reader
+                    read_documents = await content.reader.async_read(content_io, name=name)
                 else:
-                    # Prefer filename extension over MIME type for reader selection
-                    # (browsers often send wrong MIME types for Excel files)
-                    reader_hint = content.file_data.type
-                    if content.file_data.filename:
-                        ext = Path(content.file_data.filename).suffix.lower()
-                        if ext:
-                            reader_hint = ext
-                    reader = self._select_reader(reader_hint)
-                # Use file_data.filename for reader (preserves extension for format detection)
-                reader_name = content.file_data.filename or content.name or f"content_{content.file_data.type}"
-                read_documents = await reader.async_read(content_io, name=reader_name)
-                if not content.id:
-                    content.id = generate_id(content.content_hash or "")
-                self._prepare_documents_for_insert(read_documents, content.id, metadata=content.metadata)
+                    text_reader = self.text_reader
+                    if text_reader:
+                        read_documents = await text_reader.async_read(content_io, name=name)
+                    else:
+                        content.status = ContentStatus.FAILED
+                        content.status_message = "Text reader not available"
+                        await self._aupdate_content(content)
+                        return
 
-                if len(read_documents) == 0:
-                    content.status = ContentStatus.FAILED
-                    content.status_message = "Content could not be read"
-                    await self._aupdate_content(content)
-                    return
+            elif isinstance(content.file_data, FileData):
+                if content.file_data.type:
+                    if isinstance(content.file_data.content, bytes):
+                        content_io = io.BytesIO(content.file_data.content)
+                    elif isinstance(content.file_data.content, str):
+                        content_bytes = content.file_data.content.encode("utf-8", errors="replace")
+                        content_io = io.BytesIO(content_bytes)
+                    else:
+                        content_io = content.file_data.content  # type: ignore
 
-        else:
+                    # Respect an explicitly provided reader; otherwise select based on file type
+                    if content.reader:
+                        log_debug(f"Using reader: {content.reader.__class__.__name__} to read content")
+                        reader = content.reader
+                    else:
+                        # Prefer filename extension over MIME type for reader selection
+                        # (browsers often send wrong MIME types for Excel files)
+                        reader_hint = content.file_data.type
+                        if content.file_data.filename:
+                            ext = Path(content.file_data.filename).suffix.lower()
+                            if ext:
+                                reader_hint = ext
+                        reader = self._select_reader(reader_hint)
+                    # Use file_data.filename for reader (preserves extension for format detection)
+                    reader_name = content.file_data.filename or content.name or f"content_{content.file_data.type}"
+                    read_documents = await reader.async_read(content_io, name=reader_name)
+                    if not content.id:
+                        content.id = generate_id(content.content_hash or "")
+                    self._prepare_documents_for_insert(read_documents, content.id, metadata=content.metadata)
+
+                    if len(read_documents) == 0:
+                        content.status = ContentStatus.FAILED
+                        content.status_message = "Content could not be read"
+                        await self._aupdate_content(content)
+                        return
+
+            else:
+                content.status = ContentStatus.FAILED
+                content.status_message = "No content provided"
+                await self._aupdate_content(content)
+                return
+
+            await self._ahandle_vector_db_insert(content, read_documents, upsert)
+        except Exception as e:
+            log_error(f"Error loading content {content.name}: {e}")
             content.status = ContentStatus.FAILED
-            content.status_message = "No content provided"
+            content.status_message = f"Failed to load content: {str(e)}"
             await self._aupdate_content(content)
-            return
-
-        await self._ahandle_vector_db_insert(content, read_documents, upsert)
 
     def _load_from_content(
         self,
@@ -1906,103 +1926,109 @@ class Knowledge(RemoteKnowledge):
         """Synchronous version of _load_from_content."""
         from agno.vectordb import VectorDb
 
-        self.vector_db = cast(VectorDb, self.vector_db)
+        try:
+            self.vector_db = cast(VectorDb, self.vector_db)
 
-        if content.name:
-            name = content.name
-        elif content.file_data and content.file_data.filename:
-            name = content.file_data.filename
-        elif content.file_data and content.file_data.content:
-            if isinstance(content.file_data.content, bytes):
-                name = content.file_data.content[:10].decode("utf-8", errors="ignore")
-            elif isinstance(content.file_data.content, str):
-                name = (
-                    content.file_data.content[:10]
-                    if len(content.file_data.content) >= 10
-                    else content.file_data.content
-                )
-            else:
-                name = str(content.file_data.content)[:10]
-        else:
-            name = None
-
-        if name is not None:
-            content.name = name
-
-        log_info(f"Adding content from {content.name}")
-
-        self._insert_contents_db(content)
-        if self._should_skip(content.content_hash, skip_if_exists):  # type: ignore[arg-type]
-            content.status = ContentStatus.COMPLETED
-            self._update_content(content)
-            return
-
-        if content.file_data and self.vector_db.__class__.__name__ == "LightRag":
-            self._process_lightrag_content(content, KnowledgeContentOrigin.CONTENT)
-            return
-
-        read_documents = []
-
-        if isinstance(content.file_data, str):
-            content_bytes = content.file_data.encode("utf-8", errors="replace")
-            content_io = io.BytesIO(content_bytes)
-
-            if content.reader:
-                log_debug(f"Using reader: {content.reader.__class__.__name__} to read content")
-                read_documents = content.reader.read(content_io, name=name)
-            else:
-                text_reader = self.text_reader
-                if text_reader:
-                    read_documents = text_reader.read(content_io, name=name)
-                else:
-                    content.status = ContentStatus.FAILED
-                    content.status_message = "Text reader not available"
-                    self._update_content(content)
-                    return
-
-        elif isinstance(content.file_data, FileData):
-            if content.file_data.type:
+            if content.name:
+                name = content.name
+            elif content.file_data and content.file_data.filename:
+                name = content.file_data.filename
+            elif content.file_data and content.file_data.content:
                 if isinstance(content.file_data.content, bytes):
-                    content_io = io.BytesIO(content.file_data.content)
+                    name = content.file_data.content[:10].decode("utf-8", errors="ignore")
                 elif isinstance(content.file_data.content, str):
-                    content_bytes = content.file_data.content.encode("utf-8", errors="replace")
-                    content_io = io.BytesIO(content_bytes)
+                    name = (
+                        content.file_data.content[:10]
+                        if len(content.file_data.content) >= 10
+                        else content.file_data.content
+                    )
                 else:
-                    content_io = content.file_data.content  # type: ignore
+                    name = str(content.file_data.content)[:10]
+            else:
+                name = None
 
-                # Respect an explicitly provided reader; otherwise select based on file type
+            if name is not None:
+                content.name = name
+
+            log_info(f"Adding content from {content.name}")
+
+            self._insert_contents_db(content)
+            if self._should_skip(content.content_hash, skip_if_exists):  # type: ignore[arg-type]
+                content.status = ContentStatus.COMPLETED
+                self._update_content(content)
+                return
+
+            if content.file_data and self.vector_db.__class__.__name__ == "LightRag":
+                self._process_lightrag_content(content, KnowledgeContentOrigin.CONTENT)
+                return
+
+            read_documents = []
+
+            if isinstance(content.file_data, str):
+                content_bytes = content.file_data.encode("utf-8", errors="replace")
+                content_io = io.BytesIO(content_bytes)
+
                 if content.reader:
                     log_debug(f"Using reader: {content.reader.__class__.__name__} to read content")
-                    reader = content.reader
+                    read_documents = content.reader.read(content_io, name=name)
                 else:
-                    # Prefer filename extension over MIME type for reader selection
-                    # (browsers often send wrong MIME types for Excel files)
-                    reader_hint = content.file_data.type
-                    if content.file_data.filename:
-                        ext = Path(content.file_data.filename).suffix.lower()
-                        if ext:
-                            reader_hint = ext
-                    reader = self._select_reader(reader_hint)
-                # Use file_data.filename for reader (preserves extension for format detection)
-                reader_name = content.file_data.filename or content.name or f"content_{content.file_data.type}"
-                read_documents = reader.read(content_io, name=reader_name)
-                if not content.id:
-                    content.id = generate_id(content.content_hash or "")
-                self._prepare_documents_for_insert(read_documents, content.id, metadata=content.metadata)
+                    text_reader = self.text_reader
+                    if text_reader:
+                        read_documents = text_reader.read(content_io, name=name)
+                    else:
+                        content.status = ContentStatus.FAILED
+                        content.status_message = "Text reader not available"
+                        self._update_content(content)
+                        return
 
-                if len(read_documents) == 0:
-                    content.status = ContentStatus.FAILED
-                    content.status_message = "Content could not be read"
-                    self._update_content(content)
-                    return
+            elif isinstance(content.file_data, FileData):
+                if content.file_data.type:
+                    if isinstance(content.file_data.content, bytes):
+                        content_io = io.BytesIO(content.file_data.content)
+                    elif isinstance(content.file_data.content, str):
+                        content_bytes = content.file_data.content.encode("utf-8", errors="replace")
+                        content_io = io.BytesIO(content_bytes)
+                    else:
+                        content_io = content.file_data.content  # type: ignore
 
-        else:
+                    # Respect an explicitly provided reader; otherwise select based on file type
+                    if content.reader:
+                        log_debug(f"Using reader: {content.reader.__class__.__name__} to read content")
+                        reader = content.reader
+                    else:
+                        # Prefer filename extension over MIME type for reader selection
+                        # (browsers often send wrong MIME types for Excel files)
+                        reader_hint = content.file_data.type
+                        if content.file_data.filename:
+                            ext = Path(content.file_data.filename).suffix.lower()
+                            if ext:
+                                reader_hint = ext
+                        reader = self._select_reader(reader_hint)
+                    # Use file_data.filename for reader (preserves extension for format detection)
+                    reader_name = content.file_data.filename or content.name or f"content_{content.file_data.type}"
+                    read_documents = reader.read(content_io, name=reader_name)
+                    if not content.id:
+                        content.id = generate_id(content.content_hash or "")
+                    self._prepare_documents_for_insert(read_documents, content.id, metadata=content.metadata)
+
+                    if len(read_documents) == 0:
+                        content.status = ContentStatus.FAILED
+                        content.status_message = "Content could not be read"
+                        self._update_content(content)
+                        return
+
+            else:
+                content.status = ContentStatus.FAILED
+                content.status_message = "No content provided"
+                self._update_content(content)
+                return
+
+            self._handle_vector_db_insert(content, read_documents, upsert)
+        except Exception as e:
+            log_error(f"Error loading content {content.name}: {e}")
             content.status = ContentStatus.FAILED
-            content.status_message = "No content provided"
+            content.status_message = f"Failed to load content: {str(e)}"
             self._update_content(content)
-            return
-
-        self._handle_vector_db_insert(content, read_documents, upsert)
 
     async def _aload_from_topics(
         self,
