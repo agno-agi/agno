@@ -101,6 +101,7 @@ def get_authentication_dependency(settings: AgnoAPISettings):
         internal_token = getattr(request.app.state, "internal_service_token", None)
         if internal_token and hmac.compare_digest(token, internal_token):
             request.state.authenticated = True
+            request.state.user_id = "__scheduler__"
             request.state.scopes = list(INTERNAL_SERVICE_SCOPES)
             return True
 
