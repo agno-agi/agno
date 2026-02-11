@@ -45,8 +45,8 @@ except ImportError:
 
 try:
     from pymongo import AsyncMongoClient  # type: ignore
-    from pymongo.collection import AsyncCollection  # type: ignore
-    from pymongo.database import AsyncDatabase  # type: ignore
+    from pymongo.asynchronous.collection import AsyncCollection  # type: ignore
+    from pymongo.asynchronous.database import AsyncDatabase  # type: ignore
 
     PYMONGO_ASYNC_AVAILABLE = True
 except ImportError:
