@@ -64,4 +64,4 @@ app = agent_os.get_app()
 # The poller will pick it up on the next poll cycle and run the agent.
 
 if __name__ == "__main__":
-    app.serve(app="test:app", reload=True)
+    agent_os.serve(app="scheduler_with_agentos:app", reload=True)

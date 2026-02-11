@@ -76,7 +76,6 @@ class PostgresDb(BaseDb):
         learnings_table: Optional[str] = None,
         schedules_table: Optional[str] = None,
         schedule_runs_table: Optional[str] = None,
-        approvals_table: Optional[str] = None,
         id: Optional[str] = None,
         create_schema: bool = True,
     ):
@@ -151,7 +150,6 @@ class PostgresDb(BaseDb):
             learnings_table=learnings_table,
             schedules_table=schedules_table,
             schedule_runs_table=schedule_runs_table,
-            approvals_table=approvals_table,
         )
 
         self.db_schema: str = db_schema if db_schema is not None else "ai"
@@ -230,7 +228,6 @@ class PostgresDb(BaseDb):
             (self.learnings_table_name, "learnings"),
             (self.schedules_table_name, "schedules"),
             (self.schedule_runs_table_name, "schedule_runs"),
-            (self.approvals_table_name, "approvals"),
         ]
 
         for table_name, table_type in tables_to_create:
@@ -566,14 +563,6 @@ class PostgresDb(BaseDb):
             )
             return self.schedule_runs_table
 
-        if table_type == "approvals":
-            self.approvals_table = self._get_or_create_table(
-                table_name=self.approvals_table_name,
-                table_type="approvals",
-                create_table_if_not_found=create_table_if_not_found,
-            )
-            return self.approvals_table
-
         raise ValueError(f"Unknown table type: {table_type}")
 
     def _get_or_create_table(
@@ -651,12 +640,13 @@ class PostgresDb(BaseDb):
             sess.execute(stmt)
 
     # -- Session methods --
-    def delete_session(self, session_id: str) -> bool:
+    def delete_session(self, session_id: str, user_id: Optional[str] = None) -> bool:
         """
         Delete a session from the database.
 
         Args:
             session_id (str): ID of the session to delete
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
 
         Returns:
             bool: True if the session was deleted, False otherwise.
@@ -671,6 +661,8 @@ class PostgresDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.session_id == session_id)
+                if user_id is not None:
+                    delete_stmt = delete_stmt.where(table.c.user_id == user_id)
                 result = sess.execute(delete_stmt)
 
                 if result.rowcount == 0:
@@ -685,12 +677,13 @@ class PostgresDb(BaseDb):
             log_error(f"Error deleting session: {e}")
             raise e
 
-    def delete_sessions(self, session_ids: List[str]) -> None:
+    def delete_sessions(self, session_ids: List[str], user_id: Optional[str] = None) -> None:
         """Delete all given sessions from the database.
         Can handle multiple session types in the same run.
 
         Args:
             session_ids (List[str]): The IDs of the sessions to delete.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
 
         Raises:
             Exception: If an error occurs during deletion.
@@ -702,6 +695,8 @@ class PostgresDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.session_id.in_(session_ids))
+                if user_id is not None:
+                    delete_stmt = delete_stmt.where(table.c.user_id == user_id)
                 result = sess.execute(delete_stmt)
 
             log_debug(f"Successfully deleted {result.rowcount} sessions")
@@ -873,7 +868,12 @@ class PostgresDb(BaseDb):
             raise e
 
     def rename_session(
-        self, session_id: str, session_type: SessionType, session_name: str, deserialize: Optional[bool] = True
+        self,
+        session_id: str,
+        session_type: SessionType,
+        session_name: str,
+        user_id: Optional[str] = None,
+        deserialize: Optional[bool] = True,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         """
         Rename a session in the database.
@@ -882,6 +882,7 @@ class PostgresDb(BaseDb):
             session_id (str): The ID of the session to rename.
             session_type (SessionType): The type of session to rename.
             session_name (str): The new name for the session.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
             deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
 
         Returns:
@@ -916,6 +917,8 @@ class PostgresDb(BaseDb):
                     )
                     .returning(*table.c)
                 )
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
                 result = sess.execute(stmt)
                 row = result.fetchone()
                 if not row:
@@ -1008,9 +1011,12 @@ class PostgresDb(BaseDb):
                             runs=session_dict.get("runs"),
                             updated_at=int(time.time()),
                         ),
+                        where=(table.c.user_id == session_dict.get("user_id")) | (table.c.user_id.is_(None)),
                     ).returning(table)
                     result = sess.execute(stmt)
                     row = result.fetchone()
+                    if row is None:
+                        return None
                     session_dict = dict(row._mapping)
 
                     if session_dict is None or not deserialize:
@@ -1044,9 +1050,12 @@ class PostgresDb(BaseDb):
                             runs=session_dict.get("runs"),
                             updated_at=int(time.time()),
                         ),
+                        where=(table.c.user_id == session_dict.get("user_id")) | (table.c.user_id.is_(None)),
                     ).returning(table)
                     result = sess.execute(stmt)
                     row = result.fetchone()
+                    if row is None:
+                        return None
                     session_dict = dict(row._mapping)
 
                     if session_dict is None or not deserialize:
@@ -1080,9 +1089,12 @@ class PostgresDb(BaseDb):
                             runs=session_dict.get("runs"),
                             updated_at=int(time.time()),
                         ),
+                        where=(table.c.user_id == session_dict.get("user_id")) | (table.c.user_id.is_(None)),
                     ).returning(table)
                     result = sess.execute(stmt)
                     row = result.fetchone()
+                    if row is None:
+                        return None
                     session_dict = dict(row._mapping)
 
                     if session_dict is None or not deserialize:
@@ -1170,9 +1182,11 @@ class PostgresDb(BaseDb):
                         for col in table.columns
                         if col.name not in ["id", "session_id", "created_at"]
                     }
-                    stmt = stmt.on_conflict_do_update(index_elements=["session_id"], set_=update_columns).returning(
-                        table
-                    )
+                    stmt = stmt.on_conflict_do_update(
+                        index_elements=["session_id"],
+                        set_=update_columns,
+                        where=(table.c.user_id == stmt.excluded.user_id) | (table.c.user_id.is_(None)),
+                    ).returning(table)
 
                     result = sess.execute(stmt, session_records)
                     for row in result.fetchall():
@@ -1227,9 +1241,11 @@ class PostgresDb(BaseDb):
                         for col in table.columns
                         if col.name not in ["id", "session_id", "created_at"]
                     }
-                    stmt = stmt.on_conflict_do_update(index_elements=["session_id"], set_=update_columns).returning(
-                        table
-                    )
+                    stmt = stmt.on_conflict_do_update(
+                        index_elements=["session_id"],
+                        set_=update_columns,
+                        where=(table.c.user_id == stmt.excluded.user_id) | (table.c.user_id.is_(None)),
+                    ).returning(table)
 
                     result = sess.execute(stmt, session_records)
                     for row in result.fetchall():
@@ -1284,9 +1300,11 @@ class PostgresDb(BaseDb):
                         for col in table.columns
                         if col.name not in ["id", "session_id", "created_at"]
                     }
-                    stmt = stmt.on_conflict_do_update(index_elements=["session_id"], set_=update_columns).returning(
-                        table
-                    )
+                    stmt = stmt.on_conflict_do_update(
+                        index_elements=["session_id"],
+                        set_=update_columns,
+                        where=(table.c.user_id == stmt.excluded.user_id) | (table.c.user_id.is_(None)),
+                    ).returning(table)
 
                     result = sess.execute(stmt, session_records)
                     for row in result.fetchall():
@@ -4564,22 +4582,30 @@ class PostgresDb(BaseDb):
         self,
         enabled: Optional[bool] = None,
         limit: int = 100,
-        offset: int = 0,
-    ) -> List[Dict[str, Any]]:
+        page: int = 1,
+    ) -> Tuple[List[Dict[str, Any]], int]:
         try:
             table = self._get_table(table_type="schedules")
             if table is None:
-                return []
+                return [], 0
             with self.Session() as sess:
-                stmt = select(table)
+                # Build base query for filtering
+                base_stmt = select(table)
                 if enabled is not None:
-                    stmt = stmt.where(table.c.enabled == enabled)
-                stmt = stmt.order_by(table.c.created_at.desc()).limit(limit).offset(offset)
+                    base_stmt = base_stmt.where(table.c.enabled == enabled)
+
+                # Get total count
+                count_stmt = select(func.count()).select_from(base_stmt.subquery())
+                total_count = sess.execute(count_stmt).scalar() or 0
+
+                # Get paginated results
+                offset = (page - 1) * limit
+                stmt = base_stmt.order_by(table.c.created_at.desc()).limit(limit).offset(offset)
                 results = sess.execute(stmt).fetchall()
-                return [dict(row._mapping) for row in results]
+                return [dict(row._mapping) for row in results], total_count
         except Exception as e:
             log_debug(f"Error listing schedules: {e}")
-            return []
+            return [], 0
 
     def create_schedule(self, schedule_data: Dict[str, Any]) -> Dict[str, Any]:
         try:
@@ -4715,158 +4741,25 @@ class PostgresDb(BaseDb):
         self,
         schedule_id: str,
         limit: int = 100,
-        offset: int = 0,
-    ) -> List[Dict[str, Any]]:
+        page: int = 1,
+    ) -> Tuple[List[Dict[str, Any]], int]:
         try:
             table = self._get_table(table_type="schedule_runs")
             if table is None:
-                return []
-            with self.Session() as sess:
-                stmt = (
-                    select(table)
-                    .where(table.c.schedule_id == schedule_id)
-                    .order_by(table.c.created_at.desc())
-                    .limit(limit)
-                    .offset(offset)
-                )
-                results = sess.execute(stmt).fetchall()
-                return [dict(row._mapping) for row in results]
-        except Exception as e:
-            log_debug(f"Error getting schedule runs: {e}")
-            return []
-
-    # -- Approval methods --
-
-    def create_approval(self, approval_data: Dict[str, Any]) -> Dict[str, Any]:
-        try:
-            table = self._get_table(table_type="approvals", create_table_if_not_found=True)
-            if table is None:
-                raise RuntimeError("Failed to get or create approvals table")
-            data = {**approval_data}
-            now = int(time.time())
-            data.setdefault("created_at", now)
-            data.setdefault("updated_at", now)
-            with self.Session() as sess, sess.begin():
-                sess.execute(table.insert().values(**data))
-            return data
-        except Exception as e:
-            log_error(f"Error creating approval: {e}")
-            raise
-
-    def get_approval(self, approval_id: str) -> Optional[Dict[str, Any]]:
-        try:
-            table = self._get_table(table_type="approvals")
-            if table is None:
-                return None
-            with self.Session() as sess:
-                result = sess.execute(select(table).where(table.c.id == approval_id)).fetchone()
-                return dict(result._mapping) if result else None
-        except Exception as e:
-            log_debug(f"Error getting approval: {e}")
-            return None
-
-    def get_approvals(
-        self,
-        status: Optional[str] = None,
-        source_type: Optional[str] = None,
-        approval_type: Optional[str] = None,
-        pause_type: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        workflow_id: Optional[str] = None,
-        user_id: Optional[str] = None,
-        schedule_id: Optional[str] = None,
-        run_id: Optional[str] = None,
-        limit: int = 100,
-        offset: int = 0,
-    ) -> Tuple[List[Dict[str, Any]], int]:
-        try:
-            table = self._get_table(table_type="approvals")
-            if table is None:
                 return [], 0
             with self.Session() as sess:
-                stmt = select(table)
-                count_stmt = select(func.count()).select_from(table)
-                if status is not None:
-                    stmt = stmt.where(table.c.status == status)
-                    count_stmt = count_stmt.where(table.c.status == status)
-                if source_type is not None:
-                    stmt = stmt.where(table.c.source_type == source_type)
-                    count_stmt = count_stmt.where(table.c.source_type == source_type)
-                if approval_type is not None:
-                    stmt = stmt.where(table.c.approval_type == approval_type)
-                    count_stmt = count_stmt.where(table.c.approval_type == approval_type)
-                if pause_type is not None:
-                    stmt = stmt.where(table.c.pause_type == pause_type)
-                    count_stmt = count_stmt.where(table.c.pause_type == pause_type)
-                if agent_id is not None:
-                    stmt = stmt.where(table.c.agent_id == agent_id)
-                    count_stmt = count_stmt.where(table.c.agent_id == agent_id)
-                if team_id is not None:
-                    stmt = stmt.where(table.c.team_id == team_id)
-                    count_stmt = count_stmt.where(table.c.team_id == team_id)
-                if workflow_id is not None:
-                    stmt = stmt.where(table.c.workflow_id == workflow_id)
-                    count_stmt = count_stmt.where(table.c.workflow_id == workflow_id)
-                if user_id is not None:
-                    stmt = stmt.where(table.c.user_id == user_id)
-                    count_stmt = count_stmt.where(table.c.user_id == user_id)
-                if schedule_id is not None:
-                    stmt = stmt.where(table.c.schedule_id == schedule_id)
-                    count_stmt = count_stmt.where(table.c.schedule_id == schedule_id)
-                if run_id is not None:
-                    stmt = stmt.where(table.c.run_id == run_id)
-                    count_stmt = count_stmt.where(table.c.run_id == run_id)
-                total = sess.execute(count_stmt).scalar() or 0
-                stmt = stmt.order_by(table.c.created_at.desc()).limit(limit).offset(offset)
+                # Build base query for filtering
+                base_stmt = select(table).where(table.c.schedule_id == schedule_id)
+
+                # Get total count
+                count_stmt = select(func.count()).select_from(base_stmt.subquery())
+                total_count = sess.execute(count_stmt).scalar() or 0
+
+                # Get paginated results
+                offset = (page - 1) * limit
+                stmt = base_stmt.order_by(table.c.created_at.desc()).limit(limit).offset(offset)
                 results = sess.execute(stmt).fetchall()
-                return [dict(row._mapping) for row in results], total
+                return [dict(row._mapping) for row in results], total_count
         except Exception as e:
-            log_debug(f"Error listing approvals: {e}")
+            log_debug(f"Error getting schedule runs: {e}")
             return [], 0
-
-    def update_approval(
-        self, approval_id: str, expected_status: Optional[str] = None, **kwargs: Any
-    ) -> Optional[Dict[str, Any]]:
-        try:
-            table = self._get_table(table_type="approvals")
-            if table is None:
-                return None
-            kwargs["updated_at"] = int(time.time())
-            with self.Session() as sess, sess.begin():
-                stmt = table.update().where(table.c.id == approval_id)
-                if expected_status is not None:
-                    stmt = stmt.where(table.c.status == expected_status)
-                result = sess.execute(stmt.values(**kwargs))
-                if result.rowcount == 0:
-                    return None
-            return self.get_approval(approval_id)
-        except Exception as e:
-            log_debug(f"Error updating approval: {e}")
-            return None
-
-    def delete_approval(self, approval_id: str) -> bool:
-        try:
-            table = self._get_table(table_type="approvals")
-            if table is None:
-                return False
-            with self.Session() as sess, sess.begin():
-                result = sess.execute(table.delete().where(table.c.id == approval_id))
-                return result.rowcount > 0
-        except Exception as e:
-            log_debug(f"Error deleting approval: {e}")
-            return False
-
-    def get_pending_approval_count(self, user_id: Optional[str] = None) -> int:
-        try:
-            table = self._get_table(table_type="approvals")
-            if table is None:
-                return 0
-            with self.Session() as sess:
-                stmt = select(func.count()).select_from(table).where(table.c.status == "pending")
-                if user_id is not None:
-                    stmt = stmt.where(table.c.user_id == user_id)
-                return sess.execute(stmt).scalar() or 0
-        except Exception as e:
-            log_debug(f"Error counting approvals: {e}")
-            return 0
