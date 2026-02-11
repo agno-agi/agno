@@ -124,7 +124,7 @@ agent.print_response(
     "Add chicken and soup to my list.",
     stream=True,
     user_id=user_id_2,
-    session_id="user_3_session_2",
+    session_id="user_2_session_2",
 )
 
 print(f"Final shopping lists: \n{json.dumps(shopping_list, indent=2)}")

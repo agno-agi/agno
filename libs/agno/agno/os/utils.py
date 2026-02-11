@@ -260,12 +260,16 @@ async def get_db(
     return next(db for dbs in dbs.values() for db in dbs)
 
 
-def _generate_knowledge_id(name: str, db_id: str) -> str:
-    """Generate a deterministic ID for a knowledge instance based on name and db_id."""
+def _generate_knowledge_id(name: str, db_id: str, table_name: str) -> str:
+    """Generate a deterministic unique ID for a knowledge instance.
+
+    Uses db_id, table_name, and name to ensure uniqueness across all knowledge instances.
+    """
     import hashlib
 
-    id_seed = f"{name}:{db_id}"
-    hash_hex = hashlib.md5(id_seed.encode()).hexdigest()
+    id_seed = f"{db_id}:{table_name}:{name}"
+    # Use SHA256 instead of MD5 for FIPS compliance
+    hash_hex = hashlib.sha256(id_seed.encode()).hexdigest()
     return f"{hash_hex[:8]}-{hash_hex[8:12]}-{hash_hex[12:16]}-{hash_hex[16:20]}-{hash_hex[20:32]}"
 
 
@@ -278,8 +282,8 @@ def get_knowledge_instance(
 
     Args:
         knowledge_instances: List of knowledge instances to search
-        db_id: Database ID to filter by (optional)
-        knowledge_id: Knowledge base name or generated ID to filter by (optional)
+        db_id: Database ID to filter by (for backward compatibility)
+        knowledge_id: Unique generated ID to filter by (preferred)
 
     Returns:
         The matching knowledge instance
@@ -287,44 +291,59 @@ def get_knowledge_instance(
     Raises:
         HTTPException: If no matching instance is found or parameters are invalid
     """
-    # If knowledge_id provided, find by name or generated ID
+    # If only one instance and no specific identifier requested, return it (backwards compatible)
+    if len(knowledge_instances) == 1 and not knowledge_id and not db_id:
+        return next(iter(knowledge_instances))
+
+    # If knowledge_id provided, find by unique ID (preferred)
     if knowledge_id:
         for knowledge in knowledge_instances:
             if not knowledge.contents_db:
                 continue
             # Use knowledge name or generate fallback name from db_id
             name = getattr(knowledge, "name", None) or f"knowledge_{knowledge.contents_db.id}"
-            # Generate the ID for this knowledge instance
-            generated_id = _generate_knowledge_id(name, knowledge.contents_db.id)
+            kb_table_name = knowledge.contents_db.knowledge_table_name or "unknown"
+            # Generate the unique ID for this knowledge instance
+            generated_id = _generate_knowledge_id(name, knowledge.contents_db.id, kb_table_name)
 
-            # Match by name or generated ID
-            if name == knowledge_id or generated_id == knowledge_id:
-                # If db_id also provided, validate it matches
-                if db_id and knowledge.contents_db.id != db_id:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"Knowledge base '{knowledge_id}' belongs to db '{knowledge.contents_db.id}', not '{db_id}'",
-                    )
+            # Match by unique generated ID
+            if generated_id == knowledge_id:
                 return knowledge
+
         raise HTTPException(status_code=404, detail=f"Knowledge base '{knowledge_id}' not found")
 
-    # If only one instance, return it (backwards compatible)
-    if not db_id and len(knowledge_instances) == 1:
-        return next(iter(knowledge_instances))
-
-    # If no identifiers provided, require one
-    if not db_id:
+    # If db_id provided, find by database ID (backward compatible)
+    if db_id:
+        matches = [k for k in knowledge_instances if k.contents_db and k.contents_db.id == db_id]
+        if not matches:
+            raise HTTPException(status_code=404, detail=f"Knowledge instance with db_id '{db_id}' not found")
+        if len(matches) == 1:
+            return matches[0]
+        # Multiple matches - recommend using knowledge_id
+        knowledge_ids = []
+        for k in matches:
+            if k.contents_db:
+                name = getattr(k, "name", None) or f"knowledge_{k.contents_db.id}"
+                table_name = k.contents_db.knowledge_table_name or "unknown"
+                knowledge_ids.append(_generate_knowledge_id(name, k.contents_db.id, table_name))
         raise HTTPException(
             status_code=400,
-            detail="Either db_id or knowledge_id query parameter is required when using multiple knowledge bases",
+            detail=f"Multiple knowledge instances found for db_id '{db_id}'. "
+            f"Please specify knowledge_id parameter. Available IDs: {knowledge_ids}",
         )
 
-    # Find by db_id (backwards compatible behavior)
-    for knowledge in knowledge_instances:
-        if knowledge.contents_db and knowledge.contents_db.id == db_id:
-            return knowledge
-
-    raise HTTPException(status_code=404, detail=f"Knowledge instance with db_id '{db_id}' not found")
+    # No identifiers provided - list available IDs
+    knowledge_ids = []
+    for k in knowledge_instances:
+        if k.contents_db:
+            name = getattr(k, "name", None) or f"knowledge_{k.contents_db.id}"
+            table_name = k.contents_db.knowledge_table_name or "unknown"
+            knowledge_ids.append(_generate_knowledge_id(name, k.contents_db.id, table_name))
+    raise HTTPException(
+        status_code=400,
+        detail=f"db_id or knowledge_id query parameter is required when using multiple knowledge bases. "
+        f"Available IDs: {knowledge_ids}",
+    )
 
 
 def get_run_input(run_dict: Dict[str, Any], is_workflow_run: bool = False) -> str:
@@ -506,7 +525,11 @@ def get_agent_by_id(
         for agent in agents:
             if agent.id == agent_id:
                 if create_fresh and isinstance(agent, Agent):
-                    return agent.deep_copy()
+                    fresh_agent = agent.deep_copy()
+                    # Clear team/workflow context — this is a standalone agent copy
+                    fresh_agent.team_id = None
+                    fresh_agent.workflow_id = None
+                    return fresh_agent
                 return agent
 
     # Try to get the agent from the database

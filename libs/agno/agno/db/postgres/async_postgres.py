@@ -30,14 +30,6 @@ from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import sanitize_postgres_string, sanitize_postgres_strings
 
 try:
-    import greenlet  # noqa: F401
-except ImportError:
-    raise ImportError(
-        "`greenlet` not installed. Required for async database operations. "
-        "Please install it using `pip install greenlet`"
-    )
-
-try:
     from sqlalchemy import ForeignKey, Index, String, Table, UniqueConstraint, and_, case, func, or_, update
     from sqlalchemy.dialects import postgresql
     from sqlalchemy.dialects.postgresql import TIMESTAMP
@@ -107,7 +99,6 @@ class AsyncPostgresDb(AsyncBaseDb):
             ValueError: If neither db_url nor db_engine is provided.
             ValueError: If none of the tables are provided.
         """
-
         super().__init__(
             id=id,
             session_table=session_table,
@@ -461,12 +452,13 @@ class AsyncPostgresDb(AsyncBaseDb):
             await sess.execute(stmt)
 
     # -- Session methods --
-    async def delete_session(self, session_id: str) -> bool:
+    async def delete_session(self, session_id: str, user_id: Optional[str] = None) -> bool:
         """
         Delete a session from the database.
 
         Args:
             session_id (str): ID of the session to delete
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
 
         Returns:
             bool: True if the session was deleted, False otherwise.
@@ -479,6 +471,8 @@ class AsyncPostgresDb(AsyncBaseDb):
 
             async with self.async_session_factory() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.session_id == session_id)
+                if user_id is not None:
+                    delete_stmt = delete_stmt.where(table.c.user_id == user_id)
                 result = await sess.execute(delete_stmt)
 
                 if result.rowcount == 0:  # type: ignore
@@ -493,12 +487,13 @@ class AsyncPostgresDb(AsyncBaseDb):
             log_error(f"Error deleting session: {e}")
             return False
 
-    async def delete_sessions(self, session_ids: List[str]) -> None:
+    async def delete_sessions(self, session_ids: List[str], user_id: Optional[str] = None) -> None:
         """Delete all given sessions from the database.
         Can handle multiple session types in the same run.
 
         Args:
             session_ids (List[str]): The IDs of the sessions to delete.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
 
         Raises:
             Exception: If an error occurs during deletion.
@@ -508,6 +503,8 @@ class AsyncPostgresDb(AsyncBaseDb):
 
             async with self.async_session_factory() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.session_id.in_(session_ids))
+                if user_id is not None:
+                    delete_stmt = delete_stmt.where(table.c.user_id == user_id)
                 result = await sess.execute(delete_stmt)
 
             log_debug(f"Successfully deleted {result.rowcount} sessions")  # type: ignore
@@ -675,7 +672,12 @@ class AsyncPostgresDb(AsyncBaseDb):
             return [] if deserialize else ([], 0)
 
     async def rename_session(
-        self, session_id: str, session_type: SessionType, session_name: str, deserialize: Optional[bool] = True
+        self,
+        session_id: str,
+        session_type: SessionType,
+        session_name: str,
+        user_id: Optional[str] = None,
+        deserialize: Optional[bool] = True,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         """
         Rename a session in the database.
@@ -684,6 +686,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             session_id (str): The ID of the session to rename.
             session_type (SessionType): The type of session to rename.
             session_name (str): The new name for the session.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
             deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
 
         Returns:
@@ -716,6 +719,8 @@ class AsyncPostgresDb(AsyncBaseDb):
                     )
                     .returning(*table.c)
                 )
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
                 result = await sess.execute(stmt)
                 row = result.fetchone()
                 if not row:
@@ -805,6 +810,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                             runs=session_dict.get("runs"),
                             updated_at=int(time.time()),
                         ),
+                        where=(table.c.user_id == session_dict.get("user_id")) | (table.c.user_id.is_(None)),
                     ).returning(table)
                     result = await sess.execute(stmt)
                     row = result.fetchone()
@@ -845,6 +851,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                             runs=session_dict.get("runs"),
                             updated_at=int(time.time()),
                         ),
+                        where=(table.c.user_id == session_dict.get("user_id")) | (table.c.user_id.is_(None)),
                     ).returning(table)
                     result = await sess.execute(stmt)
                     row = result.fetchone()
@@ -885,6 +892,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                             runs=session_dict.get("runs"),
                             updated_at=int(time.time()),
                         ),
+                        where=(table.c.user_id == session_dict.get("user_id")) | (table.c.user_id.is_(None)),
                     ).returning(table)
                     result = await sess.execute(stmt)
                     row = result.fetchone()

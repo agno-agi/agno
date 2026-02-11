@@ -56,7 +56,7 @@ if __name__ == "__main__":
     print("VERIFICATION: LearningMachine created from learning=True")
     print("=" * 60 + "\n")
 
-    lm = agent.get_learning_machine()
+    lm = agent.learning_machine
     print(f"LearningMachine exists: {lm is not None}")
     print(
         f"UserProfileStore exists: {lm.user_profile_store is not None if lm else False}"

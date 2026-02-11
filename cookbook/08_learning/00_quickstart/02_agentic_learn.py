@@ -39,7 +39,7 @@ if __name__ == "__main__":
         session_id="session_1",
         stream=True,
     )
-    lm = agent.get_learning_machine()
+    lm = agent.learning_machine
     lm.user_profile_store.print(user_id=user_id)
     lm.user_memory_store.print(user_id=user_id)
 

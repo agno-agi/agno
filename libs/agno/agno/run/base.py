@@ -230,8 +230,6 @@ class BaseRunOutputEvent:
 
                 data["run_input"] = RunInput.from_dict(run_input)
 
-                # Handle requirements
-
         # Handle requirements
         requirements_data = data.pop("requirements", None)
         if requirements_data is not None:

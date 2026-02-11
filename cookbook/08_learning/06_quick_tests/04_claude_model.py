@@ -61,7 +61,7 @@ if __name__ == "__main__":
     )
 
     # Check if LearningMachine was initialized
-    lm = agent.get_learning_machine()
+    lm = agent.learning_machine
     print(f"\nLearningMachine exists: {lm is not None}")
 
     if lm and lm.user_profile_store:

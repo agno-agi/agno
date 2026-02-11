@@ -85,7 +85,7 @@ if __name__ == "__main__":
         session_id="conv_1",
         stream=True,
     )
-    agent.get_learning_machine().user_profile_store.print(user_id=user_id)
+    agent.learning_machine.user_profile_store.print(user_id=user_id)
 
     # Add tech stack details
     print("\n" + "=" * 60)
@@ -99,7 +99,7 @@ if __name__ == "__main__":
         session_id="conv_2",
         stream=True,
     )
-    agent.get_learning_machine().user_profile_store.print(user_id=user_id)
+    agent.learning_machine.user_profile_store.print(user_id=user_id)
 
     # Test personalization
     print("\n" + "=" * 60)

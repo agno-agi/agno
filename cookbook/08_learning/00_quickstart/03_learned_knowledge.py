@@ -49,7 +49,7 @@ if __name__ == "__main__":
         session_id="session_1",
         stream=True,
     )
-    lm = agent.get_learning_machine()
+    lm = agent.learning_machine
     lm.learned_knowledge_store.print(query="cloud")
 
     # Session 2: User 2 benefits from the learning

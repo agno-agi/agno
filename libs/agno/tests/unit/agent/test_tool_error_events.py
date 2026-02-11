@@ -38,8 +38,10 @@ def test_agent_yields_tool_call_error_event(mocker):
     run_response = RunOutput(run_id="run_1", agent_id="agent_1", agent_name="Agent")
     run_messages = RunMessages()
 
+    from agno.agent._tools import run_tool
+
     events = list(
-        agent._run_tool(run_response=run_response, run_messages=run_messages, tool=tool_execution, stream_events=True)
+        run_tool(agent, run_response=run_response, run_messages=run_messages, tool=tool_execution, stream_events=True)
     )
 
     # Verify events
