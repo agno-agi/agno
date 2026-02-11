@@ -9,6 +9,8 @@ import pytest
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
+from agno.run.team import RunPausedEvent as TeamRunPausedEvent
+from agno.run.team import TeamRunOutput
 from agno.team.team import Team
 from agno.tools.decorator import tool
 
@@ -31,17 +33,20 @@ def _make_team(db=None):
     helper = Agent(
         name="Helper Agent",
         role="Assists with general questions",
-        model=OpenAIChat(id="gpt-5-mini"),
+        model=OpenAIChat(id="gpt-4o-mini"),
         telemetry=False,
     )
     return Team(
         name="Deploy Team",
-        model=OpenAIChat(id="gpt-5-mini"),
+        model=OpenAIChat(id="gpt-4o-mini"),
         members=[helper],
         tools=[approve_deployment],
         db=db,
         telemetry=False,
-        instructions=["Use the approve_deployment tool when asked to deploy an application."],
+        instructions=[
+            "You MUST use the approve_deployment tool when asked to deploy an application.",
+            "Do NOT respond without using the tool - always call approve_deployment first.",
+        ],
     )
 
 
@@ -99,23 +104,31 @@ def test_team_tool_confirmation_streaming(shared_db):
     """Streaming team-level tool confirmation flow."""
     team = _make_team(db=shared_db)
 
-    paused_output = None
+    paused_event = None
     for event in team.run(
-        "Deploy myapp to staging", session_id="test_team_tool_stream", stream=True, stream_events=True
+        "Deploy myapp to staging",
+        session_id="test_team_tool_stream",
+        stream=True,
+        stream_events=True,
     ):
-        if hasattr(event, "is_paused") and event.is_paused:
-            paused_output = event
+        # Use isinstance to check for team's pause event
+        if isinstance(event, TeamRunPausedEvent):
+            paused_event = event
             break
 
-    assert paused_output is not None
-    assert paused_output.is_paused
+    assert paused_event is not None
+    assert paused_event.is_paused
 
-    req = paused_output.active_requirements[0]
+    req = paused_event.active_requirements[0]
     assert req.needs_confirmation
     assert req.member_agent_id is None
     req.confirm()
 
-    result = team.continue_run(paused_output)
+    result = team.continue_run(
+        run_id=paused_event.run_id,
+        session_id=paused_event.session_id,
+        requirements=paused_event.requirements,
+    )
     assert not result.is_paused
     assert result.content is not None
 
@@ -125,23 +138,31 @@ async def test_team_tool_confirmation_async_streaming(shared_db):
     """Async streaming team-level tool confirmation flow."""
     team = _make_team(db=shared_db)
 
-    paused_output = None
+    paused_event = None
     async for event in team.arun(
-        "Deploy myapp to staging", session_id="test_team_tool_async_stream", stream=True, stream_events=True
+        "Deploy myapp to staging",
+        session_id="test_team_tool_async_stream",
+        stream=True,
+        stream_events=True,
     ):
-        if hasattr(event, "is_paused") and event.is_paused:
-            paused_output = event
+        # Use isinstance to check for team's pause event
+        if isinstance(event, TeamRunPausedEvent):
+            paused_event = event
             break
 
-    assert paused_output is not None
-    assert paused_output.is_paused
+    assert paused_event is not None
+    assert paused_event.is_paused
 
-    req = paused_output.active_requirements[0]
+    req = paused_event.active_requirements[0]
     assert req.needs_confirmation
     assert req.member_agent_id is None
     req.confirm()
 
-    result = await team.acontinue_run(paused_output)
+    result = await team.acontinue_run(
+        run_id=paused_event.run_id,
+        session_id=paused_event.session_id,
+        requirements=paused_event.requirements,
+    )
     assert not result.is_paused
     assert result.content is not None
 

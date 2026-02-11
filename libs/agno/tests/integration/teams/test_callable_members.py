@@ -222,6 +222,7 @@ def test_callable_members_complex_selection(shared_db):
     assert response is not None
     assert response.content is not None
 
+
 def test_callable_members_delegation(shared_db):
     """Team leader can delegate to callable members by ID.
 
@@ -334,12 +335,10 @@ def test_callable_members_system_message_contains_member_ids(shared_db):
     # Without the fix, this would be empty because get_members_system_message_content()
     # iterates over team.members (the callable) instead of resolved members
     assert "TestWriter" in system_content, (
-        f"System message must contain 'TestWriter' for delegation. "
-        f"Got: {system_content[:500]}..."
+        f"System message must contain 'TestWriter' for delegation. Got: {system_content[:500]}..."
     )
     assert "TestResearcher" in system_content, (
-        f"System message must contain 'TestResearcher' for delegation. "
-        f"Got: {system_content[:500]}..."
+        f"System message must contain 'TestResearcher' for delegation. Got: {system_content[:500]}..."
     )
 
 
