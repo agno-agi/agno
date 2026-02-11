@@ -972,9 +972,13 @@ class BaseDb(ABC):
         self,
         enabled: Optional[bool] = None,
         limit: int = 100,
-        offset: int = 0,
-    ) -> List[Dict[str, Any]]:
-        """List schedules with optional filtering."""
+        page: int = 1,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """List schedules with optional filtering.
+
+        Returns:
+            Tuple of (schedules, total_count)
+        """
         raise NotImplementedError
 
     def create_schedule(self, schedule_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -1015,9 +1019,13 @@ class BaseDb(ABC):
         self,
         schedule_id: str,
         limit: int = 20,
-        offset: int = 0,
-    ) -> List[Dict[str, Any]]:
-        """List runs for a schedule."""
+        page: int = 1,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """List runs for a schedule.
+
+        Returns:
+            Tuple of (runs, total_count)
+        """
         raise NotImplementedError
 
 
@@ -1616,9 +1624,13 @@ class AsyncBaseDb(ABC):
         self,
         enabled: Optional[bool] = None,
         limit: int = 100,
-        offset: int = 0,
-    ) -> List[Dict[str, Any]]:
-        """List schedules with optional filtering."""
+        page: int = 1,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """List schedules with optional filtering.
+
+        Returns:
+            Tuple of (schedules, total_count)
+        """
         raise NotImplementedError
 
     async def create_schedule(self, schedule_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -1659,7 +1671,11 @@ class AsyncBaseDb(ABC):
         self,
         schedule_id: str,
         limit: int = 20,
-        offset: int = 0,
-    ) -> List[Dict[str, Any]]:
-        """List runs for a schedule."""
+        page: int = 1,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """List runs for a schedule.
+
+        Returns:
+            Tuple of (runs, total_count)
+        """
         raise NotImplementedError

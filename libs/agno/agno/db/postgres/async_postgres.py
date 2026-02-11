@@ -3115,22 +3115,32 @@ class AsyncPostgresDb(AsyncBaseDb):
         self,
         enabled: Optional[bool] = None,
         limit: int = 100,
-        offset: int = 0,
-    ) -> List[Dict[str, Any]]:
+        page: int = 1,
+    ) -> Tuple[List[Dict[str, Any]], int]:
         try:
             table = await self._get_table(table_type="schedules")
             if table is None:
-                return []
+                return [], 0
             async with self.async_session_factory() as sess:
+                # Get total count
+                count_stmt = select(func.count()).select_from(table)
+                if enabled is not None:
+                    count_stmt = count_stmt.where(table.c.enabled == enabled)
+                count_result = await sess.execute(count_stmt)
+                total_count = count_result.scalar() or 0
+
+                # Get paginated results
+                offset = (page - 1) * limit
                 stmt = select(table)
                 if enabled is not None:
                     stmt = stmt.where(table.c.enabled == enabled)
                 stmt = stmt.order_by(table.c.created_at.desc()).limit(limit).offset(offset)
                 result = await sess.execute(stmt)
-                return [dict(row._mapping) for row in result.fetchall()]
+                schedules = [dict(row._mapping) for row in result.fetchall()]
+                return schedules, total_count
         except Exception as e:
             log_debug(f"Error listing schedules: {e}")
-            return []
+            return [], 0
 
     async def create_schedule(self, schedule_data: Dict[str, Any]) -> Dict[str, Any]:
         try:
@@ -3274,13 +3284,20 @@ class AsyncPostgresDb(AsyncBaseDb):
         self,
         schedule_id: str,
         limit: int = 100,
-        offset: int = 0,
-    ) -> List[Dict[str, Any]]:
+        page: int = 1,
+    ) -> Tuple[List[Dict[str, Any]], int]:
         try:
             table = await self._get_table(table_type="schedule_runs")
             if table is None:
-                return []
+                return [], 0
             async with self.async_session_factory() as sess:
+                # Get total count
+                count_stmt = select(func.count()).select_from(table).where(table.c.schedule_id == schedule_id)
+                count_result = await sess.execute(count_stmt)
+                total_count = count_result.scalar() or 0
+
+                # Get paginated results
+                offset = (page - 1) * limit
                 stmt = (
                     select(table)
                     .where(table.c.schedule_id == schedule_id)
@@ -3289,7 +3306,8 @@ class AsyncPostgresDb(AsyncBaseDb):
                     .offset(offset)
                 )
                 result = await sess.execute(stmt)
-                return [dict(row._mapping) for row in result.fetchall()]
+                runs = [dict(row._mapping) for row in result.fetchall()]
+                return runs, total_count
         except Exception as e:
             log_debug(f"Error getting schedule runs: {e}")
-            return []
+            return [], 0

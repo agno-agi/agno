@@ -56,7 +56,11 @@ def main():
     print("\n=== List Schedules ===\n")
     resp = client.get("/schedules")
     resp.raise_for_status()
-    for s in resp.json():
+    result = resp.json()
+    schedules = result["data"]
+    meta = result["meta"]
+    print(f"Page {meta['page']} of {meta['total_pages']} (total: {meta['total_count']})\n")
+    for s in schedules:
         status = "enabled" if s["enabled"] else "disabled"
         print(f"  {s['name']} [{status}] -> {s['endpoint']}")
 
@@ -104,24 +108,30 @@ def main():
     # 6. Manual trigger
     # =========================================================================
     print("\n=== Manual Trigger ===\n")
-    resp = client.post(f"/schedules/{schedule_id}/trigger")
-    if resp.status_code == 200:
-        trigger_result = resp.json()
-        print(f"  Trigger result: status={trigger_result.get('status')}")
-        print(f"  Run ID: {trigger_result.get('run_id')}")
-    elif resp.status_code == 503:
-        print("  Trigger returned 503 (scheduler executor not running yet)")
-    else:
-        print(f"  Trigger response: {resp.status_code} {resp.text}")
+    try:
+        resp = client.post(f"/schedules/{schedule_id}/trigger")
+        if resp.status_code == 200:
+            trigger_result = resp.json()
+            print(f"  Trigger result: status={trigger_result.get('status')}")
+            print(f"  Run ID: {trigger_result.get('run_id')}")
+        elif resp.status_code == 503:
+            print("  Trigger returned 503 (scheduler executor not running yet)")
+        else:
+            print(f"  Trigger response: {resp.status_code} {resp.text}")
+    except Exception as e:
+        print(f"  Trigger timed out or failed: {type(e).__name__}")
 
     # =========================================================================
     # 7. View run history
     # =========================================================================
     print("\n=== Run History ===\n")
-    resp = client.get(f"/schedules/{schedule_id}/runs", params={"limit": 5})
+    resp = client.get(f"/schedules/{schedule_id}/runs", params={"limit": 5, "page": 1})
     resp.raise_for_status()
-    runs = resp.json()
+    result = resp.json()
+    runs = result["data"]
+    meta = result["meta"]
     if runs:
+        print(f"Showing {len(runs)} of {meta['total_count']} total runs\n")
         for run in runs:
             print(
                 f"  Run {run['id'][:8]}... status={run['status']} attempt={run['attempt']}"
@@ -135,7 +145,11 @@ def main():
     print("\n=== Delete ===\n")
     resp = client.delete(f"/schedules/{schedule_id}")
     resp.raise_for_status()
-    print(f"  Deleted: {resp.json()}")
+    try:
+        result = resp.json()
+        print(f"  Deleted: {result}")
+    except Exception:
+        print(f"  Deleted successfully (status {resp.status_code})")
 
     print("\nDone.")
 
