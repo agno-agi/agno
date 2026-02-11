@@ -253,6 +253,7 @@ def create_audit_approval(
         source_name = agent_name
         if team_id:
             source_type = "team"
+            source_name = team_name
 
         tool_name = getattr(tool_execution, "tool_name", None)
         tool_args = getattr(tool_execution, "tool_args", None)
@@ -425,6 +426,7 @@ async def acreate_audit_approval(
         source_name = agent_name
         if team_id:
             source_type = "team"
+            source_name = team_name
 
         tool_name = getattr(tool_execution, "tool_name", None)
         tool_args = getattr(tool_execution, "tool_args", None)
