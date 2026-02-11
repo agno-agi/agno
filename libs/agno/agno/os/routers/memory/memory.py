@@ -160,6 +160,9 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
     ) -> None:
         db = await get_db(dbs, db_id, table)
 
+        if hasattr(request.state, "user_id") and request.state.user_id is not None:
+            user_id = request.state.user_id
+
         if isinstance(db, RemoteDb):
             auth_token = get_auth_token_from_request(request)
             headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
@@ -198,6 +201,9 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         table: Optional[str] = Query(default=None, description="Table to use for deletion"),
     ) -> None:
         db = await get_db(dbs, db_id, table)
+
+        if hasattr(http_request.state, "user_id") and http_request.state.user_id is not None:
+            request.user_id = http_request.state.user_id
 
         if isinstance(db, RemoteDb):
             auth_token = get_auth_token_from_request(http_request)
@@ -418,10 +424,14 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
     )
     async def get_topics(
         request: Request,
+        user_id: Optional[str] = Query(default=None, description="User ID to filter topics for"),
         db_id: Optional[str] = Query(default=None, description="Database ID to query topics from"),
         table: Optional[str] = Query(default=None, description="Table to query topics from"),
     ) -> List[str]:
         db = await get_db(dbs, db_id, table)
+
+        if hasattr(request.state, "user_id") and request.state.user_id is not None:
+            user_id = request.state.user_id
 
         if isinstance(db, RemoteDb):
             auth_token = get_auth_token_from_request(request)
@@ -434,9 +444,9 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
 
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
-            return await db.get_all_memory_topics()
+            return await db.get_all_memory_topics(user_id=user_id)
         else:
-            return db.get_all_memory_topics()
+            return db.get_all_memory_topics(user_id=user_id)
 
     @router.patch(
         "/memories/{memory_id}",
@@ -560,10 +570,14 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         request: Request,
         limit: Optional[int] = Query(default=20, description="Number of user statistics to return per page", ge=1),
         page: Optional[int] = Query(default=1, description="Page number for pagination", ge=0),
+        user_id: Optional[str] = Query(default=None, description="User ID to filter statistics for"),
         db_id: Optional[str] = Query(default=None, description="Database ID to query statistics from"),
         table: Optional[str] = Query(default=None, description="Table to query statistics from"),
     ) -> PaginatedResponse[UserStatsSchema]:
         db = await get_db(dbs, db_id, table)
+
+        if hasattr(request.state, "user_id") and request.state.user_id is not None:
+            user_id = request.state.user_id
 
         if isinstance(db, RemoteDb):
             auth_token = get_auth_token_from_request(request)
@@ -585,11 +599,13 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 user_stats, total_count = await db.get_user_memory_stats(
                     limit=limit,
                     page=page,
+                    user_id=user_id,
                 )
             else:
                 user_stats, total_count = db.get_user_memory_stats(
                     limit=limit,
                     page=page,
+                    user_id=user_id,
                 )
             return PaginatedResponse(
                 data=[UserStatsSchema.from_dict(stats) for stats in user_stats],
@@ -661,6 +677,9 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         """Optimize user memories using the default summarize strategy."""
         from agno.memory import MemoryManager
         from agno.memory.strategies.types import MemoryOptimizationStrategyType
+
+        if hasattr(http_request.state, "user_id") and http_request.state.user_id is not None:
+            request.user_id = http_request.state.user_id
 
         try:
             # Get database instance
