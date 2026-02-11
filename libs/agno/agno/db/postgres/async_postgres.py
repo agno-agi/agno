@@ -458,7 +458,7 @@ class AsyncPostgresDb(AsyncBaseDb):
 
         Args:
             session_id (str): ID of the session to delete
-            user_id (Optional[str]): If provided, only delete if session belongs to this user.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
 
         Returns:
             bool: True if the session was deleted, False otherwise.
@@ -493,7 +493,7 @@ class AsyncPostgresDb(AsyncBaseDb):
 
         Args:
             session_ids (List[str]): The IDs of the sessions to delete.
-            user_id (Optional[str]): If provided, only delete sessions belonging to this user.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
 
         Raises:
             Exception: If an error occurs during deletion.
@@ -686,7 +686,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             session_id (str): The ID of the session to rename.
             session_type (SessionType): The type of session to rename.
             session_name (str): The new name for the session.
-            user_id (Optional[str]): If provided, only rename if session belongs to this user.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
             deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
 
         Returns:

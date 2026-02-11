@@ -222,22 +222,14 @@ class DynamoDb(BaseDb):
             return False
 
         try:
+            kwargs: Dict[str, Any] = {
+                "TableName": self.session_table_name,
+                "Key": {"session_id": {"S": session_id}},
+            }
             if user_id is not None:
-                session = self.client.get_item(
-                    TableName=self.session_table_name,
-                    Key={"session_id": {"S": session_id}},
-                )
-                item = session.get("Item")
-                if not item:
-                    return False
-                session_data = deserialize_from_dynamodb_item(item)
-                if session_data.get("user_id") != user_id:
-                    return False
-
-            self.client.delete_item(
-                TableName=self.session_table_name,
-                Key={"session_id": {"S": session_id}},
-            )
+                kwargs["ConditionExpression"] = "user_id = :user_id"
+                kwargs["ExpressionAttributeValues"] = {":user_id": {"S": user_id}}
+            self.client.delete_item(**kwargs)
             return True
 
         except self.client.exceptions.ConditionalCheckFailedException:
@@ -264,31 +256,26 @@ class DynamoDb(BaseDb):
 
         try:
             if user_id is not None:
-                filtered_ids = []
                 for session_id in session_ids:
-                    response = self.client.get_item(
-                        TableName=self.session_table_name,
-                        Key={"session_id": {"S": session_id}},
-                    )
-                    item = response.get("Item")
-                    if item:
-                        session_data = deserialize_from_dynamodb_item(item)
-                        if session_data.get("user_id") == user_id:
-                            filtered_ids.append(session_id)
-                session_ids = filtered_ids
-                if not session_ids:
-                    return
+                    try:
+                        self.client.delete_item(
+                            TableName=self.session_table_name,
+                            Key={"session_id": {"S": session_id}},
+                            ConditionExpression="user_id = :user_id",
+                            ExpressionAttributeValues={":user_id": {"S": user_id}},
+                        )
+                    except self.client.exceptions.ConditionalCheckFailedException:
+                        pass
+            else:
+                for i in range(0, len(session_ids), DYNAMO_BATCH_SIZE_LIMIT):
+                    batch = session_ids[i : i + DYNAMO_BATCH_SIZE_LIMIT]
+                    delete_requests = []
 
-            # Process the items to delete in batches of the max allowed size or less
-            for i in range(0, len(session_ids), DYNAMO_BATCH_SIZE_LIMIT):
-                batch = session_ids[i : i + DYNAMO_BATCH_SIZE_LIMIT]
-                delete_requests = []
+                    for session_id in batch:
+                        delete_requests.append({"DeleteRequest": {"Key": {"session_id": {"S": session_id}}}})
 
-                for session_id in batch:
-                    delete_requests.append({"DeleteRequest": {"Key": {"session_id": {"S": session_id}}}})
-
-                if delete_requests:
-                    self.client.batch_write_item(RequestItems={self.session_table_name: delete_requests})
+                    if delete_requests:
+                        self.client.batch_write_item(RequestItems={self.session_table_name: delete_requests})
 
         except Exception as e:
             log_error(f"Failed to delete sessions: {e}")
@@ -507,9 +494,10 @@ class DynamoDb(BaseDb):
             if not current_item:
                 return None
 
+            # Verify user_id if provided
             if user_id is not None:
-                session_record = deserialize_from_dynamodb_item(current_item)
-                if session_record.get("user_id") != user_id:
+                item_data = deserialize_from_dynamodb_item(current_item)
+                if item_data.get("user_id") != user_id:
                     return None
 
             # Update session_data with the new session_name
