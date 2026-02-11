@@ -220,8 +220,8 @@ class TestLinkedToMetadata:
 
         assert result[0].meta_data["linked_to"] == "My Knowledge Base"
 
-    def test_prepare_documents_no_linked_to_without_isolation(self):
-        """Test that linked_to is NOT added when isolation is disabled (backwards compatible)."""
+    def test_prepare_documents_adds_empty_linked_to_without_name(self):
+        """Test that linked_to is set to empty string when knowledge has no name."""
         mock_db = MockVectorDb()
         knowledge = Knowledge(
             name="My Knowledge Base",
@@ -234,7 +234,7 @@ class TestLinkedToMetadata:
 
         assert "linked_to" not in result[0].meta_data
 
-    def test_prepare_documents_adds_empty_linked_to_without_name(self):
+    def test_prepare_documents_adds_empty_linked_to_no_name_with_isolation(self):
         """Test that linked_to is set to empty string when knowledge has no name but isolation enabled."""
         mock_db = MockVectorDb()
         knowledge = Knowledge(
@@ -247,8 +247,8 @@ class TestLinkedToMetadata:
 
         assert result[0].meta_data["linked_to"] == ""
 
-    def test_linked_to_uses_knowledge_name_with_isolation(self):
-        """Test that linked_to uses knowledge instance name when isolation enabled."""
+    def test_linked_to_always_uses_knowledge_name(self):
+        """Test that linked_to always uses the knowledge instance name, overriding any caller-supplied value."""
         mock_db = MockVectorDb()
         knowledge = Knowledge(
             name="New KB",

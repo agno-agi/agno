@@ -11,6 +11,10 @@ from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIChat
 from agno.run.agent import RunEvent
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 db = PostgresDb(db_url=db_url)
 
@@ -67,6 +71,10 @@ def run_with_events(message: str):
         elif chunk.event == RunEvent.run_content_completed.value:
             print("[RunContentCompleted]")
 
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     run_with_events("My name is John Billings")

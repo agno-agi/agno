@@ -8,6 +8,10 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.models.morph import MorphTools
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 
 def create_sample_file():
     """Create a simple Python file in tmp directory for testing"""
@@ -67,6 +71,10 @@ def main():
 
     code_editor.print_response(improvement_request)
 
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     main()

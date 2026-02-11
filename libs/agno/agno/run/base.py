@@ -27,6 +27,11 @@ class RunContext:
     session_state: Optional[Dict[str, Any]] = None
     output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None
 
+    # Runtime-resolved callable factory results
+    tools: Optional[List[Any]] = None
+    knowledge: Optional[Any] = None
+    members: Optional[List[Any]] = None
+
 
 @dataclass
 class BaseRunOutputEvent:
@@ -174,6 +179,12 @@ class BaseRunOutputEvent:
             from agno.models.response import ToolExecution
 
             data["tool"] = ToolExecution.from_dict(tool)
+
+        tools = data.pop("tools", None)
+        if tools:
+            from agno.models.response import ToolExecution
+
+            data["tools"] = [ToolExecution.from_dict(t) for t in tools]
 
         images = data.pop("images", None)
         if images:

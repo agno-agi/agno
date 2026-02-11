@@ -1,3 +1,10 @@
+"""
+Structured Output
+=================
+
+Demonstrates structured output.
+"""
+
 from typing import List
 
 from agno.agent.agent import Agent
@@ -5,6 +12,10 @@ from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.os.interfaces.agui import AGUI
 from pydantic import BaseModel, Field
+
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
 
 
 class MovieScript(BaseModel):
@@ -41,6 +52,10 @@ agent_os = AgentOS(
     interfaces=[AGUI(agent=chat_agent)],
 )
 app = agent_os.get_app()
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     """Run your AgentOS.

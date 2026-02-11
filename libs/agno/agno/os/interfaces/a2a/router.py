@@ -4,7 +4,7 @@ from typing import Optional, Union
 from uuid import uuid4
 
 from fastapi import HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.routing import APIRouter
 from typing_extensions import List
 
@@ -130,7 +130,10 @@ def attach_routes(
         if not user_id:
             user_id = request_body.get("params", {}).get("message", {}).get("metadata", {}).get("userId")
 
-        # 3. Run the Agent
+        # 3. Check if non-blocking execution is requested
+        blocking = request_body.get("params", {}).get("configuration", {}).get("blocking", True)
+
+        # 4. Run the Agent
         try:
             response = await agent.arun(
                 input=run_input.input_content,
@@ -140,14 +143,20 @@ def attach_routes(
                 files=run_input.files,
                 session_id=context_id,
                 user_id=user_id,
+                background=not blocking,
                 **kwargs,
             )
 
-            # 4. Send the response
+            # 5. Send the response
             a2a_task = map_run_output_to_a2a_task(response)
-            return SendMessageSuccessResponse(
+            status_code = 202 if not blocking else 200
+            result = SendMessageSuccessResponse(
                 id=request_body.get("id", "unknown"),
                 result=a2a_task,
+            )
+            return JSONResponse(
+                content=result.model_dump(exclude_none=True),
+                status_code=status_code,
             )
 
         # Handle any critical error
@@ -172,6 +181,80 @@ def attach_routes(
                 id=request_body.get("id", "unknown"),
                 result=failed_task,
             )
+
+    @router.post(
+        "/agents/{id}/v1/tasks:get",
+        operation_id="get_agent_task",
+        name="get_agent_task",
+        description="Get the status and result of an agent task by ID.",
+        response_model_exclude_none=True,
+    )
+    async def a2a_get_agent_task(request: Request, id: str):
+        if not agents:
+            raise HTTPException(status_code=404, detail="Agent not found")
+
+        request_body = await request.json()
+        params = request_body.get("params", {})
+        task_id = params.get("id")
+        context_id = params.get("contextId")
+
+        if not task_id:
+            raise HTTPException(status_code=400, detail="Task ID (params.id) is required")
+
+        agent = get_agent_by_id(id, agents)
+        if not agent:
+            raise HTTPException(status_code=404, detail="Agent not found")
+        if isinstance(agent, RemoteAgent):
+            raise HTTPException(status_code=400, detail="Task polling is not supported for remote agents")
+
+        run_output = await agent.aget_run_output(run_id=task_id, session_id=context_id)
+        if not run_output:
+            raise HTTPException(status_code=404, detail="Task not found")
+
+        a2a_task = map_run_output_to_a2a_task(run_output)
+        return SendMessageSuccessResponse(
+            id=request_body.get("id", "unknown"),
+            result=a2a_task,
+        )
+
+    @router.post(
+        "/agents/{id}/v1/tasks:cancel",
+        operation_id="cancel_agent_task",
+        name="cancel_agent_task",
+        description="Cancel a running agent task.",
+        response_model_exclude_none=True,
+    )
+    async def a2a_cancel_agent_task(request: Request, id: str):
+        if not agents:
+            raise HTTPException(status_code=404, detail="Agent not found")
+
+        request_body = await request.json()
+        params = request_body.get("params", {})
+        task_id = params.get("id")
+
+        if not task_id:
+            raise HTTPException(status_code=400, detail="Task ID (params.id) is required")
+
+        agent = get_agent_by_id(id, agents)
+        if not agent:
+            raise HTTPException(status_code=404, detail="Agent not found")
+        if isinstance(agent, RemoteAgent):
+            raise HTTPException(status_code=400, detail="Task cancellation is not supported for remote agents")
+
+        # cancel_run always stores cancellation intent (even for not-yet-registered runs
+        # in cancel-before-start scenarios), so we always return success.
+        await agent.acancel_run(run_id=task_id)
+
+        context_id = params.get("contextId", str(uuid4()))
+        canceled_task = Task(
+            id=task_id,
+            context_id=context_id,
+            status=TaskStatus(state=TaskState.canceled),
+        )
+        return SendMessageSuccessResponse(
+            id=request_body.get("id", "unknown"),
+            result=canceled_task,
+        )
 
     @router.post(
         "/agents/{id}/v1/message:stream",
@@ -325,7 +408,10 @@ def attach_routes(
         if not user_id:
             user_id = request_body.get("params", {}).get("message", {}).get("metadata", {}).get("userId")
 
-        # 3. Run the Team
+        # 3. Check if non-blocking execution is requested
+        blocking = request_body.get("params", {}).get("configuration", {}).get("blocking", True)
+
+        # 4. Run the Team
         try:
             response = await team.arun(
                 input=run_input.input_content,
@@ -335,14 +421,20 @@ def attach_routes(
                 files=run_input.files,
                 session_id=context_id,
                 user_id=user_id,
+                background=not blocking,
                 **kwargs,
             )
 
-            # 4. Send the response
+            # 5. Send the response
             a2a_task = map_run_output_to_a2a_task(response)
-            return SendMessageSuccessResponse(
+            status_code = 202 if not blocking else 200
+            result = SendMessageSuccessResponse(
                 id=request_body.get("id", "unknown"),
                 result=a2a_task,
+            )
+            return JSONResponse(
+                content=result.model_dump(exclude_none=True),
+                status_code=status_code,
             )
 
         # Handle all critical errors
@@ -367,6 +459,80 @@ def attach_routes(
                 id=request_body.get("id", "unknown"),
                 result=failed_task,
             )
+
+    @router.post(
+        "/teams/{id}/v1/tasks:get",
+        operation_id="get_team_task",
+        name="get_team_task",
+        description="Get the status and result of a team task by ID.",
+        response_model_exclude_none=True,
+    )
+    async def a2a_get_team_task(request: Request, id: str):
+        if not teams:
+            raise HTTPException(status_code=404, detail="Team not found")
+
+        request_body = await request.json()
+        params = request_body.get("params", {})
+        task_id = params.get("id")
+        context_id = params.get("contextId")
+
+        if not task_id:
+            raise HTTPException(status_code=400, detail="Task ID (params.id) is required")
+
+        team = get_team_by_id(id, teams)
+        if not team:
+            raise HTTPException(status_code=404, detail="Team not found")
+        if isinstance(team, RemoteTeam):
+            raise HTTPException(status_code=400, detail="Task polling is not supported for remote teams")
+
+        run_output = await team.aget_run_output(run_id=task_id, session_id=context_id)
+        if not run_output:
+            raise HTTPException(status_code=404, detail="Task not found")
+
+        a2a_task = map_run_output_to_a2a_task(run_output)  # type: ignore[arg-type]
+        return SendMessageSuccessResponse(
+            id=request_body.get("id", "unknown"),
+            result=a2a_task,
+        )
+
+    @router.post(
+        "/teams/{id}/v1/tasks:cancel",
+        operation_id="cancel_team_task",
+        name="cancel_team_task",
+        description="Cancel a running team task.",
+        response_model_exclude_none=True,
+    )
+    async def a2a_cancel_team_task(request: Request, id: str):
+        if not teams:
+            raise HTTPException(status_code=404, detail="Team not found")
+
+        request_body = await request.json()
+        params = request_body.get("params", {})
+        task_id = params.get("id")
+
+        if not task_id:
+            raise HTTPException(status_code=400, detail="Task ID (params.id) is required")
+
+        team = get_team_by_id(id, teams)
+        if not team:
+            raise HTTPException(status_code=404, detail="Team not found")
+        if isinstance(team, RemoteTeam):
+            raise HTTPException(status_code=400, detail="Task cancellation is not supported for remote teams")
+
+        # cancel_run always stores cancellation intent (even for not-yet-registered runs
+        # in cancel-before-start scenarios), so we always return success.
+        await team.acancel_run(run_id=task_id)
+
+        context_id = params.get("contextId", str(uuid4()))
+        canceled_task = Task(
+            id=task_id,
+            context_id=context_id,
+            status=TaskStatus(state=TaskState.canceled),
+        )
+        return SendMessageSuccessResponse(
+            id=request_body.get("id", "unknown"),
+            result=canceled_task,
+        )
 
     @router.post(
         "/teams/{id}/v1/message:stream",

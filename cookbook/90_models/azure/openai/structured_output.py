@@ -1,9 +1,20 @@
+"""
+Azure Structured Output
+=======================
+
+Cookbook example for `azure/openai/structured_output.py`.
+"""
+
 from typing import List
 
 from agno.agent import Agent, RunOutput  # noqa
 from agno.models.azure import AzureOpenAI
 from pydantic import BaseModel, Field
 from rich.pretty import pprint  # noqa
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 
 class MovieScript(BaseModel):
@@ -36,3 +47,10 @@ run: RunOutput = agent.run("New York")
 pprint(run.content)
 
 # agent.print_response("New York")
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

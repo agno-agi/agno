@@ -13,6 +13,10 @@ from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.run.agent import RunInput
 
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
+
 
 # Pre-hook for logging request
 def log_request(run_input: RunInput, agent):
@@ -87,6 +91,10 @@ app = agent_os.get_app()
 
 # The response will be returned immediately, while log_request, log_analytics and send_notification
 # continue to run in the background without blocking the API response.
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     agent_os.serve(app="background_hooks_example:app", port=7777, reload=True)

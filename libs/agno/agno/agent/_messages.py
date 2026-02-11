@@ -40,6 +40,14 @@ from agno.utils.message import filter_tool_calls, get_text_from_message
 from agno.utils.prompts import get_json_output_prompt, get_response_model_format_prompt
 from agno.utils.timer import Timer
 
+
+def _get_resolved_knowledge(agent: "Agent", run_context: Optional[RunContext] = None) -> Any:
+    """Get the resolved knowledge, preferring run_context over agent.knowledge."""
+    from agno.utils.callables import get_resolved_knowledge
+
+    return get_resolved_knowledge(agent, run_context)
+
+
 # ---------------------------------------------------------------------------
 # Message formatting
 # ---------------------------------------------------------------------------
@@ -394,8 +402,9 @@ def get_system_message(
             system_message_content += learning_context + "\n"
 
     # 3.3.13 then add search_knowledge instructions to the system prompt
-    if agent.knowledge is not None and agent.search_knowledge and agent.add_search_knowledge_instructions:
-        build_context_fn = getattr(agent.knowledge, "build_context", None)
+    _resolved_knowledge = _get_resolved_knowledge(agent, run_context)
+    if _resolved_knowledge is not None and agent.search_knowledge and agent.add_search_knowledge_instructions:
+        build_context_fn = getattr(_resolved_knowledge, "build_context", None)
         if callable(build_context_fn):
             knowledge_context = build_context_fn(
                 enable_agentic_filters=agent.enable_agentic_knowledge_filters,
@@ -739,10 +748,11 @@ async def aget_system_message(
             system_message_content += learning_context + "\n"
 
     # 3.3.13 then add search_knowledge instructions to the system prompt
-    if agent.knowledge is not None and agent.search_knowledge and agent.add_search_knowledge_instructions:
+    _resolved_knowledge = _get_resolved_knowledge(agent, run_context)
+    if _resolved_knowledge is not None and agent.search_knowledge and agent.add_search_knowledge_instructions:
         # Prefer async version if available for async databases
-        abuild_context_fn = getattr(agent.knowledge, "abuild_context", None)
-        build_context_fn = getattr(agent.knowledge, "build_context", None)
+        abuild_context_fn = getattr(_resolved_knowledge, "abuild_context", None)
+        build_context_fn = getattr(_resolved_knowledge, "build_context", None)
         if callable(abuild_context_fn):
             knowledge_context = await abuild_context_fn(
                 enable_agentic_filters=agent.enable_agentic_knowledge_filters,
@@ -1700,12 +1710,14 @@ def get_relevant_docs_from_knowledge(
     # Extract dependencies from run_context if available
     dependencies = run_context.dependencies if run_context else None
 
-    if num_documents is None and agent.knowledge is not None:
-        num_documents = getattr(agent.knowledge, "max_results", None)
+    resolved_knowledge = _get_resolved_knowledge(agent, run_context)
+
+    if num_documents is None and resolved_knowledge is not None:
+        num_documents = getattr(resolved_knowledge, "max_results", None)
     # Validate the filters against known valid filter keys
-    if agent.knowledge is not None and filters is not None:
+    if resolved_knowledge is not None and filters is not None:
         if validate_filters:
-            valid_filters, invalid_keys = agent.knowledge.validate_filters(filters)  # type: ignore
+            valid_filters, invalid_keys = resolved_knowledge.validate_filters(filters)  # type: ignore
 
             # Warn about invalid filter keys
             if invalid_keys:
@@ -1744,17 +1756,17 @@ def get_relevant_docs_from_knowledge(
 
     # Use knowledge protocol's retrieve method
     try:
-        if agent.knowledge is None:
+        if resolved_knowledge is None:
             return None
 
         # Use protocol retrieve() method if available
-        retrieve_fn = getattr(agent.knowledge, "retrieve", None)
+        retrieve_fn = getattr(resolved_knowledge, "retrieve", None)
         if not callable(retrieve_fn):
             log_debug("Knowledge does not implement retrieve()")
             return None
 
         if num_documents is None:
-            num_documents = getattr(agent.knowledge, "max_results", 10)
+            num_documents = getattr(resolved_knowledge, "max_results", 10)
 
         log_debug(f"Retrieving from knowledge base with filters: {filters}")
         relevant_docs: List[Document] = retrieve_fn(query=query, max_results=num_documents, filters=filters)
@@ -1784,13 +1796,15 @@ async def aget_relevant_docs_from_knowledge(
     # Extract dependencies from run_context if available
     dependencies = run_context.dependencies if run_context else None
 
-    if num_documents is None and agent.knowledge is not None:
-        num_documents = getattr(agent.knowledge, "max_results", None)
+    resolved_knowledge = _get_resolved_knowledge(agent, run_context)
+
+    if num_documents is None and resolved_knowledge is not None:
+        num_documents = getattr(resolved_knowledge, "max_results", None)
 
     # Validate the filters against known valid filter keys
-    if agent.knowledge is not None and filters is not None:
+    if resolved_knowledge is not None and filters is not None:
         if validate_filters:
-            valid_filters, invalid_keys = await agent.knowledge.avalidate_filters(filters)  # type: ignore
+            valid_filters, invalid_keys = await resolved_knowledge.avalidate_filters(filters)  # type: ignore
 
             # Warn about invalid filter keys
             if invalid_keys:  # type: ignore
@@ -1833,19 +1847,19 @@ async def aget_relevant_docs_from_knowledge(
 
     # Use knowledge protocol's retrieve method
     try:
-        if agent.knowledge is None:
+        if resolved_knowledge is None:
             return None
 
         # Use protocol aretrieve() or retrieve() method if available
-        aretrieve_fn = getattr(agent.knowledge, "aretrieve", None)
-        retrieve_fn = getattr(agent.knowledge, "retrieve", None)
+        aretrieve_fn = getattr(resolved_knowledge, "aretrieve", None)
+        retrieve_fn = getattr(resolved_knowledge, "retrieve", None)
 
         if not callable(aretrieve_fn) and not callable(retrieve_fn):
             log_debug("Knowledge does not implement retrieve()")
             return None
 
         if num_documents is None:
-            num_documents = getattr(agent.knowledge, "max_results", 10)
+            num_documents = getattr(resolved_knowledge, "max_results", 10)
 
         log_debug(f"Retrieving from knowledge base with filters: {filters}")
 

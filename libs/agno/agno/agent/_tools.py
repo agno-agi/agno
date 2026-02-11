@@ -48,9 +48,39 @@ def raise_if_async_tools(agent: Agent) -> None:
     if agent.tools is None:
         return
 
+    # Skip check if tools is a callable factory (not yet resolved)
+    if not isinstance(agent.tools, list):
+        return
+
     from inspect import iscoroutinefunction
 
     for tool in agent.tools:
+        if isinstance(tool, Toolkit):
+            for func in tool.functions:
+                if iscoroutinefunction(tool.functions[func].entrypoint):
+                    raise Exception(
+                        f"Async tool {tool.name} can't be used with synchronous agent.run() or agent.print_response(). "
+                        "Use agent.arun() or agent.aprint_response() instead to use this tool."
+                    )
+        elif isinstance(tool, Function):
+            if iscoroutinefunction(tool.entrypoint):
+                raise Exception(
+                    f"Async function {tool.name} can't be used with synchronous agent.run() or agent.print_response(). "
+                    "Use agent.arun() or agent.aprint_response() instead to use this tool."
+                )
+        elif callable(tool):
+            if iscoroutinefunction(tool):
+                raise Exception(
+                    f"Async function {tool.__name__} can't be used with synchronous agent.run() or agent.print_response(). "
+                    "Use agent.arun() or agent.aprint_response() instead to use this tool."
+                )
+
+
+def _raise_if_async_tools_in_list(tools: list) -> None:
+    """Raise if any tools in a concrete list are async."""
+    from inspect import iscoroutinefunction
+
+    for tool in tools:
         if isinstance(tool, Toolkit):
             for func in tool.functions:
                 if iscoroutinefunction(tool.functions[func].entrypoint):
@@ -80,17 +110,30 @@ def get_tools(
     user_id: Optional[str] = None,
 ) -> List[Union[Toolkit, Callable, Function, Dict]]:
     from agno.agent import _default_tools, _init
+    from agno.utils.callables import (
+        get_resolved_knowledge,
+        get_resolved_tools,
+        resolve_callable_knowledge,
+        resolve_callable_tools,
+    )
 
     agent_tools: List[Union[Toolkit, Callable, Function, Dict]] = []
+
+    # Resolve callable factories
+    resolve_callable_tools(agent, run_context)
+    resolve_callable_knowledge(agent, run_context)
+
+    resolved_tools = get_resolved_tools(agent, run_context)
+    resolved_knowledge = get_resolved_knowledge(agent, run_context)
 
     # Connect tools that require connection management
     _init.connect_connectable_tools(agent)
 
     # Add provided tools
-    if agent.tools is not None:
+    if resolved_tools is not None:
         # If not running in async mode, raise if any tool is async
-        raise_if_async_tools(agent)
-        agent_tools.extend(agent.tools)
+        _raise_if_async_tools_in_list(resolved_tools)
+        agent_tools.extend(resolved_tools)
 
     # Add tools for accessing memory
     if agent.read_chat_history:
@@ -128,9 +171,9 @@ def get_tools(
         )
 
     # Add tools for accessing knowledge
-    if agent.knowledge is not None and agent.search_knowledge:
+    if resolved_knowledge is not None and agent.search_knowledge:
         # Use knowledge protocol's get_tools method
-        get_tools_fn = getattr(agent.knowledge, "get_tools", None)
+        get_tools_fn = getattr(resolved_knowledge, "get_tools", None)
         if callable(get_tools_fn):
             knowledge_tools = get_tools_fn(
                 run_response=run_response,
@@ -152,7 +195,7 @@ def get_tools(
             )
         )
 
-    if agent.knowledge is not None and agent.update_knowledge:
+    if resolved_knowledge is not None and agent.update_knowledge:
         agent_tools.append(agent.add_to_knowledge)
 
     # Add tools for accessing skills
@@ -171,8 +214,21 @@ async def aget_tools(
     check_mcp_tools: bool = True,
 ) -> List[Union[Toolkit, Callable, Function, Dict]]:
     from agno.agent import _default_tools, _init
+    from agno.utils.callables import (
+        aresolve_callable_knowledge,
+        aresolve_callable_tools,
+        get_resolved_knowledge,
+        get_resolved_tools,
+    )
 
     agent_tools: List[Union[Toolkit, Callable, Function, Dict]] = []
+
+    # Resolve callable factories
+    await aresolve_callable_tools(agent, run_context)
+    await aresolve_callable_knowledge(agent, run_context)
+
+    resolved_tools = get_resolved_tools(agent, run_context)
+    resolved_knowledge = get_resolved_knowledge(agent, run_context)
 
     # Connect tools that require connection management
     _init.connect_connectable_tools(agent)
@@ -181,8 +237,8 @@ async def aget_tools(
     await _init.connect_mcp_tools(agent)
 
     # Add provided tools
-    if agent.tools is not None:
-        for tool in agent.tools:
+    if resolved_tools is not None:
+        for tool in resolved_tools:
             # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
             is_mcp_tool = hasattr(type(tool), "__mro__") and any(
                 c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
@@ -247,10 +303,10 @@ async def aget_tools(
         )
 
     # Add tools for accessing knowledge
-    if agent.knowledge is not None and agent.search_knowledge:
+    if resolved_knowledge is not None and agent.search_knowledge:
         # Use knowledge protocol's get_tools method
-        aget_tools_fn = getattr(agent.knowledge, "aget_tools", None)
-        get_tools_fn = getattr(agent.knowledge, "get_tools", None)
+        aget_tools_fn = getattr(resolved_knowledge, "aget_tools", None)
+        get_tools_fn = getattr(resolved_knowledge, "get_tools", None)
 
         if callable(aget_tools_fn):
             knowledge_tools = await aget_tools_fn(
@@ -283,7 +339,7 @@ async def aget_tools(
             )
         )
 
-    if agent.knowledge is not None and agent.update_knowledge:
+    if resolved_knowledge is not None and agent.update_knowledge:
         agent_tools.append(agent.add_to_knowledge)
 
     # Add tools for accessing skills
@@ -377,6 +433,22 @@ def parse_tools(
                 _function_names.append(function_name)
 
                 _func = Function.from_callable(tool, strict=strict)
+                # Detect @approval sentinel on raw callable
+                _approval_type = getattr(tool, "_agno_approval_type", None)
+                if _approval_type is not None:
+                    _func.approval_type = _approval_type
+                    if _approval_type == "required" and not any(
+                        [_func.requires_user_input, _func.requires_confirmation, _func.external_execution]
+                    ):
+                        _func.requires_confirmation = True
+                    elif _approval_type == "audit" and not any(
+                        [_func.requires_user_input, _func.requires_confirmation, _func.external_execution]
+                    ):
+                        raise ValueError(
+                            "@approval(type='audit') requires at least one HITL flag "
+                            "('requires_confirmation', 'requires_user_input', or 'external_execution') "
+                            "to be set on @tool()."
+                        )
                 _func = _func.model_copy(deep=True)
                 _func._agent = agent
                 if strict:
@@ -496,6 +568,40 @@ def handle_get_user_input_tool_update(agent: Agent, run_messages: RunMessages, t
             metrics=Metrics(duration=0),
         )
     )
+
+
+def _maybe_create_audit_approval(
+    agent: "Agent", tool_execution: ToolExecution, run_response: RunOutput, status: str
+) -> None:
+    """Create an audit approval record if the tool has approval_type='audit'."""
+    if getattr(tool_execution, "approval_type", None) == "audit":
+        from agno.run.approval import create_audit_approval
+
+        create_audit_approval(
+            db=agent.db,
+            tool_execution=tool_execution,
+            run_response=run_response,
+            status=status,
+            agent_id=agent.id,
+            agent_name=agent.name,
+        )
+
+
+async def _amaybe_create_audit_approval(
+    agent: "Agent", tool_execution: ToolExecution, run_response: RunOutput, status: str
+) -> None:
+    """Async: create an audit approval record if the tool has approval_type='audit'."""
+    if getattr(tool_execution, "approval_type", None) == "audit":
+        from agno.run.approval import acreate_audit_approval
+
+        await acreate_audit_approval(
+            db=agent.db,
+            tool_execution=tool_execution,
+            run_response=run_response,
+            status=status,
+            agent_id=agent.id,
+            agent_name=agent.name,
+        )
 
 
 def run_tool(
@@ -650,16 +756,19 @@ def handle_tool_call_updates(
                 _t.confirmed = False
                 _t.confirmation_note = _t.confirmation_note or "Tool call was rejected"
                 _t.tool_call_error = True
+            _maybe_create_audit_approval(agent, _t, run_response, "approved" if _t.confirmed is True else "rejected")
             _t.requires_confirmation = False
 
         # Case 2: Handle external execution required tools
         elif _t.external_execution_required is not None and _t.external_execution_required is True:
             handle_external_execution_update(agent, run_messages=run_messages, tool=_t)
+            _maybe_create_audit_approval(agent, _t, run_response, "approved")
 
         # Case 3: Agentic user input required
         elif _t.tool_name == "get_user_input" and _t.requires_user_input is not None and _t.requires_user_input is True:
             handle_get_user_input_tool_update(agent, run_messages=run_messages, tool=_t)
             _t.requires_user_input = False
+            _t.answered = True
 
         # Case 4: Handle user input required tools
         elif _t.requires_user_input is not None and _t.requires_user_input is True:
@@ -668,6 +777,7 @@ def handle_tool_call_updates(
             _t.answered = True
             # Consume the generator without yielding
             deque(run_tool(agent, run_response, run_messages, _t, functions=_functions), maxlen=0)
+            _maybe_create_audit_approval(agent, _t, run_response, "approved")
 
 
 def handle_tool_call_updates_stream(
@@ -693,11 +803,13 @@ def handle_tool_call_updates_stream(
                 _t.confirmed = False
                 _t.confirmation_note = _t.confirmation_note or "Tool call was rejected"
                 _t.tool_call_error = True
+            _maybe_create_audit_approval(agent, _t, run_response, "approved" if _t.confirmed is True else "rejected")
             _t.requires_confirmation = False
 
         # Case 2: Handle external execution required tools
         elif _t.external_execution_required is not None and _t.external_execution_required is True:
             handle_external_execution_update(agent, run_messages=run_messages, tool=_t)
+            _maybe_create_audit_approval(agent, _t, run_response, "approved")
 
         # Case 3: Agentic user input required
         elif _t.tool_name == "get_user_input" and _t.requires_user_input is not None and _t.requires_user_input is True:
@@ -713,6 +825,7 @@ def handle_tool_call_updates_stream(
             )
             _t.requires_user_input = False
             _t.answered = True
+            _maybe_create_audit_approval(agent, _t, run_response, "approved")
 
 
 async def ahandle_tool_call_updates(
@@ -733,11 +846,15 @@ async def ahandle_tool_call_updates(
                 _t.confirmed = False
                 _t.confirmation_note = _t.confirmation_note or "Tool call was rejected"
                 _t.tool_call_error = True
+            await _amaybe_create_audit_approval(
+                agent, _t, run_response, "approved" if _t.confirmed is True else "rejected"
+            )
             _t.requires_confirmation = False
 
         # Case 2: Handle external execution required tools
         elif _t.external_execution_required is not None and _t.external_execution_required is True:
             handle_external_execution_update(agent, run_messages=run_messages, tool=_t)
+            await _amaybe_create_audit_approval(agent, _t, run_response, "approved")
         # Case 3: Agentic user input required
         elif _t.tool_name == "get_user_input" and _t.requires_user_input is not None and _t.requires_user_input is True:
             handle_get_user_input_tool_update(agent, run_messages=run_messages, tool=_t)
@@ -750,6 +867,7 @@ async def ahandle_tool_call_updates(
                 pass
             _t.requires_user_input = False
             _t.answered = True
+            await _amaybe_create_audit_approval(agent, _t, run_response, "approved")
 
 
 async def ahandle_tool_call_updates_stream(
@@ -776,11 +894,15 @@ async def ahandle_tool_call_updates_stream(
                 _t.confirmed = False
                 _t.confirmation_note = _t.confirmation_note or "Tool call was rejected"
                 _t.tool_call_error = True
+            await _amaybe_create_audit_approval(
+                agent, _t, run_response, "approved" if _t.confirmed is True else "rejected"
+            )
             _t.requires_confirmation = False
 
         # Case 2: Handle external execution required tools
         elif _t.external_execution_required is not None and _t.external_execution_required is True:
             handle_external_execution_update(agent, run_messages=run_messages, tool=_t)
+            await _amaybe_create_audit_approval(agent, _t, run_response, "approved")
         # Case 3: Agentic user input required
         elif _t.tool_name == "get_user_input" and _t.requires_user_input is not None and _t.requires_user_input is True:
             handle_get_user_input_tool_update(agent, run_messages=run_messages, tool=_t)
@@ -795,3 +917,4 @@ async def ahandle_tool_call_updates_stream(
                 yield event
             _t.requires_user_input = False
             _t.answered = True
+            await _amaybe_create_audit_approval(agent, _t, run_response, "approved")

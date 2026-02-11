@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from agno.team.mode import TeamMode
     from agno.team.team import Team
 
 from os import getenv
@@ -31,6 +32,7 @@ from agno.eval.base import BaseEval
 from agno.filters import FilterExpr
 from agno.guardrails import BaseGuardrail
 from agno.knowledge.protocol import KnowledgeProtocol
+from agno.learn.machine import LearningMachine
 from agno.memory import MemoryManager
 from agno.models.base import Model
 from agno.models.message import Message
@@ -58,14 +60,16 @@ from agno.utils.string import generate_id_from_name
 
 def __init__(
     team: "Team",
-    members: List[Union[Agent, "Team"]],
+    members: Union[List[Union[Agent, "Team"]], Callable[..., List]],
     id: Optional[str] = None,
     model: Optional[Union[Model, str]] = None,
     name: Optional[str] = None,
     role: Optional[str] = None,
+    mode: Optional["TeamMode"] = None,
     respond_directly: bool = False,
     determine_input_for_members: bool = True,
     delegate_to_all_members: bool = False,
+    max_iterations: int = 10,
     user_id: Optional[str] = None,
     session_id: Optional[str] = None,
     session_state: Optional[Dict[str, Any]] = None,
@@ -95,7 +99,7 @@ def __init__(
     additional_input: Optional[List[Union[str, Dict, BaseModel, Message]]] = None,
     dependencies: Optional[Dict[str, Any]] = None,
     add_dependencies_to_context: bool = False,
-    knowledge: Optional[KnowledgeProtocol] = None,
+    knowledge: Optional[Union[KnowledgeProtocol, Callable[..., KnowledgeProtocol]]] = None,
     knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
     add_knowledge_to_context: bool = False,
     enable_agentic_knowledge_filters: Optional[bool] = False,
@@ -116,7 +120,7 @@ def __init__(
     num_history_runs: Optional[int] = None,
     num_history_messages: Optional[int] = None,
     max_tool_calls_from_history: Optional[int] = None,
-    tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]] = None,
+    tools: Optional[Union[List[Union[Toolkit, Callable, Function, Dict]], Callable[..., List]]] = None,
     tool_call_limit: Optional[int] = None,
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     tool_hooks: Optional[List[Callable]] = None,
@@ -139,6 +143,8 @@ def __init__(
     enable_session_summaries: bool = False,
     session_summary_manager: Optional[SessionSummaryManager] = None,
     add_session_summary_to_context: Optional[bool] = None,
+    learning: Optional[Union[bool, LearningMachine]] = None,
+    add_learnings_to_context: bool = True,
     compress_tool_results: bool = False,
     compression_manager: Optional["CompressionManager"] = None,
     metadata: Optional[Dict[str, Any]] = None,
@@ -160,7 +166,13 @@ def __init__(
     delay_between_retries: int = 1,
     exponential_backoff: bool = False,
     telemetry: bool = True,
+    cache_callables: bool = True,
+    callable_tools_cache_key: Optional[Callable[..., Optional[str]]] = None,
+    callable_knowledge_cache_key: Optional[Callable[..., Optional[str]]] = None,
+    callable_members_cache_key: Optional[Callable[..., Optional[str]]] = None,
 ):
+    from agno.utils.callables import is_callable_factory
+
     team.members = members
 
     team.model = model  # type: ignore[assignment]
@@ -172,6 +184,30 @@ def __init__(
     team.respond_directly = respond_directly
     team.determine_input_for_members = determine_input_for_members
     team.delegate_to_all_members = delegate_to_all_members
+    team.max_iterations = max_iterations
+
+    # Resolve TeamMode: explicit mode wins, otherwise infer from booleans
+    from agno.team.mode import TeamMode
+
+    if mode is not None:
+        team.mode = mode
+        # Normalize booleans deterministically so conflicting flags can't leak through
+        if mode == TeamMode.route:
+            team.respond_directly = True
+            team.delegate_to_all_members = False
+        elif mode == TeamMode.broadcast:
+            team.delegate_to_all_members = True
+            team.respond_directly = False
+        elif mode in (TeamMode.coordinate, TeamMode.tasks):
+            team.respond_directly = False
+            team.delegate_to_all_members = False
+    else:
+        if team.respond_directly:
+            team.mode = TeamMode.route
+        elif team.delegate_to_all_members:
+            team.mode = TeamMode.broadcast
+        else:
+            team.mode = TeamMode.coordinate
 
     team.user_id = user_id
     team.session_id = session_id
@@ -237,7 +273,12 @@ def __init__(
     team.store_history_messages = store_history_messages
     team.send_media_to_model = send_media_to_model
 
-    team.tools = tools
+    if tools is None:
+        team.tools = None
+    elif is_callable_factory(tools, excluded_types=(Toolkit, Function)):
+        team.tools = tools  # type: ignore[assignment]
+    else:
+        team.tools = list(tools) if tools else []  # type: ignore[arg-type]
     team.tool_choice = tool_choice
     team.tool_call_limit = tool_call_limit
     team.tool_hooks = tool_hooks
@@ -270,6 +311,9 @@ def __init__(
     team.enable_session_summaries = enable_session_summaries
     team.session_summary_manager = session_summary_manager
     team.add_session_summary_to_context = add_session_summary_to_context
+
+    team.learning = learning
+    team.add_learnings_to_context = add_learnings_to_context
 
     # Context compression settings
     team.compress_tool_results = compress_tool_results
@@ -334,8 +378,20 @@ def __init__(
     # List of connectable tools that were initialized on the last run
     team._connectable_tools_initialized_on_run = []
 
+    # Internal resolved LearningMachine instance
+    team._learning = None
+
     # Lazy-initialized shared thread pool executor for background tasks (memory, cultural knowledge, etc.)
     team._background_executor = None
+
+    # Callable factory settings
+    team.cache_callables = cache_callables
+    team.callable_tools_cache_key = callable_tools_cache_key
+    team.callable_knowledge_cache_key = callable_knowledge_cache_key
+    team.callable_members_cache_key = callable_members_cache_key
+    team._callable_tools_cache = {}
+    team._callable_knowledge_cache = {}
+    team._callable_members_cache = {}
 
     _resolve_models(
         team,
@@ -412,8 +468,10 @@ def _initialize_member(team: "Team", member: Union["Team", Agent], debug_mode: O
         # Initialize the sub-team's model first so it has its model set
         member._set_default_model()
         # Then let the sub-team initialize its own members so they inherit from the sub-team
-        for sub_member in member.members:
-            member._initialize_member(sub_member, debug_mode=debug_mode)
+        # Only iterate if members is a static list (not a callable factory)
+        if isinstance(member.members, list):
+            for sub_member in member.members:
+                member._initialize_member(sub_member, debug_mode=debug_mode)
 
 
 def propagate_run_hooks_in_background(team: "Team", run_in_background: bool = True) -> None:
@@ -429,6 +487,10 @@ def propagate_run_hooks_in_background(team: "Team", run_in_background: bool = Tr
     from agno.team.team import Team
 
     team._run_hooks_in_background = run_in_background
+
+    # Only iterate if members is a static list (not a callable factory)
+    if not isinstance(team.members, list):
+        return
 
     for member in team.members:
         if hasattr(member, "_run_hooks_in_background"):
@@ -499,6 +561,39 @@ def _set_compression_manager(team: "Team") -> None:
             team.compression_manager.model = team.model
         if team.compression_manager.compress_tool_results:
             team.compress_tool_results = True
+
+
+def _set_learning_machine(team: "Team") -> None:
+    """Initialize LearningMachine with team's db and model.
+
+    Sets the internal _learning field without modifying the public learning field.
+
+    Handles:
+    - learning=True: Create default LearningMachine
+    - learning=False/None: Disabled
+    - learning=LearningMachine(...): Use provided, inject db/model
+    """
+    team._learning_init_attempted = True
+
+    if team.learning is None or team.learning is False:
+        team._learning = None
+        return
+
+    if team.db is None:
+        log_warning("Database not provided. LearningMachine not initialized.")
+        team._learning = None
+        return
+
+    if team.learning is True:
+        team._learning = LearningMachine(db=team.db, model=team.model, user_profile=True, user_memory=True)
+        return
+
+    if isinstance(team.learning, LearningMachine):
+        if team.learning.db is None:
+            team.learning.db = team.db
+        if team.learning.model is None:
+            team.learning.model = team.model
+        team._learning = team.learning
 
 
 def _initialize_session(
@@ -584,6 +679,8 @@ def initialize_team(team: "Team", debug_mode: Optional[bool] = None) -> None:
         _set_session_summary_manager(team)
     if team.compress_tool_results or team.compression_manager is not None:
         _set_compression_manager(team)
+    if team.learning is not None and team.learning is not False:
+        _set_learning_machine(team)
 
     log_debug(f"Team ID: {team.id}", center=True)
 
@@ -591,23 +688,37 @@ def initialize_team(team: "Team", debug_mode: Optional[bool] = None) -> None:
     if team._formatter is None:
         team._formatter = SafeFormatter()
 
-    for member in team.members:
-        _initialize_member(team, member, debug_mode=team.debug_mode)
+    # Only initialize members if they are a static list (not a callable factory)
+    if isinstance(team.members, list):
+        for member in team.members:
+            _initialize_member(team, member, debug_mode=team.debug_mode)
 
 
 def add_tool(team: "Team", tool: Union[Toolkit, Callable, Function, Dict]) -> None:
+    from agno.utils.callables import is_callable_factory
+
+    if is_callable_factory(team.tools, excluded_types=(Toolkit, Function)):
+        raise RuntimeError(
+            "Cannot add_tool() when tools is a callable factory. Use set_tools() to replace the factory."
+        )
     if not team.tools:
         team.tools = []
-    team.tools.append(tool)
+    team.tools.append(tool)  # type: ignore[union-attr]
 
 
-def set_tools(team: "Team", tools: List[Union[Toolkit, Callable, Function, Dict]]) -> None:
-    team.tools = tools
+def set_tools(team: "Team", tools: Union[List[Union[Toolkit, Callable, Function, Dict]], Callable[..., List]]) -> None:
+    from agno.utils.callables import is_callable_factory
+
+    if is_callable_factory(tools, excluded_types=(Toolkit, Function)):
+        team.tools = tools  # type: ignore[assignment]
+        team._callable_tools_cache.clear()
+    else:
+        team.tools = list(tools) if tools else []  # type: ignore[arg-type]
 
 
 async def _connect_mcp_tools(team: "Team") -> None:
     """Connect the MCP tools to the agent."""
-    if team.tools is not None:
+    if team.tools is not None and isinstance(team.tools, list):
         for tool in team.tools:
             # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
             if (
@@ -635,7 +746,7 @@ async def _disconnect_mcp_tools(team: "Team") -> None:
 
 def _connect_connectable_tools(team: "Team") -> None:
     """Connect tools that require connection management (e.g., database connections)."""
-    if team.tools:
+    if team.tools and isinstance(team.tools, list):
         for tool in team.tools:
             if (
                 hasattr(tool, "requires_connect")

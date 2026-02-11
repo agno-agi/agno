@@ -133,7 +133,7 @@ class Agent:
     max_tool_calls_from_history: Optional[int] = None
 
     # --- Knowledge ---
-    knowledge: Optional[KnowledgeProtocol] = None
+    knowledge: Optional[Union[KnowledgeProtocol, Callable[..., KnowledgeProtocol]]] = None
     # Enable RAG by adding references from Knowledge to the user prompt.
     # Add knowledge_filters to the Agent class attributes
     knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
@@ -155,7 +155,8 @@ class Agent:
     # --- Agent Tools ---
     # A list of tools provided to the Model.
     # Tools are functions the model may generate JSON inputs for.
-    tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]] = None
+    # Can also be a callable factory that returns a list of tools at runtime.
+    tools: Optional[Union[List[Union[Toolkit, Callable, Function, Dict]], Callable[..., List]]] = None
 
     # Maximum number of tool calls allowed.
     tool_call_limit: Optional[int] = None
@@ -349,6 +350,14 @@ class Agent:
     # This helps us improve the Agent and provide better support
     telemetry: bool = True
 
+    # --- Callable factory settings ---
+    # Enable caching of callable factory results
+    cache_callables: bool = True
+    # Custom cache key function for tools callable factory
+    callable_tools_cache_key: Optional[Callable[..., Optional[str]]] = None
+    # Custom cache key function for knowledge callable factory
+    callable_knowledge_cache_key: Optional[Callable[..., Optional[str]]] = None
+
     def __init__(
         self,
         *,
@@ -393,7 +402,7 @@ class Agent:
         references_format: Literal["json", "yaml"] = "json",
         skills: Optional[Skills] = None,
         metadata: Optional[Dict[str, Any]] = None,
-        tools: Optional[Sequence[Union[Toolkit, Callable, Function, Dict]]] = None,
+        tools: Optional[Union[Sequence[Union[Toolkit, Callable, Function, Dict]], Callable[..., List]]] = None,
         tool_call_limit: Optional[int] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_hooks: Optional[List[Callable]] = None,
@@ -455,6 +464,9 @@ class Agent:
         debug_mode: bool = False,
         debug_level: Literal[1, 2] = 1,
         telemetry: bool = True,
+        cache_callables: bool = True,
+        callable_tools_cache_key: Optional[Callable[..., Optional[str]]] = None,
+        callable_knowledge_cache_key: Optional[Callable[..., Optional[str]]] = None,
     ):
         self.model = model  # type: ignore[assignment]
         self.name = name
@@ -529,7 +541,14 @@ class Agent:
 
         self.metadata = metadata
 
-        self.tools = list(tools) if tools else []
+        from agno.utils.callables import is_callable_factory
+
+        if tools is None:
+            self.tools = []
+        elif is_callable_factory(tools, excluded_types=(Toolkit, Function)):
+            self.tools = tools  # type: ignore[assignment]
+        else:
+            self.tools = list(tools)  # type: ignore[arg-type]
         self.tool_call_limit = tool_call_limit
         self.tool_choice = tool_choice
         self.tool_hooks = tool_hooks
@@ -610,6 +629,8 @@ class Agent:
         # Internal use: _learning holds the resolved LearningMachine instance
         # use agent.learning_machine to access it.
         self._learning: Optional[LearningMachine] = None
+        # Whether learning init has been attempted (prevents repeated attempts when db is None)
+        self._learning_init_attempted: bool = False
 
         # If we are caching the agent session
         self._cached_session: Optional[AgentSession] = None
@@ -625,6 +646,13 @@ class Agent:
 
         # Lazy-initialized shared thread pool executor for background tasks (memory, cultural knowledge, etc.)
         self._background_executor: Optional[Any] = None
+
+        # Callable factory settings
+        self.cache_callables = cache_callables
+        self.callable_tools_cache_key = callable_tools_cache_key
+        self.callable_knowledge_cache_key = callable_knowledge_cache_key
+        self._callable_tools_cache: Dict[str, List[Any]] = {}
+        self._callable_knowledge_cache: Dict[str, Any] = {}
 
         _init.get_models(self)
 
@@ -646,7 +674,12 @@ class Agent:
 
     @property
     def learning_machine(self) -> Optional[LearningMachine]:
-        if self._learning is None and self.learning is not None and self.learning is not False:
+        if (
+            self._learning is None
+            and not self._learning_init_attempted
+            and self.learning is not None
+            and self.learning is not False
+        ):
             _init.set_learning_machine(self)
         return self._learning
 
@@ -663,8 +696,26 @@ class Agent:
     def add_tool(self, tool: Union[Toolkit, Callable, Function, Dict]) -> None:
         return _init.add_tool(self, tool)
 
-    def set_tools(self, tools: Sequence[Union[Toolkit, Callable, Function, Dict]]) -> None:
+    def set_tools(self, tools: Union[Sequence[Union[Toolkit, Callable, Function, Dict]], Callable[..., List]]) -> None:
         return _init.set_tools(self, tools)
+
+    def clear_callable_cache(
+        self,
+        kind: Optional[Literal["tools", "knowledge"]] = None,
+        close: bool = False,
+    ) -> None:
+        from agno.utils.callables import clear_callable_cache
+
+        clear_callable_cache(self, kind=kind, close=close)
+
+    async def aclear_callable_cache(
+        self,
+        kind: Optional[Literal["tools", "knowledge"]] = None,
+        close: bool = False,
+    ) -> None:
+        from agno.utils.callables import aclear_callable_cache
+
+        await aclear_callable_cache(self, kind=kind, close=close)
 
     # ---------------------------------------------------------------
     # _tools module delegates
@@ -1280,70 +1331,8 @@ class Agent:
             **kwargs,
         )
 
-    def _run(
-        self,
-        run_response: RunOutput,
-        run_context: RunContext,
-        session: AgentSession,
-        user_id: Optional[str] = None,
-        add_history_to_context: Optional[bool] = None,
-        add_dependencies_to_context: Optional[bool] = None,
-        add_session_state_to_context: Optional[bool] = None,
-        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        debug_mode: Optional[bool] = None,
-        background_tasks: Optional[Any] = None,
-        **kwargs: Any,
-    ) -> RunOutput:
-        return _run._run(
-            self,
-            run_response=run_response,
-            run_context=run_context,
-            session_id=session.session_id,
-            user_id=user_id,
-            add_history_to_context=add_history_to_context,
-            add_dependencies_to_context=add_dependencies_to_context,
-            add_session_state_to_context=add_session_state_to_context,
-            response_format=response_format,
-            debug_mode=debug_mode,
-            background_tasks=background_tasks,
-            **kwargs,
-        )
-
-    def _run_stream(
-        self,
-        run_response: RunOutput,
-        run_context: RunContext,
-        session: AgentSession,
-        user_id: Optional[str] = None,
-        add_history_to_context: Optional[bool] = None,
-        add_dependencies_to_context: Optional[bool] = None,
-        add_session_state_to_context: Optional[bool] = None,
-        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        stream_events: bool = False,
-        yield_run_output: Optional[bool] = None,
-        debug_mode: Optional[bool] = None,
-        background_tasks: Optional[Any] = None,
-        **kwargs: Any,
-    ) -> Iterator[Union[RunOutputEvent, RunOutput]]:
-        return _run._run_stream(
-            self,
-            run_response=run_response,
-            run_context=run_context,
-            session_id=session.session_id,
-            user_id=user_id,
-            add_history_to_context=add_history_to_context,
-            add_dependencies_to_context=add_dependencies_to_context,
-            add_session_state_to_context=add_session_state_to_context,
-            response_format=response_format,
-            stream_events=stream_events,
-            yield_run_output=yield_run_output,
-            debug_mode=debug_mode,
-            background_tasks=background_tasks,
-            **kwargs,
-        )
-
     @overload
-    async def arun(
+    def arun(
         self,
         input: Union[str, List, Dict, Message, BaseModel, List[Message]],
         *,
@@ -1366,6 +1355,7 @@ class Agent:
         metadata: Optional[Dict[str, Any]] = None,
         output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
         debug_mode: Optional[bool] = None,
+        background: bool = False,
         **kwargs: Any,
     ) -> RunOutput: ...
 
@@ -1420,6 +1410,7 @@ class Agent:
         output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
         yield_run_output: Optional[bool] = None,
         debug_mode: Optional[bool] = None,
+        background: bool = False,
         **kwargs: Any,
     ) -> Union[RunOutput, AsyncIterator[RunOutputEvent]]:
         return _run.arun_dispatch(
@@ -1445,68 +1436,7 @@ class Agent:
             output_schema=output_schema,
             yield_run_output=yield_run_output,
             debug_mode=debug_mode,
-            **kwargs,
-        )
-
-    async def _arun(
-        self,
-        run_response: RunOutput,
-        run_context: RunContext,
-        session_id: str,
-        user_id: Optional[str] = None,
-        add_history_to_context: Optional[bool] = None,
-        add_dependencies_to_context: Optional[bool] = None,
-        add_session_state_to_context: Optional[bool] = None,
-        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        debug_mode: Optional[bool] = None,
-        background_tasks: Optional[Any] = None,
-        **kwargs: Any,
-    ) -> RunOutput:
-        return await _run._arun(
-            self,
-            run_response=run_response,
-            run_context=run_context,
-            session_id=session_id,
-            user_id=user_id,
-            add_history_to_context=add_history_to_context,
-            add_dependencies_to_context=add_dependencies_to_context,
-            add_session_state_to_context=add_session_state_to_context,
-            response_format=response_format,
-            debug_mode=debug_mode,
-            background_tasks=background_tasks,
-            **kwargs,
-        )
-
-    def _arun_stream(
-        self,
-        run_response: RunOutput,
-        run_context: RunContext,
-        session_id: str,
-        user_id: Optional[str] = None,
-        add_history_to_context: Optional[bool] = None,
-        add_dependencies_to_context: Optional[bool] = None,
-        add_session_state_to_context: Optional[bool] = None,
-        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        stream_events: bool = False,
-        yield_run_output: Optional[bool] = None,
-        debug_mode: Optional[bool] = None,
-        background_tasks: Optional[Any] = None,
-        **kwargs: Any,
-    ) -> AsyncIterator[Union[RunOutputEvent, RunOutput]]:
-        return _run._arun_stream(
-            self,
-            run_response=run_response,
-            run_context=run_context,
-            session_id=session_id,
-            user_id=user_id,
-            add_history_to_context=add_history_to_context,
-            add_dependencies_to_context=add_dependencies_to_context,
-            add_session_state_to_context=add_session_state_to_context,
-            response_format=response_format,
-            stream_events=stream_events,
-            yield_run_output=yield_run_output,
-            debug_mode=debug_mode,
-            background_tasks=background_tasks,
+            background=background,
             **kwargs,
         )
 
@@ -1587,7 +1517,7 @@ class Agent:
         )
 
     @overload
-    async def acontinue_run(
+    def acontinue_run(
         self,
         run_response: Optional[RunOutput] = None,
         *,

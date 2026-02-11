@@ -1,12 +1,8 @@
-"""Automatically update cultural knowledge based on Agent interactions.
+"""
+03 Automatic Cultural Management
+=============================
 
-This example demonstrates how an Agent can autonomously add or refine
-shared cultural knowledge after completing a task.
-
-When `update_cultural_knowledge=True`, the Agent:
-- Reflects on its interaction and reasoning process.
-- Identifies reusable insights, patterns, or rules.
-- Updates or adds relevant cultural knowledge to the database.
+Automatically update cultural knowledge based on Agent interactions.
 """
 
 from agno.agent import Agent
@@ -19,7 +15,7 @@ from agno.models.anthropic import Claude
 db = SqliteDb(db_file="tmp/demo.db")
 
 # ---------------------------------------------------------------------------
-# Step 2. Initialize the Agent with automatic cultural management enabled
+# Create Agent
 # ---------------------------------------------------------------------------
 # The Agent will automatically add or update cultural knowledge after each run.
 agent = Agent(
@@ -29,10 +25,14 @@ agent = Agent(
 )
 
 # ---------------------------------------------------------------------------
-# Step 3. Ask the Agent to generate a response
+# Run Agent
 # ---------------------------------------------------------------------------
-agent.print_response(
-    "What would be the best way to cook ramen? Detailed and specific instructions generally work better than general advice.",
-    stream=True,
-    markdown=True,
-)
+if __name__ == "__main__":
+    # ---------------------------------------------------------------------------
+    # Step 3. Ask the Agent to generate a response
+    # ---------------------------------------------------------------------------
+    agent.print_response(
+        "What would be the best way to cook ramen? Detailed and specific instructions generally work better than general advice.",
+        stream=True,
+        markdown=True,
+    )
