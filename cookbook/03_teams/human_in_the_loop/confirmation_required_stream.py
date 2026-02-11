@@ -47,7 +47,9 @@ team = Team(
 )
 
 
-for run_event in team.run("Deploy the payments app version 2.1 to production", stream=True):
+for run_event in team.run(
+    "Deploy the payments app version 2.1 to production", stream=True
+):
     # Use isinstance to check for team's pause event (not the member agent's)
     if isinstance(run_event, TeamRunPausedEvent):
         print("Team paused - requires confirmation")

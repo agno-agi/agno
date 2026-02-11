@@ -48,7 +48,9 @@ team = Team(
 )
 
 
-for run_event in team.run("Check if the auth service is ready and deploy it to staging", stream=True):
+for run_event in team.run(
+    "Check if the auth service is ready and deploy it to staging", stream=True
+):
     # Use isinstance to check for team's pause event
     if isinstance(run_event, TeamRunPausedEvent):
         print("Team paused - requires confirmation for team-level tool")

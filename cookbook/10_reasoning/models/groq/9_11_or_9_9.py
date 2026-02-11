@@ -23,7 +23,9 @@ def run_example() -> None:
         reasoning=True,
         markdown=True,
     )
-    agent.print_response("9.11 and 9.9 -- which is bigger?", stream=True, show_full_reasoning=True)
+    agent.print_response(
+        "9.11 and 9.9 -- which is bigger?", stream=True, show_full_reasoning=True
+    )
 
 
 # ---------------------------------------------------------------------------

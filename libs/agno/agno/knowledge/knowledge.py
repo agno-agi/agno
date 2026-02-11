@@ -49,6 +49,11 @@ class Knowledge(RemoteKnowledge):
     max_results: int = 10
     readers: Optional[Dict[str, Reader]] = None
     content_sources: Optional[List[RemoteContentConfig]] = None
+    # When True, adds linked_to metadata during insert and filters by it during search.
+    # This enables isolation when multiple Knowledge instances share the same vector database.
+    # Requires re-indexing existing data to add linked_to metadata.
+    # Default is False for backwards compatibility with existing data.
+    isolate_vector_search: bool = False
 
     def __post_init__(self):
         from agno.vectordb import VectorDb
@@ -518,9 +523,9 @@ class Knowledge(RemoteKnowledge):
                 log_warning("No vector db provided")
                 return []
 
-            # Inject linked_to filter when knowledge has a name for isolation
+            # Inject linked_to filter when isolate_vector_search is enabled and knowledge has a name
             search_filters = filters
-            if self.name:
+            if self.isolate_vector_search and self.name:
                 if search_filters is None:
                     search_filters = {"linked_to": self.name}
                 elif isinstance(search_filters, dict):
@@ -557,9 +562,9 @@ class Knowledge(RemoteKnowledge):
                 log_warning("No vector db provided")
                 return []
 
-            # Inject linked_to filter when knowledge has a name for isolation
+            # Inject linked_to filter when isolate_vector_search is enabled and knowledge has a name
             search_filters = filters
-            if self.name:
+            if self.isolate_vector_search and self.name:
                 if search_filters is None:
                     search_filters = {"linked_to": self.name}
                 elif isinstance(search_filters, dict):
@@ -1283,8 +1288,9 @@ class Knowledge(RemoteKnowledge):
                 document.size = len(document.content.encode("utf-8"))
             if metadata:
                 document.meta_data.update(metadata)
-            # Add linked_to to metadata for vector search filtering
-            document.meta_data["linked_to"] = self.name or ""
+            # Add linked_to to metadata for vector search filtering (only when isolation is enabled)
+            if self.isolate_vector_search:
+                document.meta_data["linked_to"] = self.name or ""
         return documents
 
     def _chunk_documents_sync(self, reader: Reader, documents: List[Document]) -> List[Document]:
