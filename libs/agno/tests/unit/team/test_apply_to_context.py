@@ -1,6 +1,8 @@
 """Tests for ResolvedRunOptions.apply_to_context() — team version.
 
-Mirrors agent/test_apply_to_context.py to ensure parity.
+NOTE: Unlike the agent version, team's apply_to_context() always sets output_schema
+from resolved options. This is intentional because the same run_context may be reused
+across workflow steps with different teams, each with their own output_schema.
 """
 
 from pydantic import BaseModel
@@ -51,13 +53,15 @@ class TestApplyWhenProvided:
         opts.apply_to_context(ctx, metadata_provided=True)
         assert ctx.metadata == {"new": "m"}
 
-    def test_output_schema_provided_overwrites(self):
+    def test_output_schema_always_set_from_opts(self):
+        """Team always sets output_schema from resolved options for workflow reuse."""
+
         class Schema(BaseModel):
             x: int
 
         ctx = _make_context(output_schema={"old": "schema"})
         opts = _make_opts(output_schema=Schema)
-        opts.apply_to_context(ctx, output_schema_provided=True)
+        opts.apply_to_context(ctx)
         assert ctx.output_schema is Schema
 
 
@@ -109,17 +113,20 @@ class TestExistingContextPreserved:
         opts.apply_to_context(ctx)
         assert ctx.metadata == {"keep": "m"}
 
-    def test_output_schema_kept(self):
+    def test_output_schema_always_overwritten(self):
+        """Team always overwrites output_schema (unlike agent) for workflow reuse."""
+
         class Existing(BaseModel):
             a: int
 
-        class Ignored(BaseModel):
+        class NewSchema(BaseModel):
             b: int
 
         ctx = _make_context(output_schema=Existing)
-        opts = _make_opts(output_schema=Ignored)
+        opts = _make_opts(output_schema=NewSchema)
         opts.apply_to_context(ctx)
-        assert ctx.output_schema is Existing
+        # Team always sets output_schema from opts, even if context had one
+        assert ctx.output_schema is NewSchema
 
 
 class TestAllFieldsTogether:
@@ -141,9 +148,12 @@ class TestAllFieldsTogether:
             dependencies_provided=True,
             knowledge_filters_provided=False,
             metadata_provided=False,
-            output_schema_provided=False,
         )
+        # dependencies: provided=True, so overwritten
         assert ctx.dependencies == {"new": "d"}
+        # knowledge_filters: provided=False, existing not None, kept
         assert ctx.knowledge_filters == {"existing": "f"}
+        # metadata: provided=False, was None, filled from opts
         assert ctx.metadata == {"new": "m"}
-        assert ctx.output_schema == {"existing": "schema"}
+        # output_schema: always set from opts (team behavior for workflow reuse)
+        assert ctx.output_schema is None
