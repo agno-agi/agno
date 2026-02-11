@@ -1048,7 +1048,7 @@ class BaseDb(ABC):
         schedule_id: Optional[str] = None,
         run_id: Optional[str] = None,
         limit: int = 100,
-        offset: int = 0,
+        page: int = 1,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """List approvals with optional filtering. Returns (items, total_count)."""
         raise NotImplementedError
@@ -1737,7 +1737,7 @@ class AsyncBaseDb(ABC):
         schedule_id: Optional[str] = None,
         run_id: Optional[str] = None,
         limit: int = 100,
-        offset: int = 0,
+        page: int = 1,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """List approvals with optional filtering. Returns (items, total_count)."""
         raise NotImplementedError

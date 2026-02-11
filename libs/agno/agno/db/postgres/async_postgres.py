@@ -3350,12 +3350,13 @@ class AsyncPostgresDb(AsyncBaseDb):
         schedule_id: Optional[str] = None,
         run_id: Optional[str] = None,
         limit: int = 100,
-        offset: int = 0,
+        page: int = 1,
     ) -> Tuple[List[Dict[str, Any]], int]:
         try:
             table = await self._get_table(table_type="approvals")
             if table is None:
                 return [], 0
+            offset = (page - 1) * limit
             async with self.async_session_factory() as sess:
                 stmt = select(table)
                 count_stmt = select(func.count()).select_from(table)
