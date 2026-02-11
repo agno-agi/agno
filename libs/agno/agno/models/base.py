@@ -2109,7 +2109,7 @@ class Model(ABC):
                         tool_name=fc.function.name,
                         tool_args=fc.arguments,
                         requires_confirmation=True,
-                        requires_approval=fc.function.requires_approval,
+                        approval_type=fc.function.approval_type,
                         external_execution_silent=fc.function.external_execution_silent,
                     )
                 )
@@ -2129,7 +2129,7 @@ class Model(ABC):
                         tool_name=fc.function.name,
                         tool_args=fc.arguments,
                         requires_user_input=True,
-                        requires_approval=fc.function.requires_approval,
+                        approval_type=fc.function.approval_type,
                         user_input_schema=user_input_schema,
                         external_execution_silent=fc.function.external_execution_silent,
                     )
@@ -2180,7 +2180,7 @@ class Model(ABC):
                         tool_name=fc.function.name,
                         tool_args=fc.arguments,
                         external_execution_required=True,
-                        requires_approval=fc.function.requires_approval,
+                        approval_type=fc.function.approval_type,
                         external_execution_silent=fc.function.external_execution_silent,
                     )
                 )
@@ -2276,7 +2276,7 @@ class Model(ABC):
                         tool_name=fc.function.name,
                         tool_args=fc.arguments,
                         requires_confirmation=True,
-                        requires_approval=fc.function.requires_approval,
+                        approval_type=fc.function.approval_type,
                         external_execution_silent=fc.function.external_execution_silent,
                     )
                 )
@@ -2295,7 +2295,7 @@ class Model(ABC):
                         tool_name=fc.function.name,
                         tool_args=fc.arguments,
                         requires_user_input=True,
-                        requires_approval=fc.function.requires_approval,
+                        approval_type=fc.function.approval_type,
                         user_input_schema=user_input_schema,
                         external_execution_silent=fc.function.external_execution_silent,
                     )
@@ -2350,7 +2350,7 @@ class Model(ABC):
                         tool_name=fc.function.name,
                         tool_args=fc.arguments,
                         external_execution_required=True,
-                        requires_approval=fc.function.requires_approval,
+                        approval_type=fc.function.approval_type,
                         external_execution_silent=fc.function.external_execution_silent,
                     )
                 )
