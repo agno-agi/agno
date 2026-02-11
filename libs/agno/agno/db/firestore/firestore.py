@@ -725,7 +725,7 @@ class FirestoreDb(BaseDb):
             collection_ref = self._get_collection(table_type="memories")
 
             # If user_id is provided, verify the memory belongs to the user before deleting
-            if user_id:
+            if user_id is not None:
                 docs = collection_ref.where(filter=FieldFilter("memory_id", "==", memory_id)).stream()
                 for doc in docs:
                     data = doc.to_dict()
@@ -768,7 +768,7 @@ class FirestoreDb(BaseDb):
             deleted_count = 0
 
             # If user_id is provided, filter memory_ids to only those belonging to the user
-            if user_id:
+            if user_id is not None:
                 for memory_id in memory_ids:
                     docs = collection_ref.where(filter=FieldFilter("memory_id", "==", memory_id)).stream()
                     for doc in docs:
@@ -966,7 +966,7 @@ class FirestoreDb(BaseDb):
         try:
             collection_ref = self._get_collection(table_type="memories")
 
-            if user_id:
+            if user_id is not None:
                 query = collection_ref.where(filter=FieldFilter("user_id", "==", user_id))
             else:
                 query = collection_ref.where(filter=FieldFilter("user_id", "!=", None))
@@ -2074,7 +2074,7 @@ class FirestoreDb(BaseDb):
                 query = query.where(filter=FieldFilter("run_id", "==", run_id))
             if session_id:
                 query = query.where(filter=FieldFilter("session_id", "==", session_id))
-            if user_id:
+            if user_id is not None:
                 query = query.where(filter=FieldFilter("user_id", "==", user_id))
             if agent_id:
                 query = query.where(filter=FieldFilter("agent_id", "==", agent_id))
@@ -2157,7 +2157,7 @@ class FirestoreDb(BaseDb):
             query = collection_ref
 
             # Apply filters
-            if user_id:
+            if user_id is not None:
                 query = query.where(filter=FieldFilter("user_id", "==", user_id))
             if agent_id:
                 query = query.where(filter=FieldFilter("agent_id", "==", agent_id))
