@@ -291,8 +291,8 @@ def get_knowledge_instance(
     Raises:
         HTTPException: If no matching instance is found or parameters are invalid
     """
-    # If only one instance, return it (backwards compatible)
-    if len(knowledge_instances) == 1:
+    # If only one instance and no specific identifier requested, return it (backwards compatible)
+    if len(knowledge_instances) == 1 and not knowledge_id and not db_id:
         return next(iter(knowledge_instances))
 
     # If knowledge_id provided, find by unique ID (preferred)

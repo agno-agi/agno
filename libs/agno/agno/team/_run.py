@@ -421,6 +421,10 @@ def _run(
                 run_response = cast(TeamRunOutput, run_response)
                 run_response.status = RunStatus.cancelled
                 run_response.content = "Operation cancelled by user"
+                try:
+                    _cleanup_and_store(team, run_response=run_response, session=session)
+                except Exception:
+                    pass
                 return run_response
             except Exception as e:
                 if attempt < num_attempts - 1:
@@ -805,6 +809,10 @@ def _run_stream(
 
             except KeyboardInterrupt:
                 run_response = cast(TeamRunOutput, run_response)
+                try:
+                    _cleanup_and_store(team, run_response=run_response, session=session)
+                except Exception:
+                    pass
                 yield handle_event(  # type: ignore
                     create_team_run_cancelled_event(
                         from_run_response=run_response, reason="Operation cancelled by user"
@@ -1333,6 +1341,10 @@ async def _arun(
                 run_response = cast(TeamRunOutput, run_response)
                 run_response.status = RunStatus.cancelled
                 run_response.content = "Operation cancelled by user"
+                try:
+                    await _acleanup_and_store(team, run_response=run_response, session=team_session)
+                except Exception:
+                    pass
                 return run_response
 
             except Exception as e:
@@ -1742,6 +1754,10 @@ async def _arun_stream(
 
             except (KeyboardInterrupt, asyncio.CancelledError):
                 run_response = cast(TeamRunOutput, run_response)
+                try:
+                    await _acleanup_and_store(team, run_response=run_response, session=team_session)
+                except Exception:
+                    pass
                 yield handle_event(  # type: ignore
                     create_team_run_cancelled_event(
                         from_run_response=run_response, reason="Operation cancelled by user"
