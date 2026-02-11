@@ -41,8 +41,8 @@ from agno.os.utils import (
     process_video,
 )
 from agno.registry import Registry
-from agno.run.base import RunStatus
 from agno.run.agent import RunErrorEvent, RunOutput
+from agno.run.base import RunStatus
 from agno.utils.log import log_debug, log_error, log_warning
 
 if TYPE_CHECKING:
@@ -538,7 +538,6 @@ def get_agent_router(
                         status_code=409,
                         detail=detail,
                     )
-
 
         # Convert tools dict to ToolExecution objects if provided
         updated_tools = []

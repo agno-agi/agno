@@ -6,6 +6,7 @@ Example demonstrating sending a notification to the user after an agent generate
 """
 
 import asyncio
+
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.run import RunContext

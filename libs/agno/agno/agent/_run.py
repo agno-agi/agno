@@ -948,7 +948,10 @@ def _run_stream(
 
                     # Handle the paused run
                     yield from handle_agent_run_paused_stream(
-                        agent, run_response=run_response, session=agent_session, user_id=user_id,
+                        agent,
+                        run_response=run_response,
+                        session=agent_session,
+                        user_id=user_id,
                         yield_run_output=yield_run_output or False,
                     )
                     return
@@ -2108,7 +2111,10 @@ async def _arun_stream(
                         yield item
 
                     async for item in ahandle_agent_run_paused_stream(
-                        agent, run_response=run_response, session=agent_session, user_id=user_id,
+                        agent,
+                        run_response=run_response,
+                        session=agent_session,
+                        user_id=user_id,
                         yield_run_output=yield_run_output or False,
                     ):
                         yield item
@@ -3065,7 +3071,10 @@ def _continue_run_stream(
                 # We should break out of the run function
                 if any(tool_call.is_paused for tool_call in run_response.tools or []):
                     yield from handle_agent_run_paused_stream(
-                        agent, run_response=run_response, session=session, user_id=user_id,
+                        agent,
+                        run_response=run_response,
+                        session=session,
+                        user_id=user_id,
                         yield_run_output=yield_run_output or False,
                     )
                     return
@@ -3973,7 +3982,10 @@ async def _acontinue_run_stream(
                 # Break out of the run function if a tool call is paused
                 if any(tool_call.is_paused for tool_call in run_response.tools or []):
                     async for item in ahandle_agent_run_paused_stream(
-                        agent, run_response=run_response, session=agent_session, user_id=user_id,
+                        agent,
+                        run_response=run_response,
+                        session=agent_session,
+                        user_id=user_id,
                         yield_run_output=yield_run_output or False,
                     ):
                         yield item
