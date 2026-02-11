@@ -64,10 +64,15 @@ def make_memories(
             for msg in parsed_messages
             if msg.content and (not isinstance(msg.content, str) or msg.content.strip() != "")
         ]
-        if len(non_empty_messages) > 0 and agent.memory_manager is not None and agent.update_memory_on_run:
-            agent.memory_manager.create_user_memories(messages=non_empty_messages, user_id=user_id, agent_id=agent.id)  # type: ignore
-        else:
-            log_warning("Unable to add messages to memory")
+        if len(non_empty_messages) > 0:
+            if agent.memory_manager is not None and agent.update_memory_on_run:
+                agent.memory_manager.create_user_memories(
+                    messages=non_empty_messages, user_id=user_id, agent_id=agent.id
+                )  # type: ignore
+            else:
+                log_warning(
+                    "Unable to add messages to memory: memory_manager not configured or update_memory_on_run is disabled"
+                )
 
 
 async def amake_memories(
@@ -109,12 +114,15 @@ async def amake_memories(
             for msg in parsed_messages
             if msg.content and (not isinstance(msg.content, str) or msg.content.strip() != "")
         ]
-        if len(non_empty_messages) > 0 and agent.memory_manager is not None and agent.update_memory_on_run:
-            await agent.memory_manager.acreate_user_memories(  # type: ignore
-                messages=non_empty_messages, user_id=user_id, agent_id=agent.id
-            )
-        else:
-            log_warning("Unable to add messages to memory")
+        if len(non_empty_messages) > 0:
+            if agent.memory_manager is not None and agent.update_memory_on_run:
+                await agent.memory_manager.acreate_user_memories(  # type: ignore
+                    messages=non_empty_messages, user_id=user_id, agent_id=agent.id
+                )
+            else:
+                log_warning(
+                    "Unable to add messages to memory: memory_manager not configured or update_memory_on_run is disabled"
+                )
 
 
 async def astart_memory_task(
