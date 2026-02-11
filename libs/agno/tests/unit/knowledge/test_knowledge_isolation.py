@@ -209,7 +209,7 @@ class TestLinkedToMetadata:
 
         assert "linked_to" not in result[0].meta_data
 
-    def test_prepare_documents_adds_empty_linked_to_without_name(self):
+    def test_prepare_documents_adds_empty_linked_to_without_name_isolation_enabled(self):
         """Test that linked_to is set to empty string when knowledge has no name but isolation enabled."""
         mock_db = MockVectorDb()
         knowledge = Knowledge(

@@ -280,7 +280,7 @@ class AgentOS:
         self.run_hooks_in_background = run_hooks_in_background
 
         # Scheduler configuration
-        self.scheduler = scheduler
+        self._scheduler_enabled = scheduler
         self._scheduler_poll_interval = scheduler_poll_interval
         self._scheduler_base_url = scheduler_base_url
         if scheduler and not internal_service_token:
@@ -619,7 +619,7 @@ class AgentOS:
             lifespans.append(partial(db_lifespan, agent_os=self))
 
             # The scheduler lifespan (after db so tables exist)
-            if self.scheduler and self.db is not None:
+            if self._scheduler_enabled and self.db is not None:
                 lifespans.append(partial(scheduler_lifespan, agent_os=self))
 
             # The httpx client cleanup lifespan (should be last to close after other lifespans)
@@ -651,7 +651,7 @@ class AgentOS:
             lifespans.append(partial(db_lifespan, agent_os=self))  # type: ignore
 
             # The scheduler lifespan (after db so tables exist)
-            if self.scheduler and self.db is not None:
+            if self._scheduler_enabled and self.db is not None:
                 lifespans.append(partial(scheduler_lifespan, agent_os=self))
 
             # The httpx client cleanup lifespan (should be last to close after other lifespans)

@@ -23,13 +23,6 @@ from uuid import uuid4
 
 from pydantic import BaseModel
 
-if TYPE_CHECKING:
-    from agno.agent.agent import Agent
-
-# Strong references to background tasks so they aren't garbage-collected mid-execution.
-# See: https://docs.python.org/3/library/asyncio-task.html#asyncio.create_task
-_background_tasks: set[asyncio.Task[None]] = set()
-
 from agno.agent._init import _initialize_session_state
 from agno.agent._run_options import resolve_run_options
 from agno.agent._session import initialize_session, update_session_metrics
@@ -108,6 +101,13 @@ from agno.utils.log import (
     log_warning,
 )
 from agno.utils.response import get_paused_content
+
+if TYPE_CHECKING:
+    from agno.agent.agent import Agent
+
+# Strong references to background tasks so they aren't garbage-collected mid-execution.
+# See: https://docs.python.org/3/library/asyncio-task.html#asyncio.create_task
+_background_tasks: set[asyncio.Task[None]] = set()
 
 # ---------------------------------------------------------------------------
 # Run dependency resolution

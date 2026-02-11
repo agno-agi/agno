@@ -24,7 +24,6 @@ from agno.exceptions import StopAgentRun
 from agno.models.openai import OpenAIChat
 from agno.tools import FunctionCall, tool
 from rich.console import Console
-from rich.prompt import Prompt
 
 # ---------------------------------------------------------------------------
 # Create Agent
