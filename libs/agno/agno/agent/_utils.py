@@ -109,7 +109,8 @@ def convert_dependencies_to_string(agent: Agent, context: Dict[str, Any]) -> str
 # ---------------------------------------------------------------------------
 
 
-# Fields that are dataclass fields but not __init__ parameters
+# Fields set by the parent Team/Workflow during initialization — not part of
+# __init__ and should not be carried over during deep copy.
 _DEEP_COPY_EXCLUDE = {"team_id", "workflow_id"}
 
 
