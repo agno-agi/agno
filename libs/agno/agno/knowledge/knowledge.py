@@ -518,9 +518,18 @@ class Knowledge(RemoteKnowledge):
                 log_warning("No vector db provided")
                 return []
 
+            # Inject linked_to filter when knowledge has a name for isolation
+            search_filters = filters
+            if self.name:
+                if search_filters is None:
+                    search_filters = {"linked_to": self.name}
+                elif isinstance(search_filters, dict):
+                    search_filters = {**search_filters, "linked_to": self.name}
+                # List-based filters: user must add linked_to filter manually
+
             _max_results = max_results or self.max_results
             log_debug(f"Getting {_max_results} relevant documents for query: {query}")
-            return self.vector_db.search(query=query, limit=_max_results, filters=filters)
+            return self.vector_db.search(query=query, limit=_max_results, filters=search_filters)
         except Exception as e:
             log_error(f"Error searching for documents: {e}")
             return []
@@ -548,13 +557,22 @@ class Knowledge(RemoteKnowledge):
                 log_warning("No vector db provided")
                 return []
 
+            # Inject linked_to filter when knowledge has a name for isolation
+            search_filters = filters
+            if self.name:
+                if search_filters is None:
+                    search_filters = {"linked_to": self.name}
+                elif isinstance(search_filters, dict):
+                    search_filters = {**search_filters, "linked_to": self.name}
+                # List-based filters: user must add linked_to filter manually
+
             _max_results = max_results or self.max_results
             log_debug(f"Getting {_max_results} relevant documents for query: {query}")
             try:
-                return await self.vector_db.async_search(query=query, limit=_max_results, filters=filters)
+                return await self.vector_db.async_search(query=query, limit=_max_results, filters=search_filters)
             except NotImplementedError:
                 log_info("Vector db does not support async search")
-                return self.search(query=query, max_results=_max_results, filters=filters)
+                return self.vector_db.search(query=query, limit=_max_results, filters=search_filters)
         except Exception as e:
             log_error(f"Error searching for documents: {e}")
             return []
@@ -576,8 +594,9 @@ class Knowledge(RemoteKnowledge):
         if isinstance(self.contents_db, AsyncBaseDb):
             raise ValueError("get_content() is not supported for async databases. Please use aget_content() instead.")
 
+        # Filter by linked_to when knowledge has a name for isolation
         contents, count = self.contents_db.get_knowledge_contents(
-            limit=limit, page=page, sort_by=sort_by, sort_order=sort_order
+            limit=limit, page=page, sort_by=sort_by, sort_order=sort_order, linked_to=self.name
         )
         return [self._content_row_to_content(row) for row in contents], count
 
@@ -591,13 +610,14 @@ class Knowledge(RemoteKnowledge):
         if self.contents_db is None:
             raise ValueError("No contents db provided")
 
+        # Filter by linked_to when knowledge has a name for isolation
         if isinstance(self.contents_db, AsyncBaseDb):
             contents, count = await self.contents_db.get_knowledge_contents(
-                limit=limit, page=page, sort_by=sort_by, sort_order=sort_order
+                limit=limit, page=page, sort_by=sort_by, sort_order=sort_order, linked_to=self.name
             )
         else:
             contents, count = self.contents_db.get_knowledge_contents(
-                limit=limit, page=page, sort_by=sort_by, sort_order=sort_order
+                limit=limit, page=page, sort_by=sort_by, sort_order=sort_order, linked_to=self.name
             )
         return [self._content_row_to_content(row) for row in contents], count
 
@@ -1263,6 +1283,8 @@ class Knowledge(RemoteKnowledge):
                 document.size = len(document.content.encode("utf-8"))
             if metadata:
                 document.meta_data.update(metadata)
+            # Add linked_to to metadata for vector search filtering
+            document.meta_data["linked_to"] = self.name or ""
         return documents
 
     def _chunk_documents_sync(self, reader: Reader, documents: List[Document]) -> List[Document]:
@@ -2264,7 +2286,7 @@ class Knowledge(RemoteKnowledge):
             else len(content.file_data.content)
             if content.file_data and content.file_data.content
             else None,
-            linked_to=self._ensure_string_field(self.name, "knowledge.name", default=""),
+            linked_to=self.name if self.name else "",
             access_count=0,
             status=content.status if content.status else ContentStatus.PROCESSING,
             status_message=self._ensure_string_field(content.status_message, "content.status_message", default=""),
@@ -2913,7 +2935,7 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
         agent: Optional[Any] = None,
         **kwargs,
     ) -> List[Any]:
-        """Get tools to expose to the agent.
+        """Get tools to expose to the Agent or Team.
 
         Returns the search_knowledge_base tool configured for this knowledge base.
 
@@ -2923,7 +2945,7 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
             knowledge_filters: Filters to apply to searches.
             async_mode: Whether to return async tools.
             enable_agentic_filters: Whether to enable filter parameter on tool.
-            agent: The agent instance (for document conversion).
+            agent: The Agent or Team instance (for document conversion with references_format).
             **kwargs: Additional context.
 
         Returns:
@@ -2977,7 +2999,11 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
         async_mode: bool = False,
         agent: Optional[Any] = None,
     ) -> Any:
-        """Create the search_knowledge_base tool without filter parameter."""
+        """Create the search_knowledge_base tool without filter parameter.
+
+        Args:
+            agent: Agent or Team instance for custom document conversion.
+        """
         from agno.models.message import MessageReferences
         from agno.tools.function import Function
         from agno.utils.timer import Timer
@@ -3069,7 +3095,11 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
         async_mode: bool = False,
         agent: Optional[Any] = None,
     ) -> Any:
-        """Create the search_knowledge_base tool with filter parameter."""
+        """Create the search_knowledge_base tool with filter parameter.
+
+        Args:
+            agent: Agent or Team instance for custom document conversion.
+        """
         from agno.models.message import MessageReferences
         from agno.tools.function import Function
         from agno.utils.timer import Timer
@@ -3216,12 +3246,12 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
 
         Args:
             docs: List of documents to convert.
-            agent: Optional agent instance for custom conversion.
+            agent: Optional Agent or Team instance for custom conversion using their references_format.
 
         Returns:
             String representation of documents.
         """
-        # If agent has a custom converter, use it
+        # If agent (Agent or Team) has a custom converter, use it for proper YAML/JSON formatting
         if agent is not None and hasattr(agent, "_convert_documents_to_string"):
             return agent._convert_documents_to_string([doc.to_dict() for doc in docs])
 

@@ -50,11 +50,12 @@ class InMemoryDb(BaseDb):
         pass
 
     # -- Session methods --
-    def delete_session(self, session_id: str) -> bool:
+    def delete_session(self, session_id: str, user_id: Optional[str] = None) -> bool:
         """Delete a session from in-memory storage.
 
         Args:
             session_id (str): The ID of the session to delete.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
 
         Returns:
             bool: True if the session was deleted, False otherwise.
@@ -64,7 +65,11 @@ class InMemoryDb(BaseDb):
         """
         try:
             original_count = len(self._sessions)
-            self._sessions = [s for s in self._sessions if s.get("session_id") != session_id]
+            self._sessions = [
+                s
+                for s in self._sessions
+                if not (s.get("session_id") == session_id and (user_id is None or s.get("user_id") == user_id))
+            ]
 
             if len(self._sessions) < original_count:
                 log_debug(f"Successfully deleted session with session_id: {session_id}")
@@ -77,17 +82,22 @@ class InMemoryDb(BaseDb):
             log_error(f"Error deleting session: {e}")
             raise e
 
-    def delete_sessions(self, session_ids: List[str]) -> None:
+    def delete_sessions(self, session_ids: List[str], user_id: Optional[str] = None) -> None:
         """Delete multiple sessions from in-memory storage.
 
         Args:
             session_ids (List[str]): The IDs of the sessions to delete.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
 
         Raises:
             Exception: If an error occurs during deletion.
         """
         try:
-            self._sessions = [s for s in self._sessions if s.get("session_id") not in session_ids]
+            self._sessions = [
+                s
+                for s in self._sessions
+                if not (s.get("session_id") in session_ids and (user_id is None or s.get("user_id") == user_id))
+            ]
             log_debug(f"Successfully deleted sessions with ids: {session_ids}")
 
         except Exception as e:
@@ -237,11 +247,18 @@ class InMemoryDb(BaseDb):
             raise e
 
     def rename_session(
-        self, session_id: str, session_type: SessionType, session_name: str, deserialize: Optional[bool] = True
+        self,
+        session_id: str,
+        session_type: SessionType,
+        session_name: str,
+        user_id: Optional[str] = None,
+        deserialize: Optional[bool] = True,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         try:
             for i, session in enumerate(self._sessions):
                 if session.get("session_id") == session_id and session.get("session_type") == session_type.value:
+                    if user_id is not None and session.get("user_id") != user_id:
+                        continue
                     # Update session name in session_data
                     if "session_data" not in session:
                         session["session_data"] = {}
@@ -288,6 +305,9 @@ class InMemoryDb(BaseDb):
                 if existing_session.get("session_id") == session_dict.get("session_id") and self._matches_session_key(
                     existing_session, session
                 ):
+                    existing_uid = existing_session.get("user_id")
+                    if existing_uid is not None and existing_uid != session_dict.get("user_id"):
+                        return None
                     session_dict["updated_at"] = int(time.time())
                     self._sessions[i] = deepcopy(session_dict)
                     session_updated = True
@@ -847,6 +867,7 @@ class InMemoryDb(BaseDb):
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
+        linked_to: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
         """Get all knowledge contents from in-memory storage.
 
@@ -855,6 +876,7 @@ class InMemoryDb(BaseDb):
             page (Optional[int]): The page number.
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
+            linked_to (Optional[str]): Filter by linked_to value (knowledge instance name).
 
         Returns:
             Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
@@ -864,6 +886,10 @@ class InMemoryDb(BaseDb):
         """
         try:
             knowledge_items = [deepcopy(item) for item in self._knowledge]
+
+            # Apply linked_to filter if provided
+            if linked_to is not None:
+                knowledge_items = [item for item in knowledge_items if item.get("linked_to") == linked_to]
 
             total_count = len(knowledge_items)
 

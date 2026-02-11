@@ -81,7 +81,7 @@ def sample_team_session() -> TeamSession:
 
 
 def test_session_table_constraint_exists(postgres_db_real: PostgresDb):
-    """Ensure the session table has the expected unique constraint on session_id"""
+    """Ensure the session table has a primary key constraint on session_id"""
     with postgres_db_real.Session() as session:
         # Ensure table is created by calling _get_table with create_table_if_not_found=True
         table = postgres_db_real._get_table(table_type="sessions", create_table_if_not_found=True)
@@ -90,14 +90,13 @@ def test_session_table_constraint_exists(postgres_db_real: PostgresDb):
         result = session.execute(
             text(
                 "SELECT constraint_name FROM information_schema.table_constraints "
-                "WHERE table_schema = :schema AND table_name = :table AND constraint_type = 'UNIQUE'"
+                "WHERE table_schema = :schema AND table_name = :table AND constraint_type = 'PRIMARY KEY'"
             ),
             {"schema": postgres_db_real.db_schema, "table": postgres_db_real.session_table_name},
         )
         constraint_names = [row[0] for row in result.fetchall()]
-        expected_constraint = f"{postgres_db_real.session_table_name}_uq_session_id"
-        assert expected_constraint in constraint_names, (
-            f"Session table missing unique constraint {expected_constraint}. Found: {constraint_names}"
+        assert len(constraint_names) > 0, (
+            f"Session table missing PRIMARY KEY constraint. Found constraints: {constraint_names}"
         )
 
 

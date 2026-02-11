@@ -17,6 +17,10 @@ gemini = Gemini(
 from agno.agent import Agent, RunOutput  # noqa
 from agno.models.google import Gemini
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 agent = Agent(model=Gemini(id="gemini-3-flash-preview"), markdown=True)
 
 # Get the response in a variable
@@ -25,3 +29,10 @@ agent = Agent(model=Gemini(id="gemini-3-flash-preview"), markdown=True)
 
 # Print the response in the terminal
 agent.print_response("Share a 2 sentence horror story")
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

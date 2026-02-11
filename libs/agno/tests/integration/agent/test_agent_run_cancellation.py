@@ -9,6 +9,7 @@ These tests verify that when an agent is cancelled mid-execution:
 """
 
 import asyncio
+import os
 import threading
 import time
 from unittest.mock import patch
@@ -21,6 +22,8 @@ from agno.models.openai import OpenAIChat
 from agno.run.agent import RunCancelledEvent
 from agno.run.base import RunStatus
 from agno.run.cancellation_management.base import BaseRunCancellationManager
+
+pytestmark = pytest.mark.skipif(not os.getenv("OPENAI_API_KEY"), reason="OPENAI_API_KEY not set")
 
 
 # ============================================================================
@@ -233,6 +236,7 @@ def test_cancel_agent_with_tool_calls(shared_db):
     Note: In sync streaming, a RunCancelledEvent is yielded when the run is cancelled.
     We verify that events were collected before cancellation.
     """
+    pytest.importorskip("ddgs", reason="ddgs not installed")
     from agno.tools.websearch import WebSearchTools
 
     agent = Agent(
@@ -523,7 +527,7 @@ def redis_cancellation_manager(fakeredis_clients):
     set_cancellation_manager(original_manager)
 
 
-@patch("agno.agent.agent.cleanup_run", return_value=None)
+@patch("agno.agent._run.cleanup_run", return_value=None)
 def test_cancel_agent_with_redis_sync_streaming(
     cleanup_run_mock, shared_db, redis_cancellation_manager: BaseRunCancellationManager
 ):
@@ -576,7 +580,7 @@ def test_cancel_agent_with_redis_sync_streaming(
 
 
 @pytest.mark.asyncio
-@patch("agno.agent.agent.acleanup_run", return_value=None)
+@patch("agno.agent._run.acleanup_run", return_value=None)
 async def test_cancel_agent_with_redis_async_streaming(
     cleanup_run_mock, shared_db, redis_cancellation_manager: BaseRunCancellationManager
 ):
@@ -638,7 +642,7 @@ async def test_cancel_agent_with_redis_async_streaming(
 
 
 @pytest.mark.asyncio
-@patch("agno.agent.agent.acleanup_run", return_value=None)
+@patch("agno.agent._run.acleanup_run", return_value=None)
 async def test_cancel_agent_with_redis_async_non_streaming(
     cleanup_run_mock, shared_db, redis_cancellation_manager: BaseRunCancellationManager
 ):

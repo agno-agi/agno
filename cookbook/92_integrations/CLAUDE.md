@@ -8,7 +8,7 @@ Instructions for Claude Code when testing the integrations cookbooks.
 
 This folder contains **third-party integration** examples - observability platforms, memory services, and messaging platforms.
 
-**Total Examples:** 37
+**Total Examples:** 40
 **Organization:** By integration type
 
 ---
@@ -22,7 +22,7 @@ This folder contains **third-party integration** examples - observability platfo
 
 **Run a cookbook:**
 ```bash
-.venvs/demo/bin/python cookbook/91_integrations/observability/langfuse_via_openinference.py
+.venvs/demo/bin/python cookbook/92_integrations/observability/langfuse_via_openinference.py
 ```
 
 ---
@@ -35,6 +35,8 @@ This folder contains **third-party integration** examples - observability platfo
 | `discord/` | Discord bot integration |
 | `memory/` | External memory services |
 | `observability/` | Tracing platforms |
+| `rag/` | Third-party RAG integrations |
+| `surrealdb/` | SurrealDB memory integration |
 
 ---
 

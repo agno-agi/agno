@@ -1,11 +1,8 @@
 """
+04 Manually Add Culture
+=============================
+
 Manually add cultural knowledge to your Agents.
-
-This example shows how to persist cultural knowledge WITHOUT invoking a model.
-Use this to seed cultural knowledge for your Agents and Multi-Agent Teams.
-
-Cultural knowledge represents reusable insights, rules, and values that Agents
-can reference to stay consistent in tone, reasoning, and best practices.
 """
 
 from agno.agent import Agent
@@ -46,38 +43,42 @@ response_format = CulturalKnowledge(
 # Persist the cultural knowledge
 culture_manager.add_cultural_knowledge(response_format)
 
-# Optional: show what is stored
-print("\n=== Cultural Knowledge (Manual Add) ===")
-pprint(culture_manager.get_all_knowledge())
-
 # ---------------------------------------------------------------------------
-# Step 4. Initialize the Agent with cultural knowledge enabled
+# Run Agent
 # ---------------------------------------------------------------------------
-# The Agent will load shared cultural knowledge and include it in context.
-agent = Agent(
-    db=db,
-    model=Claude(id="claude-sonnet-4-5"),
-    add_culture_to_context=True,  # adds culture into the prompt context
-    # update_cultural_knowledge=True,  # uncomment to let the agent update culture after runs
-)
+if __name__ == "__main__":
+    # Optional: show what is stored
+    print("\n=== Cultural Knowledge (Manual Add) ===")
+    pprint(culture_manager.get_all_knowledge())
 
-# (Optional) A/B without culture for contrast:
-# agent_no_culture = Agent(model=Claude(id="claude-sonnet-4-5"))
+    # ---------------------------------------------------------------------------
+    # Step 4. Initialize the Agent with cultural knowledge enabled
+    # ---------------------------------------------------------------------------
+    # The Agent will load shared cultural knowledge and include it in context.
+    agent = Agent(
+        db=db,
+        model=Claude(id="claude-sonnet-4-5"),
+        add_culture_to_context=True,  # adds culture into the prompt context
+        # update_cultural_knowledge=True,  # uncomment to let the agent update culture after runs
+    )
 
-# ---------------------------------------------------------------------------
-# Step 5. Ask the Agent to generate a response that benefits from culture
-# ---------------------------------------------------------------------------
-print("\n=== With Culture ===\n")
-agent.print_response(
-    "How do I set up a FastAPI service using Docker? ",
-    stream=True,
-    markdown=True,
-)
+    # (Optional) A/B without culture for contrast:
+    # agent_no_culture = Agent(model=Claude(id="claude-sonnet-4-5"))
 
-# (Optional) Run without culture for contrast:
-# print("\n=== Without Culture ===\n")
-# agent_no_culture.print_response(
-#     "How do I set up a FastAPI service using Docker?",
-#     stream=True,
-#     markdown=True,
-# )
+    # ---------------------------------------------------------------------------
+    # Step 5. Ask the Agent to generate a response that benefits from culture
+    # ---------------------------------------------------------------------------
+    print("\n=== With Culture ===\n")
+    agent.print_response(
+        "How do I set up a FastAPI service using Docker? ",
+        stream=True,
+        markdown=True,
+    )
+
+    # (Optional) Run without culture for contrast:
+    # print("\n=== Without Culture ===\n")
+    # agent_no_culture.print_response(
+    #     "How do I set up a FastAPI service using Docker?",
+    #     stream=True,
+    #     markdown=True,
+    # )

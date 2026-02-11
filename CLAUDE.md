@@ -232,7 +232,7 @@ PR titles must follow one of these formats:
 - `type: description` — e.g., `feat: add workflow serialization`
 - `type-kebab-case` — e.g., `feat-workflow-serialization`
 
-Valid types: `feat`, `fix`, `cookbook`, `test`, `refactor`, `build`, `ci`, `chore`, `perf`, `style`, `revert`
+Valid types: `feat`, `fix`, `cookbook`, `test`, `refactor`, `chore`, `style`, `revert`, `release`
 
 **PR Description:**
 

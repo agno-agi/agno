@@ -44,7 +44,7 @@ async def main():
         urls=[
             "https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
             "https://docs.agno.com/introduction",
-            "https://docs.agno.com/basics/knowledge/overview.md",
+            "https://docs.agno.com/knowledge/overview.md",
         ],
     )
 
