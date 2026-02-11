@@ -247,24 +247,24 @@ async def asave_session(agent: Agent, session: Union[AgentSession, TeamSession, 
         log_debug(f"Created or updated AgentSession record: {session.session_id}")
 
 
-def delete_session(agent: Agent, session_id: str):
+def delete_session(agent: Agent, session_id: str, user_id: Optional[str] = None):
     """Delete the current session and save to storage"""
     if agent.db is None:
         return
 
-    agent.db.delete_session(session_id=session_id)
+    agent.db.delete_session(session_id=session_id, user_id=user_id)
 
 
-async def adelete_session(agent: Agent, session_id: str):
+async def adelete_session(agent: Agent, session_id: str, user_id: Optional[str] = None):
     """Delete the current session and save to storage"""
     from agno.agent import _init
 
     if agent.db is None:
         return
     if _init.has_async_db(agent):
-        await agent.db.delete_session(session_id=session_id)  # type: ignore
+        await agent.db.delete_session(session_id=session_id, user_id=user_id)  # type: ignore
     else:
-        agent.db.delete_session(session_id=session_id)
+        agent.db.delete_session(session_id=session_id, user_id=user_id)
 
 
 # ---------------------------------------------------------------------------

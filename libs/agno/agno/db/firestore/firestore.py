@@ -235,12 +235,12 @@ class FirestoreDb(BaseDb):
 
     # -- Session methods --
 
-    def delete_session(self, session_id: str) -> bool:
+    def delete_session(self, session_id: str, user_id: Optional[str] = None) -> bool:
         """Delete a session from the database.
 
         Args:
             session_id (str): The ID of the session to delete.
-            session_type (SessionType): The type of session to delete. Defaults to SessionType.AGENT.
+            user_id (Optional[str]): The ID of the user who owns the session.
 
         Returns:
             bool: True if the session was deleted, False otherwise.
@@ -250,7 +250,10 @@ class FirestoreDb(BaseDb):
         """
         try:
             collection_ref = self._get_collection(table_type="sessions")
-            docs = collection_ref.where(filter=FieldFilter("session_id", "==", session_id)).stream()
+            query = collection_ref.where(filter=FieldFilter("session_id", "==", session_id))
+            if user_id is not None:
+                query = query.where(filter=FieldFilter("user_id", "==", user_id))
+            docs = query.stream()
 
             for doc in docs:
                 doc.reference.delete()
@@ -272,11 +275,12 @@ class FirestoreDb(BaseDb):
         """Upsert the schema version into the database."""
         pass
 
-    def delete_sessions(self, session_ids: List[str]) -> None:
+    def delete_sessions(self, session_ids: List[str], user_id: Optional[str] = None) -> None:
         """Delete multiple sessions from the database.
 
         Args:
             session_ids (List[str]): The IDs of the sessions to delete.
+            user_id (Optional[str]): The ID of the user who owns the sessions.
         """
         try:
             collection_ref = self._get_collection(table_type="sessions")
@@ -284,7 +288,10 @@ class FirestoreDb(BaseDb):
 
             deleted_count = 0
             for session_id in session_ids:
-                docs = collection_ref.where(filter=FieldFilter("session_id", "==", session_id)).stream()
+                query = collection_ref.where(filter=FieldFilter("session_id", "==", session_id))
+                if user_id is not None:
+                    query = query.where(filter=FieldFilter("user_id", "==", user_id))
+                docs = query.stream()
                 for doc in docs:
                     batch.delete(doc.reference)
                     deleted_count += 1
@@ -469,7 +476,12 @@ class FirestoreDb(BaseDb):
             raise e
 
     def rename_session(
-        self, session_id: str, session_type: SessionType, session_name: str, deserialize: Optional[bool] = True
+        self,
+        session_id: str,
+        session_type: SessionType,
+        session_name: str,
+        user_id: Optional[str] = None,
+        deserialize: Optional[bool] = True,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         """Rename a session in the database.
 
@@ -477,6 +489,7 @@ class FirestoreDb(BaseDb):
             session_id (str): The ID of the session to rename.
             session_type (SessionType): The type of session to rename.
             session_name (str): The new name of the session.
+            user_id (Optional[str]): The ID of the user who owns the session.
             deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
 
         Returns:
@@ -490,7 +503,10 @@ class FirestoreDb(BaseDb):
         try:
             collection_ref = self._get_collection(table_type="sessions")
 
-            docs = collection_ref.where(filter=FieldFilter("session_id", "==", session_id)).stream()
+            query = collection_ref.where(filter=FieldFilter("session_id", "==", session_id))
+            if user_id is not None:
+                query = query.where(filter=FieldFilter("user_id", "==", user_id))
+            docs = query.stream()
             doc_ref = next((doc.reference for doc in docs), None)
 
             if doc_ref is None:
@@ -509,7 +525,7 @@ class FirestoreDb(BaseDb):
             session_data = current_data.get("session_data") if current_data else None
 
             if session_data is None or isinstance(session_data, str):
-                existing_session = self.get_session(session_id, session_type, deserialize=True)
+                existing_session = self.get_session(session_id, session_type, user_id=user_id, deserialize=True)
                 if existing_session is None:
                     return None
                 existing_session = cast(Session, existing_session)

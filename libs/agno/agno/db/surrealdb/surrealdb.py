@@ -243,20 +243,34 @@ class SurrealDb(BaseDb):
         table = self._get_table("sessions")
         _ = self.client.delete(table)
 
-    def delete_session(self, session_id: str) -> bool:
+    def delete_session(self, session_id: str, user_id: Optional[str] = None) -> bool:
         table = self._get_table(table_type="sessions")
         if table is None:
             return False
+
+        if user_id is not None:
+            res = self.client.query(
+                f"DELETE FROM {table} WHERE id = $record AND user_id = $user_id",
+                {"record": RecordID(table, session_id), "user_id": user_id},
+            )
+            return bool(res)
+
         res = self.client.delete(RecordID(table, session_id))
         return bool(res)
 
-    def delete_sessions(self, session_ids: list[str]) -> None:
+    def delete_sessions(self, session_ids: list[str], user_id: Optional[str] = None) -> None:
         table = self._get_table(table_type="sessions")
         if table is None:
             return
 
         records = [RecordID(table, id) for id in session_ids]
-        self.client.query(f"DELETE FROM {table} WHERE id IN $records", {"records": records})
+        if user_id is not None:
+            self.client.query(
+                f"DELETE FROM {table} WHERE id IN $records AND user_id = $user_id",
+                {"records": records, "user_id": user_id},
+            )
+        else:
+            self.client.query(f"DELETE FROM {table} WHERE id IN $records", {"records": records})
 
     def get_session(
         self,
@@ -409,7 +423,12 @@ class SurrealDb(BaseDb):
         return deserialize_sessions(session_type, list(sessions_raw))
 
     def rename_session(
-        self, session_id: str, session_type: SessionType, session_name: str, deserialize: Optional[bool] = True
+        self,
+        session_id: str,
+        session_type: SessionType,
+        session_name: str,
+        user_id: Optional[str] = None,
+        deserialize: Optional[bool] = True,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         """
         Rename a session in the database.
@@ -418,6 +437,7 @@ class SurrealDb(BaseDb):
             session_id (str): The ID of the session to rename.
             session_type (SessionType): The type of session to rename.
             session_name (str): The new name for the session.
+            user_id (Optional[str]): The ID of the user who owns the session.
             deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
 
         Returns:
@@ -429,13 +449,20 @@ class SurrealDb(BaseDb):
             Exception: If an error occurs during renaming.
         """
         table = self._get_table("sessions")
-        vars = {"record": RecordID(table, session_id), "name": session_name}
+        vars: Dict[str, Any] = {"record": RecordID(table, session_id), "name": session_name}
 
-        # Query
-        query = dedent("""
-            UPDATE ONLY $record
-            SET session_name = $name
-        """)
+        if user_id is not None:
+            query = dedent("""
+                UPDATE ONLY $record
+                SET session_name = $name
+                WHERE user_id = $user_id
+            """)
+            vars["user_id"] = user_id
+        else:
+            query = dedent("""
+                UPDATE ONLY $record
+                SET session_name = $name
+            """)
         session_raw = self._query_one(query, vars, dict)
 
         if session_raw is None or not deserialize:

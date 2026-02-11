@@ -1436,11 +1436,11 @@ class Team:
     async def aget_session_metrics(self, session_id: Optional[str] = None) -> Optional[Metrics]:
         return await _session.aget_session_metrics(self, session_id=session_id)
 
-    def delete_session(self, session_id: str):
-        return _session.delete_session(self, session_id=session_id)
+    def delete_session(self, session_id: str, user_id: Optional[str] = None):
+        return _session.delete_session(self, session_id=session_id, user_id=user_id)
 
-    async def adelete_session(self, session_id: str):
-        return await _session.adelete_session(self, session_id=session_id)
+    async def adelete_session(self, session_id: str, user_id: Optional[str] = None):
+        return await _session.adelete_session(self, session_id=session_id, user_id=user_id)
 
     def get_session_messages(
         self,

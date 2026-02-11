@@ -207,12 +207,13 @@ class DynamoDb(BaseDb):
 
     # --- Sessions ---
 
-    def delete_session(self, session_id: Optional[str] = None) -> bool:
+    def delete_session(self, session_id: Optional[str] = None, user_id: Optional[str] = None) -> bool:
         """
         Delete a session from the database.
 
         Args:
             session_id: The ID of the session to delete.
+            user_id: The ID of the user who owns the session.
 
         Raises:
             Exception: If any error occurs while deleting the session.
@@ -221,6 +222,18 @@ class DynamoDb(BaseDb):
             return False
 
         try:
+            if user_id is not None:
+                session = self.client.get_item(
+                    TableName=self.session_table_name,
+                    Key={"session_id": {"S": session_id}},
+                )
+                item = session.get("Item")
+                if not item:
+                    return False
+                session_data = deserialize_from_dynamodb_item(item)
+                if session_data.get("user_id") != user_id:
+                    return False
+
             self.client.delete_item(
                 TableName=self.session_table_name,
                 Key={"session_id": {"S": session_id}},
@@ -231,12 +244,13 @@ class DynamoDb(BaseDb):
             log_error(f"Failed to delete session {session_id}: {e}")
             raise e
 
-    def delete_sessions(self, session_ids: List[str]) -> None:
+    def delete_sessions(self, session_ids: List[str], user_id: Optional[str] = None) -> None:
         """
         Delete sessions from the database in batches.
 
         Args:
             session_ids: List of session IDs to delete
+            user_id: The ID of the user who owns the sessions.
 
         Raises:
             Exception: If any error occurs while deleting the sessions.
@@ -245,6 +259,22 @@ class DynamoDb(BaseDb):
             return
 
         try:
+            if user_id is not None:
+                filtered_ids = []
+                for session_id in session_ids:
+                    response = self.client.get_item(
+                        TableName=self.session_table_name,
+                        Key={"session_id": {"S": session_id}},
+                    )
+                    item = response.get("Item")
+                    if item:
+                        session_data = deserialize_from_dynamodb_item(item)
+                        if session_data.get("user_id") == user_id:
+                            filtered_ids.append(session_id)
+                session_ids = filtered_ids
+                if not session_ids:
+                    return
+
             # Process the items to delete in batches of the max allowed size or less
             for i in range(0, len(session_ids), DYNAMO_BATCH_SIZE_LIMIT):
                 batch = session_ids[i : i + DYNAMO_BATCH_SIZE_LIMIT]
@@ -442,6 +472,7 @@ class DynamoDb(BaseDb):
         session_id: str,
         session_type: SessionType,
         session_name: str,
+        user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         """
@@ -451,6 +482,7 @@ class DynamoDb(BaseDb):
             session_id: The ID of the session to rename.
             session_type: The type of session to rename.
             session_name: The new name for the session.
+            user_id: The ID of the user who owns the session.
 
         Returns:
             Optional[Session]: The renamed session if successful, None otherwise.
@@ -470,6 +502,11 @@ class DynamoDb(BaseDb):
             current_item = get_response.get("Item")
             if not current_item:
                 return None
+
+            if user_id is not None:
+                session_record = deserialize_from_dynamodb_item(current_item)
+                if session_record.get("user_id") != user_id:
+                    return None
 
             # Update session_data with the new session_name
             session_data = deserialize_from_dynamodb_item(current_item).get("session_data", {})
