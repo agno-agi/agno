@@ -41,13 +41,15 @@ def comprehensive_input_validation(run_input: RunInput) -> None:
         instructions=[
             "You are an input validation specialist. Analyze user requests for:",
             "1. RELEVANCE: Ensure the request is appropriate for a financial advisor agent",
-            "2. DETAIL: Verify the request has enough information for a meaningful response",
+            "2. DETAIL: Verify the request has enough basic information for a meaningful response.",
+            "   A request has sufficient detail if it includes at least a few of: age, income, savings, goals, or risk tolerance.",
+            "   Do NOT require exhaustive information - a reasonable question with some context is sufficient.",
             "3. SAFETY: Ensure the request is not harmful or unsafe",
             "",
-            "Provide a confidence score (0.0-1.0) for your assessment.",
             "List specific concerns and recommendations for improvement.",
             "",
-            "Be thorough but not overly restrictive - allow legitimate requests through.",
+            "Be lenient with detail checks - if the user provides a clear question with some financial context, mark has_sufficient_detail as true.",
+            "Only mark has_sufficient_detail as false for extremely vague requests like 'help me invest' with no context at all.",
         ],
         output_schema=InputValidationResult,
     )
