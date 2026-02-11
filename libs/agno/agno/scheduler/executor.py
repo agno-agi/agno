@@ -407,8 +407,6 @@ class ScheduleExecutor:
                     "requirements": None,
                 }
 
-            await asyncio.sleep(self.poll_interval)
-
             try:
                 resp = await client.request(
                     "GET",
@@ -472,6 +470,8 @@ class ScheduleExecutor:
                     "output": run_output,
                     "requirements": run_requirements,
                 }
+
+            await asyncio.sleep(self.poll_interval)
 
     # ------------------------------------------------------------------
     @staticmethod

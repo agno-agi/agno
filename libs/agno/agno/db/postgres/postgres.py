@@ -4733,7 +4733,7 @@ class PostgresDb(BaseDb):
                 return [dict(row._mapping) for row in results]
         except Exception as e:
             log_debug(f"Error getting schedule runs: {e}")
-            return []
+            return [], 0
 
     # -- Approval methods --
 

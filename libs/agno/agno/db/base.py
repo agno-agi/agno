@@ -147,11 +147,11 @@ class BaseDb(ABC):
 
     # --- Sessions ---
     @abstractmethod
-    def delete_session(self, session_id: str) -> bool:
+    def delete_session(self, session_id: str, user_id: Optional[str] = None) -> bool:
         raise NotImplementedError
 
     @abstractmethod
-    def delete_sessions(self, session_ids: List[str]) -> None:
+    def delete_sessions(self, session_ids: List[str], user_id: Optional[str] = None) -> None:
         raise NotImplementedError
 
     @abstractmethod
@@ -187,6 +187,7 @@ class BaseDb(ABC):
         session_id: str,
         session_type: SessionType,
         session_name: str,
+        user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         raise NotImplementedError
@@ -976,9 +977,13 @@ class BaseDb(ABC):
         self,
         enabled: Optional[bool] = None,
         limit: int = 100,
-        offset: int = 0,
-    ) -> List[Dict[str, Any]]:
-        """List schedules with optional filtering."""
+        page: int = 1,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """List schedules with optional filtering.
+
+        Returns:
+            Tuple of (schedules, total_count)
+        """
         raise NotImplementedError
 
     def create_schedule(self, schedule_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -1019,9 +1024,13 @@ class BaseDb(ABC):
         self,
         schedule_id: str,
         limit: int = 20,
-        offset: int = 0,
-    ) -> List[Dict[str, Any]]:
-        """List runs for a schedule."""
+        page: int = 1,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """List runs for a schedule.
+
+        Returns:
+            Tuple of (runs, total_count)
+        """
         raise NotImplementedError
 
     # --- Approvals (Optional) ---
@@ -1141,11 +1150,11 @@ class AsyncBaseDb(ABC):
 
     # --- Sessions ---
     @abstractmethod
-    async def delete_session(self, session_id: str) -> bool:
+    async def delete_session(self, session_id: str, user_id: Optional[str] = None) -> bool:
         raise NotImplementedError
 
     @abstractmethod
-    async def delete_sessions(self, session_ids: List[str]) -> None:
+    async def delete_sessions(self, session_ids: List[str], user_id: Optional[str] = None) -> None:
         raise NotImplementedError
 
     @abstractmethod
@@ -1181,6 +1190,7 @@ class AsyncBaseDb(ABC):
         session_id: str,
         session_type: SessionType,
         session_name: str,
+        user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         raise NotImplementedError
@@ -1665,9 +1675,13 @@ class AsyncBaseDb(ABC):
         self,
         enabled: Optional[bool] = None,
         limit: int = 100,
-        offset: int = 0,
-    ) -> List[Dict[str, Any]]:
-        """List schedules with optional filtering."""
+        page: int = 1,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """List schedules with optional filtering.
+
+        Returns:
+            Tuple of (schedules, total_count)
+        """
         raise NotImplementedError
 
     async def create_schedule(self, schedule_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -1708,9 +1722,13 @@ class AsyncBaseDb(ABC):
         self,
         schedule_id: str,
         limit: int = 20,
-        offset: int = 0,
-    ) -> List[Dict[str, Any]]:
-        """List runs for a schedule."""
+        page: int = 1,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """List runs for a schedule.
+
+        Returns:
+            Tuple of (runs, total_count)
+        """
         raise NotImplementedError
 
     # --- Approvals (Optional) ---
