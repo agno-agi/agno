@@ -51,55 +51,55 @@ def _make_team(agent, db=None):
     )
 
 
-# def test_member_confirmation_pause(shared_db):
-#     """Team pauses when member agent tool requires confirmation."""
-#     agent = _make_agent(db=shared_db)
-#     team = _make_team(agent, db=shared_db)
+def test_member_confirmation_pause(shared_db):
+    """Team pauses when member agent tool requires confirmation."""
+    agent = _make_agent(db=shared_db)
+    team = _make_team(agent, db=shared_db)
 
-#     response = team.run("What is the weather in Tokyo?", session_id="test_confirm_pause")
+    response = team.run("What is the weather in Tokyo?", session_id="test_confirm_pause")
 
-#     assert response.is_paused
-#     assert len(response.active_requirements) >= 1
+    assert response.is_paused
+    assert len(response.active_requirements) >= 1
 
-#     req = response.active_requirements[0]
-#     assert req.needs_confirmation
-#     assert req.member_agent_name is not None
-#     assert req.tool_execution is not None
-#     assert req.tool_execution.tool_name == "get_the_weather"
-
-
-# def test_member_confirmation_continue(shared_db):
-#     """Pause -> confirm -> continue_run completes successfully."""
-#     agent = _make_agent(db=shared_db)
-#     team = _make_team(agent, db=shared_db)
-
-#     response = team.run("What is the weather in Tokyo?", session_id="test_confirm_continue")
-
-#     assert response.is_paused
-#     req = response.active_requirements[0]
-#     assert req.needs_confirmation
-#     req.confirm()
-
-#     result = team.continue_run(response)
-#     assert not result.is_paused
-#     assert result.content is not None
+    req = response.active_requirements[0]
+    assert req.needs_confirmation
+    assert req.member_agent_name is not None
+    assert req.tool_execution is not None
+    assert req.tool_execution.tool_name == "get_the_weather"
 
 
-# def test_member_rejection_flow(shared_db):
-#     """Pause -> reject with note -> continue_run completes gracefully."""
-#     agent = _make_agent(db=shared_db)
-#     team = _make_team(agent, db=shared_db)
+def test_member_confirmation_continue(shared_db):
+    """Pause -> confirm -> continue_run completes successfully."""
+    agent = _make_agent(db=shared_db)
+    team = _make_team(agent, db=shared_db)
 
-#     response = team.run("What is the weather in Tokyo?", session_id="test_reject_flow")
+    response = team.run("What is the weather in Tokyo?", session_id="test_confirm_continue")
 
-#     assert response.is_paused
-#     req = response.active_requirements[0]
-#     assert req.needs_confirmation
-#     req.reject(note="User does not want weather data")
+    assert response.is_paused
+    req = response.active_requirements[0]
+    assert req.needs_confirmation
+    req.confirm()
 
-#     result = team.continue_run(response)
-#     assert not result.is_paused
-#     assert result.content is not None
+    result = team.continue_run(response)
+    assert not result.is_paused
+    assert result.content is not None
+
+
+def test_member_rejection_flow(shared_db):
+    """Pause -> reject with note -> continue_run completes gracefully."""
+    agent = _make_agent(db=shared_db)
+    team = _make_team(agent, db=shared_db)
+
+    response = team.run("What is the weather in Tokyo?", session_id="test_reject_flow")
+
+    assert response.is_paused
+    req = response.active_requirements[0]
+    assert req.needs_confirmation
+    req.reject(note="User does not want weather data")
+
+    result = team.continue_run(response)
+    assert not result.is_paused
+    assert result.content is not None
 
 
 def test_member_confirmation_streaming(shared_db):
