@@ -144,13 +144,13 @@ def get_session_metrics_internal(team: "Team", session: TeamSession) -> Metrics:
 
 
 def _read_session(
-    team: "Team", session_id: str, session_type: SessionType = SessionType.TEAM
+    team: "Team", session_id: str, session_type: SessionType = SessionType.TEAM, user_id: Optional[str] = None
 ) -> Optional[Union[TeamSession, WorkflowSession]]:
     """Get a Session from the database."""
     try:
         if not team.db:
             raise ValueError("Db not initialized")
-        session = team.db.get_session(session_id=session_id, session_type=session_type)
+        session = team.db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)
         return session  # type: ignore
     except Exception as e:
         log_warning(f"Error getting session from db: {e}")
@@ -158,14 +158,14 @@ def _read_session(
 
 
 async def _aread_session(
-    team: "Team", session_id: str, session_type: SessionType = SessionType.TEAM
+    team: "Team", session_id: str, session_type: SessionType = SessionType.TEAM, user_id: Optional[str] = None
 ) -> Optional[Union[TeamSession, WorkflowSession]]:
     """Get a Session from the database."""
     try:
         if not team.db:
             raise ValueError("Db not initialized")
         team.db = cast(AsyncBaseDb, team.db)
-        session = await team.db.get_session(session_id=session_id, session_type=session_type)
+        session = await team.db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)
         return session  # type: ignore
     except Exception as e:
         log_warning(f"Error getting session from db: {e}")
@@ -208,13 +208,17 @@ def _read_or_create_session(team: "Team", session_id: str, user_id: Optional[str
     from agno.team._telemetry import get_team_data
 
     # Return existing session if we have one
-    if team._cached_session is not None and team._cached_session.session_id == session_id:
+    if (
+        team._cached_session is not None
+        and team._cached_session.session_id == session_id
+        and (user_id is None or team._cached_session.user_id == user_id)
+    ):
         return team._cached_session
 
     # Try to load from database
     team_session = None
     if team.db is not None and team.parent_team_id is None and team.workflow_id is None:
-        team_session = cast(TeamSession, _read_session(team, session_id=session_id))
+        team_session = cast(TeamSession, _read_session(team, session_id=session_id, user_id=user_id))
 
     # Create new session if none found
     if team_session is None:
@@ -268,16 +272,20 @@ async def _aread_or_create_session(team: "Team", session_id: str, user_id: Optio
     from agno.team._telemetry import get_team_data
 
     # Return existing session if we have one
-    if team._cached_session is not None and team._cached_session.session_id == session_id:
+    if (
+        team._cached_session is not None
+        and team._cached_session.session_id == session_id
+        and (user_id is None or team._cached_session.user_id == user_id)
+    ):
         return team._cached_session
 
     # Try to load from database
     team_session = None
     if team.db is not None and team.parent_team_id is None and team.workflow_id is None:
         if _has_async_db(team):
-            team_session = cast(TeamSession, await _aread_session(team, session_id=session_id))
+            team_session = cast(TeamSession, await _aread_session(team, session_id=session_id, user_id=user_id))
         else:
-            team_session = cast(TeamSession, _read_session(team, session_id=session_id))
+            team_session = cast(TeamSession, _read_session(team, session_id=session_id, user_id=user_id))
 
     # Create new session if none found
     if team_session is None:
