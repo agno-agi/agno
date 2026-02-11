@@ -70,7 +70,7 @@ class RunRequirement:
                 return True
             return False
 
-        return self.tool_execution.requires_user_input or False
+        return False
 
     @property
     def needs_external_execution(self) -> bool:
