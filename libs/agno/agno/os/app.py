@@ -281,7 +281,7 @@ class AgentOS:
         self.run_hooks_in_background = run_hooks_in_background
 
         # Scheduler configuration
-        self._scheduler_enabled = scheduler
+        self.scheduler = scheduler
         self._scheduler_poll_interval = scheduler_poll_interval
         self._scheduler_base_url = scheduler_base_url
         if scheduler and not internal_service_token:
@@ -293,7 +293,6 @@ class AgentOS:
         # List of all MCP tools used inside the AgentOS
         self.mcp_tools: List[Any] = []
         self._mcp_app: Optional[Any] = None
-        self._scheduler_manager: Optional[Any] = None
 
         self._initialize_agents()
         self._initialize_teams()
@@ -309,17 +308,6 @@ class AgentOS:
             from agno.api.os import OSLaunch, log_os_telemetry
 
             log_os_telemetry(launch=OSLaunch(os_id=self.id, data=self._get_telemetry_data()))
-
-    @property
-    def scheduler(self) -> Any:
-        """Get a ScheduleManager for this AgentOS instance."""
-        if not hasattr(self, "_scheduler_manager") or self._scheduler_manager is None:
-            if self.db is None:
-                raise RuntimeError("No database configured -- cannot create ScheduleManager")
-            from agno.scheduler.manager import ScheduleManager
-
-            self._scheduler_manager = ScheduleManager(self.db)
-        return self._scheduler_manager
 
     def _add_agent_os_to_lifespan_function(self, lifespan):
         """
@@ -650,7 +638,7 @@ class AgentOS:
             lifespans.append(partial(db_lifespan, agent_os=self))
 
             # The scheduler lifespan (after db so tables exist)
-            if self._scheduler_enabled and self.db is not None:
+            if self.scheduler and self.db is not None:
                 lifespans.append(partial(scheduler_lifespan, agent_os=self))
 
             # The httpx client cleanup lifespan (should be last to close after other lifespans)
@@ -682,7 +670,7 @@ class AgentOS:
             lifespans.append(partial(db_lifespan, agent_os=self))  # type: ignore
 
             # The scheduler lifespan (after db so tables exist)
-            if self._scheduler_enabled and self.db is not None:
+            if self.scheduler and self.db is not None:
                 lifespans.append(partial(scheduler_lifespan, agent_os=self))
 
             # The httpx client cleanup lifespan (should be last to close after other lifespans)
