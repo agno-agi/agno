@@ -59,7 +59,9 @@ def main():
     result = resp.json()
     schedules = result["data"]
     meta = result["meta"]
-    print(f"Page {meta['page']} of {meta['total_pages']} (total: {meta['total_count']})\n")
+    print(
+        f"Page {meta['page']} of {meta['total_pages']} (total: {meta['total_count']})\n"
+    )
     for s in schedules:
         status = "enabled" if s["enabled"] else "disabled"
         print(f"  {s['name']} [{status}] -> {s['endpoint']}")

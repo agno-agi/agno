@@ -22,10 +22,6 @@ from uuid import uuid4
 
 from pydantic import BaseModel
 
-# Strong references to background tasks so they aren't garbage-collected mid-execution.
-# See: https://docs.python.org/3/library/asyncio-task.html#asyncio.create_task
-_background_tasks: set[asyncio.Task[None]] = set()
-
 from agno.exceptions import (
     InputCheckError,
     OutputCheckError,
@@ -91,6 +87,10 @@ from agno.utils.log import (
     log_info,
     log_warning,
 )
+
+# Strong references to background tasks so they aren't garbage-collected mid-execution.
+# See: https://docs.python.org/3/library/asyncio-task.html#asyncio.create_task
+_background_tasks: set[asyncio.Task[None]] = set()
 
 if TYPE_CHECKING:
     from agno.team.team import Team
@@ -3178,8 +3178,8 @@ def _handle_team_tool_call_updates_stream(
         if _t.requires_confirmation is not None and _t.requires_confirmation is True and _functions:
             if _t.confirmed is not None and _t.confirmed is True and _t.result is None:
                 yield from run_tool(
-                    team,
-                    run_response,
+                    team,  # type: ignore[arg-type]
+                    run_response,  # type: ignore[arg-type]
                     run_messages,
                     _t,
                     functions=_functions,
@@ -3206,8 +3206,8 @@ def _handle_team_tool_call_updates_stream(
         elif _t.requires_user_input is not None and _t.requires_user_input is True:
             handle_user_input_update(team, tool=_t)  # type: ignore
             yield from run_tool(
-                team,
-                run_response,
+                team,  # type: ignore[arg-type]
+                run_response,  # type: ignore[arg-type]
                 run_messages,
                 _t,
                 functions=_functions,
@@ -3294,8 +3294,8 @@ async def _ahandle_team_tool_call_updates_stream(
         if _t.requires_confirmation is not None and _t.requires_confirmation is True and _functions:
             if _t.confirmed is not None and _t.confirmed is True and _t.result is None:
                 async for event in arun_tool(
-                    team,
-                    run_response,
+                    team,  # type: ignore[arg-type]
+                    run_response,  # type: ignore[arg-type]
                     run_messages,
                     _t,
                     functions=_functions,
@@ -3323,8 +3323,8 @@ async def _ahandle_team_tool_call_updates_stream(
         elif _t.requires_user_input is not None and _t.requires_user_input is True:
             handle_user_input_update(team, tool=_t)  # type: ignore
             async for event in arun_tool(
-                team,
-                run_response,
+                team,  # type: ignore[arg-type]
+                run_response,  # type: ignore[arg-type]
                 run_messages,
                 _t,
                 functions=_functions,
@@ -3481,13 +3481,13 @@ async def _aroute_requirements_to_members(
                 updated_map = {t.tool_call_id: t for t in updated_tools}
                 member_run_output.tools = [updated_map.get(t.tool_call_id, t) for t in member_run_output.tools]
 
-            member_response = await member.acontinue_run(
+            member_response = await member.acontinue_run(  # type: ignore[misc]
                 run_response=member_run_output,
                 session_id=session.session_id,
             )
         else:
             member_run_id = reqs[0].member_run_id if reqs else None
-            member_response = await member.acontinue_run(
+            member_response = await member.acontinue_run(  # type: ignore[misc]
                 run_id=member_run_id,
                 requirements=reqs,
                 session_id=session.session_id,
@@ -4543,7 +4543,7 @@ async def _acontinue_run(
                     if team_session is not None:
                         await _acleanup_and_store(team, run_response=run_response, session=team_session)
 
-                    result = await team.arun(
+                    result = await team.arun(  # type: ignore[misc]
                         input=continuation_message,
                         stream=False,
                         session_id=session_id,

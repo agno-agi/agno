@@ -3686,7 +3686,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                     if expected_status is not None:
                         stmt = stmt.where(table.c.status == expected_status)
                     result = await sess.execute(stmt.values(**kwargs))
-                    if result.rowcount == 0:
+                    if result.rowcount == 0:  # type: ignore[attr-defined]
                         return None
             return await self.get_approval(approval_id)
         except Exception as e:
@@ -3701,7 +3701,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             async with self.async_session_factory() as sess:
                 async with sess.begin():
                     result = await sess.execute(table.delete().where(table.c.id == approval_id))
-                    return result.rowcount > 0
+                    return result.rowcount > 0  # type: ignore[attr-defined]
         except Exception as e:
             log_debug(f"Error deleting approval: {e}")
             return False

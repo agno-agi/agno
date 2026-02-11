@@ -2,7 +2,7 @@
 
 import asyncio
 import time
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, Literal, Optional
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request

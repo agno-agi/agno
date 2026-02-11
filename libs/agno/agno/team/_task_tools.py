@@ -483,7 +483,7 @@ def _get_task_management_tools(
                     event.parent_run_id = event.parent_run_id or run_response.run_id
                     yield event
             else:
-                member_run_response = await member_agent.arun(
+                member_run_response = await member_agent.arun(  # type: ignore[misc]
                     input=member_agent_task if not history else history,
                     user_id=user_id,
                     session_id=session.session_id,
