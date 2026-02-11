@@ -43,11 +43,13 @@ from agno.utils.log import log_debug, log_warning
 def get_session(
     team: "Team",
     session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
 ) -> Optional[TeamSession]:
     """Load a TeamSession from database.
 
     Args:
         session_id: The session_id to load from storage.
+        user_id: The user_id for tenant isolation.
 
     Returns:
         TeamSession: The TeamSession loaded from the database or created if it does not exist.
@@ -62,7 +64,9 @@ def get_session(
 
     # If there is a cached session, return it
     if team.cache_session and hasattr(team, "_cached_session") and team._cached_session is not None:
-        if team._cached_session.session_id == session_id_to_load:
+        if team._cached_session.session_id == session_id_to_load and (
+            user_id is None or team._cached_session.user_id == user_id
+        ):
             return team._cached_session
 
     if _has_async_db(team):
@@ -73,7 +77,7 @@ def get_session(
         loaded_session = None
         # We have a standalone team, so we are loading a TeamSession
         if team.workflow_id is None:
-            loaded_session = cast(TeamSession, _read_session(team, session_id=session_id_to_load))
+            loaded_session = cast(TeamSession, _read_session(team, session_id=session_id_to_load, user_id=user_id))
         # We have a workflow team, so we are loading a WorkflowSession
         else:
             loaded_session = cast(  # type: ignore[assignment]
@@ -82,6 +86,7 @@ def get_session(
                     team,
                     session_id=session_id_to_load,
                     session_type=SessionType.WORKFLOW,
+                    user_id=user_id,
                 ),
             )
 
@@ -98,11 +103,13 @@ def get_session(
 async def aget_session(
     team: "Team",
     session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
 ) -> Optional[TeamSession]:
     """Load a TeamSession from database.
 
     Args:
         session_id: The session_id to load from storage.
+        user_id: The user_id for tenant isolation.
 
     Returns:
         TeamSession: The TeamSession loaded from the database or created if it does not exist.
@@ -117,7 +124,9 @@ async def aget_session(
 
     # If there is a cached session, return it
     if team.cache_session and hasattr(team, "_cached_session") and team._cached_session is not None:
-        if team._cached_session.session_id == session_id_to_load:
+        if team._cached_session.session_id == session_id_to_load and (
+            user_id is None or team._cached_session.user_id == user_id
+        ):
             return team._cached_session
 
     # Load and return the session from the database
@@ -126,9 +135,11 @@ async def aget_session(
         # We have a standalone team, so we are loading a TeamSession
         if team.workflow_id is None:
             if _has_async_db(team):
-                loaded_session = cast(TeamSession, await _aread_session(team, session_id=session_id_to_load))
+                loaded_session = cast(
+                    TeamSession, await _aread_session(team, session_id=session_id_to_load, user_id=user_id)
+                )  # type: ignore[arg-type]
             else:
-                loaded_session = cast(TeamSession, _read_session(team, session_id=session_id_to_load))
+                loaded_session = cast(TeamSession, _read_session(team, session_id=session_id_to_load, user_id=user_id))
         # We have a workflow team, so we are loading a WorkflowSession
         else:
             if _has_async_db(team):
@@ -138,6 +149,7 @@ async def aget_session(
                         team,
                         session_id=session_id_to_load,
                         session_type=SessionType.WORKFLOW,
+                        user_id=user_id,
                     ),
                 )
             else:
@@ -147,6 +159,7 @@ async def aget_session(
                         team,
                         session_id=session_id_to_load,
                         session_type=SessionType.WORKFLOW,
+                        user_id=user_id,
                     ),
                 )
 
@@ -505,24 +518,24 @@ def update_session_metrics(team: "Team", session: TeamSession, run_response: Tea
 # ---------------------------------------------------------------------------
 
 
-def delete_session(team: "Team", session_id: str):
+def delete_session(team: "Team", session_id: str, user_id: Optional[str] = None):
     """Delete the current session and save to storage"""
     if team.db is None:
         return
 
-    team.db.delete_session(session_id=session_id)
+    team.db.delete_session(session_id=session_id, user_id=user_id)
 
 
-async def adelete_session(team: "Team", session_id: str):
+async def adelete_session(team: "Team", session_id: str, user_id: Optional[str] = None):
     """Delete the current session and save to storage"""
     from agno.team._init import _has_async_db
 
     if team.db is None:
         return
     if _has_async_db(team):
-        await team.db.delete_session(session_id=session_id)  # type: ignore
+        await team.db.delete_session(session_id=session_id, user_id=user_id)  # type: ignore
     else:
-        team.db.delete_session(session_id=session_id)
+        team.db.delete_session(session_id=session_id, user_id=user_id)
 
 
 # ---------------------------------------------------------------------------

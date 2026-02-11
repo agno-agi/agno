@@ -41,7 +41,6 @@ class ResolvedRunOptions:
         dependencies_provided: bool = False,
         knowledge_filters_provided: bool = False,
         metadata_provided: bool = False,
-        output_schema_provided: bool = False,
     ) -> None:
         """Apply resolved options to run_context with precedence:
         explicit args > existing run_context > resolved defaults."""
@@ -60,10 +59,12 @@ class ResolvedRunOptions:
         elif run_context.metadata is None:
             run_context.metadata = self.metadata
 
-        if output_schema_provided:
-            run_context.output_schema = self.output_schema
-        elif run_context.output_schema is None:
-            run_context.output_schema = self.output_schema
+        # Always set output_schema from resolved options.
+        # Unlike other fields, output_schema must always be updated because the same run_context
+        # may be reused across workflow steps with different agents, each with their own output_schema.
+        # This matches the main branch behavior: "output_schema parameter takes priority, even if
+        # run_context was provided"
+        run_context.output_schema = self.output_schema
 
 
 def resolve_run_options(

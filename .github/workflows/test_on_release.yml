@@ -8,6 +8,7 @@ on:
       - "v2.5-phase1"
       - "fix/ci-test-failures"
       - "fix/team-hitl-streaming"
+      - "v2.5-phase2"
   workflow_dispatch: # Allows manual triggering
     inputs:
       branch:

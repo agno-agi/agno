@@ -1256,7 +1256,6 @@ def run_dispatch(
         dependencies_provided=dependencies is not None,
         knowledge_filters_provided=knowledge_filters is not None,
         metadata_provided=metadata is not None,
-        output_schema_provided=output_schema is not None,
     )
 
     # Prepare arguments for the model (must be after run_context is fully initialized)
@@ -2369,7 +2368,6 @@ def arun_dispatch(  # type: ignore
         dependencies_provided=dependencies is not None,
         knowledge_filters_provided=knowledge_filters is not None,
         metadata_provided=metadata is not None,
-        output_schema_provided=output_schema is not None,
     )
 
     # Prepare arguments for the model (must be after run_context is fully initialized)
@@ -3209,10 +3207,9 @@ def acontinue_run_dispatch(  # type: ignore
     )
 
     # Prepare arguments for the model
-    response_format = get_response_format(agent, run_context=run_context)
     agent.model = cast(Model, agent.model)
 
-    # Initialize run context
+    # Initialize run context before computing response_format (needs run_context)
     run_context = run_context or RunContext(
         run_id=run_id,  # type: ignore
         session_id=session_id,
@@ -3229,6 +3226,8 @@ def acontinue_run_dispatch(  # type: ignore
         knowledge_filters_provided=knowledge_filters is not None,
         metadata_provided=metadata is not None,
     )
+
+    response_format = get_response_format(agent, run_context=run_context)
 
     if opts.stream:
         return _acontinue_run_stream(
