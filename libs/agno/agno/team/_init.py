@@ -742,10 +742,13 @@ async def _disconnect_mcp_tools(team: "Team") -> None:
     team._mcp_tools_initialized_on_run = []
 
 
-def _connect_connectable_tools(team: "Team") -> None:
+def _connect_connectable_tools(team: "Team", resolved_tools: Optional[list] = None) -> None:
     """Connect tools that require connection management (e.g., database connections)."""
-    if team.tools and isinstance(team.tools, list):
-        for tool in team.tools:
+    tools_to_check = (
+        resolved_tools if resolved_tools is not None else (team.tools if isinstance(team.tools, list) else None)
+    )
+    if tools_to_check:
+        for tool in tools_to_check:
             if (
                 hasattr(tool, "requires_connect")
                 and tool.requires_connect  # type: ignore

@@ -92,7 +92,7 @@ def get_members_system_message_content(
             if member.description is not None:
                 content += f"{pad}  Description: {member.description}\n"
             if member.members is not None:
-                content += member.get_members_system_message_content(indent=indent + 2, run_context=run_context)
+                content += member.get_members_system_message_content(indent=indent + 2, run_context=None)
             content += f"{pad}</member>\n"
         else:
             content += f'{pad}<member id="{member_id}" name="{member.name}">\n'

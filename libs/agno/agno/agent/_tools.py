@@ -127,7 +127,7 @@ def get_tools(
     resolved_knowledge = get_resolved_knowledge(agent, run_context)
 
     # Connect tools that require connection management
-    _init.connect_connectable_tools(agent)
+    _init.connect_connectable_tools(agent, resolved_tools=resolved_tools)
 
     # Add provided tools
     if resolved_tools is not None:
@@ -196,7 +196,7 @@ def get_tools(
         )
 
     if resolved_knowledge is not None and agent.update_knowledge:
-        agent_tools.append(agent.add_to_knowledge)
+        agent_tools.append(_default_tools.get_add_to_knowledge_function(agent, run_context=run_context))
 
     # Add tools for accessing skills
     if agent.skills is not None:
@@ -231,7 +231,7 @@ async def aget_tools(
     resolved_knowledge = get_resolved_knowledge(agent, run_context)
 
     # Connect tools that require connection management
-    _init.connect_connectable_tools(agent)
+    _init.connect_connectable_tools(agent, resolved_tools=resolved_tools)
 
     # Connect MCP tools
     await _init.connect_mcp_tools(agent)
@@ -340,7 +340,7 @@ async def aget_tools(
         )
 
     if resolved_knowledge is not None and agent.update_knowledge:
-        agent_tools.append(agent.add_to_knowledge)
+        agent_tools.append(_default_tools.get_add_to_knowledge_function(agent, run_context=run_context))
 
     # Add tools for accessing skills
     if agent.skills is not None:
