@@ -14,6 +14,8 @@ Environment:
 """
 
 from agno.agent import Agent
+from agno.db.postgres import PostgresDb
+from agno.db.sqlite import SqliteDb
 from agno.media import Image
 from agno.media_storage.s3 import S3MediaStorage
 from agno.models.openai import OpenAIChat
@@ -29,6 +31,9 @@ storage = S3MediaStorage(
 # Create agent with media storage enabled
 agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
+    # Session DBs to store only lightweight media references (with pre-signed URLs), while the
+    db=SqliteDb(db_file="tmp/data.db"),
+    # db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai") # Postgres option
     media_storage=storage,
     # store_media=True is the default; when combined with media_storage,
     # media is uploaded to S3 and only references are stored in the DB.

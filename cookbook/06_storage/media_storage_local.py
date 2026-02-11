@@ -7,6 +7,7 @@ without needing cloud credentials.
 """
 
 from agno.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.media import Image
 from agno.media_storage.local import LocalMediaStorage
 from agno.models.openai import OpenAIChat
@@ -22,6 +23,8 @@ storage = LocalMediaStorage(
 agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     media_storage=storage,
+    db=SqliteDb(db_file="tmp/data.db"),
+    # db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai") # Postgres option
 )
 
 # Run a query with an image
