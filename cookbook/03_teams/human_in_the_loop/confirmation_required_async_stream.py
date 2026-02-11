@@ -57,13 +57,15 @@ async def main():
                     print(f"  Args: {req.tool_execution.tool_args}")
                     req.confirm()
 
-            response = await team.acontinue_run(
+            # Use apprint_run_response for async streaming
+            response = team.acontinue_run(
                 run_id=run_event.run_id,
                 session_id=run_event.session_id,
                 requirements=run_event.requirements,
                 stream=True,
             )
-            pprint.pprint_run_response(response)
+            await pprint.apprint_run_response(response)
 
 
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())
