@@ -759,7 +759,7 @@ def load_yaml_config(config_file_path: str) -> AgentOSConfig:
 def collect_mcp_tools_from_team(team: Team, mcp_tools: List[Any]) -> None:
     """Recursively collect MCP tools from a team and its members."""
     # Check the team tools
-    if team.tools:
+    if team.tools and isinstance(team.tools, list):
         for tool in team.tools:
             # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
             if hasattr(type(tool), "__mro__") and any(
@@ -769,10 +769,10 @@ def collect_mcp_tools_from_team(team: Team, mcp_tools: List[Any]) -> None:
                     mcp_tools.append(tool)
 
     # Recursively check team members
-    if team.members:
+    if team.members and isinstance(team.members, list):
         for member in team.members:
             if isinstance(member, Agent):
-                if member.tools:
+                if member.tools and isinstance(member.tools, list):
                     for tool in member.tools:
                         # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
                         if hasattr(type(tool), "__mro__") and any(
@@ -819,7 +819,7 @@ def collect_mcp_tools_from_workflow_step(step: Any, mcp_tools: List[Any]) -> Non
     if isinstance(step, Step):
         # Check step's agent
         if step.agent:
-            if step.agent.tools:
+            if step.agent.tools and isinstance(step.agent.tools, list):
                 for tool in step.agent.tools:
                     # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
                     if hasattr(type(tool), "__mro__") and any(
@@ -844,7 +844,7 @@ def collect_mcp_tools_from_workflow_step(step: Any, mcp_tools: List[Any]) -> Non
 
     elif isinstance(step, Agent):
         # Direct agent in workflow steps
-        if step.tools:
+        if step.tools and isinstance(step.tools, list):
             for tool in step.tools:
                 # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
                 if hasattr(type(tool), "__mro__") and any(

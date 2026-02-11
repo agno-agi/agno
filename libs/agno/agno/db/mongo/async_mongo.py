@@ -2563,7 +2563,7 @@ class AsyncMongoDb(AsyncBaseDb):
                 query["run_id"] = run_id
             if session_id:
                 query["session_id"] = session_id
-            if user_id is not None:
+            if user_id:
                 query["user_id"] = user_id
             if agent_id:
                 query["agent_id"] = agent_id
@@ -2649,7 +2649,7 @@ class AsyncMongoDb(AsyncBaseDb):
 
             # Build match stage
             match_stage: Dict[str, Any] = {"session_id": {"$ne": None}}
-            if user_id is not None:
+            if user_id:
                 match_stage["user_id"] = user_id
             if agent_id:
                 match_stage["agent_id"] = agent_id

@@ -1648,7 +1648,7 @@ class SurrealDb(BaseDb):
                 where.and_("run_id", run_id)
             if session_id:
                 where.and_("session_id", session_id)
-            if user_id is not None:
+            if user_id:
                 where.and_("user_id", user_id)
             if agent_id:
                 where.and_("agent_id", agent_id)
@@ -1733,7 +1733,7 @@ class SurrealDb(BaseDb):
             # Build where clause
             where = WhereClause()
             where.and_("!!session_id", True, "=")  # Ensure session_id is not null
-            if user_id is not None:
+            if user_id:
                 where.and_("user_id", user_id)
             if agent_id:
                 where.and_("agent_id", agent_id)

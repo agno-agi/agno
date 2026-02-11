@@ -2470,7 +2470,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                     base_stmt = base_stmt.where(table.c.run_id == run_id)
                 if session_id:
                     base_stmt = base_stmt.where(table.c.session_id == session_id)
-                if user_id is not None:
+                if user_id:
                     base_stmt = base_stmt.where(table.c.user_id == user_id)
                 if agent_id:
                     base_stmt = base_stmt.where(table.c.agent_id == agent_id)
@@ -2558,7 +2558,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 )
 
                 # Apply filters
-                if user_id is not None:
+                if user_id:
                     base_stmt = base_stmt.where(table.c.user_id == user_id)
                 if workflow_id:
                     base_stmt = base_stmt.where(table.c.workflow_id == workflow_id)
