@@ -12,6 +12,7 @@ from agno.os.routers.approvals.schema import (
     ApprovalResolve,
     ApprovalResponse,
 )
+from agno.os.schema import PaginatedResponse, PaginationInfo
 
 
 def get_approval_router(os_db: Any, settings: Any) -> APIRouter:
@@ -48,7 +49,7 @@ def get_approval_router(os_db: Any, settings: Any) -> APIRouter:
     # Endpoints
     # ------------------------------------------------------------------
 
-    @router.get("/approvals", response_model=ApprovalListResponse)
+    @router.get("/approvals", response_model=PaginatedResponse[ApprovalResponse])
     async def list_approvals(
         status: Optional[Literal["pending", "approved", "rejected", "expired", "cancelled"]] = Query(None),
         source_type: Optional[str] = Query(None),
@@ -61,10 +62,10 @@ def get_approval_router(os_db: Any, settings: Any) -> APIRouter:
         schedule_id: Optional[str] = Query(None),
         run_id: Optional[str] = Query(None),
         limit: int = Query(100, ge=1, le=1000),
-        offset: int = Query(0, ge=0),
+        page: int = Query(1, ge=1),
         _: bool = Depends(auth_dependency),
-    ) -> Dict[str, Any]:
-        approvals, total = await _db_call(
+    ) -> PaginatedResponse[ApprovalResponse]:
+        approvals, total_count = await _db_call(
             "get_approvals",
             status=status,
             source_type=source_type,
@@ -77,9 +78,18 @@ def get_approval_router(os_db: Any, settings: Any) -> APIRouter:
             schedule_id=schedule_id,
             run_id=run_id,
             limit=limit,
-            offset=offset,
+            page=page,
         )
-        return {"approvals": approvals, "total": total, "limit": limit, "offset": offset}
+        total_pages = (total_count + limit - 1) // limit if total_count > 0 else 0
+        return PaginatedResponse(
+            data=approvals,
+            meta=PaginationInfo(
+                page=page,
+                limit=limit,
+                total_pages=total_pages,
+                total_count=total_count,
+            ),
+        )
 
     @router.get("/approvals/count", response_model=ApprovalCountResponse)
     async def get_approval_count(
