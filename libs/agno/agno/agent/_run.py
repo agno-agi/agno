@@ -26,6 +26,7 @@ from pydantic import BaseModel
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
 
+from agno.agent._init import _initialize_session_state
 from agno.agent._run_options import resolve_run_options
 from agno.agent._session import initialize_session, update_session_metrics
 from agno.exceptions import (
@@ -352,6 +353,12 @@ def _run(
                     agent,
                     session=agent_session,
                     session_state=run_context.session_state if run_context.session_state is not None else {},
+                )
+                _initialize_session_state(
+                    run_context.session_state,
+                    user_id=user_id,
+                    session_id=session_id,
+                    run_id=run_context.run_id,
                 )
 
                 # 3. Resolve dependencies
@@ -714,6 +721,12 @@ def _run_stream(
                     agent,
                     session=agent_session,
                     session_state=run_context.session_state if run_context.session_state is not None else {},
+                )
+                _initialize_session_state(
+                    run_context.session_state,
+                    user_id=user_id,
+                    session_id=session_id,
+                    run_id=run_context.run_id,
                 )
 
                 # 3. Resolve dependencies
@@ -1377,6 +1390,12 @@ async def _arun(
                     session=agent_session,
                     session_state=run_context.session_state if run_context.session_state is not None else {},
                 )
+                _initialize_session_state(
+                    run_context.session_state,
+                    user_id=user_id,
+                    session_id=session_id,
+                    run_id=run_context.run_id,
+                )
 
                 # 3. Resolve dependencies
                 if run_context.dependencies is not None:
@@ -1777,6 +1796,12 @@ async def _arun_stream(
                     agent,
                     session=agent_session,
                     session_state=run_context.session_state if run_context.session_state is not None else {},
+                )
+                _initialize_session_state(
+                    run_context.session_state,
+                    user_id=user_id,
+                    session_id=session_id,
+                    run_id=run_context.run_id,
                 )
 
                 # 3. Resolve dependencies
@@ -3298,6 +3323,12 @@ async def _acontinue_run(
                     session=agent_session,
                     session_state=run_context.session_state if run_context.session_state is not None else {},
                 )
+                _initialize_session_state(
+                    run_context.session_state,
+                    user_id=user_id,
+                    session_id=session_id,
+                    run_id=run_context.run_id,
+                )
 
                 # 4. Prepare run response
                 if run_response is not None:
@@ -3625,6 +3656,12 @@ async def _acontinue_run_stream(
                     agent,
                     session=agent_session,
                     session_state=run_context.session_state if run_context.session_state is not None else {},
+                )
+                _initialize_session_state(
+                    run_context.session_state,
+                    user_id=user_id,
+                    session_id=session_id,
+                    run_id=run_context.run_id,
                 )
 
                 # 3. Resolve dependencies
