@@ -104,15 +104,18 @@ def main():
     # 6. Manual trigger
     # =========================================================================
     print("\n=== Manual Trigger ===\n")
-    resp = client.post(f"/schedules/{schedule_id}/trigger")
-    if resp.status_code == 200:
-        trigger_result = resp.json()
-        print(f"  Trigger result: status={trigger_result.get('status')}")
-        print(f"  Run ID: {trigger_result.get('run_id')}")
-    elif resp.status_code == 503:
-        print("  Trigger returned 503 (scheduler executor not running yet)")
-    else:
-        print(f"  Trigger response: {resp.status_code} {resp.text}")
+    try:
+        resp = client.post(f"/schedules/{schedule_id}/trigger")
+        if resp.status_code == 200:
+            trigger_result = resp.json()
+            print(f"  Trigger result: status={trigger_result.get('status')}")
+            print(f"  Run ID: {trigger_result.get('run_id')}")
+        elif resp.status_code == 503:
+            print("  Trigger returned 503 (scheduler executor not running yet)")
+        else:
+            print(f"  Trigger response: {resp.status_code} {resp.text}")
+    except Exception as e:
+        print(f"  Trigger timed out or failed: {type(e).__name__}")
 
     # =========================================================================
     # 7. View run history
@@ -135,7 +138,11 @@ def main():
     print("\n=== Delete ===\n")
     resp = client.delete(f"/schedules/{schedule_id}")
     resp.raise_for_status()
-    print(f"  Deleted: {resp.json()}")
+    try:
+        result = resp.json()
+        print(f"  Deleted: {result}")
+    except Exception:
+        print(f"  Deleted successfully (status {resp.status_code})")
 
     print("\nDone.")
 
