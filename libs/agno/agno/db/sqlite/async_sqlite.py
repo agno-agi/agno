@@ -3610,7 +3610,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         schedule_id: Optional[str] = None,
         run_id: Optional[str] = None,
         limit: int = 100,
-        offset: int = 0,
+        page: int = 1,
     ) -> Tuple[List[Dict[str, Any]], int]:
         try:
             table = await self._get_table(table_type="approvals")
@@ -3650,6 +3650,10 @@ class AsyncSqliteDb(AsyncBaseDb):
                     stmt = stmt.where(table.c.run_id == run_id)
                     count_stmt = count_stmt.where(table.c.run_id == run_id)
                 total = (await sess.execute(count_stmt)).scalar() or 0
+
+                # Calculate offset from page
+                offset = (page - 1) * limit
+
                 stmt = stmt.order_by(table.c.created_at.desc()).limit(limit).offset(offset)
                 results = (await sess.execute(stmt)).fetchall()
                 return [dict(row._mapping) for row in results], total
