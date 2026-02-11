@@ -4,9 +4,10 @@ import asyncio
 import json
 import re
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 from uuid import uuid4
 
+from agno.db.schemas.scheduler import Schedule
 from agno.utils.log import log_error, log_info, log_warning
 
 try:
@@ -56,18 +57,31 @@ class ScheduleExecutor:
         self.internal_service_token = internal_service_token
         self.timeout = timeout
         self.poll_interval = poll_interval
+        self._client: Optional[httpx.AsyncClient] = None
+
+    async def _get_client(self) -> httpx.AsyncClient:
+        """Get or create the shared httpx.AsyncClient."""
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(timeout=httpx.Timeout(self.timeout))
+        return self._client
+
+    async def close(self) -> None:
+        """Close the shared httpx client."""
+        if self._client is not None and not self._client.is_closed:
+            await self._client.aclose()
+            self._client = None
 
     # ------------------------------------------------------------------
     async def execute(
         self,
-        schedule: Dict[str, Any],
+        schedule: Union[Schedule, Dict[str, Any]],
         db: Any,
         release_schedule: bool = True,
     ) -> Dict[str, Any]:
         """Execute *schedule* and persist run records.
 
         Args:
-            schedule: Schedule dict (from DB).
+            schedule: Schedule object or dict (from DB).
             db: The DB adapter instance (must have scheduler methods).
             release_schedule: Whether to release the lock after execution.
 
@@ -75,6 +89,9 @@ class ScheduleExecutor:
             The ScheduleRun dict.
         """
         from agno.scheduler.cron import compute_next_run
+
+        # Normalize to Schedule dataclass for typed access
+        sched = Schedule.from_dict(schedule) if isinstance(schedule, dict) else schedule
 
         schedule_id: Optional[str] = None
         run_id_value: Optional[str] = None
@@ -89,9 +106,9 @@ class ScheduleExecutor:
         run_dict: Dict[str, Any] = {}
 
         try:
-            schedule_id = schedule["id"]
-            max_attempts = max(1, (schedule.get("max_retries") or 0) + 1)
-            retry_delay = schedule.get("retry_delay_seconds") or 60
+            schedule_id = sched.id
+            max_attempts = max(1, (sched.max_retries or 0) + 1)
+            retry_delay = sched.retry_delay_seconds or 60
             for attempt in range(1, max_attempts + 1):
                 run_record_id = str(uuid4())
                 now = int(time.time())
@@ -119,7 +136,7 @@ class ScheduleExecutor:
                     db.create_schedule_run(run_dict)
 
                 try:
-                    result = await self._call_endpoint(schedule)
+                    result = await self._call_endpoint(sched)
                     last_status = result.get("status", "success")
                     last_status_code = result.get("status_code")
                     last_error = result.get("error")
@@ -203,8 +220,8 @@ class ScheduleExecutor:
             if release_schedule and schedule_id is not None:
                 try:
                     next_run_at = compute_next_run(
-                        schedule["cron_expr"],
-                        schedule.get("timezone", "UTC"),
+                        sched.cron_expr,
+                        sched.timezone or "UTC",
                     )
                 except Exception:
                     log_warning(
@@ -229,12 +246,12 @@ class ScheduleExecutor:
                     log_error(f"Failed to release schedule {schedule_id}: {exc}")
 
     # ------------------------------------------------------------------
-    async def _call_endpoint(self, schedule: Dict[str, Any]) -> Dict[str, Any]:
+    async def _call_endpoint(self, schedule: Schedule) -> Dict[str, Any]:
         """Make the HTTP call to the schedule's endpoint."""
-        method = (schedule.get("method") or "POST").upper()
-        endpoint = schedule["endpoint"]
-        payload = schedule.get("payload") or {}
-        timeout_seconds = schedule.get("timeout_seconds") or self.timeout
+        method = (schedule.method or "POST").upper()
+        endpoint = schedule.endpoint
+        payload = schedule.payload or {}
+        timeout_seconds = schedule.timeout_seconds or self.timeout
         url = f"{self.base_url}{endpoint}"
 
         match = _RUN_ENDPOINT_RE.match(endpoint)
@@ -244,8 +261,9 @@ class ScheduleExecutor:
             "Authorization": f"Bearer {self.internal_service_token}",
         }
 
-        if is_run_endpoint:
-            assert match is not None
+        client = await self._get_client()
+
+        if is_run_endpoint and match is not None:
             form_payload = {k: _to_form_value(v) for k, v in payload.items() if k not in ("stream", "background")}
             form_payload["stream"] = "false"
             form_payload["background"] = "true"
@@ -253,20 +271,18 @@ class ScheduleExecutor:
             resource_type = match.group(1)
             resource_id = match.group(2)
 
-            async with httpx.AsyncClient(timeout=httpx.Timeout(timeout_seconds)) as client:
-                return await self._background_run(
-                    client,
-                    url,
-                    headers,
-                    form_payload,
-                    resource_type,
-                    resource_id,
-                    timeout_seconds,
-                )
+            return await self._background_run(
+                client,
+                url,
+                headers,
+                form_payload,
+                resource_type,
+                resource_id,
+                timeout_seconds,
+            )
         else:
             headers["Content-Type"] = "application/json"
-            async with httpx.AsyncClient(timeout=httpx.Timeout(timeout_seconds)) as client:
-                return await self._simple_request(client, method, url, headers, payload if payload else None)
+            return await self._simple_request(client, method, url, headers, payload if payload else None)
 
     async def _simple_request(
         self,

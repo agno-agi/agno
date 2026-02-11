@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from agno.db.schemas.scheduler import Schedule, ScheduleRun
 from agno.scheduler.cli import SchedulerConsole, _status_style, _ts
 
 # =============================================================================
@@ -80,7 +81,7 @@ def _make_schedule(**overrides):
         "updated_at": None,
     }
     d.update(overrides)
-    return d
+    return Schedule.from_dict(d)
 
 
 def _make_run(**overrides):
@@ -99,7 +100,7 @@ def _make_run(**overrides):
         "created_at": now,
     }
     d.update(overrides)
-    return d
+    return ScheduleRun.from_dict(d)
 
 
 @pytest.fixture
@@ -122,7 +123,7 @@ class TestShowSchedules:
     def test_returns_schedule_list(self, mock_console_cls, console, mock_manager):
         result = console.show_schedules()
         assert len(result) == 1
-        assert result[0]["id"] == "sched-1"
+        assert result[0].id == "sched-1"
         mock_manager.list.assert_called_once_with(enabled=None)
 
     @patch("rich.console.Console")
@@ -142,7 +143,7 @@ class TestShowSchedule:
     def test_found(self, mock_console_cls, console, mock_manager):
         result = console.show_schedule("sched-1")
         assert result is not None
-        assert result["id"] == "sched-1"
+        assert result.id == "sched-1"
         mock_manager.get.assert_called_once_with("sched-1")
 
     @patch("rich.console.Console")
@@ -157,7 +158,7 @@ class TestShowRuns:
     def test_returns_runs(self, mock_console_cls, console, mock_manager):
         result = console.show_runs("sched-1")
         assert len(result) == 1
-        assert result[0]["id"] == "run-1"
+        assert result[0].id == "run-1"
         mock_manager.get_runs.assert_called_once_with("sched-1", limit=20)
 
     @patch("rich.console.Console")
@@ -180,7 +181,7 @@ class TestCreateAndShow:
             cron="0 9 * * *",
             endpoint="/test",
         )
-        assert result["name"] == "created"
+        assert result.name == "created"
         mock_manager.create.assert_called_once()
         mock_manager.get.assert_called_once()  # show_schedule calls get
 

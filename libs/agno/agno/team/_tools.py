@@ -516,7 +516,10 @@ def _find_member_route_by_id(team: "Team", member_id: str) -> Optional[Tuple[int
     """
     from agno.team.team import Team
 
-    for i, member in enumerate(team.members):  # type: ignore[arg-type]
+    # Only iterate if members is a static list (not a callable factory)
+    if not isinstance(team.members, list):
+        return None
+    for i, member in enumerate(team.members):
         url_safe_member_id = get_member_id(member)
         if url_safe_member_id == member_id:
             return i, member

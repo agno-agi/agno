@@ -36,8 +36,8 @@ team_schedule = mgr.create(
     max_retries=2,
     retry_delay_seconds=60,
 )
-print(f"Created team schedule: {team_schedule['name']}")
-console.show_schedule(team_schedule["id"])
+print(f"Created team schedule: {team_schedule.name}")
+console.show_schedule(team_schedule.id)
 
 # =============================================================================
 # 2. Schedule a workflow run
@@ -55,8 +55,8 @@ wf_schedule = mgr.create(
     },
     timeout_seconds=3600,
 )
-print(f"Created workflow schedule: {wf_schedule['name']}")
-console.show_schedule(wf_schedule["id"])
+print(f"Created workflow schedule: {wf_schedule.name}")
+console.show_schedule(wf_schedule.id)
 
 # =============================================================================
 # 3. Mix of agent, team, and workflow schedules
@@ -90,7 +90,7 @@ health_sched = mgr.create(
     description="Ping health endpoint every 10 minutes",
 )
 print(
-    f"Created GET schedule: {health_sched['name']} -> {health_sched['method']} {health_sched['endpoint']}"
+    f"Created GET schedule: {health_sched.name} -> {health_sched.method} {health_sched.endpoint}"
 )
 
 # =============================================================================
@@ -99,5 +99,5 @@ print(
 
 print("\n=== Cleanup ===\n")
 for s in mgr.list():
-    mgr.delete(s["id"])
+    mgr.delete(s.id)
 print("All schedules cleaned up.")

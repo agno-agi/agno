@@ -76,13 +76,13 @@ console.show_schedules()
 # =============================================================================
 
 print("\n--- Monitor Schedule Details ---")
-console.show_schedule(s_monitor["id"])
+console.show_schedule(s_monitor.id)
 
 # =============================================================================
 # Disable one schedule and show filtered views
 # =============================================================================
 
-mgr.disable(s_writer["id"])
+mgr.disable(s_writer.id)
 print("\nDisabled 'weekday-report' schedule.")
 
 print("\n--- Enabled Schedules Only ---")
@@ -97,7 +97,7 @@ print(f"({len(disabled)} disabled)")
 # Re-enable and verify
 # =============================================================================
 
-mgr.enable(s_writer["id"])
+mgr.enable(s_writer.id)
 print("\nRe-enabled 'weekday-report' schedule.")
 
 all_schedules = mgr.list()
@@ -107,6 +107,7 @@ print(f"Total schedules: {len(all_schedules)}")
 # Cleanup
 # =============================================================================
 
-for s in [s_research, s_writer, s_monitor]:
-    mgr.delete(s["id"])
-print("\nAll schedules cleaned up.")
+# Uncomment to clean up schedules from the DB:
+# for s in [s_research, s_writer, s_monitor]:
+#     mgr.delete(s.id)
+# print("\nAll schedules cleaned up.")

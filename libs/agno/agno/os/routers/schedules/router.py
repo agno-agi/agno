@@ -2,7 +2,7 @@
 
 import asyncio
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -11,8 +11,22 @@ from agno.os.routers.schedules.schema import (
     ScheduleCreate,
     ScheduleResponse,
     ScheduleRunResponse,
+    ScheduleStateResponse,
     ScheduleUpdate,
 )
+from agno.utils.log import log_info
+
+# Valid DB method names that _db_call can invoke
+_SchedulerDbMethod = Literal[
+    "get_schedule",
+    "get_schedule_by_name",
+    "get_schedules",
+    "create_schedule",
+    "update_schedule",
+    "delete_schedule",
+    "get_schedule_run",
+    "get_schedule_runs",
+]
 
 
 def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
@@ -44,7 +58,7 @@ def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
         except ImportError as exc:
             raise HTTPException(status_code=503, detail=str(exc))
 
-    async def _db_call(method_name: str, *args: Any, **kwargs: Any) -> Any:
+    async def _db_call(method_name: _SchedulerDbMethod, *args: Any, **kwargs: Any) -> Any:
         fn = getattr(os_db, method_name, None)
         if fn is None:
             raise HTTPException(status_code=503, detail="Scheduler not supported by the configured database")
@@ -176,7 +190,7 @@ def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
         if not deleted:
             raise HTTPException(status_code=500, detail="Failed to delete schedule")
 
-    @router.post("/schedules/{schedule_id}/enable", response_model=ScheduleResponse)
+    @router.post("/schedules/{schedule_id}/enable", response_model=ScheduleStateResponse)
     async def enable_schedule(
         schedule_id: str,
         _: bool = Depends(auth_dependency),
@@ -192,9 +206,10 @@ def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
         result = await _db_call("update_schedule", schedule_id, enabled=True, next_run_at=next_run_at)
         if result is None:
             raise HTTPException(status_code=500, detail="Failed to enable schedule")
+        log_info(f"Schedule '{existing.get('name', schedule_id)}' enabled (next_run_at={next_run_at})")
         return result
 
-    @router.post("/schedules/{schedule_id}/disable", response_model=ScheduleResponse)
+    @router.post("/schedules/{schedule_id}/disable", response_model=ScheduleStateResponse)
     async def disable_schedule(
         schedule_id: str,
         _: bool = Depends(auth_dependency),
@@ -206,6 +221,7 @@ def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
         result = await _db_call("update_schedule", schedule_id, enabled=False)
         if result is None:
             raise HTTPException(status_code=500, detail="Failed to disable schedule")
+        log_info(f"Schedule '{existing.get('name', schedule_id)}' disabled")
         return result
 
     @router.post("/schedules/{schedule_id}/trigger", response_model=ScheduleRunResponse)
