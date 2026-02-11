@@ -5,6 +5,7 @@ from __future__ import annotations
 from os import getenv
 from typing import (
     TYPE_CHECKING,
+    Any,
     Callable,
     Dict,
     Literal,
@@ -177,6 +178,27 @@ def set_compression_manager(agent: Agent) -> None:
     # Check compression flag on the compression manager
     if agent.compression_manager is not None and agent.compression_manager.compress_tool_results:
         agent.compress_tool_results = True
+
+
+def _initialize_session_state(
+    session_state: Dict[str, Any],
+    user_id: Optional[str] = None,
+    session_id: Optional[str] = None,
+    run_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Inject current_user_id, current_session_id, and current_run_id into session_state.
+
+    These transient values are stripped before persisting to the database (see _session.py)
+    but must be available at runtime so that tool functions and instruction templates can
+    reference them.  Teams and Workflows already do this; this brings Agents to parity.
+    """
+    if user_id:
+        session_state["current_user_id"] = user_id
+    if session_id is not None:
+        session_state["current_session_id"] = session_id
+    if run_id is not None:
+        session_state["current_run_id"] = run_id
+    return session_state
 
 
 def has_async_db(agent: Agent) -> bool:
