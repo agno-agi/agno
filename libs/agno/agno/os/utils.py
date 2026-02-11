@@ -525,7 +525,11 @@ def get_agent_by_id(
         for agent in agents:
             if agent.id == agent_id:
                 if create_fresh and isinstance(agent, Agent):
-                    return agent.deep_copy()
+                    fresh_agent = agent.deep_copy()
+                    # Clear team/workflow context — this is a standalone agent copy
+                    fresh_agent.team_id = None
+                    fresh_agent.workflow_id = None
+                    return fresh_agent
                 return agent
 
     # Try to get the agent from the database
