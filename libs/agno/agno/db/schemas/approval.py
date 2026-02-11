@@ -38,7 +38,7 @@ class Approval:
         if self.updated_at is not None:
             self.updated_at = to_epoch_s(self.updated_at)
         if self.resolved_at is not None:
-            self.resolved_at = int(self.resolved_at)
+            self.resolved_at = to_epoch_s(self.resolved_at)
 
     def to_dict(self) -> Dict[str, Any]:
         """Serialize to dict. Preserves None values (important for DB updates)."""

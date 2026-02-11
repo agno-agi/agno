@@ -117,7 +117,8 @@ def test_run_respects_run_context_precedence(monkeypatch: pytest.MonkeyPatch):
     assert preserved_context.dependencies == {"ctx_dep": "keep"}
     assert preserved_context.knowledge_filters == {"ctx_filter": "keep"}
     assert preserved_context.metadata == {"ctx_meta": "keep"}
-    assert preserved_context.output_schema == {"ctx_schema": "keep"}
+    # Team always sets output_schema from resolved options (for workflow reuse)
+    assert preserved_context.output_schema == {"type": "object", "properties": {"team": {"type": "string"}}}
 
     override_context = RunContext(
         run_id="team-override",
@@ -212,7 +213,8 @@ async def test_arun_respects_run_context_precedence(monkeypatch: pytest.MonkeyPa
     assert preserved_context.dependencies == {"ctx_dep": "keep"}
     assert preserved_context.knowledge_filters == {"ctx_filter": "keep"}
     assert preserved_context.metadata == {"ctx_meta": "keep"}
-    assert preserved_context.output_schema == {"ctx_schema": "keep"}
+    # Team always sets output_schema from resolved options (for workflow reuse)
+    assert preserved_context.output_schema == {"type": "object", "properties": {"team": {"type": "string"}}}
 
     override_context = RunContext(
         run_id="ateam-override",

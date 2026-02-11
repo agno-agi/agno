@@ -3303,7 +3303,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 return [dict(row._mapping) for row in result.fetchall()]
         except Exception as e:
             log_debug(f"Error getting schedule runs: {e}")
-            return []
+            return [], 0
 
     # -- Approval methods --
 

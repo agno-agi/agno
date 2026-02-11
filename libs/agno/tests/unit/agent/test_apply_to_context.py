@@ -1,4 +1,9 @@
-"""Tests for ResolvedRunOptions.apply_to_context() — agent version."""
+"""Tests for ResolvedRunOptions.apply_to_context() — agent version.
+
+NOTE: apply_to_context() always sets output_schema from resolved options.
+This is intentional because the same run_context may be reused across workflow
+steps with different agents, each with their own output_schema.
+"""
 
 from pydantic import BaseModel
 
@@ -50,13 +55,15 @@ class TestApplyWhenProvided:
         opts.apply_to_context(ctx, metadata_provided=True)
         assert ctx.metadata == {"new": "m"}
 
-    def test_output_schema_provided_overwrites(self):
+    def test_output_schema_always_set_from_opts(self):
+        """Agent always sets output_schema from resolved options for workflow reuse."""
+
         class Schema(BaseModel):
             x: int
 
         ctx = _make_context(output_schema={"old": "schema"})
         opts = _make_opts(output_schema=Schema)
-        opts.apply_to_context(ctx, output_schema_provided=True)
+        opts.apply_to_context(ctx)
         assert ctx.output_schema is Schema
 
 
@@ -92,7 +99,10 @@ class TestApplyFallbackWhenNone:
 
 
 class TestExistingContextPreserved:
-    """When *_provided=False and context field is already set, leave it alone."""
+    """When *_provided=False and context field is already set, leave it alone.
+
+    NOTE: output_schema is an exception - it is always set from resolved options.
+    """
 
     def test_dependencies_kept(self):
         ctx = _make_context(dependencies={"keep": "me"})
@@ -112,21 +122,24 @@ class TestExistingContextPreserved:
         opts.apply_to_context(ctx)
         assert ctx.metadata == {"keep": "m"}
 
-    def test_output_schema_kept(self):
+    def test_output_schema_always_overwritten(self):
+        """Agent always overwrites output_schema for workflow reuse."""
+
         class Existing(BaseModel):
             a: int
 
-        class Ignored(BaseModel):
+        class NewSchema(BaseModel):
             b: int
 
         ctx = _make_context(output_schema=Existing)
-        opts = _make_opts(output_schema=Ignored)
+        opts = _make_opts(output_schema=NewSchema)
         opts.apply_to_context(ctx)
-        assert ctx.output_schema is Existing
+        # Agent always sets output_schema from opts, even if context had one
+        assert ctx.output_schema is NewSchema
 
 
 class TestAllFieldsTogether:
-    """Apply all four fields simultaneously."""
+    """Apply all fields simultaneously."""
 
     def test_mixed_provided_and_fallback(self):
         ctx = _make_context(
@@ -146,7 +159,6 @@ class TestAllFieldsTogether:
             dependencies_provided=True,
             knowledge_filters_provided=False,
             metadata_provided=False,
-            output_schema_provided=False,
         )
         # dependencies: provided=True, so overwritten
         assert ctx.dependencies == {"new": "d"}
@@ -154,5 +166,5 @@ class TestAllFieldsTogether:
         assert ctx.knowledge_filters == {"existing": "f"}
         # metadata: provided=False, was None, filled from opts
         assert ctx.metadata == {"new": "m"}
-        # output_schema: provided=False, existing not None, kept
-        assert ctx.output_schema == {"existing": "schema"}
+        # output_schema: always set from opts (agent behavior for workflow reuse)
+        assert ctx.output_schema is None

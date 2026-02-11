@@ -14,6 +14,7 @@ from agno.os.routers.schedules.schema import (
     ScheduleStateResponse,
     ScheduleUpdate,
 )
+from agno.os.schema import PaginatedResponse, PaginationInfo
 from agno.utils.log import log_info
 
 # Valid DB method names that _db_call can invoke
@@ -73,14 +74,24 @@ def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
     # Endpoints
     # ------------------------------------------------------------------
 
-    @router.get("/schedules", response_model=List[ScheduleResponse])
+    @router.get("/schedules", response_model=PaginatedResponse[ScheduleResponse])
     async def list_schedules(
         enabled: Optional[bool] = Query(None),
         limit: int = Query(100, ge=1, le=1000),
-        offset: int = Query(0, ge=0),
+        page: int = Query(1, ge=1),
         _: bool = Depends(auth_dependency),
-    ) -> List[Dict[str, Any]]:
-        return await _db_call("get_schedules", enabled=enabled, limit=limit, offset=offset)
+    ) -> PaginatedResponse[ScheduleResponse]:
+        schedules, total_count = await _db_call("get_schedules", enabled=enabled, limit=limit, page=page)
+        total_pages = (total_count + limit - 1) // limit if total_count > 0 else 0
+        return PaginatedResponse(
+            data=schedules,
+            meta=PaginationInfo(
+                page=page,
+                limit=limit,
+                total_pages=total_pages,
+                total_count=total_count,
+            ),
+        )
 
     @router.post("/schedules", response_model=ScheduleResponse, status_code=201)
     async def create_schedule(
@@ -244,17 +255,27 @@ def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
 
         raise HTTPException(status_code=503, detail="Scheduler is not running")
 
-    @router.get("/schedules/{schedule_id}/runs", response_model=List[ScheduleRunResponse])
+    @router.get("/schedules/{schedule_id}/runs", response_model=PaginatedResponse[ScheduleRunResponse])
     async def list_schedule_runs(
         schedule_id: str,
         limit: int = Query(100, ge=1, le=1000),
-        offset: int = Query(0, ge=0),
+        page: int = Query(1, ge=1),
         _: bool = Depends(auth_dependency),
-    ) -> List[Dict[str, Any]]:
+    ) -> PaginatedResponse[ScheduleRunResponse]:
         existing = await _db_call("get_schedule", schedule_id)
         if existing is None:
             raise HTTPException(status_code=404, detail="Schedule not found")
-        return await _db_call("get_schedule_runs", schedule_id, limit=limit, offset=offset)
+        runs, total_count = await _db_call("get_schedule_runs", schedule_id, limit=limit, page=page)
+        total_pages = (total_count + limit - 1) // limit if total_count > 0 else 0
+        return PaginatedResponse(
+            data=runs,
+            meta=PaginationInfo(
+                page=page,
+                limit=limit,
+                total_pages=total_pages,
+                total_count=total_count,
+            ),
+        )
 
     @router.get("/schedules/{schedule_id}/runs/{run_id}", response_model=ScheduleRunResponse)
     async def get_schedule_run(

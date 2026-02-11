@@ -105,16 +105,6 @@ def get_approval_router(os_db: Any, settings: Any) -> APIRouter:
         body: ApprovalResolve,
         _: bool = Depends(auth_dependency),
     ) -> Dict[str, Any]:
-        # Check that the approval exists and is pending
-        existing = await _db_call("get_approval", approval_id)
-        if existing is None:
-            raise HTTPException(status_code=404, detail="Approval not found")
-        if existing.get("status") != "pending":
-            raise HTTPException(
-                status_code=409,
-                detail=f"Approval is already '{existing.get('status')}' and cannot be resolved",
-            )
-
         now = int(time.time())
         update_kwargs: Dict[str, Any] = {
             "status": body.status,
@@ -130,9 +120,13 @@ def get_approval_router(os_db: Any, settings: Any) -> APIRouter:
             **update_kwargs,
         )
         if result is None:
+            # Either the approval doesn't exist or it was already resolved
+            existing = await _db_call("get_approval", approval_id)
+            if existing is None:
+                raise HTTPException(status_code=404, detail="Approval not found")
             raise HTTPException(
                 status_code=409,
-                detail="Approval was already resolved by another request",
+                detail=f"Approval is already '{existing.get('status')}' and cannot be resolved",
             )
         return result
 

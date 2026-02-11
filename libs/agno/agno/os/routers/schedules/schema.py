@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$")
+_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9 ._-]*$")
 
 
 class ScheduleCreate(BaseModel):
@@ -24,7 +24,7 @@ class ScheduleCreate(BaseModel):
     @classmethod
     def validate_name(cls, v: str) -> str:
         if not _NAME_PATTERN.match(v):
-            raise ValueError("Name must start with alphanumeric and contain only alphanumeric, '.', '_', '-'")
+            raise ValueError("Name must start with alphanumeric and contain only alphanumeric, spaces, '.', '_', '-'")
         return v
 
     @field_validator("method")
@@ -61,7 +61,7 @@ class ScheduleUpdate(BaseModel):
     @classmethod
     def validate_name(cls, v: Optional[str]) -> Optional[str]:
         if v is not None and not _NAME_PATTERN.match(v):
-            raise ValueError("Name must start with alphanumeric and contain only alphanumeric, '.', '_', '-'")
+            raise ValueError("Name must start with alphanumeric and contain only alphanumeric, spaces, '.', '_', '-'")
         return v
 
     @field_validator("method")
