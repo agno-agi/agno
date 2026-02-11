@@ -54,6 +54,15 @@ def should_run_hook_in_background(hook: Callable[..., Any]) -> bool:
     return getattr(hook, HOOK_RUN_IN_BACKGROUND_ATTR, False)
 
 
+def is_guardrail_hook(hook: Callable[..., Any]) -> bool:
+    """Check if a hook was derived from a BaseGuardrail instance.
+
+    Guardrails are converted to bound methods (.check/.async_check) by normalize_pre_hooks().
+    They must always run synchronously so InputCheckError/OutputCheckError can propagate.
+    """
+    return hasattr(hook, "__self__") and isinstance(hook.__self__, BaseGuardrail)
+
+
 def normalize_pre_hooks(
     hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, BaseEval]]],
     async_mode: bool = False,

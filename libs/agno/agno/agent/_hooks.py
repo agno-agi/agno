@@ -30,6 +30,7 @@ from agno.utils.events import (
 from agno.utils.hooks import (
     copy_args_for_background,
     filter_hook_args,
+    is_guardrail_hook,
     should_run_hook_in_background,
 )
 from agno.utils.log import (
@@ -64,24 +65,25 @@ def execute_pre_hooks(
         "agent": agent,
         "session": session,
         "user_id": user_id,
-        "debug_mode": debug_mode or agent.debug_mode,
+        "debug_mode": debug_mode if debug_mode is not None else agent.debug_mode,
+        "metadata": run_context.metadata if run_context else None,
     }
+
+    all_args.update(kwargs)
 
     # Check if background_tasks is available and ALL hooks should run in background
     # Note: Pre-hooks running in background may not be able to modify run_input
     if agent._run_hooks_in_background is True and background_tasks is not None:
-        # Schedule ALL pre_hooks as background tasks
-        # Copy args to prevent race conditions
         bg_args = copy_args_for_background(all_args)
         for hook in hooks:
-            # Filter arguments to only include those that the hook accepts
-            filtered_args = filter_hook_args(hook, bg_args)
-
-            # Add to background tasks
-            background_tasks.add_task(hook, **filtered_args)
+            if is_guardrail_hook(hook):
+                # Guardrails must run synchronously to propagate InputCheckError
+                filtered_args = filter_hook_args(hook, all_args)
+                hook(**filtered_args)
+            else:
+                filtered_args = filter_hook_args(hook, bg_args)
+                background_tasks.add_task(hook, **filtered_args)
         return
-
-    all_args.update(kwargs)
 
     for i, hook in enumerate(hooks):
         # Check if this specific hook should run in background (via @hook decorator)
@@ -165,24 +167,28 @@ async def aexecute_pre_hooks(
         "session": session,
         "run_context": run_context,
         "user_id": user_id,
-        "debug_mode": debug_mode or agent.debug_mode,
+        "debug_mode": debug_mode if debug_mode is not None else agent.debug_mode,
+        "metadata": run_context.metadata if run_context else None,
     }
+
+    all_args.update(kwargs)
 
     # Check if background_tasks is available and ALL hooks should run in background
     # Note: Pre-hooks running in background may not be able to modify run_input
     if agent._run_hooks_in_background is True and background_tasks is not None:
-        # Schedule ALL pre_hooks as background tasks
-        # Copy args to prevent race conditions
         bg_args = copy_args_for_background(all_args)
         for hook in hooks:
-            # Filter arguments to only include those that the hook accepts
-            filtered_args = filter_hook_args(hook, bg_args)
-
-            # Add to background tasks (both sync and async hooks supported)
-            background_tasks.add_task(hook, **filtered_args)
+            if is_guardrail_hook(hook):
+                # Guardrails must run synchronously to propagate InputCheckError
+                filtered_args = filter_hook_args(hook, all_args)
+                if iscoroutinefunction(hook):
+                    await hook(**filtered_args)
+                else:
+                    hook(**filtered_args)
+            else:
+                filtered_args = filter_hook_args(hook, bg_args)
+                background_tasks.add_task(hook, **filtered_args)
         return
-
-    all_args.update(kwargs)
 
     for i, hook in enumerate(hooks):
         # Check if this specific hook should run in background (via @hook decorator)
@@ -264,23 +270,19 @@ def execute_post_hooks(
         "session": session,
         "user_id": user_id,
         "run_context": run_context,
-        "debug_mode": debug_mode or agent.debug_mode,
+        "debug_mode": debug_mode if debug_mode is not None else agent.debug_mode,
+        "metadata": run_context.metadata if run_context else None,
     }
+
+    all_args.update(kwargs)
 
     # Check if background_tasks is available and ALL hooks should run in background
     if agent._run_hooks_in_background is True and background_tasks is not None:
-        # Schedule ALL post_hooks as background tasks
-        # Copy args to prevent race conditions
         bg_args = copy_args_for_background(all_args)
         for hook in hooks:
-            # Filter arguments to only include those that the hook accepts
             filtered_args = filter_hook_args(hook, bg_args)
-
-            # Add to background tasks
             background_tasks.add_task(hook, **filtered_args)
         return
-
-    all_args.update(kwargs)
 
     for i, hook in enumerate(hooks):
         # Check if this specific hook should run in background (via @hook decorator)
@@ -358,21 +360,19 @@ async def aexecute_post_hooks(
         "session": session,
         "run_context": run_context,
         "user_id": user_id,
-        "debug_mode": debug_mode or agent.debug_mode,
+        "debug_mode": debug_mode if debug_mode is not None else agent.debug_mode,
+        "metadata": run_context.metadata if run_context else None,
     }
-    # Check if background_tasks is available and ALL hooks should run in background
-    if agent._run_hooks_in_background is True and background_tasks is not None:
-        # Copy args to prevent race conditions
-        bg_args = copy_args_for_background(all_args)
-        for hook in hooks:
-            # Filter arguments to only include those that the hook accepts
-            filtered_args = filter_hook_args(hook, bg_args)
-
-            # Add to background tasks (both sync and async hooks supported)
-            background_tasks.add_task(hook, **filtered_args)
-        return
 
     all_args.update(kwargs)
+
+    # Check if background_tasks is available and ALL hooks should run in background
+    if agent._run_hooks_in_background is True and background_tasks is not None:
+        bg_args = copy_args_for_background(all_args)
+        for hook in hooks:
+            filtered_args = filter_hook_args(hook, bg_args)
+            background_tasks.add_task(hook, **filtered_args)
+        return
 
     for i, hook in enumerate(hooks):
         # Check if this specific hook should run in background (via @hook decorator)

@@ -38,7 +38,7 @@ class PIIDetectionGuardrail(BaseGuardrail):
         if enable_credit_card_check:
             self.pii_patterns["Credit Card"] = re.compile(r"\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b")
         if enable_email_check:
-            self.pii_patterns["Email"] = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b")
+            self.pii_patterns["Email"] = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
         if enable_phone_check:
             self.pii_patterns["Phone"] = re.compile(r"\b\d{3}[\s.-]?\d{3}[\s.-]?\d{4}\b")
 
@@ -60,7 +60,13 @@ class PIIDetectionGuardrail(BaseGuardrail):
                         return "*" * len(match.group(0))
 
                     content = self.pii_patterns[pii_type].sub(mask_match, content)
-                run_input.input_content = content
+                if isinstance(run_input.input_content, str):
+                    run_input.input_content = content
+                else:
+                    from agno.utils.log import log_warning
+
+                    log_warning("PII masking applied but original input was not a string; masked content set as string")
+                    run_input.input_content = content
                 return
             else:
                 raise InputCheckError(
@@ -84,7 +90,13 @@ class PIIDetectionGuardrail(BaseGuardrail):
                         return "*" * len(match.group(0))
 
                     content = self.pii_patterns[pii_type].sub(mask_match, content)
-                run_input.input_content = content
+                if isinstance(run_input.input_content, str):
+                    run_input.input_content = content
+                else:
+                    from agno.utils.log import log_warning
+
+                    log_warning("PII masking applied but original input was not a string; masked content set as string")
+                    run_input.input_content = content
                 return
             else:
                 raise InputCheckError(
