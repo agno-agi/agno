@@ -249,7 +249,7 @@ class TeamResponse(BaseModel):
             _team_model_data["provider"] = team.model.provider
 
         members: List[Union[AgentResponse, TeamResponse]] = []
-        for member in team.members:
+        for member in team.members if isinstance(team.members, list) else []:
             if isinstance(member, Agent):
                 agent_response = await AgentResponse.from_agent(member)
                 members.append(agent_response)

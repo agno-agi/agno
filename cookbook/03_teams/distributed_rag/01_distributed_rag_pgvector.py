@@ -1,33 +1,22 @@
 """
-This example demonstrates how multiple specialized agents coordinate to provide
-comprehensive RAG responses using distributed PostgreSQL vector databases with
-pgvector for scalable, production-ready retrieval.
+Distributed RAG With PgVector
+=============================
 
-Team Composition:
-- Vector Retriever: Specialized in vector similarity search using pgvector
-- Hybrid Searcher: Combines vector and text search for comprehensive results
-- Data Validator: Validates retrieved data quality and relevance
-- Response Composer: Composes final responses with proper source attribution
-
-Setup:
-1. Run: `./cookbook/run_pgvector.sh` to start a postgres container with pgvector
-2. Run: `uv pip install openai sqlalchemy 'psycopg[binary]' pgvector agno`
-3. Run this script to see distributed PgVector RAG in action
+Demonstrates distributed team-based RAG using PostgreSQL + pgvector.
 """
-
-import asyncio  # noqa: F401
 
 from agno.agent import Agent
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIChat
-from agno.team.team import Team
+from agno.team import Team
 from agno.vectordb.pgvector import PgVector, SearchType
 
-# Database connection URL
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
-# Vector-focused knowledge base for similarity search
 vector_knowledge = Knowledge(
     vector_db=PgVector(
         table_name="recipes_vector",
@@ -37,7 +26,6 @@ vector_knowledge = Knowledge(
     ),
 )
 
-# Hybrid knowledge base for comprehensive search
 hybrid_knowledge = Knowledge(
     vector_db=PgVector(
         table_name="recipes_hybrid",
@@ -47,7 +35,9 @@ hybrid_knowledge = Knowledge(
     ),
 )
 
-# Vector Retriever Agent - Specialized in vector similarity search
+# ---------------------------------------------------------------------------
+# Create Members
+# ---------------------------------------------------------------------------
 vector_retriever = Agent(
     name="Vector Retriever",
     model=OpenAIChat(id="o3-mini"),
@@ -63,7 +53,6 @@ vector_retriever = Agent(
     markdown=True,
 )
 
-# Hybrid Searcher Agent - Specialized in hybrid search
 hybrid_searcher = Agent(
     name="Hybrid Searcher",
     model=OpenAIChat(id="o3-mini"),
@@ -79,7 +68,6 @@ hybrid_searcher = Agent(
     markdown=True,
 )
 
-# Data Validator Agent - Specialized in data quality validation
 data_validator = Agent(
     name="Data Validator",
     model=OpenAIChat(id="o3-mini"),
@@ -94,7 +82,6 @@ data_validator = Agent(
     markdown=True,
 )
 
-# Response Composer Agent - Specialized in response composition
 response_composer = Agent(
     name="Response Composer",
     model=OpenAIChat(id="o3-mini"),
@@ -109,7 +96,9 @@ response_composer = Agent(
     markdown=True,
 )
 
-# Create distributed PgVector RAG team
+# ---------------------------------------------------------------------------
+# Create Team
+# ---------------------------------------------------------------------------
 distributed_pgvector_team = Team(
     name="Distributed PgVector RAG Team",
     model=OpenAIChat(id="o3-mini"),
@@ -128,7 +117,10 @@ distributed_pgvector_team = Team(
 )
 
 
-async def async_pgvector_rag_demo():
+# ---------------------------------------------------------------------------
+# Run Team
+# ---------------------------------------------------------------------------
+async def async_pgvector_rag_demo() -> None:
     """Demonstrate async distributed PgVector RAG processing."""
     print("Async Distributed PgVector RAG Demo")
     print("=" * 40)
@@ -136,14 +128,12 @@ async def async_pgvector_rag_demo():
     query = "How do I make chicken and galangal in coconut milk soup? What are the key ingredients and techniques?"
 
     try:
-        # Add content to knowledge bases
         await vector_knowledge.ainsert_many(
             url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
         )
         await hybrid_knowledge.ainsert_many(
             url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
         )
-        # Run async distributed PgVector RAG
         await distributed_pgvector_team.aprint_response(input=query)
     except Exception as e:
         print(f"Error: {e}")
@@ -151,7 +141,7 @@ async def async_pgvector_rag_demo():
         print("   Run: ./cookbook/run_pgvector.sh")
 
 
-def sync_pgvector_rag_demo():
+def sync_pgvector_rag_demo() -> None:
     """Demonstrate sync distributed PgVector RAG processing."""
     print("Distributed PgVector RAG Demo")
     print("=" * 35)
@@ -159,14 +149,12 @@ def sync_pgvector_rag_demo():
     query = "How do I make chicken and galangal in coconut milk soup? What are the key ingredients and techniques?"
 
     try:
-        # Add content to knowledge bases
         vector_knowledge.insert_many(
             url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
         )
         hybrid_knowledge.insert_many(
             url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
         )
-        # Run distributed PgVector RAG
         distributed_pgvector_team.print_response(input=query)
     except Exception as e:
         print(f"Error: {e}")
@@ -174,7 +162,7 @@ def sync_pgvector_rag_demo():
         print("   Run: ./cookbook/run_pgvector.sh")
 
 
-def complex_query_demo():
+def complex_query_demo() -> None:
     """Demonstrate distributed RAG for complex culinary queries."""
     print("Complex Culinary Query with Distributed PgVector RAG")
     print("=" * 60)
@@ -187,7 +175,6 @@ def complex_query_demo():
     - Any dietary considerations or alternatives"""
 
     try:
-        # Add content to knowledge bases
         vector_knowledge.insert_many(
             url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
         )

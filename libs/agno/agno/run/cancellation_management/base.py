@@ -23,8 +23,12 @@ class BaseRunCancellationManager(ABC):
     def cancel_run(self, run_id: str) -> bool:
         """Cancel a run by marking it as cancelled.
 
+        Always stores cancellation intent, even for runs not yet registered
+        (cancel-before-start support for background runs).
+
         Returns:
-            bool: True if run was found and cancelled, False if run not found.
+            bool: True if run was previously registered, False if storing
+            cancellation intent for an unregistered run.
         """
         pass
 
@@ -32,8 +36,12 @@ class BaseRunCancellationManager(ABC):
     async def acancel_run(self, run_id: str) -> bool:
         """Cancel a run by marking it as cancelled (async version).
 
+        Always stores cancellation intent, even for runs not yet registered
+        (cancel-before-start support for background runs).
+
         Returns:
-            bool: True if run was found and cancelled, False if run not found.
+            bool: True if run was previously registered, False if storing
+            cancellation intent for an unregistered run.
         """
         pass
 

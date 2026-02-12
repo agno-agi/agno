@@ -32,7 +32,7 @@ from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
 
 try:
-    from sqlalchemy import Column, MetaData, String, Table, func, select, text
+    from sqlalchemy import Column, MetaData, String, Table, func, or_, select, text
     from sqlalchemy.dialects import sqlite
     from sqlalchemy.engine import Engine, create_engine
     from sqlalchemy.orm import scoped_session, sessionmaker
@@ -60,6 +60,9 @@ class SqliteDb(BaseDb):
         component_configs_table: Optional[str] = None,
         component_links_table: Optional[str] = None,
         learnings_table: Optional[str] = None,
+        schedules_table: Optional[str] = None,
+        schedule_runs_table: Optional[str] = None,
+        approvals_table: Optional[str] = None,
         id: Optional[str] = None,
     ):
         """
@@ -88,6 +91,8 @@ class SqliteDb(BaseDb):
             component_configs_table (Optional[str]): Name of the table to store component configurations.
             component_links_table (Optional[str]): Name of the table to store component links.
             learnings_table (Optional[str]): Name of the table to store learning records.
+            schedules_table (Optional[str]): Name of the table to store cron schedules.
+            schedule_runs_table (Optional[str]): Name of the table to store schedule run history.
             id (Optional[str]): ID of the database.
 
         Raises:
@@ -112,6 +117,9 @@ class SqliteDb(BaseDb):
             component_configs_table=component_configs_table,
             component_links_table=component_links_table,
             learnings_table=learnings_table,
+            schedules_table=schedules_table,
+            schedule_runs_table=schedule_runs_table,
+            approvals_table=approvals_table,
         )
 
         _engine: Optional[Engine] = db_engine
@@ -236,6 +244,9 @@ class SqliteDb(BaseDb):
             (self.component_configs_table_name, "component_configs"),
             (self.component_links_table_name, "component_links"),
             (self.learnings_table_name, "learnings"),
+            (self.schedules_table_name, "schedules"),
+            (self.schedule_runs_table_name, "schedule_runs"),
+            (self.approvals_table_name, "approvals"),
         ]
 
         for table_name, table_type in tables_to_create:
@@ -261,8 +272,12 @@ class SqliteDb(BaseDb):
         try:
             from sqlalchemy.schema import ForeignKeyConstraint, PrimaryKeyConstraint
 
-            # Pass traces_table_name for spans table foreign key resolution
-            table_schema = get_table_schema_definition(table_type, traces_table_name=self.trace_table_name).copy()
+            # Pass table names for foreign key resolution
+            table_schema = get_table_schema_definition(
+                table_type,
+                traces_table_name=self.trace_table_name,
+                schedules_table_name=self.schedules_table_name,
+            ).copy()
 
             columns: List[Column] = []
             indexes: List[str] = []
@@ -271,6 +286,7 @@ class SqliteDb(BaseDb):
             schema_unique_constraints = table_schema.pop("_unique_constraints", [])
             schema_primary_key = table_schema.pop("__primary_key__", None)
             schema_foreign_keys = table_schema.pop("__foreign_keys__", [])
+            schema_composite_indexes = table_schema.pop("__composite_indexes__", [])
 
             # Build columns
             for col_name, col_config in table_schema.items():
@@ -296,7 +312,10 @@ class SqliteDb(BaseDb):
                 # Single-column FK
                 if "foreign_key" in col_config:
                     fk_ref = self._resolve_fk_reference(col_config["foreign_key"])
-                    column_args.append(ForeignKey(fk_ref))
+                    fk_kwargs: Dict[str, Any] = {}
+                    if "ondelete" in col_config:
+                        fk_kwargs["ondelete"] = col_config["ondelete"]
+                    column_args.append(ForeignKey(fk_ref, **fk_kwargs))
 
                 columns.append(Column(*column_args, **column_kwargs))  # type: ignore
 
@@ -357,6 +376,12 @@ class SqliteDb(BaseDb):
                     raise ValueError(f"Index references missing column in {table_name}: {idx_col}")
                 idx_name = f"idx_{table_name}_{idx_col}"
                 Index(idx_name, table.c[idx_col])  # Correct way; do NOT append as constraint
+
+            # Composite indexes
+            for idx_config in schema_composite_indexes:
+                idx_name = f"idx_{table_name}_{'_'.join(idx_config['columns'])}"
+                idx_cols = [table.c[c] for c in idx_config["columns"]]
+                Index(idx_name, *idx_cols)
 
             # Create table
             table_created = False
@@ -551,6 +576,30 @@ class SqliteDb(BaseDb):
             )
             return self.learnings_table
 
+        elif table_type == "schedules":
+            self.schedules_table = self._get_or_create_table(
+                table_name=self.schedules_table_name,
+                table_type="schedules",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.schedules_table
+
+        elif table_type == "schedule_runs":
+            self.schedule_runs_table = self._get_or_create_table(
+                table_name=self.schedule_runs_table_name,
+                table_type="schedule_runs",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.schedule_runs_table
+
+        elif table_type == "approvals":
+            self.approvals_table = self._get_or_create_table(
+                table_name=self.approvals_table_name,
+                table_type="approvals",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.approvals_table
+
         else:
             raise ValueError(f"Unknown table type: '{table_type}'")
 
@@ -628,12 +677,13 @@ class SqliteDb(BaseDb):
 
     # -- Session methods --
 
-    def delete_session(self, session_id: str) -> bool:
+    def delete_session(self, session_id: str, user_id: Optional[str] = None) -> bool:
         """
         Delete a session from the database.
 
         Args:
             session_id (str): ID of the session to delete
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
 
         Raises:
             Exception: If an error occurs during deletion.
@@ -645,9 +695,11 @@ class SqliteDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.session_id == session_id)
+                if user_id is not None:
+                    delete_stmt = delete_stmt.where(table.c.user_id == user_id)
                 result = sess.execute(delete_stmt)
                 if result.rowcount == 0:
-                    log_debug(f"No session found to deletewith session_id: {session_id}")
+                    log_debug(f"No session found to delete with session_id: {session_id}")
                     return False
                 else:
                     log_debug(f"Successfully deleted session with session_id: {session_id}")
@@ -657,12 +709,13 @@ class SqliteDb(BaseDb):
             log_error(f"Error deleting session: {e}")
             raise e
 
-    def delete_sessions(self, session_ids: List[str]) -> None:
+    def delete_sessions(self, session_ids: List[str], user_id: Optional[str] = None) -> None:
         """Delete all given sessions from the database.
         Can handle multiple session types in the same run.
 
         Args:
             session_ids (List[str]): The IDs of the sessions to delete.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
 
         Raises:
             Exception: If an error occurs during deletion.
@@ -674,6 +727,8 @@ class SqliteDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.session_id.in_(session_ids))
+                if user_id is not None:
+                    delete_stmt = delete_stmt.where(table.c.user_id == user_id)
                 result = sess.execute(delete_stmt)
 
             log_debug(f"Successfully deleted {result.rowcount} sessions")
@@ -845,6 +900,7 @@ class SqliteDb(BaseDb):
         session_id: str,
         session_type: SessionType,
         session_name: str,
+        user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         """
@@ -854,6 +910,7 @@ class SqliteDb(BaseDb):
             session_id (str): The ID of the session to rename.
             session_type (SessionType): The type of session to rename.
             session_name (str): The new name for the session.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
             deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
 
         Returns:
@@ -867,7 +924,7 @@ class SqliteDb(BaseDb):
         try:
             # Get the current session as a deserialized object
             # Get the session record
-            session = self.get_session(session_id, session_type, deserialize=True)
+            session = self.get_session(session_id, session_type, user_id=user_id, deserialize=True)
             if session is None:
                 return None
 
@@ -936,6 +993,7 @@ class SqliteDb(BaseDb):
                             metadata=serialized_session.get("metadata"),
                             updated_at=int(time.time()),
                         ),
+                        where=(table.c.user_id == serialized_session.get("user_id")) | (table.c.user_id.is_(None)),
                     )
                     stmt = stmt.returning(*table.columns)  # type: ignore
                     result = sess.execute(stmt)
@@ -974,6 +1032,7 @@ class SqliteDb(BaseDb):
                             metadata=serialized_session.get("metadata"),
                             updated_at=int(time.time()),
                         ),
+                        where=(table.c.user_id == serialized_session.get("user_id")) | (table.c.user_id.is_(None)),
                     )
                     stmt = stmt.returning(*table.columns)  # type: ignore
                     result = sess.execute(stmt)
@@ -1011,6 +1070,7 @@ class SqliteDb(BaseDb):
                             metadata=serialized_session.get("metadata"),
                             updated_at=int(time.time()),
                         ),
+                        where=(table.c.user_id == serialized_session.get("user_id")) | (table.c.user_id.is_(None)),
                     )
                     stmt = stmt.returning(*table.columns)  # type: ignore
                     result = sess.execute(stmt)
@@ -1986,6 +2046,7 @@ class SqliteDb(BaseDb):
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
+        linked_to: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
         """Get all knowledge contents from the database.
 
@@ -1994,6 +2055,7 @@ class SqliteDb(BaseDb):
             page (Optional[int]): The page number.
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
+            linked_to (Optional[str]): Filter by linked_to value (knowledge instance name).
 
         Returns:
             Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
@@ -2008,6 +2070,10 @@ class SqliteDb(BaseDb):
         try:
             with self.Session() as sess, sess.begin():
                 stmt = select(table)
+
+                # Apply linked_to filter if provided
+                if linked_to is not None:
+                    stmt = stmt.where(table.c.linked_to == linked_to)
 
                 # Apply sorting
                 if sort_by is not None:
@@ -2590,7 +2656,7 @@ class SqliteDb(BaseDb):
                     base_stmt = base_stmt.where(table.c.run_id == run_id)
                 if session_id:
                     base_stmt = base_stmt.where(table.c.session_id == session_id)
-                if user_id:
+                if user_id is not None:
                     base_stmt = base_stmt.where(table.c.user_id == user_id)
                 if agent_id:
                     base_stmt = base_stmt.where(table.c.agent_id == agent_id)
@@ -2678,7 +2744,7 @@ class SqliteDb(BaseDb):
                 )
 
                 # Apply filters
-                if user_id:
+                if user_id is not None:
                     base_stmt = base_stmt.where(table.c.user_id == user_id)
                 if workflow_id:
                     base_stmt = base_stmt.where(table.c.workflow_id == workflow_id)
@@ -3171,6 +3237,7 @@ class SqliteDb(BaseDb):
         component_type: Optional[ComponentType] = None,
         name: Optional[str] = None,
         description: Optional[str] = None,
+        current_version: Optional[int] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Create or update a component.
@@ -3180,6 +3247,7 @@ class SqliteDb(BaseDb):
             component_type: Type (agent|team|workflow). Required for create, optional for update.
             name: Display name.
             description: Optional description.
+            current_version: Optional current version.
             metadata: Optional metadata dict.
 
         Returns:
@@ -3245,6 +3313,8 @@ class SqliteDb(BaseDb):
                         updates["name"] = name
                     if description is not None:
                         updates["description"] = description
+                    if current_version is not None:
+                        updates["current_version"] = current_version
                     if metadata is not None:
                         updates["metadata"] = metadata
 
@@ -3790,10 +3860,6 @@ class SqliteDb(BaseDb):
 
                 if config_row is None:
                     return False
-
-                # Cannot delete published configs
-                if config_row.stage == "published":
-                    raise ValueError(f"Cannot delete published config {component_id} v{version}")
 
                 # Check if it's current version
                 current = sess.execute(
@@ -4356,3 +4422,369 @@ class SqliteDb(BaseDb):
         except Exception as e:
             log_debug(f"Error getting learnings: {e}")
             return []
+
+    # -- Schedule methods --
+    def get_schedule(self, schedule_id: str) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="schedules")
+            if table is None:
+                return None
+            with self.Session() as sess:
+                result = sess.execute(select(table).where(table.c.id == schedule_id)).fetchone()
+                return dict(result._mapping) if result else None
+        except Exception as e:
+            log_debug(f"Error getting schedule: {e}")
+            return None
+
+    def get_schedule_by_name(self, name: str) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="schedules")
+            if table is None:
+                return None
+            with self.Session() as sess:
+                result = sess.execute(select(table).where(table.c.name == name)).fetchone()
+                return dict(result._mapping) if result else None
+        except Exception as e:
+            log_debug(f"Error getting schedule by name: {e}")
+            return None
+
+    def get_schedules(
+        self,
+        enabled: Optional[bool] = None,
+        limit: int = 100,
+        page: int = 1,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        try:
+            table = self._get_table(table_type="schedules")
+            if table is None:
+                return [], 0
+            with self.Session() as sess:
+                # Build base query with filters
+                base_query = select(table)
+                if enabled is not None:
+                    base_query = base_query.where(table.c.enabled == enabled)
+
+                # Get total count
+                count_stmt = select(func.count()).select_from(base_query.alias())
+                total_count = sess.execute(count_stmt).scalar() or 0
+
+                # Calculate offset from page
+                offset = (page - 1) * limit
+
+                # Get paginated results
+                stmt = base_query.order_by(table.c.created_at.desc()).limit(limit).offset(offset)
+                results = sess.execute(stmt).fetchall()
+                return [dict(row._mapping) for row in results], total_count
+        except Exception as e:
+            log_debug(f"Error listing schedules: {e}")
+            return [], 0
+
+    def create_schedule(self, schedule_data: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            table = self._get_table(table_type="schedules", create_table_if_not_found=True)
+            if table is None:
+                raise RuntimeError("Failed to get or create schedules table")
+            with self.Session() as sess, sess.begin():
+                sess.execute(table.insert().values(**schedule_data))
+            return schedule_data
+        except Exception as e:
+            log_error(f"Error creating schedule: {e}")
+            raise
+
+    def update_schedule(self, schedule_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="schedules")
+            if table is None:
+                return None
+            kwargs["updated_at"] = int(time.time())
+            with self.Session() as sess, sess.begin():
+                sess.execute(table.update().where(table.c.id == schedule_id).values(**kwargs))
+            return self.get_schedule(schedule_id)
+        except Exception as e:
+            log_debug(f"Error updating schedule: {e}")
+            return None
+
+    def delete_schedule(self, schedule_id: str) -> bool:
+        try:
+            table = self._get_table(table_type="schedules")
+            if table is None:
+                return False
+            runs_table = self._get_table(table_type="schedule_runs")
+            with self.Session() as sess, sess.begin():
+                if runs_table is not None:
+                    sess.execute(runs_table.delete().where(runs_table.c.schedule_id == schedule_id))
+                result = sess.execute(table.delete().where(table.c.id == schedule_id))
+                return result.rowcount > 0
+        except Exception as e:
+            log_debug(f"Error deleting schedule: {e}")
+            return False
+
+    def claim_due_schedule(self, worker_id: str, lock_grace_seconds: int = 300) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="schedules")
+            if table is None:
+                return None
+            now = int(time.time())
+            stale_lock_threshold = now - lock_grace_seconds
+            with self.Session() as sess, sess.begin():
+                # Find a due, enabled schedule that is either unlocked or has a stale lock
+                stmt = (
+                    select(table)
+                    .where(
+                        table.c.enabled == True,  # noqa: E712
+                        table.c.next_run_at <= now,
+                        or_(
+                            table.c.locked_by.is_(None),
+                            table.c.locked_at <= stale_lock_threshold,
+                        ),
+                    )
+                    .order_by(table.c.next_run_at.asc())
+                    .limit(1)
+                )
+                row = sess.execute(stmt).fetchone()
+                if row is None:
+                    return None
+                schedule = dict(row._mapping)
+                # Atomically claim it
+                result = sess.execute(
+                    table.update()
+                    .where(
+                        table.c.id == schedule["id"],
+                        or_(
+                            table.c.locked_by.is_(None),
+                            table.c.locked_at <= stale_lock_threshold,
+                        ),
+                    )
+                    .values(locked_by=worker_id, locked_at=now)
+                )
+                if result.rowcount == 0:
+                    return None
+                schedule["locked_by"] = worker_id
+                schedule["locked_at"] = now
+                return schedule
+        except Exception as e:
+            log_debug(f"Error claiming schedule: {e}")
+            return None
+
+    def release_schedule(self, schedule_id: str, next_run_at: Optional[int] = None) -> bool:
+        try:
+            table = self._get_table(table_type="schedules")
+            if table is None:
+                return False
+            updates: Dict[str, Any] = {"locked_by": None, "locked_at": None, "updated_at": int(time.time())}
+            if next_run_at is not None:
+                updates["next_run_at"] = next_run_at
+            with self.Session() as sess, sess.begin():
+                result = sess.execute(table.update().where(table.c.id == schedule_id).values(**updates))
+                return result.rowcount > 0
+        except Exception as e:
+            log_debug(f"Error releasing schedule: {e}")
+            return False
+
+    def create_schedule_run(self, run_data: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            table = self._get_table(table_type="schedule_runs", create_table_if_not_found=True)
+            if table is None:
+                raise RuntimeError("Failed to get or create schedule_runs table")
+            with self.Session() as sess, sess.begin():
+                sess.execute(table.insert().values(**run_data))
+            return run_data
+        except Exception as e:
+            log_error(f"Error creating schedule run: {e}")
+            raise
+
+    def update_schedule_run(self, schedule_run_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="schedule_runs")
+            if table is None:
+                return None
+            with self.Session() as sess, sess.begin():
+                sess.execute(table.update().where(table.c.id == schedule_run_id).values(**kwargs))
+            return self.get_schedule_run(schedule_run_id)
+        except Exception as e:
+            log_debug(f"Error updating schedule run: {e}")
+            return None
+
+    def get_schedule_run(self, run_id: str) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="schedule_runs")
+            if table is None:
+                return None
+            with self.Session() as sess:
+                result = sess.execute(select(table).where(table.c.id == run_id)).fetchone()
+                return dict(result._mapping) if result else None
+        except Exception as e:
+            log_debug(f"Error getting schedule run: {e}")
+            return None
+
+    def get_schedule_runs(
+        self,
+        schedule_id: str,
+        limit: int = 20,
+        page: int = 1,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        try:
+            table = self._get_table(table_type="schedule_runs")
+            if table is None:
+                return [], 0
+            with self.Session() as sess:
+                # Get total count
+                count_stmt = select(func.count()).select_from(table).where(table.c.schedule_id == schedule_id)
+                total_count = sess.execute(count_stmt).scalar() or 0
+
+                # Calculate offset from page
+                offset = (page - 1) * limit
+
+                # Get paginated results
+                stmt = (
+                    select(table)
+                    .where(table.c.schedule_id == schedule_id)
+                    .order_by(table.c.created_at.desc())
+                    .limit(limit)
+                    .offset(offset)
+                )
+                results = sess.execute(stmt).fetchall()
+                return [dict(row._mapping) for row in results], total_count
+        except Exception as e:
+            log_debug(f"Error getting schedule runs: {e}")
+            return [], 0
+
+    # -- Approval methods --
+
+    def create_approval(self, approval_data: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            table = self._get_table(table_type="approvals", create_table_if_not_found=True)
+            if table is None:
+                raise RuntimeError("Failed to get or create approvals table")
+            data = {**approval_data}
+            now = int(time.time())
+            data.setdefault("created_at", now)
+            data.setdefault("updated_at", now)
+            with self.Session() as sess, sess.begin():
+                sess.execute(table.insert().values(**data))
+            return data
+        except Exception as e:
+            log_error(f"Error creating approval: {e}")
+            raise
+
+    def get_approval(self, approval_id: str) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="approvals")
+            if table is None:
+                return None
+            with self.Session() as sess:
+                result = sess.execute(select(table).where(table.c.id == approval_id)).fetchone()
+                return dict(result._mapping) if result else None
+        except Exception as e:
+            log_debug(f"Error getting approval: {e}")
+            return None
+
+    def get_approvals(
+        self,
+        status: Optional[str] = None,
+        source_type: Optional[str] = None,
+        approval_type: Optional[str] = None,
+        pause_type: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        schedule_id: Optional[str] = None,
+        run_id: Optional[str] = None,
+        limit: int = 100,
+        page: int = 1,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        try:
+            table = self._get_table(table_type="approvals")
+            if table is None:
+                return [], 0
+            with self.Session() as sess:
+                stmt = select(table)
+                count_stmt = select(func.count()).select_from(table)
+                if status is not None:
+                    stmt = stmt.where(table.c.status == status)
+                    count_stmt = count_stmt.where(table.c.status == status)
+                if source_type is not None:
+                    stmt = stmt.where(table.c.source_type == source_type)
+                    count_stmt = count_stmt.where(table.c.source_type == source_type)
+                if approval_type is not None:
+                    stmt = stmt.where(table.c.approval_type == approval_type)
+                    count_stmt = count_stmt.where(table.c.approval_type == approval_type)
+                if pause_type is not None:
+                    stmt = stmt.where(table.c.pause_type == pause_type)
+                    count_stmt = count_stmt.where(table.c.pause_type == pause_type)
+                if agent_id is not None:
+                    stmt = stmt.where(table.c.agent_id == agent_id)
+                    count_stmt = count_stmt.where(table.c.agent_id == agent_id)
+                if team_id is not None:
+                    stmt = stmt.where(table.c.team_id == team_id)
+                    count_stmt = count_stmt.where(table.c.team_id == team_id)
+                if workflow_id is not None:
+                    stmt = stmt.where(table.c.workflow_id == workflow_id)
+                    count_stmt = count_stmt.where(table.c.workflow_id == workflow_id)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                    count_stmt = count_stmt.where(table.c.user_id == user_id)
+                if schedule_id is not None:
+                    stmt = stmt.where(table.c.schedule_id == schedule_id)
+                    count_stmt = count_stmt.where(table.c.schedule_id == schedule_id)
+                if run_id is not None:
+                    stmt = stmt.where(table.c.run_id == run_id)
+                    count_stmt = count_stmt.where(table.c.run_id == run_id)
+                total = sess.execute(count_stmt).scalar() or 0
+
+                # Calculate offset from page
+                offset = (page - 1) * limit
+
+                stmt = stmt.order_by(table.c.created_at.desc()).limit(limit).offset(offset)
+                results = sess.execute(stmt).fetchall()
+                return [dict(row._mapping) for row in results], total
+        except Exception as e:
+            log_debug(f"Error listing approvals: {e}")
+            return [], 0
+
+    def update_approval(
+        self, approval_id: str, expected_status: Optional[str] = None, **kwargs: Any
+    ) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="approvals")
+            if table is None:
+                return None
+            kwargs["updated_at"] = int(time.time())
+            with self.Session() as sess, sess.begin():
+                stmt = table.update().where(table.c.id == approval_id)
+                if expected_status is not None:
+                    stmt = stmt.where(table.c.status == expected_status)
+                result = sess.execute(stmt.values(**kwargs))
+                if result.rowcount == 0:
+                    return None
+            return self.get_approval(approval_id)
+        except Exception as e:
+            log_debug(f"Error updating approval: {e}")
+            return None
+
+    def delete_approval(self, approval_id: str) -> bool:
+        try:
+            table = self._get_table(table_type="approvals")
+            if table is None:
+                return False
+            with self.Session() as sess, sess.begin():
+                result = sess.execute(table.delete().where(table.c.id == approval_id))
+                return result.rowcount > 0
+        except Exception as e:
+            log_debug(f"Error deleting approval: {e}")
+            return False
+
+    def get_pending_approval_count(self, user_id: Optional[str] = None) -> int:
+        try:
+            table = self._get_table(table_type="approvals")
+            if table is None:
+                return 0
+            with self.Session() as sess:
+                stmt = select(func.count()).select_from(table).where(table.c.status == "pending")
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                return sess.execute(stmt).scalar() or 0
+        except Exception as e:
+            log_debug(f"Error counting approvals: {e}")
+            return 0

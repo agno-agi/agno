@@ -1,5 +1,16 @@
+"""
+Openai Agent Flex Tier
+======================
+
+Cookbook example for `openai/chat/agent_flex_tier.py`.
+"""
+
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 agent = Agent(
     model=OpenAIChat(id="o4-mini", service_tier="flex"),
@@ -7,3 +18,10 @@ agent = Agent(
 )
 
 agent.print_response("Share a 2 sentence horror story")
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

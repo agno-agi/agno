@@ -235,12 +235,12 @@ class FirestoreDb(BaseDb):
 
     # -- Session methods --
 
-    def delete_session(self, session_id: str) -> bool:
+    def delete_session(self, session_id: str, user_id: Optional[str] = None) -> bool:
         """Delete a session from the database.
 
         Args:
             session_id (str): The ID of the session to delete.
-            session_type (SessionType): The type of session to delete. Defaults to SessionType.AGENT.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
 
         Returns:
             bool: True if the session was deleted, False otherwise.
@@ -250,7 +250,10 @@ class FirestoreDb(BaseDb):
         """
         try:
             collection_ref = self._get_collection(table_type="sessions")
-            docs = collection_ref.where(filter=FieldFilter("session_id", "==", session_id)).stream()
+            query = collection_ref.where(filter=FieldFilter("session_id", "==", session_id))
+            if user_id is not None:
+                query = query.where(filter=FieldFilter("user_id", "==", user_id))
+            docs = query.stream()
 
             for doc in docs:
                 doc.reference.delete()
@@ -272,11 +275,12 @@ class FirestoreDb(BaseDb):
         """Upsert the schema version into the database."""
         pass
 
-    def delete_sessions(self, session_ids: List[str]) -> None:
+    def delete_sessions(self, session_ids: List[str], user_id: Optional[str] = None) -> None:
         """Delete multiple sessions from the database.
 
         Args:
             session_ids (List[str]): The IDs of the sessions to delete.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
         """
         try:
             collection_ref = self._get_collection(table_type="sessions")
@@ -284,7 +288,10 @@ class FirestoreDb(BaseDb):
 
             deleted_count = 0
             for session_id in session_ids:
-                docs = collection_ref.where(filter=FieldFilter("session_id", "==", session_id)).stream()
+                query = collection_ref.where(filter=FieldFilter("session_id", "==", session_id))
+                if user_id is not None:
+                    query = query.where(filter=FieldFilter("user_id", "==", user_id))
+                docs = query.stream()
                 for doc in docs:
                     batch.delete(doc.reference)
                     deleted_count += 1
@@ -469,7 +476,12 @@ class FirestoreDb(BaseDb):
             raise e
 
     def rename_session(
-        self, session_id: str, session_type: SessionType, session_name: str, deserialize: Optional[bool] = True
+        self,
+        session_id: str,
+        session_type: SessionType,
+        session_name: str,
+        user_id: Optional[str] = None,
+        deserialize: Optional[bool] = True,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         """Rename a session in the database.
 
@@ -477,6 +489,7 @@ class FirestoreDb(BaseDb):
             session_id (str): The ID of the session to rename.
             session_type (SessionType): The type of session to rename.
             session_name (str): The new name of the session.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
             deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
 
         Returns:
@@ -490,7 +503,10 @@ class FirestoreDb(BaseDb):
         try:
             collection_ref = self._get_collection(table_type="sessions")
 
-            docs = collection_ref.where(filter=FieldFilter("session_id", "==", session_id)).stream()
+            query = collection_ref.where(filter=FieldFilter("session_id", "==", session_id))
+            if user_id is not None:
+                query = query.where(filter=FieldFilter("user_id", "==", user_id))
+            docs = query.stream()
             doc_ref = next((doc.reference for doc in docs), None)
 
             if doc_ref is None:
@@ -509,7 +525,7 @@ class FirestoreDb(BaseDb):
             session_data = current_data.get("session_data") if current_data else None
 
             if session_data is None or isinstance(session_data, str):
-                existing_session = self.get_session(session_id, session_type, deserialize=True)
+                existing_session = self.get_session(session_id, session_type, user_id=user_id, deserialize=True)
                 if existing_session is None:
                     return None
                 existing_session = cast(Session, existing_session)
@@ -613,7 +629,17 @@ class FirestoreDb(BaseDb):
             docs = collection_ref.where(filter=FieldFilter("session_id", "==", record["session_id"])).stream()
             doc_ref = next((doc.reference for doc in docs), None)
 
-            if doc_ref is None:
+            if doc_ref is not None:
+                existing_doc = doc_ref.get()
+                if existing_doc.exists:
+                    existing_data = existing_doc.to_dict()
+                    if (
+                        existing_data
+                        and existing_data.get("user_id") is not None
+                        and existing_data.get("user_id") != record.get("user_id")
+                    ):
+                        return None
+            else:
                 # Create new document
                 doc_ref = collection_ref.document()
 
@@ -699,7 +725,7 @@ class FirestoreDb(BaseDb):
             collection_ref = self._get_collection(table_type="memories")
 
             # If user_id is provided, verify the memory belongs to the user before deleting
-            if user_id:
+            if user_id is not None:
                 docs = collection_ref.where(filter=FieldFilter("memory_id", "==", memory_id)).stream()
                 for doc in docs:
                     data = doc.to_dict()
@@ -742,7 +768,7 @@ class FirestoreDb(BaseDb):
             deleted_count = 0
 
             # If user_id is provided, filter memory_ids to only those belonging to the user
-            if user_id:
+            if user_id is not None:
                 for memory_id in memory_ids:
                     docs = collection_ref.where(filter=FieldFilter("memory_id", "==", memory_id)).stream()
                     for doc in docs:
@@ -940,7 +966,7 @@ class FirestoreDb(BaseDb):
         try:
             collection_ref = self._get_collection(table_type="memories")
 
-            if user_id:
+            if user_id is not None:
                 query = collection_ref.where(filter=FieldFilter("user_id", "==", user_id))
             else:
                 query = collection_ref.where(filter=FieldFilter("user_id", "!=", None))
@@ -1518,6 +1544,7 @@ class FirestoreDb(BaseDb):
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
+        linked_to: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
         """Get all knowledge contents from the database.
 
@@ -1526,7 +1553,7 @@ class FirestoreDb(BaseDb):
             page (Optional[int]): The page number.
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
-            create_table_if_not_found (Optional[bool]): Whether to create the table if it doesn't exist.
+            linked_to (Optional[str]): Filter by linked_to value (knowledge instance name).
 
         Returns:
             Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
@@ -1540,6 +1567,10 @@ class FirestoreDb(BaseDb):
                 return [], 0
 
             query = collection_ref
+
+            # Apply linked_to filter if provided
+            if linked_to is not None:
+                query = query.where("linked_to", "==", linked_to)
 
             # Apply sorting
             query = apply_sorting(query, sort_by, sort_order)
@@ -2043,7 +2074,7 @@ class FirestoreDb(BaseDb):
                 query = query.where(filter=FieldFilter("run_id", "==", run_id))
             if session_id:
                 query = query.where(filter=FieldFilter("session_id", "==", session_id))
-            if user_id:
+            if user_id is not None:
                 query = query.where(filter=FieldFilter("user_id", "==", user_id))
             if agent_id:
                 query = query.where(filter=FieldFilter("agent_id", "==", agent_id))
@@ -2126,7 +2157,7 @@ class FirestoreDb(BaseDb):
             query = collection_ref
 
             # Apply filters
-            if user_id:
+            if user_id is not None:
                 query = query.where(filter=FieldFilter("user_id", "==", user_id))
             if agent_id:
                 query = query.where(filter=FieldFilter("agent_id", "==", agent_id))

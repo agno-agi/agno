@@ -27,11 +27,16 @@ from agno.tools.hackernews import HackerNewsTools
 from agno.tools.websearch import WebSearchTools
 from pydantic import BaseModel
 
-# MongoDB connection settings
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
 db_url = "mongodb://mongoadmin:secret@localhost:27017"
 db = MongoDb(db_url=db_url)
 
 
+# ---------------------------------------------------------------------------
+# Create Team
+# ---------------------------------------------------------------------------
 class Article(BaseModel):
     title: str
     summary: str
@@ -70,4 +75,8 @@ hn_team = Team(
     add_member_tools_to_context=False,
 )
 
-hn_team.print_response("Write an article about the top 2 stories on hackernews")
+# ---------------------------------------------------------------------------
+# Run Team
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    hn_team.print_response("Write an article about the top 2 stories on hackernews")

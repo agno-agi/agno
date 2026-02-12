@@ -124,6 +124,10 @@ class Function(BaseModel):
     # If True (and external_execution=True), the function will not produce verbose paused messages (e.g., "I have tools to execute...")
     external_execution_silent: Optional[bool] = None
 
+    # Approval type: "required" (blocking) or "audit" (non-blocking audit trail).
+    # Set via the @approval decorator, not directly via @tool().
+    approval_type: Optional[str] = None
+
     # Caching configuration
     cache_results: bool = False
     cache_dir: Optional[str] = None
@@ -146,7 +150,15 @@ class Function(BaseModel):
     def to_dict(self) -> Dict[str, Any]:
         return self.model_dump(
             exclude_none=True,
-            include={"name", "description", "parameters", "strict", "requires_confirmation", "external_execution"},
+            include={
+                "name",
+                "description",
+                "parameters",
+                "strict",
+                "requires_confirmation",
+                "external_execution",
+                "approval_type",
+            },
         )
 
     @classmethod
@@ -160,6 +172,7 @@ class Function(BaseModel):
             strict=data.get("strict"),
             requires_confirmation=data.get("requires_confirmation", False),
             external_execution=data.get("external_execution", False),
+            approval_type=data.get("approval_type"),
         )
 
     def model_copy(self, *, deep: bool = False) -> "Function":

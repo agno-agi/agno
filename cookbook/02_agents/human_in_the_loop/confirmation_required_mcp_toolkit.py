@@ -42,6 +42,7 @@ agent = Agent(
 async def main():
     async for run_event in agent.arun("What is Agno?", stream=True):
         if run_event.is_paused:
+            # Handle confirmation requirements
             for requirement in run_event.active_requirements:
                 if requirement.needs_confirmation:
                     # Ask for confirmation
@@ -61,17 +62,20 @@ async def main():
                     else:
                         requirement.confirm()
 
-            async for resp in agent.acontinue_run(  # type: ignore
+            # Continue the run after handling all confirmations
+            async for resp in agent.acontinue_run(
                 run_id=run_event.run_id,
                 requirements=run_event.requirements,
                 stream=True,
             ):
-                print(resp.content, end="")
-            else:
+                if resp.content:
+                    print(resp.content, end="")
+        else:
+            # Not paused - print the streaming content
+            if run_event.content:
                 print(run_event.content, end="")
 
-    # Or for simple debug flow
-    # await agent.aprint_response("what is Agno?", stream=True)
+    print()  # Final newline
 
 
 if __name__ == "__main__":

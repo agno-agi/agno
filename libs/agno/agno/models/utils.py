@@ -149,6 +149,11 @@ def _get_model_class(model_id: str, model_provider: str) -> Model:
 
         return Nebius(id=model_id)
 
+    elif model_provider == "neosantara":
+        from agno.models.neosantara import Neosantara
+
+        return Neosantara(id=model_id)
+
     elif model_provider == "nexus":
         from agno.models.nexus import Nexus
 
