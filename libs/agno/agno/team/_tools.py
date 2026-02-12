@@ -124,6 +124,7 @@ def _determine_tools_for_model(
         _get_previous_sessions_messages_function,
         _get_update_user_memory_function,
         _update_session_state_tool,
+        get_add_to_knowledge_function,
     )
     from agno.team._init import _connect_connectable_tools
     from agno.team._messages import _get_user_message
@@ -148,6 +149,7 @@ def _determine_tools_for_model(
 
     _connect_connectable_tools(
         team,
+        resolved_tools=resolved_tools,
     )
 
     # Prepare tools
@@ -206,7 +208,7 @@ def _determine_tools_for_model(
             _tools.extend(knowledge_tools)
 
     if resolved_knowledge is not None and team.update_knowledge:
-        _tools.append(team.add_to_knowledge)
+        _tools.append(get_add_to_knowledge_function(team, run_context=run_context))
 
     from agno.team.mode import TeamMode
 
@@ -492,7 +494,7 @@ def _find_member_by_id(
 
         # If this member is a team, search its members recursively
         if isinstance(member, Team):
-            result = member._find_member_by_id(member_id, run_context=run_context)
+            result = member._find_member_by_id(member_id, run_context=None)
             if result is not None:
                 return result
 
@@ -529,7 +531,7 @@ def _find_member_route_by_id(
             return i, member
 
         if isinstance(member, Team):
-            result = member._find_member_by_id(member_id, run_context=run_context)
+            result = member._find_member_by_id(member_id, run_context=None)
             if result is not None:
                 return i, member
 

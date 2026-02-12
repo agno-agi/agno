@@ -36,6 +36,7 @@ from agno.run.requirement import RunRequirement
 from agno.run.team import TeamRunOutputEvent
 from agno.session import AgentSession
 from agno.tools.function import Function
+from agno.utils.callables import get_resolved_tools
 from agno.utils.events import (
     create_compression_completed_event,
     create_compression_started_event,
@@ -288,6 +289,9 @@ def reason(
 
         reasoning_model = deepcopy(agent.model)
 
+    # Resolve tools from run_context (handles callable factory tools)
+    resolved_tools = get_resolved_tools(agent, run_context)
+
     # Create reasoning manager with config
     manager = ReasoningManager(
         ReasoningConfig(
@@ -295,7 +299,7 @@ def reason(
             reasoning_agent=agent.reasoning_agent,
             min_steps=agent.reasoning_min_steps,
             max_steps=agent.reasoning_max_steps,
-            tools=agent.tools if isinstance(agent.tools, list) else None,
+            tools=resolved_tools,
             tool_call_limit=agent.tool_call_limit,
             use_json_mode=agent.use_json_mode,
             telemetry=agent.telemetry,
@@ -334,6 +338,9 @@ async def areason(
 
         reasoning_model = deepcopy(agent.model)
 
+    # Resolve tools from run_context (handles callable factory tools)
+    resolved_tools = get_resolved_tools(agent, run_context)
+
     # Create reasoning manager with config
     manager = ReasoningManager(
         ReasoningConfig(
@@ -341,7 +348,7 @@ async def areason(
             reasoning_agent=agent.reasoning_agent,
             min_steps=agent.reasoning_min_steps,
             max_steps=agent.reasoning_max_steps,
-            tools=agent.tools if isinstance(agent.tools, list) else None,
+            tools=resolved_tools,
             tool_call_limit=agent.tool_call_limit,
             use_json_mode=agent.use_json_mode,
             telemetry=agent.telemetry,

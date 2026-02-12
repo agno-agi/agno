@@ -25,6 +25,53 @@ from agno.utils.callables import (
 )
 
 # ---------------------------------------------------------------------------
+# Shared helpers for bug-fix tests
+# ---------------------------------------------------------------------------
+
+
+class _ConnectableToolkit:
+    """Simulates a toolkit that requires connect() before use."""
+
+    def __init__(self, name: str = "connectable"):
+        self.name = name
+        self.requires_connect = True
+        self.connected = False
+
+    def connect(self):
+        self.connected = True
+
+    def __call__(self, x: str) -> str:
+        if not self.connected:
+            raise RuntimeError("Tool not connected")
+        return f"{self.name}: {x}"
+
+
+class _InsertableKnowledge:
+    """Mock KnowledgeProtocol that tracks insert() calls."""
+
+    def __init__(self):
+        self.inserted: list = []
+
+    def build_context(self, **kwargs) -> str:
+        return "mock context"
+
+    def get_tools(self, **kwargs):
+        return []
+
+    async def aget_tools(self, **kwargs):
+        return []
+
+    def retrieve(self, query: str, **kwargs):
+        return []
+
+    async def aretrieve(self, query: str, **kwargs):
+        return []
+
+    def insert(self, *, name: str, text_content: str, reader: Any) -> None:
+        self.inserted.append({"name": name, "text_content": text_content})
+
+
+# ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
 
@@ -735,3 +782,126 @@ class TestAgentDeepCopyCallable:
         copied = agent.deep_copy()
         # The factory should be shared by reference (not deep-copied)
         assert copied.tools is agent.tools
+
+
+# ---------------------------------------------------------------------------
+# connect_connectable_tools with factory-resolved tools
+# ---------------------------------------------------------------------------
+
+
+class TestConnectConnectableToolsWithFactory:
+    """connect_connectable_tools accepts resolved_tools parameter
+    to connect tools from factory-resolved lists.
+    """
+
+    def test_connectable_tool_from_factory_connected_with_resolved_tools(self):
+        from agno.agent import _init as agent_init
+
+        connectable = _ConnectableToolkit("db-tool")
+
+        def tools_factory(run_context):
+            return [connectable]
+
+        agent = Agent(name="test", tools=tools_factory)
+
+        rc = _make_run_context(user_id="user1")
+        resolve_callable_tools(agent, rc)
+
+        agent_init.connect_connectable_tools(agent, resolved_tools=rc.tools)
+        assert connectable.connected is True
+
+    def test_connectable_tool_from_static_list_still_works(self):
+        from agno.agent import _init as agent_init
+
+        connectable = _ConnectableToolkit("db-tool")
+        agent = Agent(name="test", tools=[connectable])
+
+        agent_init.connect_connectable_tools(agent)
+        assert connectable.connected is True
+
+    def test_without_resolved_tools_factory_still_skipped(self):
+        from agno.agent import _init as agent_init
+
+        connectable = _ConnectableToolkit("db-tool")
+
+        def tools_factory(run_context):
+            return [connectable]
+
+        agent = Agent(name="test", tools=tools_factory)
+        agent_init.connect_connectable_tools(agent)
+        assert connectable.connected is False
+
+
+# ---------------------------------------------------------------------------
+# get_add_to_knowledge_function with factory knowledge
+# ---------------------------------------------------------------------------
+
+
+class TestAgentAddToKnowledgeWithFactory:
+    """get_add_to_knowledge_function captures run_context in a closure
+    so factory-resolved knowledge is accessible.
+    """
+
+    def test_factory_knowledge_accessible_via_new_function(self):
+        from agno.agent import _default_tools as agent_default_tools
+
+        mock_kb = _InsertableKnowledge()
+
+        def knowledge_factory(run_context):
+            return mock_kb
+
+        agent = Agent(name="test", knowledge=knowledge_factory)
+
+        rc = _make_run_context(user_id="user1")
+        resolve_callable_knowledge(agent, rc)
+
+        func = agent_default_tools.get_add_to_knowledge_function(agent, run_context=rc)
+        result = func.entrypoint(query="test-query", result="test-data")
+        assert "successfully" in result.lower()
+        assert len(mock_kb.inserted) == 1
+
+    def test_old_add_to_knowledge_still_works_with_static_knowledge(self):
+        from agno.agent import _default_tools as agent_default_tools
+
+        mock_kb = _InsertableKnowledge()
+        agent = Agent(name="test", knowledge=mock_kb)
+
+        result = agent_default_tools.add_to_knowledge(agent, query="test", result="data")
+        assert "successfully" in result.lower()
+
+    def test_agent_knowledge_field_unchanged(self):
+        mock_kb = _InsertableKnowledge()
+
+        def knowledge_factory(run_context):
+            return mock_kb
+
+        agent = Agent(name="test", knowledge=knowledge_factory)
+        assert agent.knowledge is knowledge_factory
+
+
+# ---------------------------------------------------------------------------
+# get_resolved_tools used for reasoning with factory tools
+# ---------------------------------------------------------------------------
+
+
+class TestReasoningToolsWithFactory:
+    """get_resolved_tools returns factory-resolved tools for reasoning."""
+
+    def test_resolved_tools_returned_for_factory(self):
+        def tools_factory(run_context):
+            return [_dummy_tool]
+
+        agent = Agent(name="test", tools=tools_factory)
+
+        rc = _make_run_context(user_id="user1")
+        resolve_callable_tools(agent, rc)
+
+        result = get_resolved_tools(agent, rc)
+        assert result == [_dummy_tool]
+
+    def test_resolved_tools_returned_for_static_list(self):
+        agent = Agent(name="test", tools=[_dummy_tool])
+
+        rc = _make_run_context(user_id="user1")
+        result = get_resolved_tools(agent, rc)
+        assert result == [_dummy_tool]
