@@ -94,6 +94,7 @@ mistral = ["mistralai"]
 ollama = ["ollama"]
 openai = ["openai"]
 portkey = ["portkey-ai"]
+copilot = ["github-copilot-sdk"]
 
 # Dependencies for Token Counting
 tokenizers = ["tiktoken", "tokenizers"]
