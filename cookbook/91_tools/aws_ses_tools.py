@@ -48,6 +48,11 @@ from agno.models.openai import OpenAIChat
 from agno.tools.aws_ses import AWSSESTool
 from agno.tools.websearch import WebSearchTools
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
+
 # Configure email settings
 sender_email = "coolmusta@gmail.com"  # Your verified SES email
 sender_name = "AI Research Updates"
@@ -81,16 +86,21 @@ agent = Agent(
 )
 
 # Example 1: Send an email
-agent.print_response(
-    "Research AI developments in healthcare from the past week with a focus on practical applications in clinical settings. Send the summary via email to mustafa@agno.com"
-)
 
-"""
-Troubleshooting:
-- If emails aren't sending, check:
-  * Both sender and recipient are verified (in sandbox mode)
-  * AWS credentials are correctly configured
-  * You're within sending limits
-  * Your IAM user has correct SES permissions
-- Use SES Console's 'Send Test Email' feature to verify setup
-"""
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    agent.print_response(
+        "Research AI developments in healthcare from the past week with a focus on practical applications in clinical settings. Send the summary via email to mustafa@agno.com"
+    )
+
+    """
+    Troubleshooting:
+    - If emails aren't sending, check:
+      * Both sender and recipient are verified (in sandbox mode)
+      * AWS credentials are correctly configured
+      * You're within sending limits
+      * Your IAM user has correct SES permissions
+    - Use SES Console's 'Send Test Email' feature to verify setup
+    """

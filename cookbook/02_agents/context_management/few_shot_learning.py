@@ -1,12 +1,17 @@
 """
-This example demonstrates how to use additional_input with an Agent
-to teach proper response patterns through few-shot learning.
+Few Shot Learning
+=============================
+
+This example demonstrates how to use additional_input with an Agent.
 """
 
 from agno.agent import Agent
 from agno.models.message import Message
 from agno.models.openai.chat import OpenAIChat
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 # Few-shot examples showing good support patterns
 support_examples = [
     # Example 1: Simple issue resolution
@@ -71,6 +76,10 @@ support_examples = [
     ),
 ]
 
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     # Create agent with few-shot learning
     agent = Agent(

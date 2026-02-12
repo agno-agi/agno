@@ -1,7 +1,8 @@
-"""Basic Skills Example
+"""
+Basic Skills
+=============================
 
-This example demonstrates how to create an agent with skills
-and use them via .print_response().
+Basic Skills Example.
 """
 
 from pathlib import Path
@@ -10,6 +11,9 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.skills import LocalSkills, Skills
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 # Get the skills directory relative to this file
 skills_dir = Path(__file__).parent / "sample_skills"
 
@@ -24,6 +28,10 @@ agent = Agent(
     markdown=True,
 )
 
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     # Ask the agent to review some code
     agent.print_response(

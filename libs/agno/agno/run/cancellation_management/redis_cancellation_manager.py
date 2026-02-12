@@ -82,54 +82,82 @@ class RedisRunCancellationManager(BaseRunCancellationManager):
         return self.async_redis_client
 
     def register_run(self, run_id: str) -> None:
-        """Register a new run as not cancelled."""
+        """Register a new run as not cancelled.
+
+        Uses NX flag to preserve any existing cancellation intent
+        (cancel-before-start support for background runs).
+        """
         client = self._ensure_sync_client()
         key = self._get_key(run_id)
-        client.set(key, "0", ex=self.ttl_seconds)
+        # NX: only set if key does not exist, preserving cancel-before-start intent
+        client.set(key, "0", ex=self.ttl_seconds, nx=True)
 
     async def aregister_run(self, run_id: str) -> None:
-        """Register a new run as not cancelled (async version)."""
+        """Register a new run as not cancelled (async version).
+
+        Uses NX flag to preserve any existing cancellation intent
+        (cancel-before-start support for background runs).
+        """
         client = self._ensure_async_client()
         key = self._get_key(run_id)
-        await client.set(key, "0", ex=self.ttl_seconds)
+        # NX: only set if key does not exist, preserving cancel-before-start intent
+        await client.set(key, "0", ex=self.ttl_seconds, nx=True)
+
+    # Lua script for atomic cancel: checks existence then sets to "1" with optional TTL.
+    # Returns 1 if the key already existed (run was registered), 0 otherwise.
+    _CANCEL_LUA = """
+local existed = redis.call('EXISTS', KEYS[1])
+redis.call('SET', KEYS[1], '1')
+local ttl = tonumber(ARGV[1])
+if ttl and ttl > 0 then
+    redis.call('EXPIRE', KEYS[1], ttl)
+end
+return existed
+"""
 
     def cancel_run(self, run_id: str) -> bool:
         """Cancel a run by marking it as cancelled.
 
+        Always stores cancellation intent, even for runs not yet registered
+        (cancel-before-start support for background runs).
+
         Returns:
-            bool: True if run was found and cancelled, False if run not found.
+            bool: True if run was previously registered, False if storing
+            cancellation intent for an unregistered run.
         """
         client = self._ensure_sync_client()
         key = self._get_key(run_id)
 
-        # Atomically set to "1" only if key exists (XX flag)
-        result = client.set(key, "1", ex=self.ttl_seconds, xx=True)
+        # Atomic: check existence then set to "1" in a single round-trip
+        was_registered = bool(client.eval(self._CANCEL_LUA, 1, key, self.ttl_seconds or 0))
 
-        if result:
+        if was_registered:
             logger.info(f"Run {run_id} marked for cancellation")
-            return True
         else:
-            logger.warning(f"Attempted to cancel unknown run {run_id}")
-            return False
+            logger.info(f"Run {run_id} not yet registered, storing cancellation intent")
+        return was_registered
 
     async def acancel_run(self, run_id: str) -> bool:
         """Cancel a run by marking it as cancelled (async version).
 
+        Always stores cancellation intent, even for runs not yet registered
+        (cancel-before-start support for background runs).
+
         Returns:
-            bool: True if run was found and cancelled, False if run not found.
+            bool: True if run was previously registered, False if storing
+            cancellation intent for an unregistered run.
         """
         client = self._ensure_async_client()
         key = self._get_key(run_id)
 
-        # Atomically set to "1" only if key exists (XX flag)
-        result = await client.set(key, "1", ex=self.ttl_seconds, xx=True)
+        # Atomic: check existence then set to "1" in a single round-trip
+        was_registered = bool(await client.eval(self._CANCEL_LUA, 1, key, self.ttl_seconds or 0))  # type: ignore[misc]
 
-        if result:
+        if was_registered:
             logger.info(f"Run {run_id} marked for cancellation")
-            return True
         else:
-            logger.warning(f"Attempted to cancel unknown run {run_id}")
-            return False
+            logger.info(f"Run {run_id} not yet registered, storing cancellation intent")
+        return was_registered
 
     def is_cancelled(self, run_id: str) -> bool:
         """Check if a run is cancelled."""

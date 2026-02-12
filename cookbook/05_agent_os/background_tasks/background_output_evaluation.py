@@ -25,6 +25,10 @@ from agno.os import AgentOS
 from agno.run.agent import RunOutput
 from pydantic import BaseModel
 
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
+
 
 class EvaluationResult(BaseModel):
     """Structured output for the evaluator agent."""
@@ -187,6 +191,10 @@ app = agent_os.get_app()
 #
 # curl -X POST http://localhost:7777/agents/support-agent/runs \
 #   -F "message=Explain the difference between HTTP and HTTPS" -F "stream=false"
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     agent_os.serve(app="background_output_evaluation:app", port=7777, reload=True)
