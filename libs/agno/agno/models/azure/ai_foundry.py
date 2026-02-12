@@ -140,11 +140,12 @@ class AzureAIFoundry(Model):
         if not self.azure_endpoint:
             log_error("AZURE_ENDPOINT not set. Please set the AZURE_ENDPOINT environment variable.")
 
-        base_params = {
+        base_params: Dict[str, Any] = {
             "endpoint": self.azure_endpoint,
-            "credential": AzureKeyCredential(self.api_key),
             "api_version": self.api_version,
         }
+        if self.api_key:
+            base_params["credential"] = AzureKeyCredential(self.api_key)
 
         # Create client_params dict with non-None values
         client_params = {k: v for k, v in base_params.items() if v is not None}

@@ -1,9 +1,20 @@
+"""
+Structured Output
+=================
+
+Demonstrates structured output.
+"""
+
 from typing import List
 
 from agno.agent.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from pydantic import BaseModel, Field
+
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
 
 
 class MovieScript(BaseModel):
@@ -41,6 +52,10 @@ agent_os = AgentOS(
     a2a_interface=True,
 )
 app = agent_os.get_app()
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     """Run your AgentOS with A2A interface.

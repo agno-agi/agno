@@ -1,7 +1,18 @@
+"""
+Openai Pdf Input Url
+====================
+
+Cookbook example for `openai/responses/pdf_input_url.py`.
+"""
+
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.media import File
 from agno.models.openai.responses import OpenAIResponses
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 # Setup the database for the Agent Session to be stored
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
@@ -24,3 +35,10 @@ session = agent.get_session()
 if session and session.runs and session.runs[-1].citations:
     print("Citations:")
     print(session.runs[-1].citations)
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

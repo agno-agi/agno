@@ -1,5 +1,5 @@
 """
-📔 MCP Graphiti Agent - A personal diary assistant
+ MCP Graphiti Agent - A personal diary assistant
 
 This example demonstrates how to use Agno's MCP integration together with Graphiti, to build a personal diary assistant.
 
@@ -13,6 +13,11 @@ from textwrap import dedent
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.mcp import MCPTools
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 
 mcp_server_url = "http://localhost:8000/sse"
 
@@ -32,6 +37,10 @@ async def run_agent(message: str) -> None:
         )
         await agent.aprint_response(message, stream=True)
 
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     asyncio.run(

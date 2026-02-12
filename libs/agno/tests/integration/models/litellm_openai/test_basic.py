@@ -135,6 +135,7 @@ def test_history():
         model=LiteLLMOpenAI(id="gpt-4o"),
         db=SqliteDb(db_file="tmp/litellm_openai/test_basic.db"),
         add_history_to_context=True,
+        store_history_messages=True,
         telemetry=False,
     )
     run_output = agent.run("Hello")

@@ -7,13 +7,33 @@ Instructions for Claude Code when working on this codebase.
 ## Repository Structure
 
 ```
-agno/
+.
 ├── libs/agno/agno/          # Core framework code
 ├── cookbook/                # Examples, patterns and test cases (organized by topic)
 ├── scripts/                 # Development and build scripts
 ├── specs/                   # Design documents (symlinked, private)
+├── docs/                    # Documentation (symlinked, private)
 └── .cursorrules             # Coding patterns and conventions
 ```
+
+---
+
+## Conductor Notes
+
+When working in Conductor, you can use the `.context/` directory for scratch notes or agent-to-agent handoff artifacts. This directory is gitignored.
+
+---
+
+## Setting Up Symlinks
+
+The `specs/` and `docs/` directories are symlinked from external locations. For a fresh clone or new workspace, create these symlinks:
+
+```bash
+ln -s ~/code/specs specs
+ln -s ~/code/docs docs
+```
+
+These contain private design documents and documentation that are not checked into the repository.
 
 ---
 
@@ -23,7 +43,7 @@ This project uses two virtual environments:
 
 | Environment | Purpose | Setup |
 |-------------|---------|-------|
-| `.venv/` | Development: tests, formatting, validation | `uv sync` or standard setup |
+| `.venv/` | Development: tests, formatting, validation | `./scripts/dev_setup.sh` |
 | `.venvs/demo/` | Cookbooks: has all demo dependencies | `./scripts/demo_setup.sh` |
 
 **Use `.venv`** for development tasks (`pytest`, `./scripts/format.sh`, `./scripts/validate.sh`).
@@ -212,7 +232,7 @@ PR titles must follow one of these formats:
 - `type: description` — e.g., `feat: add workflow serialization`
 - `type-kebab-case` — e.g., `feat-workflow-serialization`
 
-Valid types: `feat`, `fix`, `cookbook`, `test`, `refactor`, `build`, `ci`, `chore`, `perf`, `style`, `revert`
+Valid types: `feat`, `fix`, `cookbook`, `test`, `refactor`, `chore`, `style`, `revert`, `release`
 
 **PR Description:**
 
@@ -247,4 +267,4 @@ gh api repos/agno-agi/agno/pulls/<PR_NUMBER> -X PATCH -f body="$(cat /path/to/bo
 - Don't use emojis in examples and print lines
 - Don't skip async variants of public methods
 - Don't push code without running `./scripts/format.sh` and `./scripts/validate.sh`
-- Don't submit a PR without a detailed PR description. Always follow the PR template provided in `.github/pull_request_template.md` add to it. 
+- Don't submit a PR without a detailed PR description. Always follow the PR template provided in `.github/pull_request_template.md`.

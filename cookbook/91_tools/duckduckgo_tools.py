@@ -1,7 +1,19 @@
+"""
+Duckduckgo Tools
+=============================
+
+Demonstrates duckduckgo tools.
+"""
+
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.websearch import WebSearchTools
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 
 # Example 1: Enable specific DuckDuckGo functions
 agent = Agent(
@@ -31,8 +43,13 @@ yandex_agent = Agent(
 )
 
 # Test the agents
-agent.print_response("What's the latest about GPT-5?", markdown=True)
-# news_agent.print_response(
-#     "Find recent news about artificial intelligence", markdown=True
-# )
-# yandex_agent.print_response("What's happening in AI?", markdown=True)
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    agent.print_response("What's the latest about GPT-5?", markdown=True)
+    # news_agent.print_response(
+    #     "Find recent news about artificial intelligence", markdown=True
+    # )
+    # yandex_agent.print_response("What's happening in AI?", markdown=True)

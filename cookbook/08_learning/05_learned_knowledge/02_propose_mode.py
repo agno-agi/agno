@@ -22,9 +22,9 @@ from agno.learn import LearnedKnowledgeConfig, LearningMachine, LearningMode
 from agno.models.openai import OpenAIResponses
 from agno.vectordb.pgvector import PgVector, SearchType
 
-# ============================================================================
-# Setup
-# ============================================================================
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 db = PostgresDb(db_url=db_url)
@@ -54,9 +54,9 @@ agent = Agent(
     markdown=True,
 )
 
-# ============================================================================
-# Demo
-# ============================================================================
+# ---------------------------------------------------------------------------
+# Run Demo
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     user_id = "propose@example.com"
@@ -88,7 +88,7 @@ if __name__ == "__main__":
         session_id=session_id,
         stream=True,
     )
-    agent.get_learning_machine().learned_knowledge_store.print(query="docker localhost")
+    agent.learning_machine.learned_knowledge_store.print(query="docker localhost")
 
     # Rejection example
     print("\n" + "=" * 60)
@@ -108,4 +108,4 @@ if __name__ == "__main__":
         session_id="session_2",
         stream=True,
     )
-    agent.get_learning_machine().learned_knowledge_store.print(query="restart")
+    agent.learning_machine.learned_knowledge_store.print(query="restart")

@@ -253,10 +253,8 @@ class OpenAIChat(Model):
             if self.provider in ["AIMLAPI", "Fireworks", "Nvidia", "VLLM"]:
                 for tool in tools:
                     if tool.get("type") == "function":
-                        if tool["function"].get("requires_confirmation") is not None:
-                            del tool["function"]["requires_confirmation"]
-                        if tool["function"].get("external_execution") is not None:
-                            del tool["function"]["external_execution"]
+                        for _internal_key in ("requires_confirmation", "external_execution", "approval_type"):
+                            tool["function"].pop(_internal_key, None)
 
             request_params["tools"] = tools
 
