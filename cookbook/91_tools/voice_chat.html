@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ElevenLabs Voice RAG Chat</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+            min-height: 100vh;
+            color: white;
+        }
+        
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 40px 20px;
+            text-align: center;
+        }
+        
+        h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            background: linear-gradient(90deg, #00d4ff, #7c3aed);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        
+        .subtitle {
+            color: #94a3b8;
+            margin-bottom: 40px;
+            font-size: 1.1rem;
+        }
+        
+        .agent-input {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+            margin-bottom: 30px;
+            flex-wrap: wrap;
+        }
+        
+        input[type="text"] {
+            padding: 15px 20px;
+            font-size: 1rem;
+            border: 2px solid #334155;
+            border-radius: 10px;
+            background: #1e293b;
+            color: white;
+            width: 400px;
+            max-width: 100%;
+        }
+        
+        input[type="text"]::placeholder {
+            color: #64748b;
+        }
+        
+        input[type="text"]:focus {
+            outline: none;
+            border-color: #7c3aed;
+        }
+        
+        button {
+            padding: 15px 30px;
+            font-size: 1rem;
+            font-weight: 600;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(90deg, #7c3aed, #00d4ff);
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 30px rgba(124, 58, 237, 0.3);
+        }
+        
+        .widget-container {
+            background: #1e293b;
+            border-radius: 20px;
+            padding: 30px;
+            margin-top: 30px;
+            min-height: 400px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+        }
+        
+        .placeholder {
+            color: #64748b;
+            font-size: 1.2rem;
+        }
+        
+        .instructions {
+            background: #1e293b;
+            border-radius: 15px;
+            padding: 25px;
+            margin-top: 30px;
+            text-align: left;
+        }
+        
+        .instructions h2 {
+            color: #7c3aed;
+            margin-bottom: 15px;
+            font-size: 1.3rem;
+        }
+        
+        .instructions ol {
+            margin-left: 20px;
+            line-height: 1.8;
+            color: #94a3b8;
+        }
+        
+        .instructions li {
+            margin-bottom: 10px;
+        }
+        
+        .instructions code {
+            background: #334155;
+            padding: 2px 8px;
+            border-radius: 5px;
+            font-family: monospace;
+            color: #00d4ff;
+        }
+        
+        .note {
+            background: #7c3aed20;
+            border-left: 4px solid #7c3aed;
+            padding: 15px;
+            margin-top: 20px;
+            border-radius: 0 10px 10px 0;
+        }
+        
+        .note strong {
+            color: #7c3aed;
+        }
+
+        /* Style the ElevenLabs widget */
+        elevenlabs-convai {
+            --elevenlabs-convai-widget-width: 100%;
+            --elevenlabs-convai-widget-height: 400px;
+        }
+        
+        .active-widget {
+            width: 100%;
+        }
+        
+        footer {
+            margin-top: 50px;
+            color: #64748b;
+            font-size: 0.9rem;
+        }
+        
+        footer a {
+            color: #7c3aed;
+            text-decoration: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎤 Voice RAG Chat</h1>
+        <p class="subtitle">Real-time voice conversations with AI agents powered by ElevenLabs</p>
+        
+        <div class="agent-input">
+            <input 
+                type="text" 
+                id="agentId" 
+                placeholder="Enter Agent ID (e.g., agent_xxx...)"
+            >
+            <button class="btn-primary" onclick="loadWidget()">
+                Start Voice Chat
+            </button>
+        </div>
+        
+        <div class="widget-container" id="widgetContainer">
+            <p class="placeholder">👆 Enter your Agent ID above to start chatting</p>
+        </div>
+        
+        <div class="instructions">
+            <h2>📋 How to Use</h2>
+            <ol>
+                <li>Create a voice agent using the <code>ElevenLabsVoiceRAGTools</code> toolkit</li>
+                <li>Copy the <code>agent_id</code> from the response (e.g., <code>agent_5001kfk1cytyez5s8ntmmjd0fawa</code>)</li>
+                <li>Paste it in the input field above and click "Start Voice Chat"</li>
+                <li>Allow microphone access when prompted</li>
+                <li>Start speaking to your AI agent!</li>
+            </ol>
+            
+            <div class="note">
+                <strong>⚠️ Important:</strong> The agent must have "Public Access" enabled in the 
+                <a href="https://elevenlabs.io/app/agents" target="_blank" style="color: #00d4ff;">ElevenLabs Dashboard</a> 
+                under the agent's Security tab → Authentication → Disable authentication.
+            </div>
+        </div>
+        
+        <footer>
+            Built with <a href="https://github.com/agno-agi/agno" target="_blank">Agno</a> & 
+            <a href="https://elevenlabs.io" target="_blank">ElevenLabs</a>
+        </footer>
+    </div>
+    
+    <!-- ElevenLabs Widget Script -->
+    <script src="https://unpkg.com/@elevenlabs/convai-widget-embed" async type="text/javascript"></script>
+    
+    <script>
+        // Check URL params for agent ID
+        const urlParams = new URLSearchParams(window.location.search);
+        const agentIdFromUrl = urlParams.get('agent_id');
+        
+        if (agentIdFromUrl) {
+            document.getElementById('agentId').value = agentIdFromUrl;
+            // Auto-load widget after a small delay for script to load
+            setTimeout(() => loadWidget(), 1000);
+        }
+        
+        function loadWidget() {
+            const agentId = document.getElementById('agentId').value.trim();
+            
+            if (!agentId) {
+                alert('Please enter an Agent ID');
+                return;
+            }
+            
+            const container = document.getElementById('widgetContainer');
+            
+            // Clear previous widget
+            container.innerHTML = '';
+            
+            // Create widget element
+            const widget = document.createElement('elevenlabs-convai');
+            widget.setAttribute('agent-id', agentId);
+            widget.className = 'active-widget';
+            
+            container.appendChild(widget);
+            
+            // Update URL for sharing
+            const newUrl = `${window.location.pathname}?agent_id=${agentId}`;
+            window.history.pushState({}, '', newUrl);
+        }
+        
+        // Handle Enter key in input
+        document.getElementById('agentId').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                loadWidget();
+            }
+        });
+    </script>
+</body>
+</html>
