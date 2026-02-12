@@ -108,10 +108,10 @@ def test_is_valid_header_provider_with_http_transport():
     assert tools.header_provider is not None
 
 
-def test_is_valid_header_provider_ignored_for_stdio():
-    """Test that header_provider is ignored for stdio transport."""
-    tools = MCPTools(command="npx foo", header_provider=lambda: {})
-    assert tools.header_provider is None
+def test_header_provider_with_stdio_transport_raises_error():
+    """Test that ValueError is raised when header_provider is used with stdio transport."""
+    with pytest.raises(ValueError, match="header_provider is not supported with 'stdio' transport"):
+        MCPTools(command="npx foo", transport="stdio", header_provider=lambda: {})
 
 
 def test_call_header_provider_no_params():

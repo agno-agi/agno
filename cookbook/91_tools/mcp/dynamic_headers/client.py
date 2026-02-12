@@ -11,6 +11,9 @@ from agno.tools.mcp import MCPTools
 if TYPE_CHECKING:
     from agno.agent import Agent
     from agno.team import Team
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 
 async def main():
@@ -123,6 +126,10 @@ async def main():
         await mcp_tools.close()
         print("\nConnection closed")
 
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     asyncio.run(main())

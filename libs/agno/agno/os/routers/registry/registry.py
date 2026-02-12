@@ -16,7 +16,7 @@ from agno.os.schema import (
     PaginatedResponse,
     PaginationInfo,
     RegistryContentResponse,
-    RegistryContentType,
+    RegistryResourceType,
     SchemaMetadata,
     ToolMetadata,
     UnauthenticatedResponse,
@@ -143,11 +143,11 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
         except (ValueError, TypeError):
             return {"type": "object", "properties": {}, "required": []}
 
-    def _get_components(component_type: Optional[RegistryContentType] = None) -> List[RegistryContentResponse]:
-        components: List[RegistryContentResponse] = []
+    def _get_resources(resource_type: Optional[RegistryResourceType] = None) -> List[RegistryContentResponse]:
+        resources: List[RegistryContentResponse] = []
 
         # Tools
-        if component_type is None or component_type == RegistryContentType.TOOL:
+        if resource_type is None or resource_type == RegistryResourceType.TOOL:
             for tool in getattr(registry, "tools", []) or []:
                 if isinstance(tool, Toolkit):
                     toolkit_name = _safe_name(tool, fallback=tool.__class__.__name__)
@@ -213,10 +213,10 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
                         is_toolkit=True,
                         functions=function_details,
                     )
-                    components.append(
+                    resources.append(
                         RegistryContentResponse(
                             name=toolkit_name,
-                            type=RegistryContentType.TOOL,
+                            type=RegistryResourceType.TOOL,
                             description=_safe_str(getattr(tool, "description", None)),
                             metadata=toolkit_metadata.model_dump(exclude_none=True),
                         )
@@ -262,10 +262,10 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
                         signature=tool_signature,
                         return_annotation=tool_return_annotation,
                     )
-                    components.append(
+                    resources.append(
                         RegistryContentResponse(
                             name=func_name,
-                            type=RegistryContentType.TOOL,
+                            type=RegistryResourceType.TOOL,
                             description=_safe_str(getattr(tool, "description", None)),
                             metadata=func_tool_metadata.model_dump(exclude_none=True),
                         )
@@ -297,17 +297,17 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
                         signature=callable_signature,
                         return_annotation=callable_return_annotation,
                     )
-                    components.append(
+                    resources.append(
                         RegistryContentResponse(
                             name=str(call_name),
-                            type=RegistryContentType.TOOL,
+                            type=RegistryResourceType.TOOL,
                             description=_safe_str(getattr(tool, "__doc__", None)),
                             metadata=callable_metadata.model_dump(exclude_none=True),
                         )
                     )
 
         # Models
-        if component_type is None or component_type == RegistryContentType.MODEL:
+        if resource_type is None or resource_type == RegistryResourceType.MODEL:
             for model in getattr(registry, "models", []) or []:
                 model_name = (
                     _safe_str(getattr(model, "id", None))
@@ -319,17 +319,17 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
                     provider=_safe_str(getattr(model, "provider", None)),
                     model_id=_safe_str(getattr(model, "id", None)),
                 )
-                components.append(
+                resources.append(
                     RegistryContentResponse(
                         name=model_name,
-                        type=RegistryContentType.MODEL,
+                        type=RegistryResourceType.MODEL,
                         description=_safe_str(getattr(model, "description", None)),
                         metadata=model_metadata.model_dump(exclude_none=True),
                     )
                 )
 
         # Databases
-        if component_type is None or component_type == RegistryContentType.DB:
+        if resource_type is None or resource_type == RegistryResourceType.DB:
             for db in getattr(registry, "dbs", []) or []:
                 db_name = (
                     _safe_str(getattr(db, "name", None)) or _safe_str(getattr(db, "id", None)) or db.__class__.__name__
@@ -338,17 +338,17 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
                     class_path=_class_path(db),
                     db_id=_safe_str(getattr(db, "id", None)),
                 )
-                components.append(
+                resources.append(
                     RegistryContentResponse(
                         name=db_name,
-                        type=RegistryContentType.DB,
+                        type=RegistryResourceType.DB,
                         description=_safe_str(getattr(db, "description", None)),
                         metadata=db_metadata.model_dump(exclude_none=True),
                     )
                 )
 
         # Vector databases
-        if component_type is None or component_type == RegistryContentType.VECTOR_DB:
+        if resource_type is None or resource_type == RegistryResourceType.VECTOR_DB:
             for vdb in getattr(registry, "vector_dbs", []) or []:
                 vdb_name = (
                     _safe_str(getattr(vdb, "name", None))
@@ -363,17 +363,17 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
                     collection=_safe_str(getattr(vdb, "collection", None)),
                     table_name=_safe_str(getattr(vdb, "table_name", None)),
                 )
-                components.append(
+                resources.append(
                     RegistryContentResponse(
                         name=vdb_name,
-                        type=RegistryContentType.VECTOR_DB,
+                        type=RegistryResourceType.VECTOR_DB,
                         description=_safe_str(getattr(vdb, "description", None)),
                         metadata=vdb_metadata.model_dump(exclude_none=True),
                     )
                 )
 
         # Schemas
-        if component_type is None or component_type == RegistryContentType.SCHEMA:
+        if resource_type is None or resource_type == RegistryResourceType.SCHEMA:
             for schema in getattr(registry, "schemas", []) or []:
                 schema_name = schema.__name__
                 schema_json: Optional[Dict[str, Any]] = None
@@ -388,16 +388,16 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
                     schema=schema_json,
                     schema_error=schema_error,
                 )
-                components.append(
+                resources.append(
                     RegistryContentResponse(
                         name=schema_name,
-                        type=RegistryContentType.SCHEMA,
+                        type=RegistryResourceType.SCHEMA,
                         metadata=schema_metadata.model_dump(exclude_none=True, by_alias=True),
                     )
                 )
 
         # Functions (raw callables used for workflow conditions, selectors, etc.)
-        if component_type is None or component_type == RegistryContentType.FUNCTION:
+        if resource_type is None or resource_type == RegistryResourceType.FUNCTION:
             for func in getattr(registry, "functions", []) or []:
                 func_name = getattr(func, "__name__", None) or "anonymous"
                 func_module = getattr(func, "__module__", "unknown")
@@ -427,10 +427,10 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
                     signature=reg_func_signature,
                     return_annotation=reg_func_return_annotation,
                 )
-                components.append(
+                resources.append(
                     RegistryContentResponse(
                         name=func_name,
-                        type=RegistryContentType.FUNCTION,
+                        type=RegistryResourceType.FUNCTION,
                         description=func_description,
                         metadata=reg_func_metadata.model_dump(exclude_none=True),
                     )
@@ -471,8 +471,8 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
                 )
 
         # Stable ordering helps pagination
-        components.sort(key=lambda c: (c.type, c.name))
-        return components
+        resources.sort(key=lambda r: (r.type, r.name))
+        return resources
 
     @router.get(
         "/registry",
@@ -481,26 +481,26 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
         status_code=200,
         operation_id="list_registry",
         summary="List Registry",
-        description="List all components in the registry with optional filtering.",
+        description="List all resources in the registry with optional filtering.",
     )
     async def list_registry(
-        component_type: Optional[RegistryContentType] = Query(None, description="Filter by component type"),
+        resource_type: Optional[RegistryResourceType] = Query(None, description="Filter by resource type"),
         name: Optional[str] = Query(None, description="Filter by name (partial match)"),
         page: int = Query(1, ge=1, description="Page number"),
         limit: int = Query(20, ge=1, le=100, description="Items per page"),
     ) -> PaginatedResponse[RegistryContentResponse]:
         try:
             start_time_ms = time.time() * 1000
-            components = _get_components(component_type)
+            resources = _get_resources(resource_type)
 
             if name:
                 needle = name.lower().strip()
-                components = [c for c in components if needle in c.name.lower()]
+                resources = [r for r in resources if needle in r.name.lower()]
 
-            total_count = len(components)
+            total_count = len(resources)
             total_pages = (total_count + limit - 1) // limit if limit > 0 else 0
             start_idx = (page - 1) * limit
-            paginated = components[start_idx : start_idx + limit]
+            paginated = resources[start_idx : start_idx + limit]
 
             return PaginatedResponse(
                 data=paginated,
@@ -513,7 +513,7 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
                 ),
             )
         except Exception as e:
-            log_error(f"Error listing components: {e}")
+            log_error(f"Error listing registry resources: {e}")
             raise HTTPException(status_code=500, detail=str(e))
 
     return router

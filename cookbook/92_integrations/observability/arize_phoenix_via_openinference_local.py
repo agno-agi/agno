@@ -1,8 +1,8 @@
 """
-This example shows how to instrument your agno agent with OpenInference and send traces to Arize Phoenix.
+Arize Phoenix Local Via OpenInference
+=====================================
 
-1. Install dependencies: uv pip install arize-phoenix openai openinference-instrumentation-agno opentelemetry-sdk opentelemetry-exporter-otlp
-2. Run `phoenix serve` to start the local collector.
+Demonstrates instrumenting an Agno agent and sending traces to a local Phoenix instance.
 """
 
 import os
@@ -12,13 +12,21 @@ from agno.models.openai import OpenAIChat
 from agno.tools.yfinance import YFinanceTools
 from phoenix.otel import register
 
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
 os.environ["PHOENIX_COLLECTOR_ENDPOINT"] = "http://localhost:6006"
-# configure the Phoenix tracer
+
+# Configure the Phoenix tracer
 tracer_provider = register(
     project_name="agno-stock-price-agent",  # Default is 'default'
     auto_instrument=True,  # Automatically use the installed OpenInference instrumentation
 )
 
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 agent = Agent(
     name="Stock Price Agent",
     model=OpenAIChat(id="gpt-5.2"),
@@ -27,4 +35,9 @@ agent = Agent(
     debug_mode=True,
 )
 
-agent.print_response("What is the current price of Tesla?")
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    agent.print_response("What is the current price of Tesla?")

@@ -1,21 +1,13 @@
-# Team Reasoning
+# reasoning
 
-Multi-agent reasoning and analysis.
+Examples for team workflows in reasoning.
 
-## Setup
+## Prerequisites
 
-```bash
-# install dep's based on your preferred model provider
-uv pip install agno openai anthropic
-```
+- Load environment variables (for example, OPENAI_API_KEY) via direnv allow.
+- Use .venvs/demo/bin/python to run cookbook examples.
+- Some examples require additional services (for example PostgreSQL, LanceDB, or Infinity server) as noted in file docstrings.
 
-Set your API keys:
-```bash
-export OPENAI_API_KEY=xxx
-export ANTHROPIC_API_KEY=xxx
-```
+## Files
 
-## Examples
-
-- **[01_reasoning_multi_purpose_team.py](./01_reasoning_multi_purpose_team.py)** - Multi-purpose reasoning team
-- **[02_async_multi_purpose_reasoning_team.py](./02_async_multi_purpose_reasoning_team.py)** - Asynchronous reasoning team
+- reasoning_multi_purpose_team.py - Demonstrates reasoning multi purpose team.
