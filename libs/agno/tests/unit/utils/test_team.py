@@ -96,8 +96,10 @@ def test_get_member_id():
     assert get_member_id(member) == "test-agent"
     member = Agent(name="Test Agent", id="123")
     assert get_member_id(member) == "123"
-    member = Agent(name="Test Agent", id=str(uuid.uuid4()))
-    assert get_member_id(member) == "test-agent"
+    # When a valid UUID id is provided, it should be returned even if name exists
+    agent_uuid = str(uuid.uuid4())
+    member = Agent(name="Test Agent", id=agent_uuid)
+    assert get_member_id(member) == agent_uuid
     member = Agent(id=str(uuid.uuid4()))
     assert get_member_id(member) == member.id
 
@@ -106,7 +108,40 @@ def test_get_member_id():
     assert get_member_id(inner_team) == "test-team"
     inner_team = Team(name="Test Team", id="123", members=[member])
     assert get_member_id(inner_team) == "123"
-    inner_team = Team(name="Test Team", id=str(uuid.uuid4()), members=[member])
-    assert get_member_id(inner_team) == "test-team"
+    # When a valid UUID id is provided, it should be returned even if name exists
+    team_uuid = str(uuid.uuid4())
+    inner_team = Team(name="Test Team", id=team_uuid, members=[member])
+    assert get_member_id(inner_team) == team_uuid
     inner_team = Team(id=str(uuid.uuid4()), members=[member])
     assert get_member_id(inner_team) == inner_team.id
+
+
+def test_get_member_id_uuid_priority():
+    """Test that get_member_id prioritizes id over name when id is a valid UUID."""
+    # Agent with UUID id and name should return the UUID
+    agent_uuid = "47ecf9eb-4dcf-4090-8e5b-ba5d20f98e14"
+    member = Agent(name="写作助手", id=agent_uuid)
+    assert get_member_id(member) == agent_uuid
+
+    # Agent with non-UUID id should return url-safe id
+    member = Agent(name="写作助手", id="my-custom-id")
+    assert get_member_id(member) == "my-custom-id"
+
+    # Agent with only name should return url-safe name
+    member = Agent(name="写作助手")
+    assert get_member_id(member) == "写作助手"
+
+    # Team with UUID id and name should return the UUID
+    team_uuid = str(uuid.uuid4())
+    agent = Agent(name="Helper")
+    team = Team(name="Test Team", id=team_uuid, members=[agent])
+    assert get_member_id(team) == team_uuid
+
+    # Team with non-UUID id should return url-safe id
+    team = Team(name="Test Team", id="my-team-id", members=[agent])
+    assert get_member_id(team) == "my-team-id"
+
+    # Agent with only a UUID id (no name) should return the UUID
+    only_uuid = str(uuid.uuid4())
+    member = Agent(id=only_uuid)
+    assert get_member_id(member) == only_uuid

@@ -33,23 +33,21 @@ def get_member_id(member: Union[Agent, "Team"]) -> str:
     """
     Get the ID of a member
 
-    If the member has an agent_id or team_id, use that if it is not a valid UUID.
+    If the member has an explicitly set id, use that:
+      - If it is not a valid UUID, convert it to a URL safe string.
+      - If it is a valid UUID, use it directly.
     Then if the member has a name, convert that to a URL safe string.
-    Then if the member has the default UUID ID, use that.
     Otherwise, return None.
     """
     from agno.team.team import Team
 
-    if isinstance(member, Agent) and member.id is not None and (not is_valid_uuid(member.id)):
-        url_safe_member_id = url_safe_string(member.id)
-    elif isinstance(member, Team) and member.id is not None and (not is_valid_uuid(member.id)):
-        url_safe_member_id = url_safe_string(member.id)
+    if isinstance(member, (Agent, Team)) and member.id is not None:
+        if is_valid_uuid(member.id):
+            url_safe_member_id = member.id
+        else:
+            url_safe_member_id = url_safe_string(member.id)
     elif member.name is not None:
         url_safe_member_id = url_safe_string(member.name)
-    elif isinstance(member, Agent) and member.id is not None:
-        url_safe_member_id = member.id
-    elif isinstance(member, Team) and member.id is not None:
-        url_safe_member_id = member.id
     else:
         url_safe_member_id = None
     return url_safe_member_id
