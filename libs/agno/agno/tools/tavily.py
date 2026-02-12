@@ -140,7 +140,7 @@ class TavilyTools(Toolkit):
         """
 
         return self.client.get_search_context(
-            query=query, search_depth=self.search_depth, max_tokens=self.max_tokens, include_answer=self.include_answer
+            query=query, search_depth=self.search_depth, max_tokens=self.max_tokens
         )
 
     def extract_url_content(self, urls: str) -> str:
