@@ -1,151 +1,38 @@
-# TEST_LOG for cookbook/04_workflows/07_cel_expressions
+# Test Log — 07_cel_expressions
 
-Generated: 2026-02-11
-
-**Note:** Required `cel-python` package installation (`uv pip install cel-python`).
+Tested: 2026-02-12 | Branch: cookbook/v25-merge-fixes
 
 ## condition/
 
-### cel_basic.py
-
-**Status:** PASS
-
-**Description:** CEL `input.contains("urgent")` condition with if/else branches. 2 runs.
-
-**Result:** Both completed (urgent: routed to urgent handler, normal: routed to normal handler). 1.8s total.
-
----
-
-### cel_additional_data.py
-
-**Status:** PASS
-
-**Description:** CEL condition using additional_data fields. 2 runs.
-
-**Result:** Completed (5.8s, 10.0s).
-
----
-
-### cel_previous_step.py
-
-**Status:** PASS
-
-**Description:** CEL condition using previous step output content. 2 runs.
-
-**Result:** Completed (10.4s, 2.9s).
-
----
-
-### cel_previous_step_outputs.py
-
-**Status:** PASS
-
-**Description:** CEL condition accessing previous_step_outputs map. 2 runs.
-
-**Result:** Completed (30.0s, 48.2s).
-
----
-
-### cel_session_state.py
-
-**Status:** PASS
-
-**Description:** CEL condition using session state variables. 5 runs.
-
-**Result:** All completed (9.6s, 3.1s, 2.6s, 6.1s, 4.5s). Session state correctly tracked across runs.
-
----
+| File | Status | Notes |
+|------|--------|-------|
+| cel_basic.py | PASS | Completed in ~1.3s, urgent/normal routing via CEL |
+| cel_additional_data.py | PASS | Completed in ~2.3s, priority gate with additional data |
+| cel_previous_step.py | PASS | Completed in ~1.9s, routing based on previous step classification |
+| cel_previous_step_outputs.py | PASS | Completed in ~38s, safety research with CEL output checks |
+| cel_session_state.py | PASS | Completed in ~2.5s, retry counter via session state |
 
 ## loop/
 
-### cel_compound_exit.py
-
-**Status:** PASS
-
-**Description:** CEL compound exit condition combining multiple checks. 1 run.
-
-**Result:** Completed in 89.9s.
-
----
-
-### cel_content_keyword.py
-
-**Status:** PASS
-
-**Description:** CEL end condition checking for keyword in output content. 1 run.
-
-**Result:** Completed in 8.0s.
-
----
-
-### cel_iteration_limit.py
-
-**Status:** PASS
-
-**Description:** CEL `current_iteration >= 2` with max_iterations=10. Verifies early exit. 1 run.
-
-**Result:** Completed in 20.7s.
-
----
-
-### cel_step_outputs_check.py
-
-**Status:** PASS
-
-**Description:** CEL end condition checking step output properties. 1 run.
-
-**Result:** Completed in 50.0s.
-
----
+| File | Status | Notes |
+|------|--------|-------|
+| cel_compound_exit.py | PASS | Completed in ~78s, research loop with compound exit (2/5 iterations) |
+| cel_content_keyword.py | PASS | Completed in ~2s, editing loop exited on "DONE" keyword (1/5 iterations) |
+| cel_iteration_limit.py | PASS | Completed in ~12s, writing loop with iteration limit (2/10 iterations) |
+| cel_step_outputs_check.py | PASS | Completed in ~19s, research loop with quality approval (1/5 iterations) |
 
 ## router/
 
-### cel_additional_data_route.py
+| File | Status | Notes |
+|------|--------|-------|
+| cel_additional_data_route.py | PASS | Completed in ~2s, content format routing (tweet writer) |
+| cel_previous_step_route.py | PASS | Completed in ~2s, support routing based on classification |
+| cel_session_state_route.py | PASS | Completed in ~22s, adaptive routing based on session state |
+| cel_ternary.py | PASS | Completed in ~15s, ternary routing for image/video |
+| cel_using_step_choices.py | PASS | Completed in ~24s, router with step_choices parameter |
 
-**Status:** PASS
+## Summary
 
-**Description:** CEL router using additional_data for routing decisions. 2 runs.
-
-**Result:** Completed (6.8s, 2.4s).
-
----
-
-### cel_previous_step_route.py
-
-**Status:** PASS
-
-**Description:** CEL router using previous step content for routing. 2 runs.
-
-**Result:** Completed (4.6s, 3.6s).
-
----
-
-### cel_session_state_route.py
-
-**Status:** PASS
-
-**Description:** CEL router using session state for adaptive routing. Multiple runs.
-
-**Result:** Completed (8.8s, 21.6s).
-
----
-
-### cel_ternary.py
-
-**Status:** PASS
-
-**Description:** CEL ternary operator `input.contains("video") ? "Video Handler" : "Image Handler"`. 2 runs.
-
-**Result:** Completed (17.2s, 11.2s). Correctly routed video and image requests.
-
----
-
-### cel_using_step_choices.py
-
-**Status:** PASS
-
-**Description:** CEL router with step_choices parameter. 2 runs.
-
-**Result:** Completed (13.5s, 27.7s).
-
----
+- **PASS:** 14
+- **FAIL:** 0
+- **SKIP:** 0

@@ -1,13 +1,15 @@
-# TEST_LOG
+# Test Log — os
 
-## os — v2.5 Review (2026-02-11)
+Tested: 2026-02-12 | Branch: cookbook/v25-merge-fixes
 
-### multiple_knowledge_instances.py
+| File | Status | Notes |
+|------|--------|-------|
+| multiple_knowledge_instances.py | SKIP | AgentOS server — Address already in use (port 7777 occupied) |
 
-**Status:** PASS
+## Summary
 
-**Description:** AgentOS with multiple Knowledge instances sharing PgVector and ContentsDB. Registers instances via `/knowledge/config` endpoint. Starts FastAPI server with uvicorn.
+| Status | Count |
+|--------|-------|
+| SKIP   | 1     |
 
-**Result:** Server started successfully on http://localhost:7777. AgentOS banner displayed, uvicorn confirmed running. Terminated by timeout (expected — server runs indefinitely). No import errors or startup failures.
-
----
+Requires free port 7777 for AgentOS server startup.
