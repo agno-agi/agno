@@ -107,11 +107,11 @@ class TestManagerList:
     def test_list_all(self, mgr, mock_db):
         result = mgr.list()
         assert len(result) == 1
-        mock_db.get_schedules.assert_called_once_with(enabled=None, limit=100, offset=0)
+        mock_db.get_schedules.assert_called_once_with(enabled=None, limit=100, page=1)
 
     def test_list_with_filters(self, mgr, mock_db):
-        mgr.list(enabled=True, limit=10, offset=5)
-        mock_db.get_schedules.assert_called_once_with(enabled=True, limit=10, offset=5)
+        mgr.list(enabled=True, limit=10, page=2)
+        mock_db.get_schedules.assert_called_once_with(enabled=True, limit=10, page=2)
 
 
 class TestManagerGet:
