@@ -1,143 +1,151 @@
 # TEST_LOG for cookbook/04_workflows/07_cel_expressions
 
-Generated: 2026-02-08 16:39:09
+Generated: 2026-02-11
 
-### condition/cel_additional_data.py
+**Note:** Required `cel-python` package installation (`uv pip install cel-python`).
 
-**Status:** PASS
+## condition/
 
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
-
-**Result:** Executed successfully. ┃ • Check for typos and grammatical errors. ┃
-
----
-
-### condition/cel_basic.py
+### cel_basic.py
 
 **Status:** PASS
 
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
+**Description:** CEL `input.contains("urgent")` condition with if/else branches. 2 runs.
 
-**Result:** Executed successfully. Completed in 1.5s
+**Result:** Both completed (urgent: routed to urgent handler, normal: routed to normal handler). 1.8s total.
 
 ---
 
-### condition/cel_previous_step.py
+### cel_additional_data.py
 
 **Status:** PASS
 
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
+**Description:** CEL condition using additional_data fields. 2 runs.
 
-**Result:** Executed successfully. DEBUG My API returns 500 errors when I send POST requests with JSON payloads.
-
----
-
-### condition/cel_previous_step_outputs.py
-
-**Status:** FAIL
-
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
-
-**Result:** Timed out after 35s. ┃ • Implement robust error handling mechanisms within automated systems to ┃
+**Result:** Completed (5.8s, 10.0s).
 
 ---
 
-### condition/cel_session_state.py
+### cel_previous_step.py
 
 **Status:** PASS
 
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
+**Description:** CEL condition using previous step output content. 2 runs.
 
-**Result:** Executed successfully. ┃ previously. Understanding the specific error message can help us target ┃
-
----
-
-### loop/cel_compound_exit.py
-
-**Status:** PASS
-
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
-
-**Result:** Executed successfully. - **Accountability**: Determining liability when AI systems make errors in
+**Result:** Completed (10.4s, 2.9s).
 
 ---
 
-### loop/cel_content_keyword.py
+### cel_previous_step_outputs.py
 
 **Status:** PASS
 
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
+**Description:** CEL condition accessing previous_step_outputs map. 2 runs.
 
-**Result:** Executed successfully. Completed in 1.5s
+**Result:** Completed (30.0s, 48.2s).
 
 ---
 
-### loop/cel_iteration_limit.py
+### cel_session_state.py
 
 **Status:** PASS
 
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
+**Description:** CEL condition using session state variables. 5 runs.
 
-**Result:** Executed successfully. Completed in 6.0s
+**Result:** All completed (9.6s, 3.1s, 2.6s, 6.1s, 4.5s). Session state correctly tracked across runs.
 
 ---
 
-### loop/cel_step_outputs_check.py
+## loop/
+
+### cel_compound_exit.py
 
 **Status:** PASS
 
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
+**Description:** CEL compound exit condition combining multiple checks. 1 run.
 
-**Result:** Executed successfully. Completed in 10.9s
+**Result:** Completed in 89.9s.
 
 ---
 
-### router/cel_additional_data_route.py
+### cel_content_keyword.py
 
 **Status:** PASS
 
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
+**Description:** CEL end condition checking for keyword in output content. 1 run.
 
-**Result:** Executed successfully. Completed in 1.8s
+**Result:** Completed in 8.0s.
 
 ---
 
-### router/cel_previous_step_route.py
+### cel_iteration_limit.py
 
 **Status:** PASS
 
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
+**Description:** CEL `current_iteration >= 2` with max_iterations=10. Verifies early exit. 1 run.
 
-**Result:** Executed successfully. DEBUG My API keeps returning 503 errors.
+**Result:** Completed in 20.7s.
 
 ---
 
-### router/cel_session_state_route.py
+### cel_step_outputs_check.py
 
 **Status:** PASS
 
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
+**Description:** CEL end condition checking step output properties. 1 run.
 
-**Result:** Executed successfully. Completed in 10.1s
+**Result:** Completed in 50.0s.
 
 ---
 
-### router/cel_ternary.py
+## router/
+
+### cel_additional_data_route.py
 
 **Status:** PASS
 
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
+**Description:** CEL router using additional_data for routing decisions. 2 runs.
 
-**Result:** Executed successfully. Completed in 5.9s
+**Result:** Completed (6.8s, 2.4s).
 
 ---
 
-### router/cel_using_step_choices.py
+### cel_previous_step_route.py
 
 **Status:** PASS
 
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
+**Description:** CEL router using previous step content for routing. 2 runs.
 
-**Result:** Executed successfully. ┃ error correction, and fault-tolerant systems are crucial for realizing ┃
+**Result:** Completed (4.6s, 3.6s).
+
+---
+
+### cel_session_state_route.py
+
+**Status:** PASS
+
+**Description:** CEL router using session state for adaptive routing. Multiple runs.
+
+**Result:** Completed (8.8s, 21.6s).
+
+---
+
+### cel_ternary.py
+
+**Status:** PASS
+
+**Description:** CEL ternary operator `input.contains("video") ? "Video Handler" : "Image Handler"`. 2 runs.
+
+**Result:** Completed (17.2s, 11.2s). Correctly routed video and image requests.
+
+---
+
+### cel_using_step_choices.py
+
+**Status:** PASS
+
+**Description:** CEL router with step_choices parameter. 2 runs.
+
+**Result:** Completed (13.5s, 27.7s).
 
 ---

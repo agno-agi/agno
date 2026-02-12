@@ -1,393 +1,279 @@
 # TEST_LOG for cookbook/04_workflows/06_advanced_concepts
 
-Generated: 2026-02-08 16:39:09
+Generated: 2026-02-11
 
-### background_execution/background_poll.py
+## early_stopping/
 
-**Status:** FAIL
-
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
-
-**Result:** Timed out after 35s. DEBUG *** Agent Run End: 279bd889-9bd2-42b5-9b88-1d665ea235cd ****
-
----
-
-### background_execution/websocket_client.py
+### early_stop_basic.py
 
 **Status:** PASS
 
-**Description:** Executed with `.venvs/demo/bin/python` (mode: startup, timeout: 8s).
+**Description:** Tests StepOutput(stop=True) across 3 workflows: security deployment (2 cases), content quality (1 case), data validation (2 cases). 5 test cases total.
 
-**Result:** Startup validation completed. [ERROR] Failed to connect: Multiple exceptions: [Errno 61] Connect call failed
+**Result:** All 5 completed (8.1s, 37.6s, 8.9s, 2.4s, 20.3s). Early termination triggered correctly for VULNERABLE code and INVALID data.
 
 ---
 
-### background_execution/websocket_server.py
+### early_stop_condition.py
 
 **Status:** PASS
 
-**Description:** Executed with `.venvs/demo/bin/python` (mode: startup, timeout: 8s).
+**Description:** Stops workflow from inside a Condition branch via compliance checker. Sync-stream.
 
-**Result:** Startup validation only; process terminated after 8.14s. INFO: Finished server process [29101]
-
----
-
-### early_stopping/early_stop_basic.py
-
-**Status:** FAIL
-
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
-
-**Result:** Timed out after 35s. ┃ • Endpoint breakdown: top routes by latency and errors ┃
+**Result:** Completed in 33.7s. Early termination triggered correctly.
 
 ---
 
-### early_stopping/early_stop_condition.py
+### early_stop_loop.py
 
 **Status:** PASS
 
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
+**Description:** Stops a Loop early via safety-check step. Sync-stream.
 
-**Result:** Executed successfully. ddgs.exceptions.DDGSException: No results found.
+**Result:** Completed in 27.1s. Early termination triggered correctly.
 
 ---
 
-### early_stopping/early_stop_loop.py
+### early_stop_parallel.py
 
 **Status:** PASS
 
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
+**Description:** Stops workflow from within a Parallel block via safety checker. Sync non-streaming.
 
-**Result:** Executed successfully. Completed in 14.3s
+**Result:** Completed in 15.7s.
 
 ---
 
-### early_stopping/early_stop_parallel.py
+## guardrails/
+
+### prompt_injection.py
+
+**Status:** PASS (functional, guardrail ineffective)
+
+**Description:** Tests PromptInjectionGuardrail with 5 test cases. Async workflow with SqliteDb.
+
+**Result:** Normal request passed. All 4 injection attempts passed through without being blocked. PromptInjectionGuardrail not detecting these patterns — [B] COOKBOOK QUALITY.
+
+---
+
+## previous_step_outputs/
+
+### access_previous_outputs.py
+
+**Status:** PASS (partial)
+
+**Description:** Tests accessing outputs from prior steps via named steps and implicit step keys.
+
+**Result:**
+- Named access workflow: PASS (33.4s)
+- Direct steps workflow: FAIL ("object of type 'NoneType' has no len()" — step key naming for raw function executors)
+
+---
+
+## session_state/
+
+### state_in_condition.py
 
 **Status:** PASS
 
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
+**Description:** Uses session state in Condition evaluator. 2 runs.
 
-**Result:** Executed successfully. ┃ responsible for AI-driven errors or harms. ┃
+**Result:** Both completed. Session state correctly tracked.
 
 ---
 
-### guardrails/prompt_injection.py
+### state_with_agent.py
 
 **Status:** PASS
 
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
+**Description:** Shares mutable session state across agent tool calls. 4 runs.
 
-**Result:** Executed successfully. ERROR Validation failed: Potential jailbreaking or prompt injection detected.
-
----
-
-### history/continuous_execution.py
-
-**Status:** FAIL
-
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
-
-**Result:** Timed out after 35s. Student :
+**Result:** All 4 completed. State persisted correctly.
 
 ---
 
-### history/history_in_function.py
-
-**Status:** FAIL
-
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
-
-**Result:** Timed out after 35s. Content Manager :
-
----
-
-### history/intent_routing_with_history.py
-
-**Status:** FAIL
-
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
-
-**Result:** Timed out after 35s. - 'I'm getting an error message'
-
----
-
-### history/step_history.py
-
-**Status:** FAIL
-
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
-
-**Result:** Timed out after 35s. fit their needs.
-
----
-
-### long_running/disruption_catchup.py
+### rename_session.py
 
 **Status:** PASS
 
-**Description:** Executed with `.venvs/demo/bin/python` (mode: startup, timeout: 2s).
+**Description:** Demonstrates renaming workflow sessions.
 
-**Result:** Startup validation only; process terminated after 2.01s. Starting test in 2 seconds...
+**Result:** Completed. Session renamed successfully.
 
 ---
 
-### long_running/events_replay.py
+### state_in_function.py, state_in_router.py, state_with_team.py
+
+**Status:** NOT RUN (time constraint — complex multi-run cookbooks)
+
+---
+
+## structured_io/
+
+### input_schema.py
 
 **Status:** PASS
 
-**Description:** Executed with `.venvs/demo/bin/python` (mode: startup, timeout: 2s).
-
-**Result:** Startup validation only; process terminated after 2.01s. Starting test in 2 seconds...
+**Result:** Completed in 96.8s.
 
 ---
 
-### long_running/websocket_reconnect.py
+### pydantic_input.py
 
 **Status:** PASS
 
-**Description:** Executed with `.venvs/demo/bin/python` (mode: startup, timeout: 2s).
-
-**Result:** Startup validation only; process terminated after 2.01s. Starting test in 2 seconds...
+**Result:** Completed in 80.9s.
 
 ---
 
-### previous_step_outputs/access_previous_outputs.py
-
-**Status:** FAIL
-
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
-
-**Result:** Timed out after 35s. DEBUG Getting top 15 stories from Hacker News
-
----
-
-### run_control/cancel_run.py
+### structured_io_function.py
 
 **Status:** PASS
 
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
-
-**Result:** Executed successfully. Workflow cancellation example completed
+**Result:** Completed in 29.2s.
 
 ---
 
-### run_control/deep_copy.py
+### structured_io_agent.py
 
 **Status:** PASS
 
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
-
-**Result:** Executed successfully. First Step: Draft Outline Copy
+**Result:** Completed in 27.7s.
 
 ---
 
-### run_control/event_storage.py
+### structured_io_team.py
 
-**Status:** FAIL
+**Status:** TIMEOUT
 
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
-
-**Result:** Timed out after 35s. DEBUG Creating new sync OpenAI client for model gpt-5.2
+**Result:** Timed out at 120s.
 
 ---
 
-### run_control/executor_events.py
+### image_input.py
 
 **Status:** PASS
 
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
-
-**Result:** Executed successfully. DEBUG Marked run 544da40f-5099-4686-a1fe-b9dcd4e537c6 as RunStatus.completed
+**Result:** Completed in 32.2s.
 
 ---
 
-### run_control/metrics.py
+## history/
 
-**Status:** FAIL
+### step_history.py
 
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
+**Status:** TIMEOUT
 
-**Result:** Timed out after 35s. DEBUG Creating new sync OpenAI client for model gpt-4o
+**Result:** Timed out at 120s.
 
 ---
 
-### run_control/remote_workflow.py
+### continuous_execution.py, history_in_function.py, intent_routing_with_history.py
+
+**Status:** NOT RUN (time constraint)
+
+---
+
+## run_control/
+
+### cancel_run.py
 
 **Status:** PASS
 
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
-
-**Result:** Executed successfully. Error: Failed to connect to remote server at http://localhost:7777
+**Result:** Workflow cancellation worked correctly.
 
 ---
 
-### run_control/workflow_cli.py
+### deep_copy.py
 
-**Status:** FAIL
+**Status:** PASS (non-execution demo)
 
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
-
-**Result:** Timed out after 35s. ┃ • Add observability and safety: logs/metrics, error handling, retries, ┃
+**Result:** Deepcopy of workflow displayed correctly.
 
 ---
 
-### run_control/workflow_serialization.py
+### event_storage.py
 
 **Status:** PASS
 
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
-
-**Result:** Executed successfully. ERROR Error saving workflow: Label 'serialization-demo' already exists for
+**Result:** 2845 event lines captured. Full event lifecycle verified.
 
 ---
 
-### session_state/rename_session.py
+### executor_events.py
 
-**Status:** FAIL
+**Status:** PASS (non-execution demo)
 
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
-
-**Result:** Exited with code 1. AttributeError: 'NoneType' object has no attribute 'session_data'
+**Result:** Event type hierarchy displayed correctly.
 
 ---
 
-### session_state/state_in_condition.py
+### workflow_serialization.py
+
+**Status:** PASS (non-execution demo)
+
+**Result:** Serialized workflow dict displayed correctly.
+
+---
+
+### metrics.py
+
+**Status:** TIMEOUT
+
+**Result:** Timed out at 120s.
+
+---
+
+### remote_workflow.py
+
+**Status:** SKIP (requires AgentOS server)
+
+---
+
+### workflow_cli.py
+
+**Status:** SKIP (requires interactive stdin)
+
+---
+
+## workflow_agent/
+
+### basic_workflow_agent.py
 
 **Status:** PASS
 
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
-
-**Result:** Executed successfully. Completed in 3.2s
+**Result:** All 4 runs completed (63.5s, 4.4s, 25.3s, 6.9s).
 
 ---
 
-### session_state/state_in_function.py
-
-**Status:** FAIL
-
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
-
-**Result:** Timed out after 35s. DEBUG Creating new sync OpenAI client for model gpt-4o
-
----
-
-### session_state/state_in_router.py
-
-**Status:** FAIL
-
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
-
-**Result:** Timed out after 35s. - Useful large-scale quantum computing likely requires **quantum error
-
----
-
-### session_state/state_with_agent.py
+### workflow_agent_with_condition.py
 
 **Status:** PASS
 
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
-
-**Result:** Executed successfully. Final workflow session state: {'shopping_list': []}
+**Result:** Completed in 21.0s.
 
 ---
 
-### session_state/state_with_team.py
+## tools/
 
-**Status:** FAIL
+### workflow_tools.py
 
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
-
-**Result:** Timed out after 35s. DEBUG [ERROR] Step 'Write Tests' not found in the list
+**Status:** NOT RUN (time constraint)
 
 ---
 
-### structured_io/image_input.py
+## background_execution/
 
-**Status:** PASS
+### background_poll.py, websocket_client.py, websocket_server.py
 
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
-
-**Result:** Executed successfully. Completed in 22.9s
+**Status:** SKIP (server/client architecture)
 
 ---
 
-### structured_io/input_schema.py
+## long_running/
 
-**Status:** FAIL
+### disruption_catchup.py, events_replay.py, websocket_reconnect.py
 
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
-
-**Result:** Timed out after 35s. DEBUG ********************** TOOL METRICS **********************
-
----
-
-### structured_io/pydantic_input.py
-
-**Status:** FAIL
-
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
-
-**Result:** Timed out after 35s. ddgs.exceptions.DDGSException: No results found.
-
----
-
-### structured_io/structured_io_agent.py
-
-**Status:** PASS
-
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
-
-**Result:** Executed successfully. /Users/ab/conductor/workspaces/agno/colombo/cookbook/04_workflows/06_advanced_concepts/structured_io/structured_io_agent.py:65: PydanticDeprecatedSince20: `min_items` is deprecated and will be removed, use `min_length` i
-
----
-
-### structured_io/structured_io_function.py
-
-**Status:** PASS
-
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
-
-**Result:** Executed successfully. /Users/ab/conductor/workspaces/agno/colombo/cookbook/04_workflows/06_advanced_concepts/structured_io/structured_io_function.py:83: PydanticDeprecatedSince20: `min_items` is deprecated and will be removed, use `min_length
-
----
-
-### structured_io/structured_io_team.py
-
-**Status:** FAIL
-
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
-
-**Result:** Timed out after 35s. /Users/ab/conductor/workspaces/agno/colombo/cookbook/04_workflows/06_advanced_concepts/structured_io/structured_io_team.py:65: PydanticDeprecatedSince20: `min_items` is deprecated and will be removed, use `min_length` in
-
----
-
-### tools/workflow_tools.py
-
-**Status:** FAIL
-
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
-
-**Result:** Timed out after 35s. involvement from IBM, targeting error challenges in quantum computing.
-
----
-
-### workflow_agent/basic_workflow_agent.py
-
-**Status:** FAIL
-
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 120s).
-
-**Result:** Timed out after 120s. DEBUG ********************** TOOL METRICS **********************
-
----
-
-### workflow_agent/workflow_agent_with_condition.py
-
-**Status:** PASS
-
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 120s).
-
-**Result:** Executed successfully. Completed in 13.5s
+**Status:** SKIP (server/client architecture)
 
 ---

@@ -24,9 +24,14 @@ agent = Agent(
     add_datetime_to_context=True,
 )
 
+
 # ---------------------------------------------------------------------------
 # Run Agent
 # ---------------------------------------------------------------------------
+async def main():
+    await agent.aprint_response("How many people live in Canada?")
+    await agent.aprint_response("What is their national anthem called?")
+
+
 if __name__ == "__main__":
-    asyncio.run(agent.aprint_response("How many people live in Canada?"))
-    asyncio.run(agent.aprint_response("What is their national anthem called?"))
+    asyncio.run(main())

@@ -1,21 +1,13 @@
 # Test Log: metrics
 
-> Updated: 2026-02-08 15:49:52
-
-## Pattern Check
-
-**Status:** PASS
-
-**Result:** Checked 1 file(s) in /Users/ab/conductor/workspaces/agno/colombo/cookbook/03_teams/metrics. Violations: 0
-
----
+> Updated: 2026-02-11
 
 ### 01_team_metrics.py
 
-**Status:** FAIL
+**Status:** PASS
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/metrics/01_team_metrics.py`.
+**Description:** Team metrics aggregation — creates a stock research team with YFinanceTools, runs a query, then prints leader message metrics, aggregated team metrics, session metrics, and member metrics.
 
-**Result:** Exited with code 1. Tail: agno/agno/db/surrealdb/surrealdb.py", line 16, in <module> |     from agno.db.surrealdb import utils |   File "/Users/ab/conductor/workspaces/agno/colombo/libs/agno/agno/db/surrealdb/utils.py", line 4, in <module> |     from surrealdb import BlockingHttpSurrealConnection, BlockingWsSurrealConnection, Surreal | ModuleNotFoundError: No module named 'surrealdb'
+**Result:** After fixing SurrealDb import (see REVIEW_LOG.md), ran successfully. All four metric levels displayed correctly: per-message metrics (input/output tokens, reasoning tokens, TTFT, duration), aggregated team metrics, session metrics via `team.get_session_metrics()`, and member-level metrics from `run_output.member_responses`.
 
 ---

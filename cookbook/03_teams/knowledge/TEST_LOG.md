@@ -1,22 +1,14 @@
 # Test Log: knowledge
 
-> Updated: 2026-02-08 15:49:52
-
-## Pattern Check
-
-**Status:** PASS
-
-**Result:** Checked 4 file(s) in /Users/ab/conductor/workspaces/agno/colombo/cookbook/03_teams/knowledge. Violations: 0
-
----
+> Updated: 2026-02-11
 
 ### 01_team_with_knowledge.py
 
 **Status:** FAIL
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/knowledge/01_team_with_knowledge.py`.
+**Description:** Team with LanceDb knowledge base — downloads docs from URL, embeds with OpenAI, team queries knowledge.
 
-**Result:** Exited with code 1. Tail: rom agno.vectordb.lancedb.lance_db import LanceDb, SearchType |   File "/Users/ab/conductor/workspaces/agno/colombo/libs/agno/agno/vectordb/lancedb/lance_db.py", line 11, in <module> |     raise ImportError("`lancedb` not installed. Please install using `pip install lancedb`") | ImportError: `lancedb` not installed. Please install using `pip install lancedb`
+**Result:** `lancedb` package not installed in demo venv. Import error at module level blocks execution.
 
 ---
 
@@ -24,9 +16,9 @@
 
 **Status:** FAIL
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/knowledge/02_team_with_knowledge_filters.py`.
+**Description:** Static metadata-based knowledge filtering — downloads sample PDFs, inserts with metadata, filters by `user_id`.
 
-**Result:** Exited with code 1. Tail: rom agno.vectordb.lancedb.lance_db import LanceDb, SearchType |   File "/Users/ab/conductor/workspaces/agno/colombo/libs/agno/agno/vectordb/lancedb/lance_db.py", line 11, in <module> |     raise ImportError("`lancedb` not installed. Please install using `pip install lancedb`") | ImportError: `lancedb` not installed. Please install using `pip install lancedb`
+**Result:** Same `lancedb` import error. Package not installed.
 
 ---
 
@@ -34,18 +26,18 @@
 
 **Status:** FAIL
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/knowledge/03_team_with_agentic_knowledge_filters.py`.
+**Description:** AI-driven dynamic knowledge filtering — same sample data as 02, uses `enable_agentic_knowledge_filters=True`.
 
-**Result:** Exited with code 1. Tail: rom agno.vectordb.lancedb.lance_db import LanceDb, SearchType |   File "/Users/ab/conductor/workspaces/agno/colombo/libs/agno/agno/vectordb/lancedb/lance_db.py", line 11, in <module> |     raise ImportError("`lancedb` not installed. Please install using `pip install lancedb`") | ImportError: `lancedb` not installed. Please install using `pip install lancedb`
+**Result:** Same `lancedb` import error. Package not installed.
 
 ---
 
 ### 04_team_with_custom_retriever.py
 
-**Status:** FAIL
+**Status:** PASS
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/knowledge/04_team_with_custom_retriever.py`.
+**Description:** Custom team knowledge retriever using PgVector — downloads docs from URL, embeds with OpenAI, custom retriever function receives `RunContext.dependencies` for runtime context injection.
 
-**Result:** Timed out before completion. Tail:                                                        | DEBUG =========================== user ===========================               | DEBUG Research the concept of AI agents, including their roles, functionalities, |       and examples from the knowledge base.                                      | DEBUG Creating new sync OpenAI client for model gpt-4o
+**Result:** Ran successfully (exit 0). Embedding is slow (~100s for URL content). Custom retriever received dependencies dict correctly. PgVector storage works.
 
 ---

@@ -1,19 +1,21 @@
 # Test Log: rbac/asymmetric
 
-> Tests not yet run. Run each file and update this log.
-
 ### basic.py
 
-**Status:** PENDING
+**Status:** PASS
 
-**Description:** Basic RBAC Example with AgentOS (Asymmetric Keys).
+**Description:** Basic RBAC with RS256 asymmetric keys. Uses `generate_rsa_keys()` from `agno.utils.cryptography`, persists keys to `/tmp` for reload consistency.
+
+**Result:** Import and app construction OK. JWT middleware added with RS256 algorithm.
 
 ---
 
 ### custom_scope_mappings.py
 
-**Status:** PENDING
+**Status:** PASS
 
-**Description:** Custom Scope Mappings Example.
+**Description:** Custom scope mappings with RS256. Manually adds JWTMiddleware with custom scopes and `admin_scope="foo:bar"` override.
+
+**Result:** Import and app construction OK. Custom scope mappings applied.
 
 ---

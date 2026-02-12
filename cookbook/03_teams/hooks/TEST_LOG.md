@@ -1,41 +1,33 @@
 # Test Log: hooks
 
-> Updated: 2026-02-08 15:49:52
-
-## Pattern Check
-
-**Status:** PASS
-
-**Result:** Checked 3 file(s) in /Users/ab/conductor/workspaces/agno/colombo/cookbook/03_teams/hooks. Violations: 0
-
----
-
-### post_hook_output.py
-
-**Status:** FAIL
-
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/hooks/post_hook_output.py`.
-
-**Result:** Timed out before completion. Tail: rder volume, I can tailor the top 5 moves  |       and KPI targets.                                                           | DEBUG **********************  TOOL METRICS  **********************               | DEBUG * Duration:                    0.0005s                                     | DEBUG **********************  TOOL METRICS  **********************
-
----
-
-### pre_hook_input.py
-
-**Status:** FAIL
-
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/hooks/pre_hook_input.py`.
-
-**Result:** Timed out before completion. Tail: ers, setting up continuous integration/continuous     |       delivery (CI/CD) pipelines, monitoring, logging, and implementing          |       analytics for system performance and usage. Use cloud services like AWS,   |       Google Cloud, or Azure.                                                    | DEBUG Creating new sync OpenAI client for model gpt-5.2
-
----
+> Updated: 2026-02-11
 
 ### stream_hook.py
 
 **Status:** PASS
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/hooks/stream_hook.py`.
+**Description:** Demonstrates post-hook notification after streamed team response using `RunContext.metadata` to pass user email. Uses `YFinanceTools` to generate a financial report for AAPL.
 
-**Result:** Executed successfully. Duration: 13.82s. Tail: E and P/B) supported by    ┃ | ┃ scale, margins, and Services contribution; dividend is **modest** relative   ┃ | ┃ to price.                                                                    ┃ | ┃                                                                              ┃ | ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+**Result:** Completed successfully in ~14s. Post-hook fired after streaming, correctly accessed `run_context.metadata["email"]` and sent mock email notification.
+
+---
+
+### pre_hook_input.py
+
+**Status:** FAIL (timeout)
+
+**Description:** Demonstrates complex pre-hooks with inner Agent calls for input validation (`comprehensive_team_input_validation`) and transformation (`transform_team_input`). 5 test cases across 2 teams.
+
+**Result:** Timed out at 180s. The validation pre-hook creates an inner Agent (gpt-5.2) with `output_schema` for structured validation, causing multiple nested LLM roundtrips per test case. First test case (complex software project) never completed within timeout. Prior run (2026-02-08) also timed out — this is structurally too slow for reasonable cookbook execution.
+
+---
+
+### post_hook_output.py
+
+**Status:** PASS
+
+**Description:** Demonstrates 6 types of post-hooks: quality validation (inner Agent), simple coordination check, metadata injection, collaboration summary, and structured response formatting (inner Agent). 6 test cases across 5 different teams.
+
+**Result:** All 6 test cases completed successfully. Validation hooks, metadata injection, and structured formatting all worked correctly. Async and sync mixed usage functioned. Prior run (2026-02-08) had timed out — this run completed.
 
 ---

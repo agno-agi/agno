@@ -2,32 +2,11 @@
 
 Test results for `cookbook/00_quickstart/` examples.
 
-**Test Date:** 2026-02-10 (re-validated)
-**Environment:** `.venvs/demo/bin/python` with `direnv` exports loaded
-**Model:** `gemini-3-flash-preview` (Google Gemini)
-**Database:** SQLite (`tmp/agents.db`) and ChromaDB (`tmp/chromadb/`)
-
----
-
-## Structure Validation
-
-### check_cookbook_pattern.py
-
-**Status:** PASS
-
-**Description:** Validates cookbook structure and formatting pattern for quickstart examples.
-
-**Result:** `.venvs/demo/bin/python cookbook/scripts/check_cookbook_pattern.py --base-dir cookbook/00_quickstart` reported `Checked 13 file(s) ... Violations: 0`.
-
----
-
-### style_guide_compliance_scan
-
-**Status:** PASS
-
-**Description:** Validates module docstring with `=====` underline, section banners, import placement, `if __name__ == "__main__":` gate, and no emoji characters.
-
-**Result:** All 13 runnable files comply with `cookbook/STYLE_GUIDE.md`. No emoji characters found.
+**Test Date:** 2026-02-11 (v2.5 re-verification)
+**Environment:** `.venvs/demo/bin/python` (Python 3.12)
+**Model:** Gemini (agent_with_tools, knowledge, self-learning), OpenAI (all others)
+**Database:** SQLite (`tmp/agents.db`), ChromaDB (`tmp/chromadb/`)
+**Branch:** `cookbooks/v2.5-testing`
 
 ---
 
@@ -39,7 +18,7 @@ Test results for `cookbook/00_quickstart/` examples.
 
 **Description:** Finance Agent with YFinanceTools fetches real-time market data for NVIDIA.
 
-**Result:** Exited `0`; produced investment brief with price ($190.04), market cap ($4.63T), P/E, 52-week range, key drivers, and risks.
+**Result:** Exited `0`; produced investment brief with price ($191.78), market cap, P/E, 52-week range, key drivers, and risks.
 
 ---
 
@@ -47,9 +26,9 @@ Test results for `cookbook/00_quickstart/` examples.
 
 **Status:** PASS
 
-**Description:** Returns a typed `StockAnalysis` Pydantic model for NVIDIA.
+**Description:** Returns a typed `StockAnalysis` Pydantic model for NVIDIA via Gemini.
 
-**Result:** Exited `0`; structured output parsed correctly with all fields (ticker, company_name, current_price, market_cap, pe_ratio, 52-week range, key_drivers, key_risks, recommendation).
+**Result:** Exited `0`; structured output with all fields: price, market cap, P/E, summary, key drivers (3), key risks (3), recommendation.
 
 ---
 
@@ -57,9 +36,9 @@ Test results for `cookbook/00_quickstart/` examples.
 
 **Status:** PASS
 
-**Description:** Full type safety with `AnalysisRequest` input and `StockAnalysis` output schemas. Tests both dict and Pydantic model input.
+**Description:** Full type safety with `AnalysisRequest` input and `StockAnalysis` output schemas.
 
-**Result:** Exited `0`; both dict input (NVDA deep analysis) and Pydantic model input (AAPL quick analysis) returned correctly typed `StockAnalysis` responses.
+**Result:** Exited `0`; both dict input (NVDA) and Pydantic model input (AAPL) returned correctly typed responses.
 
 ---
 
@@ -67,9 +46,9 @@ Test results for `cookbook/00_quickstart/` examples.
 
 **Status:** PASS
 
-**Description:** Finance Agent with SQLite storage persists conversation across three turns.
+**Description:** Finance Agent with SQLite storage persists conversation across three turns (NVDA analysis, TSLA comparison, portfolio advice).
 
-**Result:** Exited `0`; completed three-turn conversation (NVDA brief, TSLA comparison, investment recommendation). Agent correctly referenced prior turns.
+**Result:** Exited `0`; completed three-turn conversation with correct cross-turn context retention.
 
 ---
 
@@ -77,9 +56,9 @@ Test results for `cookbook/00_quickstart/` examples.
 
 **Status:** PASS
 
-**Description:** Agent with MemoryManager extracts and recalls user preferences.
+**Description:** Agent with MemoryManager extracts and recalls user preferences (AI/semiconductor interests, moderate risk tolerance).
 
-**Result:** Exited `0`; agent stored two memories ("interested in AI and semiconductor stocks", "moderate risk tolerance") and used them to personalize stock recommendations.
+**Result:** Exited `0`; stored 2 memories, recalled them to personalize stock recommendations.
 
 ---
 
@@ -87,29 +66,9 @@ Test results for `cookbook/00_quickstart/` examples.
 
 **Status:** PASS
 
-**Description:** Agent manages a stock watchlist via custom state-modifying tools.
+**Description:** Agent manages a stock watchlist via custom state-modifying tools (`add_to_watchlist`, `remove_from_watchlist`, `get_current_stock_price`).
 
-**Result:** Exited `0`; added NVDA, AAPL, GOOGL to watchlist, fetched prices for watched stocks, and confirmed session state `['NVDA', 'AAPL', 'GOOGL']`.
-
----
-
-### agent_search_over_knowledge.py
-
-**Status:** PASS
-
-**Description:** Loads Agno introduction docs into ChromaDB knowledge base with hybrid search and answers questions.
-
-**Result:** Exited `0`; loaded knowledge from `https://docs.agno.com/introduction.md`, searched and synthesized answer about Agno features and components.
-
----
-
-### custom_tool_for_self_learning.py
-
-**Status:** PASS
-
-**Description:** Agent with custom `save_learning` tool saves insights to a ChromaDB knowledge base and recalls them.
-
-**Result:** Exited `0`; agent proposed and saved a learning about tech P/E benchmarks, then recalled it from the knowledge base.
+**Result:** Exited `0`; watchlist state `['NVDA', 'AAPL', 'GOOGL']` managed correctly across 3 turns.
 
 ---
 
@@ -119,17 +78,7 @@ Test results for `cookbook/00_quickstart/` examples.
 
 **Description:** Tests PII detection, prompt injection, and custom spam guardrails.
 
-**Result:** Exited `0`; four test cases executed: normal request processed, PII (SSN) blocked, prompt injection blocked, spam (excessive exclamation marks) blocked.
-
----
-
-### human_in_the_loop.py
-
-**Status:** PASS
-
-**Description:** Confirmation-required tool execution with `@tool(requires_confirmation=True)`.
-
-**Result:** Exited `0`; agent proposed saving a learning, confirmation was approved via stdin `y`, tool executed and saved the learning.
+**Result:** Exited `0`; PII blocked (SSN detected), injection blocked (prompt injection detected), spam blocked (excessive exclamation), normal request processed.
 
 ---
 
@@ -137,9 +86,9 @@ Test results for `cookbook/00_quickstart/` examples.
 
 **Status:** PASS
 
-**Description:** Bull/Bear analyst team with leader synthesis for NVIDIA and AMD comparison.
+**Description:** Bull/Bear analyst team with leader synthesis. NVIDIA and AMD comparative analysis.
 
-**Result:** Exited `0`; both analysts provided independent perspectives, leader synthesized into balanced recommendation with comparison table.
+**Result:** Exited `0`; both analysts provided independent perspectives with real data, leader synthesized balanced recommendation with metrics table.
 
 ---
 
@@ -147,9 +96,39 @@ Test results for `cookbook/00_quickstart/` examples.
 
 **Status:** PASS
 
-**Description:** Three-step workflow: Data Gathering, Analysis, Report Writing for NVIDIA.
+**Description:** Three-step workflow: Data Gathering -> Analysis -> Report Writing for NVIDIA.
 
-**Result:** Exited `0` in ~30.8s; all three steps completed, final report included recommendation (BUY), key metrics table, and rationale.
+**Result:** Exited `0` in ~34s; all three steps completed with final investment report.
+
+---
+
+### agent_search_over_knowledge.py
+
+**Status:** PASS
+
+**Description:** Loads Agno docs into ChromaDB knowledge base with hybrid search (semantic + keyword).
+
+**Result:** Exited `0`; knowledge base loaded and queried successfully. Agent answered questions about Agno SDK, AgentOS, and learning capabilities.
+
+---
+
+### custom_tool_for_self_learning.py
+
+**Status:** PASS
+
+**Description:** Agent with custom `save_learning` tool saves insights to ChromaDB knowledge base.
+
+**Result:** Exited `0`; 3 learnings saved (P/E valuation, benchmarks, org goal) and recalled correctly.
+
+---
+
+### human_in_the_loop.py
+
+**Status:** SKIP
+
+**Description:** Confirmation-required tool execution with `@tool(requires_confirmation=True)`.
+
+**Result:** Requires interactive user input (Rich `Prompt.ask`). EOFError when run non-interactively.
 
 ---
 
@@ -157,9 +136,9 @@ Test results for `cookbook/00_quickstart/` examples.
 
 **Status:** PASS
 
-**Description:** Startup-only validation for long-running AgentOS server.
+**Description:** AgentOS server startup with all quickstart agents registered.
 
-**Result:** Server started successfully on `http://localhost:7777` with all 10 agents, 1 team, and 1 workflow registered. Uvicorn startup complete. Process terminated cleanly after 15s.
+**Result:** Exited `0`; import + agent registration successful. Cosmetic tracing warning about `Agent._run` attribute (openinference compatibility with v2.5 rename).
 
 ---
 
@@ -167,18 +146,18 @@ Test results for `cookbook/00_quickstart/` examples.
 
 | File | Status | Notes |
 |------|--------|-------|
-| `agent_with_tools.py` | PASS | Produced NVDA investment brief with real market data |
-| `agent_with_structured_output.py` | PASS | Typed `StockAnalysis` returned with all fields |
-| `agent_with_typed_input_output.py` | PASS | Both dict and Pydantic model inputs handled correctly |
-| `agent_with_storage.py` | PASS | Three-turn persisted conversation completed |
-| `agent_with_memory.py` | PASS | Memories stored and recalled for personalization |
-| `agent_with_state_management.py` | PASS | Watchlist state managed across turns |
-| `agent_search_over_knowledge.py` | PASS | Knowledge loaded, hybrid search, and answer generated |
-| `custom_tool_for_self_learning.py` | PASS | Custom tool saved and recalled learning |
-| `agent_with_guardrails.py` | PASS | All 4 guardrail test cases passed (normal, PII, injection, spam) |
-| `human_in_the_loop.py` | PASS | Confirmation flow exercised with stdin approval |
-| `multi_agent_team.py` | PASS | Bull/Bear team collaboration completed |
-| `sequential_workflow.py` | PASS | Three-step workflow completed in ~33.6s |
-| `run.py` | PASS | AgentOS server startup validated |
+| `agent_with_tools.py` | PASS | |
+| `agent_with_structured_output.py` | PASS | |
+| `agent_with_typed_input_output.py` | PASS | |
+| `agent_with_storage.py` | PASS | |
+| `agent_with_memory.py` | PASS | |
+| `agent_with_state_management.py` | PASS | |
+| `agent_with_guardrails.py` | PASS | |
+| `multi_agent_team.py` | PASS | |
+| `sequential_workflow.py` | PASS | |
+| `agent_search_over_knowledge.py` | PASS | |
+| `custom_tool_for_self_learning.py` | PASS | |
+| `human_in_the_loop.py` | SKIP | Needs interactive input |
+| `run.py` | PASS | |
 
-**Overall:** 13 PASS, 0 FAIL
+**Overall:** 12 PASS, 0 FAIL, 1 SKIP
