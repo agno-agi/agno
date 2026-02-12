@@ -48,7 +48,7 @@ db = SqliteDb(
 )
 agent = Agent(
     name="Admin Agent",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     tools=[delete_user_data, send_bulk_email],
     markdown=True,
     db=db,
@@ -69,7 +69,7 @@ if __name__ == "__main__":
     )
     agent = Agent(
         name="Admin Agent",
-        model=OpenAIResponses(id="gpt-5.2-mini"),
+        model=OpenAIResponses(id="gpt-5-mini"),
         tools=[delete_user_data, send_bulk_email],
         markdown=True,
         db=db,

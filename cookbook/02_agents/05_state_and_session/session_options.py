@@ -14,7 +14,7 @@ from agno.utils.pprint import pprint_run_response
 # Create Agent
 # ---------------------------------------------------------------------------
 agent = Agent(
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     db=SqliteDb(db_file="tmp/example_no_history.db"),
     add_history_to_context=True,  # Use history during execution
     num_history_runs=3,

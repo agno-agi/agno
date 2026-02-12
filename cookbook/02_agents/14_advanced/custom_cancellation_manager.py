@@ -131,7 +131,7 @@ def main():
     # Create an agent
     agent = Agent(
         name="StoryAgent",
-        model=OpenAIResponses(id="gpt-5.2-mini"),
+        model=OpenAIResponses(id="gpt-5-mini"),
         description="An agent that writes stories",
     )
 

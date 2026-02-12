@@ -60,7 +60,7 @@ async def example_structured_background_run():
 
     agent = Agent(
         name="CityFactsAgent",
-        model=OpenAIResponses(id="gpt-5.2-mini"),
+        model=OpenAIResponses(id="gpt-5-mini"),
         description="An agent that provides structured facts about cities.",
         db=db,
     )
@@ -126,7 +126,7 @@ async def example_multiple_background_runs():
 
     agent = Agent(
         name="QuizAgent",
-        model=OpenAIResponses(id="gpt-5.2-mini"),
+        model=OpenAIResponses(id="gpt-5-mini"),
         description="An agent that answers trivia questions.",
         db=db,
     )

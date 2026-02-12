@@ -13,7 +13,7 @@ from agno.models.openai import OpenAIResponses
 # Create Agent
 # ---------------------------------------------------------------------------
 agent = Agent(
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     debug_mode=True,
 )
 
@@ -25,6 +25,6 @@ if __name__ == "__main__":
 
     # You can also set the debug mode on a single run
     agent = Agent(
-        model=OpenAIResponses(id="gpt-5.2-mini"),
+        model=OpenAIResponses(id="gpt-5-mini"),
     )
     agent.print_response(input="Tell me a joke.", debug_mode=True)

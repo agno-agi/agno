@@ -28,7 +28,7 @@ class ResearchTopic(BaseModel):
 # ---------------------------------------------------------------------------
 hackernews_agent = Agent(
     name="Hackernews Agent",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     tools=[HackerNewsTools()],
     role="Extract key insights and content from Hackernews posts",
     input_schema=ResearchTopic,

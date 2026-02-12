@@ -29,7 +29,7 @@ async def main():
 
     basic_agent = Agent(
         name="Basic Moderated Agent",
-        model=OpenAIResponses(id="gpt-5.2-mini"),
+        model=OpenAIResponses(id="gpt-5-mini"),
         pre_hooks=[OpenAIModerationGuardrail()],
         description="An agent with basic OpenAI content moderation.",
         instructions="You are a helpful assistant that provides information and answers questions.",
@@ -77,7 +77,7 @@ async def main():
 
     custom_agent = Agent(
         name="Custom Moderated Agent",
-        model=OpenAIResponses(id="gpt-5.2-mini"),
+        model=OpenAIResponses(id="gpt-5-mini"),
         pre_hooks=[
             OpenAIModerationGuardrail(
                 raise_for_categories=[

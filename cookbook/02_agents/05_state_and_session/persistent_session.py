@@ -17,7 +17,7 @@ db = PostgresDb(db_url=db_url, session_table="sessions")
 # Create Agent
 # ---------------------------------------------------------------------------
 agent = Agent(
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     db=db,
     session_id="session_storage",
     add_history_to_context=True,

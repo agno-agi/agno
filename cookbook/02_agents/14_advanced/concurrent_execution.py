@@ -23,7 +23,7 @@ The report should be unbiased and factual.
 
 # Create the agent ONCE outside the loop - this is the correct pattern
 agent = Agent(
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     instructions=instructions,
     tools=[DuckDuckGoTools()],
 )

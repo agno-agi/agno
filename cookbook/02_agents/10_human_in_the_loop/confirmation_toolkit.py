@@ -19,7 +19,7 @@ console = Console()
 # Create Agent
 # ---------------------------------------------------------------------------
 agent = Agent(
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     tools=[WebSearchTools(requires_confirmation_tools=["web_search"])],
     markdown=True,
     db=SqliteDb(db_file="tmp/confirmation_required_toolkit.db"),

@@ -16,14 +16,14 @@ from agno.team import Team
 writer = Agent(
     name="Writer",
     role="Content writer",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     instructions=["Write clear, concise content."],
 )
 
 researcher = Agent(
     name="Researcher",
     role="Research analyst",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     instructions=["Research topics and summarize findings."],
 )
 
@@ -44,7 +44,7 @@ def pick_members(session_state: dict):
 
 team = Team(
     name="Content Team",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     members=pick_members,
     cache_callables=False,
     instructions=["Coordinate the team to complete the task."],

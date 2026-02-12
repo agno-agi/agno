@@ -84,7 +84,7 @@ if __name__ == "__main__":
     # Create agent with few-shot learning
     agent = Agent(
         name="Customer Support Specialist",
-        model=OpenAIResponses(id="gpt-5.2-mini"),
+        model=OpenAIResponses(id="gpt-5-mini"),
         add_name_to_context=True,
         additional_input=support_examples,  # few-shot learning examples
         instructions=[

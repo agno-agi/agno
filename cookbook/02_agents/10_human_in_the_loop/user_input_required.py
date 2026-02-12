@@ -33,7 +33,7 @@ def send_email(subject: str, body: str, to_address: str) -> str:
 # Create Agent
 # ---------------------------------------------------------------------------
 agent = Agent(
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     tools=[send_email],
     markdown=True,
     db=SqliteDb(db_file="tmp/user_input_required.db"),

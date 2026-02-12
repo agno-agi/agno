@@ -24,7 +24,7 @@ async def main():
     # Create an agent with PII detection protection
     agent = Agent(
         name="Privacy-Protected Agent",
-        model=OpenAIResponses(id="gpt-5.2-mini"),
+        model=OpenAIResponses(id="gpt-5-mini"),
         pre_hooks=[PIIDetectionGuardrail()],
         description="An agent that helps with customer service while protecting privacy.",
         instructions="You are a helpful customer service assistant. Always protect user privacy and handle sensitive information appropriately.",
@@ -120,7 +120,7 @@ async def main():
     # Create an agent with PII detection which masks the PII in the input
     agent = Agent(
         name="Privacy-Protected Agent (Masked)",
-        model=OpenAIResponses(id="gpt-5.2-mini"),
+        model=OpenAIResponses(id="gpt-5-mini"),
         pre_hooks=[PIIDetectionGuardrail(mask_pii=True)],
         description="An agent that helps with customer service while protecting privacy.",
         instructions="You are a helpful customer service assistant. Always protect user privacy and handle sensitive information appropriately.",

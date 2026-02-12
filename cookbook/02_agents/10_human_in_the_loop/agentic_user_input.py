@@ -59,7 +59,7 @@ class EmailTools(Toolkit):
 # Create Agent
 # ---------------------------------------------------------------------------
 agent = Agent(
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     tools=[EmailTools(), UserControlFlowTools()],
     markdown=True,
     db=SqliteDb(db_file="tmp/agentic_user_input.db"),

@@ -51,7 +51,7 @@ def get_top_hackernews_stories(num_stories: int) -> str:
 # Create Agent
 # ---------------------------------------------------------------------------
 agent = Agent(
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     tools=[get_top_hackernews_stories],
     markdown=True,
     db=SqliteDb(session_table="test_session", db_file="tmp/example.db"),

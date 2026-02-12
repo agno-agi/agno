@@ -20,7 +20,7 @@ db = PostgresDb(db_url=db_url, session_table="sessions")
 # Create Agent
 # ---------------------------------------------------------------------------
 agent = Agent(
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     db=db,
     enable_session_summaries=True,
     session_id="session_123",
@@ -37,10 +37,10 @@ if __name__ == "__main__":
 
     # Method 2: Set session_summary_manager
 
-    # session_summary_manager = SessionSummaryManager(model=OpenAIResponses(id="gpt-5.2-mini"))
+    # session_summary_manager = SessionSummaryManager(model=OpenAIResponses(id="gpt-5-mini"))
 
     # agent = Agent(
-    #     model=OpenAIResponses(id="gpt-5.2-mini"),
+    #     model=OpenAIResponses(id="gpt-5-mini"),
     #     db=db,
     #     session_id="session_summary",
     #     session_summary_manager=session_summary_manager,

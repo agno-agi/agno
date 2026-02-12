@@ -16,7 +16,7 @@ from agno.tools.duckduckgo import DuckDuckGoTools
 # Create Agent
 # ---------------------------------------------------------------------------
 agent = Agent(
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     tools=[DuckDuckGoTools()],
     description="Specialized in tracking competitor activities",
     instructions="Use the search tools and always use the latest information and data.",

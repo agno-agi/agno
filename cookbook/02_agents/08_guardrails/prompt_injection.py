@@ -22,7 +22,7 @@ def main():
     # Create an agent with prompt injection protection
     agent = Agent(
         name="Guardrails Demo Agent",
-        model=OpenAIResponses(id="gpt-5.2-mini"),
+        model=OpenAIResponses(id="gpt-5-mini"),
         pre_hooks=[PromptInjectionGuardrail()],
         description="An agent that tells jokes and provides helpful information.",
         instructions="You are a friendly assistant that tells jokes and provides helpful information. Always maintain a positive and helpful tone.",

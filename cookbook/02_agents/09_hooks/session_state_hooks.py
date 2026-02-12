@@ -36,7 +36,7 @@ def track_conversation_topics(run_context: RunContext, run_input: RunInput) -> N
 
     topics_analyzer_agent = Agent(
         name="Topics Analyzer",
-        model=OpenAIResponses(id="gpt-5.2-mini"),
+        model=OpenAIResponses(id="gpt-5-mini"),
         instructions=[
             "Your task is to analyze a user query and extract the topics."
             "You will be presented with a user message sent to an agent."
@@ -62,7 +62,7 @@ def track_conversation_topics(run_context: RunContext, run_input: RunInput) -> N
 # Create a simple agent and equip it with our pre-hook
 agent = Agent(
     name="Simple Agent",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     pre_hooks=[track_conversation_topics],
     db=SqliteDb(db_file="test.db"),
 )

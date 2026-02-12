@@ -131,7 +131,7 @@ def main():
     agent = Agent(
         name="StorytellerAgent",
         model=OpenAIResponses(
-            id="gpt-5.2-mini"
+            id="gpt-5-mini"
         ),  # Use a model that can generate long responses
         description="An agent that writes detailed stories",
     )

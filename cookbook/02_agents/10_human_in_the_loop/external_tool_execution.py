@@ -35,7 +35,7 @@ def execute_shell_command(command: str) -> str:
 # Create Agent
 # ---------------------------------------------------------------------------
 agent = Agent(
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     tools=[execute_shell_command],
     markdown=True,
     db=SqliteDb(session_table="test_session", db_file="tmp/example.db"),

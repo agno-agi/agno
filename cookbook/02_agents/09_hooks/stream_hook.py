@@ -44,7 +44,7 @@ async def main():
 
     agent = Agent(
         name="Financial Report Agent",
-        model=OpenAIResponses(id="gpt-5.2-mini"),
+        model=OpenAIResponses(id="gpt-5-mini"),
         post_hooks=[send_notification],
         tools=[YFinanceTools()],
         instructions=[

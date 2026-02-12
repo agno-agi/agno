@@ -37,7 +37,7 @@ def comprehensive_input_validation(run_input: RunInput) -> None:
     # Input validation agent
     validator_agent = Agent(
         name="Input Validator",
-        model=OpenAIResponses(id="gpt-5.2-mini"),
+        model=OpenAIResponses(id="gpt-5-mini"),
         instructions=[
             "You are an input validation specialist. Analyze user requests for:",
             "1. RELEVANCE: Ensure the request is appropriate for a financial advisor agent",
@@ -87,7 +87,7 @@ def main():
     # Create a financial advisor agent with comprehensive hooks
     agent = Agent(
         name="Financial Advisor",
-        model=OpenAIResponses(id="gpt-5.2-mini"),
+        model=OpenAIResponses(id="gpt-5-mini"),
         pre_hooks=[comprehensive_input_validation],
         description="A professional financial advisor providing investment guidance and financial planning advice.",
         instructions=[

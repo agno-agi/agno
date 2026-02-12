@@ -40,7 +40,7 @@ cities = [
 # Create Agent
 # ---------------------------------------------------------------------------
 agent = Agent(
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     tools=[get_weather_for_city],
     instructions="You are a weather assistant. Get the weather using the get_weather_for_city tool.",
     # Only keep 3 most recent tool calls from history in context (reduces token costs)

@@ -13,7 +13,7 @@ from agno.tools.yfinance import YFinanceTools
 # Create Agent
 # ---------------------------------------------------------------------------
 agent = Agent(
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     tools=[YFinanceTools()],
     tool_call_limit=1,
 )

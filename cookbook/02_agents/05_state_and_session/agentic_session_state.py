@@ -14,7 +14,7 @@ db = SqliteDb(db_file="tmp/agents.db")
 # Create Agent
 # ---------------------------------------------------------------------------
 agent = Agent(
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     db=db,
     session_state={"shopping_list": []},
     add_session_state_to_context=True,  # Required so the agent is aware of the session state

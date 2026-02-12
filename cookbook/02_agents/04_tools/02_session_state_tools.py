@@ -42,7 +42,7 @@ def get_tools(session_state: dict):
 # ---------------------------------------------------------------------------
 
 agent = Agent(
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     tools=get_tools,
     cache_callables=False,
     instructions=["Use the available tool to respond."],

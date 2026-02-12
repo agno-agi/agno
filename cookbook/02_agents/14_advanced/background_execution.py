@@ -43,7 +43,7 @@ async def example_background_run_with_polling():
 
     agent = Agent(
         name="BackgroundAgent",
-        model=OpenAIResponses(id="gpt-5.2-mini"),
+        model=OpenAIResponses(id="gpt-5-mini"),
         description="An agent that runs in the background",
         db=db,
     )
@@ -95,7 +95,7 @@ async def example_cancel_background_run():
 
     agent = Agent(
         name="CancellableAgent",
-        model=OpenAIResponses(id="gpt-5.2-mini"),
+        model=OpenAIResponses(id="gpt-5-mini"),
         description="An agent whose run can be cancelled",
         db=db,
     )
@@ -139,7 +139,7 @@ async def example_cancel_before_start():
 
     agent = Agent(
         name="PreCancelAgent",
-        model=OpenAIResponses(id="gpt-5.2-mini"),
+        model=OpenAIResponses(id="gpt-5-mini"),
         description="An agent whose run is cancelled before starting",
         db=db,
     )

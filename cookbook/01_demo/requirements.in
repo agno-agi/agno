@@ -1,7 +1,6 @@
 agno[openai,anthropic]
-duckduckgo-search
+parallel-web
 duckdb
-yfinance
 exa-py
 pgvector
 psycopg[binary]

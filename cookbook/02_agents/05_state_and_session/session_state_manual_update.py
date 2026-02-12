@@ -25,7 +25,7 @@ def add_item(run_context: RunContext, item: str) -> str:
 # Create Agent
 # ---------------------------------------------------------------------------
 agent = Agent(
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     # Initialize the session state with an empty shopping list (this is the default session state for all users)
     session_state={"shopping_list": []},
     db=SqliteDb(db_file="tmp/agents.db"),

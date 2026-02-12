@@ -23,7 +23,7 @@ agent = Agent(
     # Provide a MemoryManager for structured memory operations
     memory_manager=MemoryManager(
         db=db,
-        model=OpenAIResponses(id="gpt-5.2-mini"),
+        model=OpenAIResponses(id="gpt-5-mini"),
     ),
     markdown=True,
 )

@@ -47,7 +47,7 @@ def validate_response_quality(run_output: RunOutput) -> None:
     # Create a validation agent
     validator_agent = Agent(
         name="Output Validator",
-        model=OpenAIResponses(id="gpt-5.2-mini"),
+        model=OpenAIResponses(id="gpt-5-mini"),
         instructions=[
             "You are an output quality validator. Analyze responses for:",
             "1. COMPLETENESS: Response addresses the question thoroughly",
@@ -123,7 +123,7 @@ async def main():
     # Agent with comprehensive output validation
     agent_with_validation = Agent(
         name="Customer Support Agent",
-        model=OpenAIResponses(id="gpt-5.2-mini"),
+        model=OpenAIResponses(id="gpt-5-mini"),
         post_hooks=[validate_response_quality],
         instructions=[
             "You are a helpful customer support agent.",
@@ -135,7 +135,7 @@ async def main():
     # Agent with simple validation only
     agent_simple = Agent(
         name="Simple Agent",
-        model=OpenAIResponses(id="gpt-5.2-mini"),
+        model=OpenAIResponses(id="gpt-5-mini"),
         post_hooks=[simple_length_validation],
         instructions=[
             "You are a helpful assistant. Keep responses focused and appropriate length."
@@ -161,7 +161,7 @@ async def main():
         # Use a more constrained instruction to get a brief response
         brief_agent = Agent(
             name="Brief Agent",
-            model=OpenAIResponses(id="gpt-5.2-mini"),
+            model=OpenAIResponses(id="gpt-5-mini"),
             post_hooks=[simple_length_validation],
             instructions=["Answer in 1-2 words only."],
         )

@@ -40,14 +40,14 @@ db = SqliteDb(
 deploy_agent = Agent(
     name="Deploy Agent",
     role="Handles deployments to production",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     tools=[deploy_to_production],
 )
 
 team = Team(
     name="DevOps Team",
     members=[deploy_agent],
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     db=db,
 )
 
@@ -67,13 +67,13 @@ if __name__ == "__main__":
     deploy_agent = Agent(
         name="Deploy Agent",
         role="Handles deployments to production",
-        model=OpenAIResponses(id="gpt-5.2-mini"),
+        model=OpenAIResponses(id="gpt-5-mini"),
         tools=[deploy_to_production],
     )
     team = Team(
         name="DevOps Team",
         members=[deploy_agent],
-        model=OpenAIResponses(id="gpt-5.2-mini"),
+        model=OpenAIResponses(id="gpt-5-mini"),
         db=db,
     )
 

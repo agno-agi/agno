@@ -59,7 +59,7 @@ def tools_for_user(run_context: RunContext):
 # Create Agent
 # ---------------------------------------------------------------------------
 agent = Agent(
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     tools=tools_for_user,
     instructions=[
         "You are a helpful assistant.",

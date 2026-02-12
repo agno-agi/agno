@@ -21,7 +21,7 @@ if os.path.exists("tmp/data.db"):
 
 # Create agents for different users to demonstrate user-specific session history
 agent = Agent(
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     db=AsyncSqliteDb(db_file="tmp/data.db"),
     search_session_history=True,  # allow searching previous sessions
     num_history_sessions=2,  # only include the last 2 sessions in the search to avoid context length issues

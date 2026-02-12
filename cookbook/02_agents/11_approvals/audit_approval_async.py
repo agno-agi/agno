@@ -38,7 +38,7 @@ db = SqliteDb(
     db_file=DB_FILE, session_table="agent_sessions", approvals_table="approvals"
 )
 agent = Agent(
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     tools=[delete_user_data],
     markdown=True,
     db=db,
@@ -59,7 +59,7 @@ async def main():
         db_file=DB_FILE, session_table="agent_sessions", approvals_table="approvals"
     )
     _agent = Agent(
-        model=OpenAIResponses(id="gpt-5.2-mini"),
+        model=OpenAIResponses(id="gpt-5-mini"),
         tools=[delete_user_data],
         markdown=True,
         db=_db,

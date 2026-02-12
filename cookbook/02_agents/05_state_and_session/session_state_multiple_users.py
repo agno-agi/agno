@@ -64,7 +64,7 @@ def get_shopping_list(run_context: RunContext) -> str:
 # Create Agent
 # ---------------------------------------------------------------------------
 agent = Agent(
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     db=SqliteDb(db_file="tmp/data.db"),
     tools=[add_item, remove_item, get_shopping_list],
     # Reference the in-memory database
