@@ -46,6 +46,10 @@ def _offload_single_media(
             logger.warning(f"Failed to read file {media.filepath} for offload: {e}")
             return
 
+    # If no content yet and storage wants to persist remote URLs, try downloading
+    if content_bytes is None and getattr(storage, "persist_remote_urls", False):
+        content_bytes = media.get_content_bytes()
+
     if content_bytes is None:
         # No content to upload (URL-only media or empty)
         return
@@ -214,6 +218,10 @@ async def _aoffload_single_media(
             logger.warning(f"Failed to read file {media.filepath} for offload: {e}")
             return
 
+    # If no content yet and storage wants to persist remote URLs, try downloading
+    if content_bytes is None and getattr(storage, "persist_remote_urls", False):
+        content_bytes = media.get_content_bytes()
+
     if content_bytes is None:
         return
 
@@ -346,7 +354,13 @@ def refresh_message_media_urls(message: Message, storage: MediaStorage) -> None:
                     try:
                         fresh_url = storage.get_url(media.media_reference.storage_key)
                         media.media_reference.url = fresh_url
-                        media.url = fresh_url
+                        if fresh_url.startswith("file://"):
+                            # Local file:// URLs are not accepted by model APIs.
+                            # Read the bytes so the model adapter can base64-encode them.
+                            media.content = storage.download(media.media_reference.storage_key)
+                            media.url = None
+                        else:
+                            media.url = fresh_url
                     except Exception as e:
                         logger.warning(f"Failed to refresh URL for {getattr(media, 'id', '?')}: {e}")
     # audio_output is the only output field serialized by Message.to_dict()
@@ -358,7 +372,11 @@ def refresh_message_media_urls(message: Message, storage: MediaStorage) -> None:
         try:
             fresh_url = storage.get_url(message.audio_output.media_reference.storage_key)
             message.audio_output.media_reference.url = fresh_url
-            message.audio_output.url = fresh_url
+            if fresh_url.startswith("file://"):
+                message.audio_output.content = storage.download(message.audio_output.media_reference.storage_key)
+                message.audio_output.url = None
+            else:
+                message.audio_output.url = fresh_url
         except Exception as e:
             logger.warning(f"Failed to refresh URL for audio_output: {e}")
 
@@ -372,7 +390,13 @@ async def arefresh_message_media_urls(message: Message, storage: AsyncMediaStora
                     try:
                         fresh_url = await storage.get_url(media.media_reference.storage_key)
                         media.media_reference.url = fresh_url
-                        media.url = fresh_url
+                        if fresh_url.startswith("file://"):
+                            # Local file:// URLs are not accepted by model APIs.
+                            # Read the bytes so the model adapter can base64-encode them.
+                            media.content = await storage.download(media.media_reference.storage_key)
+                            media.url = None
+                        else:
+                            media.url = fresh_url
                     except Exception as e:
                         logger.warning(f"Failed to refresh URL for {getattr(media, 'id', '?')}: {e}")
     if (
@@ -383,7 +407,11 @@ async def arefresh_message_media_urls(message: Message, storage: AsyncMediaStora
         try:
             fresh_url = await storage.get_url(message.audio_output.media_reference.storage_key)
             message.audio_output.media_reference.url = fresh_url
-            message.audio_output.url = fresh_url
+            if fresh_url.startswith("file://"):
+                message.audio_output.content = await storage.download(message.audio_output.media_reference.storage_key)
+                message.audio_output.url = None
+            else:
+                message.audio_output.url = fresh_url
         except Exception as e:
             logger.warning(f"Failed to refresh URL for audio_output: {e}")
 

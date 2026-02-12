@@ -14,9 +14,11 @@ class LocalMediaStorage(MediaStorage):
         self,
         base_path: str = "./media_storage",
         base_url: Optional[str] = None,
+        persist_remote_urls: bool = False,
     ):
         self.base_path = Path(base_path)
         self.base_url = base_url.rstrip("/") if base_url else None
+        self.persist_remote_urls = persist_remote_urls
         self.base_path.mkdir(parents=True, exist_ok=True)
 
     @property
@@ -76,7 +78,7 @@ class LocalMediaStorage(MediaStorage):
     def get_url(self, storage_key: str, *, expires_in: int = 3600) -> str:
         if self.base_url:
             return f"{self.base_url}/{storage_key}"
-        file_path = self._resolve_path(storage_key)
+        file_path = self._resolve_path(storage_key).resolve()
         return file_path.as_uri()
 
     def delete(self, storage_key: str) -> bool:
@@ -105,8 +107,10 @@ class AsyncLocalMediaStorage(AsyncMediaStorage):
         self,
         base_path: str = "./media_storage",
         base_url: Optional[str] = None,
+        persist_remote_urls: bool = False,
     ):
-        self._sync = LocalMediaStorage(base_path=base_path, base_url=base_url)
+        self._sync = LocalMediaStorage(base_path=base_path, base_url=base_url, persist_remote_urls=persist_remote_urls)
+        self.persist_remote_urls = persist_remote_urls
 
     @property
     def backend_name(self) -> str:

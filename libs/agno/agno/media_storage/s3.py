@@ -24,6 +24,7 @@ class S3MediaStorage(MediaStorage):
         endpoint_url: Optional[str] = None,
         aws_access_key_id: Optional[str] = None,
         aws_secret_access_key: Optional[str] = None,
+        persist_remote_urls: bool = False,
     ):
         self.bucket = bucket
         self.prefix = prefix
@@ -33,6 +34,7 @@ class S3MediaStorage(MediaStorage):
         self.endpoint_url = endpoint_url
         self.aws_access_key_id = aws_access_key_id
         self.aws_secret_access_key = aws_secret_access_key
+        self.persist_remote_urls = persist_remote_urls
         self._client: Optional[Any] = None
 
     @property

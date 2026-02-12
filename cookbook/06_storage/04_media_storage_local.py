@@ -34,6 +34,7 @@ load_dotenv()
 # URL-only media is skipped by default.
 # ---------------------------------------------------------------------------
 
+# Create the storage. If you want to use async use AsyncLocalMediaStorage instead.
 storage = LocalMediaStorage(
     base_path="./tmp/media_storage",
     # Optional: set base_url if serving files via a local HTTP server
@@ -48,17 +49,15 @@ agent = Agent(
 )
 
 # Download image content first so media storage can offload it
-image_url = (
-    "https://upload.wikimedia.org/wikipedia/commons/0/0c/GoldenGateBridge-001.jpg"
-)
-image_bytes = httpx.get(image_url).content
+image_url = "https://thumbs.dreamstime.com/b/mountain-landscape-pieniny-national-park-foot-tatra-mountains-mountain-landscape-pieniny-national-park-437239881.jpg?w=768"
+image_bytes = httpx.get(image_url, follow_redirects=True).content
 
 agent.print_response(
     "What do you see in this image?",
     images=[
         Image(
             content=image_bytes,
-            mime_type="image/jpeg",
+            format="jpeg",
         )
     ],
 )
@@ -68,7 +67,7 @@ agent.print_response(
     "What do you see in this image?",
     images=[
         Image(
-            url="https://upload.wikimedia.org/wikipedia/commons/0/0c/GoldenGateBridge-001.jpg"
+            url="https://thumbs.dreamstime.com/b/mountain-landscape-pieniny-national-park-foot-tatra-mountains-mountain-landscape-pieniny-national-park-437239881.jpg?w=768"
         )
     ],
 )
@@ -78,6 +77,7 @@ agent.print_response(
 # This will download every URL-only media automatically and store it locally.
 # ---------------------------------------------------------------------------
 
+# Create the storage. If you want to use async use AsyncLocalMediaStorage instead.
 storage_with_persist = LocalMediaStorage(
     base_path="./tmp/media_storage",
     persist_remote_urls=True,
@@ -95,7 +95,7 @@ agent_with_persist.print_response(
     "What do you see in this image?",
     images=[
         Image(
-            url="https://upload.wikimedia.org/wikipedia/commons/0/0c/GoldenGateBridge-001.jpg"
+            url="https://thumbs.dreamstime.com/b/mountain-landscape-pieniny-national-park-foot-tatra-mountains-mountain-landscape-pieniny-national-park-437239881.jpg?w=768"
         )
     ],
 )

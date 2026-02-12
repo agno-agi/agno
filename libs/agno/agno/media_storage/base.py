@@ -5,6 +5,8 @@ from typing import Any, Dict, Optional
 class MediaStorage(ABC):
     """Sync media storage backend for uploading and retrieving media files."""
 
+    persist_remote_urls: bool = False
+
     @abstractmethod
     def upload(
         self,
@@ -41,6 +43,8 @@ class MediaStorage(ABC):
 
 class AsyncMediaStorage(ABC):
     """Async media storage backend. Same method names as MediaStorage (matching AsyncBaseDb pattern)."""
+
+    persist_remote_urls: bool = False
 
     @abstractmethod
     async def upload(

@@ -42,6 +42,7 @@ load_dotenv()
 # URL-only media is skipped by default.
 # ---------------------------------------------------------------------------
 
+# Create the storage. If you want to use async use AsyncS3MediaStorage instead.
 storage = S3MediaStorage(
     bucket="my-agno-media",
     region="us-east-1",
@@ -57,17 +58,15 @@ agent = Agent(
 )
 
 # Download image content first so media storage can offload it to S3
-image_url = (
-    "https://upload.wikimedia.org/wikipedia/commons/0/0c/GoldenGateBridge-001.jpg"
-)
-image_bytes = httpx.get(image_url).content
+image_url = "https://thumbs.dreamstime.com/b/mountain-landscape-pieniny-national-park-foot-tatra-mountains-mountain-landscape-pieniny-national-park-437239881.jpg?w=768"
+image_bytes = httpx.get(image_url, follow_redirects=True).content
 
 agent.print_response(
     "What do you see in this image?",
     images=[
         Image(
             content=image_bytes,
-            mime_type="image/jpeg",
+            format="jpeg",
         )
     ],
 )
@@ -77,7 +76,7 @@ agent.print_response(
     "What do you see in this image?",
     images=[
         Image(
-            url="https://upload.wikimedia.org/wikipedia/commons/0/0c/GoldenGateBridge-001.jpg"
+            url="https://thumbs.dreamstime.com/b/mountain-landscape-pieniny-national-park-foot-tatra-mountains-mountain-landscape-pieniny-national-park-437239881.jpg?w=768"
         )
     ],
 )
@@ -107,7 +106,7 @@ agent_with_persist.print_response(
     "What do you see in this image?",
     images=[
         Image(
-            url="https://upload.wikimedia.org/wikipedia/commons/0/0c/GoldenGateBridge-001.jpg"
+            url="https://thumbs.dreamstime.com/b/mountain-landscape-pieniny-national-park-foot-tatra-mountains-mountain-landscape-pieniny-national-park-437239881.jpg?w=768"
         )
     ],
 )

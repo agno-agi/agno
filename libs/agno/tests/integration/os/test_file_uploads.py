@@ -4,8 +4,8 @@ import json
 from unittest.mock import AsyncMock, patch
 
 from agno.agent.agent import Agent
-from agno.media import Image
 from agno.media import File as FileMedia
+from agno.media import Image
 from agno.team.team import Team
 
 # ---------------------------------------------------------------------------
