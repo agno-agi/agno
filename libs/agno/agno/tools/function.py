@@ -506,11 +506,24 @@ class Function(BaseModel):
         if framework_params & set(sig.parameters.keys()):
             return func
 
+        # Also check for Agent/Team type annotations (not just parameter names)
+        # This handles cases like `my_agent: Agent` where the name differs
+        try:
+            hints = get_type_hints(func)
+            for hint in hints.values():
+                # Get the type name, handling both direct types and string annotations
+                type_name = getattr(hint, "__name__", str(hint))
+                if type_name in ("Agent", "Team"):
+                    return func
+        except Exception:
+            # If we can't resolve type hints (e.g., forward references),
+            # fall through to try validate_call which will log any issues
+            pass
+
         # Wrap the callable with validate_call
-        else:
-            wrapped = validate_call(func, config=dict(arbitrary_types_allowed=True))  # type: ignore
-            wrapped._wrapped_for_validation = True  # Mark as wrapped to avoid infinite recursion
-            return wrapped
+        wrapped = validate_call(func, config=dict(arbitrary_types_allowed=True))  # type: ignore
+        wrapped._wrapped_for_validation = True  # Mark as wrapped to avoid infinite recursion
+        return wrapped
 
     def process_schema_for_strict(self):
         """Process the schema to make it strict mode compliant."""
