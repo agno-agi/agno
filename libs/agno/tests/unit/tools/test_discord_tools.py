@@ -117,41 +117,47 @@ class TestSyncTools:
         assert payload["message_reference"]["message_id"] == "msg1"
 
     def test_upload_file(self, tools):
-        with patch("agno.tools.discord.requests.post") as mock_post:
-            mock_post.return_value = Mock(status_code=200, text='{"id":"3"}')
-            mock_post.return_value.raise_for_status = Mock()
-            mock_post.return_value.json.return_value = {"id": "3"}
-            result = tools.upload_file("ch1", b"file-bytes", "test.txt", message="Here's a file")
+        resp = Mock(status_code=200, text='{"id":"3"}')
+        resp.raise_for_status = Mock()
+        resp.json.return_value = {"id": "3"}
+        tools._session.post = Mock(return_value=resp)
+        result = tools.upload_file("ch1", b"file-bytes", "test.txt", message="Here's a file")
         data = json.loads(result)
         assert data["id"] == "3"
-        call_kwargs = mock_post.call_args
+        call_kwargs = tools._session.post.call_args
         assert "files" in call_kwargs.kwargs
 
     def test_upload_file_string_content(self, tools):
-        with patch("agno.tools.discord.requests.post") as mock_post:
-            mock_post.return_value = Mock(status_code=200, text='{"id":"4"}')
-            mock_post.return_value.raise_for_status = Mock()
-            mock_post.return_value.json.return_value = {"id": "4"}
-            result = tools.upload_file("ch1", "text content", "test.txt")
+        resp = Mock(status_code=200, text='{"id":"4"}')
+        resp.raise_for_status = Mock()
+        resp.json.return_value = {"id": "4"}
+        tools._session.post = Mock(return_value=resp)
+        result = tools.upload_file("ch1", "text content", "test.txt")
         assert "error" not in result.lower()
 
     def test_download_file(self, tools):
-        with patch("agno.tools.discord.requests.get") as mock_get:
-            mock_get.return_value = Mock(content=b"file-bytes", status_code=200)
-            mock_get.return_value.raise_for_status = Mock()
-            result = tools.download_file("https://cdn.discordapp.com/attachments/1/2/image.png")
+        resp = Mock(content=b"file-bytes", status_code=200)
+        resp.raise_for_status = Mock()
+        tools._session.get = Mock(return_value=resp)
+        result = tools.download_file("https://cdn.discordapp.com/attachments/1/2/image.png")
         data = json.loads(result)
         assert data["filename"] == "image.png"
         assert data["size"] == 10
         assert "content_base64" in data
 
     def test_download_file_with_query_params(self, tools):
-        with patch("agno.tools.discord.requests.get") as mock_get:
-            mock_get.return_value = Mock(content=b"data", status_code=200)
-            mock_get.return_value.raise_for_status = Mock()
-            result = tools.download_file("https://cdn.discordapp.com/attachments/1/2/file.pdf?ex=abc")
+        resp = Mock(content=b"data", status_code=200)
+        resp.raise_for_status = Mock()
+        tools._session.get = Mock(return_value=resp)
+        result = tools.download_file("https://cdn.discordapp.com/attachments/1/2/file.pdf?ex=abc")
         data = json.loads(result)
         assert data["filename"] == "file.pdf"
+
+    def test_download_file_rejects_non_discord_url(self, tools):
+        result = tools.download_file("https://evil.com/steal-data")
+        data = json.loads(result)
+        assert "error" in data
+        assert "not allowed" in data["error"]
 
     def test_get_channel_info(self, tools):
         _mock_session_response(tools, json_data={"id": "ch1", "name": "general"})
@@ -204,24 +210,18 @@ class TestSyncTools:
         assert "error" in data
 
     def test_search_messages(self, tools):
-        with patch("agno.tools.discord.requests.get") as mock_get:
-            mock_get.return_value = Mock(status_code=200)
-            mock_get.return_value.raise_for_status = Mock()
-            mock_get.return_value.json.return_value = {"messages": [{"id": "1", "content": "test"}]}
-            result = tools.search_messages("guild1", "test query", limit=10)
+        _mock_session_response(tools, json_data={"messages": [{"id": "1", "content": "test"}]})
+        result = tools.search_messages("guild1", "test query", limit=10)
         data = json.loads(result)
         assert "messages" in data
-        call_kwargs = mock_get.call_args
+        call_kwargs = tools._session.request.call_args
         assert call_kwargs.kwargs["params"]["content"] == "test query"
         assert call_kwargs.kwargs["params"]["limit"] == 10
 
     def test_search_messages_caps_limit(self, tools):
-        with patch("agno.tools.discord.requests.get") as mock_get:
-            mock_get.return_value = Mock(status_code=200)
-            mock_get.return_value.raise_for_status = Mock()
-            mock_get.return_value.json.return_value = {"messages": []}
-            tools.search_messages("guild1", "query", limit=100)
-        call_kwargs = mock_get.call_args
+        _mock_session_response(tools, json_data={"messages": []})
+        tools.search_messages("guild1", "query", limit=100)
+        call_kwargs = tools._session.request.call_args
         assert call_kwargs.kwargs["params"]["limit"] == 25
 
     def test_get_thread(self, tools):
@@ -248,8 +248,8 @@ class TestSyncTools:
     def test_list_users_caps_limit(self, tools):
         _mock_session_response(tools, json_data=[])
         tools.list_users("guild1", limit=5000)
-        call_url = tools._session.request.call_args[0][1]
-        assert "limit=1000" in call_url
+        call_kwargs = tools._session.request.call_args
+        assert call_kwargs.kwargs["params"]["limit"] == 1000
 
     def test_get_user_info(self, tools):
         user_data = {"id": "u1", "username": "alice", "global_name": "Alice", "bot": False, "avatar": "abc123"}

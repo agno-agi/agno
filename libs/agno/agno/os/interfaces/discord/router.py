@@ -1,4 +1,3 @@
-import io
 import time
 from os import getenv
 from typing import Any, Dict, List, Optional, Union
@@ -16,11 +15,8 @@ from agno.workflow import RemoteWorkflow, Workflow
 
 try:
     import aiohttp
-    import discord
 except ImportError:
-    raise ImportError(
-        "Discord interface requires `discord.py` and `aiohttp`. Install using `pip install discord.py aiohttp`"
-    )
+    raise ImportError("Discord interface requires `aiohttp`. Install using `pip install agno[discord]`")
 
 DISCORD_API_BASE = "https://discord.com/api/v10"
 
@@ -224,6 +220,7 @@ def attach_routes(
 
     async def _process_command(data: dict, application_id: str, interaction_token: str):
         try:
+            _cleanup_stale_hitl()
             command_data = data.get("data", {})
             options = command_data.get("options", [])
 

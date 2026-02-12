@@ -2,6 +2,7 @@ import base64
 import json
 from os import getenv
 from typing import Any, Dict, List, Optional, Union
+from urllib.parse import urlparse
 
 import requests
 
@@ -9,6 +10,7 @@ from agno.tools import Toolkit
 from agno.utils.log import logger
 
 DISCORD_API_BASE = "https://discord.com/api/v10"
+DISCORD_CDN_DOMAINS = {"cdn.discordapp.com", "media.discordapp.net"}
 
 
 class DiscordTools(Toolkit):
@@ -71,9 +73,11 @@ class DiscordTools(Toolkit):
 
         super().__init__(name="discord", tools=tools, **kwargs)
 
-    def _make_request(self, method: str, endpoint: str, data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def _make_request(
+        self, method: str, endpoint: str, data: Optional[Dict[str, Any]] = None, params: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
         url = f"{self.base_url}{endpoint}"
-        response = self._session.request(method, url, json=data)
+        response = self._session.request(method, url, json=data, params=params, timeout=30)
         response.raise_for_status()
         return response.json() if response.text else {}
 
@@ -146,12 +150,11 @@ class DiscordTools(Toolkit):
             if message:
                 payload["content"] = message
 
-            auth_headers = {"Authorization": f"Bot {self.bot_token}"}
-            response = requests.post(
+            response = self._session.post(
                 url,
-                headers=auth_headers,
                 data={"payload_json": json.dumps(payload)},
                 files={"files[0]": (filename, content_bytes)},
+                timeout=30,
             )
             response.raise_for_status()
             return json.dumps(response.json(), indent=2)
@@ -164,12 +167,19 @@ class DiscordTools(Toolkit):
 
         Args:
             attachment_url (str): The URL of the Discord attachment to download.
+                Must be a Discord CDN URL (cdn.discordapp.com or media.discordapp.net).
 
         Returns:
             str: A JSON string containing the filename, size, and base64-encoded content.
         """
         try:
-            response = requests.get(attachment_url, timeout=30)
+            parsed = urlparse(attachment_url)
+            if parsed.hostname not in DISCORD_CDN_DOMAINS:
+                return json.dumps(
+                    {"error": f"URL domain not allowed. Must be one of: {', '.join(sorted(DISCORD_CDN_DOMAINS))}"}
+                )
+
+            response = self._session.get(attachment_url, timeout=30)
             response.raise_for_status()
 
             filename = attachment_url.split("/")[-1].split("?")[0]
@@ -228,7 +238,7 @@ class DiscordTools(Toolkit):
             str: A JSON string containing the channel's message history.
         """
         try:
-            response = self._make_request("GET", f"/channels/{channel_id}/messages?limit={limit}")
+            response = self._make_request("GET", f"/channels/{channel_id}/messages", params={"limit": limit})
             return json.dumps(response, indent=2)
         except Exception as e:
             logger.error(f"Error getting messages: {e}")
@@ -263,15 +273,9 @@ class DiscordTools(Toolkit):
             str: A JSON string containing matching messages.
         """
         try:
-            url = f"{self.base_url}/guilds/{guild_id}/messages/search"
             params: Dict[str, Any] = {"content": query, "limit": min(limit, 25)}
-            response = requests.get(
-                url,
-                headers=self.headers,
-                params=params,
-            )
-            response.raise_for_status()
-            return json.dumps(response.json(), indent=2)
+            response = self._make_request("GET", f"/guilds/{guild_id}/messages/search", params=params)
+            return json.dumps(response, indent=2)
         except Exception as e:
             logger.error(f"Error searching messages: {e}")
             return json.dumps({"error": str(e)})
@@ -287,7 +291,7 @@ class DiscordTools(Toolkit):
             str: A JSON string containing the thread messages.
         """
         try:
-            response = self._make_request("GET", f"/channels/{channel_id}/messages?limit={limit}")
+            response = self._make_request("GET", f"/channels/{channel_id}/messages", params={"limit": limit})
             return json.dumps(response, indent=2)
         except Exception as e:
             logger.error(f"Error getting thread: {e}")
@@ -304,7 +308,7 @@ class DiscordTools(Toolkit):
             str: A JSON string containing the count and list of server members.
         """
         try:
-            response = self._make_request("GET", f"/guilds/{guild_id}/members?limit={min(limit, 1000)}")
+            response = self._make_request("GET", f"/guilds/{guild_id}/members", params={"limit": min(limit, 1000)})
             items: list = response if isinstance(response, list) else []
             members = [
                 {

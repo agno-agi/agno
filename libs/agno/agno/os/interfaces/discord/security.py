@@ -35,5 +35,5 @@ def verify_discord_signature(body: bytes, timestamp: str, signature: str) -> boo
         return True
     except BadSignatureError:
         return False
-    except Exception:
+    except (ValueError, TypeError):
         return False
