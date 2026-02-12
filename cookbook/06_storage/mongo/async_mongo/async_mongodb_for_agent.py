@@ -23,16 +23,24 @@ from agno.agent import Agent
 from agno.db.mongo import AsyncMongoDb
 from agno.tools.websearch import WebSearchTools
 
-# MongoDB connection settings
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
 db_url = "mongodb://mongoadmin:secret@localhost:27017"
-
 db = AsyncMongoDb(db_url=db_url)
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 agent = Agent(
     db=db,
     tools=[WebSearchTools()],
     add_history_to_context=True,
 )
 
-asyncio.run(agent.aprint_response("How many people live in Canada?"))
-asyncio.run(agent.aprint_response("What is their national anthem called?"))
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    asyncio.run(agent.aprint_response("How many people live in Canada?"))
+    asyncio.run(agent.aprint_response("What is their national anthem called?"))

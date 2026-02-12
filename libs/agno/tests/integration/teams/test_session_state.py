@@ -305,13 +305,20 @@ def test_team_with_state_shared_with_members(shared_db):
         return f"The shopping list is now {run_context.session_state['shopping_list']}"
 
     shopping_agent = Agent(
+        name="Shopping Agent",
+        role="Manages shopping lists. Use the add_item tool to add items.",
         tools=[add_item],
+        instructions=["You MUST use the add_item tool to add items to the shopping list."],
     )
 
     # Create an Agent that maintains state
     team = Team(
         db=shared_db,
         members=[shopping_agent],
+        instructions=[
+            "You MUST delegate shopping list tasks to the Shopping Agent.",
+            "Do NOT respond directly - always use the Shopping Agent member.",
+        ],
     )
     team.run("Add oranges to my shopping list", session_id="session_1", session_state={"shopping_list": []})
 

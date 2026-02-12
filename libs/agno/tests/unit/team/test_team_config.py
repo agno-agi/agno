@@ -19,6 +19,7 @@ import pytest
 from agno.agent.agent import Agent
 from agno.db.base import BaseDb, ComponentType
 from agno.registry import Registry
+from agno.session import TeamSession
 from agno.team.team import Team, get_team_by_id, get_teams
 
 # =============================================================================
@@ -194,6 +195,26 @@ class TestTeamToDict:
         assert "retries" not in config  # defaults to 0
         assert "respond_directly" not in config  # defaults to False
 
+    def test_store_history_messages_default_is_false(self):
+        """Test store_history_messages defaults to False and is omitted from config."""
+        team = Team(id="history-default-team", members=[])
+
+        assert team.store_history_messages is False
+        assert "store_history_messages" not in team.to_dict()
+
+    def test_add_search_knowledge_instructions_default_omitted(self):
+        """Test add_search_knowledge_instructions default is omitted from config."""
+        team = Team(id="search-default-team", members=[])
+
+        assert "add_search_knowledge_instructions" not in team.to_dict()
+
+    def test_add_search_knowledge_instructions_false_is_serialized(self):
+        """Test add_search_knowledge_instructions=False is serialized in config."""
+        team = Team(id="search-false-team", members=[], add_search_knowledge_instructions=False)
+        config = team.to_dict()
+
+        assert config["add_search_knowledge_instructions"] is False
+
     def test_to_dict_with_db(self, basic_team, mock_db):
         """Test to_dict includes database configuration."""
         basic_team.db = mock_db
@@ -248,6 +269,26 @@ class TestTeamToDict:
         assert "members" in config
         assert len(config["members"]) == 1
         assert config["members"][0] == {"type": "team", "team_id": "inner-team"}
+
+    def test_to_dict_with_mode(self):
+        """Test to_dict includes mode and max_iterations."""
+        from agno.team.mode import TeamMode
+
+        team = Team(id="task-team", members=[], mode=TeamMode.tasks, max_iterations=20)
+        config = team.to_dict()
+
+        assert config["mode"] == "tasks"
+        assert config["max_iterations"] == 20
+
+    def test_to_dict_mode_default_not_serialized(self):
+        """Test that default max_iterations is not serialized."""
+        from agno.team.mode import TeamMode
+
+        team = Team(id="coord-team", members=[], mode=TeamMode.coordinate)
+        config = team.to_dict()
+
+        assert config["mode"] == "coordinate"
+        assert "max_iterations" not in config  # default=10 should not be serialized
 
 
 # =============================================================================
@@ -392,6 +433,42 @@ class TestTeamFromDict:
         assert reconstructed.markdown == team_with_settings.markdown
         assert reconstructed.debug_mode == team_with_settings.debug_mode
         assert reconstructed.retries == team_with_settings.retries
+
+    def test_from_dict_with_mode(self):
+        """Test from_dict reconstructs mode and max_iterations."""
+        from agno.team.mode import TeamMode
+
+        config = {
+            "id": "task-team",
+            "mode": "tasks",
+            "max_iterations": 25,
+        }
+        team = Team.from_dict(config)
+
+        assert team.mode == TeamMode.tasks
+        assert team.max_iterations == 25
+
+    def test_from_dict_mode_roundtrip(self):
+        """Test to_dict -> from_dict roundtrip preserves mode."""
+        from agno.team.mode import TeamMode
+
+        team = Team(id="rt-team", members=[], mode=TeamMode.route, max_iterations=15)
+        config = team.to_dict()
+        reconstructed = Team.from_dict(config)
+
+        assert reconstructed.mode == TeamMode.route
+        assert reconstructed.max_iterations == 15
+
+    def test_from_dict_no_mode_defaults(self):
+        """Test from_dict with no mode field defaults correctly."""
+        config = {"id": "no-mode-team"}
+        team = Team.from_dict(config)
+
+        # Mode should be inferred as coordinate (default)
+        from agno.team.mode import TeamMode
+
+        assert team.mode == TeamMode.coordinate
+        assert team.max_iterations == 10
 
 
 # =============================================================================
@@ -669,6 +746,20 @@ class TestTeamDelete:
         result = basic_team.delete()
 
         assert result is False
+
+
+class TestTeamSessionNaming:
+    def test_generate_session_name_fallback_after_max_retries(self):
+        """Test generate_session_name falls back after repeated invalid model output."""
+        team = Team(id="session-name-team", members=[])
+        team.model = MagicMock()
+        team.model.response = MagicMock(return_value=MagicMock(content=None))
+
+        session = TeamSession(session_id="session-1", runs=[])
+        session_name = team.generate_session_name(session=session)
+
+        assert session_name == "Team Session"
+        assert team.model.response.call_count == 4
 
 
 # =============================================================================

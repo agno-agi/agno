@@ -1,3 +1,10 @@
+"""
+Image To Text
+=============================
+
+Demonstrates collaborative image analysis and narrative generation.
+"""
+
 from pathlib import Path
 
 from agno.agent import Agent
@@ -5,6 +12,9 @@ from agno.media import Image
 from agno.models.openai import OpenAIChat
 from agno.team import Team
 
+# ---------------------------------------------------------------------------
+# Create Members
+# ---------------------------------------------------------------------------
 image_analyzer = Agent(
     name="Image Analyst",
     role="Analyze and describe images in detail",
@@ -25,7 +35,9 @@ creative_writer = Agent(
     ],
 )
 
-# Create a team for collaborative image-to-text processing
+# ---------------------------------------------------------------------------
+# Create Team
+# ---------------------------------------------------------------------------
 image_team = Team(
     name="Image Story Team",
     model=OpenAIChat(id="gpt-4o"),
@@ -39,8 +51,12 @@ image_team = Team(
     markdown=True,
 )
 
-image_path = Path(__file__).parent.joinpath("sample.jpg")
-image_team.print_response(
-    "Write a 3 sentence fiction story about the image",
-    images=[Image(filepath=image_path)],
-)
+# ---------------------------------------------------------------------------
+# Run Team
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    image_path = Path(__file__).parent.joinpath("sample.jpg")
+    image_team.print_response(
+        "Write a 3 sentence fiction story about the image",
+        images=[Image(filepath=image_path)],
+    )

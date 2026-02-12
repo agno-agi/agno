@@ -1,0 +1,136 @@
+{
+  "intent_mappings": [
+    {
+      "intent": "Find policies or handbooks",
+      "keywords": ["policy", "handbook", "guideline", "rule", "compliance", "hr", "pto", "vacation", "time off"],
+      "primary_source": "s3",
+      "fallback_sources": ["google_drive", "notion"],
+      "reasoning": "Policies live in S3 company-docs bucket; may also be in Drive for legacy orgs",
+      "known_locations": ["s3://company-docs/policies/", "s3://company-docs/hr/"]
+    },
+    {
+      "intent": "Find OKRs or goals",
+      "keywords": ["okr", "okrs", "objectives", "key results", "goals", "targets", "kpis", "planning"],
+      "primary_source": "s3",
+      "fallback_sources": ["google_drive", "notion"],
+      "reasoning": "OKRs are in S3 planning folder; may also be in Drive for formal docs",
+      "known_locations": ["s3://company-docs/planning/"]
+    },
+    {
+      "intent": "Find runbooks or procedures",
+      "keywords": ["runbook", "playbook", "procedure", "how to", "steps", "guide", "sop", "deploy", "incident"],
+      "primary_source": "s3",
+      "fallback_sources": ["notion", "google_drive"],
+      "reasoning": "Runbooks are in S3 engineering-docs; Notion may have living versions",
+      "known_locations": ["s3://engineering-docs/runbooks/"]
+    },
+    {
+      "intent": "Find technical documentation",
+      "keywords": ["docs", "documentation", "api", "architecture", "design doc", "rfc", "spec", "system"],
+      "primary_source": "s3",
+      "fallback_sources": ["notion", "google_drive"],
+      "reasoning": "Architecture and RFCs are in S3 engineering-docs; wikis may be in Notion",
+      "known_locations": ["s3://engineering-docs/architecture/", "s3://engineering-docs/rfcs/"]
+    },
+    {
+      "intent": "Find data retention or compliance info",
+      "keywords": ["retention", "compliance", "gdpr", "ccpa", "data", "security", "audit"],
+      "primary_source": "s3",
+      "fallback_sources": ["google_drive"],
+      "reasoning": "Compliance policies are in S3 company-docs/policies",
+      "known_locations": ["s3://company-docs/policies/data-retention.md", "s3://company-docs/policies/security-policy.md"]
+    },
+    {
+      "intent": "Find discussions or decisions",
+      "keywords": ["discussion", "decision", "decided", "agreed", "consensus", "debate", "context"],
+      "primary_source": "slack",
+      "fallback_sources": ["notion", "s3"],
+      "reasoning": "Real-time decisions happen in Slack; formal decisions may be documented elsewhere"
+    },
+    {
+      "intent": "Find meeting notes",
+      "keywords": ["meeting", "notes", "minutes", "standup", "sync", "1:1", "all-hands"],
+      "primary_source": "notion",
+      "fallback_sources": ["google_drive", "s3"],
+      "reasoning": "Meeting notes are often in Notion databases"
+    },
+    {
+      "intent": "Find project information",
+      "keywords": ["project", "status", "update", "timeline", "roadmap", "milestone"],
+      "primary_source": "notion",
+      "fallback_sources": ["s3", "slack"],
+      "reasoning": "Project tracking usually in Notion; status updates shared in Slack"
+    },
+    {
+      "intent": "Find contact or team information",
+      "keywords": ["who", "contact", "team", "owner", "responsible", "lead", "manager"],
+      "primary_source": "slack",
+      "fallback_sources": ["notion"],
+      "reasoning": "Slack has user profiles; Notion may have team directories"
+    },
+    {
+      "intent": "Find announcements",
+      "keywords": ["announcement", "news", "update", "change", "launch", "release"],
+      "primary_source": "slack",
+      "fallback_sources": ["s3", "notion"],
+      "reasoning": "Announcements go to Slack first; may be archived in S3"
+    },
+    {
+      "intent": "Find reports or metrics",
+      "keywords": ["report", "metrics", "data", "numbers", "analysis", "export", "quarterly"],
+      "primary_source": "s3",
+      "fallback_sources": ["google_drive"],
+      "reasoning": "Data exports and reports are in S3 data-exports bucket",
+      "known_locations": ["s3://data-exports/reports/"]
+    }
+  ],
+  "source_preferences": [
+    {
+      "source": "s3",
+      "best_for": ["policies", "runbooks", "architecture docs", "RFCs", "data exports", "compliance docs"],
+      "search_first_when": ["looking for authoritative documents", "need full document content", "looking for technical docs"]
+    },
+    {
+      "source": "google_drive",
+      "best_for": ["collaborative docs", "spreadsheets", "presentations", "legacy documents"],
+      "search_first_when": ["need real-time collaboration", "looking for spreadsheet data", "older organization"]
+    },
+    {
+      "source": "notion",
+      "best_for": ["wikis", "project tracking", "meeting notes", "living documentation"],
+      "search_first_when": ["looking for team knowledge", "need structured databases", "looking for project status"]
+    },
+    {
+      "source": "slack",
+      "best_for": ["discussions", "decisions", "context", "announcements", "who knows what"],
+      "search_first_when": ["looking for recent context", "need to understand a decision", "finding the right person"]
+    }
+  ],
+  "common_gotchas": [
+    {
+      "issue": "Information spread across sources",
+      "description": "Important info often exists in multiple places - a decision in Slack, documented in Notion, with artifacts in S3",
+      "solution": "Search multiple sources and cross-reference; S3 usually has the authoritative version"
+    },
+    {
+      "issue": "Outdated documentation",
+      "description": "Docs may be stale - Slack discussions may reflect newer decisions not yet documented",
+      "solution": "Check Slack for recent discussions about the topic; note document last-modified dates"
+    },
+    {
+      "issue": "PTO policy location",
+      "description": "PTO info is in the Employee Handbook, not a standalone document",
+      "solution": "Search for 'PTO' in employee-handbook.md, Section 4"
+    },
+    {
+      "issue": "API docs may be stale",
+      "description": "Notion API docs may be outdated; check S3 or GitHub for latest",
+      "solution": "Prefer S3 engineering-docs for architecture; check modified dates"
+    },
+    {
+      "issue": "Naming inconsistencies",
+      "description": "Same concept may have different names (e.g., 'Q4 Goals' vs 'Q4 OKRs' vs 'Q4 Objectives')",
+      "solution": "Try multiple search terms; use synonyms and variations"
+    }
+  ]
+}

@@ -17,6 +17,10 @@ from agno.agent import Agent
 from agno.media import File
 from agno.models.google import Gemini
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 # GCS requires Vertex AI (OAuth credentials), not API keys
 # Set GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_LOCATION env vars
 agent = Agent(
@@ -37,3 +41,10 @@ agent.print_response(
         )
     ],
 )
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

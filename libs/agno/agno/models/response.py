@@ -55,6 +55,9 @@ class ToolExecution:
     # If True (and external_execution_required=True), suppresses verbose paused messages
     external_execution_silent: Optional[bool] = None
 
+    # Approval type: "required" (blocking) or "audit" (non-blocking audit trail).
+    approval_type: Optional[str] = None
+
     @property
     def is_paused(self) -> bool:
         return bool(self.requires_confirmation or self.requires_user_input or self.external_execution_required)
@@ -88,6 +91,7 @@ class ToolExecution:
             else None,
             external_execution_required=data.get("external_execution_required"),
             external_execution_silent=data.get("external_execution_silent"),
+            approval_type=data.get("approval_type"),
             metrics=Metrics(**(data.get("metrics", {}) or {})),
             **{"created_at": data["created_at"]} if "created_at" in data else {},
         )
