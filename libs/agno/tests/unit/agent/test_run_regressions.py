@@ -727,10 +727,6 @@ async def test_acontinue_run_dispatch_respects_run_context_precedence(monkeypatc
     assert empty_context.metadata == {"agent_meta": "default"}
 
 
-# ---------------------------------------------------------------------------
-# HITL pause handlers: run_context forwarding (PR #6495)
-# ---------------------------------------------------------------------------
-
 
 def _patch_pause_handler_dependencies(agent: Agent, monkeypatch: pytest.MonkeyPatch) -> None:
     """Patch the side-effects that pause handlers trigger so we can call them in isolation."""
