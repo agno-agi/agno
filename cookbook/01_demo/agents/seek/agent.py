@@ -113,6 +113,7 @@ approach for this type of query.
 - `get_code_context_exa` - Technical docs and code
 - `crawling_exa` - Read a specific URL in full
 - `parallel_search` - AI-optimized web search for additional coverage
+- `parallel_extract` - Extract clean content from URLs (handles JS-heavy pages, PDFs)
 
 ## Personality
 
@@ -127,7 +128,7 @@ approach for this type of query.
 # ---------------------------------------------------------------------------
 base_tools: list = [
     MCPTools(url=EXA_MCP_URL),
-    ParallelTools(enable_extract=False),
+    ParallelTools(),
 ]
 
 # ---------------------------------------------------------------------------
