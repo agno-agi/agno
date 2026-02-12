@@ -11,7 +11,7 @@ from agno.db.sqlite import SqliteDb
 from agno.media import Image
 from agno.media_storage.local import LocalMediaStorage
 from agno.models.openai import OpenAIChat
-from agno.db.postgres import PostgresDb
+# from agno.db.postgres import PostgresDb
 
 # Configure local storage backend
 storage = LocalMediaStorage(
