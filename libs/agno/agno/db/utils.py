@@ -52,8 +52,27 @@ class CustomJSONEncoder(json.JSONEncoder):
         return super().default(obj)
 
 
+def json_serializer(obj: Any) -> str:
+    """Custom JSON serializer for SQLAlchemy engine.
+
+    This function is used as the json_serializer parameter when creating
+    SQLAlchemy engines for PostgreSQL. It handles non-JSON-serializable
+    types like datetime, date, UUID, etc.
+
+    Args:
+        obj: The object to serialize to JSON.
+
+    Returns:
+        JSON string representation of the object.
+    """
+    return json.dumps(obj, cls=CustomJSONEncoder)
+
+
 def serialize_session_json_fields(session: dict) -> dict:
     """Serialize all JSON fields in the given Session dictionary.
+
+    Uses CustomJSONEncoder to handle non-JSON-serializable types like
+    datetime, date, UUID, Message, Metrics, etc.
 
     Args:
         data (dict): The dictionary to serialize JSON fields in.
@@ -62,17 +81,17 @@ def serialize_session_json_fields(session: dict) -> dict:
         dict: The dictionary with JSON fields serialized.
     """
     if session.get("session_data") is not None:
-        session["session_data"] = json.dumps(session["session_data"])
+        session["session_data"] = json.dumps(session["session_data"], cls=CustomJSONEncoder)
     if session.get("agent_data") is not None:
-        session["agent_data"] = json.dumps(session["agent_data"])
+        session["agent_data"] = json.dumps(session["agent_data"], cls=CustomJSONEncoder)
     if session.get("team_data") is not None:
-        session["team_data"] = json.dumps(session["team_data"])
+        session["team_data"] = json.dumps(session["team_data"], cls=CustomJSONEncoder)
     if session.get("workflow_data") is not None:
-        session["workflow_data"] = json.dumps(session["workflow_data"])
+        session["workflow_data"] = json.dumps(session["workflow_data"], cls=CustomJSONEncoder)
     if session.get("metadata") is not None:
-        session["metadata"] = json.dumps(session["metadata"])
+        session["metadata"] = json.dumps(session["metadata"], cls=CustomJSONEncoder)
     if session.get("chat_history") is not None:
-        session["chat_history"] = json.dumps(session["chat_history"])
+        session["chat_history"] = json.dumps(session["chat_history"], cls=CustomJSONEncoder)
     if session.get("summary") is not None:
         session["summary"] = json.dumps(session["summary"], cls=CustomJSONEncoder)
     if session.get("runs") is not None:
