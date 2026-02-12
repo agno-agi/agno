@@ -168,9 +168,9 @@ class TestManagerTrigger:
 
 class TestManagerGetRuns:
     def test_get_runs(self, mgr, mock_db):
-        result = mgr.get_runs("sched-1", limit=5, offset=1)
+        result = mgr.get_runs("sched-1", limit=5, page=2)
         assert result == []
-        mock_db.get_schedule_runs.assert_called_once_with("sched-1", limit=5, offset=1)
+        mock_db.get_schedule_runs.assert_called_once_with("sched-1", limit=5, page=2)
 
 
 class TestManagerCallMissingMethod:

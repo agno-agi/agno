@@ -234,9 +234,12 @@ class ScheduleManager:
             "SchedulePoller.trigger() with a running executor."
         )
 
-    def get_runs(self, schedule_id: str, limit: int = 20, offset: int = 0) -> List[ScheduleRun]:
+    def get_runs(self, schedule_id: str, limit: int = 20, page: int = 1) -> List[ScheduleRun]:
         """Get run history for a schedule."""
-        return self._to_run_list(self._call("get_schedule_runs", schedule_id, limit=limit, offset=offset))
+        result = self._call("get_schedule_runs", schedule_id, limit=limit, page=page)
+        # get_schedule_runs returns (runs_list, total_count) tuple
+        runs_data = result[0] if isinstance(result, tuple) else result
+        return self._to_run_list(runs_data)
 
     # --- Async API ---
 
@@ -364,6 +367,9 @@ class ScheduleManager:
         """Async disable a schedule."""
         return self._to_schedule(await self._acall("update_schedule", schedule_id, enabled=False))
 
-    async def aget_runs(self, schedule_id: str, limit: int = 20, offset: int = 0) -> List[ScheduleRun]:
+    async def aget_runs(self, schedule_id: str, limit: int = 20, page: int = 1) -> List[ScheduleRun]:
         """Async get run history for a schedule."""
-        return self._to_run_list(await self._acall("get_schedule_runs", schedule_id, limit=limit, offset=offset))
+        result = await self._acall("get_schedule_runs", schedule_id, limit=limit, page=page)
+        # get_schedule_runs returns (runs_list, total_count) tuple
+        runs_data = result[0] if isinstance(result, tuple) else result
+        return self._to_run_list(runs_data)
