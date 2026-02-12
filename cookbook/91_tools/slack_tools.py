@@ -1,50 +1,68 @@
-"""Run `uv pip install openai slack-sdk` to install dependencies."""
+"""Run: pip install openai slack-sdk"""
 
 from agno.agent import Agent
 from agno.tools.slack import SlackTools
 
-# Example 1: Enable all Slack functions
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
+
+# Example 1: Enable all Slack tools
 agent_all = Agent(
     tools=[
         SlackTools(
-            all=True,  # Enable all Slack functions
+            all=True,  # Enable all Slack tools
         )
     ],
     markdown=True,
 )
 
-# Example 2: Enable specific Slack functions only
+# Example 2: Enable specific tools only
 agent_specific = Agent(
     tools=[
         SlackTools(
             enable_send_message=True,
             enable_list_channels=True,
             enable_get_channel_history=False,
-            enable_send_message_thread=False,
+            enable_upload_file=False,
+            enable_download_file=False,
         )
     ],
     markdown=True,
 )
 
-
-# Example usage with all functions enabled
-print("=== Example 1: Using all Slack functions ===")
-agent_all.print_response(
-    "Send a message 'Hello from Agno with all functions!' to the channel #bot-test and then list all channels",
+# Example 3: Read-only agent (no send_message)
+agent_readonly = Agent(
+    tools=[
+        SlackTools(
+            enable_send_message=False,
+            enable_list_channels=True,
+            enable_get_channel_history=True,
+            enable_upload_file=False,
+            enable_download_file=True,
+        )
+    ],
     markdown=True,
 )
 
-# Example usage with specific functions only
-print(
-    "\n=== Example 2: Using specific Slack functions (send message + list channels) ==="
-)
-agent_specific.print_response(
-    "Send a message 'Hello from limited bot!' to the channel #bot-test", markdown=True
-)
+# Run examples
 
-# Example slack markdown formatting
-print("\n=== Example 3: Slack Markdown Formatting (enabled by default) ===")
-agent_all.print_response(
-    "Send a message to #bot-test with *bold text*, _italic text_, and a `code snippet`",
-    markdown=True,
-)
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    agent_all.print_response(
+        "Send 'Hello from Agno!' to #general",
+        stream=True,
+    )
+
+    agent_specific.print_response(
+        "List all channels in the workspace",
+        stream=True,
+    )
+
+    agent_readonly.print_response(
+        "Get the last 5 messages from #general",
+        stream=True,
+    )

@@ -1,6 +1,17 @@
+"""
+Groq Image Agent
+================
+
+Cookbook example for `groq/image_agent.py`.
+"""
+
 from agno.agent import Agent
 from agno.media import Image
 from agno.models.groq import Groq
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 agent = Agent(model=Groq(id="meta-llama/llama-4-scout-17b-16e-instruct"))
 
@@ -11,3 +22,10 @@ agent.print_response(
     ],
     stream=True,
 )
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

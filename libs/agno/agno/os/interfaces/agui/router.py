@@ -14,7 +14,7 @@ try:
     )
     from ag_ui.encoder import EventEncoder
 except ImportError as e:
-    raise ImportError("`ag_ui` not installed. Please install it with `pip install -U ag-ui`") from e
+    raise ImportError("`ag_ui` not installed. Please install it with `pip install -U ag-ui-protocol`") from e
 
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
