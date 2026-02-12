@@ -50,17 +50,3 @@ example_agent = Agent(...)
 if __name__ == "__main__":
     example_agent.print_response("...", stream=True)
 ```
-
-## Validation
-
-Run structure checks:
-
-```bash
-.venvs/demo/bin/python cookbook/scripts/check_cookbook_pattern.py --base-dir cookbook/00_quickstart
-```
-
-Run metadata checks:
-
-```bash
-.venvs/demo/bin/python cookbook/scripts/audit_cookbook_metadata.py --scope direct
-```
