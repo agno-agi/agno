@@ -35,7 +35,7 @@ from agno.os.schema import (
     ValidationErrorResponse,
 )
 from agno.os.settings import AgnoAPISettings
-from agno.os.utils import get_knowledge_instance_by_db_id
+from agno.os.utils import get_knowledge_instance
 from agno.remote.base import RemoteKnowledge
 from agno.utils.log import log_debug, log_error, log_info
 from agno.utils.string import generate_id
@@ -108,8 +108,9 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
         chunk_size: Optional[int] = Form(None, description="Chunk size to use for processing"),
         chunk_overlap: Optional[int] = Form(None, description="Chunk overlap to use for processing"),
         db_id: Optional[str] = Query(default=None, description="Database ID to use for content storage"),
+        knowledge_id: Optional[str] = Query(default=None, description="Knowledge base ID to upload to"),
     ):
-        knowledge = get_knowledge_instance_by_db_id(knowledge_instances, db_id)
+        knowledge = get_knowledge_instance(knowledge_instances, db_id, knowledge_id)
 
         parsed_metadata = None
         if metadata:
@@ -133,7 +134,6 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
                 chunker=chunker,
                 chunk_size=chunk_size,
                 chunk_overlap=chunk_overlap,
-                db_id=db_id,
                 headers=headers,
             )
 
@@ -251,8 +251,9 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
         chunk_size: Optional[int] = Form(None, description="Chunk size for processing"),
         chunk_overlap: Optional[int] = Form(None, description="Chunk overlap for processing"),
         db_id: Optional[str] = Query(default=None, description="Database ID to use for content storage"),
+        knowledge_id: Optional[str] = Query(default=None, description="Knowledge base ID to upload to"),
     ):
-        knowledge = get_knowledge_instance_by_db_id(knowledge_instances, db_id)
+        knowledge = get_knowledge_instance(knowledge_instances, db_id, knowledge_id)
 
         if isinstance(knowledge, RemoteKnowledge):
             # TODO: Forward to remote knowledge instance
@@ -358,9 +359,10 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
         description: Optional[str] = Form(None, description="Content description"),
         metadata: Optional[str] = Form(None, description="Content metadata as JSON string"),
         reader_id: Optional[str] = Form(None, description="ID of the reader to use for processing"),
-        db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
+        db_id: Optional[str] = Query(default=None, description="Database ID to use"),
+        knowledge_id: Optional[str] = Query(default=None, description="Knowledge base ID to use"),
     ) -> Optional[ContentResponseSchema]:
-        knowledge = get_knowledge_instance_by_db_id(knowledge_instances, db_id)
+        knowledge = get_knowledge_instance(knowledge_instances, db_id, knowledge_id)
 
         # Parse metadata JSON string if provided
         parsed_metadata = None
@@ -379,7 +381,6 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
                 description=description,
                 metadata=parsed_metadata,
                 reader_id=reader_id,
-                db_id=db_id,
                 headers=headers,
             )
 
@@ -465,9 +466,10 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
         page: Optional[int] = Query(default=1, description="Page number", ge=0),
         sort_by: Optional[str] = Query(default="created_at", description="Field to sort by"),
         sort_order: Optional[SortOrder] = Query(default="desc", description="Sort order (asc or desc)"),
-        db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
+        db_id: Optional[str] = Query(default=None, description="Database ID to use"),
+        knowledge_id: Optional[str] = Query(default=None, description="Knowledge base ID to use"),
     ) -> PaginatedResponse[ContentResponseSchema]:
-        knowledge = get_knowledge_instance_by_db_id(knowledge_instances, db_id)
+        knowledge = get_knowledge_instance(knowledge_instances, db_id, knowledge_id)
 
         if isinstance(knowledge, RemoteKnowledge):
             auth_token = get_auth_token_from_request(request)
@@ -477,7 +479,6 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
                 page=page,
                 sort_by=sort_by,
                 sort_order=sort_order.value if sort_order else None,
-                db_id=db_id,
                 headers=headers,
             )
 
@@ -544,13 +545,14 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
     async def get_content_by_id(
         request: Request,
         content_id: str,
-        db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
+        db_id: Optional[str] = Query(default=None, description="Database ID to use"),
+        knowledge_id: Optional[str] = Query(default=None, description="Knowledge base ID to use"),
     ) -> ContentResponseSchema:
-        knowledge = get_knowledge_instance_by_db_id(knowledge_instances, db_id)
+        knowledge = get_knowledge_instance(knowledge_instances, db_id, knowledge_id)
         if isinstance(knowledge, RemoteKnowledge):
             auth_token = get_auth_token_from_request(request)
             headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
-            return await knowledge.get_content_by_id(content_id=content_id, db_id=db_id, headers=headers)
+            return await knowledge.get_content_by_id(content_id=content_id, headers=headers)
 
         content = await knowledge.aget_content_by_id(content_id=content_id)
         if not content:
@@ -589,13 +591,14 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
     async def delete_content_by_id(
         request: Request,
         content_id: str,
-        db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
+        db_id: Optional[str] = Query(default=None, description="Database ID to use"),
+        knowledge_id: Optional[str] = Query(default=None, description="Knowledge base ID to use"),
     ) -> ContentResponseSchema:
-        knowledge = get_knowledge_instance_by_db_id(knowledge_instances, db_id)
+        knowledge = get_knowledge_instance(knowledge_instances, db_id, knowledge_id)
         if isinstance(knowledge, RemoteKnowledge):
             auth_token = get_auth_token_from_request(request)
             headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
-            await knowledge.delete_content_by_id(content_id=content_id, db_id=db_id, headers=headers)
+            await knowledge.delete_content_by_id(content_id=content_id, headers=headers)
         else:
             await knowledge.aremove_content_by_id(content_id=content_id)
 
@@ -619,13 +622,14 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
     )
     async def delete_all_content(
         request: Request,
-        db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
+        db_id: Optional[str] = Query(default=None, description="Database ID to use"),
+        knowledge_id: Optional[str] = Query(default=None, description="Knowledge base ID to use"),
     ):
-        knowledge = get_knowledge_instance_by_db_id(knowledge_instances, db_id)
+        knowledge = get_knowledge_instance(knowledge_instances, db_id, knowledge_id)
         if isinstance(knowledge, RemoteKnowledge):
             auth_token = get_auth_token_from_request(request)
             headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
-            return await knowledge.delete_all_content(db_id=db_id, headers=headers)
+            return await knowledge.delete_all_content(headers=headers)
 
         await knowledge.aremove_all_content()
         return "success"
@@ -663,13 +667,14 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
     async def get_content_status(
         request: Request,
         content_id: str,
-        db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
+        db_id: Optional[str] = Query(default=None, description="Database ID to use"),
+        knowledge_id: Optional[str] = Query(default=None, description="Knowledge base ID to use"),
     ) -> ContentStatusResponse:
-        knowledge = get_knowledge_instance_by_db_id(knowledge_instances, db_id)
+        knowledge = get_knowledge_instance(knowledge_instances, db_id, knowledge_id)
         if isinstance(knowledge, RemoteKnowledge):
             auth_token = get_auth_token_from_request(request)
             headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
-            return await knowledge.get_content_status(content_id=content_id, db_id=db_id, headers=headers)
+            return await knowledge.get_content_status(content_id=content_id, headers=headers)
 
         knowledge_status, status_message = await knowledge.aget_content_status(content_id=content_id)
 
@@ -742,7 +747,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
 
         start_time = time.time()
 
-        knowledge = get_knowledge_instance_by_db_id(knowledge_instances, request.db_id)
+        knowledge = get_knowledge_instance(knowledge_instances, request.db_id, request.knowledge_id)
 
         if isinstance(knowledge, RemoteKnowledge):
             auth_token = get_auth_token_from_request(http_request)
@@ -752,7 +757,6 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
                 max_results=request.max_results,
                 filters=request.filters,
                 search_type=request.search_type,
-                db_id=request.db_id,
                 headers=headers,
             )
 
@@ -1079,9 +1083,10 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
     )
     async def get_config(
         request: Request,
-        db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
+        db_id: Optional[str] = Query(default=None, description="Database ID to use"),
+        knowledge_id: Optional[str] = Query(default=None, description="Knowledge base ID to use"),
     ) -> ConfigResponseSchema:
-        knowledge = get_knowledge_instance_by_db_id(knowledge_instances, db_id)
+        knowledge = get_knowledge_instance(knowledge_instances, db_id, knowledge_id)
 
         if isinstance(knowledge, RemoteKnowledge):
             auth_token = get_auth_token_from_request(request)

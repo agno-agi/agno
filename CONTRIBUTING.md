@@ -19,7 +19,7 @@ To maintain a clear and organized project history, please adhere to the followin
 
 1.  **Title Format:** Your PR title must start with a type tag enclosed in square brackets, followed by a space and a concise subject.
     - Example: `[feat] Add user authentication`
-    - Valid types: `[feat]`, `[fix]`, `[docs]`, `[test]`, `[refactor]`, `[build]`, `[ci]`, `[chore]`, `[perf]`, `[style]`, `[revert]`.
+    - Valid types: `[feat]`, `[fix]`, `[cookbook]`, `[test]`, `[refactor]`, `[chore]`, `[style]`, `[revert]`, `[release]`.
 2.  **Link to Issue:** The PR description should ideally reference the issue it addresses using keywords like `fixes #<issue_number>`, `closes #<issue_number>`, or `resolves #<issue_number>`.
     - Example: `This PR fixes #42 by implementing the new login flow.`
 

@@ -12,6 +12,10 @@ import asyncio
 
 from agno.client import AgentOSClient
 
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
+
 
 async def main():
     client = AgentOSClient(base_url="http://localhost:7777")
@@ -93,6 +97,10 @@ async def main():
     await client.delete_session(session.session_id)
     print("   Session deleted")
 
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     asyncio.run(main())

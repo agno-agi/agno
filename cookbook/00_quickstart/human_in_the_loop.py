@@ -41,16 +41,16 @@ from agno.vectordb.search import SearchType
 from rich.console import Console
 from rich.prompt import Prompt
 
-# ============================================================================
+# ---------------------------------------------------------------------------
 # Storage Configuration
-# ============================================================================
+# ---------------------------------------------------------------------------
 agent_db = SqliteDb(db_file="tmp/agents.db")
 
-# ============================================================================
+# ---------------------------------------------------------------------------
 # Knowledge Base for Learnings
-# ============================================================================
+# ---------------------------------------------------------------------------
 learnings_kb = Knowledge(
-    name="Agent Learnings",
+    name="Agent Learnings HITL",
     vector_db=ChromaDb(
         name="learnings",
         collection="learnings",
@@ -64,9 +64,9 @@ learnings_kb = Knowledge(
 )
 
 
-# ============================================================================
+# ---------------------------------------------------------------------------
 # Custom Tool: Save Learning (requires confirmation)
-# ============================================================================
+# ---------------------------------------------------------------------------
 @tool(requires_confirmation=True)
 def save_learning(title: str, learning: str) -> str:
     """
@@ -101,9 +101,9 @@ def save_learning(title: str, learning: str) -> str:
     return f"Saved: '{title}'"
 
 
-# ============================================================================
+# ---------------------------------------------------------------------------
 # Agent Instructions
-# ============================================================================
+# ---------------------------------------------------------------------------
 instructions = """\
 You are a Finance Agent that learns and improves over time.
 
@@ -135,9 +135,9 @@ You have two special abilities:
 Don't save: Raw data, one-off facts, or obvious information.\
 """
 
-# ============================================================================
+# ---------------------------------------------------------------------------
 # Create the Agent
-# ============================================================================
+# ---------------------------------------------------------------------------
 human_in_the_loop_agent = Agent(
     name="Agent with Human in the Loop",
     model=Gemini(id="gemini-3-flash-preview"),
@@ -155,9 +155,9 @@ human_in_the_loop_agent = Agent(
     markdown=True,
 )
 
-# ============================================================================
+# ---------------------------------------------------------------------------
 # Run the Agent
-# ============================================================================
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     console = Console()
 
@@ -175,7 +175,7 @@ if __name__ == "__main__":
         for requirement in run_response.active_requirements:
             if requirement.needs_confirmation:
                 console.print(
-                    f"\n[bold yellow]🛑 Confirmation Required[/bold yellow]\n"
+                    f"\n[bold yellow]Confirmation Required[/bold yellow]\n"
                     f"Tool: [bold blue]{requirement.tool_execution.tool_name}[/bold blue]\n"
                     f"Args: {requirement.tool_execution.tool_args}"
                 )
@@ -192,10 +192,10 @@ if __name__ == "__main__":
 
                 if choice == "n":
                     requirement.reject()
-                    console.print("[red]❌ Rejected[/red]")
+                    console.print("[red]Rejected[/red]")
                 else:
                     requirement.confirm()
-                    console.print("[green]✅ Approved[/green]")
+                    console.print("[green]Approved[/green]")
 
         # Continue the run with the user's decisions
         run_response = human_in_the_loop_agent.continue_run(
@@ -206,9 +206,9 @@ if __name__ == "__main__":
         # Print the final response after tool execution
         pprint.pprint_run_response(run_response)
 
-# ============================================================================
+# ---------------------------------------------------------------------------
 # More Examples
-# ============================================================================
+# ---------------------------------------------------------------------------
 """
 Human-in-the-loop patterns:
 
