@@ -728,19 +728,25 @@ async def test_acontinue_run_dispatch_respects_run_context_precedence(monkeypatc
 
 
 
-def _patch_pause_handler_dependencies(agent: Agent, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Patch the side-effects that pause handlers trigger so we can call them in isolation."""
+def _patch_pause_handler_dependencies(agent: Agent, monkeypatch: pytest.MonkeyPatch, async_mode: bool = False) -> None:
     from agno.agent import _session
 
     monkeypatch.setattr(_session, "save_session", lambda agent, session: None)
-    monkeypatch.setattr(_run, "create_approval_from_pause", lambda **kwargs: None)
     monkeypatch.setattr(_run, "scrub_run_output_for_storage", lambda agent, run_response: None)
     monkeypatch.setattr(_run, "save_run_response_to_file", lambda agent, **kwargs: None)
     monkeypatch.setattr(_run, "update_session_metrics", lambda agent, session, run_response: None)
 
+    if async_mode:
+
+        async def noop_acreate_approval(**kwargs):
+            return None
+
+        monkeypatch.setattr(_run, "acreate_approval_from_pause", noop_acreate_approval)
+    else:
+        monkeypatch.setattr(_run, "create_approval_from_pause", lambda **kwargs: None)
+
 
 def test_handle_agent_run_paused_persists_session_state(monkeypatch: pytest.MonkeyPatch):
-    """When run_context is passed, session_state must be written to session.session_data."""
     agent = Agent(name="test-hitl")
     _patch_pause_handler_dependencies(agent, monkeypatch)
 
@@ -766,7 +772,6 @@ def test_handle_agent_run_paused_persists_session_state(monkeypatch: pytest.Monk
 
 
 def test_handle_agent_run_paused_without_run_context_does_not_set_state(monkeypatch: pytest.MonkeyPatch):
-    """Without run_context (the old buggy path), session_state must NOT appear."""
     agent = Agent(name="test-hitl")
     _patch_pause_handler_dependencies(agent, monkeypatch)
 
@@ -786,19 +791,8 @@ def test_handle_agent_run_paused_without_run_context_does_not_set_state(monkeypa
 
 @pytest.mark.asyncio
 async def test_ahandle_agent_run_paused_persists_session_state(monkeypatch: pytest.MonkeyPatch):
-    """Async variant: run_context session_state must be persisted."""
-    from agno.agent import _session
-
     agent = Agent(name="test-hitl-async")
-    monkeypatch.setattr(_session, "save_session", lambda agent, session: None)
-    monkeypatch.setattr(_run, "scrub_run_output_for_storage", lambda agent, run_response: None)
-    monkeypatch.setattr(_run, "save_run_response_to_file", lambda agent, **kwargs: None)
-    monkeypatch.setattr(_run, "update_session_metrics", lambda agent, session, run_response: None)
-
-    async def noop_acreate_approval(**kwargs):
-        return None
-
-    monkeypatch.setattr(_run, "acreate_approval_from_pause", noop_acreate_approval)
+    _patch_pause_handler_dependencies(agent, monkeypatch, async_mode=True)
 
     session = AgentSession(session_id="s1", session_data={})
     run_response = RunOutput(run_id="r1", session_id="s1", messages=[])
