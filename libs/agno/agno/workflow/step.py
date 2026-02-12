@@ -399,10 +399,11 @@ class Step:
                                 elif isinstance(chunk, (RunOutput, TeamRunOutput)):
                                     # This is the final response from the agent/team
                                     content = chunk.content  # type: ignore[assignment]
-                                # If the chunk is a StepOutput, use it as the final response
+                                # If the chunk is a StepOutput, update final_response
+                                # but keep consuming the generator so subsequent
+                                # yields and side-effects are not skipped.
                                 elif isinstance(chunk, StepOutput):
                                     final_response = chunk
-                                    break
                                 # Non Agent/Team data structure that was yielded
                                 else:
                                     content += str(chunk)
@@ -629,6 +630,7 @@ class Step:
             try:
                 log_debug(f"Step {self.name} streaming attempt {attempt + 1}/{self.max_retries + 1}")
                 final_response = None
+                yielded_step_outputs = False
 
                 if self._executor_type == "function":
                     log_debug(f"Executing function executor for step: {self.name}")
@@ -665,8 +667,14 @@ class Step:
                                 elif isinstance(event, (RunOutput, TeamRunOutput)):
                                     content = event.content  # type: ignore[assignment]
                                 elif isinstance(event, StepOutput):
-                                    final_response = event
-                                    break
+                                    # Process and yield each StepOutput immediately so
+                                    # the workflow can emit a StepOutputEvent for it.
+                                    # Do NOT break here — continue consuming the
+                                    # generator so subsequent yields and side-effects
+                                    # are not skipped.
+                                    final_response = self._process_step_output(event)
+                                    yield final_response
+                                    yielded_step_outputs = True
                                 else:
                                     content += str(event)
 
@@ -791,9 +799,11 @@ class Step:
                 # Switch back to workflow logger after execution
                 use_workflow_logger()
 
-                # Yield the step output
+                # Yield the step output — skip if StepOutput(s) were already
+                # yielded directly from the generator loop to avoid duplicates.
                 final_response = self._process_step_output(final_response)
-                yield final_response
+                if not yielded_step_outputs:
+                    yield final_response
 
                 # Emit StepCompletedEvent
                 if stream_events and workflow_run_response:
@@ -892,7 +902,6 @@ class Step:
                                         content = chunk.content  # type: ignore[assignment]
                                     elif isinstance(chunk, StepOutput):
                                         final_response = chunk
-                                        break
                                     else:
                                         content += str(chunk)
 
@@ -920,7 +929,6 @@ class Step:
                                             content = chunk.content  # type: ignore[assignment]
                                         elif isinstance(chunk, StepOutput):
                                             final_response = chunk
-                                            break
                                         else:
                                             content += str(chunk)
 
@@ -1104,6 +1112,7 @@ class Step:
             try:
                 log_debug(f"Async step {self.name} streaming attempt {attempt + 1}/{self.max_retries + 1}")
                 final_response = None
+                yielded_step_outputs = False
 
                 if self._executor_type == "function":
                     log_debug(f"Executing async function executor for step: {self.name}")
@@ -1140,8 +1149,9 @@ class Step:
                             elif isinstance(event, (RunOutput, TeamRunOutput)):
                                 content = event.content  # type: ignore[assignment]
                             elif isinstance(event, StepOutput):
-                                final_response = event
-                                break
+                                final_response = self._process_step_output(event)
+                                yield final_response
+                                yielded_step_outputs = True
                             else:
                                 content += str(event)
                         if not final_response:
@@ -1191,8 +1201,9 @@ class Step:
                             elif isinstance(event, (RunOutput, TeamRunOutput)):
                                 content = event.content  # type: ignore[assignment]
                             elif isinstance(event, StepOutput):
-                                final_response = event
-                                break
+                                final_response = self._process_step_output(event)
+                                yield final_response
+                                yielded_step_outputs = True
                             else:
                                 if isinstance(content, str):
                                     content += str(event)
@@ -1308,9 +1319,11 @@ class Step:
                 # Switch back to workflow logger after execution
                 use_workflow_logger()
 
-                # Yield the final response
+                # Yield the final response — skip if StepOutput(s) were already
+                # yielded directly from the generator loop to avoid duplicates.
                 final_response = self._process_step_output(final_response)
-                yield final_response
+                if not yielded_step_outputs:
+                    yield final_response
 
                 if stream_events and workflow_run_response:
                     # Emit StepCompletedEvent
