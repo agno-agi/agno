@@ -6,7 +6,7 @@ Please install dependencies using:.
 """
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIResponses
+from agno.models.openai import OpenAIChat
 from agno.tools.moviepy_video import MoviePyVideoTools
 from agno.tools.openai import OpenAITools
 
@@ -21,7 +21,7 @@ openai_tools = OpenAITools()
 # ---------------------------------------------------------------------------
 video_caption_agent = Agent(
     name="Video Caption Generator Agent",
-    model=OpenAIResponses(
+    model=OpenAIChat(
         id="gpt-4o",
     ),
     tools=[video_tools, openai_tools],
