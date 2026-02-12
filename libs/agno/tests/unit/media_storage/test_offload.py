@@ -1,17 +1,25 @@
 """Tests for media offloading utilities."""
 
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from agno.media import File, Image
 from agno.models.message import Message
-from agno.utils.media_offload import _offload_single_media, offload_run_media, refresh_message_media_urls
+from agno.utils.media_offload import (
+    _offload_single_media,
+    arefresh_message_media_urls,
+    offload_run_media,
+    refresh_message_media_urls,
+)
 
 
-def _mock_storage():
+def _mock_storage(persist_remote_urls: bool = False):
     storage = MagicMock()
     storage.backend_name = "mock"
     storage.bucket = "test-bucket"
     storage.region = "us-east-1"
+    storage.persist_remote_urls = persist_remote_urls
     storage.upload.return_value = "agno/media/test-id.ext"
     storage.get_url.return_value = "https://example.com/presigned-url"
     return storage
@@ -44,6 +52,18 @@ class TestOffloadSingleMedia:
         _offload_single_media(img, storage, "session-1", "run-1", "image")
 
         storage.upload.assert_not_called()
+
+    def test_offload_url_media_when_persist_remote_urls_enabled(self):
+        storage = _mock_storage(persist_remote_urls=True)
+        img = Image(url="https://example.com/img.png", id="img-url-1", mime_type="image/png")
+
+        with patch.object(Image, "get_content_bytes", return_value=b"downloaded-bytes"):
+            _offload_single_media(img, storage, "session-1", "run-1", "image")
+
+        storage.upload.assert_called_once()
+        assert img.media_reference is not None
+        assert img.media_reference.storage_key == "agno/media/test-id.ext"
+        assert img.content is None
 
     def test_skip_external_file(self):
         storage = _mock_storage()
@@ -133,5 +153,46 @@ class TestRefreshMessageMediaUrls:
         msg.images = [img]
 
         refresh_message_media_urls(msg, storage)
+
+        storage.get_url.assert_not_called()
+
+
+def _mock_async_storage():
+    storage = AsyncMock()
+    storage.backend_name = "mock-async"
+    storage.bucket = "test-bucket"
+    storage.region = "us-east-1"
+    storage.get_url.return_value = "https://example.com/fresh-async-url"
+    return storage
+
+
+class TestAsyncRefreshMessageMediaUrls:
+    @pytest.mark.asyncio
+    async def test_async_refresh_urls(self):
+        storage = _mock_async_storage()
+
+        from agno.media_storage.reference import MediaReference
+
+        ref = MediaReference(media_id="img-1", storage_key="key-1", storage_backend="s3", url="https://old-url.com")
+        img = Image(url="https://old-url.com", media_reference=ref, id="img-1")
+
+        msg = Message(role="user", content="test")
+        msg.images = [img]
+
+        await arefresh_message_media_urls(msg, storage)
+
+        assert img.url == "https://example.com/fresh-async-url"
+        assert img.media_reference.url == "https://example.com/fresh-async-url"
+        storage.get_url.assert_called_once_with("key-1")
+
+    @pytest.mark.asyncio
+    async def test_async_skip_media_without_reference(self):
+        storage = _mock_async_storage()
+        img = Image(url="https://example.com/img.png")
+
+        msg = Message(role="user", content="test")
+        msg.images = [img]
+
+        await arefresh_message_media_urls(msg, storage)
 
         storage.get_url.assert_not_called()

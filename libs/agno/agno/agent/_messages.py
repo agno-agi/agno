@@ -1469,7 +1469,12 @@ async def aget_run_messages(
             if agent.media_storage is not None:
                 from agno.media_storage.base import AsyncMediaStorage
 
-                if not isinstance(agent.media_storage, AsyncMediaStorage):
+                if isinstance(agent.media_storage, AsyncMediaStorage):
+                    from agno.utils.media_offload import arefresh_message_media_urls
+
+                    for _msg in history_copy:
+                        await arefresh_message_media_urls(_msg, agent.media_storage)
+                else:
                     from agno.utils.media_offload import refresh_message_media_urls
 
                     for _msg in history_copy:
@@ -1714,6 +1719,7 @@ def get_relevant_docs_from_knowledge(
 
     if num_documents is None and resolved_knowledge is not None:
         num_documents = getattr(resolved_knowledge, "max_results", None)
+
     # Validate the filters against known valid filter keys
     if resolved_knowledge is not None and filters is not None:
         if validate_filters:
