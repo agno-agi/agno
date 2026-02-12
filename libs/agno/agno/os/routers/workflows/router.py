@@ -57,6 +57,7 @@ async def handle_workflow_via_websocket(websocket: WebSocket, message: dict, os:
         session_id = message.get("session_id")
         user_message = message.get("message", "")
         user_id = message.get("user_id")
+        version = message.get("version")
 
         if not workflow_id:
             await websocket.send_text(json.dumps({"event": "error", "error": "workflow_id is required"}))
@@ -64,7 +65,7 @@ async def handle_workflow_via_websocket(websocket: WebSocket, message: dict, os:
 
         # Get workflow from OS
         workflow = get_workflow_by_id(
-            workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True
+            workflow_id=workflow_id, workflows=os.workflows, db=os.db, version=version, registry=os.registry, create_fresh=True
         )
         if not workflow:
             await websocket.send_text(json.dumps({"event": "error", "error": f"Workflow {workflow_id} not found"}))
