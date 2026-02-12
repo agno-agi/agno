@@ -264,8 +264,20 @@ class AwsBedrock(Model):
                     "toolUseId": message.tool_call_id,
                     "content": [{"json": {"result": content}}],
                 }
-                formatted_message: Dict[str, Any] = {"role": "user", "content": [{"toolResult": tool_result}]}
-                formatted_messages.append(formatted_message)
+                # Batch consecutive tool results into a single user message.
+                # Bedrock's Converse API requires all toolResult blocks for the
+                # same turn to appear in one message.
+                if (
+                    formatted_messages
+                    and formatted_messages[-1].get("role") == "user"
+                    and formatted_messages[-1].get("content")
+                    and isinstance(formatted_messages[-1]["content"], list)
+                    and any("toolResult" in item for item in formatted_messages[-1]["content"] if isinstance(item, dict))
+                ):
+                    formatted_messages[-1]["content"].append({"toolResult": tool_result})
+                else:
+                    formatted_message: Dict[str, Any] = {"role": "user", "content": [{"toolResult": tool_result}]}
+                    formatted_messages.append(formatted_message)
             else:
                 formatted_message = {"role": message.role, "content": []}
                 if isinstance(message.content, list):
