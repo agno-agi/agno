@@ -1,4 +1,4 @@
-agno[openai,anthropic]
+agno[openai,anthropic, scheduler]
 duckduckgo-search
 duckdb
 yfinance
