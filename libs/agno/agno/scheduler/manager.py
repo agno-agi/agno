@@ -188,9 +188,12 @@ class ScheduleManager:
         log_debug(f"Schedule '{name}' created (id={result.id}, cron={cron})")
         return result
 
-    def list(self, enabled: Optional[bool] = None, limit: int = 100, offset: int = 0) -> List[Schedule]:
+    def list(self, enabled: Optional[bool] = None, limit: int = 100, page: int = 1) -> List[Schedule]:
         """List all schedules."""
-        return self._to_schedule_list(self._call("get_schedules", enabled=enabled, limit=limit, offset=offset))
+        result = self._call("get_schedules", enabled=enabled, limit=limit, page=page)
+        # get_schedules returns (schedules_list, total_count) tuple
+        schedules_data = result[0] if isinstance(result, tuple) else result
+        return self._to_schedule_list(schedules_data)
 
     def get(self, schedule_id: str) -> Optional[Schedule]:
         """Get a schedule by ID."""
@@ -326,9 +329,12 @@ class ScheduleManager:
         log_debug(f"Schedule '{name}' created (id={result.id}, cron={cron})")
         return result
 
-    async def alist(self, enabled: Optional[bool] = None, limit: int = 100, offset: int = 0) -> List[Schedule]:
+    async def alist(self, enabled: Optional[bool] = None, limit: int = 100, page: int = 1) -> List[Schedule]:
         """Async list all schedules."""
-        return self._to_schedule_list(await self._acall("get_schedules", enabled=enabled, limit=limit, offset=offset))
+        result = await self._acall("get_schedules", enabled=enabled, limit=limit, page=page)
+        # get_schedules returns (schedules_list, total_count) tuple
+        schedules_data = result[0] if isinstance(result, tuple) else result
+        return self._to_schedule_list(schedules_data)
 
     async def aget(self, schedule_id: str) -> Optional[Schedule]:
         """Async get a schedule by ID."""
