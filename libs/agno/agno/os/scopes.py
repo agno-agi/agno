@@ -434,6 +434,23 @@ def get_default_scope_mappings() -> Dict[str, List[str]]:
         "GET /traces": ["traces:read"],
         "GET /traces/*": ["traces:read"],
         "GET /trace_session_stats": ["traces:read"],
+        # Schedule endpoints
+        "GET /schedules": ["schedules:read"],
+        "GET /schedules/*": ["schedules:read"],
+        "POST /schedules": ["schedules:write"],
+        "PATCH /schedules/*": ["schedules:write"],
+        "DELETE /schedules/*": ["schedules:delete"],
+        "POST /schedules/*/enable": ["schedules:write"],
+        "POST /schedules/*/disable": ["schedules:write"],
+        "POST /schedules/*/trigger": ["schedules:write"],
+        "GET /schedules/*/runs": ["schedules:read"],
+        "GET /schedules/*/runs/*": ["schedules:read"],
+        # Approval endpoints
+        "GET /approvals": ["approvals:read"],
+        "GET /approvals/count": ["approvals:read"],
+        "GET /approvals/*": ["approvals:read"],
+        "POST /approvals/*/resolve": ["approvals:write"],
+        "DELETE /approvals/*": ["approvals:delete"],
     }
 
 

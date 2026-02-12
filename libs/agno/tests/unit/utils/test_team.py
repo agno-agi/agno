@@ -33,28 +33,28 @@ def team_show_member_responses_false():
 
 def test_show_member_responses_fallback(team_show_member_responses_true):
     """Test fallback to team.show_members_responses"""
-    with patch("agno.team.team.print_response") as mock:
+    with patch("agno.team._cli.print_response") as mock:
         team_show_member_responses_true.print_response("test", stream=False)
         assert mock.call_args[1]["show_member_responses"] is True
 
 
 def test_show_member_responses_override_false(team_show_member_responses_true):
     """Test parameter overrides team default"""
-    with patch("agno.team.team.print_response") as mock:
+    with patch("agno.team._cli.print_response") as mock:
         team_show_member_responses_true.print_response("test", stream=False, show_member_responses=False)
         assert mock.call_args[1]["show_member_responses"] is False
 
 
 def test_show_member_responses_override_true(team_show_member_responses_false):
     """Test parameter overrides team default"""
-    with patch("agno.team.team.print_response") as mock:
+    with patch("agno.team._cli.print_response") as mock:
         team_show_member_responses_false.print_response("test", stream=False, show_member_responses=True)
         assert mock.call_args[1]["show_member_responses"] is True
 
 
 def test_show_member_responses_streaming(team_show_member_responses_true):
     """Test parameter with streaming"""
-    with patch("agno.team.team.print_response_stream") as mock:
+    with patch("agno.team._cli.print_response_stream") as mock:
         team_show_member_responses_true.print_response("test", stream=True, show_member_responses=False)
         assert mock.call_args[1]["show_member_responses"] is False
 
@@ -62,7 +62,7 @@ def test_show_member_responses_streaming(team_show_member_responses_true):
 @pytest.mark.asyncio
 async def test_async_show_member_responses_fallback(team_show_member_responses_true):
     """Test fallback to team.show_members_responses"""
-    with patch("agno.team.team.aprint_response") as mock:
+    with patch("agno.team._cli.aprint_response") as mock:
         await team_show_member_responses_true.aprint_response("test", stream=False)
         assert mock.call_args[1]["show_member_responses"] is True
 
@@ -70,7 +70,7 @@ async def test_async_show_member_responses_fallback(team_show_member_responses_t
 @pytest.mark.asyncio
 async def test_async_show_member_responses_override_false(team_show_member_responses_true):
     """Test parameter overrides team default"""
-    with patch("agno.team.team.aprint_response") as mock:
+    with patch("agno.team._cli.aprint_response") as mock:
         await team_show_member_responses_true.aprint_response("test", stream=False, show_member_responses=False)
         assert mock.call_args[1]["show_member_responses"] is False
 
@@ -78,7 +78,7 @@ async def test_async_show_member_responses_override_false(team_show_member_respo
 @pytest.mark.asyncio
 async def test_async_show_member_responses_override_true(team_show_member_responses_false):
     """Test parameter overrides team default"""
-    with patch("agno.team.team.aprint_response") as mock:
+    with patch("agno.team._cli.aprint_response") as mock:
         await team_show_member_responses_false.aprint_response("test", stream=False, show_member_responses=True)
         assert mock.call_args[1]["show_member_responses"] is True
 
@@ -86,7 +86,7 @@ async def test_async_show_member_responses_override_true(team_show_member_respon
 @pytest.mark.asyncio
 async def test_async_show_member_responses_streaming(team_show_member_responses_true):
     """Test parameter override with streaming"""
-    with patch("agno.team.team.aprint_response_stream") as mock:
+    with patch("agno.team._cli.aprint_response_stream") as mock:
         await team_show_member_responses_true.aprint_response("test", stream=True, show_member_responses=False)
         assert mock.call_args[1]["show_member_responses"] is False
 

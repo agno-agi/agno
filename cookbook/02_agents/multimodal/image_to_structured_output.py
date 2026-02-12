@@ -1,3 +1,10 @@
+"""
+Image To Structured Output
+=============================
+
+Image To Structured Output.
+"""
+
 from typing import List
 
 from agno.agent import Agent
@@ -18,17 +25,24 @@ class MovieScript(BaseModel):
     )
 
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 agent = Agent(model=OpenAIChat(id="gpt-4o"), output_schema=MovieScript)
 
-response = agent.run(
-    "Write a movie about this image",
-    images=[
-        Image(
-            url="https://upload.wikimedia.org/wikipedia/commons/0/0c/GoldenGateBridge-001.jpg"
-        )
-    ],
-    stream=True,
-)
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    response = agent.run(
+        "Write a movie about this image",
+        images=[
+            Image(
+                url="https://upload.wikimedia.org/wikipedia/commons/0/0c/GoldenGateBridge-001.jpg"
+            )
+        ],
+        stream=True,
+    )
 
-for event in response:
-    pprint(event.content)
+    for event in response:
+        pprint(event.content)

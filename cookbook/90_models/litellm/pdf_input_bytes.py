@@ -1,9 +1,20 @@
+"""
+Litellm Pdf Input Bytes
+=======================
+
+Cookbook example for `litellm/pdf_input_bytes.py`.
+"""
+
 from pathlib import Path
 
 from agno.agent import Agent
 from agno.media import File
 from agno.models.litellm import LiteLLM
 from agno.utils.media import download_file
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 pdf_path = Path(__file__).parent.joinpath("ThaiRecipes.pdf")
 
@@ -24,3 +35,10 @@ agent.print_response(
         ),
     ],
 )
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

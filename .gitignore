@@ -75,9 +75,11 @@ agno_json_data/
 # AI
 .claude/
 .cursor/
+.conductor/
 
 # Private design documents (symlinked)
 specs
+docs
 projects
 agno-os
 

@@ -8,7 +8,7 @@ except ImportError:
     raise ImportError("`sqlalchemy` not installed. Please install it using `pip install sqlalchemy`")
 
 SESSION_TABLE_SCHEMA = {
-    "session_id": {"type": lambda: String(128), "nullable": False},
+    "session_id": {"type": lambda: String(128), "primary_key": True, "nullable": False},
     "session_type": {"type": lambda: String(20), "nullable": False, "index": True},
     "agent_id": {"type": lambda: String(128), "nullable": True},
     "team_id": {"type": lambda: String(128), "nullable": True},
@@ -23,12 +23,6 @@ SESSION_TABLE_SCHEMA = {
     "summary": {"type": JSON, "nullable": True},
     "created_at": {"type": BigInteger, "nullable": False, "index": True},
     "updated_at": {"type": BigInteger, "nullable": True},
-    "_unique_constraints": [
-        {
-            "name": "uq_session_id",
-            "columns": ["session_id"],
-        },
-    ],
 }
 
 USER_MEMORY_TABLE_SCHEMA = {

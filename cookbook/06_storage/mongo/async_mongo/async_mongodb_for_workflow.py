@@ -28,10 +28,15 @@ from agno.tools.websearch import WebSearchTools
 from agno.workflow.step import Step
 from agno.workflow.workflow import Workflow
 
-# MongoDB connection settings
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
 db_url = "mongodb://mongoadmin:secret@localhost:27017"
 db = AsyncMongoDb(db_url=db_url)
 
+# ---------------------------------------------------------------------------
+# Create Workflow
+# ---------------------------------------------------------------------------
 hackernews_agent = Agent(
     name="Hackernews Agent",
     model=OpenAIChat(id="gpt-4o-mini"),
@@ -74,6 +79,9 @@ content_creation_workflow = Workflow(
     steps=[research_step, content_planning_step],
 )
 
+# ---------------------------------------------------------------------------
+# Run Workflow
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     asyncio.run(
         content_creation_workflow.aprint_response(

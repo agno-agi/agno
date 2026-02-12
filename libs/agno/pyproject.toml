@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "2.4.5"
+version = "2.5.0"
 description = "Agno: a lightweight library for building Multi-Agent Systems"
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -64,9 +64,11 @@ dev = [
   "openai",
   "fakeredis",
   "xlwt",
+  "types-greenlet",
 ]
 
 os = ["fastapi", "uvicorn", "PyJWT"]
+scheduler = ["croniter>=1.3", "pytz>=2023.3"]
 
 # Dependencies for Telemetry
 opentelemetry = ["opentelemetry-sdk", "opentelemetry-exporter-otlp"]
@@ -95,6 +97,9 @@ portkey = ["portkey-ai"]
 
 # Dependencies for Token Counting
 tokenizers = ["tiktoken", "tokenizers"]
+
+# Dependencies for Workflow Expression Evaluation
+cel = ["cel-python"]
 
 # Dependencies for Tools
 agentql = ["agentql"]
@@ -155,7 +160,7 @@ mysql = ["pymysql", "asyncmy"]
 # Dependencies for Vector databases
 pgvector = ["pgvector"]
 chromadb = ["chromadb"]
-lancedb = ["lancedb==0.24.0", "tantivy"]
+lancedb = ["lancedb>=0.26.0", "tantivy"]
 pylance = ["pylance"]
 qdrant = ["qdrant-client"]
 couchbase = ["couchbase"]
@@ -176,7 +181,7 @@ pptx = ["python-pptx"]
 text = ["aiofiles"]
 csv = ["aiofiles"]
 excel = ["openpyxl", "xlrd"]
-markdown = ["unstructured", "markdown", "aiofiles"]
+markdown = ["unstructured<0.18.31", "markdown", "aiofiles"]
 chonkie = ["chonkie[semantic]", "chonkie[code]", "chonkie"]
 
 # Dependencies for AG-UI integration
@@ -350,6 +355,7 @@ integration-tests = [
 # Dependencies for demo application
 demo = [
     "agno[dev]",
+    "agno[scheduler]",
     "anthropic",
     "chromadb",
     "ddgs",
@@ -556,6 +562,7 @@ module = [
   "reportlab.*",
   "surrealdb.*",
   "trafilatura.*",
-  "xlrd.*"
+  "xlrd.*",
+  "celpy.*"
 ]
 ignore_missing_imports = true

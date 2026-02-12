@@ -333,7 +333,7 @@ class AgentAsJudgeEval(BaseEval):
                 </output>
             """)
 
-            response = await evaluator_agent.arun(prompt, stream=False)
+            response = await evaluator_agent.arun(prompt, stream=False)  # type: ignore[misc]
             judge_response = response.content
             if not isinstance(judge_response, (NumericJudgeResponse, BinaryJudgeResponse)):
                 raise EvalError(f"Invalid response: {judge_response}")

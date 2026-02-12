@@ -57,7 +57,7 @@ def print_response_stream(
     accumulated_tool_calls: List = []
 
     with Live(console=console) as live_log:
-        status = Status("Thinking...", spinner="aesthetic", speed=0.4, refresh_per_second=10)
+        status = Status("Working...", spinner="aesthetic", speed=0.4, refresh_per_second=10)
         live_log.update(status)
         response_timer = Timer()
         response_timer.start()
@@ -224,7 +224,7 @@ def print_response_stream(
 
         response_timer.stop()
 
-        # Final update to remove the "Thinking..." status
+        # Final update to remove the "Working..." status
         panels = [p for p in panels if not isinstance(p, Status)]
         live_log.update(Group(*panels))
 
@@ -262,7 +262,7 @@ async def aprint_response_stream(
     accumulated_tool_calls: List = []
 
     with Live(console=console) as live_log:
-        status = Status("Thinking...", spinner="aesthetic", speed=0.4, refresh_per_second=10)
+        status = Status("Working...", spinner="aesthetic", speed=0.4, refresh_per_second=10)
         live_log.update(status)
         response_timer = Timer()
         response_timer.start()
@@ -429,7 +429,7 @@ async def aprint_response_stream(
 
         response_timer.stop()
 
-        # Final update to remove the "Thinking..." status
+        # Final update to remove the "Working..." status
         panels = [p for p in panels if not isinstance(p, Status)]
         live_log.update(Group(*panels))
 
@@ -571,7 +571,7 @@ def print_response(
     **kwargs: Any,
 ):
     with Live(console=console) as live_log:
-        status = Status("Thinking...", spinner="aesthetic", speed=0.4, refresh_per_second=10)
+        status = Status("Working...", spinner="aesthetic", speed=0.4, refresh_per_second=10)
         live_log.update(status)
         response_timer = Timer()
         response_timer.start()
@@ -659,7 +659,7 @@ def print_response(
             live_log.update(Group(*panels))
             agent.session_summary_manager.summaries_updated = False
 
-        # Final update to remove the "Thinking..." status
+        # Final update to remove the "Working..." status
         panels = [p for p in panels if not isinstance(p, Status)]
         live_log.update(Group(*panels))
 
@@ -691,7 +691,7 @@ async def aprint_response(
     **kwargs: Any,
 ):
     with Live(console=console) as live_log:
-        status = Status("Thinking...", spinner="aesthetic", speed=0.4, refresh_per_second=10)
+        status = Status("Working...", spinner="aesthetic", speed=0.4, refresh_per_second=10)
         live_log.update(status)
         response_timer = Timer()
         response_timer.start()
@@ -710,7 +710,7 @@ async def aprint_response(
             live_log.update(Group(*panels))
 
         # Run the agent
-        run_response = await agent.arun(
+        run_response = await agent.arun(  # type: ignore[misc]
             input=input,
             session_id=session_id,
             session_state=session_state,
@@ -779,7 +779,7 @@ async def aprint_response(
             panels.append(summary_panel)
             live_log.update(Group(*panels))
 
-        # Final update to remove the "Thinking..." status
+        # Final update to remove the "Working..." status
         panels = [p for p in panels if not isinstance(p, Status)]
         live_log.update(Group(*panels))
 

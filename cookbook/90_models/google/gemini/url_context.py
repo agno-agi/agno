@@ -3,6 +3,10 @@
 from agno.agent import Agent
 from agno.models.google import Gemini
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 agent = Agent(
     model=Gemini(id="gemini-2.5-flash", url_context=True),
     markdown=True,
@@ -11,6 +15,11 @@ agent = Agent(
 url1 = "https://www.foodnetwork.com/recipes/ina-garten/perfect-roast-chicken-recipe-1940592"
 url2 = "https://www.allrecipes.com/recipe/83557/juicy-roasted-chicken/"
 
-agent.print_response(
-    f"Compare the ingredients and cooking times from the recipes at {url1} and {url2}"
-)
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    # --- Sync ---
+    agent.print_response(
+        f"Compare the ingredients and cooking times from the recipes at {url1} and {url2}"
+    )
