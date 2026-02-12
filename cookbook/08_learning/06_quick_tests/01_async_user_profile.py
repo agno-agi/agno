@@ -19,9 +19,9 @@ from agno.db.postgres import PostgresDb
 from agno.learn import LearningMachine, LearningMode, UserProfileConfig
 from agno.models.openai import OpenAIResponses
 
-# ============================================================================
-# Setup
-# ============================================================================
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 
@@ -36,9 +36,9 @@ agent = Agent(
     markdown=True,
 )
 
-# ============================================================================
-# Async Demo
-# ============================================================================
+# ---------------------------------------------------------------------------
+# Run Async Demo
+# ---------------------------------------------------------------------------
 
 
 async def main():
@@ -55,7 +55,7 @@ async def main():
         session_id="async_session_1",
         stream=True,
     )
-    agent.get_learning_machine().user_profile_store.print(user_id=user_id)
+    agent.learning_machine.user_profile_store.print(user_id=user_id)
 
     # Session 2: New session - verify profile persisted (async)
     print("\n" + "=" * 60)
@@ -68,7 +68,7 @@ async def main():
         session_id="async_session_2",
         stream=True,
     )
-    agent.get_learning_machine().user_profile_store.print(user_id=user_id)
+    agent.learning_machine.user_profile_store.print(user_id=user_id)
 
     print("\n" + "=" * 60)
     print("ASYNC TEST COMPLETE")

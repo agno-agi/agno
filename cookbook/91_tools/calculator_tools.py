@@ -1,5 +1,17 @@
+"""
+Calculator Tools
+=============================
+
+Demonstrates calculator tools.
+"""
+
 from agno.agent import Agent
 from agno.tools.calculator import CalculatorTools
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 
 # Example 1: Include specific calculator functions for basic operations
 basic_calc_agent = Agent(
@@ -18,6 +30,11 @@ agent = Agent(
     tools=[CalculatorTools()],
     markdown=True,
 )
-simple_calc_agent.print_response(
-    "What is 10*5 then to the power of 2, do it step by step"
-)
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    simple_calc_agent.print_response(
+        "What is 10*5 then to the power of 2, do it step by step"
+    )

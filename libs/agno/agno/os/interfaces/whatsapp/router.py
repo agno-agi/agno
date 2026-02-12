@@ -179,7 +179,7 @@ def attach_routes(
             log_info(f"Processing message from {phone_number}: {message_text}")
 
             if agent:
-                response = await agent.arun(
+                response = await agent.arun(  # type: ignore[misc]
                     message_text,
                     user_id=phone_number,
                     session_id=f"wa:{phone_number}",

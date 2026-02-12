@@ -35,6 +35,10 @@ from google.adk import Agent
 from google.adk.a2a.utils.agent_to_a2a import to_a2a
 from google.adk.tools import google_search
 
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
+
 agent = Agent(
     name="facts_agent",
     model="gemini-2.5-flash-lite",
@@ -45,6 +49,10 @@ agent = Agent(
 )
 
 app = to_a2a(agent, port=int(os.getenv("PORT", "8001")))
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     import uvicorn

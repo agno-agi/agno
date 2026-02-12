@@ -1,6 +1,18 @@
+"""
+Replicate Tools
+=============================
+
+Demonstrates replicate tools.
+"""
+
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.replicate import ReplicateTools
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 
 """Create an agent specialized for Replicate AI content generation"""
 
@@ -31,4 +43,8 @@ full_agent = Agent(
     markdown=True,
 )
 
-image_agent.print_response("Generate an image of a horse in the dessert.")
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    image_agent.print_response("Generate an image of a horse in the dessert.")

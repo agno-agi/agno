@@ -2,10 +2,16 @@
 uv pip install openai ddgs newspaper4k lxml_html_clean agno
 """
 
+import asyncio
+
 from agno.agent import Agent
 from agno.models.groq import Groq
 from agno.tools.newspaper4k import Newspaper4kTools
 from agno.tools.websearch import WebSearchTools
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 agent = Agent(
     model=Groq(id="llama-3.3-70b-versatile"),
@@ -19,4 +25,13 @@ agent = Agent(
     markdown=True,
     add_datetime_to_context=True,
 )
-agent.print_response("Simulation theory", stream=True)
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    # --- Sync + Streaming ---
+    agent.print_response("Simulation theory", stream=True)
+
+    # --- Async + Streaming ---
+    asyncio.run(agent.aprint_response("Simulation theory", stream=True))

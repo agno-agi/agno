@@ -1,6 +1,17 @@
+"""
+Openai Generate Images
+======================
+
+Cookbook example for `openai/chat/generate_images.py`.
+"""
+
 from agno.agent import Agent, RunOutput
 from agno.models.openai import OpenAIChat
 from agno.tools.dalle import DalleTools
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 image_agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
@@ -20,3 +31,10 @@ if run_response and isinstance(run_response, RunOutput) and run_response.images:
         print(image_url)
 else:
     print("No images found in run response")
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

@@ -6,6 +6,10 @@ from agno.agent import Agent
 from agno.models.langdb import LangDB
 from agno.tools.duckdb import DuckDbTools
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 duckdb_tools = DuckDbTools(
     create_tables=False, export_tables=False, summarize_tables=False
 )
@@ -24,3 +28,10 @@ agent = Agent(
     """),
 )
 agent.print_response("What is the average rating of movies?", stream=False)
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

@@ -13,6 +13,10 @@ import asyncio
 
 from agno.client import AgentOSClient
 
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
+
 
 async def main():
     client = AgentOSClient(base_url="http://localhost:7777")
@@ -82,6 +86,10 @@ async def main():
     memories_after = await client.list_memories(user_id=user_id)
     print(f"   Remaining memories: {len(memories_after.data)}")
 
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     asyncio.run(main())
