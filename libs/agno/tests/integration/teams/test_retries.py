@@ -1,6 +1,6 @@
 """Integration tests for team retry functionality."""
 
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -13,25 +13,27 @@ from agno.team import Team
 def test_team_retry():
     """Test that team retries on failure and eventually succeeds."""
     member = Agent(model=OpenAIChat(id="gpt-4o-mini"))
+    model = OpenAIChat(id="gpt-4o-mini")
     team = Team(
         members=[member],
         name="Retry Team",
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=model,
         retries=2,
         delay_between_retries=0,
     )
 
     # Mock that fails once, then succeeds
     attempt_count = {"count": 0}
-    original_run = team._run
+    original_response = model.response
 
-    def mock_run(*args, **kwargs):
+    def mock_response(*args, **kwargs):
         attempt_count["count"] += 1
         if attempt_count["count"] < 2:
             raise Exception(f"Simulated failure on attempt {attempt_count['count']}")
-        return original_run(*args, **kwargs)
+        return original_response(*args, **kwargs)
 
-    with patch.object(team, "_run", side_effect=mock_run):
+    # Mock the model's response method so _run's retry logic can still work
+    with patch.object(model, "response", side_effect=mock_response):
         response = team.run("Test message")
 
     # Should succeed on the 2nd attempt
@@ -43,26 +45,29 @@ def test_team_retry():
 def test_team_exponential_backoff():
     """Test that exponential backoff increases delay between retries."""
     member = Agent(model=OpenAIChat(id="gpt-4o-mini"))
+    model = OpenAIChat(id="gpt-4o-mini")
     team = Team(
         members=[member],
         name="Retry Team",
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=model,
         retries=2,
         delay_between_retries=1,
         exponential_backoff=True,
     )
 
     attempt_count = {"count": 0}
+    original_response = model.response
 
-    def mock_run(*args, **kwargs):
+    def mock_response(*args, **kwargs):
         attempt_count["count"] += 1
         if attempt_count["count"] < 3:  # Fail first 2 attempts (attempts 1 and 2)
             raise Exception("Simulated failure")
         # Succeed on 3rd attempt
-        return Mock(status=RunStatus.completed)
+        return original_response(*args, **kwargs)
 
-    with patch.object(team, "_run", side_effect=mock_run):
-        with patch("agno.team.team.time.sleep") as mock_sleep:
+    # Mock the model's response method so _run's retry logic can still work
+    with patch.object(model, "response", side_effect=mock_response):
+        with patch("agno.team._run.time.sleep") as mock_sleep:
             _ = team.run("Test message")
 
     # Check that sleep was called with exponentially increasing delays
@@ -74,21 +79,23 @@ def test_team_exponential_backoff():
 def test_team_keyboard_interrupt_stops_retries():
     """Test that KeyboardInterrupt stops retries immediately."""
     member = Agent(model=OpenAIChat(id="gpt-4o-mini"))
+    model = OpenAIChat(id="gpt-4o-mini")
     team = Team(
         members=[member],
         name="Retry Team",
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=model,
         retries=5,
         delay_between_retries=0,
     )
 
     attempt_count = {"count": 0}
 
-    def mock_run(*args, **kwargs):
+    def mock_response(*args, **kwargs):
         attempt_count["count"] += 1
         raise KeyboardInterrupt()
 
-    with patch.object(team, "_run", side_effect=mock_run):
+    # Mock the model's response method so _run's KeyboardInterrupt handling can work
+    with patch.object(model, "response", side_effect=mock_response):
         response = team.run("Test message")
 
     # Should stop on first attempt without retrying
@@ -100,8 +107,6 @@ def test_team_keyboard_interrupt_stops_retries():
 @pytest.mark.asyncio
 async def test_team_async_retry():
     """Test that async team retries on failure and eventually succeeds."""
-    import types
-
     member = Agent(model=OpenAIChat(id="gpt-4o-mini"))
     team = Team(
         members=[member],
@@ -112,17 +117,16 @@ async def test_team_async_retry():
     )
 
     attempt_count = {"count": 0}
-    original_arun = team._arun
+    original_aresponse = team.model.aresponse  # type: ignore
 
-    def mock_arun(self, *args, **kwargs):
+    async def mock_aresponse(*args, **kwargs):
         attempt_count["count"] += 1
         if attempt_count["count"] < 2:
             raise Exception(f"Simulated failure on attempt {attempt_count['count']}")
-        return original_arun(*args, **kwargs)
+        return await original_aresponse(*args, **kwargs)
 
-    # Properly bind the async method
-    team._arun = types.MethodType(mock_arun, team)
-    response = await team.arun("Test message")
+    with patch.object(team.model, "aresponse", side_effect=mock_aresponse):
+        response = await team.arun("Test message")
 
     # Should succeed on the 2nd attempt
     assert attempt_count["count"] == 2

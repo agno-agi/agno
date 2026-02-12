@@ -82,7 +82,7 @@ class ContentResponseSchema(BaseModel):
             status=status,
             status_message=content.get("status_message"),
             created_at=parse_timestamp(content.get("created_at")),
-            updated_at=parse_timestamp(content.get("updated_at")),
+            updated_at=parse_timestamp(content.get("updated_at", content.get("created_at", 0))),
             # TODO: These fields are not available in the Content class. Fix the inconsistency
             access_count=None,
             linked_to=None,
@@ -156,11 +156,12 @@ class VectorSearchRequestSchema(BaseModel):
     class Meta(BaseModel):
         """Inline metadata schema for pagination."""
 
-        limit: int = Field(20, description="Number of results per page", ge=1, le=100)
+        limit: int = Field(20, description="Number of results per page", ge=1)
         page: int = Field(1, description="Page number", ge=1)
 
     query: str = Field(..., description="The search query text")
-    db_id: Optional[str] = Field(None, description="The content database ID to search in")
+    db_id: Optional[str] = Field(None, description="Database ID to search in")
+    knowledge_id: Optional[str] = Field(None, description="Knowledge base ID to search in")
     vector_db_ids: Optional[List[str]] = Field(None, description="List of vector database IDs to search in")
     search_type: Optional[str] = Field(None, description="The type of search to perform (vector, keyword, hybrid)")
     max_results: Optional[int] = Field(None, description="The maximum number of results to return", ge=1, le=1000)
@@ -170,9 +171,21 @@ class VectorSearchRequestSchema(BaseModel):
     )
 
 
+class RemoteContentSourceSchema(BaseModel):
+    """Schema for remote content source configuration."""
+
+    id: str = Field(..., description="Unique identifier for the content source")
+    name: str = Field(..., description="Display name for the content source")
+    type: str = Field(..., description="Type of content source (s3, gcs, sharepoint, github, azureblob)")
+    metadata: Optional[Dict[str, Any]] = Field(None, description="Custom metadata for the content source")
+
+
 class ConfigResponseSchema(BaseModel):
     readers: Optional[Dict[str, ReaderSchema]] = Field(None, description="Available content readers")
     readersForType: Optional[Dict[str, List[str]]] = Field(None, description="Mapping of content types to reader IDs")
     chunkers: Optional[Dict[str, ChunkerSchema]] = Field(None, description="Available chunking strategies")
     filters: Optional[List[str]] = Field(None, description="Available filter tags")
     vector_dbs: Optional[List[VectorDbSchema]] = Field(None, description="Configured vector databases")
+    remote_content_sources: Optional[List[RemoteContentSourceSchema]] = Field(
+        None, description="Configured remote content sources (S3, GCS, SharePoint, GitHub)"
+    )

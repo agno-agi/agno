@@ -5,6 +5,7 @@ from typing import Any, Dict, Generic, List, Optional, TypeVar, Union
 from pydantic import BaseModel, ConfigDict, Field
 
 from agno.agent import Agent
+from agno.agent.remote import RemoteAgent
 from agno.db.base import SessionType
 from agno.os.config import (
     ChatConfig,
@@ -15,13 +16,11 @@ from agno.os.config import (
     SessionConfig,
     TracesConfig,
 )
-from agno.os.utils import (
-    extract_input_media,
-    get_run_input,
-    get_session_name,
-)
+from agno.os.utils import extract_input_media, get_run_input, get_session_name, to_utc_datetime
 from agno.session import AgentSession, TeamSession, WorkflowSession
+from agno.team.remote import RemoteTeam
 from agno.team.team import Team
+from agno.workflow.remote import RemoteWorkflow
 from agno.workflow.workflow import Workflow
 
 
@@ -76,10 +75,12 @@ class InternalServerErrorResponse(BaseModel):
 
 
 class HealthResponse(BaseModel):
-    model_config = ConfigDict(json_schema_extra={"example": {"status": "ok", "instantiated_at": "1760169236.778903"}})
+    model_config = ConfigDict(
+        json_schema_extra={"example": {"status": "ok", "instantiated_at": "2025-06-10T12:00:00Z"}}
+    )
 
     status: str = Field(..., description="Health status of the service")
-    instantiated_at: str = Field(..., description="Unix timestamp when service was instantiated")
+    instantiated_at: datetime = Field(..., description="Timestamp when service was instantiated")
 
 
 class InterfaceResponse(BaseModel):
@@ -102,7 +103,7 @@ class AgentSummaryResponse(BaseModel):
     db_id: Optional[str] = Field(None, description="Database identifier")
 
     @classmethod
-    def from_agent(cls, agent: Agent) -> "AgentSummaryResponse":
+    def from_agent(cls, agent: Union[Agent, RemoteAgent]) -> "AgentSummaryResponse":
         return cls(id=agent.id, name=agent.name, description=agent.description, db_id=agent.db.id if agent.db else None)
 
 
@@ -113,8 +114,9 @@ class TeamSummaryResponse(BaseModel):
     db_id: Optional[str] = Field(None, description="Database identifier")
 
     @classmethod
-    def from_team(cls, team: Team) -> "TeamSummaryResponse":
-        return cls(id=team.id, name=team.name, description=team.description, db_id=team.db.id if team.db else None)
+    def from_team(cls, team: Union[Team, RemoteTeam]) -> "TeamSummaryResponse":
+        db_id = team.db.id if team.db else None
+        return cls(id=team.id, name=team.name, description=team.description, db_id=db_id)
 
 
 class WorkflowSummaryResponse(BaseModel):
@@ -124,12 +126,13 @@ class WorkflowSummaryResponse(BaseModel):
     db_id: Optional[str] = Field(None, description="Database identifier")
 
     @classmethod
-    def from_workflow(cls, workflow: Workflow) -> "WorkflowSummaryResponse":
+    def from_workflow(cls, workflow: Union[Workflow, RemoteWorkflow]) -> "WorkflowSummaryResponse":
+        db_id = workflow.db.id if workflow.db else None
         return cls(
             id=workflow.id,
             name=workflow.name,
             description=workflow.description,
-            db_id=workflow.db.id if workflow.db else None,
+            db_id=db_id,
         )
 
 
@@ -140,7 +143,8 @@ class ConfigResponse(BaseModel):
     name: Optional[str] = Field(None, description="Name of the OS instance")
     description: Optional[str] = Field(None, description="Description of the OS instance")
     available_models: Optional[List[str]] = Field(None, description="List of available models")
-    databases: List[str] = Field(..., description="List of database IDs")
+    os_database: Optional[str] = Field(None, description="ID of the database used for the OS instance")
+    databases: List[str] = Field(..., description="List of database IDs used by the components of the OS instance")
     chat: Optional[ChatConfig] = Field(None, description="Chat configuration")
 
     session: Optional[SessionConfig] = Field(None, description="Session configuration")
@@ -182,18 +186,39 @@ class SessionSchema(BaseModel):
 
     @classmethod
     def from_dict(cls, session: Dict[str, Any]) -> "SessionSchema":
-        session_name = get_session_name(session)
+        session_name = session.get("session_name")
+        if not session_name:
+            session_name = get_session_name(session)
         session_data = session.get("session_data", {}) or {}
+
+        created_at = session.get("created_at", 0)
+        updated_at = session.get("updated_at", created_at)
+
+        # Handle created_at and updated_at as either ISO 8601 string or timestamp
+        def parse_datetime(val):
+            if isinstance(val, str):
+                try:
+                    # Accept both with and without Z
+                    if val.endswith("Z"):
+                        val = val[:-1] + "+00:00"
+                    return datetime.fromisoformat(val)
+                except Exception:
+                    return None
+            elif isinstance(val, (int, float)):
+                try:
+                    return datetime.fromtimestamp(val, tz=timezone.utc)
+                except Exception:
+                    return None
+            return None
+
+        created_at = to_utc_datetime(session.get("created_at", 0))
+        updated_at = to_utc_datetime(session.get("updated_at", created_at))
         return cls(
             session_id=session.get("session_id", ""),
             session_name=session_name,
             session_state=session_data.get("session_state", None),
-            created_at=datetime.fromtimestamp(session.get("created_at", 0), tz=timezone.utc)
-            if session.get("created_at")
-            else None,
-            updated_at=datetime.fromtimestamp(session.get("updated_at", 0), tz=timezone.utc)
-            if session.get("updated_at")
-            else None,
+            created_at=created_at,
+            updated_at=updated_at,
         )
 
 
@@ -239,6 +264,8 @@ class AgentSessionDetailSchema(BaseModel):
     @classmethod
     def from_session(cls, session: AgentSession) -> "AgentSessionDetailSchema":
         session_name = get_session_name({**session.to_dict(), "session_type": "agent"})
+        created_at = datetime.fromtimestamp(session.created_at, tz=timezone.utc) if session.created_at else None
+        updated_at = datetime.fromtimestamp(session.updated_at, tz=timezone.utc) if session.updated_at else created_at
         return cls(
             user_id=session.user_id,
             agent_session_id=session.session_id,
@@ -254,8 +281,8 @@ class AgentSessionDetailSchema(BaseModel):
             metrics=session.session_data.get("session_metrics", {}) if session.session_data else None,  # type: ignore
             metadata=session.metadata,
             chat_history=[message.to_dict() for message in session.get_chat_history()],
-            created_at=datetime.fromtimestamp(session.created_at, tz=timezone.utc) if session.created_at else None,
-            updated_at=datetime.fromtimestamp(session.updated_at, tz=timezone.utc) if session.updated_at else None,
+            created_at=to_utc_datetime(created_at),
+            updated_at=to_utc_datetime(updated_at),
         )
 
 
@@ -278,7 +305,8 @@ class TeamSessionDetailSchema(BaseModel):
     def from_session(cls, session: TeamSession) -> "TeamSessionDetailSchema":
         session_dict = session.to_dict()
         session_name = get_session_name({**session_dict, "session_type": "team"})
-
+        created_at = datetime.fromtimestamp(session.created_at, tz=timezone.utc) if session.created_at else None
+        updated_at = datetime.fromtimestamp(session.updated_at, tz=timezone.utc) if session.updated_at else created_at
         return cls(
             session_id=session.session_id,
             team_id=session.team_id,
@@ -293,8 +321,8 @@ class TeamSessionDetailSchema(BaseModel):
             metrics=session.session_data.get("session_metrics", {}) if session.session_data else None,
             metadata=session.metadata,
             chat_history=[message.to_dict() for message in session.get_chat_history()],
-            created_at=datetime.fromtimestamp(session.created_at, tz=timezone.utc) if session.created_at else None,
-            updated_at=datetime.fromtimestamp(session.updated_at, tz=timezone.utc) if session.updated_at else None,
+            created_at=to_utc_datetime(created_at),
+            updated_at=to_utc_datetime(updated_at),
         )
 
 
@@ -310,14 +338,15 @@ class WorkflowSessionDetailSchema(BaseModel):
     workflow_data: Optional[dict] = Field(None, description="Workflow-specific data")
     metadata: Optional[dict] = Field(None, description="Additional metadata")
 
-    created_at: Optional[int] = Field(None, description="Unix timestamp of session creation")
-    updated_at: Optional[int] = Field(None, description="Unix timestamp of last update")
+    created_at: Optional[datetime] = Field(None, description="Session creation timestamp")
+    updated_at: Optional[datetime] = Field(None, description="Last update timestamp")
 
     @classmethod
     def from_session(cls, session: WorkflowSession) -> "WorkflowSessionDetailSchema":
         session_dict = session.to_dict()
         session_name = get_session_name({**session_dict, "session_type": "workflow"})
-
+        created_at = datetime.fromtimestamp(session.created_at, tz=timezone.utc) if session.created_at else None
+        updated_at = datetime.fromtimestamp(session.updated_at, tz=timezone.utc) if session.updated_at else created_at
         return cls(
             session_id=session.session_id,
             user_id=session.user_id,
@@ -328,8 +357,8 @@ class WorkflowSessionDetailSchema(BaseModel):
             session_state=session.session_data.get("session_state", None) if session.session_data else None,
             workflow_data=session.workflow_data,
             metadata=session.metadata,
-            created_at=session.created_at,
-            updated_at=session.updated_at,
+            created_at=to_utc_datetime(created_at),
+            updated_at=to_utc_datetime(updated_at),
         )
 
 
@@ -338,6 +367,7 @@ class RunSchema(BaseModel):
     parent_run_id: Optional[str] = Field(None, description="Parent run ID if this is a nested run")
     agent_id: Optional[str] = Field(None, description="Agent ID that executed this run")
     user_id: Optional[str] = Field(None, description="User ID associated with the run")
+    status: Optional[str] = Field(None, description="Run status (PENDING, RUNNING, COMPLETED, ERROR, etc.)")
     run_input: Optional[str] = Field(None, description="Input provided to the run")
     content: Optional[Union[str, dict]] = Field(None, description="Output content from the run")
     run_response_format: Optional[str] = Field(None, description="Format of the response (text/json)")
@@ -371,6 +401,7 @@ class RunSchema(BaseModel):
             parent_run_id=run_dict.get("parent_run_id", ""),
             agent_id=run_dict.get("agent_id", ""),
             user_id=run_dict.get("user_id", ""),
+            status=run_dict.get("status"),
             run_input=run_input,
             content=run_dict.get("content", ""),
             run_response_format=run_response_format,
@@ -390,9 +421,7 @@ class RunSchema(BaseModel):
             files=run_dict.get("files", []),
             response_audio=run_dict.get("response_audio", None),
             input_media=extract_input_media(run_dict),
-            created_at=datetime.fromtimestamp(run_dict.get("created_at", 0), tz=timezone.utc)
-            if run_dict.get("created_at") is not None
-            else None,
+            created_at=to_utc_datetime(run_dict.get("created_at")),
         )
 
 
@@ -400,6 +429,7 @@ class TeamRunSchema(BaseModel):
     run_id: str = Field(..., description="Unique identifier for the team run")
     parent_run_id: Optional[str] = Field(None, description="Parent run ID if this is a nested run")
     team_id: Optional[str] = Field(None, description="Team ID that executed this run")
+    status: Optional[str] = Field(None, description="Run status (PENDING, RUNNING, COMPLETED, ERROR, etc.)")
     content: Optional[Union[str, dict]] = Field(None, description="Output content from the team run")
     reasoning_content: Optional[str] = Field(None, description="Reasoning content if reasoning was enabled")
     reasoning_steps: Optional[List[dict]] = Field(None, description="List of reasoning steps")
@@ -431,6 +461,7 @@ class TeamRunSchema(BaseModel):
             run_id=run_dict.get("run_id", ""),
             parent_run_id=run_dict.get("parent_run_id", ""),
             team_id=run_dict.get("team_id", ""),
+            status=run_dict.get("status"),
             run_input=run_input,
             content=run_dict.get("content", ""),
             run_response_format=run_response_format,
@@ -440,9 +471,7 @@ class TeamRunSchema(BaseModel):
             messages=[message for message in run_dict.get("messages", [])] if run_dict.get("messages") else None,
             tools=[tool for tool in run_dict.get("tools", [])] if run_dict.get("tools") else None,
             events=[event for event in run_dict["events"]] if run_dict.get("events") else None,
-            created_at=datetime.fromtimestamp(run_dict.get("created_at", 0), tz=timezone.utc)
-            if run_dict.get("created_at") is not None
-            else None,
+            created_at=to_utc_datetime(run_dict.get("created_at")),
             references=run_dict.get("references", []),
             citations=run_dict.get("citations", None),
             reasoning_messages=run_dict.get("reasoning_messages", []),
@@ -468,7 +497,7 @@ class WorkflowRunSchema(BaseModel):
     step_results: Optional[list[dict]] = Field(None, description="Results from each workflow step")
     step_executor_runs: Optional[list[dict]] = Field(None, description="Executor runs for each step")
     metrics: Optional[dict] = Field(None, description="Performance and usage metrics")
-    created_at: Optional[int] = Field(None, description="Unix timestamp of run creation")
+    created_at: Optional[datetime] = Field(None, description="Run creation timestamp")
     reasoning_content: Optional[str] = Field(None, description="Reasoning content if reasoning was enabled")
     reasoning_steps: Optional[List[dict]] = Field(None, description="List of reasoning steps")
     references: Optional[List[dict]] = Field(None, description="References cited in the workflow")
@@ -497,7 +526,7 @@ class WorkflowRunSchema(BaseModel):
             metrics=run_response.get("metrics", {}),
             step_results=run_response.get("step_results", []),
             step_executor_runs=run_response.get("step_executor_runs", []),
-            created_at=run_response["created_at"],
+            created_at=to_utc_datetime(run_response.get("created_at")),
             reasoning_content=run_response.get("reasoning_content", ""),
             reasoning_steps=run_response.get("reasoning_steps", []),
             references=run_response.get("references", []),
@@ -521,7 +550,7 @@ class SortOrder(str, Enum):
 
 class PaginationInfo(BaseModel):
     page: int = Field(0, description="Current page number (0-indexed)", ge=0)
-    limit: int = Field(20, description="Number of items per page", ge=1, le=100)
+    limit: int = Field(20, description="Number of items per page", ge=1)
     total_pages: int = Field(0, description="Total number of pages", ge=0)
     total_count: int = Field(0, description="Total count of items", ge=0)
     search_time_ms: float = Field(0, description="Search execution time in milliseconds", ge=0)
@@ -532,3 +561,176 @@ class PaginatedResponse(BaseModel, Generic[T]):
 
     data: List[T] = Field(..., description="List of items for the current page")
     meta: PaginationInfo = Field(..., description="Pagination metadata")
+
+
+class ComponentType(str, Enum):
+    AGENT = "agent"
+    TEAM = "team"
+    WORKFLOW = "workflow"
+
+
+class ComponentCreate(BaseModel):
+    name: str = Field(..., description="Display name")
+    component_id: Optional[str] = Field(
+        None, description="Unique identifier for the entity. Auto-generated from name if not provided."
+    )
+    component_type: ComponentType = Field(..., description="Type of entity: agent, team, or workflow")
+    description: Optional[str] = Field(None, description="Optional description")
+    metadata: Optional[Dict[str, Any]] = Field(None, description="Optional metadata")
+    # Config parameters are optional, but if provided, they will be used to create the initial config
+    config: Optional[Dict[str, Any]] = Field(None, description="Optional configuration")
+    label: Optional[str] = Field(None, description="Optional label (e.g., 'stable')")
+    stage: str = Field("draft", description="Stage: 'draft' or 'published'")
+    notes: Optional[str] = Field(None, description="Optional notes")
+    set_current: bool = Field(True, description="Set as current version")
+
+
+class ComponentResponse(BaseModel):
+    component_id: str
+    component_type: ComponentType
+    name: Optional[str] = None
+    description: Optional[str] = None
+    current_version: Optional[int] = None
+    metadata: Optional[Dict[str, Any]] = None
+    created_at: int
+    updated_at: Optional[int] = None
+
+
+class ConfigCreate(BaseModel):
+    config: Dict[str, Any] = Field(..., description="The configuration data")
+    version: Optional[int] = Field(None, description="Optional version number")
+    label: Optional[str] = Field(None, description="Optional label (e.g., 'stable')")
+    stage: str = Field("draft", description="Stage: 'draft' or 'published'")
+    notes: Optional[str] = Field(None, description="Optional notes")
+    links: Optional[List[Dict[str, Any]]] = Field(None, description="Optional links to child components")
+    set_current: bool = Field(True, description="Set as current version")
+
+
+class ComponentConfigResponse(BaseModel):
+    component_id: str
+    version: int
+    label: Optional[str] = None
+    stage: str
+    config: Dict[str, Any]
+    notes: Optional[str] = None
+    created_at: int
+    updated_at: Optional[int] = None
+
+
+class ComponentUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    component_type: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+    current_version: Optional[int] = None
+
+
+class ConfigUpdate(BaseModel):
+    config: Optional[Dict[str, Any]] = None
+    label: Optional[str] = None
+    stage: Optional[str] = None
+    notes: Optional[str] = None
+    links: Optional[List[Dict[str, Any]]] = None
+
+
+class RegistryResourceType(str, Enum):
+    """Types of resources that can be stored in a registry."""
+
+    TOOL = "tool"
+    MODEL = "model"
+    DB = "db"
+    VECTOR_DB = "vector_db"
+    SCHEMA = "schema"
+    FUNCTION = "function"
+
+
+class CallableMetadata(BaseModel):
+    """Common metadata for callable components (tools, functions)."""
+
+    name: str = Field(..., description="Callable name")
+    description: Optional[str] = Field(None, description="Callable description")
+    class_path: str = Field(..., description="Full module path to the class/function")
+    module: Optional[str] = Field(None, description="Module where the callable is defined")
+    qualname: Optional[str] = Field(None, description="Qualified name of the callable")
+    has_entrypoint: bool = Field(..., description="Whether the callable has an executable entrypoint")
+    parameters: Dict[str, Any] = Field(default_factory=dict, description="JSON schema of parameters")
+    requires_confirmation: Optional[bool] = Field(None, description="Whether execution requires user confirmation")
+    external_execution: Optional[bool] = Field(None, description="Whether execution happens externally")
+    signature: Optional[str] = Field(None, description="Function signature string")
+    return_annotation: Optional[str] = Field(None, description="Return type annotation")
+
+
+class ToolMetadata(BaseModel):
+    """Metadata for tool registry components."""
+
+    class_path: str = Field(..., description="Full module path to the tool class")
+    is_toolkit: bool = Field(False, description="Whether this is a toolkit containing multiple functions")
+    functions: Optional[List[CallableMetadata]] = Field(
+        None, description="Functions in the toolkit (if is_toolkit=True)"
+    )
+
+    # Fields for non-toolkit tools (Function or raw callable)
+    module: Optional[str] = Field(None, description="Module where the callable is defined")
+    qualname: Optional[str] = Field(None, description="Qualified name of the callable")
+    has_entrypoint: Optional[bool] = Field(None, description="Whether the tool has an executable entrypoint")
+    parameters: Optional[Dict[str, Any]] = Field(None, description="JSON schema of parameters")
+    requires_confirmation: Optional[bool] = Field(None, description="Whether execution requires user confirmation")
+    external_execution: Optional[bool] = Field(None, description="Whether execution happens externally")
+    signature: Optional[str] = Field(None, description="Function signature string")
+    return_annotation: Optional[str] = Field(None, description="Return type annotation")
+
+
+class ModelMetadata(BaseModel):
+    """Metadata for model registry components."""
+
+    class_path: str = Field(..., description="Full module path to the model class")
+    provider: Optional[str] = Field(None, description="Model provider (e.g., openai, anthropic)")
+    model_id: Optional[str] = Field(None, description="Model identifier")
+
+
+class DbMetadata(BaseModel):
+    """Metadata for database registry components."""
+
+    class_path: str = Field(..., description="Full module path to the database class")
+    db_id: Optional[str] = Field(None, description="Database identifier")
+
+
+class VectorDbMetadata(BaseModel):
+    """Metadata for vector database registry components."""
+
+    class_path: str = Field(..., description="Full module path to the vector database class")
+    vector_db_id: Optional[str] = Field(None, description="Vector database identifier")
+    collection: Optional[str] = Field(None, description="Collection name")
+    table_name: Optional[str] = Field(None, description="Table name (for SQL-based vector stores)")
+
+
+class SchemaMetadata(BaseModel):
+    """Metadata for schema registry components."""
+
+    class_path: str = Field(..., description="Full module path to the schema class")
+    schema_: Optional[Dict[str, Any]] = Field(None, alias="schema", description="JSON schema definition")
+    schema_error: Optional[str] = Field(None, description="Error message if schema generation failed")
+
+
+class FunctionMetadata(CallableMetadata):
+    """Metadata for function registry components (workflow conditions, selectors, etc.)."""
+
+    pass
+
+
+# Union of all metadata types for type hints
+RegistryMetadata = Union[
+    ToolMetadata,
+    ModelMetadata,
+    DbMetadata,
+    VectorDbMetadata,
+    SchemaMetadata,
+    FunctionMetadata,
+]
+
+
+class RegistryContentResponse(BaseModel):
+    name: str
+    type: RegistryResourceType
+    description: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None

@@ -9,7 +9,7 @@ from agno.models.anthropic import Claude
 @pytest.fixture(scope="module")
 def claude_model():
     """Fixture that provides a Claude model and reuses it across all tests in the module."""
-    return Claude(id="claude-3-5-haiku-20241022")
+    return Claude(id="claude-sonnet-4-20250514")
 
 
 def _assert_metrics(response: RunOutput):
@@ -138,6 +138,7 @@ def test_history(claude_model):
         model=claude_model,
         db=SqliteDb(db_file="tmp/anthropic/test_basic.db"),
         add_history_to_context=True,
+        store_history_messages=True,
         telemetry=False,
     )
     run_output = agent.run("Hello")

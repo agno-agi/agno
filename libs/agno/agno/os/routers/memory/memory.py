@@ -9,7 +9,7 @@ from fastapi.routing import APIRouter
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.schemas import UserMemory
 from agno.models.utils import get_model
-from agno.os.auth import get_authentication_dependency
+from agno.os.auth import get_auth_token_from_request, get_authentication_dependency
 from agno.os.routers.memory.schemas import (
     DeleteMemoriesRequest,
     OptimizeMemoriesRequest,
@@ -30,12 +30,13 @@ from agno.os.schema import (
 )
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import get_db
+from agno.remote.base import RemoteDb
 
 logger = logging.getLogger(__name__)
 
 
 def get_memory_router(
-    dbs: dict[str, list[Union[BaseDb, AsyncBaseDb]]], settings: AgnoAPISettings = AgnoAPISettings(), **kwargs
+    dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]], settings: AgnoAPISettings = AgnoAPISettings(), **kwargs
 ) -> APIRouter:
     """Create memory router with comprehensive OpenAPI documentation for user memory management endpoints."""
     router = APIRouter(
@@ -52,7 +53,7 @@ def get_memory_router(
     return attach_routes(router=router, dbs=dbs)
 
 
-def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBaseDb]]]) -> APIRouter:
+def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]]) -> APIRouter:
     @router.post(
         "/memories",
         response_model=UserMemorySchema,
@@ -90,7 +91,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         db_id: Optional[str] = Query(default=None, description="Database ID to use for memory storage"),
         table: Optional[str] = Query(default=None, description="Table to use for memory storage"),
     ) -> UserMemorySchema:
-        if hasattr(request.state, "user_id"):
+        if hasattr(request.state, "user_id") and request.state.user_id is not None:
             user_id = request.state.user_id
             payload.user_id = user_id
 
@@ -98,6 +99,18 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             raise HTTPException(status_code=400, detail="User ID is required")
 
         db = await get_db(dbs, db_id, table)
+
+        if isinstance(db, RemoteDb):
+            auth_token = get_auth_token_from_request(request)
+            headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
+            return await db.create_memory(
+                memory=payload.memory,
+                topics=payload.topics or [],
+                user_id=payload.user_id,
+                db_id=db_id,
+                table=table,
+                headers=headers,
+            )
 
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
@@ -139,12 +152,27 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         },
     )
     async def delete_memory(
+        request: Request,
         memory_id: str = Path(description="Memory ID to delete"),
         user_id: Optional[str] = Query(default=None, description="User ID to delete memory for"),
         db_id: Optional[str] = Query(default=None, description="Database ID to use for deletion"),
         table: Optional[str] = Query(default=None, description="Table to use for deletion"),
     ) -> None:
         db = await get_db(dbs, db_id, table)
+
+        if hasattr(request.state, "user_id") and request.state.user_id is not None:
+            user_id = request.state.user_id
+
+        if isinstance(db, RemoteDb):
+            auth_token = get_auth_token_from_request(request)
+            headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
+            return await db.delete_memory(
+                memory_id=memory_id,
+                user_id=user_id,
+                db_id=db_id,
+                table=table,
+                headers=headers,
+            )
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
             await db.delete_user_memory(memory_id=memory_id, user_id=user_id)
@@ -167,11 +195,27 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         },
     )
     async def delete_memories(
+        http_request: Request,
         request: DeleteMemoriesRequest,
         db_id: Optional[str] = Query(default=None, description="Database ID to use for deletion"),
         table: Optional[str] = Query(default=None, description="Table to use for deletion"),
     ) -> None:
         db = await get_db(dbs, db_id, table)
+
+        if hasattr(http_request.state, "user_id") and http_request.state.user_id is not None:
+            request.user_id = http_request.state.user_id
+
+        if isinstance(db, RemoteDb):
+            auth_token = get_auth_token_from_request(http_request)
+            headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
+            return await db.delete_memories(
+                memory_ids=request.memory_ids,
+                user_id=request.user_id,
+                db_id=db_id,
+                table=table,
+                headers=headers,
+            )
+
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
             await db.delete_user_memories(memory_ids=request.memory_ids, user_id=request.user_id)
@@ -218,8 +262,8 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         team_id: Optional[str] = Query(default=None, description="Filter memories by team ID"),
         topics: Optional[List[str]] = Depends(parse_topics),
         search_content: Optional[str] = Query(default=None, description="Fuzzy search within memory content"),
-        limit: Optional[int] = Query(default=20, description="Number of memories to return per page"),
-        page: Optional[int] = Query(default=1, description="Page number for pagination"),
+        limit: Optional[int] = Query(default=20, description="Number of memories to return per page", ge=1),
+        page: Optional[int] = Query(default=1, description="Page number for pagination", ge=0),
         sort_by: Optional[str] = Query(default="updated_at", description="Field to sort memories by"),
         sort_order: Optional[SortOrder] = Query(default="desc", description="Sort order (asc or desc)"),
         db_id: Optional[str] = Query(default=None, description="Database ID to query memories from"),
@@ -227,8 +271,26 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
     ) -> PaginatedResponse[UserMemorySchema]:
         db = await get_db(dbs, db_id, table)
 
-        if hasattr(request.state, "user_id"):
+        if hasattr(request.state, "user_id") and request.state.user_id is not None:
             user_id = request.state.user_id
+
+        if isinstance(db, RemoteDb):
+            auth_token = get_auth_token_from_request(request)
+            headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
+            return await db.get_memories(
+                user_id=user_id,
+                agent_id=agent_id,
+                team_id=team_id,
+                topics=topics,
+                search_content=search_content,
+                limit=limit,
+                page=page,
+                sort_by=sort_by,
+                sort_order=sort_order.value if sort_order else "desc",
+                db_id=db_id,
+                table=table,
+                headers=headers,
+            )
 
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
@@ -305,8 +367,19 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
     ) -> UserMemorySchema:
         db = await get_db(dbs, db_id, table)
 
-        if hasattr(request.state, "user_id"):
+        if hasattr(request.state, "user_id") and request.state.user_id is not None:
             user_id = request.state.user_id
+
+        if isinstance(db, RemoteDb):
+            auth_token = get_auth_token_from_request(request)
+            headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
+            return await db.get_memory(
+                memory_id=memory_id,
+                user_id=user_id,
+                db_id=db_id,
+                table=table,
+                headers=headers,
+            )
 
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
@@ -350,15 +423,30 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         },
     )
     async def get_topics(
+        request: Request,
+        user_id: Optional[str] = Query(default=None, description="User ID to filter topics for"),
         db_id: Optional[str] = Query(default=None, description="Database ID to query topics from"),
         table: Optional[str] = Query(default=None, description="Table to query topics from"),
     ) -> List[str]:
         db = await get_db(dbs, db_id, table)
+
+        if hasattr(request.state, "user_id") and request.state.user_id is not None:
+            user_id = request.state.user_id
+
+        if isinstance(db, RemoteDb):
+            auth_token = get_auth_token_from_request(request)
+            headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
+            return await db.get_memory_topics(
+                db_id=db_id,
+                table=table,
+                headers=headers,
+            )
+
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
-            return await db.get_all_memory_topics()
+            return await db.get_all_memory_topics(user_id=user_id)
         else:
-            return db.get_all_memory_topics()
+            return db.get_all_memory_topics(user_id=user_id)
 
     @router.patch(
         "/memories/{memory_id}",
@@ -400,7 +488,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         db_id: Optional[str] = Query(default=None, description="Database ID to use for update"),
         table: Optional[str] = Query(default=None, description="Table to use for update"),
     ) -> UserMemorySchema:
-        if hasattr(request.state, "user_id"):
+        if hasattr(request.state, "user_id") and request.state.user_id is not None:
             user_id = request.state.user_id
             payload.user_id = user_id
 
@@ -408,6 +496,19 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             raise HTTPException(status_code=400, detail="User ID is required")
 
         db = await get_db(dbs, db_id, table)
+
+        if isinstance(db, RemoteDb):
+            auth_token = get_auth_token_from_request(request)
+            headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
+            return await db.update_memory(
+                memory_id=memory_id,
+                user_id=payload.user_id,
+                memory=payload.memory,
+                topics=payload.topics or [],
+                db_id=db_id,
+                table=table,
+                headers=headers,
+            )
 
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
@@ -466,12 +567,29 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         },
     )
     async def get_user_memory_stats(
-        limit: Optional[int] = Query(default=20, description="Number of user statistics to return per page"),
-        page: Optional[int] = Query(default=1, description="Page number for pagination"),
+        request: Request,
+        limit: Optional[int] = Query(default=20, description="Number of user statistics to return per page", ge=1),
+        page: Optional[int] = Query(default=1, description="Page number for pagination", ge=0),
+        user_id: Optional[str] = Query(default=None, description="User ID to filter statistics for"),
         db_id: Optional[str] = Query(default=None, description="Database ID to query statistics from"),
         table: Optional[str] = Query(default=None, description="Table to query statistics from"),
     ) -> PaginatedResponse[UserStatsSchema]:
         db = await get_db(dbs, db_id, table)
+
+        if hasattr(request.state, "user_id") and request.state.user_id is not None:
+            user_id = request.state.user_id
+
+        if isinstance(db, RemoteDb):
+            auth_token = get_auth_token_from_request(request)
+            headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
+            return await db.get_user_memory_stats(
+                limit=limit,
+                page=page,
+                db_id=db_id,
+                table=table,
+                headers=headers,
+            )
+
         try:
             # Ensure limit and page are integers
             limit = int(limit) if limit is not None else 20
@@ -481,11 +599,13 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 user_stats, total_count = await db.get_user_memory_stats(
                     limit=limit,
                     page=page,
+                    user_id=user_id,
                 )
             else:
                 user_stats, total_count = db.get_user_memory_stats(
                     limit=limit,
                     page=page,
+                    user_id=user_id,
                 )
             return PaginatedResponse(
                 data=[UserStatsSchema.from_dict(stats) for stats in user_stats],
@@ -549,6 +669,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         },
     )
     async def optimize_memories(
+        http_request: Request,
         request: OptimizeMemoriesRequest,
         db_id: Optional[str] = Query(default=None, description="Database ID to use for optimization"),
         table: Optional[str] = Query(default=None, description="Table to use for optimization"),
@@ -557,9 +678,24 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         from agno.memory import MemoryManager
         from agno.memory.strategies.types import MemoryOptimizationStrategyType
 
+        if hasattr(http_request.state, "user_id") and http_request.state.user_id is not None:
+            request.user_id = http_request.state.user_id
+
         try:
             # Get database instance
             db = await get_db(dbs, db_id, table)
+
+            if isinstance(db, RemoteDb):
+                auth_token = get_auth_token_from_request(http_request)
+                headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
+                return await db.optimize_memories(
+                    user_id=request.user_id,
+                    model=request.model,
+                    apply=request.apply,
+                    db_id=db_id,
+                    table=table,
+                    headers=headers,
+                )
 
             # Create memory manager with optional model
             if request.model:

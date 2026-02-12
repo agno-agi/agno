@@ -1,7 +1,9 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
+
+from agno.os.utils import to_utc_datetime
 
 
 class DayAggregatedMetrics(BaseModel):
@@ -20,22 +22,24 @@ class DayAggregatedMetrics(BaseModel):
     model_metrics: List[Dict[str, Any]] = Field(..., description="Metrics grouped by model (model_id, provider, count)")
 
     date: datetime = Field(..., description="Date for which these metrics are aggregated")
-    created_at: int = Field(..., description="Unix timestamp when metrics were created", ge=0)
-    updated_at: int = Field(..., description="Unix timestamp when metrics were last updated", ge=0)
+    created_at: datetime = Field(..., description="Timestamp when metrics were created")
+    updated_at: datetime = Field(..., description="Timestamp when metrics were last updated")
 
     @classmethod
     def from_dict(cls, metrics_dict: Dict[str, Any]) -> "DayAggregatedMetrics":
+        created_at = to_utc_datetime(metrics_dict.get("created_at")) or datetime.now(timezone.utc)
+        updated_at = to_utc_datetime(metrics_dict.get("updated_at", created_at)) or created_at
         return cls(
             agent_runs_count=metrics_dict.get("agent_runs_count", 0),
             agent_sessions_count=metrics_dict.get("agent_sessions_count", 0),
-            created_at=metrics_dict.get("created_at", 0),
-            date=metrics_dict.get("date", datetime.now()),
+            date=metrics_dict.get("date", datetime.now(timezone.utc)),
             id=metrics_dict.get("id", ""),
             model_metrics=metrics_dict.get("model_metrics", {}),
             team_runs_count=metrics_dict.get("team_runs_count", 0),
             team_sessions_count=metrics_dict.get("team_sessions_count", 0),
             token_metrics=metrics_dict.get("token_metrics", {}),
-            updated_at=metrics_dict.get("updated_at", 0),
+            created_at=created_at,
+            updated_at=updated_at,
             users_count=metrics_dict.get("users_count", 0),
             workflow_runs_count=metrics_dict.get("workflow_runs_count", 0),
             workflow_sessions_count=metrics_dict.get("workflow_sessions_count", 0),

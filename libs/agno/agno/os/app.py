@@ -5,13 +5,15 @@ from typing import Any, Dict, List, Literal, Optional, Union
 from uuid import uuid4
 
 from fastapi import APIRouter, FastAPI, HTTPException
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
+from httpx import HTTPStatusError
 from rich import box
 from rich.panel import Panel
 from starlette.requests import Request
 
-from agno.agent.agent import Agent
+from agno.agent import Agent, RemoteAgent
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.knowledge.knowledge import Knowledge
 from agno.os.config import (
@@ -21,7 +23,9 @@ from agno.os.config import (
     EvalsConfig,
     EvalsDomainConfig,
     KnowledgeConfig,
+    KnowledgeDatabaseConfig,
     KnowledgeDomainConfig,
+    KnowledgeInstanceConfig,
     MemoryConfig,
     MemoryDomainConfig,
     MetricsConfig,
@@ -32,20 +36,26 @@ from agno.os.config import (
     TracesDomainConfig,
 )
 from agno.os.interfaces.base import BaseInterface
-from agno.os.router import get_base_router
+from agno.os.router import get_base_router, get_websocket_router
 from agno.os.routers.agents import get_agent_router
+from agno.os.routers.approvals import get_approval_router
+from agno.os.routers.components import get_components_router
+from agno.os.routers.database import get_database_router
 from agno.os.routers.evals import get_eval_router
 from agno.os.routers.health import get_health_router
 from agno.os.routers.home import get_home_router
 from agno.os.routers.knowledge import get_knowledge_router
 from agno.os.routers.memory import get_memory_router
 from agno.os.routers.metrics import get_metrics_router
+from agno.os.routers.registry import get_registry_router
+from agno.os.routers.schedules import get_schedule_router
 from agno.os.routers.session import get_session_router
 from agno.os.routers.teams import get_team_router
 from agno.os.routers.traces import get_traces_router
-from agno.os.routers.workflows import get_websocket_router, get_workflow_router
+from agno.os.routers.workflows import get_workflow_router
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
+    _generate_knowledge_id,
     collect_mcp_tools_from_team,
     collect_mcp_tools_from_workflow,
     find_conflicting_routes,
@@ -54,33 +64,75 @@ from agno.os.utils import (
     setup_tracing_for_os,
     update_cors_middleware,
 )
-from agno.team.team import Team
+from agno.registry import Registry
+from agno.remote.base import RemoteDb, RemoteKnowledge
+from agno.team import RemoteTeam, Team
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id, generate_id_from_name
-from agno.workflow.workflow import Workflow
+from agno.workflow import RemoteWorkflow, Workflow
 
 
 @asynccontextmanager
 async def mcp_lifespan(_, mcp_tools):
     """Manage MCP connection lifecycle inside a FastAPI app"""
-    # Startup logic: connect to all contextual MCP servers
     for tool in mcp_tools:
         await tool.connect()
 
     yield
 
-    # Shutdown logic: Close all contextual MCP connections
     for tool in mcp_tools:
         await tool.close()
 
 
 @asynccontextmanager
+async def http_client_lifespan(_):
+    """Manage httpx client lifecycle for proper connection pool cleanup."""
+    from agno.utils.http import aclose_default_clients
+
+    yield
+
+    await aclose_default_clients()
+
+
+@asynccontextmanager
 async def db_lifespan(app: FastAPI, agent_os: "AgentOS"):
-    """Initializes databases in the event loop"""
+    """Initializes databases in the event loop and closes them on shutdown."""
     if agent_os.auto_provision_dbs:
         agent_os._initialize_sync_databases()
         await agent_os._initialize_async_databases()
+
     yield
+
+    await agent_os._close_databases()
+
+
+@asynccontextmanager
+async def scheduler_lifespan(app: FastAPI, agent_os: "AgentOS"):
+    """Start and stop the scheduler poller."""
+    from agno.scheduler import ScheduleExecutor, SchedulePoller
+
+    base_url = agent_os._scheduler_base_url or "http://127.0.0.1:7777"
+    internal_token = agent_os._internal_service_token
+    if internal_token is None:
+        raise ValueError("internal_service_token must be set when scheduler is enabled")
+
+    executor = ScheduleExecutor(
+        base_url=base_url,
+        internal_service_token=internal_token,
+    )
+    poller = SchedulePoller(
+        db=agent_os.db,
+        executor=executor,
+        poll_interval=agent_os._scheduler_poll_interval,
+    )
+
+    app.state.scheduler_executor = executor
+    app.state.scheduler_poller = poller
+    await poller.start()
+
+    yield
+
+    await poller.stop()
 
 
 def _combine_app_lifespans(lifespans: list) -> Any:
@@ -114,9 +166,10 @@ class AgentOS:
         name: Optional[str] = None,
         description: Optional[str] = None,
         version: Optional[str] = None,
-        agents: Optional[List[Agent]] = None,
-        teams: Optional[List[Team]] = None,
-        workflows: Optional[List[Workflow]] = None,
+        db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
+        agents: Optional[List[Union[Agent, RemoteAgent]]] = None,
+        teams: Optional[List[Union[Team, RemoteTeam]]] = None,
+        workflows: Optional[List[Union[Workflow, RemoteWorkflow]]] = None,
         knowledge: Optional[List[Knowledge]] = None,
         interfaces: Optional[List[BaseInterface]] = None,
         a2a_interface: bool = False,
@@ -130,10 +183,14 @@ class AgentOS:
         base_app: Optional[FastAPI] = None,
         on_route_conflict: Literal["preserve_agentos", "preserve_base_app", "error"] = "preserve_agentos",
         tracing: bool = False,
-        tracing_db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
         auto_provision_dbs: bool = True,
         run_hooks_in_background: bool = False,
         telemetry: bool = True,
+        registry: Optional[Registry] = None,
+        scheduler: bool = False,
+        scheduler_poll_interval: int = 15,
+        scheduler_base_url: Optional[str] = None,
+        internal_service_token: Optional[str] = None,
     ):
         """Initialize AgentOS.
 
@@ -142,6 +199,7 @@ class AgentOS:
             name: Name of the AgentOS instance
             description: Description of the AgentOS instance
             version: Version of the AgentOS instance
+            db: Default database for the AgentOS instance. Agents, teams and workflows with no db will use this one.
             agents: List of agents to include in the OS
             teams: List of teams to include in the OS
             workflows: List of workflows to include in the OS
@@ -159,21 +217,23 @@ class AgentOS:
             authorization_config: Configuration for the authorization middleware
             cors_allowed_origins: List of allowed CORS origins (will be merged with default Agno domains)
             tracing: If True, enables OpenTelemetry tracing for all agents and teams in the OS
-            tracing_db: Dedicated database for storing and reading traces. Recommended for multi-db setups.
-                       If not provided and tracing=True, the first available db from agents/teams/workflows is used.
             run_hooks_in_background: If True, run agent/team pre/post hooks as FastAPI background tasks (non-blocking)
             telemetry: Whether to enable telemetry
+            registry: Optional registry to use for the AgentOS
+            scheduler: Whether to enable the cron scheduler
+            scheduler_poll_interval: Seconds between scheduler poll cycles (default: 15)
+            scheduler_base_url: Base URL for scheduler HTTP calls (default: http://127.0.0.1:7777)
+            internal_service_token: Token for scheduler-to-OS auth (auto-generated if not provided)
 
         """
-        if not agents and not workflows and not teams and not knowledge:
-            raise ValueError("Either agents, teams, workflows or knowledge bases must be provided.")
+        if not agents and not workflows and not teams and not knowledge and not db:
+            raise ValueError("Either agents, teams, workflows, knowledge bases or a database must be provided.")
 
         self.config = load_yaml_config(config) if isinstance(config, str) else config
 
-        self.agents: Optional[List[Agent]] = agents
-        self.workflows: Optional[List[Workflow]] = workflows
-        self.teams: Optional[List[Team]] = teams
-        self.interfaces = interfaces or []
+        self.agents: Optional[List[Union[Agent, RemoteAgent]]] = agents
+        self.workflows: Optional[List[Union[Workflow, RemoteWorkflow]]] = workflows
+        self.teams: Optional[List[Union[Team, RemoteTeam]]] = teams
         self.a2a_interface = a2a_interface
         self.knowledge = knowledge
         self.settings: AgnoAPISettings = settings or AgnoAPISettings()
@@ -199,13 +259,15 @@ class AgentOS:
 
         self.version = version
         self.description = description
+        self.db = db
 
         self.telemetry = telemetry
         self.tracing = tracing
-        self.tracing_db = tracing_db
 
         self.enable_mcp_server = enable_mcp_server
         self.lifespan = lifespan
+
+        self.registry = registry
 
         # RBAC
         self.authorization = authorization
@@ -216,6 +278,16 @@ class AgentOS:
 
         # If True, run agent/team hooks as FastAPI background tasks
         self.run_hooks_in_background = run_hooks_in_background
+
+        # Scheduler configuration
+        self._scheduler_enabled = scheduler
+        self._scheduler_poll_interval = scheduler_poll_interval
+        self._scheduler_base_url = scheduler_base_url
+        if self._scheduler_enabled and not internal_service_token:
+            import secrets
+
+            internal_service_token = secrets.token_urlsafe(32)
+        self._internal_service_token = internal_service_token
 
         # List of all MCP tools used inside the AgentOS
         self.mcp_tools: List[Any] = []
@@ -285,13 +357,25 @@ class AgentOS:
     def _reprovision_routers(self, app: FastAPI) -> None:
         """Re-provision all routes for the AgentOS."""
         updated_routers = [
+            get_home_router(self),
             get_session_router(dbs=self.dbs),
+            get_memory_router(dbs=self.dbs),
+            get_eval_router(dbs=self.dbs, agents=self.agents, teams=self.teams),
             get_metrics_router(dbs=self.dbs),
             get_knowledge_router(knowledge_instances=self.knowledge_instances),
             get_traces_router(dbs=self.dbs),
-            get_memory_router(dbs=self.dbs),
-            get_eval_router(dbs=self.dbs, agents=self.agents, teams=self.teams),
+            get_database_router(self, settings=self.settings),
         ]
+        # Add component and registry routers only if a sync db (BaseDb) is available
+        # Component routes require sync database operations
+        if self.db is not None and isinstance(self.db, BaseDb):
+            updated_routers.append(get_components_router(os_db=self.db, registry=self.registry))
+        if self.registry is not None:
+            updated_routers.append(get_registry_router(registry=self.registry))
+        # Add schedule and approval routers if a db is available
+        if self.db is not None:
+            updated_routers.append(get_schedule_router(os_db=self.db, settings=self.settings))
+            updated_routers.append(get_approval_router(os_db=self.db, settings=self.settings))
 
         # Clear all previously existing routes
         app.router.routes = [
@@ -321,8 +405,8 @@ class AgentOS:
 
         self._add_router(app, get_health_router(health_endpoint="/health"))
         self._add_router(app, get_base_router(self, settings=self.settings))
-        self._add_router(app, get_agent_router(self, settings=self.settings))
-        self._add_router(app, get_team_router(self, settings=self.settings))
+        self._add_router(app, get_agent_router(self, settings=self.settings, registry=self.registry))
+        self._add_router(app, get_team_router(self, settings=self.settings, registry=self.registry))
         self._add_router(app, get_workflow_router(self, settings=self.settings))
         self._add_router(app, get_websocket_router(self, settings=self.settings))
 
@@ -366,32 +450,14 @@ class AgentOS:
             raise ValueError(f"Duplicate IDs found in AgentOS: {', '.join(repr(id_) for id_ in duplicate_ids)}")
 
     def _make_app(self, lifespan: Optional[Any] = None) -> FastAPI:
-        # Adjust the FastAPI app lifespan to handle MCP connections if relevant
-        app_lifespan = lifespan
-        if self.mcp_tools is not None:
-            mcp_tools_lifespan = partial(mcp_lifespan, mcp_tools=self.mcp_tools)
-            # If there is already a lifespan, combine it with the MCP lifespan
-            if lifespan is not None:
-                # Combine both lifespans
-                @asynccontextmanager
-                async def combined_lifespan(app: FastAPI):
-                    # Run both lifespans
-                    async with lifespan(app):  # type: ignore
-                        async with mcp_tools_lifespan(app):  # type: ignore
-                            yield
-
-                app_lifespan = combined_lifespan
-            else:
-                app_lifespan = mcp_tools_lifespan
-
         return FastAPI(
             title=self.name or "Agno AgentOS",
             version=self.version or "1.0.0",
-            description=self.description or "An agent operating system.",
+            description=self.description or "Your multi-agent operating system.",
             docs_url="/docs" if self.settings.docs_enabled else None,
             redoc_url="/redoc" if self.settings.docs_enabled else None,
             openapi_url="/openapi.json" if self.settings.docs_enabled else None,
-            lifespan=app_lifespan,
+            lifespan=lifespan,
         )
 
     def _initialize_agents(self) -> None:
@@ -399,8 +465,13 @@ class AgentOS:
         if not self.agents:
             return
         for agent in self.agents:
+            if isinstance(agent, RemoteAgent):
+                continue
+            # Set the default db to agents without their own
+            if self.db is not None and agent.db is None:
+                agent.db = self.db
             # Track all MCP tools to later handle their connection
-            if agent.tools:
+            if agent.tools and isinstance(agent.tools, list):
                 for tool in agent.tools:
                     # Checking if the tool is an instance of MCPTools, MultiMCPTools, or a subclass of those
                     if hasattr(type(tool), "__mro__"):
@@ -423,17 +494,25 @@ class AgentOS:
             return
 
         for team in self.teams:
+            if isinstance(team, RemoteTeam):
+                continue
+
+            # Set the default db to teams without their own
+            if self.db is not None and team.db is None:
+                team.db = self.db
+
             # Track all MCP tools recursively
             collect_mcp_tools_from_team(team, self.mcp_tools)
 
             team.initialize_team()
 
-            for member in team.members:
-                if isinstance(member, Agent):
-                    member.team_id = None
-                    member.initialize_agent()
-                elif isinstance(member, Team):
-                    member.initialize_team()
+            if isinstance(team.members, list):
+                for member in team.members:
+                    if isinstance(member, Agent):
+                        member.team_id = None
+                        member.initialize_agent()
+                    elif isinstance(member, Team):
+                        member.initialize_team()
 
             # Required for the built-in routes to work
             team.store_events = True
@@ -446,33 +525,38 @@ class AgentOS:
         if not self.workflows:
             return
 
-        if self.workflows:
-            for workflow in self.workflows:
-                # Track MCP tools recursively in workflow members
-                collect_mcp_tools_from_workflow(workflow, self.mcp_tools)
+        for workflow in self.workflows:
+            if isinstance(workflow, RemoteWorkflow):
+                continue
+            # Set the default db to workflows without their own
+            if self.db is not None and workflow.db is None:
+                workflow.db = self.db
 
-                if not workflow.id:
-                    workflow.id = generate_id_from_name(workflow.name)
+            # Track MCP tools recursively in workflow members
+            collect_mcp_tools_from_workflow(workflow, self.mcp_tools)
 
-                # Required for the built-in routes to work
-                workflow.store_events = True
+            if not workflow.id:
+                workflow.id = generate_id_from_name(workflow.name)
 
-                # Propagate run_hooks_in_background setting to workflow and all its step agents/teams
-                workflow.propagate_run_hooks_in_background(self.run_hooks_in_background)
+            # Required for the built-in routes to work
+            workflow.store_events = True
+
+            # Propagate run_hooks_in_background setting to workflow and all its step agents/teams
+            workflow.propagate_run_hooks_in_background(self.run_hooks_in_background)
 
     def _setup_tracing(self) -> None:
         """Set up OpenTelemetry tracing for this AgentOS.
 
-        Uses tracing_db if provided, otherwise falls back to the first available
+        Uses the AgentOS db if provided, otherwise falls back to the first available
         database from agents/teams/workflows.
         """
-        # Use tracing_db if explicitly provided
-        if self.tracing_db is not None:
-            setup_tracing_for_os(db=self.tracing_db)
+        # Use AgentOS db if explicitly provided
+        if self.db is not None:
+            setup_tracing_for_os(db=self.db)
             return
 
         # Fall back to finding the first available database
-        db: Optional[Union[BaseDb, AsyncBaseDb]] = None
+        db: Optional[Union[BaseDb, AsyncBaseDb, RemoteDb]] = None
 
         for agent in self.agents or []:
             if agent.db:
@@ -494,7 +578,7 @@ class AgentOS:
         if db is None:
             log_warning(
                 "tracing=True but no database found. "
-                "Provide 'tracing_db' parameter or 'db' parameter to at least one agent/team/workflow."
+                "Provide 'db' parameter to AgentOS or to at least one agent/team/workflow."
             )
             return
 
@@ -534,6 +618,13 @@ class AgentOS:
             # The async database lifespan
             lifespans.append(partial(db_lifespan, agent_os=self))
 
+            # The scheduler lifespan (after db so tables exist)
+            if self._scheduler_enabled and self.db is not None:
+                lifespans.append(partial(scheduler_lifespan, agent_os=self))
+
+            # The httpx client cleanup lifespan (should be last to close after other lifespans)
+            lifespans.append(http_client_lifespan)
+
             # Combine lifespans and set them in the app
             if lifespans:
                 fastapi_app.router.lifespan_context = _combine_app_lifespans(lifespans)
@@ -559,6 +650,13 @@ class AgentOS:
             # Async database initialization lifespan
             lifespans.append(partial(db_lifespan, agent_os=self))  # type: ignore
 
+            # The scheduler lifespan (after db so tables exist)
+            if self._scheduler_enabled and self.db is not None:
+                lifespans.append(partial(scheduler_lifespan, agent_os=self))
+
+            # The httpx client cleanup lifespan (should be last to close after other lifespans)
+            lifespans.append(http_client_lifespan)
+
             final_lifespan = _combine_app_lifespans(lifespans) if lifespans else None
             fastapi_app = self._make_app(lifespan=final_lifespan)
 
@@ -574,7 +672,18 @@ class AgentOS:
             get_metrics_router(dbs=self.dbs),
             get_knowledge_router(knowledge_instances=self.knowledge_instances),
             get_traces_router(dbs=self.dbs),
+            get_database_router(self, settings=self.settings),
         ]
+        # Add component and registry routers only if a sync db (BaseDb) is available
+        # Component routes require sync database operations
+        if self.db is not None and isinstance(self.db, BaseDb):
+            routers.append(get_components_router(os_db=self.db, registry=self.registry))
+        if self.registry is not None:
+            routers.append(get_registry_router(registry=self.registry))
+        # Add schedule and approval routers if a db is available
+        if self.db is not None:
+            routers.append(get_schedule_router(os_db=self.db, settings=self.settings))
+            routers.append(get_approval_router(os_db=self.db, settings=self.settings))
 
         for router in routers:
             self._add_router(fastapi_app, router)
@@ -585,12 +694,30 @@ class AgentOS:
 
         if not self._app_set:
 
+            @fastapi_app.exception_handler(RequestValidationError)
+            async def validation_exception_handler(_: Request, exc: RequestValidationError) -> JSONResponse:
+                log_error(f"Validation error (422): {exc.errors()}")
+                return JSONResponse(
+                    status_code=422,
+                    content={"detail": exc.errors()},
+                )
+
             @fastapi_app.exception_handler(HTTPException)
             async def http_exception_handler(_, exc: HTTPException) -> JSONResponse:
                 log_error(f"HTTP exception: {exc.status_code} {exc.detail}")
                 return JSONResponse(
                     status_code=exc.status_code,
                     content={"detail": str(exc.detail)},
+                )
+
+            @fastapi_app.exception_handler(HTTPStatusError)
+            async def http_status_error_handler(_: Request, exc: HTTPStatusError) -> JSONResponse:
+                status_code = exc.response.status_code
+                detail = exc.response.text
+                log_error(f"Downstream server returned HTTP status error: {status_code} {detail}")
+                return JSONResponse(
+                    status_code=status_code,
+                    content={"detail": detail},
                 )
 
             @fastapi_app.exception_handler(Exception)
@@ -612,9 +739,30 @@ class AgentOS:
         fastapi_app.state.agent_os_id = self.id
         fastapi_app.state.cors_allowed_origins = self.cors_allowed_origins
 
+        # Store internal service token for scheduler auth bypass
+        if self._internal_service_token:
+            fastapi_app.state.internal_service_token = self._internal_service_token
+
         # Add JWT middleware if authorization is enabled
         if self.authorization:
+            # Set authorization_enabled flag on settings so security key validation is skipped
+            self.settings.authorization_enabled = True
+
+            jwt_configured = bool(getenv("JWT_VERIFICATION_KEY") or getenv("JWT_JWKS_FILE"))
+            security_key_set = bool(self.settings.os_security_key)
+            if jwt_configured and security_key_set:
+                log_warning(
+                    "Both JWT configuration (JWT_VERIFICATION_KEY or JWT_JWKS_FILE) and OS_SECURITY_KEY are set. "
+                    "With authorization=True, only JWT authorization will be used. "
+                    "Consider removing OS_SECURITY_KEY from your environment."
+                )
+
             self._add_jwt_middleware(fastapi_app)
+
+        # Add trailing slash normalization middleware
+        from agno.os.middleware.trailing_slash import TrailingSlashMiddleware
+
+        fastapi_app.add_middleware(TrailingSlashMiddleware)
 
         return fastapi_app
 
@@ -720,32 +868,43 @@ class AgentOS:
 
     def _get_telemetry_data(self) -> Dict[str, Any]:
         """Get the telemetry data for the OS"""
+        agent_ids = []
+        team_ids = []
+        workflow_ids = []
+        for agent in self.agents or []:
+            agent_ids.append(agent.id)
+        for team in self.teams or []:
+            team_ids.append(team.id)
+        for workflow in self.workflows or []:
+            workflow_ids.append(workflow.id)
         return {
-            "agents": [agent.id for agent in self.agents] if self.agents else None,
-            "teams": [team.id for team in self.teams] if self.teams else None,
-            "workflows": [workflow.id for workflow in self.workflows] if self.workflows else None,
+            "agents": agent_ids,
+            "teams": team_ids,
+            "workflows": workflow_ids,
             "interfaces": [interface.type for interface in self.interfaces] if self.interfaces else None,
         }
 
     def _auto_discover_databases(self) -> None:
         """Auto-discover and initialize the databases used by all contextual agents, teams and workflows."""
 
-        dbs: Dict[str, List[Union[BaseDb, AsyncBaseDb]]] = {}
+        dbs: Dict[str, List[Union[BaseDb, AsyncBaseDb, RemoteDb]]] = {}
         knowledge_dbs: Dict[
-            str, List[Union[BaseDb, AsyncBaseDb]]
+            str, List[Union[BaseDb, AsyncBaseDb, RemoteDb]]
         ] = {}  # Track databases specifically used for knowledge
 
         for agent in self.agents or []:
             if agent.db:
                 self._register_db_with_validation(dbs, agent.db)
-            if agent.knowledge and agent.knowledge.contents_db:
-                self._register_db_with_validation(knowledge_dbs, agent.knowledge.contents_db)
+            agent_contents_db = getattr(agent.knowledge, "contents_db", None) if agent.knowledge else None
+            if agent_contents_db:
+                self._register_db_with_validation(knowledge_dbs, agent_contents_db)
 
         for team in self.teams or []:
             if team.db:
                 self._register_db_with_validation(dbs, team.db)
-            if team.knowledge and team.knowledge.contents_db:
-                self._register_db_with_validation(knowledge_dbs, team.knowledge.contents_db)
+            team_contents_db = getattr(team.knowledge, "contents_db", None) if team.knowledge else None
+            if team_contents_db:
+                self._register_db_with_validation(knowledge_dbs, team_contents_db)
 
         for workflow in self.workflows or []:
             if workflow.db:
@@ -761,9 +920,9 @@ class AgentOS:
             elif interface.team and interface.team.db:
                 self._register_db_with_validation(dbs, interface.team.db)
 
-        # Register tracing_db if provided (for traces reading)
-        if self.tracing_db is not None:
-            self._register_db_with_validation(dbs, self.tracing_db)
+        # Register AgentOS db if provided
+        if self.db is not None:
+            self._register_db_with_validation(dbs, self.db)
 
         self.dbs = dbs
         self.knowledge_dbs = knowledge_dbs
@@ -819,6 +978,32 @@ class AgentOS:
             except Exception as e:
                 log_warning(f"Failed to initialize async {db.__class__.__name__} (id: {db.id}): {e}")
 
+    async def _close_databases(self) -> None:
+        """Close all database connections and release connection pools."""
+        from itertools import chain
+
+        if not hasattr(self, "dbs") or not hasattr(self, "knowledge_dbs"):
+            return
+
+        unique_dbs = list(
+            {
+                id(db): db
+                for db in chain(
+                    chain.from_iterable(self.dbs.values()), chain.from_iterable(self.knowledge_dbs.values())
+                )
+            }.values()
+        )
+
+        for db in unique_dbs:
+            try:
+                if hasattr(db, "close") and callable(db.close):
+                    if isinstance(db, AsyncBaseDb):
+                        await db.close()
+                    else:
+                        db.close()
+            except Exception as e:
+                log_warning(f"Failed to close {db.__class__.__name__} (id: {db.id}): {e}")
+
     def _get_db_table_names(self, db: BaseDb) -> Dict[str, str]:
         """Get the table names for a database"""
         table_names = {
@@ -832,7 +1017,9 @@ class AgentOS:
         return {k: v for k, v in table_names.items() if v is not None}
 
     def _register_db_with_validation(
-        self, registered_dbs: Dict[str, List[Union[BaseDb, AsyncBaseDb]]], db: Union[BaseDb, AsyncBaseDb]
+        self,
+        registered_dbs: Dict[str, List[Union[BaseDb, AsyncBaseDb, RemoteDb]]],
+        db: Union[BaseDb, AsyncBaseDb, RemoteDb],
     ) -> None:
         """Register a database in the contextual OS after validating it is not conflicting with registered databases"""
         if db.id in registered_dbs:
@@ -842,18 +1029,22 @@ class AgentOS:
 
     def _auto_discover_knowledge_instances(self) -> None:
         """Auto-discover the knowledge instances used by all contextual agents, teams and workflows."""
-        seen_ids = set()
-        knowledge_instances: List[Knowledge] = []
+        seen_instances: set[int] = set()  # Track by object identity
+        knowledge_instances: List[Union[Knowledge, RemoteKnowledge]] = []
 
-        def _add_knowledge_if_not_duplicate(knowledge: "Knowledge") -> None:
-            """Add knowledge instance if it's not already in the list (by object identity or db_id)."""
-            # Use database ID if available, otherwise use object ID as fallback
-            if not knowledge.contents_db:
+        def _add_knowledge_if_not_duplicate(knowledge: Any) -> None:
+            """Add knowledge instance if it's not already in the list (by object identity)."""
+            # Only handle Knowledge and RemoteKnowledge instances that have contents_db
+            contents_db = getattr(knowledge, "contents_db", None)
+            if not contents_db:
                 return
-            if knowledge.contents_db.id in seen_ids:
+            # Deduplicate by object identity to allow multiple knowledge instances with the same contents_db
+            if id(knowledge) in seen_instances:
                 return
-            seen_ids.add(knowledge.contents_db.id)
-            knowledge_instances.append(knowledge)
+            seen_instances.add(id(knowledge))
+            # Only append if it's a Knowledge or RemoteKnowledge instance
+            if isinstance(knowledge, (Knowledge, RemoteKnowledge)):
+                knowledge_instances.append(knowledge)
 
         for agent in self.agents or []:
             if agent.knowledge:
@@ -867,6 +1058,53 @@ class AgentOS:
             _add_knowledge_if_not_duplicate(knowledge_base)
 
         self.knowledge_instances = knowledge_instances
+
+        # Validate that all knowledge instances have unique names
+        # Duplicate names cause content isolation issues since linked_to uses the name
+        self._validate_knowledge_instance_names()
+
+    def _validate_knowledge_instance_names(self) -> None:
+        """Validate that all knowledge instances have unique names.
+
+        Raises:
+            ValueError: If duplicate knowledge instance names are detected.
+        """
+        # Track seen combinations of (name, db_id, table) to detect true duplicates
+        # Same name is OK if using different contents_db or different table
+        seen_combinations: dict[tuple[str, str, str], str] = {}  # (name, db_id, table) -> description
+        duplicates: list[str] = []
+
+        for knowledge in self.knowledge_instances:
+            contents_db = getattr(knowledge, "contents_db", None)
+            if not contents_db:
+                continue
+
+            db_id = getattr(contents_db, "id", None)
+            if not db_id:
+                continue
+
+            # Get the name (with fallback)
+            knowledge_name = getattr(knowledge, "name", None) or f"knowledge_{db_id}"
+            table_name = getattr(contents_db, "knowledge_table_name", "unknown")
+
+            # Create unique key based on name + db + table
+            key = (knowledge_name, db_id, table_name)
+
+            if key in seen_combinations:
+                duplicates.append(f"'{knowledge_name}' in table '{table_name}'")
+            else:
+                seen_combinations[key] = table_name
+
+        if duplicates:
+            unique_duplicates = list(set(duplicates))
+            error_msg = (
+                f"Duplicate knowledge instances detected:\n"
+                f"  {', '.join(unique_duplicates)}\n\n"
+                "Each knowledge instance must have a unique combination of (knowledgename, database, table). "
+                "To fix this, give each knowledge instance a unique `name` parameter."
+            )
+            log_error(error_msg)
+            raise ValueError(error_msg)
 
     def _get_session_config(self) -> SessionConfig:
         session_config = self.config.session if self.config and self.config.session else SessionConfig()
@@ -916,16 +1154,53 @@ class AgentOS:
 
         if knowledge_config.dbs is None:
             knowledge_config.dbs = []
+        if knowledge_config.knowledge_instances is None:
+            knowledge_config.knowledge_instances = []
 
+        # Track seen knowledge IDs to deduplicate
+        seen_knowledge_ids: set[str] = set()
+
+        # Build flat list of knowledge instances
+        for knowledge in self.knowledge_instances:
+            contents_db = getattr(knowledge, "contents_db", None)
+            if not contents_db:
+                continue
+
+            db_id = getattr(contents_db, "id", None)
+            if not db_id:
+                continue
+
+            table_name = getattr(contents_db, "knowledge_table_name", "unknown")
+            knowledge_name = getattr(knowledge, "name", None) or f"knowledge_{db_id}"
+            knowledge_id = _generate_knowledge_id(knowledge_name, db_id, table_name)
+
+            # Skip if already processed (deduplicate by knowledge_id)
+            if knowledge_id in seen_knowledge_ids:
+                continue
+            seen_knowledge_ids.add(knowledge_id)
+
+            instance_config = KnowledgeInstanceConfig(
+                id=knowledge_id,
+                name=knowledge_name,
+                description=getattr(knowledge, "description", None),
+                db_id=db_id,
+                table=table_name,
+            )
+            knowledge_config.knowledge_instances.append(instance_config)
+
+        # Build KnowledgeDatabaseConfig for each db with its tables (as strings)
         dbs_with_specific_config = [db.db_id for db in knowledge_config.dbs]
 
-        # Only add databases that are actually used for knowledge contents
-        for db_id in self.knowledge_dbs.keys():
+        for db_id, dbs in self.knowledge_dbs.items():
             if db_id not in dbs_with_specific_config:
+                # Get all unique table names for this db
+                unique_tables = list(set(db.knowledge_table_name for db in dbs))
+
                 knowledge_config.dbs.append(
-                    DatabaseConfig(
+                    KnowledgeDatabaseConfig(
                         db_id=db_id,
                         domain_config=KnowledgeDomainConfig(display_name=db_id),
+                        tables=unique_tables,
                     )
                 )
 
@@ -983,13 +1258,13 @@ class AgentOS:
 
         dbs_with_specific_config = [db.db_id for db in traces_config.dbs]
 
-        # If tracing_db is explicitly set, only use that database for traces
-        if self.tracing_db is not None:
-            if self.tracing_db.id not in dbs_with_specific_config:
+        # If AgentOS db is explicitly set, only use that database for traces
+        if self.db is not None:
+            if self.db.id not in dbs_with_specific_config:
                 traces_config.dbs.append(
                     DatabaseConfig(
-                        db_id=self.tracing_db.id,
-                        domain_config=TracesDomainConfig(display_name=self.tracing_db.id),
+                        db_id=self.db.id,
+                        domain_config=TracesDomainConfig(display_name=self.db.id),
                     )
                 )
         else:
@@ -1033,8 +1308,12 @@ class AgentOS:
             Align.center(f"[bold cyan]{public_endpoint}[/bold cyan]"),
             Align.center(f"\n\n[bold dark_orange]OS running on:[/bold dark_orange] http://{host}:{port}"),
         ]
-        if bool(self.settings.os_security_key):
-            panel_group.append(Align.center("\n\n[bold chartreuse3]:lock: Security Enabled[/bold chartreuse3]"))
+        if self.authorization:
+            panel_group.append(
+                Align.center("\n\n[bold chartreuse3]:lock: JWT Authorization Enabled[/bold chartreuse3]")
+            )
+        elif bool(self.settings.os_security_key):
+            panel_group.append(Align.center("\n\n[bold chartreuse3]:lock: Security Key Enabled[/bold chartreuse3]"))
 
         console = Console()
         console.print(

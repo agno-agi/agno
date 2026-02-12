@@ -1,11 +1,11 @@
 import logging
 from typing import Optional, Union
 
-from fastapi import Depends, HTTPException, Query
+from fastapi import Depends, HTTPException, Query, Request
 from fastapi.routing import APIRouter
 
 from agno.db.base import AsyncBaseDb, BaseDb
-from agno.os.auth import get_authentication_dependency
+from agno.os.auth import get_auth_token_from_request, get_authentication_dependency
 from agno.os.routers.traces.schemas import (
     TraceDetail,
     TraceNode,
@@ -22,14 +22,15 @@ from agno.os.schema import (
     ValidationErrorResponse,
 )
 from agno.os.settings import AgnoAPISettings
-from agno.os.utils import get_db, parse_datetime_to_utc
+from agno.os.utils import get_db, timestamp_to_datetime
+from agno.remote.base import RemoteDb
 from agno.utils.log import log_error
 
 logger = logging.getLogger(__name__)
 
 
 def get_traces_router(
-    dbs: dict[str, list[Union[BaseDb, AsyncBaseDb]]], settings: AgnoAPISettings = AgnoAPISettings(), **kwargs
+    dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]], settings: AgnoAPISettings = AgnoAPISettings(), **kwargs
 ) -> APIRouter:
     """Create traces router with comprehensive OpenAPI documentation for trace endpoints."""
     router = APIRouter(
@@ -46,7 +47,7 @@ def get_traces_router(
     return attach_routes(router=router, dbs=dbs)
 
 
-def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBaseDb]]]) -> APIRouter:
+def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]]) -> APIRouter:
     @router.get(
         "/traces",
         response_model=PaginatedResponse[TraceSummary],
@@ -109,6 +110,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         },
     )
     async def get_traces(
+        request: Request,
         run_id: Optional[str] = Query(default=None, description="Filter by run ID"),
         session_id: Optional[str] = Query(default=None, description="Filter by session ID"),
         user_id: Optional[str] = Query(default=None, description="Filter by user ID"),
@@ -124,8 +126,8 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             default=None,
             description="Filter traces ending before this time (ISO 8601 format with timezone, e.g., '2025-11-19T11:00:00Z' or '2025-11-19T16:30:00+05:30'). Times are converted to UTC for comparison.",
         ),
-        page: int = Query(default=1, description="Page number (1-indexed)", ge=1),
-        limit: int = Query(default=20, description="Number of traces per page", ge=1, le=100),
+        page: int = Query(default=1, description="Page number (1-indexed)", ge=0),
+        limit: int = Query(default=20, description="Number of traces per page", ge=1),
         db_id: Optional[str] = Query(default=None, description="Database ID to query traces from"),
     ):
         """Get list of traces with optional filters and pagination"""
@@ -134,12 +136,31 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         # Get database using db_id or default to first available
         db = await get_db(dbs, db_id)
 
+        if isinstance(db, RemoteDb):
+            auth_token = get_auth_token_from_request(request)
+            headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
+            return await db.get_traces(
+                run_id=run_id,
+                session_id=session_id,
+                user_id=user_id,
+                agent_id=agent_id,
+                team_id=team_id,
+                workflow_id=workflow_id,
+                status=status,
+                start_time=start_time,
+                end_time=end_time,
+                limit=limit,
+                page=page,
+                db_id=db_id,
+                headers=headers,
+            )
+
         try:
             start_time_ms = time_module.time() * 1000
 
             # Convert ISO datetime strings to UTC datetime objects
-            start_time_dt = parse_datetime_to_utc(start_time, "start_time") if start_time else None
-            end_time_dt = parse_datetime_to_utc(end_time, "end_time") if end_time else None
+            start_time_dt = timestamp_to_datetime(start_time, "start_time") if start_time else None
+            end_time_dt = timestamp_to_datetime(end_time, "end_time") if end_time else None
 
             if isinstance(db, AsyncBaseDb):
                 traces, total_count = await db.get_traces(
@@ -303,6 +324,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         },
     )
     async def get_trace(
+        request: Request,
         trace_id: str,
         span_id: Optional[str] = Query(default=None, description="Optional: Span ID to retrieve specific span"),
         run_id: Optional[str] = Query(default=None, description="Optional: Run ID to retrieve trace for"),
@@ -311,6 +333,17 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         """Get detailed trace with hierarchical span tree, or a specific span within the trace"""
         # Get database using db_id or default to first available
         db = await get_db(dbs, db_id)
+
+        if isinstance(db, RemoteDb):
+            auth_token = get_auth_token_from_request(request)
+            headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
+            return await db.get_trace(
+                trace_id=trace_id,
+                span_id=span_id,
+                run_id=run_id,
+                db_id=db_id,
+                headers=headers,
+            )
 
         try:
             # If span_id is provided, return just that span
@@ -408,6 +441,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         },
     )
     async def get_trace_stats(
+        request: Request,
         user_id: Optional[str] = Query(default=None, description="Filter by user ID"),
         agent_id: Optional[str] = Query(default=None, description="Filter by agent ID"),
         team_id: Optional[str] = Query(default=None, description="Filter by team ID"),
@@ -421,7 +455,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             description="Filter sessions with traces created before this time (ISO 8601 format with timezone, e.g., '2025-11-19T11:00:00Z' or '2025-11-19T16:30:00+05:30'). Times are converted to UTC for comparison.",
         ),
         page: int = Query(default=1, description="Page number (1-indexed)", ge=1),
-        limit: int = Query(default=20, description="Number of sessions per page", ge=1, le=100),
+        limit: int = Query(default=20, description="Number of sessions per page", ge=1),
         db_id: Optional[str] = Query(default=None, description="Database ID to query statistics from"),
     ):
         """Get trace statistics grouped by session"""
@@ -430,12 +464,28 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         # Get database using db_id or default to first available
         db = await get_db(dbs, db_id)
 
+        if isinstance(db, RemoteDb):
+            auth_token = get_auth_token_from_request(request)
+            headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
+            return await db.get_trace_session_stats(
+                user_id=user_id,
+                agent_id=agent_id,
+                team_id=team_id,
+                workflow_id=workflow_id,
+                start_time=start_time,
+                end_time=end_time,
+                limit=limit,
+                page=page,
+                db_id=db_id,
+                headers=headers,
+            )
+
         try:
             start_time_ms = time_module.time() * 1000
 
             # Convert ISO datetime strings to UTC datetime objects
-            start_time_dt = parse_datetime_to_utc(start_time, "start_time") if start_time else None
-            end_time_dt = parse_datetime_to_utc(end_time, "end_time") if end_time else None
+            start_time_dt = timestamp_to_datetime(start_time, "start_time") if start_time else None
+            end_time_dt = timestamp_to_datetime(end_time, "end_time") if end_time else None
 
             if isinstance(db, AsyncBaseDb):
                 stats_list, total_count = await db.get_trace_stats(

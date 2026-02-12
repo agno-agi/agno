@@ -2,7 +2,7 @@ import pytest
 
 from agno.agent import Agent
 from agno.models.cerebras import CerebrasOpenAI
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 from agno.tools.yfinance import YFinanceTools
 
 
@@ -50,7 +50,7 @@ def test_tool_use_stream():
 async def test_async_tool_use():
     agent = Agent(
         model=CerebrasOpenAI(id="gpt-oss-120b"),
-        tools=[DuckDuckGoTools(cache_results=True)],
+        tools=[WebSearchTools(cache_results=True)],
         telemetry=False,
     )
 
@@ -69,6 +69,9 @@ async def test_async_tool_use_stream():
         tools=[YFinanceTools(cache_results=True)],
         telemetry=False,
     )
+
+    tool_call_seen = False
+    keyword_seen_in_response = False
 
     async for response in agent.arun(
         "What is the current price of TSLA?",
@@ -91,7 +94,7 @@ async def test_async_tool_use_stream():
 def test_tool_use_with_content():
     agent = Agent(
         model=CerebrasOpenAI(id="gpt-oss-120b"),
-        tools=[DuckDuckGoTools(cache_results=True)],
+        tools=[WebSearchTools(cache_results=True)],
         telemetry=False,
     )
 

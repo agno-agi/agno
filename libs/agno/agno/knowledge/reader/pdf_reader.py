@@ -200,10 +200,11 @@ class BasePDFReader(Reader):
         super().__init__(chunking_strategy=chunking_strategy, **kwargs)
 
     @classmethod
-    def get_supported_chunking_strategies(self) -> List[ChunkingStrategyType]:
+    def get_supported_chunking_strategies(cls) -> List[ChunkingStrategyType]:
         """Get the list of supported chunking strategies for PDF readers."""
         return [
             ChunkingStrategyType.DOCUMENT_CHUNKER,
+            ChunkingStrategyType.CODE_CHUNKER,
             ChunkingStrategyType.FIXED_SIZE_CHUNKER,
             ChunkingStrategyType.AGENTIC_CHUNKER,
             ChunkingStrategyType.SEMANTIC_CHUNKER,
@@ -218,24 +219,22 @@ class BasePDFReader(Reader):
 
     def _get_doc_name(self, pdf_source: Union[str, Path, IO[Any]], name: Optional[str] = None) -> str:
         """Determines the document name from the source or a provided name."""
-        try:
-            if name:
-                return name
-            if isinstance(pdf_source, str):
-                return pdf_source.split("/")[-1].split(".")[0].replace(" ", "_")
-            # Assumes a file-like object with a .name attribute
-            return pdf_source.name.split(".")[0]
-        except Exception:
-            # The original code had a bug here, it should check `name` first.
-            return name or "pdf"
+        if name:
+            return name
+        if isinstance(pdf_source, str):
+            return Path(pdf_source).stem.replace(" ", "_")
+        if isinstance(pdf_source, Path):
+            return pdf_source.stem.replace(" ", "_")
+        return getattr(pdf_source, "name", "pdf_file").split(".")[0].replace(" ", "_")
 
     def _decrypt_pdf(self, doc_reader: DocumentReader, doc_name: str, password: Optional[str] = None) -> bool:
         if not doc_reader.is_encrypted:
             return True
 
         # Use provided password or fall back to instance password
-        pdf_password = password or self.password
-        if not pdf_password:
+        # Note: Empty string "" is a valid password for PDFs with blank user password
+        pdf_password = self.password if password is None else password
+        if pdf_password is None:
             log_error(f'PDF file "{doc_name}" is password protected but no password provided')
             return False
 
@@ -337,12 +336,18 @@ class PDFReader(BasePDFReader):
     """Reader for PDF files"""
 
     @classmethod
-    def get_supported_content_types(self) -> List[ContentType]:
+    def get_supported_content_types(cls) -> List[ContentType]:
         return [ContentType.PDF]
 
     def read(
-        self, pdf: Union[str, Path, IO[Any]], name: Optional[str] = None, password: Optional[str] = None
+        self,
+        pdf: Optional[Union[str, Path, IO[Any]]] = None,
+        name: Optional[str] = None,
+        password: Optional[str] = None,
     ) -> List[Document]:
+        if pdf is None:
+            log_error("No pdf provided")
+            return []
         doc_name = self._get_doc_name(pdf, name)
         log_debug(f"Reading: {doc_name}")
 

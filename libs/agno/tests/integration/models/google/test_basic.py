@@ -4,8 +4,8 @@ from pydantic import BaseModel, Field
 
 from agno.agent import Agent, RunOutput  # noqa
 from agno.db.sqlite import SqliteDb
-from agno.exceptions import ModelProviderError
 from agno.models.google import Gemini
+from agno.run.base import RunStatus
 
 
 def _assert_metrics(response: RunOutput):
@@ -88,19 +88,15 @@ async def test_async_basic_stream():
 def test_exception_handling():
     agent = Agent(
         model=Gemini(id="gemini-2.0-flash-made-up-id"),
-        exponential_backoff=True,
-        delay_between_retries=5,
         markdown=True,
         telemetry=False,
     )
 
     # Print the response in the terminal
-    with pytest.raises(ModelProviderError) as exc:
-        agent.run("Share a 2 sentence horror story")
-
-    assert exc.value.model_name == "Gemini"
-    assert exc.value.model_id == "gemini-2.0-flash-made-up-id"
-    assert exc.value.status_code == 404
+    response = agent.run("Share a 2 sentence horror story")
+    assert response.status == RunStatus.error
+    assert response.content is not None
+    assert "gemini-2.0-flash-made-up-id" in response.content
 
 
 def test_with_memory():
@@ -186,6 +182,7 @@ def test_history():
         delay_between_retries=5,
         db=SqliteDb(db_file="tmp/google/test_basic.db"),
         add_history_to_context=True,
+        store_history_messages=True,
         telemetry=False,
     )
     run_output = agent.run("Hello")

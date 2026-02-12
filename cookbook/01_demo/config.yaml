@@ -1,56 +1,51 @@
 chat:
   quick_prompts:
-    agno-mcp-agent:
-      - "What is Agno?"
-      - "What is AgentOS?"
-      - "What are Agno's key features?"
-
-    finance-agent:
-      - "How are my fav stocks performing?"
-      - "Prepare an investment brief on Apple (AAPL)."
-      - "Summarize key financial metrics for TSLA."
-
-    research-agent:
-      - "Competitive landscape for vector databases."
-      - "Latest breakthroughs in small language models."
-      - "What has changed recently in the Japanese yen carry trade and why is it becoming more volatile?"
-
-    reasoning-research-agent:
-      - "Competitive landscape for vector databases."
-      - "Latest breakthroughs in small language models."
-      - "What has changed recently in the Japanese yen carry trade and why is it becoming more volatile?"
-
-    memory-manager:
-      - "What do you know about me?"
-      - "I live in New York City"
-      - "I like to hike and swim on the weekends"
-
-    deep-knowledge-agent:
-      - "What is Agno?"
-      - "What are Agno's key features?"
-      - "How does Agno handle knowledge base management?"
-
-    youtube-agent:
-      - "Summarize this video: https://www.youtube.com/watch?v=dQw4w9WgXcQ"
-      - "Explain this video in simple terms: https://www.youtube.com/watch?v=nLkBNnnA8Ac&t=1s"
-      - "What can you do?"
-
-    finance-team:
-      - "Analyze current sentiment around AI stocks."
-      - "Analyze the semiconductor market performance focusing on: NVIDIA (NVDA), AMD (AMD), Intel (INTC), and Taiwan Semiconductor (TSM)."
-      - "Analyze the automotive industry: Tesla, Ford, General Motors, and Toyota."
-
-    agno-knowledge-agent:
-      - "What is Agno?"
-      - "What is AgentOS?"
-      - "What are Agno's key features?"
-
-    self-learning-research-agent:
-      - "What is the consensus on AI agents in enterprise production systems?"
-      - "Has the consensus on AI agents in production systems changed recently?"
-      - "How are companies currently deploying Gemini models in production?"
-
-    self-learning-agent:
-      - "Analyze nvidia and tsla performance and suggest a rule of thumb for when to buy or sell."
-      - "What's a reliable way to evaluate AI stocks today?"
-      - "What prior learnings can I use?"
+    dash:
+      - "Tell me about yourself"
+      - "Who won the most F1 races in 2019?"
+      - "Compare Ferrari and Mercedes constructor championships from 2015-2020"
+    reasoning-dash:
+      - "Tell me about yourself"
+      - "What's the relationship between pole positions and race wins over the decades?"
+      - "Analyze the dominance patterns in F1 - which eras had the least competition?"
+    scout:
+      - "Tell me about yourself"
+      - "What is our PTO policy?"
+      - "Find the deployment runbook"
+    reasoning-scout:
+      - "Tell me about yourself"
+      - "Compare our security policy with our data retention policy"
+      - "What are the key architectural decisions in our system?"
+    pal:
+      - "Tell me about yourself"
+      - "Note: Decided to use PostgreSQL for the new project"
+      - "Research the latest developments in AI agents and save the key findings"
+    seek:
+      - "Tell me about yourself"
+      - "Research Anthropic - their products, funding, and recent developments"
+      - "Deep dive into the current state of AI regulation in the EU"
+    reasoning-seek:
+      - "Tell me about yourself"
+      - "Research and compare the business models of OpenAI, Anthropic, and Google DeepMind"
+      - "Analyze the competitive landscape for AI coding assistants"
+    dex:
+      - "Tell me about yourself"
+      - "I just met Sarah Chen - she's a Staff Engineer at Anthropic working on Claude"
+      - "Prep me for my meeting with James Wilson, CEO of our company"
+    ace:
+      - "Tell me about yourself"
+      - "Draft a reply to: 'Hi, loved the demo. Can we schedule a follow-up to discuss pricing?'"
+      - "Write a cold outreach email to a VP of Engineering about our AI platform"
+    research-team:
+      - "Research Anthropic - company overview, key people, products, and recent news"
+      - "Deep research on the AI agents market - key players, trends, and opportunities"
+      - "Investigate the competitive landscape for enterprise knowledge management"
+    support-team:
+      - "What is our company's PTO policy?"
+      - "How many F1 races did Hamilton win in 2020?"
+      - "Draft a reply to a customer asking about our enterprise pricing"
+    daily-brief:
+      - "Generate my daily brief for today"
+    meeting-prep:
+      - "Prepare me for my 10 AM Product Strategy Review meeting"
+      - "I have a meeting with the CEO about Q1 roadmap - help me prepare"

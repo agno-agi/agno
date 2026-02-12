@@ -32,7 +32,7 @@ class Cassandra(VectorDb):
             from agno.knowledge.embedder.openai import OpenAIEmbedder
 
             embedder = OpenAIEmbedder()
-            log_info("Embedder not provided, using OpenAIEmbedder as default.")
+            log_debug("Embedder not provided, using OpenAIEmbedder as default.")
         # Initialize base class with name and description
         super().__init__(name=name, description=description)
 

@@ -76,7 +76,11 @@ def test_init_with_url(mock_create_engine):
 
     db = PostgresDb(db_url="postgresql://user:pass@localhost/db", session_table="sessions")
 
-    mock_create_engine.assert_called_once_with("postgresql://user:pass@localhost/db")
+    mock_create_engine.assert_called_once_with(
+        "postgresql://user:pass@localhost/db",
+        pool_pre_ping=True,
+        pool_recycle=3600,
+    )
     assert db.db_engine == mock_engine
 
 
@@ -369,7 +373,7 @@ def test_get_table_schema_definition_sessions():
     assert schema == SESSION_TABLE_SCHEMA
     assert "session_id" in schema
     assert schema["session_id"]["nullable"] is False
-    assert "_unique_constraints" in schema
+    assert schema["session_id"]["primary_key"] is True
 
 
 def test_get_table_schema_definition_memories():

@@ -41,6 +41,7 @@ dist
 .perfenv*
 .demoenv*
 .gemini-agents*
+.getting-started*
 venv*
 agnoenv*
 aienv*
@@ -74,7 +75,18 @@ agno_json_data/
 # AI
 .claude/
 .cursor/
+.conductor/
+
+# Private design documents (symlinked)
+specs
+docs
+projects
+agno-os
+
+# Private Claude coding session preferences
+CLAUDE_PRIVATE.md
 
 # ignore pyrightconfig.json
 pyrightconfig.json
 .python-version
+CLAUDE_PRIVATE.md

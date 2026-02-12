@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "2.3.13"
+version = "2.5.0"
 description = "Agno: a lightweight library for building Multi-Agent Systems"
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -61,11 +61,14 @@ dev = [
   "uvicorn",
   "PyJWT",
   "mcp",
-  "openai"
+  "openai",
+  "fakeredis",
+  "xlwt",
+  "types-greenlet",
 ]
 
 os = ["fastapi", "uvicorn", "PyJWT"]
-
+scheduler = ["croniter>=1.3", "pytz>=2023.3"]
 
 # Dependencies for Telemetry
 opentelemetry = ["opentelemetry-sdk", "opentelemetry-exporter-otlp"]
@@ -95,6 +98,9 @@ portkey = ["portkey-ai"]
 # Dependencies for Token Counting
 tokenizers = ["tiktoken", "tokenizers"]
 
+# Dependencies for Workflow Expression Evaluation
+cel = ["cel-python"]
+
 # Dependencies for Tools
 agentql = ["agentql"]
 apify = ["apify-client"]
@@ -108,6 +114,7 @@ duckdb = ["duckdb"]
 elevenlabs = ["elevenlabs"]
 evm = ["web3"]
 exa = ["exa_py"]
+seltz = ["seltz"]
 fal = ["fal_client"]
 firecrawl = ["firecrawl-py==3.4.0"]
 tavily = ["tavily-python"]
@@ -119,7 +126,7 @@ googlemaps = ["googlemaps", "google-maps-places"]
 matplotlib = ["matplotlib"]
 mcp = ["mcp>=1.9.2"]
 mem0 = ["mem0ai"]
-memori = ["memorisdk==3.0.5"]
+memori = ["memori>=3.0.5"]
 newspaper = ["newspaper4k", "lxml_html_clean"]
 notion = ["notion-client"]
 opencv = ["opencv-python"]
@@ -153,7 +160,7 @@ mysql = ["pymysql", "asyncmy"]
 # Dependencies for Vector databases
 pgvector = ["pgvector"]
 chromadb = ["chromadb"]
-lancedb = ["lancedb==0.24.0", "tantivy"]
+lancedb = ["lancedb>=0.26.0", "tantivy"]
 pylance = ["pylance"]
 qdrant = ["qdrant-client"]
 couchbase = ["couchbase"]
@@ -173,8 +180,9 @@ docx = ["python-docx"]
 pptx = ["python-pptx"]
 text = ["aiofiles"]
 csv = ["aiofiles"]
-markdown = ["unstructured", "markdown", "aiofiles"]
-chonkie = ["chonkie[st]", "chonkie"]
+excel = ["openpyxl", "xlrd"]
+markdown = ["unstructured<0.18.31", "markdown", "aiofiles"]
+chonkie = ["chonkie[semantic]", "chonkie[code]", "chonkie"]
 
 # Dependencies for AG-UI integration
 agui = ["ag-ui-protocol"]
@@ -225,6 +233,7 @@ tools = [
   "agno[arxiv]",
   # "agno[brave]",  # It clashes with other dependencies
   "agno[exa]",
+  "agno[seltz]",
   "agno[cartesia]",
   "agno[ddg]",
   "agno[duckdb]",
@@ -303,6 +312,7 @@ knowledge = [
   "agno[pptx]",
   "agno[text]",
   "agno[csv]",
+  "agno[excel]",
   "agno[markdown]",
   "agno[chonkie]"
 ]
@@ -340,6 +350,33 @@ integration-tests = [
     "sqlalchemy",
     "Pillow",
     "fastmcp"
+]
+
+# Dependencies for demo application
+demo = [
+    "agno[dev]",
+    "agno[scheduler]",
+    "anthropic",
+    "chromadb",
+    "ddgs",
+    "fastapi[standard]",
+    "google-genai",
+    "matplotlib",
+    "mcp",
+    "nest_asyncio",
+    "openai",
+    "openinference-instrumentation-agno",
+    "opentelemetry-api",
+    "opentelemetry-sdk",
+    "pandas",
+    "parallel-web",
+    "pgvector",
+    "pillow",
+    "psycopg[binary]",
+    "pypdf",
+    "sqlalchemy",
+    "yfinance",
+    "youtube-transcript-api",
 ]
 
 [project.urls]
@@ -418,6 +455,7 @@ module = [
   "e2b_code_interpreter.*",
   "eth_account.*",
   "exa_py.*",
+  "seltz.*",
   "fastapi.*",
   "fastembed.*",
   "fastmcp.*",
@@ -458,6 +496,7 @@ module = [
   "newspaper.*",
   "numpy.*",
   "ollama.*",
+  "openpyxl.*",
   "openai.*",
   "cv2.*",
   "openbb.*",
@@ -522,6 +561,8 @@ module = [
   "redshift_connector.*",
   "reportlab.*",
   "surrealdb.*",
-  "trafilatura.*"
+  "trafilatura.*",
+  "xlrd.*",
+  "celpy.*"
 ]
 ignore_missing_imports = true

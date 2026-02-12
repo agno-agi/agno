@@ -1,23 +1,31 @@
 import base64
 from os import getenv
-from typing import Optional
+from typing import Optional, Union
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from fastapi.responses import PlainTextResponse
 
 from agno.agent.agent import Agent
+from agno.agent.remote import RemoteAgent
 from agno.media import Audio, File, Image, Video
+from agno.team.remote import RemoteTeam
 from agno.team.team import Team
 from agno.tools.whatsapp import WhatsAppTools
 from agno.utils.log import log_error, log_info, log_warning
 from agno.utils.whatsapp import get_media_async, send_image_message_async, typing_indicator_async, upload_media_async
+from agno.workflow import RemoteWorkflow, Workflow
 
 from .security import validate_webhook_signature
 
 
-def attach_routes(router: APIRouter, agent: Optional[Agent] = None, team: Optional[Team] = None) -> APIRouter:
-    if agent is None and team is None:
-        raise ValueError("Either agent or team must be provided.")
+def attach_routes(
+    router: APIRouter,
+    agent: Optional[Union[Agent, RemoteAgent]] = None,
+    team: Optional[Union[Team, RemoteTeam]] = None,
+    workflow: Optional[Union[Workflow, RemoteWorkflow]] = None,
+) -> APIRouter:
+    if agent is None and team is None and workflow is None:
+        raise ValueError("Either agent, team, or workflow must be provided.")
 
     # Create WhatsApp tools instance once for reuse
     whatsapp_tools = WhatsAppTools(async_mode=True)
@@ -73,7 +81,7 @@ def attach_routes(router: APIRouter, agent: Optional[Agent] = None, team: Option
                         continue
 
                     message = messages[0]
-                    background_tasks.add_task(process_message, message, agent, team)
+                    background_tasks.add_task(process_message, message, agent, team, workflow)
 
             return {"status": "processing"}
 
@@ -81,7 +89,12 @@ def attach_routes(router: APIRouter, agent: Optional[Agent] = None, team: Option
             log_error(f"Error processing webhook: {str(e)}")
             raise HTTPException(status_code=500, detail=str(e))
 
-    async def process_message(message: dict, agent: Optional[Agent], team: Optional[Team]):
+    async def process_message(
+        message: dict,
+        agent: Optional[Union[Agent, RemoteAgent]],
+        team: Optional[Union[Team, RemoteTeam]],
+        workflow: Optional[Union[Workflow, RemoteWorkflow]] = None,
+    ):
         """Process a single WhatsApp message in the background"""
         try:
             message_image = None
@@ -120,7 +133,7 @@ def attach_routes(router: APIRouter, agent: Optional[Agent] = None, team: Option
 
             # Generate and send response
             if agent:
-                response = await agent.arun(
+                response = await agent.arun(  # type: ignore[misc]
                     message_text,
                     user_id=phone_number,
                     session_id=f"wa:{phone_number}",
@@ -139,6 +152,22 @@ def attach_routes(router: APIRouter, agent: Optional[Agent] = None, team: Option
                     videos=[Video(content=await get_media_async(message_video))] if message_video else None,
                     audio=[Audio(content=await get_media_async(message_audio))] if message_audio else None,
                 )
+            elif workflow:
+                response = await workflow.arun(  # type: ignore
+                    message_text,
+                    user_id=phone_number,
+                    session_id=f"wa:{phone_number}",
+                    images=[Image(content=await get_media_async(message_image))] if message_image else None,
+                    files=[File(content=await get_media_async(message_doc))] if message_doc else None,
+                    videos=[Video(content=await get_media_async(message_video))] if message_video else None,
+                    audio=[Audio(content=await get_media_async(message_audio))] if message_audio else None,
+                )
+            if response.status == "ERROR":
+                await _send_whatsapp_message(
+                    phone_number, "Sorry, there was an error processing your message. Please try again later."
+                )
+                log_error(response.content)
+                return
 
             if response.reasoning_content:
                 await _send_whatsapp_message(phone_number, f"Reasoning: \n{response.reasoning_content}", italics=True)

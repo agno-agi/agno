@@ -1,179 +1,110 @@
 # Agno Cookbooks
 
-Welcome to Agno's cookbook collection! Here you will find hundreds of examples on how to use the framework to build what you want.
+Hundreds of examples. Copy, paste, run.
 
-## Setup
+## Where to Start
 
-### Create and activate a virtual environment
+**New to Agno?** Start with [00_quickstart](./00_quickstart) — it walks you through the fundamentals, with each cookbook building on the last.
 
-```shell
-python3 -m venv .venv
-source .venv/bin/activate
+**Want to see something real?** Jump to [01_showcase](./01_showcase) — advanced use cases. Run the examples, break them, learn from them.
+
+**Want to explore a particular topic?** Find your use case below.
+
+---
+
+## Build by Use Case
+
+### I want to build a single agent
+[02_agents](./02_agents) — The atomic unit of Agno. Start here for tools, RAG, structured outputs, multimodal, guardrails, and more.
+
+### I want agents working together
+[03_teams](./03_teams) — Coordinate multiple agents. Async flows, shared memory, distributed RAG, reasoning patterns.
+
+### I want to orchestrate complex processes
+[04_workflows](./04_workflows) — Chain agents, teams, and functions into automated pipelines.
+
+### I want to deploy and manage agents
+[05_agent_os](./05_agent_os) — Deploy to web APIs, Slack, WhatsApp, and more. The control plane for your agent systems.
+
+---
+
+## Deep Dives
+
+### Storage
+[06_storage](./06_storage) — Give your agents persistent storage. Postgres and SQLite recommended. Also supports DynamoDB, Firestore, MongoDB, Redis, SingleStore, SurrealDB, and more.
+
+### Knowledge & RAG
+[07_knowledge](./07_knowledge) — Give your agents information to search at runtime. Covers chunking strategies (semantic, recursive, agentic), embedders, vector databases, hybrid search, and loading from URLs, S3, GCS, YouTube, PDFs, and more.
+
+### Learning
+[08_learning](./08_learning) — Unified learning system for agents. Decision logging, preference tracking, and continuous improvement.
+
+### Evals
+[09_evals](./09_evals) — Measure what matters: accuracy (LLM-as-judge), performance (latency, memory), reliability (expected tool calls), and agent-as-judge patterns.
+
+### Reasoning
+[10_reasoning](./10_reasoning) — Make agents think before they act. Three approaches:
+- **Reasoning models** — Use models pre-trained for reasoning (o1, o3, etc.)
+- **Reasoning tools** — Give the agent tools that enable reasoning (think, analyze)
+- **Reasoning harness** — Set `reasoning=True` for chain-of-thought with tool use
+
+### Memory
+[80_memory](./80_memory) — Agents that remember. Store insights and facts about users across conversations for personalized responses.
+
+### Models
+[90_models](./90_models) — 40+ model providers. Gemini, Claude, GPT, Llama, Mistral, DeepSeek, Groq, Ollama, vLLM — if it exists, we probably support it.
+
+### Tools
+[91_tools](./91_tools) — Extend what agents can do. Web search, SQL, email, APIs, MCP, Discord, Slack, Docker, and custom tools with the `@tool` decorator.
+
+### Integrations
+[92_integrations](./92_integrations) — Connect to Discord, observability tools (Langfuse, Arize Phoenix, AgentOps, LangSmith), memory providers, and A2A protocol.
+
+## Quality Standard
+
+For every cookbook folder that contains runnable Python examples, include:
+
+- `README.md` explaining intent, prerequisites, and run commands
+- `TEST_LOG.md` recording run status and observations
+
+Use templates:
+
+- `cookbook/templates/README.template.md`
+- `cookbook/templates/TEST_LOG.template.md`
+- `cookbook/STYLE_GUIDE.md`
+
+Run metadata audit:
+
+```bash
+python3 cookbook/scripts/audit_cookbook_metadata.py --scope direct
 ```
 
-### Install libraries
+Enforce in checks (fails on missing metadata):
 
-```shell
-pip install -U openai agno
+```bash
+python3 cookbook/scripts/audit_cookbook_metadata.py --scope direct --fail-on-missing
 ```
 
-### Export your keys
+Check cookbook Python structure pattern:
 
-```shell
-export OPENAI_API_KEY=***
+```bash
+python3 cookbook/scripts/check_cookbook_pattern.py --base-dir cookbook/00_quickstart
 ```
 
-Note: We have just added OpenAI library and API key as an example. You will need to install and export the API keys for the examples you want to run.
+Run cookbooks in non-interactive batch mode with demo environment defaults:
 
-## Run a cookbook
-
-```shell
-python cookbook/.../example.py
+```bash
+python3 cookbook/scripts/cookbook_runner.py cookbook/00_quickstart --batch --python-bin .venvs/demo/bin/python
 ```
 
-The full folder is organized in sections focused on a specific concept or feature. These are the top level ones:
+Write machine-readable run report:
 
-## Getting Started
+```bash
+python3 cookbook/scripts/cookbook_runner.py cookbook/00_quickstart --batch --json-report .context/cookbook-run.json
+```
 
-The getting started guide walks through the basics of building with Agno. Cookbooks build on each other, introducing new concepts and capabilities.
+---
 
-## Demo
+## Contributing
 
-The demo folder contains a complete example of a multi-agent system using Agno's AgentOS. It is a good example to run after getting faimilar with the framework in the getting started guide.
-
-## Examples
-
-Collection of real world examples you can build using Agno Agents, Teams and Workflows.
-
-## Agents
-
-An Agent is the core piece of the Agno framework. It is the atomic component that can be used to build your AI system. It is the main abstraction piece in the Agno framework.
-
-You can find a comprehensive set of examples in this folder, divided by the main features you can use with your Agents.
-
-## Teams
-
-A Team is a collection of Agents (or other sub-teams) that work together to accomplish tasks. They are the main abstraction piece in the Agno framework after Agents.
-
-You can find a comprehensive set of examples in this folder, divided by the main features you can use with your Teams.
-
-## Workflows
-
-Agno Workflows are designed to automate complex processes by defining a series of steps that are executed in sequence. Each step can be executed by an agent, a team, or a custom function.
-
-Workflows are our higher-level abstraction, and are useful to build complex AI systems. In this folder you will find a comprehensive guide showcasing what are the building blocks of Workflows and how much can be achieved using them.
-
-## AgentOS
-
-AgentOS is a critical piece of the Agno SDK for building, deploying, and managing Agent Systems. It provides a unified platform to create intelligent agents, organize them into teams, orchestrate complex workflows, and deploy them across various interfaces like web APIs, Slack, WhatsApp, and more.
-
-## Database
-
-In this section you can see examples on how to use all our Database implementations with your Agents.
-
-## Knowledge
-
-Knowledge is the way to provide your Agents with information they can search at runtime to make better decisions and generate better answers.
-
-In this section you will find a comprehensive list of examples on how to manage your Knowledge setup, what sources are available, what databases can be used, etc.
-
-## Memory
-
-An Agent can store insights and facts about users that it learns through conversations with them. This is great to personalize responses!
-
-In this section you will find a guide to learn how Memory is setup and how much your Agent can do with it.
-
-## Reasoning
-
-Reasoning gives Agents the ability to plan before acting, and to analyze results after having generated them. This can greatly improve an Agent's capacity to solve problems. There are three ways to use reasoning:
-
-### Reasoning models
-
-Some models are pre-trained to reasoning. The most popular reasoning models are available for your Agno Agents out of the box.
-
-See the [examples](./models/).
-
-### Reasoning tools
-
-You can give your Agent tools that enable reasoning. This is the simplest way to achieve reasoning.
-
-See the [examples](./tools/).
-
-### Reasoning Agents
-
-Reasoning Agents are a new type of multi-agent system developed by Agno that combines chain of thought reasoning with tool use.
-
-You can enable reasoning on any Agent by setting reasoning=True.
-
-When an Agent with reasoning=True is given a task, a separate “Reasoning Agent” first solves the problem using chain-of-thought. At each step, it calls tools to gather information, validate results, and iterate until it reaches a final answer. Once the Reasoning Agent has a final answer, it hands the results back to the original Agent to validate and provide a response.
-
-See the [examples](./agents/).
-
-## Models
-
-Models are the brain of Agno Agents. In this folder you will find specific examples for each of the Models we support:
-
-- AI/ML API
-- Anthropic Claude
-- Anthropic Claude via AWS Bedrock
-- AWS Bedrock
-- Azure AI Foundry
-- Cohere
-- Cerebras
-- DashScope
-- DeepSeek
-- DeepInfra
-- Fireworks
-- Google Gemini
-- Groq
-- Hugging Face
-- IBM
-- InternLM
-- LangDB
-- LiteLLM
-- Llama CPP
-- LM Studio
-- Meta Llama
-- Mistral
-- Nebius
-- Nexus
-- NVIDIA
-- Ollama
-- OpenAI
-- OpenAI Like
-- OpenAI via Azure
-- OpenRouter
-- Perplexity
-- Portkey
-- Sambanova
-- SiliconFlow
-- Together
-- vLLM
-- xAI
-
-## Evals
-
-Section focused on evaluating your Agno Agents and Teams across three key dimensions:
-
-- Accuracy: How complete/correct/accurate is the Agent’s response (LLM-as-a-judge)
-- Performance: How fast does the Agent respond and what’s the memory footprint?
-- Reliability: Does the Agent make the expected tool calls?
-- Agent as Judge: How accurate is the Agent’s response, given a question and expected response
-
-## Integrations
-
-Examples for some of the main integrations you can use with your Agno code.
-
-## Tools
-
-Tools are utilities that allow Agents to perform tasks. Think searching the web, running SQL, sending emails or calling APIs.
-
-In this folder you will find examples for some of our ToolKits. An Agno ToolKit is the simplest way to give tools to your Agents and works out of the box.
-
-You can also find examples to learn how to use custom tools, for any functionality we don't support out of the box yet.
-
-## Scripts
-
-Some utility scripts to make your work with Agno easier.
-
-We are constantly adding new cookbooks to the repository, if you want to contribute, please check the [CONTRIBUTING.md](./CONTRIBUTING.md) file.
+We're always adding new cookbooks. Want to contribute? See [CONTRIBUTING.md](./CONTRIBUTING.md).

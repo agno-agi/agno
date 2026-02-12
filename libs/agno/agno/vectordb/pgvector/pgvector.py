@@ -122,7 +122,7 @@ class PgVector(VectorDb):
             from agno.knowledge.embedder.openai import OpenAIEmbedder
 
             embedder = OpenAIEmbedder()
-            log_info("Embedder not provided, using OpenAIEmbedder as default.")
+            log_debug("Embedder not provided, using OpenAIEmbedder as default.")
         self.embedder: Embedder = embedder
         self.dimensions: Optional[int] = self.embedder.dimensions
 
@@ -227,8 +227,11 @@ class PgVector(VectorDb):
                 log_debug("Creating extension: vector")
                 sess.execute(text("CREATE EXTENSION IF NOT EXISTS vector;"))
                 if self.create_schema and self.schema is not None:
-                    log_debug(f"Creating schema: {self.schema}")
-                    sess.execute(text(f"CREATE SCHEMA IF NOT EXISTS {self.schema};"))
+                    try:
+                        log_debug(f"Creating schema: {self.schema}")
+                        sess.execute(text(f"CREATE SCHEMA IF NOT EXISTS {self.schema};"))
+                    except Exception as e:
+                        log_warning(f"Could not create schema {self.schema}: {e}")
             log_debug(f"Creating table: {self.table_name}")
             self.table.create(self.db_engine)
 
@@ -379,7 +382,7 @@ class PgVector(VectorDb):
                                 record = {
                                     "id": record_id,
                                     "name": doc.name,
-                                    "meta_data": doc.meta_data,
+                                    "meta_data": meta_data,
                                     "filters": filters,
                                     "content": cleaned_content,
                                     "embedding": doc.embedding,
@@ -514,7 +517,7 @@ class PgVector(VectorDb):
         return {
             "id": record_id,
             "name": doc.name,
-            "meta_data": doc.meta_data,
+            "meta_data": meta_data,
             "filters": filters,
             "content": cleaned_content,
             "embedding": doc.embedding,
@@ -650,6 +653,13 @@ class PgVector(VectorDb):
                                 ):
                                     log_warning(f"Document {idx} '{doc.name}' has empty embedding (length 0)")
 
+                                if (
+                                    doc.embedding is not None
+                                    and isinstance(doc.embedding, list)
+                                    and len(doc.embedding) == 0
+                                ):
+                                    log_warning(f"Document {idx} '{doc.name}' has empty embedding (length 0)")
+
                                 meta_data = doc.meta_data or {}
                                 if filters:
                                     meta_data.update(filters)
@@ -657,7 +667,7 @@ class PgVector(VectorDb):
                                 record = {
                                     "id": record_id,  # use record_id as a reproducible id to avoid duplicates while upsert
                                     "name": doc.name,
-                                    "meta_data": doc.meta_data,
+                                    "meta_data": meta_data,
                                     "filters": filters,
                                     "content": cleaned_content,
                                     "embedding": doc.embedding,

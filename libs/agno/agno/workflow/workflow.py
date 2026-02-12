@@ -1,9 +1,9 @@
 import asyncio
-import warnings
 from dataclasses import dataclass
 from datetime import datetime
 from os import getenv
 from typing import (
+    TYPE_CHECKING,
     Any,
     AsyncIterator,
     Awaitable,
@@ -24,21 +24,32 @@ from uuid import uuid4
 from fastapi import WebSocket
 from pydantic import BaseModel
 
+if TYPE_CHECKING:
+    from agno.os.managers import WebSocketHandler
+
 from agno.agent.agent import Agent
-from agno.db.base import AsyncBaseDb, BaseDb, SessionType
+from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, SessionType
+from agno.db.utils import db_from_dict
 from agno.exceptions import InputCheckError, OutputCheckError, RunCancelledException
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Message
 from agno.models.metrics import Metrics
+from agno.registry import Registry
 from agno.run import RunContext, RunStatus
 from agno.run.agent import RunContentEvent, RunEvent, RunOutput
 from agno.run.cancel import (
-    cancel_run as cancel_run_global,
+    acancel_run as acancel_run_global,
 )
 from agno.run.cancel import (
+    acleanup_run,
+    araise_if_cancelled,
+    aregister_run,
     cleanup_run,
     raise_if_cancelled,
     register_run,
+)
+from agno.run.cancel import (
+    cancel_run as cancel_run_global,
 )
 from agno.run.team import RunContentEvent as TeamRunContentEvent
 from agno.run.team import TeamRunEvent
@@ -53,7 +64,7 @@ from agno.run.workflow import (
 )
 from agno.session.workflow import WorkflowChatInteraction, WorkflowSession
 from agno.team.team import Team
-from agno.utils.common import is_typed_dict, validate_typed_dict
+from agno.utils.agent import validate_input
 from agno.utils.log import (
     log_debug,
     log_error,
@@ -69,7 +80,8 @@ from agno.utils.print_response.workflow import (
     print_response,
     print_response_stream,
 )
-from agno.workflow import WorkflowAgent
+from agno.utils.string import generate_id_from_name
+from agno.workflow.agent import WorkflowAgent
 from agno.workflow.condition import Condition
 from agno.workflow.loop import Loop
 from agno.workflow.parallel import Parallel
@@ -81,7 +93,6 @@ from agno.workflow.types import (
     StepMetrics,
     StepOutput,
     StepType,
-    WebSocketHandler,
     WorkflowExecutionInput,
     WorkflowMetrics,
 )
@@ -94,6 +105,43 @@ STEP_TYPE_MAPPING = {
     Condition: StepType.CONDITION,
     Router: StepType.ROUTER,
 }
+
+
+def _step_from_dict(
+    data: Dict[str, Any],
+    registry: Optional["Registry"] = None,
+    db: Optional["BaseDb"] = None,
+    links: Optional[List[Dict[str, Any]]] = None,
+) -> Union[Step, Steps, Loop, Parallel, Condition, Router]:
+    """
+    Deserialize a step from a dictionary based on its type.
+
+    Args:
+        data: Dictionary containing step configuration with a "type" field
+        registry: Optional registry for rehydrating non-serializable objects
+        db: Optional database for loading agents/teams in steps
+        links: Optional links for this step version
+
+    Returns:
+        The appropriate step type instance (Step, Steps, Loop, Parallel, Condition, or Router)
+    """
+    step_type = data.get("type", "Step")
+
+    if step_type == "Loop":
+        return Loop.from_dict(data, registry=registry, db=db, links=links)
+    elif step_type == "Parallel":
+        return Parallel.from_dict(data, registry=registry, db=db, links=links)
+    elif step_type == "Steps":
+        return Steps.from_dict(data, registry=registry, db=db, links=links)
+    elif step_type == "Condition":
+        return Condition.from_dict(data, registry=registry, db=db, links=links)
+    elif step_type == "Router":
+        return Router.from_dict(data, registry=registry, db=db, links=links)
+    elif step_type == "Step":
+        return Step.from_dict(data, registry=registry, db=db, links=links)
+    else:
+        raise ValueError(f"Unknown step type: {step_type}")
+
 
 WorkflowSteps = Union[
     Callable[
@@ -165,7 +213,7 @@ class Workflow:
     # Control whether to store executor responses (agent/team responses) in flattened runs
     store_executor_outputs: bool = True
 
-    websocket_handler: Optional[WebSocketHandler] = None
+    websocket_handler: Optional["WebSocketHandler"] = None
 
     # Input schema to validate the input to the workflow
     input_schema: Optional[Type[BaseModel]] = None
@@ -182,9 +230,6 @@ class Workflow:
     add_workflow_history_to_steps: bool = False
     # Number of historical runs to include in the messages
     num_history_runs: int = 3
-
-    # Deprecated. Use stream_events instead.
-    stream_intermediate_steps: bool = False
 
     # If True, run hooks as FastAPI background tasks (non-blocking). Set by AgentOS.
     _run_hooks_in_background: bool = False
@@ -205,7 +250,6 @@ class Workflow:
         debug_mode: Optional[bool] = False,
         stream: Optional[bool] = None,
         stream_events: bool = False,
-        stream_intermediate_steps: bool = False,
         stream_executor_events: bool = True,
         store_events: bool = False,
         events_to_skip: Optional[List[Union[WorkflowRunEvent, RunEvent, TeamRunEvent]]] = None,
@@ -241,14 +285,7 @@ class Workflow:
         self.add_workflow_history_to_steps = add_workflow_history_to_steps
         self.num_history_runs = num_history_runs
         self._workflow_session: Optional[WorkflowSession] = None
-
-        if stream_intermediate_steps:
-            warnings.warn(
-                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-        self.stream_events = stream_events or stream_intermediate_steps
+        self.stream_events = stream_events
 
         # Warn if workflow history is enabled without a database
         if self.add_workflow_history_to_steps and self.db is None:
@@ -259,66 +296,10 @@ class Workflow:
 
     def set_id(self) -> None:
         if self.id is None:
-            if self.name is not None:
-                self.id = self.name.lower().replace(" ", "-")
-            else:
-                self.id = str(uuid4())
+            self.id = generate_id_from_name(self.name)
 
     def _has_async_db(self) -> bool:
         return self.db is not None and isinstance(self.db, AsyncBaseDb)
-
-    def _validate_input(
-        self, input: Optional[Union[str, Dict[str, Any], List[Any], BaseModel, List[Message]]]
-    ) -> Optional[Union[str, List, Dict, Message, BaseModel]]:
-        """Parse and validate input against input_schema if provided"""
-        if self.input_schema is None:
-            return input  # Return input unchanged if no schema is set
-
-        if input is None:
-            raise ValueError("Input required when input_schema is set")
-
-        # Handle Message objects - extract content
-        if isinstance(input, Message):
-            input = input.content  # type: ignore
-
-        # If input is a string, convert it to a dict
-        if isinstance(input, str):
-            import json
-
-            try:
-                input = json.loads(input)
-            except Exception as e:
-                raise ValueError(f"Failed to parse input. Is it a valid JSON string?: {e}")
-
-        # Case 1: Message is already a BaseModel instance
-        if isinstance(input, BaseModel):
-            if isinstance(input, self.input_schema):
-                try:
-                    return input
-                except Exception as e:
-                    raise ValueError(f"BaseModel validation failed: {str(e)}")
-            else:
-                # Different BaseModel types
-                raise ValueError(f"Expected {self.input_schema.__name__} but got {type(input).__name__}")
-
-        # Case 2: Message is a dict
-        elif isinstance(input, dict):
-            try:
-                # Check if the schema is a TypedDict
-                if is_typed_dict(self.input_schema):
-                    validated_dict = validate_typed_dict(input, self.input_schema)
-                    return validated_dict
-                else:
-                    validated_model = self.input_schema(**input)
-                    return validated_model
-            except Exception as e:
-                raise ValueError(f"Failed to parse dict into {self.input_schema.__name__}: {str(e)}")
-
-        # Case 3: Other types not supported for structured input
-        else:
-            raise ValueError(
-                f"Cannot validate {type(input)} against input_schema. Expected dict or {self.input_schema.__name__} instance."
-            )
 
     @property
     def run_parameters(self) -> Dict[str, Any]:
@@ -397,27 +378,20 @@ class Workflow:
     def _initialize_session_state(
         self,
         session_state: Dict[str, Any],
-        user_id: Optional[str] = None,
         session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
         run_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Initialize the session state for the workflow."""
+        session_state["workflow_id"] = self.id
+        if self.name:
+            session_state["workflow_name"] = self.name
         if user_id:
             session_state["current_user_id"] = user_id
         if session_id is not None:
             session_state["current_session_id"] = session_id
         if run_id is not None:
             session_state["current_run_id"] = run_id
-
-        session_state.update(
-            {
-                "workflow_id": self.id,
-                "run_id": run_id,
-                "session_id": session_id,
-            }
-        )
-        if self.name:
-            session_state["workflow_name"] = self.name
 
         return session_state
 
@@ -585,19 +559,338 @@ class Workflow:
 
         return session.session_data["session_state"]  # type: ignore
 
-    async def adelete_session(self, session_id: str):
+    async def adelete_session(self, session_id: str, user_id: Optional[str] = None):
         """Delete the current session and save to storage"""
         if self.db is None:
             return
         # -*- Delete session
-        await self.db.delete_session(session_id=session_id)  # type: ignore
+        await self.db.delete_session(session_id=session_id, user_id=user_id)  # type: ignore
 
-    def delete_session(self, session_id: str):
+    def delete_session(self, session_id: str, user_id: Optional[str] = None):
         """Delete the current session and save to storage"""
         if self.db is None:
             return
         # -*- Delete session
-        self.db.delete_session(session_id=session_id)
+        self.db.delete_session(session_id=session_id, user_id=user_id)
+
+    # -*- Serialization Functions
+    def to_dict(self) -> Dict[str, Any]:
+        """
+        Convert the Workflow to a dictionary.
+
+        Returns:
+            Dict[str, Any]: Dictionary representation of the workflow configuration
+        """
+        config: Dict[str, Any] = {}
+
+        # --- Workflow settings ---
+        if self.name is not None:
+            config["name"] = self.name
+        if self.id is not None:
+            config["id"] = self.id
+        if self.description is not None:
+            config["description"] = self.description
+
+        # --- User settings ---
+        if self.user_id is not None:
+            config["user_id"] = self.user_id
+
+        # --- Session settings ---
+        if self.session_id is not None:
+            config["session_id"] = self.session_id
+        if self.session_state is not None:
+            config["session_state"] = self.session_state
+        config["overwrite_db_session_state"] = self.overwrite_db_session_state
+
+        # --- Database settings ---
+        if self.db is not None and hasattr(self.db, "to_dict"):
+            config["db"] = self.db.to_dict()
+
+        # --- History settings ---
+        config["add_workflow_history_to_steps"] = self.add_workflow_history_to_steps
+        config["num_history_runs"] = self.num_history_runs
+
+        # --- Streaming settings ---
+        if self.stream is not None:
+            config["stream"] = self.stream
+        config["stream_events"] = self.stream_events
+        config["stream_executor_events"] = self.stream_executor_events
+        config["store_events"] = self.store_events
+        config["store_executor_outputs"] = self.store_executor_outputs
+
+        # --- Schema settings ---
+        if self.input_schema is not None:
+            if isinstance(self.input_schema, type) and issubclass(self.input_schema, BaseModel):
+                config["input_schema"] = self.input_schema.__name__
+            elif isinstance(self.input_schema, dict):
+                config["input_schema"] = self.input_schema
+
+        # --- Metadata ---
+        if self.metadata is not None:
+            config["metadata"] = self.metadata
+
+        # --- Debug and telemetry settings ---
+        config["debug_mode"] = self.debug_mode
+        config["telemetry"] = self.telemetry
+
+        # --- Steps ---
+        if self.steps and isinstance(self.steps, list):
+            config["steps"] = [step.to_dict() for step in self.steps if hasattr(step, "to_dict")]
+
+        return config
+
+    @classmethod
+    def from_dict(
+        cls,
+        data: Dict[str, Any],
+        db: Optional["BaseDb"] = None,
+        links: Optional[List[Dict[str, Any]]] = None,
+        registry: Optional[Registry] = None,
+    ) -> "Workflow":
+        """
+        Create a Workflow from a dictionary.
+
+        Args:
+            data: Dictionary containing workflow configuration
+            db: Optional database for loading agents/teams in steps
+            links: Optional links for this workflow version
+            registry: Optional registry for rehydrating executors
+
+        Returns:
+            Workflow: Reconstructed workflow instance
+        """
+        config = data.copy()
+
+        # --- Handle DB reconstruction ---
+        if "db" in config and isinstance(config["db"], dict):
+            db_data = config["db"]
+            db_id = db_data.get("id")
+
+            # Try to get the db from the registry
+            if registry and db_id:
+                registry_db = registry.get_db(db_id)
+                if registry_db is not None:
+                    config["db"] = registry_db
+                else:
+                    del config["db"]
+            else:
+                # No registry or no db_id, fall back to creating from dict
+                config["db"] = db_from_dict(db_data)
+                if config["db"] is None:
+                    del config["db"]
+
+        # --- Handle Schema reconstruction ---
+        if "input_schema" in config and isinstance(config["input_schema"], str):
+            schema_cls = registry.get_schema(config["input_schema"]) if registry else None
+            if schema_cls:
+                config["input_schema"] = schema_cls
+            else:
+                log_warning(f"Input schema {config['input_schema']} not found in registry, skipping.")
+                del config["input_schema"]
+
+        # --- Handle steps reconstruction ---
+        steps: Optional[WorkflowSteps] = None
+        if "steps" in config and config["steps"]:
+            steps = [_step_from_dict(step_data, db=db, links=links, registry=registry) for step_data in config["steps"]]
+            del config["steps"]
+
+        return cls(
+            # --- Workflow settings ---
+            name=config.get("name"),
+            id=config.get("id"),
+            description=config.get("description"),
+            # --- User settings ---
+            user_id=config.get("user_id"),
+            # --- Session settings ---
+            session_id=config.get("session_id"),
+            session_state=config.get("session_state"),
+            overwrite_db_session_state=config.get("overwrite_db_session_state", False),
+            # --- Database settings ---
+            db=config.get("db"),
+            # --- History settings ---
+            add_workflow_history_to_steps=config.get("add_workflow_history_to_steps", False),
+            num_history_runs=config.get("num_history_runs", 3),
+            # --- Streaming settings ---
+            stream=config.get("stream"),
+            stream_events=config.get("stream_events", False),
+            stream_executor_events=config.get("stream_executor_events", True),
+            store_events=config.get("store_events", False),
+            store_executor_outputs=config.get("store_executor_outputs", True),
+            # --- Schema settings ---
+            input_schema=config.get("input_schema"),
+            # --- Metadata ---
+            metadata=config.get("metadata"),
+            # --- Debug and telemetry settings ---
+            debug_mode=config.get("debug_mode", False),
+            telemetry=config.get("telemetry", True),
+            # --- Steps ---
+            steps=steps,
+        )
+
+    def save(
+        self,
+        *,
+        db: Optional["BaseDb"] = None,
+        stage: str = "published",
+        label: Optional[str] = None,
+        notes: Optional[str] = None,
+    ) -> Optional[int]:
+        """
+        Save the workflow component and config.
+
+        Args:
+            db: The database to save the component and config to.
+            stage: The stage of the component. Defaults to "published".
+            label: The label of the component.
+            notes: The notes of the component.
+
+        Returns:
+            Optional[int]: The version number of the saved config.
+        """
+        db_ = db or self.db
+        if not db_:
+            raise ValueError("Db not initialized or provided")
+        if not isinstance(db_, BaseDb):
+            raise ValueError("Async databases not yet supported for save(). Use a sync database.")
+        if self.id is None:
+            self.id = generate_id_from_name(self.name)
+
+        # Track saved entity versions for pinning links
+        saved_versions: Dict[str, int] = {}
+
+        # Collect all links
+        all_links: List[Dict[str, Any]] = []
+
+        def _save_step_agents(
+            step: Any,
+            position: int,
+            saved_versions: Dict[str, int],
+            all_links: List[Dict[str, Any]],
+        ) -> None:
+            """Recursively save agents/teams in steps, including nested containers."""
+            if isinstance(step, Step):
+                # Save agent if present
+                if step.agent and isinstance(step.agent, Agent):
+                    agent_version = step.agent.save(
+                        db=db_,
+                        stage=stage,
+                        label=label,
+                        notes=notes,
+                    )
+                    if step.agent.id is not None and agent_version is not None:
+                        saved_versions[step.agent.id] = agent_version
+
+                # Save team if present
+                if step.team and isinstance(step.team, Team):
+                    team_version = step.team.save(db=db_, stage=stage, label=label, notes=notes)
+                    if step.team.id is not None and team_version is not None:
+                        saved_versions[step.team.id] = team_version
+
+                # Add links with position and pinned version
+                for link in step.get_links(position=position):
+                    if link["child_component_id"] in saved_versions:
+                        link["child_version"] = saved_versions[link["child_component_id"]]
+                    all_links.append(link)
+
+            elif isinstance(step, (Parallel, Loop, Steps, Condition)):
+                # Recursively process nested steps
+                for nested_position, nested_step in enumerate(step.steps):
+                    _save_step_agents(nested_step, nested_position, saved_versions, all_links)
+
+            elif isinstance(step, Router):
+                # Router uses 'choices' instead of 'steps'
+                for nested_position, nested_step in enumerate(step.choices):
+                    _save_step_agents(nested_step, nested_position, saved_versions, all_links)
+
+        try:
+            steps_to_save = self.steps if isinstance(self.steps, list) else []
+            for position, step in enumerate(steps_to_save):
+                _save_step_agents(step, position, saved_versions, all_links)
+
+            db_.upsert_component(
+                component_id=self.id,
+                component_type=ComponentType.WORKFLOW,
+                name=self.name,
+                description=self.description,
+                metadata=self.metadata,
+            )
+            config = db_.upsert_config(
+                component_id=self.id,
+                config=self.to_dict(),
+                links=all_links,
+                label=label,
+                stage=stage,
+                notes=notes,
+            )
+
+            return config.get("version")
+
+        except Exception as e:
+            log_error(f"Error saving workflow: {e}")
+            return None
+
+    @classmethod
+    def load(
+        cls,
+        id: str,
+        *,
+        db: "BaseDb",
+        registry: Optional["Registry"] = None,
+        label: Optional[str] = None,
+        version: Optional[int] = None,
+    ) -> Optional["Workflow"]:
+        """
+        Load a workflow by id.
+
+        Args:
+            id: The id of the workflow to load.
+            db: The database to load the workflow from.
+            label: The label of the workflow to load.
+
+        Returns:
+            The workflow loaded from the database or None if not found.
+        """
+        # TODO: Use db.load_component_graph instead of get_config
+        data: Optional[Dict[str, Any]] = db.get_config(component_id=id, label=label, version=version)
+        if data is None:
+            return None
+
+        config = data.get("config")
+        if config is None:
+            return None
+
+        workflow = cls.from_dict(config, db=db, registry=registry)
+
+        workflow.id = id
+        workflow.db = db
+
+        return workflow
+
+    def delete(
+        self,
+        *,
+        db: Optional["BaseDb"] = None,
+        hard_delete: bool = False,
+    ) -> bool:
+        """
+        Delete the workflow component.
+
+        Args:
+            db: The database to delete the workflow from.
+            hard_delete: Whether to hard delete the workflow.
+
+        Returns:
+            True if the workflow was deleted, False otherwise.
+        """
+        db_ = db or self.db
+        if not db_:
+            raise ValueError("Db not initialized or provided")
+        if not isinstance(db_, BaseDb):
+            raise ValueError("Async databases not yet supported for delete(). Use a sync database.")
+        if self.id is None:
+            raise ValueError("Cannot delete workflow without an id")
+
+        return db_.delete_component(component_id=self.id, hard_delete=hard_delete)
 
     async def aget_run_output(self, run_id: str, session_id: Optional[str] = None) -> Optional[WorkflowRunOutput]:
         """Get a RunOutput from the database."""
@@ -685,7 +978,11 @@ class Workflow:
         from time import time
 
         # Returning cached session if we have one
-        if self._workflow_session is not None and self._workflow_session.session_id == session_id:
+        if (
+            self._workflow_session is not None
+            and self._workflow_session.session_id == session_id
+            and (user_id is None or self._workflow_session.user_id == user_id)
+        ):
             return self._workflow_session
 
         # Try to load from database
@@ -693,7 +990,7 @@ class Workflow:
         if self.db is not None:
             log_debug(f"Reading WorkflowSession: {session_id}")
 
-            workflow_session = cast(WorkflowSession, self._read_session(session_id=session_id))
+            workflow_session = cast(WorkflowSession, self._read_session(session_id=session_id, user_id=user_id))
 
         if workflow_session is None:
             # Creating new session if none found
@@ -727,7 +1024,11 @@ class Workflow:
         from time import time
 
         # Returning cached session if we have one
-        if self._workflow_session is not None and self._workflow_session.session_id == session_id:
+        if (
+            self._workflow_session is not None
+            and self._workflow_session.session_id == session_id
+            and (user_id is None or self._workflow_session.user_id == user_id)
+        ):
             return self._workflow_session
 
         # Try to load from database
@@ -735,17 +1036,22 @@ class Workflow:
         if self.db is not None:
             log_debug(f"Reading WorkflowSession: {session_id}")
 
-            workflow_session = cast(WorkflowSession, await self._aread_session(session_id=session_id))
+            workflow_session = cast(WorkflowSession, await self._aread_session(session_id=session_id, user_id=user_id))
 
         if workflow_session is None:
             # Creating new session if none found
             log_debug(f"Creating new WorkflowSession: {session_id}")
+            session_data = {}
+            if self.session_state is not None:
+                from copy import deepcopy
+
+                session_data["session_state"] = deepcopy(self.session_state)
             workflow_session = WorkflowSession(
                 session_id=session_id,
                 workflow_id=self.id,
                 user_id=user_id,
                 workflow_data=self._get_workflow_data(),
-                session_data={},
+                session_data=session_data,
                 metadata=self.metadata,
                 created_at=int(time()),
             )
@@ -759,6 +1065,7 @@ class Workflow:
     async def aget_session(
         self,
         session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> Optional[WorkflowSession]:
         """Load an WorkflowSession from database.
 
@@ -774,7 +1081,9 @@ class Workflow:
 
         # Try to load from database
         if self.db is not None:
-            workflow_session = cast(WorkflowSession, await self._aread_session(session_id=session_id_to_load))
+            workflow_session = cast(
+                WorkflowSession, await self._aread_session(session_id=session_id_to_load, user_id=user_id)
+            )
             return workflow_session
 
         log_warning(f"WorkflowSession {session_id_to_load} not found in db")
@@ -783,6 +1092,7 @@ class Workflow:
     def get_session(
         self,
         session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> Optional[WorkflowSession]:
         """Load an WorkflowSession from database.
 
@@ -799,7 +1109,7 @@ class Workflow:
 
         # Try to load from database
         if self.db is not None and session_id_to_load is not None:
-            workflow_session = cast(WorkflowSession, self._read_session(session_id=session_id_to_load))
+            workflow_session = cast(WorkflowSession, self._read_session(session_id=session_id_to_load, user_id=user_id))
             return workflow_session
 
         log_warning(f"WorkflowSession {session_id_to_load} not found in db")
@@ -821,8 +1131,11 @@ class Workflow:
                 session.session_data["session_state"].pop("session_id", None)
                 session.session_data["session_state"].pop("workflow_name", None)
 
-            await self._aupsert_session(session=session)  # type: ignore
-            log_debug(f"Created or updated WorkflowSession record: {session.session_id}")
+            result = await self._aupsert_session(session=session)  # type: ignore
+            if result is None:
+                log_warning(f"WorkflowSession not persisted (ownership mismatch): {session.session_id}")
+            else:
+                log_debug(f"Created or updated WorkflowSession record: {session.session_id}")
 
     def save_session(self, session: WorkflowSession) -> None:
         """Save the WorkflowSession to storage
@@ -840,8 +1153,11 @@ class Workflow:
                 session.session_data["session_state"].pop("session_id", None)
                 session.session_data["session_state"].pop("workflow_name", None)
 
-            self._upsert_session(session=session)
-            log_debug(f"Created or updated WorkflowSession record: {session.session_id}")
+            result = self._upsert_session(session=session)
+            if result is None:
+                log_warning(f"WorkflowSession not persisted (ownership mismatch): {session.session_id}")
+            else:
+                log_debug(f"Created or updated WorkflowSession record: {session.session_id}")
 
     def get_chat_history(
         self, session_id: Optional[str] = None, last_n_runs: Optional[int] = None
@@ -892,23 +1208,30 @@ class Workflow:
         return session.get_chat_history(last_n_runs=last_n_runs)
 
     # -*- Session Database Functions
-    async def _aread_session(self, session_id: str) -> Optional[WorkflowSession]:
+    async def _aread_session(self, session_id: str, user_id: Optional[str] = None) -> Optional[WorkflowSession]:
         """Get a Session from the database."""
         try:
             if not self.db:
                 raise ValueError("Db not initialized")
-            session = await self.db.get_session(session_id=session_id, session_type=SessionType.WORKFLOW)  # type: ignore
+            if self._has_async_db():
+                session = await self.db.get_session(
+                    session_id=session_id, session_type=SessionType.WORKFLOW, user_id=user_id
+                )  # type: ignore
+            else:
+                session = self.db.get_session(
+                    session_id=session_id, session_type=SessionType.WORKFLOW, user_id=user_id
+                )
             return session if isinstance(session, (WorkflowSession, type(None))) else None
         except Exception as e:
             log_warning(f"Error getting session from db: {e}")
             return None
 
-    def _read_session(self, session_id: str) -> Optional[WorkflowSession]:
+    def _read_session(self, session_id: str, user_id: Optional[str] = None) -> Optional[WorkflowSession]:
         """Get a Session from the database."""
         try:
             if not self.db:
                 raise ValueError("Db not initialized")
-            session = self.db.get_session(session_id=session_id, session_type=SessionType.WORKFLOW)
+            session = self.db.get_session(session_id=session_id, session_type=SessionType.WORKFLOW, user_id=user_id)
             return session if isinstance(session, (WorkflowSession, type(None))) else None
         except Exception as e:
             log_warning(f"Error getting session from db: {e}")
@@ -1016,7 +1339,7 @@ class Workflow:
     def _broadcast_to_websocket(
         self,
         event: Any,
-        websocket_handler: Optional[WebSocketHandler] = None,
+        websocket_handler: Optional["WebSocketHandler"] = None,
     ) -> None:
         """Broadcast events to WebSocket if available (async context only)"""
         if websocket_handler:
@@ -1031,7 +1354,7 @@ class Workflow:
         self,
         event: "WorkflowRunOutputEvent",
         workflow_run_response: WorkflowRunOutput,
-        websocket_handler: Optional[WebSocketHandler] = None,
+        websocket_handler: Optional["WebSocketHandler"] = None,
     ) -> "WorkflowRunOutputEvent":
         """Handle workflow events for storage - similar to Team._handle_event"""
         from agno.run.agent import RunOutput
@@ -1059,8 +1382,71 @@ class Workflow:
                     workflow_run_response.events = []
                 workflow_run_response.events.append(event)
 
+        # Add to event buffer for reconnection support
+        # Use workflow_run_id for agent/team events, run_id for workflow events
+        buffer_run_id = None
+        event_index = None
+        if hasattr(event, "workflow_run_id") and event.workflow_run_id:
+            # Agent/Team event - use workflow_run_id
+            buffer_run_id = event.workflow_run_id
+        elif hasattr(event, "run_id") and event.run_id:
+            # Workflow event - use run_id
+            buffer_run_id = event.run_id
+
+        if buffer_run_id:
+            try:
+                from agno.os.managers import event_buffer
+
+                # add_event now returns the event_index
+                event_index = event_buffer.add_event(buffer_run_id, event)  # type: ignore
+            except Exception as e:
+                # Don't fail workflow execution if buffering fails
+                log_debug(f"Failed to add event to buffer: {e}")
+
         # Broadcast to WebSocket if available (async context only)
-        self._broadcast_to_websocket(event, websocket_handler)
+        # Include event_index for frontend reconnection support
+        if websocket_handler:
+            import asyncio
+
+            try:
+                loop = asyncio.get_running_loop()
+                if loop:
+                    # Pass event_index and run_id to websocket handler
+                    asyncio.create_task(
+                        websocket_handler.handle_event(event, event_index=event_index, run_id=buffer_run_id)
+                    )
+            except RuntimeError:
+                pass
+
+        # ALSO broadcast through websocket manager for reconnected clients
+        # This ensures clients who reconnect after workflow started still receive events
+        if buffer_run_id and websocket_handler:
+            try:
+                import asyncio
+
+                from agno.os.managers import websocket_manager
+
+                loop = asyncio.get_running_loop()
+                if loop:
+                    # Format the event for broadcast
+                    event_dict = event.model_dump() if hasattr(event, "model_dump") else event.to_dict()
+                    if event_index is not None:
+                        event_dict["event_index"] = event_index
+                    if "run_id" not in event_dict:
+                        event_dict["run_id"] = buffer_run_id
+
+                    # Broadcast to registered websocket (if different from original)
+                    import json
+
+                    from agno.utils.serialize import json_serializer
+
+                    asyncio.create_task(
+                        websocket_manager.broadcast_to_run(
+                            buffer_run_id, json.dumps(event_dict, default=json_serializer)
+                        )
+                    )
+            except Exception as e:
+                log_debug(f"Failed to broadcast through manager: {e}")
 
         return event
 
@@ -1080,6 +1466,9 @@ class Workflow:
             event.workflow_id = workflow_run_response.workflow_id
         if hasattr(event, "workflow_run_id"):
             event.workflow_run_id = workflow_run_response.run_id
+        # Set session_id to match workflow's session_id for consistent event tracking
+        if hasattr(event, "session_id") and workflow_run_response.session_id:
+            event.session_id = workflow_run_response.session_id
         if hasattr(event, "step_id") and step_id:
             event.step_id = step_id
         if hasattr(event, "step_name") and step_name is not None:
@@ -1755,6 +2144,17 @@ class Workflow:
         )
         yield self._handle_event(workflow_completed_event, workflow_run_response)
 
+        # Mark run as completed in event buffer
+        try:
+            from agno.os.managers import event_buffer
+
+            event_buffer.set_run_completed(
+                workflow_run_response.run_id,  # type: ignore
+                workflow_run_response.status or RunStatus.completed,
+            )
+        except Exception as e:
+            log_debug(f"Failed to mark run as completed in buffer: {e}")
+
         # Stop timer on error
         if workflow_run_response.metrics:
             workflow_run_response.metrics.stop_timer()
@@ -1855,6 +2255,7 @@ class Workflow:
         """Execute a specific pipeline by name asynchronously"""
         from inspect import isasyncgenfunction, iscoroutinefunction, isgeneratorfunction
 
+        await aregister_run(run_context.run_id)
         # Read existing session from database
         workflow_session, run_context.session_state = await self._aload_or_create_session(
             session_id=session_id, user_id=user_id, session_state=run_context.session_state
@@ -1878,14 +2279,14 @@ class Workflow:
             elif isasyncgenfunction(self.steps):  # type: ignore
                 async_gen = await self._acall_custom_function(self.steps, execution_input, **kwargs)
                 async for chunk in async_gen:
-                    raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+                    await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
                     if hasattr(chunk, "content") and chunk.content is not None and isinstance(chunk.content, str):
                         content += chunk.content
                     else:
                         content += str(chunk)
                 workflow_run_response.content = content
             else:
-                raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+                await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
                 workflow_run_response.content = self._call_custom_function(self.steps, execution_input, **kwargs)
             workflow_run_response.status = RunStatus.completed
 
@@ -1905,7 +2306,7 @@ class Workflow:
                 output_files: List[File] = (execution_input.files or []).copy()  # Start with input files
 
                 for i, step in enumerate(self.steps):  # type: ignore[arg-type]
-                    raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+                    await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
                     step_name = getattr(step, "name", f"step_{i + 1}")
                     log_debug(f"Async Executing step {i + 1}/{self._get_step_count()}: {step_name}")
 
@@ -1920,7 +2321,7 @@ class Workflow:
                     )
 
                     # Check for cancellation before executing step
-                    raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+                    await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
 
                     step_output = await step.aexecute(  # type: ignore[union-attr]
                         step_input,
@@ -1938,7 +2339,7 @@ class Workflow:
                     )
 
                     # Check for cancellation after step execution
-                    raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+                    await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
 
                     # Update the workflow-level previous_step_outputs dictionary
                     previous_step_outputs[step_name] = step_output
@@ -2018,7 +2419,7 @@ class Workflow:
         else:
             self.save_session(session=workflow_session)
         # Always clean up the run tracking
-        cleanup_run(workflow_run_response.run_id)  # type: ignore
+        await acleanup_run(workflow_run_response.run_id)  # type: ignore
 
         # Log Workflow Telemetry
         if self.telemetry:
@@ -2034,12 +2435,14 @@ class Workflow:
         workflow_run_response: WorkflowRunOutput,
         run_context: RunContext,
         stream_events: bool = False,
-        websocket_handler: Optional[WebSocketHandler] = None,
+        websocket_handler: Optional["WebSocketHandler"] = None,
         background_tasks: Optional[Any] = None,
         **kwargs: Any,
     ) -> AsyncIterator[WorkflowRunOutputEvent]:
         """Execute a specific pipeline by name with event streaming"""
         from inspect import isasyncgenfunction, iscoroutinefunction, isgeneratorfunction
+
+        await aregister_run(run_context.run_id)
 
         # Read existing session from database
         workflow_session, run_context.session_state = await self._aload_or_create_session(
@@ -2072,7 +2475,7 @@ class Workflow:
                 content = ""
                 async_gen = await self._acall_custom_function(self.steps, execution_input, **kwargs)
                 async for chunk in async_gen:
-                    raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+                    await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
                     if hasattr(chunk, "content") and chunk.content is not None and isinstance(chunk.content, str):
                         content += chunk.content
                         yield chunk
@@ -2107,7 +2510,7 @@ class Workflow:
 
                 for i, step in enumerate(self.steps):  # type: ignore[arg-type]
                     if workflow_run_response.run_id:
-                        raise_if_cancelled(workflow_run_response.run_id)
+                        await araise_if_cancelled(workflow_run_response.run_id)
                     step_name = getattr(step, "name", f"step_{i + 1}")
                     log_debug(f"Async streaming step {i + 1}/{self._get_step_count()}: {step_name}")
 
@@ -2145,7 +2548,7 @@ class Workflow:
                         background_tasks=background_tasks,
                     ):
                         if workflow_run_response.run_id:
-                            raise_if_cancelled(workflow_run_response.run_id)
+                            await araise_if_cancelled(workflow_run_response.run_id)
 
                         # Accumulate partial data from streaming events
                         partial_step_content = self._accumulate_partial_step_data(event, partial_step_content)  # type: ignore
@@ -2347,6 +2750,17 @@ class Workflow:
         )
         yield self._handle_event(workflow_completed_event, workflow_run_response, websocket_handler=websocket_handler)
 
+        # Mark run as completed in event buffer
+        try:
+            from agno.os.managers import event_buffer
+
+            event_buffer.set_run_completed(
+                workflow_run_response.run_id,  # type: ignore
+                workflow_run_response.status or RunStatus.completed,
+            )
+        except Exception as e:
+            log_debug(f"Failed to mark run as completed in buffer: {e}")
+
         # Stop timer on error
         if workflow_run_response.metrics:
             workflow_run_response.metrics.stop_timer()
@@ -2364,7 +2778,7 @@ class Workflow:
             await self._alog_workflow_telemetry(session_id=session_id, run_id=workflow_run_response.run_id)
 
         # Always clean up the run tracking
-        cleanup_run(workflow_run_response.run_id)  # type: ignore
+        await acleanup_run(workflow_run_response.run_id)  # type: ignore
 
     async def _arun_background(
         self,
@@ -2406,6 +2820,7 @@ class Workflow:
             run_id=run_id,
             input=input,
             session_id=session_id,
+            user_id=user_id,
             workflow_id=self.id,
             workflow_name=self.name,
             created_at=int(datetime.now().timestamp()),
@@ -2494,7 +2909,7 @@ class Workflow:
         videos: Optional[List[Video]] = None,
         files: Optional[List[File]] = None,
         stream_events: bool = False,
-        websocket_handler: Optional[WebSocketHandler] = None,
+        websocket_handler: Optional["WebSocketHandler"] = None,
         **kwargs: Any,
     ) -> WorkflowRunOutput:
         """Execute workflow in background with streaming and WebSocket broadcasting"""
@@ -2524,6 +2939,7 @@ class Workflow:
             run_id=run_id,
             input=input,
             session_id=session_id,
+            user_id=user_id,
             workflow_id=self.id,
             workflow_name=self.name,
             created_at=int(datetime.now().timestamp()),
@@ -2698,6 +3114,7 @@ class Workflow:
         execution_input: WorkflowExecutionInput,
         run_context: RunContext,
         stream: bool = False,
+        stream_events: bool = False,
         **kwargs: Any,
     ) -> Union[WorkflowRunOutput, Iterator[WorkflowRunOutputEvent]]:
         """
@@ -2711,7 +3128,7 @@ class Workflow:
             execution_input: The execution input
             run_context: The run context
             stream: Whether to stream the response
-            stream_intermediate_steps: Whether to stream intermediate steps
+            stream_events: Whether to stream all events
 
         Returns:
             WorkflowRunOutput if stream=False, Iterator[WorkflowRunOutputEvent] if stream=True
@@ -2723,6 +3140,7 @@ class Workflow:
                 execution_input=execution_input,
                 run_context=run_context,
                 stream=stream,
+                stream_events=stream_events,
                 **kwargs,
             )
         else:
@@ -2757,7 +3175,7 @@ class Workflow:
 
         from agno.run.workflow import WorkflowCompletedEvent, WorkflowRunOutputEvent
 
-        # Initialize agent with stream_intermediate_steps=True so tool yields events
+        # Initialize agent with stream_events=True so tool yields events
         self._initialize_workflow_agent(session, execution_input, run_context=run_context, stream=stream)
 
         # Build dependencies with workflow context
@@ -2779,6 +3197,7 @@ class Workflow:
             run_id=run_id,
             input=execution_input.input,
             session_id=session.session_id,
+            user_id=session.user_id,
             workflow_id=self.id,
             workflow_name=self.name,
             created_at=int(datetime.now().timestamp()),
@@ -2796,8 +3215,8 @@ class Workflow:
         for event in self.agent.run(  # type: ignore[union-attr]
             input=agent_input,
             stream=True,
-            stream_intermediate_steps=True,
-            yield_run_response=True,
+            stream_events=True,
+            yield_run_output=True,
             session_id=session.session_id,
             dependencies=run_context.dependencies,  # Pass context dynamically per-run
             session_state=run_context.session_state,  # Pass session state dynamically per-run
@@ -2960,6 +3379,7 @@ class Workflow:
                 run_id=run_id,
                 input=execution_input.input,
                 session_id=session.session_id,
+                user_id=session.user_id,
                 workflow_id=self.id,
                 workflow_name=self.name,
                 created_at=int(datetime.now().timestamp()),
@@ -3008,6 +3428,7 @@ class Workflow:
                     run_id=str(uuid4()),
                     input=execution_input.input,
                     session_id=session.session_id,
+                    user_id=session.user_id,
                     workflow_id=self.id,
                     workflow_name=self.name,
                     created_at=int(datetime.now().timestamp()),
@@ -3020,7 +3441,7 @@ class Workflow:
         session: WorkflowSession,
         execution_input: WorkflowExecutionInput,
         run_context: RunContext,
-        websocket_handler: Optional[WebSocketHandler] = None,
+        websocket_handler: Optional["WebSocketHandler"] = None,
         stream: bool = False,
     ) -> None:
         """Initialize the workflow agent with async tools (but NOT context - that's passed per-run)"""
@@ -3056,7 +3477,7 @@ class Workflow:
         run_context: RunContext,
         execution_input: WorkflowExecutionInput,
         stream: bool = False,
-        websocket_handler: Optional[WebSocketHandler] = None,
+        websocket_handler: Optional["WebSocketHandler"] = None,
         **kwargs: Any,
     ):
         """
@@ -3079,7 +3500,8 @@ class Workflow:
         if stream:
 
             async def _stream():
-                session, session_state_loaded = await self._aload_session_for_workflow_agent(
+                await aregister_run(run_context.run_id)
+                session, _ = await self._aload_session_for_workflow_agent(
                     run_context.session_id, run_context.user_id, run_context.session_state
                 )
                 async for event in self._arun_workflow_agent_stream(
@@ -3097,7 +3519,8 @@ class Workflow:
         else:
 
             async def _execute():
-                session, session_state_loaded = await self._aload_session_for_workflow_agent(
+                await aregister_run(run_context.run_id)
+                session, _ = await self._aload_session_for_workflow_agent(
                     run_context.session_id, run_context.user_id, run_context.session_state
                 )
                 return await self._arun_workflow_agent(
@@ -3117,7 +3540,7 @@ class Workflow:
         execution_input: WorkflowExecutionInput,
         run_context: RunContext,
         stream: bool = False,
-        websocket_handler: Optional[WebSocketHandler] = None,
+        websocket_handler: Optional["WebSocketHandler"] = None,
         **kwargs: Any,
     ) -> AsyncIterator[WorkflowRunOutputEvent]:
         """
@@ -3162,6 +3585,7 @@ class Workflow:
             run_id=run_id,
             input=execution_input.input,
             session_id=session.session_id,
+            user_id=session.user_id,
             workflow_id=self.id,
             workflow_name=self.name,
             created_at=int(datetime.now().timestamp()),
@@ -3180,8 +3604,8 @@ class Workflow:
         async for event in self.agent.arun(  # type: ignore[union-attr]
             input=agent_input,
             stream=True,
-            stream_intermediate_steps=True,
-            yield_run_response=True,
+            stream_events=True,
+            yield_run_output=True,
             session_id=session.session_id,
             dependencies=run_context.dependencies,  # Pass context dynamically per-run
             session_state=run_context.session_state,  # Pass session state dynamically per-run
@@ -3360,6 +3784,7 @@ class Workflow:
                 run_id=run_id,
                 input=execution_input.input,
                 session_id=session.session_id,
+                user_id=session.user_id,
                 workflow_id=self.id,
                 workflow_name=self.name,
                 created_at=int(datetime.now().timestamp()),
@@ -3427,6 +3852,7 @@ class Workflow:
                     run_id=str(uuid4()),
                     input=execution_input.input,
                     session_id=session.session_id,
+                    user_id=session.user_id,
                     workflow_id=self.id,
                     workflow_name=self.name,
                     created_at=int(datetime.now().timestamp()),
@@ -3445,6 +3871,17 @@ class Workflow:
         """
         return cancel_run_global(run_id)
 
+    async def acancel_run(self, run_id: str) -> bool:
+        """Cancel a running workflow execution (async version).
+
+        Args:
+            run_id (str): The run_id to cancel.
+
+        Returns:
+            bool: True if the run was found and marked for cancellation, False otherwise.
+        """
+        return await acancel_run_global(run_id)
+
     @overload
     def run(
         self,
@@ -3460,9 +3897,9 @@ class Workflow:
         files: Optional[List[File]] = None,
         stream: Literal[False] = False,
         stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         background: Optional[bool] = False,
         background_tasks: Optional[Any] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
     ) -> WorkflowRunOutput: ...
 
     @overload
@@ -3480,9 +3917,9 @@ class Workflow:
         files: Optional[List[File]] = None,
         stream: Literal[True] = True,
         stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         background: Optional[bool] = False,
         background_tasks: Optional[Any] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
     ) -> Iterator[WorkflowRunOutputEvent]: ...
 
     def run(
@@ -3497,11 +3934,11 @@ class Workflow:
         images: Optional[List[Image]] = None,
         videos: Optional[List[Video]] = None,
         files: Optional[List[File]] = None,
-        stream: bool = False,
+        stream: Optional[bool] = None,
         stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         background: Optional[bool] = False,
         background_tasks: Optional[Any] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> Union[WorkflowRunOutput, Iterator[WorkflowRunOutputEvent]]:
         """Execute the workflow synchronously with optional streaming"""
@@ -3512,7 +3949,10 @@ class Workflow:
         run_id = run_id or str(uuid4())
         register_run(run_id)
 
-        input = self._validate_input(input)
+        if input is None and self.input_schema is not None:
+            raise ValueError("Input is required when input_schema is provided")
+        if input is not None and self.input_schema is not None:
+            input = validate_input(input, self.input_schema)
         if background:
             raise RuntimeError("Background execution is not supported for sync run()")
 
@@ -3525,23 +3965,26 @@ class Workflow:
         workflow_session = self.read_or_create_session(session_id=session_id, user_id=user_id)
         self._update_metadata(session=workflow_session)
 
-        # Initialize session state
-        session_state = self._initialize_session_state(
+        # Initialize session state. Get it from DB if relevant.
+        session_state = self._load_session_state(
+            session=workflow_session,
             session_state=session_state if session_state is not None else {},
-            user_id=user_id,
+        )
+
+        # Add current session/user/run info to session_state
+        session_state = self._initialize_session_state(
+            session_state=session_state,
             session_id=session_id,
+            user_id=user_id,
             run_id=run_id,
         )
-        # Update session state from DB
-        session_state = self._load_session_state(session=workflow_session, session_state=session_state)
 
         log_debug(f"Workflow Run Start: {self.name}", center=True)
 
-        # Use simple defaults
-        stream = stream or self.stream or False
-        stream_events = (stream_events or stream_intermediate_steps) or (
-            self.stream_events or self.stream_intermediate_steps
-        )
+        # Use stream override value when necessary
+        if stream is None:
+            stream = self.stream or False
+        stream_events = stream_events or self.stream_events
 
         # Can't stream events if streaming is disabled
         if stream is False:
@@ -3573,6 +4016,9 @@ class Workflow:
             session_id=session_id,
             user_id=user_id,
             session_state=session_state,
+            workflow_id=self.id,
+            workflow_name=self.name,
+            dependencies=dependencies,
         )
 
         # Execute workflow agent if configured
@@ -3583,6 +4029,7 @@ class Workflow:
                 execution_input=inputs,
                 run_context=run_context,
                 stream=stream,
+                stream_events=stream_events,
                 **kwargs,
             )
 
@@ -3591,6 +4038,7 @@ class Workflow:
             run_id=run_id,
             input=input,
             session_id=session_id,
+            user_id=user_id,
             workflow_id=self.id,
             workflow_name=self.name,
             created_at=int(datetime.now().timestamp()),
@@ -3635,10 +4083,10 @@ class Workflow:
         files: Optional[List[File]] = None,
         stream: Literal[False] = False,
         stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         background: Optional[bool] = False,
         websocket: Optional[WebSocket] = None,
         background_tasks: Optional[Any] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
     ) -> WorkflowRunOutput: ...
 
     @overload
@@ -3656,10 +4104,10 @@ class Workflow:
         files: Optional[List[File]] = None,
         stream: Literal[True] = True,
         stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         background: Optional[bool] = False,
         websocket: Optional[WebSocket] = None,
         background_tasks: Optional[Any] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
     ) -> AsyncIterator[WorkflowRunOutputEvent]: ...
 
     def arun(  # type: ignore
@@ -3674,35 +4122,30 @@ class Workflow:
         images: Optional[List[Image]] = None,
         videos: Optional[List[Video]] = None,
         files: Optional[List[File]] = None,
-        stream: bool = False,
+        stream: Optional[bool] = None,
         stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = False,
         background: Optional[bool] = False,
         websocket: Optional[WebSocket] = None,
         background_tasks: Optional[Any] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> Union[WorkflowRunOutput, AsyncIterator[WorkflowRunOutputEvent]]:
         """Execute the workflow synchronously with optional streaming"""
 
-        input = self._validate_input(input)
+        if input is None and self.input_schema is not None:
+            raise ValueError("Input is required when input_schema is provided")
+        if input is not None and self.input_schema is not None:
+            input = validate_input(input, self.input_schema)
 
         websocket_handler = None
         if websocket:
-            from agno.workflow.types import WebSocketHandler
+            from agno.os.managers import WebSocketHandler
 
             websocket_handler = WebSocketHandler(websocket=websocket)
 
         if background:
             if stream and websocket:
-                # Consider both stream_events and stream_intermediate_steps (deprecated)
-                if stream_intermediate_steps is not None:
-                    warnings.warn(
-                        "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
-                        DeprecationWarning,
-                        stacklevel=2,
-                    )
-                stream_events = stream_events or stream_intermediate_steps or False
-
+                stream_events = stream_events or False
                 # Background + Streaming + WebSocket = Real-time events
                 return self._arun_background_stream(  # type: ignore
                     input=input,
@@ -3740,7 +4183,6 @@ class Workflow:
 
         # Set the id for the run and register it immediately for cancellation tracking
         run_id = run_id or str(uuid4())
-        register_run(run_id)
 
         self.initialize_workflow()
         session_id, user_id = self._initialize_session(session_id=session_id, user_id=user_id)
@@ -3751,15 +4193,15 @@ class Workflow:
             session_id=session_id,
             user_id=user_id,
             session_state=session_state,
+            dependencies=dependencies,
         )
 
         log_debug(f"Async Workflow Run Start: {self.name}", center=True)
 
-        # Use simple defaults
-        stream = stream or self.stream or False
-        stream_events = (stream_events or stream_intermediate_steps) or (
-            self.stream_events or self.stream_intermediate_steps
-        )
+        # Use stream override value when necessary
+        if stream is None:
+            stream = self.stream or False
+        stream_events = stream_events or self.stream_events
 
         # Can't stream events if streaming is disabled
         if stream is False:
@@ -3798,6 +4240,7 @@ class Workflow:
             run_id=run_id,
             input=input,
             session_id=session_id,
+            user_id=user_id,
             workflow_id=self.id,
             workflow_name=self.name,
             created_at=int(datetime.now().timestamp()),
@@ -4024,7 +4467,8 @@ class Workflow:
                 **kwargs,
             )
 
-    def to_dict(self) -> Dict[str, Any]:
+    # TODO: This is a temporary method to convert the workflow to a dictionary for steps. We need to find a better way to do this.
+    def to_dict_for_steps(self) -> Dict[str, Any]:
         """Convert workflow to dictionary representation"""
 
         def serialize_step(step):
@@ -4409,3 +4853,286 @@ class Workflow:
                 session_id=session_id,
                 **kwargs,
             )
+
+    def deep_copy(self, *, update: Optional[Dict[str, Any]] = None) -> "Workflow":
+        """Create and return a deep copy of this Workflow, optionally updating fields.
+
+        This creates a fresh Workflow instance with isolated mutable state while sharing
+        heavy resources like database connections. Steps containing agents/teams are also
+        deep copied to ensure complete isolation.
+
+        Args:
+            update: Optional dictionary of fields to override in the new Workflow.
+
+        Returns:
+            Workflow: A new Workflow instance with copied state.
+        """
+        from copy import copy, deepcopy
+        from dataclasses import fields
+
+        from agno.utils.log import log_debug, log_warning
+
+        # Extract the fields to set for the new Workflow
+        fields_for_new_workflow: Dict[str, Any] = {}
+
+        for f in fields(self):
+            # Skip private fields (not part of __init__ signature)
+            if f.name.startswith("_"):
+                continue
+
+            field_value = getattr(self, f.name)
+            if field_value is not None:
+                # Special handling for steps that may contain agents/teams
+                if f.name == "steps" and field_value is not None:
+                    fields_for_new_workflow[f.name] = self._deep_copy_steps(field_value)
+                # Special handling for workflow agent
+                elif f.name == "agent" and field_value is not None:
+                    if hasattr(field_value, "deep_copy"):
+                        fields_for_new_workflow[f.name] = field_value.deep_copy()
+                    else:
+                        fields_for_new_workflow[f.name] = field_value
+                # Share heavy resources - these maintain connections/pools that shouldn't be duplicated
+                elif f.name == "db":
+                    fields_for_new_workflow[f.name] = field_value
+                # For compound types, attempt a deep copy
+                elif isinstance(field_value, (list, dict, set)):
+                    try:
+                        fields_for_new_workflow[f.name] = deepcopy(field_value)
+                    except Exception:
+                        try:
+                            fields_for_new_workflow[f.name] = copy(field_value)
+                        except Exception as e:
+                            log_warning(f"Failed to copy field: {f.name} - {e}")
+                            fields_for_new_workflow[f.name] = field_value
+                # For pydantic models, attempt a model_copy
+                elif isinstance(field_value, BaseModel):
+                    try:
+                        fields_for_new_workflow[f.name] = field_value.model_copy(deep=True)
+                    except Exception:
+                        try:
+                            fields_for_new_workflow[f.name] = field_value.model_copy(deep=False)
+                        except Exception:
+                            fields_for_new_workflow[f.name] = field_value
+                # For other types, attempt a shallow copy
+                else:
+                    try:
+                        fields_for_new_workflow[f.name] = copy(field_value)
+                    except Exception:
+                        fields_for_new_workflow[f.name] = field_value
+
+        # Update fields if provided
+        if update:
+            fields_for_new_workflow.update(update)
+
+        # Create a new Workflow
+        try:
+            new_workflow = self.__class__(**fields_for_new_workflow)
+            log_debug(f"Created new {self.__class__.__name__}")
+            return new_workflow
+        except Exception as e:
+            from agno.utils.log import log_error
+
+            log_error(f"Failed to create deep copy of {self.__class__.__name__}: {e}")
+            raise
+
+    def _deep_copy_steps(self, steps: Any) -> Any:
+        """Deep copy workflow steps, handling nested agents and teams."""
+        from agno.workflow.steps import Steps
+
+        if steps is None:
+            return None
+
+        # Handle Steps container
+        if isinstance(steps, Steps):
+            copied_steps = []
+            if steps.steps:
+                for step in steps.steps:
+                    copied_steps.append(self._deep_copy_single_step(step))
+            return Steps(steps=copied_steps)
+
+        # Handle list of steps
+        if isinstance(steps, list):
+            return [self._deep_copy_single_step(step) for step in steps]
+
+        # Handle callable steps
+        if callable(steps):
+            return steps
+
+        # Handle single step
+        return self._deep_copy_single_step(steps)
+
+    def _deep_copy_single_step(self, step: Any) -> Any:
+        """Deep copy a single step, handling nested agents and teams."""
+        from copy import copy, deepcopy
+
+        from agno.agent import Agent
+        from agno.team import Team
+        from agno.workflow.condition import Condition
+        from agno.workflow.loop import Loop
+        from agno.workflow.parallel import Parallel
+        from agno.workflow.router import Router
+        from agno.workflow.step import Step
+        from agno.workflow.steps import Steps
+
+        # Handle Step with agent or team
+        if isinstance(step, Step):
+            step_kwargs: Dict[str, Any] = {}
+            if step.name:
+                step_kwargs["name"] = step.name
+            if step.description:
+                step_kwargs["description"] = step.description
+            if step.executor:
+                step_kwargs["executor"] = step.executor
+            if step.agent:
+                step_kwargs["agent"] = step.agent.deep_copy() if hasattr(step.agent, "deep_copy") else step.agent
+            if step.team:
+                step_kwargs["team"] = step.team.deep_copy() if hasattr(step.team, "deep_copy") else step.team
+            # Copy Step configuration attributes
+            for attr in [
+                "max_retries",
+                "timeout_seconds",
+                "skip_on_failure",
+                "strict_input_validation",
+                "add_workflow_history",
+                "num_history_runs",
+            ]:
+                if hasattr(step, attr):
+                    value = getattr(step, attr)
+                    # Only include non-default values to avoid overriding defaults
+                    if value is not None:
+                        step_kwargs[attr] = value
+            return Step(**step_kwargs)
+
+        # Handle direct Agent
+        if isinstance(step, Agent):
+            return step.deep_copy() if hasattr(step, "deep_copy") else step
+
+        # Handle direct Team
+        if isinstance(step, Team):
+            return step.deep_copy() if hasattr(step, "deep_copy") else step
+
+        # Handle Parallel steps
+        if isinstance(step, Parallel):
+            copied_parallel_steps = [self._deep_copy_single_step(s) for s in step.steps] if step.steps else []
+            return Parallel(*copied_parallel_steps, name=step.name, description=step.description)
+
+        # Handle Loop steps
+        if isinstance(step, Loop):
+            copied_loop_steps = [self._deep_copy_single_step(s) for s in step.steps] if step.steps else []
+            return Loop(
+                steps=copied_loop_steps,
+                name=step.name,
+                description=step.description,
+                max_iterations=step.max_iterations,
+                end_condition=step.end_condition,
+            )
+
+        # Handle Condition steps
+        if isinstance(step, Condition):
+            copied_condition_steps = [self._deep_copy_single_step(s) for s in step.steps] if step.steps else []
+            return Condition(
+                evaluator=step.evaluator, steps=copied_condition_steps, name=step.name, description=step.description
+            )
+
+        # Handle Router steps
+        if isinstance(step, Router):
+            copied_choices = [self._deep_copy_single_step(s) for s in step.choices] if step.choices else []
+            return Router(choices=copied_choices, name=step.name, description=step.description, selector=step.selector)
+
+        # Handle Steps container
+        if isinstance(step, Steps):
+            copied_steps = [self._deep_copy_single_step(s) for s in step.steps] if step.steps else []
+            return Steps(name=step.name, description=step.description, steps=copied_steps)
+
+        # For other types, attempt deep copy
+        try:
+            return deepcopy(step)
+        except Exception:
+            try:
+                return copy(step)
+            except Exception:
+                return step
+
+
+def get_workflow_by_id(
+    db: "BaseDb",
+    id: str,
+    version: Optional[int] = None,
+    label: Optional[str] = None,
+    registry: Optional["Registry"] = None,
+) -> Optional["Workflow"]:
+    """
+    Get a Workflow by id from the database (new entities/configs schema).
+
+    Resolution order:
+    - if version is provided: load that version
+    - elif label is provided: load that labeled version
+    - else: load entity.current_version
+
+    Args:
+        db: Database handle.
+        id: Workflow entity_id.
+        version: Optional integer config version.
+        label: Optional version_label.
+        registry: Optional Registry for reconstructing unserializable components.
+
+    Returns:
+        Workflow instance or None.
+    """
+    try:
+        row = db.get_config(component_id=id, version=version, label=label)
+        if row is None:
+            return None
+
+        cfg = row.get("config") if isinstance(row, dict) else None
+        if cfg is None:
+            raise ValueError(f"Invalid config found for workflow {id}")
+
+        resolved_version = row.get("version")
+
+        # Get links for this workflow version
+        links = db.get_links(component_id=id, version=resolved_version) if resolved_version else []
+
+        workflow = Workflow.from_dict(cfg, db=db, links=links, registry=registry)
+
+        # Ensure workflow.id is set to the component_id
+        workflow.id = id
+
+        return workflow
+
+    except Exception as e:
+        log_error(f"Error loading Workflow {id} from database: {e}")
+        return None
+
+
+def get_workflows(
+    db: "BaseDb",
+    registry: Optional["Registry"] = None,
+) -> List["Workflow"]:
+    """Get all workflows from the database"""
+    workflows: List[Workflow] = []
+    try:
+        components, _ = db.list_components(component_type=ComponentType.WORKFLOW)
+        for component in components:
+            try:
+                config = db.get_config(component_id=component["component_id"])
+                if config is not None:
+                    workflow_config = config.get("config")
+                    if workflow_config is not None:
+                        component_id = component["component_id"]
+                        if "id" not in workflow_config:
+                            workflow_config["id"] = component_id
+                        workflow = Workflow.from_dict(workflow_config, db=db, registry=registry)
+                        # Ensure workflow.id is set to the component_id
+                        workflow.id = component_id
+                        workflows.append(workflow)
+            except Exception as e:
+                component_id = component.get("component_id", "unknown")
+                log_error(f"Error loading Workflow {component_id} from database: {e}")
+                # Continue loading other workflows even if this one fails
+                continue
+        return workflows
+
+    except Exception as e:
+        log_error(f"Error loading Workflows from database: {e}")
+        return []

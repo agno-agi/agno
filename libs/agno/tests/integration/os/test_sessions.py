@@ -674,7 +674,7 @@ def test_create_empty_session_minimal(shared_db, test_agent: Agent):
     data = response.json()
     assert "session_id" in data
     assert data["session_id"] is not None
-    assert data["agent_id"] is None
+    assert data.get("agent_id") is None  # None fields are excluded with response_model_exclude_none=True
     assert data.get("session_state") is None
     assert data.get("chat_history") == []
 

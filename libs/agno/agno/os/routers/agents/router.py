@@ -1,5 +1,5 @@
 import json
-from typing import TYPE_CHECKING, Any, AsyncGenerator, List, Optional, cast
+from typing import TYPE_CHECKING, Any, AsyncGenerator, List, Optional, Union, cast
 from uuid import uuid4
 
 from fastapi import (
@@ -9,16 +9,19 @@ from fastapi import (
     File,
     Form,
     HTTPException,
+    Query,
     Request,
     UploadFile,
 )
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from agno.agent.agent import Agent
+from agno.agent.remote import RemoteAgent
+from agno.db.base import BaseDb
 from agno.exceptions import InputCheckError, OutputCheckError
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
-from agno.os.auth import get_authentication_dependency, require_resource_access
+from agno.os.auth import get_auth_token_from_request, get_authentication_dependency, require_resource_access
 from agno.os.routers.agents.schema import AgentResponse
 from agno.os.schema import (
     BadRequestResponse,
@@ -37,7 +40,9 @@ from agno.os.utils import (
     process_image,
     process_video,
 )
+from agno.registry import Registry
 from agno.run.agent import RunErrorEvent, RunOutput
+from agno.run.base import RunStatus
 from agno.utils.log import log_debug, log_error, log_warning
 
 if TYPE_CHECKING:
@@ -45,7 +50,7 @@ if TYPE_CHECKING:
 
 
 async def agent_response_streamer(
-    agent: Agent,
+    agent: Union[Agent, RemoteAgent],
     message: str,
     session_id: Optional[str] = None,
     user_id: Optional[str] = None,
@@ -54,12 +59,22 @@ async def agent_response_streamer(
     videos: Optional[List[Video]] = None,
     files: Optional[List[FileMedia]] = None,
     background_tasks: Optional[BackgroundTasks] = None,
+    auth_token: Optional[str] = None,
     **kwargs: Any,
 ) -> AsyncGenerator:
     try:
         # Pass background_tasks if provided
         if background_tasks is not None:
             kwargs["background_tasks"] = background_tasks
+
+        if "stream_events" in kwargs:
+            stream_events = kwargs.pop("stream_events")
+        else:
+            stream_events = True
+
+        # Pass auth_token for remote agents
+        if auth_token and isinstance(agent, RemoteAgent):
+            kwargs["auth_token"] = auth_token
 
         run_response = agent.arun(
             input=message,
@@ -70,7 +85,7 @@ async def agent_response_streamer(
             videos=videos,
             files=files,
             stream=True,
-            stream_events=True,
+            stream_events=stream_events,
             **kwargs,
         )
         async for run_response_chunk in run_response:
@@ -94,14 +109,20 @@ async def agent_response_streamer(
 
 
 async def agent_continue_response_streamer(
-    agent: Agent,
-    run_id: Optional[str] = None,
-    updated_tools: Optional[List] = None,
+    agent: Union[Agent, RemoteAgent],
+    run_id: str,
+    updated_tools: List,
     session_id: Optional[str] = None,
     user_id: Optional[str] = None,
     background_tasks: Optional[BackgroundTasks] = None,
+    auth_token: Optional[str] = None,
 ) -> AsyncGenerator:
     try:
+        # Build kwargs for remote agent auth
+        extra_kwargs: dict = {}
+        if auth_token and isinstance(agent, RemoteAgent):
+            extra_kwargs["auth_token"] = auth_token
+
         continue_response = agent.acontinue_run(
             run_id=run_id,
             updated_tools=updated_tools,
@@ -110,6 +131,7 @@ async def agent_continue_response_streamer(
             stream=True,
             stream_events=True,
             background_tasks=background_tasks,
+            **extra_kwargs,
         )
         async for run_response_chunk in continue_response:
             yield format_sse_event(run_response_chunk)  # type: ignore
@@ -138,6 +160,7 @@ async def agent_continue_response_streamer(
 def get_agent_router(
     os: "AgentOS",
     settings: AgnoAPISettings = AgnoAPISettings(),
+    registry: Optional[Registry] = None,
 ) -> APIRouter:
     """
     Create the agent router with comprehensive OpenAPI documentation.
@@ -194,38 +217,42 @@ def get_agent_router(
         request: Request,
         background_tasks: BackgroundTasks,
         message: str = Form(...),
-        stream: bool = Form(False),
+        stream: bool = Form(True),
         session_id: Optional[str] = Form(None),
         user_id: Optional[str] = Form(None),
         files: Optional[List[UploadFile]] = File(None),
+        version: Optional[str] = Form(None),
+        background: bool = Form(False),
     ):
         kwargs = await get_request_kwargs(request, create_agent_run)
 
-        if hasattr(request.state, "user_id"):
-            if user_id:
+        if hasattr(request.state, "user_id") and request.state.user_id is not None:
+            if user_id and user_id != request.state.user_id:
                 log_warning("User ID parameter passed in both request state and kwargs, using request state")
             user_id = request.state.user_id
-        if hasattr(request.state, "session_id"):
-            if session_id:
+        if hasattr(request.state, "session_id") and request.state.session_id is not None:
+            if session_id and session_id != request.state.session_id:
                 log_warning("Session ID parameter passed in both request state and kwargs, using request state")
             session_id = request.state.session_id
-        if hasattr(request.state, "session_state"):
+        if hasattr(request.state, "session_state") and request.state.session_state is not None:
             session_state = request.state.session_state
             if "session_state" in kwargs:
                 log_warning("Session state parameter passed in both request state and kwargs, using request state")
             kwargs["session_state"] = session_state
-        if hasattr(request.state, "dependencies"):
+        if hasattr(request.state, "dependencies") and request.state.dependencies is not None:
             dependencies = request.state.dependencies
             if "dependencies" in kwargs:
                 log_warning("Dependencies parameter passed in both request state and kwargs, using request state")
             kwargs["dependencies"] = dependencies
-        if hasattr(request.state, "metadata"):
+        if hasattr(request.state, "metadata") and request.state.metadata is not None:
             metadata = request.state.metadata
             if "metadata" in kwargs:
                 log_warning("Metadata parameter passed in both request state and kwargs, using request state")
             kwargs["metadata"] = metadata
 
-        agent = get_agent_by_id(agent_id, os.agents)
+        agent = get_agent_by_id(
+            agent_id, os.agents, os.db, registry, version=int(version) if version else None, create_fresh=True
+        )
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
 
@@ -320,6 +347,42 @@ def get_agent_router(
                 else:
                     raise HTTPException(status_code=400, detail="Unsupported file type")
 
+        # Extract auth token for remote agents
+        auth_token = get_auth_token_from_request(request)
+
+        # Background execution: return 202 immediately with run metadata
+        if background:
+            if isinstance(agent, RemoteAgent):
+                raise HTTPException(status_code=400, detail="Background execution is not supported for remote agents")
+            if not agent.db:
+                raise HTTPException(
+                    status_code=400, detail="Background execution requires a database to be configured on the agent"
+                )
+
+            run_response = cast(
+                RunOutput,
+                await agent.arun(  # type: ignore[misc]
+                    input=message,
+                    session_id=session_id,
+                    user_id=user_id,
+                    images=base64_images if base64_images else None,
+                    audio=base64_audios if base64_audios else None,
+                    videos=base64_videos if base64_videos else None,
+                    files=input_files if input_files else None,
+                    stream=False,
+                    background=True,
+                    **kwargs,
+                ),
+            )
+            return JSONResponse(
+                status_code=202,
+                content={
+                    "run_id": run_response.run_id,
+                    "session_id": run_response.session_id,
+                    "status": run_response.status.value if run_response.status else "PENDING",
+                },
+            )
+
         if stream:
             return StreamingResponse(
                 agent_response_streamer(
@@ -332,15 +395,20 @@ def get_agent_router(
                     videos=base64_videos if base64_videos else None,
                     files=input_files if input_files else None,
                     background_tasks=background_tasks,
+                    auth_token=auth_token,
                     **kwargs,
                 ),
                 media_type="text/event-stream",
             )
         else:
+            # Pass auth_token for remote agents
+            if auth_token and isinstance(agent, RemoteAgent):
+                kwargs["auth_token"] = auth_token
+
             try:
                 run_response = cast(
                     RunOutput,
-                    await agent.arun(
+                    await agent.arun(  # type: ignore[misc]
                         input=message,
                         session_id=session_id,
                         user_id=user_id,
@@ -379,13 +447,13 @@ def get_agent_router(
         agent_id: str,
         run_id: str,
     ):
-        agent = get_agent_by_id(agent_id, os.agents)
+        agent = get_agent_by_id(agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True)
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
 
-        if not agent.cancel_run(run_id=run_id):
-            raise HTTPException(status_code=500, detail="Failed to cancel run")
-
+        # cancel_run always stores cancellation intent (even for not-yet-registered runs
+        # in cancel-before-start scenarios), so we always return success.
+        await agent.acancel_run(run_id=run_id)
         return JSONResponse(content={}, status_code=200)
 
     @router.post(
@@ -413,6 +481,9 @@ def get_agent_router(
             },
             400: {"description": "Invalid JSON in tools field or invalid tool structure", "model": BadRequestResponse},
             404: {"description": "Agent not found", "model": NotFoundResponse},
+            409: {
+                "description": "Run is not paused (e.g. run is already running, continued, or errored). Only PAUSED runs can be continued.",
+            },
         },
         dependencies=[Depends(require_resource_access("agents", "run", "agent_id"))],
     )
@@ -426,9 +497,9 @@ def get_agent_router(
         user_id: Optional[str] = Form(None),
         stream: bool = Form(True),
     ):
-        if hasattr(request.state, "user_id"):
+        if hasattr(request.state, "user_id") and request.state.user_id is not None:
             user_id = request.state.user_id
-        if hasattr(request.state, "session_id"):
+        if hasattr(request.state, "session_id") and request.state.session_id is not None:
             session_id = request.state.session_id
 
         # Parse the JSON string manually
@@ -437,7 +508,7 @@ def get_agent_router(
         except json.JSONDecodeError:
             raise HTTPException(status_code=400, detail="Invalid JSON in tools field")
 
-        agent = get_agent_by_id(agent_id, os.agents)
+        agent = get_agent_by_id(agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True)
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
 
@@ -446,8 +517,31 @@ def get_agent_router(
                 "Continuing run without session_id. This might lead to unexpected behavior if session context is important."
             )
 
+        # Only allow /continue when the run is in a paused state. If running, continued, or errored, return 409.
+        if session_id and not isinstance(agent, RemoteAgent):
+            existing_run = await agent.aget_run_output(run_id=run_id, session_id=session_id)
+            if existing_run is not None:
+                is_paused = getattr(existing_run, "is_paused", False)
+                if not is_paused:
+                    status = getattr(existing_run, "status", None)
+                    _status_to_detail = {
+                        RunStatus.running: "run is already running",
+                        RunStatus.completed: "run is already continued",
+                        RunStatus.error: "run is already errored",
+                        RunStatus.cancelled: "run is already cancelled",
+                        RunStatus.pending: "run is already pending",
+                    }
+                    detail = _status_to_detail.get(
+                        status,  # type: ignore[arg-type]
+                        f"run is not paused (status={getattr(status, 'value', status)})",
+                    )
+                    raise HTTPException(
+                        status_code=409,
+                        detail=detail,
+                    )
+
         # Convert tools dict to ToolExecution objects if provided
-        updated_tools = None
+        updated_tools = []
         if tools_data:
             try:
                 from agno.models.response import ToolExecution
@@ -455,6 +549,9 @@ def get_agent_router(
                 updated_tools = [ToolExecution.from_dict(tool) for tool in tools_data]
             except Exception as e:
                 raise HTTPException(status_code=400, detail=f"Invalid structure or content for tools: {str(e)}")
+
+        # Extract auth token for remote agents
+        auth_token = get_auth_token_from_request(request)
 
         if stream:
             return StreamingResponse(
@@ -465,20 +562,27 @@ def get_agent_router(
                     session_id=session_id,
                     user_id=user_id,
                     background_tasks=background_tasks,
+                    auth_token=auth_token,
                 ),
                 media_type="text/event-stream",
             )
         else:
+            # Build extra kwargs for remote agent auth
+            extra_kwargs: dict = {}
+            if auth_token and isinstance(agent, RemoteAgent):
+                extra_kwargs["auth_token"] = auth_token
+
             try:
                 run_response_obj = cast(
                     RunOutput,
-                    await agent.acontinue_run(
+                    await agent.acontinue_run(  # type: ignore
                         run_id=run_id,  # run_id from path
                         updated_tools=updated_tools,
                         session_id=session_id,
                         user_id=user_id,
                         stream=False,
                         background_tasks=background_tasks,
+                        **extra_kwargs,
                     ),
                 )
                 return run_response_obj.to_dict()
@@ -526,9 +630,6 @@ def get_agent_router(
     )
     async def get_agents(request: Request) -> List[AgentResponse]:
         """Return the list of all Agents present in the contextual OS"""
-        if os.agents is None:
-            return []
-
         # Filter agents based on user's scopes (only if authorization is enabled)
         if getattr(request.state, "authorization_enabled", False):
             from agno.os.auth import filter_resources_by_access, get_accessible_resources
@@ -539,14 +640,27 @@ def get_agent_router(
                 raise HTTPException(status_code=403, detail="Insufficient permissions")
 
             # Limit results based on the user's access/scopes
-            accessible_agents = filter_resources_by_access(request, os.agents, "agents")
+            accessible_agents = filter_resources_by_access(request, os.agents or [], "agents")
         else:
-            accessible_agents = os.agents
+            accessible_agents = os.agents or []
 
-        agents = []
-        for agent in accessible_agents:
-            agent_response = await AgentResponse.from_agent(agent=agent)
-            agents.append(agent_response)
+        agents: List[AgentResponse] = []
+        if accessible_agents:
+            for agent in accessible_agents:
+                if isinstance(agent, RemoteAgent):
+                    agents.append(await agent.get_agent_config())
+                else:
+                    agent_response = await AgentResponse.from_agent(agent=agent)
+                    agents.append(agent_response)
+
+        if os.db and isinstance(os.db, BaseDb):
+            from agno.agent.agent import get_agents
+
+            db_agents = get_agents(db=os.db, registry=registry)
+            if db_agents:
+                for db_agent in db_agents:
+                    agent_response = await AgentResponse.from_agent(agent=db_agent)
+                    agents.append(agent_response)
 
         return agents
 
@@ -590,10 +704,89 @@ def get_agent_router(
         dependencies=[Depends(require_resource_access("agents", "read", "agent_id"))],
     )
     async def get_agent(agent_id: str, request: Request) -> AgentResponse:
-        agent = get_agent_by_id(agent_id, os.agents)
+        agent = get_agent_by_id(agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True)
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
 
-        return await AgentResponse.from_agent(agent)
+        if isinstance(agent, RemoteAgent):
+            return await agent.get_agent_config()
+        else:
+            return await AgentResponse.from_agent(agent=agent)
+
+    @router.get(
+        "/agents/{agent_id}/runs/{run_id}",
+        tags=["Agents"],
+        operation_id="get_agent_run",
+        summary="Get Agent Run",
+        description=(
+            "Retrieve the status and output of an agent run. Use this to poll for background run completion.\n\n"
+            "Requires the `session_id` that was returned when the run was created."
+        ),
+        responses={
+            200: {"description": "Run output retrieved successfully"},
+            404: {"description": "Agent or run not found", "model": NotFoundResponse},
+        },
+        dependencies=[Depends(require_resource_access("agents", "run", "agent_id"))],
+    )
+    async def get_agent_run(
+        agent_id: str,
+        run_id: str,
+        session_id: str = Query(..., description="Session ID for the run"),
+    ):
+        agent = get_agent_by_id(agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True)
+        if agent is None:
+            raise HTTPException(status_code=404, detail="Agent not found")
+        if isinstance(agent, RemoteAgent):
+            raise HTTPException(status_code=400, detail="Run polling is not supported for remote agents")
+
+        run_output = await agent.aget_run_output(run_id=run_id, session_id=session_id)
+        if run_output is None:
+            raise HTTPException(status_code=404, detail="Run not found")
+
+        return run_output.to_dict()
+
+    @router.get(
+        "/agents/{agent_id}/runs",
+        tags=["Agents"],
+        operation_id="list_agent_runs",
+        summary="List Agent Runs",
+        description=(
+            "List runs for an agent within a session, optionally filtered by status.\n\n"
+            "Useful for monitoring background runs and viewing run history."
+        ),
+        responses={
+            200: {"description": "List of runs retrieved successfully"},
+            404: {"description": "Agent not found", "model": NotFoundResponse},
+        },
+        dependencies=[Depends(require_resource_access("agents", "run", "agent_id"))],
+    )
+    async def list_agent_runs(
+        agent_id: str,
+        session_id: str = Query(..., description="Session ID to list runs for"),
+        status: Optional[str] = Query(None, description="Filter by run status (PENDING, RUNNING, COMPLETED, ERROR)"),
+    ):
+        from agno.os.schema import RunSchema
+
+        agent = get_agent_by_id(agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True)
+        if agent is None:
+            raise HTTPException(status_code=404, detail="Agent not found")
+        if isinstance(agent, RemoteAgent):
+            raise HTTPException(status_code=400, detail="Run listing is not supported for remote agents")
+
+        # Load the session to get its runs
+        from agno.agent._storage import aread_or_create_session
+
+        session = await aread_or_create_session(agent, session_id=session_id)
+        runs = session.runs or []
+
+        # Convert to dicts and optionally filter by status
+        result = []
+        for run in runs:
+            run_dict = run.to_dict()
+            if status and run_dict.get("status") != status:
+                continue
+            result.append(RunSchema.from_dict(run_dict))
+
+        return result
 
     return router

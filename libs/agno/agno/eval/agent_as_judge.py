@@ -333,7 +333,7 @@ class AgentAsJudgeEval(BaseEval):
                 </output>
             """)
 
-            response = await evaluator_agent.arun(prompt, stream=False)
+            response = await evaluator_agent.arun(prompt, stream=False)  # type: ignore[misc]
             judge_response = response.content
             if not isinstance(judge_response, (NumericJudgeResponse, BinaryJudgeResponse)):
                 raise EvalError(f"Invalid response: {judge_response}")
@@ -518,8 +518,11 @@ class AgentAsJudgeEval(BaseEval):
         if self.print_summary or print_summary:
             result.print_summary(console)
 
+        # evaluator model info
+        model_id = self.model.id if self.model is not None else None
+        model_provider = self.model.provider if self.model is not None else None
         # Log to DB
-        self._log_eval_to_db(run_id=run_id, result=result)
+        self._log_eval_to_db(run_id=run_id, result=result, model_id=model_id, model_provider=model_provider)
 
         if self.telemetry:
             from agno.api.evals import EvalRunCreate, create_eval_run_telemetry
@@ -613,8 +616,11 @@ class AgentAsJudgeEval(BaseEval):
         if self.print_summary or print_summary:
             result.print_summary(console)
 
+        # evaluator model info
+        model_id = self.model.id if self.model is not None else None
+        model_provider = self.model.provider if self.model is not None else None
         # Log to DB
-        await self._async_log_eval_to_db(run_id=run_id, result=result)
+        await self._async_log_eval_to_db(run_id=run_id, result=result, model_id=model_id, model_provider=model_provider)
 
         if self.telemetry:
             from agno.api.evals import EvalRunCreate, async_create_eval_run_telemetry
@@ -681,8 +687,11 @@ class AgentAsJudgeEval(BaseEval):
         if self.print_summary or print_summary:
             result.print_summary(console)
 
+        # evaluator model info
+        model_id = self.model.id if self.model is not None else None
+        model_provider = self.model.provider if self.model is not None else None
         # Log to DB
-        self._log_eval_to_db(run_id=run_id, result=result)
+        self._log_eval_to_db(run_id=run_id, result=result, model_id=model_id, model_provider=model_provider)
 
         if self.telemetry:
             from agno.api.evals import EvalRunCreate, create_eval_run_telemetry
@@ -748,8 +757,11 @@ class AgentAsJudgeEval(BaseEval):
         if self.print_summary or print_summary:
             result.print_summary(console)
 
+        # evaluator model info
+        model_id = self.model.id if self.model is not None else None
+        model_provider = self.model.provider if self.model is not None else None
         # Log to DB
-        await self._async_log_eval_to_db(run_id=run_id, result=result)
+        await self._async_log_eval_to_db(run_id=run_id, result=result, model_id=model_id, model_provider=model_provider)
 
         if self.telemetry:
             from agno.api.evals import EvalRunCreate, async_create_eval_run_telemetry
@@ -801,15 +813,14 @@ class AgentAsJudgeEval(BaseEval):
         if isinstance(run_output, RunOutput):
             agent_id = run_output.agent_id
             team_id = None
-            model_id = run_output.model
-            model_provider = run_output.model_provider
         elif isinstance(run_output, TeamRunOutput):
             agent_id = None
             team_id = run_output.team_id
-            model_id = run_output.model
-            model_provider = run_output.model_provider
 
-        # Log to DB if we have a valid result (use run_id from result)
+        # evaluator model info
+        model_id = self.model.id if self.model is not None else None
+        model_provider = self.model.provider if self.model is not None else None
+        # Log to DB if we have a valid result
         if result:
             self._log_eval_to_db(
                 run_id=result.run_id,
@@ -841,15 +852,14 @@ class AgentAsJudgeEval(BaseEval):
         if isinstance(run_output, RunOutput):
             agent_id = run_output.agent_id
             team_id = None
-            model_id = run_output.model
-            model_provider = run_output.model_provider
         elif isinstance(run_output, TeamRunOutput):
             agent_id = None
             team_id = run_output.team_id
-            model_id = run_output.model
-            model_provider = run_output.model_provider
 
-        # Log to DB if we have a valid result (use run_id from result)
+        # evaluator model info
+        model_id = self.model.id if self.model is not None else None
+        model_provider = self.model.provider if self.model is not None else None
+        # Log to DB if we have a valid result
         if result:
             await self._async_log_eval_to_db(
                 run_id=result.run_id,

@@ -61,7 +61,7 @@ def print_response(
         tags_to_include_in_markdown = {"think", "thinking"}
 
     with Live(console=console) as live_console:
-        status = Status("Thinking...", spinner="aesthetic", speed=0.4, refresh_per_second=10)
+        status = Status("Working...", spinner="aesthetic", speed=0.4, refresh_per_second=10)
         live_console.update(status)
 
         response_timer = Timer()
@@ -121,17 +121,19 @@ def print_response(
         team_markdown = False
         member_markdown = {}
         if markdown:
-            for member in team.members:
-                if member.id is not None:
-                    member_markdown[member.id] = True
+            if isinstance(team.members, list):
+                for member in team.members:
+                    if member.id is not None:
+                        member_markdown[member.id] = True
             team_markdown = True
 
         if team.output_schema is not None:
             team_markdown = False
 
-        for member in team.members:
-            if member.output_schema is not None and member.id is not None:
-                member_markdown[member.id] = False  # type: ignore
+        if isinstance(team.members, list):
+            for member in team.members:
+                if member.output_schema is not None and member.id is not None:
+                    member_markdown[member.id] = False  # type: ignore
 
         # Handle reasoning
         reasoning_steps = []
@@ -349,7 +351,7 @@ def print_response(
                 panels.append(summary_panel)
                 team.session_summary_manager.summaries_updated = False
 
-        # Final update to remove the "Thinking..." status
+        # Final update to remove the "Working..." status
         panels = [p for p in panels if not isinstance(p, Status)]
         live_console.update(Group(*panels))
 
@@ -373,7 +375,6 @@ def print_response_stream(
     files: Optional[Sequence[File]] = None,
     markdown: bool = False,
     stream_events: bool = False,
-    stream_intermediate_steps: bool = False,  # type: ignore
     knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
     add_history_to_context: Optional[bool] = None,
     dependencies: Optional[Dict[str, Any]] = None,
@@ -411,7 +412,7 @@ def print_response_stream(
     processed_tool_calls = set()
 
     with Live(console=console) as live_console:
-        status = Status("Thinking...", spinner="aesthetic", speed=0.4, refresh_per_second=10)
+        status = Status("Working...", spinner="aesthetic", speed=0.4, refresh_per_second=10)
         live_console.update(status)
         response_timer = Timer()
         response_timer.start()
@@ -736,17 +737,19 @@ def print_response_stream(
             live_console.update(Group(*panels))
             team.session_summary_manager.summaries_updated = False
 
-        # Final update to remove the "Thinking..." status
+        # Final update to remove the "Working..." status
         panels = [p for p in panels if not isinstance(p, Status)]
 
         if markdown:
-            for member in team.members:
-                if member.id is not None:
-                    member_markdown[member.id] = True
+            if isinstance(team.members, list):
+                for member in team.members:
+                    if member.id is not None:
+                        member_markdown[member.id] = True
 
-        for member in team.members:
-            if member.output_schema is not None and member.id is not None:
-                member_markdown[member.id] = False  # type: ignore
+        if isinstance(team.members, list):
+            for member in team.members:
+                if member.output_schema is not None and member.id is not None:
+                    member_markdown[member.id] = False  # type: ignore
 
         # Final panels assembly - we'll recreate the panels from scratch to ensure correct order
         final_panels = []
@@ -993,7 +996,7 @@ async def aprint_response(
         tags_to_include_in_markdown = {"think", "thinking"}
 
     with Live(console=console) as live_console:
-        status = Status("Thinking...", spinner="aesthetic", speed=0.4, refresh_per_second=10)
+        status = Status("Working...", spinner="aesthetic", speed=0.4, refresh_per_second=10)
         live_console.update(status)
 
         response_timer = Timer()
@@ -1053,17 +1056,19 @@ async def aprint_response(
         team_markdown = False
         member_markdown = {}
         if markdown:
-            for member in team.members:
-                if member.id is not None:
-                    member_markdown[member.id] = True
+            if isinstance(team.members, list):
+                for member in team.members:
+                    if member.id is not None:
+                        member_markdown[member.id] = True
             team_markdown = True
 
         if team.output_schema is not None:
             team_markdown = False
 
-        for member in team.members:
-            if member.output_schema is not None and member.id is not None:
-                member_markdown[member.id] = False  # type: ignore
+        if isinstance(team.members, list):
+            for member in team.members:
+                if member.output_schema is not None and member.id is not None:
+                    member_markdown[member.id] = False  # type: ignore
 
         # Handle reasoning
         reasoning_steps = []
@@ -1279,7 +1284,7 @@ async def aprint_response(
                 panels.append(summary_panel)
                 team.session_summary_manager.summaries_updated = False
 
-        # Final update to remove the "Thinking..." status
+        # Final update to remove the "Working..." status
         panels = [p for p in panels if not isinstance(p, Status)]
         live_console.update(Group(*panels))
 
@@ -1303,7 +1308,6 @@ async def aprint_response_stream(
     files: Optional[Sequence[File]] = None,
     markdown: bool = False,
     stream_events: bool = False,
-    stream_intermediate_steps: bool = False,  # type: ignore
     knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
     add_history_to_context: Optional[bool] = None,
     dependencies: Optional[Dict[str, Any]] = None,
@@ -1342,7 +1346,7 @@ async def aprint_response_stream(
     final_panels = []  # type: ignore
 
     with Live(console=console) as live_console:
-        status = Status("Thinking...", spinner="aesthetic", speed=0.4, refresh_per_second=10)
+        status = Status("Working...", spinner="aesthetic", speed=0.4, refresh_per_second=10)
         live_console.update(status)
         response_timer = Timer()
         response_timer.start()
@@ -1665,17 +1669,19 @@ async def aprint_response_stream(
             live_console.update(Group(*panels))
             team.session_summary_manager.summaries_updated = False
 
-        # Final update to remove the "Thinking..." status
+        # Final update to remove the "Working..." status
         panels = [p for p in panels if not isinstance(p, Status)]
 
         if markdown:
-            for member in team.members:
-                if member.id is not None:
-                    member_markdown[member.id] = True  # type: ignore
+            if isinstance(team.members, list):
+                for member in team.members:
+                    if member.id is not None:
+                        member_markdown[member.id] = True  # type: ignore
 
-        for member in team.members:
-            if member.output_schema is not None and member.id is not None:
-                member_markdown[member.id] = False  # type: ignore
+        if isinstance(team.members, list):
+            for member in team.members:
+                if member.output_schema is not None and member.id is not None:
+                    member_markdown[member.id] = False  # type: ignore
 
         # Final panels assembly - we'll recreate the panels from scratch to ensure correct order
         final_panels = []

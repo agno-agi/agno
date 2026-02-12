@@ -51,8 +51,11 @@ class TeamRunInput:
             return self.input_content.model_dump_json(exclude_none=True)
         elif isinstance(self.input_content, Message):
             return json.dumps(self.input_content.to_dict())
-        elif isinstance(self.input_content, list) and self.input_content and isinstance(self.input_content[0], Message):
-            return json.dumps([m.to_dict() for m in self.input_content])
+        elif isinstance(self.input_content, list):
+            try:
+                return json.dumps(self.to_dict().get("input_content"))
+            except Exception:
+                return str(self.input_content)
         else:
             return str(self.input_content)
 
@@ -67,22 +70,15 @@ class TeamRunInput:
                 result["input_content"] = self.input_content.model_dump(exclude_none=True)
             elif isinstance(self.input_content, Message):
                 result["input_content"] = self.input_content.to_dict()
-
-            # Handle input_content provided as a list of Message objects
-            elif (
-                isinstance(self.input_content, list)
-                and self.input_content
-                and isinstance(self.input_content[0], Message)
-            ):
-                result["input_content"] = [m.to_dict() for m in self.input_content]
-
-            # Handle input_content provided as a list of dicts
-            elif (
-                isinstance(self.input_content, list) and self.input_content and isinstance(self.input_content[0], dict)
-            ):
-                for content in self.input_content:
-                    # Handle media input
-                    if isinstance(content, dict):
+            elif isinstance(self.input_content, list):
+                serialized_items: List[Any] = []
+                for item in self.input_content:
+                    if isinstance(item, Message):
+                        serialized_items.append(item.to_dict())
+                    elif isinstance(item, BaseModel):
+                        serialized_items.append(item.model_dump(exclude_none=True))
+                    elif isinstance(item, dict):
+                        content = dict(item)
                         if content.get("images"):
                             content["images"] = [
                                 img.to_dict() if isinstance(img, Image) else img for img in content["images"]
@@ -99,7 +95,11 @@ class TeamRunInput:
                             content["files"] = [
                                 file.to_dict() if isinstance(file, File) else file for file in content["files"]
                             ]
-                result["input_content"] = self.input_content
+                        serialized_items.append(content)
+                    else:
+                        serialized_items.append(item)
+
+                result["input_content"] = serialized_items
             else:
                 result["input_content"] = self.input_content
 
@@ -146,6 +146,7 @@ class TeamRunEvent(str, Enum):
 
     tool_call_started = "TeamToolCallStarted"
     tool_call_completed = "TeamToolCallCompleted"
+    tool_call_error = "TeamToolCallError"
 
     reasoning_started = "TeamReasoningStarted"
     reasoning_step = "TeamReasoningStep"
@@ -163,6 +164,15 @@ class TeamRunEvent(str, Enum):
 
     output_model_response_started = "TeamOutputModelResponseStarted"
     output_model_response_completed = "TeamOutputModelResponseCompleted"
+
+    model_request_started = "TeamModelRequestStarted"
+    model_request_completed = "TeamModelRequestCompleted"
+
+    compression_started = "TeamCompressionStarted"
+    compression_completed = "TeamCompressionCompleted"
+
+    run_paused = "TeamRunPaused"
+    run_continued = "TeamRunContinued"
 
     custom_event = "CustomEvent"
 
@@ -288,6 +298,32 @@ class RunCancelledEvent(BaseTeamRunEvent):
 
 
 @dataclass
+class RunPausedEvent(BaseTeamRunEvent):
+    """Event sent when the team run is paused due to HITL requirements"""
+
+    event: str = TeamRunEvent.run_paused.value
+    tools: Optional[List[ToolExecution]] = None
+    requirements: Optional[List[RunRequirement]] = None
+
+    @property
+    def is_paused(self):
+        return True
+
+    @property
+    def active_requirements(self) -> List[RunRequirement]:
+        if not self.requirements:
+            return []
+        return [req for req in self.requirements if not req.is_resolved()]
+
+
+@dataclass
+class RunContinuedEvent(BaseTeamRunEvent):
+    """Event sent when a paused team run is continued"""
+
+    event: str = TeamRunEvent.run_continued.value
+
+
+@dataclass
 class PreHookStartedEvent(BaseTeamRunEvent):
     event: str = TeamRunEvent.pre_hook_started.value
     pre_hook_name: Optional[str] = None
@@ -321,6 +357,7 @@ class MemoryUpdateStartedEvent(BaseTeamRunEvent):
 @dataclass
 class MemoryUpdateCompletedEvent(BaseTeamRunEvent):
     event: str = TeamRunEvent.memory_update_completed.value
+    memories: Optional[List[Any]] = None
 
 
 @dataclass
@@ -379,6 +416,13 @@ class ToolCallCompletedEvent(BaseTeamRunEvent):
 
 
 @dataclass
+class ToolCallErrorEvent(BaseTeamRunEvent):
+    event: str = TeamRunEvent.tool_call_error.value
+    tool: Optional[ToolExecution] = None
+    error: Optional[str] = None
+
+
+@dataclass
 class ParserModelResponseStartedEvent(BaseTeamRunEvent):
     event: str = TeamRunEvent.parser_model_response_started.value
 
@@ -399,6 +443,48 @@ class OutputModelResponseCompletedEvent(BaseTeamRunEvent):
 
 
 @dataclass
+class ModelRequestStartedEvent(BaseTeamRunEvent):
+    """Event sent when a model request is about to be made"""
+
+    event: str = TeamRunEvent.model_request_started.value
+    model: Optional[str] = None
+    model_provider: Optional[str] = None
+
+
+@dataclass
+class ModelRequestCompletedEvent(BaseTeamRunEvent):
+    """Event sent when a model request has completed"""
+
+    event: str = TeamRunEvent.model_request_completed.value
+    model: Optional[str] = None
+    model_provider: Optional[str] = None
+    input_tokens: Optional[int] = None
+    output_tokens: Optional[int] = None
+    total_tokens: Optional[int] = None
+    time_to_first_token: Optional[float] = None
+    reasoning_tokens: Optional[int] = None
+    cache_read_tokens: Optional[int] = None
+    cache_write_tokens: Optional[int] = None
+
+
+@dataclass
+class CompressionStartedEvent(BaseTeamRunEvent):
+    """Event sent when tool result compression is about to start"""
+
+    event: str = TeamRunEvent.compression_started.value
+
+
+@dataclass
+class CompressionCompletedEvent(BaseTeamRunEvent):
+    """Event sent when tool result compression has completed"""
+
+    event: str = TeamRunEvent.compression_completed.value
+    tool_results_compressed: Optional[int] = None
+    original_size: Optional[int] = None
+    compressed_size: Optional[int] = None
+
+
+@dataclass
 class CustomEvent(BaseTeamRunEvent):
     event: str = TeamRunEvent.custom_event.value
 
@@ -416,6 +502,8 @@ TeamRunOutputEvent = Union[
     RunCompletedEvent,
     RunErrorEvent,
     RunCancelledEvent,
+    RunPausedEvent,
+    RunContinuedEvent,
     PreHookStartedEvent,
     PreHookCompletedEvent,
     ReasoningStartedEvent,
@@ -428,10 +516,15 @@ TeamRunOutputEvent = Union[
     SessionSummaryCompletedEvent,
     ToolCallStartedEvent,
     ToolCallCompletedEvent,
+    ToolCallErrorEvent,
     ParserModelResponseStartedEvent,
     ParserModelResponseCompletedEvent,
     OutputModelResponseStartedEvent,
     OutputModelResponseCompletedEvent,
+    ModelRequestStartedEvent,
+    ModelRequestCompletedEvent,
+    CompressionStartedEvent,
+    CompressionCompletedEvent,
     CustomEvent,
 ]
 
@@ -444,6 +537,8 @@ TEAM_RUN_EVENT_TYPE_REGISTRY = {
     TeamRunEvent.run_completed.value: RunCompletedEvent,
     TeamRunEvent.run_error.value: RunErrorEvent,
     TeamRunEvent.run_cancelled.value: RunCancelledEvent,
+    TeamRunEvent.run_paused.value: RunPausedEvent,
+    TeamRunEvent.run_continued.value: RunContinuedEvent,
     TeamRunEvent.pre_hook_started.value: PreHookStartedEvent,
     TeamRunEvent.pre_hook_completed.value: PreHookCompletedEvent,
     TeamRunEvent.post_hook_started.value: PostHookStartedEvent,
@@ -458,10 +553,15 @@ TEAM_RUN_EVENT_TYPE_REGISTRY = {
     TeamRunEvent.session_summary_completed.value: SessionSummaryCompletedEvent,
     TeamRunEvent.tool_call_started.value: ToolCallStartedEvent,
     TeamRunEvent.tool_call_completed.value: ToolCallCompletedEvent,
+    TeamRunEvent.tool_call_error.value: ToolCallErrorEvent,
     TeamRunEvent.parser_model_response_started.value: ParserModelResponseStartedEvent,
     TeamRunEvent.parser_model_response_completed.value: ParserModelResponseCompletedEvent,
     TeamRunEvent.output_model_response_started.value: OutputModelResponseStartedEvent,
     TeamRunEvent.output_model_response_completed.value: OutputModelResponseCompletedEvent,
+    TeamRunEvent.model_request_started.value: ModelRequestStartedEvent,
+    TeamRunEvent.model_request_completed.value: ModelRequestCompletedEvent,
+    TeamRunEvent.compression_started.value: CompressionStartedEvent,
+    TeamRunEvent.compression_completed.value: CompressionCompletedEvent,
     TeamRunEvent.custom_event.value: CustomEvent,
 }
 
@@ -572,6 +672,7 @@ class TeamRunOutput:
                 "reasoning_steps",
                 "reasoning_messages",
                 "references",
+                "requirements",
             ]
         }
         if self.events is not None:
@@ -627,6 +728,9 @@ class TeamRunOutput:
 
         if self.content and isinstance(self.content, BaseModel):
             _dict["content"] = self.content.model_dump(exclude_none=True, mode="json")
+
+        if self.requirements is not None:
+            _dict["requirements"] = [req.to_dict() if hasattr(req, "to_dict") else req for req in self.requirements]
 
         if self.tools is not None:
             _dict["tools"] = []
@@ -706,6 +810,11 @@ class TeamRunOutput:
         tools = data.pop("tools", [])
         tools = [ToolExecution.from_dict(tool) for tool in tools] if tools else None
 
+        requirements_data = data.pop("requirements", None)
+        requirements = None
+        if requirements_data is not None:
+            requirements = [RunRequirement.from_dict(r) if isinstance(r, dict) else r for r in requirements_data]
+
         response_audio = reconstruct_response_audio(data.pop("response_audio", None))
 
         input_data = data.pop("input", None)
@@ -742,6 +851,7 @@ class TeamRunOutput:
             input=input_obj,
             citations=citations,
             tools=tools,
+            requirements=requirements,
             events=events,
             **filtered_data,
         )

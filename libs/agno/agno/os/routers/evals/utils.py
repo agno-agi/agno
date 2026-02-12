@@ -2,7 +2,7 @@ from typing import Optional, Union
 
 from fastapi import HTTPException
 
-from agno.agent.agent import Agent
+from agno.agent import Agent, RemoteAgent
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.eval.accuracy import AccuracyEval
 from agno.eval.agent_as_judge import AgentAsJudgeEval
@@ -10,7 +10,7 @@ from agno.eval.performance import PerformanceEval
 from agno.eval.reliability import ReliabilityEval
 from agno.models.base import Model
 from agno.os.routers.evals.schemas import EvalRunInput, EvalSchema
-from agno.team.team import Team
+from agno.team import RemoteTeam, Team
 
 
 async def run_accuracy_eval(
@@ -56,8 +56,8 @@ async def run_accuracy_eval(
 async def run_agent_as_judge_eval(
     eval_run_input: EvalRunInput,
     db: Union[BaseDb, AsyncBaseDb],
-    agent: Optional[Agent] = None,
-    team: Optional[Team] = None,
+    agent: Optional[Union[Agent, RemoteAgent]] = None,
+    team: Optional[Union[Team, RemoteTeam]] = None,
     default_model: Optional[Model] = None,
 ) -> EvalSchema:
     """Run an AgentAsJudge evaluation for the given agent or team"""
@@ -66,17 +66,13 @@ async def run_agent_as_judge_eval(
 
     # Run agent/team to get output
     if agent:
-        agent_response = await agent.arun(eval_run_input.input, stream=False)
+        agent_response = await agent.arun(eval_run_input.input, stream=False)  # type: ignore[misc]
         output = str(agent_response.content) if agent_response.content else ""
-        model_id = agent.model.id if agent and agent.model else None
-        model_provider = agent.model.provider if agent and agent.model else None
         agent_id = agent.id
         team_id = None
     elif team:
-        team_response = await team.arun(eval_run_input.input, stream=False)
+        team_response = await team.arun(eval_run_input.input, stream=False)  # type: ignore[misc]
         output = str(team_response.content) if team_response.content else ""
-        model_id = team.model.id if team and team.model else None
-        model_provider = team.model.provider if team and team.model else None
         agent_id = None
         team_id = team.id
     else:
@@ -98,20 +94,24 @@ async def run_agent_as_judge_eval(
     if not result:
         raise HTTPException(status_code=500, detail="Failed to run agent as judge evaluation")
 
+    # Use evaluator's model
+    eval_model_id = agent_as_judge_eval.model.id if agent_as_judge_eval.model is not None else None
+    eval_model_provider = agent_as_judge_eval.model.provider if agent_as_judge_eval.model is not None else None
+
     eval_run = EvalSchema.from_agent_as_judge_eval(
         agent_as_judge_eval=agent_as_judge_eval,
         result=result,
         agent_id=agent_id,
         team_id=team_id,
-        model_id=model_id,
-        model_provider=model_provider,
+        model_id=eval_model_id,
+        model_provider=eval_model_provider,
     )
 
     # Restore original model after eval
     if default_model is not None:
-        if agent is not None:
+        if agent is not None and isinstance(agent, Agent):
             agent.model = default_model
-        elif team is not None:
+        elif team is not None and isinstance(team, Team):
             team.model = default_model
 
     return eval_run
@@ -128,7 +128,7 @@ async def run_performance_eval(
     if agent:
 
         async def run_component():  # type: ignore
-            return await agent.arun(eval_run_input.input, stream=False)
+            return await agent.arun(eval_run_input.input, stream=False)  # type: ignore[misc]
 
         model_id = agent.model.id if agent and agent.model else None
         model_provider = agent.model.provider if agent and agent.model else None
@@ -136,7 +136,7 @@ async def run_performance_eval(
     elif team:
 
         async def run_component():  # type: ignore
-            return await team.arun(eval_run_input.input, stream=False)
+            return await team.arun(eval_run_input.input, stream=False)  # type: ignore[misc]
 
         model_id = team.model.id if team and team.model else None
         model_provider = team.model.provider if team and team.model else None
@@ -188,7 +188,7 @@ async def run_reliability_eval(
         raise HTTPException(status_code=400, detail="expected_tool_calls is required for reliability evaluations")
 
     if agent:
-        agent_response = await agent.arun(eval_run_input.input, stream=False)
+        agent_response = await agent.arun(eval_run_input.input, stream=False)  # type: ignore[misc]
         reliability_eval = ReliabilityEval(
             db=db,
             name=eval_run_input.name,
@@ -199,7 +199,7 @@ async def run_reliability_eval(
         model_provider = agent.model.provider if agent and agent.model else None
 
     elif team:
-        team_response = await team.arun(eval_run_input.input, stream=False)
+        team_response = await team.arun(eval_run_input.input, stream=False)  # type: ignore[misc]
         reliability_eval = ReliabilityEval(
             db=db,
             name=eval_run_input.name,

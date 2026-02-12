@@ -1,12 +1,12 @@
 """
 Unit tests for Memori integration with Agno agents.
 
-Tests the new integration pattern using Memori.agno.register().
+Tests the integration pattern using Memori.llm.register().
 """
 
 import os
 import tempfile
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 import pytest
 from sqlalchemy import create_engine
@@ -41,15 +41,11 @@ def db_session(temp_db):
 
 @pytest.fixture
 def openai_model():
-    """Create an OpenAI model for testing (with mocked get_client to avoid API key requirement)."""
+    """Create an OpenAI model with fake API key for testing."""
     with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):
         model = OpenAIChat(id="gpt-4o-mini")
-    # Create a mock OpenAI client with chat attribute
-    mock_client = Mock()
-    mock_client.chat = Mock()
-    # Patch get_client to return our mock client
-    model.get_client = lambda: mock_client
-    return model
+        model.get_client()
+        return model
 
 
 class TestMemoriIntegration:
@@ -57,7 +53,7 @@ class TestMemoriIntegration:
 
     def test_memori_initialization(self, db_session, openai_model):
         """Test that Memori can be initialized and registered with Agno."""
-        mem = Memori(conn=db_session).agno.register(openai_chat=openai_model)
+        mem = Memori(conn=db_session).llm.register(openai_model.get_client())
         mem.attribution(entity_id="test-entity", process_id="test-process")
 
         assert mem is not None
@@ -65,7 +61,7 @@ class TestMemoriIntegration:
 
     def test_memori_storage_build(self, db_session, openai_model):
         """Test that Memori storage can be built."""
-        mem = Memori(conn=db_session).agno.register(openai_chat=openai_model)
+        mem = Memori(conn=db_session).llm.register(openai_model.get_client())
         mem.attribution(entity_id="test-entity", process_id="test-process")
 
         # Build storage should not raise an exception
@@ -75,7 +71,7 @@ class TestMemoriIntegration:
     def test_agent_with_memori(self, db_session, openai_model):
         """Test that an agent can be created with Memori integration."""
         # Initialize Memori
-        mem = Memori(conn=db_session).agno.register(openai_chat=openai_model)
+        mem = Memori(conn=db_session).llm.register(openai_model.get_client())
         mem.attribution(entity_id="test-agent", process_id="test-session")
         mem.config.storage.build()
 
@@ -91,10 +87,10 @@ class TestMemoriIntegration:
 
     def test_multiple_memori_instances(self, db_session, openai_model):
         """Test that multiple Memori instances can be created with different attributions."""
-        mem1 = Memori(conn=db_session).agno.register(openai_chat=openai_model)
+        mem1 = Memori(conn=db_session).llm.register(openai_model.get_client())
         mem1.attribution(entity_id="entity-1", process_id="process-1")
 
-        mem2 = Memori(conn=db_session).agno.register(openai_chat=openai_model)
+        mem2 = Memori(conn=db_session).llm.register(openai_model.get_client())
         mem2.attribution(entity_id="entity-2", process_id="process-2")
 
         assert mem1 is not None
@@ -109,7 +105,7 @@ class TestMemoriIntegration:
             engine = create_engine(f"sqlite:///{db_path}")
             Session = sessionmaker(bind=engine)
 
-            mem = Memori(conn=Session).agno.register(openai_chat=openai_model)
+            mem = Memori(conn=Session).llm.register(openai_model.get_client())
             mem.attribution(entity_id="test", process_id="test")
             mem.config.storage.build()
 
@@ -121,14 +117,14 @@ class TestMemoriIntegration:
 
     def test_memori_config_exists(self, db_session, openai_model):
         """Test that Memori config object is accessible."""
-        mem = Memori(conn=db_session).agno.register(openai_chat=openai_model)
+        mem = Memori(conn=db_session).llm.register(openai_model.get_client())
 
         assert hasattr(mem, "config")
         assert hasattr(mem.config, "storage")
 
     def test_memori_attribution_required(self, db_session, openai_model):
         """Test that attribution can be set on Memori instance."""
-        mem = Memori(conn=db_session).agno.register(openai_chat=openai_model)
+        mem = Memori(conn=db_session).llm.register(openai_model.get_client())
 
         # Should be able to set attribution without error
         mem.attribution(entity_id="test-entity", process_id="test-process")
@@ -138,17 +134,14 @@ class TestMemoriIntegration:
 class TestMemoriWithAgent:
     """Integration tests for Memori with Agno agents."""
 
-    @pytest.mark.skipif("OPENAI_API_KEY" not in os.environ, reason="OpenAI API key not available")
-    def test_agent_memory_persistence(self, db_session):
+    def test_agent_memory_persistence(self, db_session, openai_model):
         """Test that agent conversations are persisted with Memori."""
-        model = OpenAIChat(id="gpt-4o-mini")
-
-        mem = Memori(conn=db_session).agno.register(openai_chat=model)
+        mem = Memori(conn=db_session).llm.register(openai_model.get_client())
         mem.attribution(entity_id="test-user", process_id="test-conversation")
         mem.config.storage.build()
 
         agent = Agent(
-            model=model,
+            model=openai_model,
             instructions=["You are a helpful assistant."],
             markdown=True,
         )
@@ -159,7 +152,7 @@ class TestMemoriWithAgent:
     def test_agent_with_different_entity_ids(self, db_session, openai_model):
         """Test that different entity IDs can be used for different agents."""
         # Agent 1
-        mem1 = Memori(conn=db_session).agno.register(openai_chat=openai_model)
+        mem1 = Memori(conn=db_session).llm.register(openai_model.get_client())
         mem1.attribution(entity_id="user-1", process_id="session-1")
         mem1.config.storage.build()
 
@@ -169,7 +162,7 @@ class TestMemoriWithAgent:
         )
 
         # Agent 2
-        mem2 = Memori(conn=db_session).agno.register(openai_chat=openai_model)
+        mem2 = Memori(conn=db_session).llm.register(openai_model.get_client())
         mem2.attribution(entity_id="user-2", process_id="session-2")
         mem2.config.storage.build()
 
@@ -195,7 +188,7 @@ class TestMemoriConfiguration:
             engine = create_engine(f"sqlite:///{db_path}")
             Session = sessionmaker(bind=engine)
 
-            mem = Memori(conn=Session).agno.register(openai_chat=openai_model)
+            mem = Memori(conn=Session).llm.register(openai_model.get_client())
             mem.attribution(entity_id="test", process_id="test")
             mem.config.storage.build()
 
@@ -206,14 +199,10 @@ class TestMemoriConfiguration:
 
     def test_memori_storage_build_idempotent(self, db_session, openai_model):
         """Test that storage build can be called multiple times safely."""
-        mem = Memori(conn=db_session).agno.register(openai_chat=openai_model)
+        mem = Memori(conn=db_session).llm.register(openai_model.get_client())
         mem.attribution(entity_id="test", process_id="test")
 
         # Should be safe to call multiple times
         mem.config.storage.build()
         mem.config.storage.build()
         assert True
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
