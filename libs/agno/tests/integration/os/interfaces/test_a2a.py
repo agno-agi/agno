@@ -21,6 +21,7 @@ from agno.run.agent import (
     RunOutput,
     RunOutputEvent,
     RunStartedEvent,
+    RunStatus,
     ToolCallCompletedEvent,
     ToolCallStartedEvent,
 )
@@ -87,6 +88,7 @@ def test_a2a(test_agent: Agent, test_client: TestClient):
         agent_id=test_agent.id,
         agent_name=test_agent.name,
         content="Hello! This is a test response.",
+        status=RunStatus.completed,
     )
 
     with patch.object(test_agent, "arun", new_callable=AsyncMock) as mock_arun:
@@ -608,6 +610,7 @@ def test_a2a_team(test_team: Team, test_team_client: TestClient):
         agent_id=test_team.id,
         agent_name=test_team.name,
         content="Hello! This is a test response from the team.",
+        status=RunStatus.completed,
     )
 
     with patch.object(test_team, "arun", new_callable=AsyncMock) as mock_arun:
@@ -1113,6 +1116,7 @@ def test_a2a_workflow(test_workflow: Workflow, test_workflow_client: TestClient)
         workflow_id=test_workflow.id,
         workflow_name=test_workflow.name,
         content="Workflow echo: Hello from workflow!",
+        status=RunStatus.completed,
     )
 
     with patch.object(test_workflow, "arun", new_callable=AsyncMock) as mock_arun:
