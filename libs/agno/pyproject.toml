@@ -359,6 +359,8 @@ demo = [
     "anthropic",
     "chromadb",
     "ddgs",
+    "duckdb",
+    "exa-py",
     "fastapi[standard]",
     "google-genai",
     "matplotlib",

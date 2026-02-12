@@ -71,29 +71,27 @@ source .venvs/demo/bin/activate
 ./cookbook/scripts/run_pgvector.sh
 ```
 
-### 4. Load data for Dash (F1 dataset)
-```bash
-python -m cookbook.01_demo.agents.dash.scripts.load_data
-python -m cookbook.01_demo.agents.dash.scripts.load_knowledge
-```
-
-### 5. Load knowledge for Scout (enterprise docs)
-```bash
-python -m cookbook.01_demo.agents.scout.scripts.load_knowledge
-```
-
-### 6. Export environment variables
+### 4. Export environment variables
 ```bash
 export OPENAI_API_KEY="..."      # Required for all agents
 export EXA_API_KEY="..."         # Optional because Exa MCP is currently free
 ```
 
-### 7. Run the demo
+### 5. Load data and knowledge
 ```bash
-python -m cookbook.01_demo.run
+cd cookbook/01_demo
+
+python -m agents.dash.scripts.load_data
+python -m agents.dash.scripts.load_knowledge
+python -m agents.scout.scripts.load_knowledge
 ```
 
-### 8. Connect via AgentOS
+### 6. Run the demo
+```bash
+python -m run
+```
+
+### 7. Connect via AgentOS
 
 - Open [os.agno.com](https://os.agno.com) in your browser
 - Click on "Add AgentOS"
@@ -108,14 +106,14 @@ python -m cookbook.01_demo.run
 
 ```bash
 # Run all evals
-python -m cookbook.01_demo.evals.run_evals
+python -m evals.run_evals
 
 # Filter by agent
-python -m cookbook.01_demo.evals.run_evals --agent dash
+python -m evals.run_evals --agent dash
 
 # Filter by category
-python -m cookbook.01_demo.evals.run_evals --category dash_basic
+python -m evals.run_evals --category dash_basic
 
 # Verbose mode (show full responses on failure)
-python -m cookbook.01_demo.evals.run_evals --verbose
+python -m evals.run_evals --verbose
 ```
