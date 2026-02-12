@@ -5,6 +5,14 @@ from typing import Any, Dict, List, Literal, Optional
 from agno.tools.toolkit import Toolkit
 from agno.utils.log import logger
 
+# Try to get agno version for tracking
+try:
+    from importlib.metadata import version as get_version
+
+    AGNO_VERSION = get_version("agno")
+except Exception:
+    AGNO_VERSION = "unknown"
+
 try:
     from nimble_python import AsyncNimble, Nimble
 except ImportError:
@@ -103,8 +111,15 @@ class NimbleTools(Toolkit):
             if exclude_domains:
                 search_params["exclude_domains"] = exclude_domains
 
-            # Call Nimble Search API
-            response = self.client.search(**search_params)
+            # Call Nimble Search API with tracking headers
+            response = self.client.search(
+                **search_params,
+                extra_headers={
+                    "X-Client-Source": "agno-tools",
+                    "X-Client-Tool": "NimbleTools",
+                    "X-Client-Version": AGNO_VERSION,
+                },
+            )
 
             # Return the response as JSON
             return json.dumps(response.model_dump(), indent=2)
