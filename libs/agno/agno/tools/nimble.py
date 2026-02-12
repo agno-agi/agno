@@ -74,22 +74,26 @@ class NimbleTools(Toolkit):
         include_domains: Optional[List[str]] = None,
         exclude_domains: Optional[List[str]] = None,
     ) -> str:
-        """Use this function to search the web using Nimble's search API.
+        """Search the web for real-time information using Nimble's search API.
 
-        Provides real-time online information with support for deep content extraction
-        and LLM-generated answer summaries.
+        Choose the right mode:
+        - Fast Mode (deep_search=False, default): Best for URL discovery and quick answers.
+          Returns concise, token-efficient results perfect for agentic loops and initial research.
+        - Deep Search (deep_search=True): Use when you need comprehensive full-page content
+          for in-depth analysis, extracting detailed information, or reading entire articles.
 
         Args:
             query: Search query string.
-            max_results: Maximum number of results (1-100). Defaults to 3.
-            deep_search: Extract full page content when True. Defaults to False (fast mode).
-            include_answer: Generate LLM answer summary. Defaults to False.
-            time_range: Filter by recency - "hour", "day", "week", "month", "year". Defaults to None.
-            include_domains: List of domains to restrict results to. Defaults to None.
-            exclude_domains: List of domains to exclude. Defaults to None.
+            max_results: Number of results to return (1-100). Defaults to 3.
+            deep_search: Enable full-page content extraction. Defaults to False (fast mode).
+            include_answer: Generate an LLM-powered summary answer. Defaults to False.
+            time_range: Filter by recency - "hour", "day", "week", "month", "year".
+                       Use for time-sensitive queries like "latest news" or "recent updates".
+            include_domains: Restrict search to specific domains (e.g., ["github.com", "docs.python.org"]).
+            exclude_domains: Exclude specific domains from results.
 
         Returns:
-            Formatted search results (markdown, plain_text, or simplified_html).
+            JSON string with search results formatted according to output_format setting.
         """
         try:
             # Build search parameters
