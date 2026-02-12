@@ -13,6 +13,7 @@ from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
+from agno.db.schema import build_agno_metadata, compile_ddl_for_metadata
 from agno.db.sqlite.schemas import get_table_schema_definition
 from agno.db.sqlite.utils import (
     apply_sorting,
@@ -144,6 +145,37 @@ class SqliteDb(BaseDb):
 
         # Initialize database session
         self.Session: scoped_session = scoped_session(sessionmaker(bind=self.db_engine))
+
+    def _table_name_overrides(self) -> Dict[str, str]:
+        return {
+            "sessions": self.session_table_name,
+            "memories": self.memory_table_name,
+            "metrics": self.metrics_table_name,
+            "evals": self.eval_table_name,
+            "knowledge": self.knowledge_table_name,
+            "culture": self.culture_table_name,
+            "traces": self.trace_table_name,
+            "spans": self.span_table_name,
+            "versions": self.versions_table_name,
+        }
+
+    def create_all_tables(self) -> None:
+        metadata = build_agno_metadata(
+            schema=None,
+            table_names=self._table_name_overrides(),
+            dialect_name=self.db_engine.dialect.name,
+        )
+        metadata.create_all(bind=self.db_engine, checkfirst=True)
+
+    def get_create_all_tables_ddl(self) -> List[str]:
+        metadata = build_agno_metadata(
+            schema=None,
+            table_names=self._table_name_overrides(),
+            dialect_name=self.db_engine.dialect.name,
+        )
+        statements = compile_ddl_for_metadata(metadata, dialect=self.db_engine.dialect)
+        statements.extend(self._get_extra_ddl())
+        return statements
 
     # -- Serialization methods --
     def to_dict(self) -> Dict[str, Any]:

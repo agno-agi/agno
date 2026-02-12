@@ -123,6 +123,27 @@ class BaseDb(ABC):
     def table_exists(self, table_name: str) -> bool:
         raise NotImplementedError
 
+    # --- Schema bootstrap / DDL ---
+    def create_all_tables(self) -> None:
+        """Create all Agno control tables for this database."""
+        raise NotImplementedError("create_all_tables is not implemented for this database")
+
+    def get_create_all_tables_ddl(self) -> List[str]:
+        """Return SQL DDL statements to create all Agno control tables for this database."""
+        raise NotImplementedError("get_create_all_tables_ddl is not implemented for this database")
+
+    def _create_namespace_if_needed(self) -> None:
+        """Optional hook for databases that support schemas/namespaces."""
+        return None
+
+    def _get_namespace_ddl(self) -> List[str]:
+        """Optional hook to emit namespace creation DDL."""
+        return []
+
+    def _get_extra_ddl(self) -> List[str]:
+        """Optional hook for database-specific DDL beyond table creation."""
+        return []
+
     def _create_all_tables(self) -> None:
         """Create all tables for this database."""
         pass
