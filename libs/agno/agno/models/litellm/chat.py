@@ -13,7 +13,12 @@ from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.tools.function import Function
 from agno.utils.log import log_debug, log_error, log_warning
-from agno.utils.openai import _format_file_for_message, audio_to_message, images_to_message
+from agno.utils.models.schema_utils import get_response_schema_for_provider
+from agno.utils.openai import (
+    _format_file_for_message,
+    audio_to_message,
+    images_to_message,
+)
 from agno.utils.tokens import count_schema_tokens
 
 try:
@@ -35,6 +40,9 @@ class LiteLLM(Model):
     id: str = "gpt-4o"
     name: str = "LiteLLM"
     provider: str = "LiteLLM"
+
+    supports_native_structured_outputs: bool = False
+    supports_json_schema_outputs: bool = False
 
     api_key: Optional[str] = None
     api_base: Optional[str] = None
@@ -157,7 +165,10 @@ class LiteLLM(Model):
                     {
                         "id": tc.get("id", f"call_{i}"),
                         "type": "function",
-                        "function": {"name": tc["function"]["name"], "arguments": tc["function"]["arguments"]},
+                        "function": {
+                            "name": tc["function"]["name"],
+                            "arguments": tc["function"]["arguments"],
+                        },
                     }
                     for i, tc in enumerate(m.tool_calls)
                 ]
@@ -209,7 +220,10 @@ class LiteLLM(Model):
         # Handle metadata via extra_body as per LiteLLM docs
         if self.metadata:
             if self.extra_body:
-                base_params["extra_body"] = {**self.extra_body, "metadata": self.metadata}
+                base_params["extra_body"] = {
+                    **self.extra_body,
+                    "metadata": self.metadata,
+                }
             else:
                 base_params["extra_body"] = {"metadata": self.metadata}
         elif self.extra_body:
@@ -221,8 +235,46 @@ class LiteLLM(Model):
             request_params.update(self.request_params)
 
         if request_params:
-            log_debug(f"Calling {self.provider} with request parameters: {request_params}", log_level=2)
+            log_debug(
+                f"Calling {self.provider} with request parameters: {request_params}",
+                log_level=2,
+            )
         return request_params
+
+    def _get_response_format_param(
+        self, response_format: Optional[Union[Dict, Type[BaseModel]]]
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Convert response_format to LiteLLM-compatible format.
+
+        Args:
+            response_format: Either a dict (already formatted) or a Pydantic BaseModel class.
+
+        Returns:
+            A dict suitable for the LiteLLM response_format parameter, or None.
+        """
+        if response_format is None:
+            return None
+
+        # If it's already a dict, pass it through (e.g., {"type": "json_object"})
+        if isinstance(response_format, dict):
+            return response_format
+
+        # If it's a Pydantic model class, convert to JSON schema format
+        if isinstance(response_format, type) and issubclass(response_format, BaseModel):
+            # Use existing schema utility to get provider-normalized schema
+            # This handles additionalProperties: false and other OpenAI requirements
+            schema = get_response_schema_for_provider(response_format, "openai")
+            return {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": response_format.__name__,
+                    "strict": True,
+                    "schema": schema,
+                },
+            }
+
+        return None
 
     def invoke(
         self,
@@ -237,6 +289,11 @@ class LiteLLM(Model):
         """Sends a chat completion request to the LiteLLM API."""
         completion_kwargs = self.get_request_params(tools=tools)
         completion_kwargs["messages"] = self._format_messages(messages, compress_tool_results)
+
+        if self.supports_native_structured_outputs:
+            response_format_param = self._get_response_format_param(response_format)
+            if response_format_param is not None:
+                completion_kwargs["response_format"] = response_format_param
 
         if run_response and run_response.metrics:
             run_response.metrics.set_time_to_first_token()
@@ -266,6 +323,11 @@ class LiteLLM(Model):
         completion_kwargs["stream"] = True
         completion_kwargs["stream_options"] = {"include_usage": True}
 
+        if self.supports_native_structured_outputs:
+            response_format_param = self._get_response_format_param(response_format)
+            if response_format_param is not None:
+                completion_kwargs["response_format"] = response_format_param
+
         if run_response and run_response.metrics:
             run_response.metrics.set_time_to_first_token()
 
@@ -289,6 +351,11 @@ class LiteLLM(Model):
         """Sends an asynchronous chat completion request to the LiteLLM API."""
         completion_kwargs = self.get_request_params(tools=tools)
         completion_kwargs["messages"] = self._format_messages(messages, compress_tool_results)
+
+        if self.supports_native_structured_outputs:
+            response_format_param = self._get_response_format_param(response_format)
+            if response_format_param is not None:
+                completion_kwargs["response_format"] = response_format_param
 
         if run_response and run_response.metrics:
             run_response.metrics.set_time_to_first_token()
@@ -317,6 +384,11 @@ class LiteLLM(Model):
         completion_kwargs["messages"] = self._format_messages(messages, compress_tool_results)
         completion_kwargs["stream"] = True
         completion_kwargs["stream_options"] = {"include_usage": True}
+
+        if self.supports_native_structured_outputs:
+            response_format_param = self._get_response_format_param(response_format)
+            if response_format_param is not None:
+                completion_kwargs["response_format"] = response_format_param
 
         if run_response and run_response.metrics:
             run_response.metrics.set_time_to_first_token()
@@ -355,7 +427,10 @@ class LiteLLM(Model):
                     {
                         "id": tool_call.id,
                         "type": "function",
-                        "function": {"name": tool_call.function.name, "arguments": tool_call.function.arguments},
+                        "function": {
+                            "name": tool_call.function.name,
+                            "arguments": tool_call.function.arguments,
+                        },
                     }
                 )
 
@@ -436,7 +511,11 @@ class LiteLLM(Model):
 
             # Initialize if first time seeing this index
             if index not in tool_calls_by_index:
-                tool_calls_by_index[index] = {"id": None, "type": "function", "function": {"name": "", "arguments": ""}}
+                tool_calls_by_index[index] = {
+                    "id": None,
+                    "type": "function",
+                    "function": {"name": "", "arguments": ""},
+                }
 
             # Update with new information
             if tc.get("id") is not None:
