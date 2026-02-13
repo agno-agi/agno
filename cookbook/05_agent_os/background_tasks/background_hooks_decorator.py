@@ -14,6 +14,10 @@ from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.run.agent import RunInput
 
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
+
 
 @hook(run_in_background=True)
 def log_request(run_input: RunInput, agent):
@@ -77,6 +81,10 @@ app = agent_os.get_app()
 # curl -X POST http://localhost:8000/agents/background-task-agent/runs \
 #   -F "message=Hello, how are you?" \
 #   -F "stream=false"
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     agent_os.serve(app="background_hooks_decorator:app", port=7777, reload=True)

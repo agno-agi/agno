@@ -1,3 +1,10 @@
+"""
+Parser Model
+=============================
+
+Parser Model.
+"""
+
 import random
 from typing import List
 
@@ -56,6 +63,9 @@ class NationalParkAdventure(BaseModel):
     )
 
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 agent = Agent(
     model=Claude(id="claude-sonnet-4-20250514"),
     description="You help people plan amazing national park adventures and provide detailed park guides.",
@@ -77,6 +87,13 @@ national_parks = [
     "Great Smoky Mountains National Park",
     "Rocky National Park",
 ]
-# Get the response in a variable
-run: RunOutput = agent.run(national_parks[random.randint(0, len(national_parks) - 1)])
-pprint(run.content)
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    # Get the response in a variable
+    run: RunOutput = agent.run(
+        national_parks[random.randint(0, len(national_parks) - 1)]
+    )
+    pprint(run.content)

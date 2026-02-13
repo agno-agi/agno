@@ -15,16 +15,32 @@ import os
 from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.lancedb import LanceDb
 
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
 TABLE_NAME = "agno_cloud_test"
 URI = os.getenv("LANCE_DB_URI")
 API_KEY = os.getenv("LANCE_DB_API_KEY") or os.getenv("LANCEDB_API_KEY")
 
 
+# ---------------------------------------------------------------------------
+# Create Knowledge Base
+# ---------------------------------------------------------------------------
+# The cloud vector DB and knowledge instance are created inside `main()`
+# after validating required environment variables.
+
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
 def main():
     if not URI:
         print("Set LANCE_DB_URI (e.g. db://your-database-id)")
         return
 
+    # ---------------------------------------------------------------------------
+    # Create Knowledge Base
+    # ---------------------------------------------------------------------------
     vector_db = LanceDb(
         uri=URI,
         table_name=TABLE_NAME,

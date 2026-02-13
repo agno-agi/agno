@@ -5,6 +5,7 @@ from __future__ import annotations
 from os import getenv
 from typing import (
     TYPE_CHECKING,
+    Any,
     Callable,
     Dict,
     Literal,
@@ -123,6 +124,8 @@ def set_learning_machine(agent: Agent) -> None:
     - learning=False/None: Disabled
     - learning=LearningMachine(...): Use provided, inject db/model/knowledge
     """
+    agent._learning_init_attempted = True
+
     # Handle learning=False or learning=None
     if agent.learning is None or agent.learning is False:
         agent._learning = None
@@ -177,6 +180,27 @@ def set_compression_manager(agent: Agent) -> None:
         agent.compress_tool_results = True
 
 
+def _initialize_session_state(
+    session_state: Dict[str, Any],
+    user_id: Optional[str] = None,
+    session_id: Optional[str] = None,
+    run_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Inject current_user_id, current_session_id, and current_run_id into session_state.
+
+    These transient values are stripped before persisting to the database (see _session.py)
+    but must be available at runtime so that tool functions and instruction templates can
+    reference them.  Teams and Workflows already do this; this brings Agents to parity.
+    """
+    if user_id:
+        session_state["current_user_id"] = user_id
+    if session_id is not None:
+        session_state["current_session_id"] = session_id
+    if run_id is not None:
+        session_state["current_run_id"] = run_id
+    return session_state
+
+
 def has_async_db(agent: Agent) -> bool:
     """Return True if the db the agent is equipped with is an Async implementation."""
     return agent.db is not None and isinstance(agent.db, AsyncBaseDb)
@@ -224,18 +248,30 @@ def initialize_agent(agent: Agent, debug_mode: Optional[bool] = None) -> None:
 
 
 def add_tool(agent: Agent, tool: Union[Toolkit, Callable, Function, Dict]) -> None:
+    from agno.utils.callables import is_callable_factory
+
+    if is_callable_factory(agent.tools, excluded_types=(Toolkit, Function)):
+        raise RuntimeError(
+            "Cannot add_tool() when tools is a callable factory. Use set_tools() to replace the factory."
+        )
     if not agent.tools:
         agent.tools = []
-    agent.tools.append(tool)
+    agent.tools.append(tool)  # type: ignore[union-attr]
 
 
-def set_tools(agent: Agent, tools: Sequence[Union[Toolkit, Callable, Function, Dict]]) -> None:
-    agent.tools = list(tools) if tools else []
+def set_tools(agent: Agent, tools: Union[Sequence[Union[Toolkit, Callable, Function, Dict]], Callable]) -> None:
+    from agno.utils.callables import is_callable_factory
+
+    if is_callable_factory(tools, excluded_types=(Toolkit, Function)):
+        agent.tools = tools  # type: ignore[assignment]
+        agent._callable_tools_cache.clear()
+    else:
+        agent.tools = list(tools) if tools else []  # type: ignore[arg-type]
 
 
 async def connect_mcp_tools(agent: Agent) -> None:
     """Connect the MCP tools to the agent."""
-    if agent.tools:
+    if agent.tools and isinstance(agent.tools, list):
         for tool in agent.tools:
             # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
             if (
@@ -263,7 +299,7 @@ async def disconnect_mcp_tools(agent: Agent) -> None:
 
 def connect_connectable_tools(agent: Agent) -> None:
     """Connect tools that require connection management (e.g., database connections)."""
-    if agent.tools:
+    if agent.tools and isinstance(agent.tools, list):
         for tool in agent.tools:
             if (
                 hasattr(tool, "requires_connect")

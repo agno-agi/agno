@@ -1,9 +1,20 @@
+"""
+Azure Structured Output
+=======================
+
+Cookbook example for `azure/ai_foundry/structured_output.py`.
+"""
+
 from typing import List
 
 from agno.agent import Agent, RunOutput  # noqa
 from agno.models.azure import AzureAIFoundry
 from pydantic import BaseModel, Field
 from rich.pretty import pprint  # noqa
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 
 class MovieScript(BaseModel):
@@ -32,7 +43,6 @@ structured_output_agent = Agent(
     output_schema=MovieScript,
 )
 
-
 # Agent with strict_output=False (guided mode)
 # strict_output=False: Attempts to follow the schema as a guide but may occasionally deviate
 guided_output_agent = Agent(
@@ -41,11 +51,16 @@ guided_output_agent = Agent(
     output_schema=MovieScript,
 )
 
-
 # Get the response in a variable
 # structured_output_response: RunOutput = structured_output_agent.run("New York")
 # pprint(structured_output_response.content)
 
-
 structured_output_agent.print_response("New York")
 guided_output_agent.print_response("New York")
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

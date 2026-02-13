@@ -15,10 +15,15 @@ from agno.tools.hackernews import HackerNewsTools
 from agno.tools.websearch import WebSearchTools
 from pydantic import BaseModel
 
-# Setup the JSON database
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
 db = JsonDb(db_path="tmp/json_db")
 
 
+# ---------------------------------------------------------------------------
+# Create Team
+# ---------------------------------------------------------------------------
 class Article(BaseModel):
     title: str
     summary: str
@@ -56,4 +61,8 @@ hn_team = Team(
     show_members_responses=True,
 )
 
-hn_team.print_response("Write an article about the top 2 stories on hackernews")
+# ---------------------------------------------------------------------------
+# Run Team
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    hn_team.print_response("Write an article about the top 2 stories on hackernews")

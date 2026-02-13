@@ -84,7 +84,6 @@ class MigrationManager:
 
             # Find files after the current version
             latest_version = None
-            any_migration_executed = False
             for version, normalised_version in self.available_versions:
                 if normalised_version > current_version:
                     if target_version and normalised_version > _target_version:
@@ -92,14 +91,14 @@ class MigrationManager:
 
                     log_info(f"Applying migration {normalised_version} on {table_name}")
                     migration_executed = await self._up_migration(version, table_type, table_name)
+                    latest_version = normalised_version.public
                     if migration_executed:
-                        any_migration_executed = True
                         latest_version = normalised_version.public
                         log_info(f"Successfully applied migration {normalised_version} on table {table_name}")
                     else:
                         log_info(f"Skipping application of migration {normalised_version} on table {table_name}")
 
-            if any_migration_executed and latest_version:
+            if latest_version:
                 log_info(f"Storing version {latest_version} in database for table {table_name}")
                 if isinstance(self.db, AsyncBaseDb):
                     await self.db.upsert_schema_version(table_name, latest_version)

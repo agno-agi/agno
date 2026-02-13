@@ -22,6 +22,11 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.scrapegraph import ScrapeGraphTools
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
+
 agent_model = OpenAIChat(id="gpt-4.1")
 scrapegraph_smartscraper = ScrapeGraphTools(enable_smartscraper=True)
 
@@ -30,60 +35,65 @@ agent = Agent(
 )
 
 # Example 1: Use smartscraper tool
-agent.print_response("""
-Use smartscraper to extract the following from https://www.wired.com/category/science/:
-- News articles
-- Headlines
-- Images
-- Links
-- Author
-""")
 
-# Example 2: Only markdownify enabled (by setting smartscraper=False)
-# scrapegraph_md = ScrapeGraphTools(enable_smartscraper=False)
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    agent.print_response("""
+    Use smartscraper to extract the following from https://www.wired.com/category/science/:
+    - News articles
+    - Headlines
+    - Images
+    - Links
+    - Author
+    """)
 
-# md_agent = Agent(tools=[scrapegraph_md], model=agent_model, markdown=True)
+    # Example 2: Only markdownify enabled (by setting smartscraper=False)
+    # scrapegraph_md = ScrapeGraphTools(enable_smartscraper=False)
 
-# md_agent.print_response(
-#     "Fetch and convert https://www.wired.com/category/science/ to markdown format"
-# )
+    # md_agent = Agent(tools=[scrapegraph_md], model=agent_model, markdown=True)
 
-# # Example 3: Enable crawl
-# scrapegraph_crawl = ScrapeGraphTools(enable_crawl=True)
+    # md_agent.print_response(
+    #     "Fetch and convert https://www.wired.com/category/science/ to markdown format"
+    # )
 
-# crawl_agent = Agent(tools=[scrapegraph_crawl], model=agent_model, markdown=True)
+    # # Example 3: Enable crawl
+    # scrapegraph_crawl = ScrapeGraphTools(enable_crawl=True)
 
-# crawl_agent.print_response(
-#     "Use crawl to extract what the company does and get text content from privacy and terms from https://scrapegraphai.com/ with a suitable schema."
-# )
+    # crawl_agent = Agent(tools=[scrapegraph_crawl], model=agent_model, markdown=True)
 
-# # Example 4: Enable scrape method for raw HTML content
-# scrapegraph_scrape = ScrapeGraphTools(enable_scrape=True, enable_smartscraper=False)
+    # crawl_agent.print_response(
+    #     "Use crawl to extract what the company does and get text content from privacy and terms from https://scrapegraphai.com/ with a suitable schema."
+    # )
 
-# scrape_agent = Agent(
-#     tools=[scrapegraph_scrape],
-#     model=agent_model,
-#     markdown=True,
-#     stream=True,
-# )
+    # # Example 4: Enable scrape method for raw HTML content
+    # scrapegraph_scrape = ScrapeGraphTools(enable_scrape=True, enable_smartscraper=False)
 
-# scrape_agent.print_response(
-#     "Use the scrape tool to get the complete raw HTML content from https://en.wikipedia.org/wiki/2025_FIFA_Club_World_Cup"
-# )
+    # scrape_agent = Agent(
+    #     tools=[scrapegraph_scrape],
+    #     model=agent_model,
+    #     markdown=True,
+    #     stream=True,
+    # )
 
-# # Example 5: Enable all ScrapeGraph functions
-# scrapegraph_all = Agent(
-#     tools=[
-#         ScrapeGraphTools(all=True, render_heavy_js=True)
-#     ],  # render_heavy_js=True scrapes all JavaScript
-#     model=agent_model,
-#     markdown=True,
-#     stream=True,
-# )
+    # scrape_agent.print_response(
+    #     "Use the scrape tool to get the complete raw HTML content from https://en.wikipedia.org/wiki/2025_FIFA_Club_World_Cup"
+    # )
 
-# scrapegraph_all.print_response("""
-# Use any appropriate scraping method to extract comprehensive information from https://www.wired.com/category/science/:
-# - News articles and headlines
-# - Convert to markdown if needed
-# - Search for specific information
-# """)
+    # # Example 5: Enable all ScrapeGraph functions
+    # scrapegraph_all = Agent(
+    #     tools=[
+    #         ScrapeGraphTools(all=True, render_heavy_js=True)
+    #     ],  # render_heavy_js=True scrapes all JavaScript
+    #     model=agent_model,
+    #     markdown=True,
+    #     stream=True,
+    # )
+
+    # scrapegraph_all.print_response("""
+    # Use any appropriate scraping method to extract comprehensive information from https://www.wired.com/category/science/:
+    # - News articles and headlines
+    # - Convert to markdown if needed
+    # - Search for specific information
+    # """)

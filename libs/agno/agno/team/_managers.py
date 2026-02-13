@@ -1,4 +1,4 @@
-"""Background task orchestration for memory."""
+"""Background task orchestration for memory and learning."""
 
 from __future__ import annotations
 
@@ -16,7 +16,8 @@ from typing import List
 
 from agno.db.base import UserMemory
 from agno.run.messages import RunMessages
-from agno.utils.log import log_debug
+from agno.session import TeamSession
+from agno.utils.log import log_debug, log_warning
 
 # ---------------------------------------------------------------------------
 # Memory
@@ -171,3 +172,129 @@ async def aget_user_memories(team: "Team", user_id: Optional[str] = None) -> Opt
         user_id = "default"
 
     return await team.memory_manager.aget_user_memories(user_id=user_id)  # type: ignore
+
+
+# ---------------------------------------------------------------------------
+# Learning
+# ---------------------------------------------------------------------------
+
+
+def _process_learnings(
+    team: "Team",
+    run_messages: RunMessages,
+    session: TeamSession,
+    user_id: Optional[str],
+) -> None:
+    """Process learnings from conversation (runs in background thread)."""
+    if team._learning is None:
+        return
+
+    try:
+        messages = list(run_messages.messages) if run_messages else []
+        team._learning.process(
+            messages=messages,
+            user_id=user_id,
+            session_id=session.session_id if session else None,
+            team_id=team.id,
+        )
+        log_debug("Learning extraction completed.")
+    except Exception as e:
+        log_warning(f"Error processing learnings: {e}")
+
+
+async def _aprocess_learnings(
+    team: "Team",
+    run_messages: RunMessages,
+    session: TeamSession,
+    user_id: Optional[str],
+) -> None:
+    """Async process learnings from conversation."""
+    if team._learning is None:
+        return
+
+    try:
+        messages = list(run_messages.messages) if run_messages else []
+        await team._learning.aprocess(
+            messages=messages,
+            user_id=user_id,
+            session_id=session.session_id if session else None,
+            team_id=team.id,
+        )
+        log_debug("Learning extraction completed.")
+    except Exception as e:
+        log_warning(f"Error processing learnings: {e}")
+
+
+def _start_learning_future(
+    team: "Team",
+    run_messages: RunMessages,
+    session: TeamSession,
+    user_id: Optional[str],
+    existing_future: Optional[Future[None]] = None,
+) -> Optional[Future[None]]:
+    """Start learning extraction in background thread.
+
+    Args:
+        team: The Team instance.
+        run_messages: The run messages containing conversation.
+        session: The team session.
+        user_id: The user ID for learning extraction.
+        existing_future: An existing future to cancel before starting a new one.
+
+    Returns:
+        A new learning future if conditions are met, None otherwise.
+    """
+    if existing_future is not None and not existing_future.done():
+        existing_future.cancel()
+
+    if team._learning is not None:
+        log_debug("Starting learning extraction in background thread.")
+        return team.background_executor.submit(
+            _process_learnings,
+            team,
+            run_messages=run_messages,
+            session=session,
+            user_id=user_id,
+        )
+
+    return None
+
+
+async def _astart_learning_task(
+    team: "Team",
+    run_messages: RunMessages,
+    session: TeamSession,
+    user_id: Optional[str],
+    existing_task: Optional[asyncio.Task[None]] = None,
+) -> Optional[asyncio.Task[None]]:
+    """Start learning extraction as async task.
+
+    Args:
+        team: The Team instance.
+        run_messages: The run messages containing conversation.
+        session: The team session.
+        user_id: The user ID for learning extraction.
+        existing_task: An existing task to cancel before starting a new one.
+
+    Returns:
+        A new learning task if conditions are met, None otherwise.
+    """
+    if existing_task is not None and not existing_task.done():
+        existing_task.cancel()
+        try:
+            await existing_task
+        except asyncio.CancelledError:
+            pass
+
+    if team._learning is not None:
+        log_debug("Starting learning extraction as async task.")
+        return asyncio.create_task(
+            _aprocess_learnings(
+                team,
+                run_messages=run_messages,
+                session=session,
+                user_id=user_id,
+            )
+        )
+
+    return None

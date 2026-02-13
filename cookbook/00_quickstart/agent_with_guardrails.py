@@ -33,9 +33,9 @@ from agno.run.team import TeamRunInput
 from agno.tools.yfinance import YFinanceTools
 
 
-# ============================================================================
+# ---------------------------------------------------------------------------
 # Custom Guardrail: Spam Detection
-# ============================================================================
+# ---------------------------------------------------------------------------
 class SpamDetectionGuardrail(BaseGuardrail):
     """
     A custom guardrail that detects spammy or low-quality input.
@@ -73,9 +73,9 @@ class SpamDetectionGuardrail(BaseGuardrail):
         self.check(run_input)
 
 
-# ============================================================================
+# ---------------------------------------------------------------------------
 # Agent Instructions
-# ============================================================================
+# ---------------------------------------------------------------------------
 instructions = """\
 You are a Finance Agent — a data-driven analyst who retrieves market data
 and produces concise, decision-ready insights.
@@ -84,9 +84,9 @@ Always be helpful and provide accurate financial information.
 Never share sensitive personal information in responses.\
 """
 
-# ============================================================================
+# ---------------------------------------------------------------------------
 # Create the Agent with Guardrails
-# ============================================================================
+# ---------------------------------------------------------------------------
 agent_with_guardrails = Agent(
     name="Agent with Guardrails",
     model=Gemini(id="gemini-3-flash-preview"),
@@ -101,9 +101,9 @@ agent_with_guardrails = Agent(
     markdown=True,
 )
 
-# ============================================================================
+# ---------------------------------------------------------------------------
 # Run the Agent
-# ============================================================================
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     test_cases = [
         # Normal request — should work
@@ -129,9 +129,9 @@ if __name__ == "__main__":
             print(f"\n[BLOCKED] {e.message}")
             print(f"   Trigger: {e.check_trigger}")
 
-# ============================================================================
+# ---------------------------------------------------------------------------
 # More Examples
-# ============================================================================
+# ---------------------------------------------------------------------------
 """
 Built-in guardrails:
 

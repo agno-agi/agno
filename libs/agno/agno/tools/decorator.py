@@ -214,6 +214,34 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
         # Preserve the original signature and metadata
         update_wrapper(wrapper, func)
 
+        # Detect sentinel from @approval decorator applied below @tool
+        _approval_type = getattr(func, "_agno_approval_type", None)
+        if _approval_type is not None:
+            if _approval_type == "required":
+                kwargs["approval_type"] = "required"
+                if not any(
+                    [
+                        kwargs.get("requires_user_input"),
+                        kwargs.get("requires_confirmation"),
+                        kwargs.get("external_execution"),
+                    ]
+                ):
+                    kwargs["requires_confirmation"] = True
+            elif _approval_type == "audit":
+                kwargs["approval_type"] = "audit"
+                if not any(
+                    [
+                        kwargs.get("requires_user_input"),
+                        kwargs.get("requires_confirmation"),
+                        kwargs.get("external_execution"),
+                    ]
+                ):
+                    raise ValueError(
+                        "@approval(type='audit') requires at least one HITL flag "
+                        "('requires_confirmation', 'requires_user_input', or 'external_execution') "
+                        "to be set on @tool()."
+                    )
+
         if kwargs.get("requires_user_input", True):
             kwargs["user_input_fields"] = kwargs.get("user_input_fields", [])
 

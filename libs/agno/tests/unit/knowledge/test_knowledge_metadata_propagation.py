@@ -141,7 +141,7 @@ def test_prepare_documents_for_insert_with_metadata():
     # Call _prepare_documents_for_insert with metadata
     result = knowledge._prepare_documents_for_insert(documents, "content-id-1", metadata=metadata)
 
-    # Verify metadata was merged (linked_to NOT added when isolate_vector_search=False)
+    # Verify metadata was merged (linked_to is always added, empty string for unnamed knowledge)
     assert result[0].meta_data == {
         "existing": "value1",
         "document_id": "123",
