@@ -1,60 +1,71 @@
-# Test Log -- learning
+# Test Log: learning
 
-**Tested:** Not yet tested
-**Environment:** .venvs/demo/bin/python, pgvector: required
+> Updated: 2026-02-13
+
+## Pattern Check
+
+**Status:** PASS
+
+**Result:** Checked 6 file(s). Violations: 0
 
 ---
 
 ### 01_team_always_learn.py
 
-**Status:** SKIP
-**Tier:** untagged
-**Description:** Team with learning=True captures user profile and memories automatically.
-**Result:** Requires PostgreSQL.
+**Status:** PASS
+
+**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/learning/01_team_always_learn.py`.
+
+**Result:** Executed successfully.
 
 ---
 
 ### 02_team_configured_learning.py
 
-**Status:** SKIP
-**Tier:** untagged
-**Description:** Configured LearningMachine with per-store modes.
-**Result:** Requires PostgreSQL.
+**Status:** PASS
+
+**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/learning/02_team_configured_learning.py`.
+
+**Result:** Executed successfully.
 
 ---
 
 ### 03_team_entity_memory.py
 
-**Status:** SKIP
-**Tier:** untagged
-**Description:** Entity memory tracking across conversations.
-**Result:** Requires PostgreSQL.
+**Status:** PASS
+
+**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/learning/03_team_entity_memory.py`.
+
+**Result:** Executed successfully.
 
 ---
 
 ### 04_team_session_planning.py
 
-**Status:** SKIP
-**Tier:** untagged
-**Description:** Session context with planning mode.
-**Result:** Requires PostgreSQL.
+**Status:** PASS
+
+**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/learning/04_team_session_planning.py`.
+
+**Result:** Executed successfully.
 
 ---
 
 ### 05_team_learned_knowledge.py
 
-**Status:** SKIP
-**Tier:** untagged
-**Description:** Learned knowledge with vector DB.
-**Result:** Requires PostgreSQL and PgVector.
+**Status:** PASS
+
+**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/learning/05_team_learned_knowledge.py`.
+
+**Result:** Executed successfully.
 
 ---
 
 ### 06_team_decision_log.py
 
-**Status:** SKIP
-**Tier:** untagged
-**Description:** Decision logging for architecture review board.
-**Result:** Requires PostgreSQL.
+**Status:** PASS
+
+**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/learning/06_team_decision_log.py`.
+
+**Result:** Executed successfully.
 
 ---
