@@ -1368,7 +1368,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
 
     @router.post(
         "/knowledge/content/{content_id}/refresh",
-        response_model=ContentResponseSchema,
+        response_model=ContentStatusResponse,
         status_code=202,
         operation_id="refresh_content",
         summary="Refresh Content",
@@ -1393,7 +1393,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
         background_tasks: BackgroundTasks,
         content_id: str = Path(..., description="Content ID to refresh"),
         knowledge_id: Optional[str] = Query(default=None, description="Knowledge base ID (name)"),
-    ) -> ContentResponseSchema:
+    ) -> ContentStatusResponse:
         knowledge = get_knowledge_instance(knowledge_instances, knowledge_id=knowledge_id)
 
         if isinstance(knowledge, RemoteKnowledge):
@@ -1429,12 +1429,9 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
 
         background_tasks.add_task(process_refresh, knowledge, content_id)
 
-        return ContentResponseSchema(
-            id=content_id,
-            name=content.name,
-            description=content.description,
-            metadata=content.metadata,
+        return ContentStatusResponse(
             status=ContentStatus.PROCESSING,
+            status_message="Refreshing content",
         )
 
     return router
