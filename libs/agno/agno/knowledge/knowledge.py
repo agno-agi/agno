@@ -19,9 +19,11 @@ from agno.knowledge.document import Document
 from agno.knowledge.reader import Reader, ReaderFactory
 from agno.knowledge.remote_content.config import (
     RemoteContentConfig,
+    S3Config,
 )
 from agno.knowledge.remote_content.remote_content import (
     RemoteContent,
+    S3Content,
 )
 from agno.knowledge.remote_knowledge import RemoteKnowledge
 from agno.utils.http import async_fetch_with_retry
@@ -171,13 +173,16 @@ class Knowledge(RemoteKnowledge):
         if text_content:
             file_data = FileData(content=text_content, type="Text")
 
+        # Strip reserved _agno key from user-provided metadata
+        safe_metadata = {k: v for k, v in metadata.items() if k != self.RESERVED_METADATA_KEY} if metadata else None
+
         content = Content(
             name=name,
             description=description,
             path=path,
             url=url,
             file_data=file_data if file_data else None,
-            metadata=metadata,
+            metadata=safe_metadata,
             topics=topics,
             remote_content=remote_content,
             reader=reader,
@@ -237,13 +242,16 @@ class Knowledge(RemoteKnowledge):
         if text_content:
             file_data = FileData(content=text_content, type="Text")
 
+        # Strip reserved _agno key from user-provided metadata
+        safe_metadata = {k: v for k, v in metadata.items() if k != self.RESERVED_METADATA_KEY} if metadata else None
+
         content = Content(
             name=name,
             description=description,
             path=path,
             url=url,
             file_data=file_data if file_data else None,
-            metadata=metadata,
+            metadata=safe_metadata,
             topics=topics,
             remote_content=remote_content,
             reader=reader,
@@ -1253,6 +1261,8 @@ class Knowledge(RemoteKnowledge):
         """Synchronously load content."""
         # Store raw content if applicable
         self._maybe_store_raw(content, store_raw)
+        # Capture reader and chunking config in _agno metadata
+        self._store_processing_config(content)
 
         if content.path:
             self._load_from_path(content, upsert, skip_if_exists, include, exclude)
@@ -1280,6 +1290,8 @@ class Knowledge(RemoteKnowledge):
     ) -> None:
         # Store raw content if applicable
         self._maybe_store_raw(content, store_raw)
+        # Capture reader and chunking config in _agno metadata
+        self._store_processing_config(content)
 
         if content.path:
             await self._aload_from_path(content, upsert, skip_if_exists, include, exclude)
@@ -1299,6 +1311,9 @@ class Knowledge(RemoteKnowledge):
     def _maybe_store_raw(self, content: Content, store_raw: Optional[bool] = None) -> None:
         """Store raw content to the configured raw storage backend if applicable.
 
+        If the content source is the same S3 bucket as the raw storage, skips the copy
+        and records a metadata pointer to the original location instead.
+
         Args:
             content: Content with file_data to store
             store_raw: None=auto (store if raw_storage_config set), True=force, False=skip
@@ -1313,6 +1328,10 @@ class Knowledge(RemoteKnowledge):
             return
 
         if self.raw_storage is None:
+            return
+
+        # Check if source is already in the same S3 bucket as raw storage — skip the copy
+        if self._is_source_same_as_raw_storage(content):
             return
 
         # Extract raw bytes from content
@@ -1340,6 +1359,55 @@ class Knowledge(RemoteKnowledge):
                 content.metadata = self._set_agno_metadata(content.metadata, key, value)
         except Exception as e:
             log_error(f"Failed to store raw content: {e}")
+
+    def _is_source_same_as_raw_storage(self, content: Content) -> bool:
+        """Check if the content's source location is the same as the raw storage backend.
+
+        When they match, there's no need to copy — the source metadata already points
+        to the file and can be used for refresh.
+        """
+        if not content.remote_content or not isinstance(content.remote_content, S3Content):
+            return False
+
+        if not isinstance(self.raw_storage_config, S3Config):
+            return False
+
+        source_bucket = content.remote_content.bucket_name
+        raw_bucket = self.raw_storage_config.bucket_name
+
+        if source_bucket and raw_bucket and source_bucket == raw_bucket:
+            log_info("Source S3 bucket matches raw storage bucket, skipping redundant copy")
+            return True
+
+        return False
+
+    def _store_processing_config(self, content: Content) -> None:
+        """Capture reader and chunking configuration in _agno metadata.
+
+        Stores the reader class name, chunk settings, and chunking strategy so that
+        content can be re-processed with identical parameters during refresh.
+        """
+        if content.metadata is None:
+            content.metadata = {}
+
+        processing: Dict[str, Any] = {}
+
+        reader = content.reader
+        if reader:
+            processing["reader_id"] = type(reader).__name__
+            processing["chunk"] = reader.chunk
+            processing["chunk_size"] = reader.chunk_size
+
+            if reader.chunking_strategy:
+                strategy = reader.chunking_strategy
+                processing["chunking_strategy"] = type(strategy).__name__
+                # Capture common chunking params
+                if hasattr(strategy, "chunk_size"):
+                    processing["chunking_chunk_size"] = strategy.chunk_size
+                if hasattr(strategy, "overlap"):
+                    processing["chunking_overlap"] = strategy.overlap
+
+        content.metadata = self._set_agno_metadata(content.metadata, "processing", processing)
 
     @staticmethod
     def _extract_file_bytes(content: Content) -> Optional[bytes]:
@@ -2753,7 +2821,9 @@ class Knowledge(RemoteKnowledge):
             self.contents_db.upsert_knowledge_content(knowledge_row=content_row)
 
             if self.vector_db:
-                self.vector_db.update_metadata(content_id=content.id, metadata=content.metadata or {})
+                # Strip _agno from metadata sent to vector_db — only user fields should be searchable
+                user_metadata = {k: v for k, v in (content.metadata or {}).items() if k != self.RESERVED_METADATA_KEY}
+                self.vector_db.update_metadata(content_id=content.id, metadata=user_metadata)
 
             return content_row.to_dict()
 
@@ -2802,7 +2872,9 @@ class Knowledge(RemoteKnowledge):
                 self.contents_db.upsert_knowledge_content(knowledge_row=content_row)
 
             if self.vector_db:
-                self.vector_db.update_metadata(content_id=content.id, metadata=content.metadata or {})
+                # Strip _agno from metadata sent to vector_db — only user fields should be searchable
+                user_metadata = {k: v for k, v in (content.metadata or {}).items() if k != self.RESERVED_METADATA_KEY}
+                self.vector_db.update_metadata(content_id=content.id, metadata=user_metadata)
 
             return content_row.to_dict()
 

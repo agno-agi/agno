@@ -167,12 +167,10 @@ class BaseLoader:
         Returns:
             Merged metadata dictionary with provider fields under ``_agno``
         """
-        merged: Dict[str, Any] = dict(user_metadata or {})
+        # Strip any user-provided _agno — this key is reserved for the framework
+        merged: Dict[str, Any] = {k: v for k, v in (user_metadata or {}).items() if k != "_agno"}
         # Store provider metadata under reserved _agno key
-        existing_agno = merged.get("_agno", {})
-        if not isinstance(existing_agno, dict):
-            existing_agno = {}
-        merged["_agno"] = {**existing_agno, **provider_metadata}
+        merged["_agno"] = dict(provider_metadata)
         return merged
 
     def _files_to_dict_list(self, files: List[FileToProcess]) -> List[Dict[str, Any]]:
