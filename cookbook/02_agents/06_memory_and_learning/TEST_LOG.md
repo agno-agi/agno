@@ -1,25 +1,24 @@
-# TEST LOG
+# Test Log -- 06_memory_and_learning
 
-Generated: 2026-02-10 UTC
+**Tested:** 2026-02-13
+**Environment:** .venvs/demo/bin/python, pgvector: running
 
-Pattern Check: Checked 1 file(s) in cookbook/02_agents/learning. Violations: 0
+---
 
 ### learning_machine.py
 
 **Status:** PASS
-
-**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
-
-**Result:** Completed successfully.
+**Tier:** untagged
+**Description:** Demonstrates learning machine. Ran successfully and produced expected output.
+**Result:** Completed successfully in 5s.
 
 ---
 
 ### memory_manager.py
 
 **Status:** PASS
-
-**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
-
-**Result:** Structure check passed. Exits 0.
+**Tier:** untagged
+**Description:** Demonstrates memory manager. Ran successfully and produced expected output.
+**Result:** Completed successfully in 9s.
 
 ---

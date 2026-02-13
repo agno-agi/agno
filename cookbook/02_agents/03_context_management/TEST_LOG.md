@@ -1,65 +1,60 @@
-# TEST LOG
+# Test Log -- 03_context_management
 
-Generated: 2026-02-10 UTC
+**Tested:** 2026-02-13
+**Environment:** .venvs/demo/bin/python, pgvector: running
 
-Pattern Check: Checked 4 file(s) in cookbook/02_agents/context_management. Violations: 0
+---
 
 ### few_shot_learning.py
 
 **Status:** PASS
-
-**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
-
-**Result:** Completed successfully.
+**Tier:** untagged
+**Description:** Demonstrates few shot learning. Ran successfully and produced expected output.
+**Result:** Completed successfully in 10s.
 
 ---
 
 ### filter_tool_calls_from_history.py
 
 **Status:** PASS
-
-**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
-
-**Result:** Completed successfully.
+**Tier:** untagged
+**Description:** Demonstrates filter tool calls from history. Ran successfully and produced expected output.
+**Result:** Completed successfully in 39s.
 
 ---
 
 ### instructions.py
 
 **Status:** PASS
-
-**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
-
-**Result:** Completed successfully.
+**Tier:** untagged
+**Description:** Demonstrates instructions. Ran successfully and produced expected output.
+**Result:** Completed successfully in 2s.
 
 ---
 
 ### instructions_with_state.py
 
 **Status:** PASS
-
-**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
-
-**Result:** Completed successfully.
+**Tier:** untagged
+**Description:** Demonstrates instructions with state. Ran successfully and produced expected output.
+**Result:** Completed successfully in 13s.
 
 ---
 
 ### introduction_message.py
 
 **Status:** PASS
-
-**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
-
-**Result:** Structure check passed. Exits 0.
+**Tier:** untagged
+**Description:** Demonstrates introduction message. Ran successfully and produced expected output.
+**Result:** Completed successfully in 5s.
 
 ---
 
 ### system_message.py
 
 **Status:** PASS
-
-**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
-
-**Result:** Structure check passed. Exits 0.
+**Tier:** untagged
+**Description:** Demonstrates system message. Ran successfully and produced expected output.
+**Result:** Completed successfully in 11s.
 
 ---

@@ -1,55 +1,51 @@
-# TEST LOG
+# Test Log -- 09_hooks
 
-Generated: 2026-02-10 UTC
+**Tested:** 2026-02-13
+**Environment:** .venvs/demo/bin/python, pgvector: running
 
-Pattern Check: Checked 4 file(s) in cookbook/02_agents/hooks. Violations: 0
+---
 
 ### post_hook_output.py
 
 **Status:** PASS
-
-**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
-
-**Result:** Completed successfully.
+**Tier:** untagged
+**Description:** Demonstrates post hook output. Ran successfully and produced expected output.
+**Result:** Completed successfully in 22s.
 
 ---
 
 ### pre_hook_input.py
 
 **Status:** PASS
-
-**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
-
-**Result:** Completed successfully.
+**Tier:** untagged
+**Description:** Demonstrates pre hook input. Ran successfully and produced expected output.
+**Result:** Completed successfully in 65s.
 
 ---
 
 ### session_state_hooks.py
 
 **Status:** PASS
-
-**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
-
-**Result:** Completed successfully.
+**Tier:** untagged
+**Description:** Demonstrates session state hooks. Ran successfully and produced expected output.
+**Result:** Completed successfully in 43s.
 
 ---
 
 ### stream_hook.py
 
 **Status:** PASS
-
-**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
-
-**Result:** Completed successfully.
+**Tier:** untagged
+**Description:** Demonstrates stream hook. Ran successfully and produced expected output.
+**Result:** Completed successfully in 19s.
 
 ---
 
 ### tool_hooks.py
 
 **Status:** PASS
-
-**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
-
-**Result:** Structure check passed. Exits 0.
+**Tier:** untagged
+**Description:** Demonstrates tool hooks. Ran successfully and produced expected output.
+**Result:** Completed successfully in 6s.
 
 ---

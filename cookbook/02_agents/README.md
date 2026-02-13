@@ -1,6 +1,6 @@
 # Agno Agents Cookbook
 
-Practical examples for building AI agents with Agno, organized by feature area.
+Practical examples for building agents with Agno, organized by feature area.
 
 ## Directories
 

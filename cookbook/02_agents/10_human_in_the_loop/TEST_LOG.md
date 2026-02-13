@@ -1,75 +1,69 @@
-# TEST LOG
+# Test Log -- 10_human_in_the_loop
 
-Generated: 2026-02-10 UTC
+**Tested:** 2026-02-13
+**Environment:** .venvs/demo/bin/python, pgvector: running
 
-Pattern Check: Checked 6 file(s) in cookbook/02_agents/human_in_the_loop. Violations: 0
+---
 
 ### agentic_user_input.py
 
-**Status:** PASS
-
-**Description:** Interactive smoke validation (startup and first tool flow) in non-interactive terminal.
-
-**Result:** Startup and initial tool call validated; process reached interactive prompt and stopped due EOF in non-interactive execution.
+**Status:** PASS (interactive)
+**Tier:** untagged
+**Description:** Demonstrates agentic user input. Interactive file - setup succeeded, waiting for user input as expected.
+**Result:** Setup succeeded. Requires user input for full execution.
 
 ---
 
 ### confirmation_advanced.py
 
 **Status:** FAIL
-
-**Description:** Interactive smoke validation (startup and first tool flow) in non-interactive terminal.
-
-**Result:** Failed during interactive startup: The `wikipedia` package is not installed. Please install it via `pip install wikipedia`.
+**Tier:** untagged
+**Description:** Demonstrates confirmation advanced. Failed due to missing dependency: ModuleNotFoundError: No module named 'wikipedia'
+**Result:** Missing dependency - should be reclassified as SKIP or dependency added to demo env.
 
 ---
 
 ### confirmation_required.py
 
-**Status:** PASS
+**Status:** PASS (interactive)
+**Tier:** untagged
+**Description:** Demonstrates confirmation required. Interactive file that requires user input - failed with EOFError in non-interactive mode.
+**Result:** Expected behavior for interactive file in non-interactive mode.
 
-**Description:** Interactive smoke validation (startup and first tool flow) in non-interactive terminal.
+---
 
-**Result:** Startup and initial tool call validated; process reached interactive prompt and stopped due EOF in non-interactive execution.
+### confirmation_required_mcp_toolkit.py
+
+**Status:** PASS (interactive)
+**Tier:** untagged
+**Description:** Demonstrates confirmation required mcp toolkit. Interactive file that requires user input - failed with EOFError in non-interactive mode.
+**Result:** Expected behavior for interactive file in non-interactive mode.
 
 ---
 
 ### confirmation_toolkit.py
 
-**Status:** PASS
-
-**Description:** Interactive smoke validation (startup and first tool flow) in non-interactive terminal.
-
-**Result:** Startup and initial tool call validated; process reached interactive prompt and stopped due EOF in non-interactive execution.
+**Status:** PASS (interactive)
+**Tier:** untagged
+**Description:** Demonstrates confirmation toolkit. Interactive file that requires user input - failed with EOFError in non-interactive mode.
+**Result:** Expected behavior for interactive file in non-interactive mode.
 
 ---
 
 ### external_tool_execution.py
 
 **Status:** PASS
-
-**Description:** Interactive smoke validation (startup and first tool flow) in non-interactive terminal.
-
-**Result:** Interactive flow completed successfully.
+**Tier:** untagged
+**Description:** Demonstrates external tool execution. Ran successfully and produced expected output.
+**Result:** Completed successfully in 11s.
 
 ---
 
 ### user_input_required.py
 
-**Status:** PASS
-
-**Description:** Interactive smoke validation (startup and first tool flow) in non-interactive terminal.
-
-**Result:** Interactive flow completed successfully.
-
----
-
-### confirmation_required_mcp_toolkit.py
-
-**Status:** PASS
-
-**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
-
-**Result:** Structure check passed. Exits 0.
+**Status:** PASS (interactive)
+**Tier:** untagged
+**Description:** Demonstrates user input required. Interactive file that requires user input - failed with EOFError in non-interactive mode.
+**Result:** Expected behavior for interactive file in non-interactive mode.
 
 ---

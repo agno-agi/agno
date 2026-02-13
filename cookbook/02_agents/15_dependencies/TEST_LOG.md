@@ -1,35 +1,33 @@
-# TEST LOG
+# Test Log -- 15_dependencies
 
-Generated: 2026-02-10 UTC
+**Tested:** 2026-02-13
+**Environment:** .venvs/demo/bin/python, pgvector: running
 
-Pattern Check: Checked 3 file(s) in cookbook/02_agents/dependencies. Violations: 0
+---
 
 ### dependencies_in_context.py
 
 **Status:** PASS
-
-**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
-
-**Result:** Completed successfully.
+**Tier:** untagged
+**Description:** Demonstrates dependencies in context. Ran successfully and produced expected output.
+**Result:** Completed successfully in 19s.
 
 ---
 
 ### dependencies_in_tools.py
 
 **Status:** PASS
-
-**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
-
-**Result:** Completed successfully.
+**Tier:** untagged
+**Description:** Demonstrates dependencies in tools. Ran successfully and produced expected output.
+**Result:** Completed successfully in 11s.
 
 ---
 
 ### dynamic_tools.py
 
 **Status:** PASS
-
-**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
-
-**Result:** Completed successfully.
+**Tier:** untagged
+**Description:** Demonstrates dynamic tools. Ran successfully and produced expected output.
+**Result:** Completed successfully in 3s.
 
 ---
