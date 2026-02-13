@@ -557,17 +557,25 @@ def handle_get_user_input_tool_update(agent: Agent, run_messages: RunMessages, t
         {"name": user_input_field.name, "value": user_input_field.value}
         for user_input_field in tool.user_input_schema or []
     ]
-    # Add the tool call result to the run_messages
-    run_messages.messages.append(
-        Message(
-            role=agent.model.tool_message_role,
-            content=f"User inputs retrieved: {json.dumps(user_input_result)}",
-            tool_call_id=tool.tool_call_id,
-            tool_name=tool.tool_name,
-            tool_args=tool.tool_args,
-            metrics=Metrics(duration=0),
+    # Update existing placeholder message if present (from pre-pause execution),
+    # otherwise append a new one (backward compat for non-reasoning models).
+    updated = False
+    for msg in run_messages.messages:
+        if msg.tool_call_id == tool.tool_call_id and msg.role == agent.model.tool_message_role:
+            msg.content = f"User inputs retrieved: {json.dumps(user_input_result)}"
+            updated = True
+            break
+    if not updated:
+        run_messages.messages.append(
+            Message(
+                role=agent.model.tool_message_role,
+                content=f"User inputs retrieved: {json.dumps(user_input_result)}",
+                tool_call_id=tool.tool_call_id,
+                tool_name=tool.tool_name,
+                tool_args=tool.tool_args,
+                metrics=Metrics(duration=0),
+            )
         )
-    )
 
 
 def _maybe_create_audit_approval(

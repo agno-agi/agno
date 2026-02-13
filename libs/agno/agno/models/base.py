@@ -2214,6 +2214,22 @@ class Model(ABC):
                 )
 
             if paused_tool_executions:
+                # For get_user_input (UCF), execute the tool before pausing so that
+                # reasoning models (which require all tool results) get a placeholder.
+                is_ucf_get_user_input = (
+                    fc.function.name == "get_user_input"
+                    and fc.arguments
+                    and fc.arguments.get("user_input_fields")
+                    and not fc.function.requires_confirmation
+                    and not fc.function.external_execution
+                )
+                if is_ucf_get_user_input:
+                    yield from self.run_function_call(
+                        function_call=fc,
+                        function_call_results=function_call_results,
+                        additional_input=additional_input,
+                    )
+
                 yield ModelResponse(
                     tool_executions=paused_tool_executions,
                     event=ModelResponseEvent.tool_call_paused.value,
@@ -2384,6 +2400,44 @@ class Model(ABC):
                 )
 
             if paused_tool_executions:
+                # For get_user_input (UCF), execute the tool before pausing so that
+                # reasoning models (which require all tool results) get a placeholder.
+                is_ucf_get_user_input = (
+                    fc.function.name == "get_user_input"
+                    and fc.arguments
+                    and fc.arguments.get("user_input_fields")
+                    and not fc.function.requires_confirmation
+                    and not fc.function.external_execution
+                )
+                if is_ucf_get_user_input:
+                    fc_success, fc_timer, fc_obj, fc_exec_result = await self.arun_function_call(fc)
+                    fc_output = str(fc_exec_result.result) if fc_exec_result.result else ""
+                    # arun_function_call returns AgentRunException in the success slot on error;
+                    # bool(Exception) is truthy, so use isinstance check instead.
+                    fc_succeeded = isinstance(fc_success, bool) and fc_success
+                    fc_result_msg = self.create_function_call_result(
+                        fc_obj,
+                        success=fc_succeeded,
+                        output=fc_output,
+                        timer=fc_timer,
+                        function_execution_result=fc_exec_result,
+                    )
+                    yield ModelResponse(
+                        content=f"{fc_obj.get_call_str()} completed in {fc_timer.elapsed:.4f}s. ",
+                        tool_executions=[
+                            ToolExecution(
+                                tool_call_id=fc_result_msg.tool_call_id,
+                                tool_name=fc_result_msg.tool_name,
+                                tool_args=fc_result_msg.tool_args,
+                                tool_call_error=fc_result_msg.tool_call_error,
+                                result=str(fc_result_msg.content),
+                                metrics=fc_result_msg.metrics,
+                            )
+                        ],
+                        event=ModelResponseEvent.tool_call_completed.value,
+                    )
+                    function_call_results.append(fc_result_msg)
+
                 yield ModelResponse(
                     tool_executions=paused_tool_executions,
                     event=ModelResponseEvent.tool_call_paused.value,
