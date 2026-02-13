@@ -41,10 +41,6 @@ from agno.os.interfaces.telegram.security import (  # noqa: E402
     validate_webhook_secret_token,
 )
 
-# ---------------------------------------------------------------------------
-# security.py
-# ---------------------------------------------------------------------------
-
 
 class TestIsDevelopmentMode:
     def test_unset_is_not_dev(self, monkeypatch):
@@ -106,11 +102,6 @@ class TestValidateWebhookSecretToken:
         assert validate_webhook_secret_token("") is False
 
 
-# ---------------------------------------------------------------------------
-# telegram.py (Telegram class)
-# ---------------------------------------------------------------------------
-
-
 class TestTelegramClass:
     def test_requires_agent_team_or_workflow(self):
         with pytest.raises(ValueError, match="requires an agent, team, or workflow"):
@@ -166,10 +157,6 @@ class TestTelegramClass:
         assert "/telegram/status" in routes
         assert "/telegram/webhook" in routes
 
-
-# ---------------------------------------------------------------------------
-# router.py (FastAPI endpoints via TestClient)
-# ---------------------------------------------------------------------------
 
 ROUTER_MODULE = "agno.os.interfaces.telegram.router"
 
@@ -295,11 +282,6 @@ class TestWebhookEndpoint:
 
         resp = client.post("/telegram/webhook", json=self._text_update())
         assert resp.status_code == 403
-
-
-# ---------------------------------------------------------------------------
-# router.py (process_message — end-to-end via TestClient + mocked AsyncTeleBot)
-# ---------------------------------------------------------------------------
 
 
 def _build_telegram_client(
@@ -494,11 +476,6 @@ class TestProcessMessage:
         agent.arun.assert_not_called()
 
 
-# ---------------------------------------------------------------------------
-# Outbound image handling
-# ---------------------------------------------------------------------------
-
-
 class TestOutboundImages:
     def test_url_image_sent_directly(self, monkeypatch):
         monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
@@ -670,11 +647,6 @@ class TestOutboundImages:
         send_calls = mock_bot.send_message.call_args_list
         sent_texts = [call[0][1] for call in send_calls]
         assert "Fallback text" in sent_texts
-
-
-# ---------------------------------------------------------------------------
-# Inbound media (voice, video, document, sticker)
-# ---------------------------------------------------------------------------
 
 
 class TestInboundMedia:
@@ -862,11 +834,6 @@ class TestInboundMedia:
         assert len(call_kwargs["images"]) == 1
 
 
-# ---------------------------------------------------------------------------
-# Outbound audio, video, and document handling
-# ---------------------------------------------------------------------------
-
-
 class TestOutboundAudioVideoFiles:
     def _make_response(self, **overrides):
         r = MagicMock()
@@ -960,7 +927,8 @@ class TestOutboundAudioVideoFiles:
 
         mock_file = MagicMock()
         mock_file.url = None
-        mock_file.get_content_bytes = MagicMock(return_value=b"fake-doc-bytes")
+        mock_file.content = b"fake-doc-bytes"
+        mock_file.filepath = None
 
         mock_response = self._make_response(files=[mock_file])
         agent = AsyncMock()
@@ -1031,11 +999,6 @@ class TestOutboundAudioVideoFiles:
         mock_bot.send_message.assert_not_called()
 
 
-# ---------------------------------------------------------------------------
-# Message splitting (end-to-end via process_message)
-# ---------------------------------------------------------------------------
-
-
 class TestMessageSplitting:
     def test_sends_via_chunked(self, monkeypatch):
         monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
@@ -1070,11 +1033,6 @@ class TestMessageSplitting:
         mock_bot.send_message.assert_called_with(12345, "Short reply", reply_to_message_id=None)
 
 
-# ---------------------------------------------------------------------------
-# attach_routes validation
-# ---------------------------------------------------------------------------
-
-
 class TestAttachRoutesValidation:
     def test_raises_without_agent_team_workflow(self, monkeypatch):
         monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
@@ -1093,11 +1051,6 @@ class TestAttachRoutesValidation:
 
         with pytest.raises(ValueError, match="TELEGRAM_TOKEN"):
             attach_routes(router=APIRouter(), agent=MagicMock())
-
-
-# ---------------------------------------------------------------------------
-# Bot commands
-# ---------------------------------------------------------------------------
 
 
 class TestBotCommands:
@@ -1192,11 +1145,6 @@ class TestBotCommands:
 
         assert resp.status_code == 200
         agent.arun.assert_called_once()
-
-
-# ---------------------------------------------------------------------------
-# Group mention filtering
-# ---------------------------------------------------------------------------
 
 
 class TestGroupMentionFiltering:
@@ -1381,11 +1329,6 @@ class TestGroupMentionFiltering:
         agent.arun.assert_called_once()
 
 
-# ---------------------------------------------------------------------------
-# Reply-to-bot filtering
-# ---------------------------------------------------------------------------
-
-
 class TestReplyToBotFiltering:
     BOT_USER_ID = 11111
 
@@ -1510,11 +1453,6 @@ class TestReplyToBotFiltering:
         agent.arun.assert_called_once()
 
 
-# ---------------------------------------------------------------------------
-# Mention stripping
-# ---------------------------------------------------------------------------
-
-
 class TestMentionStripping:
     def test_mention_at_start_stripped(self, monkeypatch):
         monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
@@ -1631,11 +1569,6 @@ class TestMentionStripping:
         assert agent.arun.call_args[0][0] == "Hello world"
 
 
-# ---------------------------------------------------------------------------
-# Group session IDs
-# ---------------------------------------------------------------------------
-
-
 class TestGroupSessionId:
     def test_dm_session_id(self, monkeypatch):
         monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
@@ -1743,11 +1676,6 @@ class TestGroupSessionId:
 
         assert resp.status_code == 200
         assert agent.arun.call_args[1]["session_id"] == "tg:-100123:thread:500"
-
-
-# ---------------------------------------------------------------------------
-# Reply threading
-# ---------------------------------------------------------------------------
 
 
 class TestReplyThreading:

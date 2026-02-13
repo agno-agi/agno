@@ -2,7 +2,7 @@ import base64
 import binascii
 import os
 import re
-from typing import Any, List, Optional, Union
+from typing import Any, List, NamedTuple, Optional, Union
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -10,8 +10,9 @@ from pydantic import BaseModel, Field
 from agno.agent import Agent, RemoteAgent
 from agno.media import Audio, File, Image, Video
 from agno.os.interfaces.telegram.security import validate_webhook_secret_token
+from agno.run.agent import RunOutput
 from agno.team import RemoteTeam, Team
-from agno.utils.log import log_debug, log_error, log_info, log_warning
+from agno.utils.log import log_error, log_info, log_warning
 from agno.workflow import RemoteWorkflow, Workflow
 
 try:
@@ -31,6 +32,14 @@ class TelegramStatusResponse(BaseModel):
 
 class TelegramWebhookResponse(BaseModel):
     status: str = Field(description="Processing status")
+
+
+class ParsedMessage(NamedTuple):
+    text: Optional[str]
+    image_file_id: Optional[str]
+    audio_file_id: Optional[str]
+    video_file_id: Optional[str]
+    document_meta: Optional[dict]
 
 
 def attach_routes(
@@ -92,9 +101,7 @@ def attach_routes(
     def _strip_bot_mention(text: str, bot_username: str) -> str:
         return re.sub(rf"@{re.escape(bot_username)}\b", "", text, flags=re.IGNORECASE).strip()
 
-    def _parse_inbound_message(
-        message: dict,
-    ) -> tuple[Optional[str], Optional[str], Optional[str], Optional[str], Optional[dict]]:
+    def _parse_inbound_message(message: dict) -> ParsedMessage:
         message_text: Optional[str] = None
         image_file_id: Optional[str] = None
         audio_file_id: Optional[str] = None
@@ -123,7 +130,7 @@ def attach_routes(
             document_meta = message["document"]
             message_text = message.get("caption", "Process this file")
 
-        return message_text, image_file_id, audio_file_id, video_file_id, document_meta
+        return ParsedMessage(message_text, image_file_id, audio_file_id, video_file_id, document_meta)
 
     async def _download_inbound_media(
         image_file_id: Optional[str],
@@ -179,83 +186,55 @@ def attach_routes(
             reply_id = reply_to_message_id if i == 1 else None
             await bot.send_message(chat_id, f"[{i}/{len(chunks)}] {chunk}", reply_to_message_id=reply_id)
 
-    def _resolve_image_data(image: Any) -> Optional[Any]:
-        if image.url:
-            return image.url
-        if image.content:
-            content = image.content
+    def _resolve_media_data(item: Any) -> Optional[Any]:
+        if item.url:
+            return item.url
+        if item.content:
+            content = item.content
             if isinstance(content, bytes):
                 try:
                     decoded = content.decode("utf-8")
-                    return base64.b64decode(decoded)
+                    return base64.b64decode(decoded, validate=True)
                 except (UnicodeDecodeError, binascii.Error):
                     return content
             elif isinstance(content, str):
                 try:
-                    return base64.b64decode(content)
+                    return base64.b64decode(content, validate=True)
                 except binascii.Error:
-                    log_warning("Invalid base64 image content")
+                    log_warning("Invalid base64 media content")
                     return None
-        if image.filepath:
+        if item.filepath:
             try:
-                with open(image.filepath, "rb") as f:
+                with open(item.filepath, "rb") as f:
                     return f.read()
             except Exception as e:
-                log_warning(f"Failed to read image file: {e}")
+                log_warning(f"Failed to read media file: {e}")
         return None
 
-    async def _send_response_media(response: Any, chat_id: int, reply_to: Optional[int]) -> bool:
+    async def _send_response_media(response: RunOutput, chat_id: int, reply_to: Optional[int]) -> bool:
         any_media_sent = False
         caption = response.content[:TG_MAX_CAPTION_LENGTH] if response.content else None
 
-        if response.images:
-            for image in response.images:
-                photo_data = _resolve_image_data(image)
-                if photo_data:
+        media_senders = [
+            ("images", bot.send_photo),
+            ("audio", bot.send_audio),
+            ("videos", bot.send_video),
+            ("files", bot.send_document),
+        ]
+        for attr, sender in media_senders:
+            items = getattr(response, attr, None)
+            if not items:
+                continue
+            for item in items:
+                data = _resolve_media_data(item)
+                if data:
                     try:
-                        log_debug(f"Sending photo to chat_id={chat_id}, caption={caption[:50] if caption else None}")
-                        await bot.send_photo(chat_id, photo_data, caption=caption, reply_to_message_id=reply_to)
+                        await sender(chat_id, data, caption=caption, reply_to_message_id=reply_to)
                         any_media_sent = True
                         caption = None
                         reply_to = None
                     except Exception as e:
-                        log_error(f"Failed to send photo to chat {chat_id}: {e}")
-
-        if response.audio:
-            for aud in response.audio:
-                audio_data = aud.url or aud.get_content_bytes()
-                if audio_data:
-                    try:
-                        await bot.send_audio(chat_id, audio_data, caption=caption, reply_to_message_id=reply_to)
-                        any_media_sent = True
-                        caption = None
-                        reply_to = None
-                    except Exception as e:
-                        log_error(f"Failed to send audio to chat {chat_id}: {e}")
-
-        if response.videos:
-            for vid in response.videos:
-                video_data = vid.url or vid.get_content_bytes()
-                if video_data:
-                    try:
-                        await bot.send_video(chat_id, video_data, caption=caption, reply_to_message_id=reply_to)
-                        any_media_sent = True
-                        caption = None
-                        reply_to = None
-                    except Exception as e:
-                        log_error(f"Failed to send video to chat {chat_id}: {e}")
-
-        if response.files:
-            for file_obj in response.files:
-                file_data = file_obj.url or file_obj.get_content_bytes()
-                if file_data:
-                    try:
-                        await bot.send_document(chat_id, file_data, caption=caption, reply_to_message_id=reply_to)
-                        any_media_sent = True
-                        caption = None
-                        reply_to = None
-                    except Exception as e:
-                        log_error(f"Failed to send document to chat {chat_id}: {e}")
+                        log_error(f"Failed to send {attr.rstrip('s')} to chat {chat_id}: {e}")
 
         return any_media_sent
 
@@ -328,21 +307,22 @@ def attach_routes(
                 )
                 return
 
-            if is_group and reply_to_mentions_only:
+            if is_group:
                 bot_username = await _get_bot_username()
-                is_mentioned = _message_mentions_bot(message, bot_username)
-                is_reply = reply_to_bot_messages and _is_reply_to_bot(message, await _get_bot_id())
-                if not is_mentioned and not is_reply:
-                    return
+                if reply_to_mentions_only:
+                    is_mentioned = _message_mentions_bot(message, bot_username)
+                    is_reply = reply_to_bot_messages and _is_reply_to_bot(message, await _get_bot_id())
+                    if not is_mentioned and not is_reply:
+                        return
 
             await bot.send_chat_action(chat_id, "typing")
 
-            message_text, image_file_id, audio_file_id, video_file_id, document_meta = _parse_inbound_message(message)
-            if message_text is None:
+            parsed = _parse_inbound_message(message)
+            if parsed.text is None:
                 return
+            message_text = parsed.text
 
             if is_group and message_text:
-                bot_username = await _get_bot_username()
                 message_text = _strip_bot_mention(message_text, bot_username)
 
             user_id = str(message.get("from", {}).get("id", chat_id))
@@ -358,7 +338,7 @@ def attach_routes(
             reply_to = incoming_message_id if is_group else None
 
             images, audio, videos, files = await _download_inbound_media(
-                image_file_id, audio_file_id, video_file_id, document_meta
+                parsed.image_file_id, parsed.audio_file_id, parsed.video_file_id, parsed.document_meta
             )
 
             run_kwargs: dict = dict(
