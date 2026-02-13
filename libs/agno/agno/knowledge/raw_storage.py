@@ -27,9 +27,11 @@ class RawStorage:
     def __init__(
         self,
         storage_config: RemoteContentConfig,
+        knowledge_id: Optional[str] = None,
         content_sources: Optional[List[RemoteContentConfig]] = None,
     ):
         self.storage_config = storage_config
+        self.knowledge_id = knowledge_id
         self.content_sources = content_sources or []
 
     # ==========================================
@@ -128,9 +130,12 @@ class RawStorage:
         if not isinstance(config, S3Config):
             raise ValueError("Storage config is not S3Config")
 
-        # Build S3 key
+        # Build S3 key: {prefix}/{knowledge_id}/{content_id}/{filename}
         prefix = config.prefix.rstrip("/") if config.prefix else "raw"
-        s3_key = f"{prefix}/{content_id}/{filename}"
+        if self.knowledge_id:
+            s3_key = f"{prefix}/{self.knowledge_id}/{content_id}/{filename}"
+        else:
+            s3_key = f"{prefix}/{content_id}/{filename}"
 
         # Build session/client
         session_kwargs: Dict[str, Any] = {}
@@ -202,8 +207,11 @@ class RawStorage:
         if not isinstance(config, LocalStorageConfig):
             raise ValueError("Storage config is not LocalStorageConfig")
 
-        # Build local path
-        dir_path = os.path.join(config.base_path, content_id)
+        # Build local path: {base_path}/{knowledge_id}/{content_id}/{filename}
+        if self.knowledge_id:
+            dir_path = os.path.join(config.base_path, self.knowledge_id, content_id)
+        else:
+            dir_path = os.path.join(config.base_path, content_id)
         os.makedirs(dir_path, exist_ok=True)
         file_path = os.path.join(dir_path, filename)
 

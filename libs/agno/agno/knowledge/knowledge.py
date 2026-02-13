@@ -69,6 +69,17 @@ class Knowledge(RemoteKnowledge):
         self.construct_readers()
 
     @property
+    def knowledge_id(self) -> str:
+        """Generate a deterministic ID for this knowledge instance."""
+        import hashlib
+
+        name = self.name or "knowledge"
+        db_id = self.contents_db.id if self.contents_db else "default"
+        id_seed = f"{name}:{db_id}"
+        hash_hex = hashlib.md5(id_seed.encode()).hexdigest()
+        return f"{hash_hex[:8]}-{hash_hex[8:12]}-{hash_hex[12:16]}-{hash_hex[16:20]}-{hash_hex[20:32]}"
+
+    @property
     def raw_storage(self):
         """Lazily initialize RawStorage from raw_storage_config."""
         if self._raw_storage is not None:
@@ -81,6 +92,7 @@ class Knowledge(RemoteKnowledge):
 
         self._raw_storage = RawStorage(
             storage_config=self.raw_storage_config,
+            knowledge_id=self.knowledge_id,
             content_sources=self.content_sources,
         )
         return self._raw_storage
@@ -921,6 +933,7 @@ class Knowledge(RemoteKnowledge):
 
         return RawStorage(
             storage_config=storage_config,
+            knowledge_id=self.knowledge_id,
             content_sources=self.content_sources,
         )
 
