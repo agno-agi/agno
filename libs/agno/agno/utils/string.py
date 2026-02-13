@@ -93,7 +93,18 @@ def _clean_json_content(content: str) -> str:
             parts.pop(-1)
         content = "".join(parts)
     elif "```" in content:
-        content = content.split("```")[1].strip()
+        # Only strip outer code fences (content wrapped in ```)
+        # Don't strip if backticks appear inside JSON string values
+        stripped = content.strip()
+        if stripped.startswith("```"):
+            first_line_end = stripped.find("\n")
+            if first_line_end != -1:
+                rest = stripped[first_line_end + 1:]
+                if rest.rstrip().endswith("```"):
+                    rest = rest.rstrip()[:-3].rstrip()
+                content = rest
+            else:
+                content = stripped[3:]
 
     # Replace markdown formatting like *"name"* or `"name"` with "name"
     content = re.sub(r'[*`#]?"([A-Za-z0-9_]+)"[*`#]?', r'"\1"', content)
