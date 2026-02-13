@@ -18,10 +18,14 @@ from agno.knowledge.content import Content, ContentAuth, ContentStatus, FileData
 from agno.knowledge.document import Document
 from agno.knowledge.reader import Reader, ReaderFactory
 from agno.knowledge.remote_content.config import (
+    AzureBlobConfig,
+    GcsConfig,
     RemoteContentConfig,
     S3Config,
 )
 from agno.knowledge.remote_content.remote_content import (
+    AzureBlobContent,
+    GCSContent,
     RemoteContent,
     S3Content,
 )
@@ -852,6 +856,9 @@ class Knowledge(RemoteKnowledge):
 
         file_bytes, filename = self._resolve_refresh_source(content)
 
+        # Reconstruct the reader from stored processing config
+        content.reader = self._reconstruct_reader_from_processing(content)
+
         # Create new Content with the fetched file data
         file_data = FileData(
             content=file_bytes,
@@ -871,6 +878,9 @@ class Knowledge(RemoteKnowledge):
             raise ValueError(f"Content {content_id} not found")
 
         file_bytes, filename = self._resolve_refresh_source(content)
+
+        # Reconstruct the reader from stored processing config
+        content.reader = self._reconstruct_reader_from_processing(content)
 
         # Create new Content with the fetched file data
         file_data = FileData(
@@ -1263,6 +1273,9 @@ class Knowledge(RemoteKnowledge):
         self._maybe_store_raw(content, store_raw)
         # Capture reader and chunking config in _agno metadata
         self._store_processing_config(content)
+        # Mark refresh_available if raw storage or cloud source is available
+        if self._is_refresh_available(content):
+            content.status_message = "refresh_available"
 
         if content.path:
             self._load_from_path(content, upsert, skip_if_exists, include, exclude)
@@ -1292,6 +1305,9 @@ class Knowledge(RemoteKnowledge):
         self._maybe_store_raw(content, store_raw)
         # Capture reader and chunking config in _agno metadata
         self._store_processing_config(content)
+        # Mark refresh_available if raw storage or cloud source is available
+        if self._is_refresh_available(content):
+            content.status_message = "refresh_available"
 
         if content.path:
             await self._aload_from_path(content, upsert, skip_if_exists, include, exclude)
@@ -1366,18 +1382,38 @@ class Knowledge(RemoteKnowledge):
         When they match, there's no need to copy — the source metadata already points
         to the file and can be used for refresh.
         """
-        if not content.remote_content or not isinstance(content.remote_content, S3Content):
+        if not content.remote_content:
             return False
 
-        if not isinstance(self.raw_storage_config, S3Config):
-            return False
+        # S3: same bucket check
+        if isinstance(content.remote_content, S3Content) and isinstance(self.raw_storage_config, S3Config):
+            source_bucket = content.remote_content.bucket_name
+            raw_bucket = self.raw_storage_config.bucket_name
+            if source_bucket and raw_bucket and source_bucket == raw_bucket:
+                log_info("Source S3 bucket matches raw storage bucket, skipping redundant copy")
+                return True
 
-        source_bucket = content.remote_content.bucket_name
-        raw_bucket = self.raw_storage_config.bucket_name
+        # Azure Blob: same account + container check
+        if isinstance(content.remote_content, AzureBlobContent) and isinstance(
+            self.raw_storage_config, AzureBlobConfig
+        ):
+            source_config_id = content.remote_content.config_id
+            source_config = self._get_remote_config_by_id(source_config_id) if source_config_id else None
+            if isinstance(source_config, AzureBlobConfig):
+                if (
+                    source_config.storage_account == self.raw_storage_config.storage_account
+                    and source_config.container == self.raw_storage_config.container
+                ):
+                    log_info("Source Azure Blob container matches raw storage container, skipping redundant copy")
+                    return True
 
-        if source_bucket and raw_bucket and source_bucket == raw_bucket:
-            log_info("Source S3 bucket matches raw storage bucket, skipping redundant copy")
-            return True
+        # GCS: same bucket check
+        if isinstance(content.remote_content, GCSContent) and isinstance(self.raw_storage_config, GcsConfig):
+            source_bucket = content.remote_content.bucket_name
+            raw_bucket = self.raw_storage_config.bucket_name
+            if source_bucket and raw_bucket and source_bucket == raw_bucket:
+                log_info("Source GCS bucket matches raw storage bucket, skipping redundant copy")
+                return True
 
         return False
 
@@ -1400,7 +1436,10 @@ class Knowledge(RemoteKnowledge):
 
             if reader.chunking_strategy:
                 strategy = reader.chunking_strategy
-                processing["chunking_strategy"] = type(strategy).__name__
+                # Store the ChunkingStrategyType enum value (e.g., "FixedSizeChunker")
+                # so it can be resolved via ChunkingStrategyType.from_string() on refresh
+                strategy_name = self._CHUNKING_CLASS_TO_TYPE.get(type(strategy).__name__)
+                processing["chunking_strategy"] = strategy_name or type(strategy).__name__
                 # Capture common chunking params
                 if hasattr(strategy, "chunk_size"):
                     processing["chunking_chunk_size"] = strategy.chunk_size
@@ -1408,6 +1447,65 @@ class Knowledge(RemoteKnowledge):
                     processing["chunking_overlap"] = strategy.overlap
 
         content.metadata = self._set_agno_metadata(content.metadata, "processing", processing)
+
+    # Mapping from chunking implementation class names to ChunkingStrategyType enum values
+    _CHUNKING_CLASS_TO_TYPE: Dict[str, str] = {
+        "AgenticChunking": "AgenticChunker",
+        "CodeChunking": "CodeChunker",
+        "DocumentChunking": "DocumentChunker",
+        "RecursiveChunking": "RecursiveChunker",
+        "SemanticChunking": "SemanticChunker",
+        "FixedSizeChunking": "FixedSizeChunker",
+        "RowChunking": "RowChunker",
+        "MarkdownChunking": "MarkdownChunker",
+    }
+
+    def _is_refresh_available(self, content: Content) -> bool:
+        """Check if content has a source available for refresh."""
+        has_raw = bool(self._get_agno_metadata(content.metadata, "raw_storage_type"))
+        has_source = bool(self._get_agno_metadata(content.metadata, "source_type"))
+        return has_raw or has_source
+
+    def _reconstruct_reader_from_processing(self, content: Content) -> Optional[Reader]:
+        """Reconstruct a Reader from stored _agno.processing metadata.
+
+        Used during content refresh to reproduce the same reader and chunking
+        settings that were used during the original ingest.
+        """
+        processing = self._get_agno_metadata(content.metadata, "processing")
+        if not processing or not isinstance(processing, dict):
+            return None
+
+        reader_id = processing.get("reader_id")
+        if not reader_id:
+            return None
+
+        reader_key = ReaderFactory.get_reader_key_for_class_name(reader_id)
+        if not reader_key:
+            log_warning(f"Cannot reconstruct reader: unknown class name '{reader_id}'")
+            return None
+
+        reader = ReaderFactory.create_reader(reader_key)
+
+        # Restore chunk settings
+        if "chunk" in processing:
+            reader.chunk = processing["chunk"]
+        if "chunk_size" in processing:
+            reader.chunk_size = processing["chunk_size"]
+
+        # Restore chunking strategy
+        chunking_strategy_name = processing.get("chunking_strategy")
+        if chunking_strategy_name:
+            try:
+                reader.set_chunking_strategy_from_string(
+                    chunking_strategy_name,
+                    chunk_size=processing.get("chunking_chunk_size"),
+                    overlap=processing.get("chunking_overlap"),
+                )
+            except ValueError:
+                log_warning(f"Cannot reconstruct chunking strategy: '{chunking_strategy_name}'")
+
+        return reader
 
     @staticmethod
     def _extract_file_bytes(content: Content) -> Optional[bytes]:

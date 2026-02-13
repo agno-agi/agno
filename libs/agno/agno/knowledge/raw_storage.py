@@ -1,14 +1,16 @@
 """Raw content storage for Knowledge.
 
-Provides storage and retrieval of raw file contents in S3 or local filesystem.
-This enables features like content refresh (re-embedding from original files)
-and raw file access by agents.
+Provides storage and retrieval of raw file contents in S3, Azure Blob, GCS,
+or local filesystem. This enables features like content refresh (re-embedding
+from original files) and raw file access by agents.
 """
 
 import os
 from typing import Any, Dict, List, Optional
 
 from agno.knowledge.remote_content.config import (
+    AzureBlobConfig,
+    GcsConfig,
     LocalStorageConfig,
     RemoteContentConfig,
     S3Config,
@@ -19,8 +21,10 @@ from agno.utils.log import log_error, log_info
 class RawStorage:
     """Handles storage and retrieval of raw content files.
 
-    Supports two backends:
+    Supports four backends:
     - S3: For production use (via S3Config)
+    - Azure Blob Storage: For Azure environments (via AzureBlobConfig)
+    - Google Cloud Storage: For GCP environments (via GcsConfig)
     - Local filesystem: For development/testing (via LocalStorageConfig)
     """
 
@@ -53,6 +57,10 @@ class RawStorage:
             return self._store_to_s3(content_id, filename, file_data)
         elif isinstance(self.storage_config, LocalStorageConfig):
             return self._store_to_local(content_id, filename, file_data)
+        elif isinstance(self.storage_config, AzureBlobConfig):
+            return self._store_to_azure_blob(content_id, filename, file_data)
+        elif isinstance(self.storage_config, GcsConfig):
+            return self._store_to_gcs(content_id, filename, file_data)
         else:
             raise ValueError(f"Unsupported raw storage config type: {type(self.storage_config).__name__}")
 
@@ -78,6 +86,10 @@ class RawStorage:
             return self._fetch_from_s3(agno_metadata)
         elif raw_storage_type == "local":
             return self._fetch_from_local(agno_metadata)
+        elif raw_storage_type == "azure_blob":
+            return self._fetch_from_azure_blob(agno_metadata)
+        elif raw_storage_type == "gcs":
+            return self._fetch_from_gcs(agno_metadata)
         else:
             raise ValueError(f"Unknown raw storage type: {raw_storage_type}")
 
@@ -237,6 +249,167 @@ class RawStorage:
 
         with open(file_path, "rb") as f:
             return f.read()
+
+    # ==========================================
+    # AZURE BLOB RAW STORAGE
+    # ==========================================
+
+    def _store_to_azure_blob(self, content_id: str, filename: str, file_data: bytes) -> Dict[str, Any]:
+        """Store raw content to Azure Blob Storage."""
+        try:
+            from azure.identity import ClientSecretCredential  # type: ignore
+            from azure.storage.blob import BlobServiceClient  # type: ignore
+        except ImportError:
+            raise ImportError(
+                "The `azure-identity` and `azure-storage-blob` packages are not installed. "
+                "Please install them via `pip install azure-identity azure-storage-blob`."
+            )
+
+        config = self.storage_config
+        if not isinstance(config, AzureBlobConfig):
+            raise ValueError("Storage config is not AzureBlobConfig")
+
+        # Build blob name: {prefix}/{knowledge_id}/{content_id}/{filename}
+        prefix = config.prefix.rstrip("/") if config.prefix else "raw"
+        if self.knowledge_id:
+            blob_name = f"{prefix}/{self.knowledge_id}/{content_id}/{filename}"
+        else:
+            blob_name = f"{prefix}/{content_id}/{filename}"
+
+        credential = ClientSecretCredential(
+            tenant_id=config.tenant_id,
+            client_id=config.client_id,
+            client_secret=config.client_secret,
+        )
+
+        blob_service = BlobServiceClient(
+            account_url=f"https://{config.storage_account}.blob.core.windows.net",
+            credential=credential,
+        )
+
+        blob_client = blob_service.get_blob_client(container=config.container, blob=blob_name)
+        blob_client.upload_blob(file_data, overwrite=True)
+
+        log_info(f"Stored raw content to azure://{config.storage_account}/{config.container}/{blob_name}")
+
+        return {
+            "raw_storage_type": "azure_blob",
+            "raw_storage_blob_name": blob_name,
+            "raw_storage_container": config.container,
+            "raw_storage_account": config.storage_account,
+            "raw_storage_config_id": config.id,
+        }
+
+    def _fetch_from_azure_blob(self, agno_metadata: Dict[str, Any]) -> bytes:
+        """Fetch raw content from Azure Blob Storage."""
+        try:
+            from azure.identity import ClientSecretCredential  # type: ignore
+            from azure.storage.blob import BlobServiceClient  # type: ignore
+        except ImportError:
+            raise ImportError(
+                "The `azure-identity` and `azure-storage-blob` packages are not installed. "
+                "Please install them via `pip install azure-identity azure-storage-blob`."
+            )
+
+        container = agno_metadata.get("raw_storage_container")
+        blob_name = agno_metadata.get("raw_storage_blob_name")
+        storage_account = agno_metadata.get("raw_storage_account")
+        config_id = agno_metadata.get("raw_storage_config_id")
+
+        if not container or not blob_name or not storage_account:
+            raise ValueError("Missing raw_storage_container, raw_storage_blob_name, or raw_storage_account in metadata")
+
+        config = self._resolve_config(config_id)
+
+        if not isinstance(config, AzureBlobConfig):
+            raise ValueError(f"Config {config_id} is not an AzureBlobConfig")
+
+        credential = ClientSecretCredential(
+            tenant_id=config.tenant_id,
+            client_id=config.client_id,
+            client_secret=config.client_secret,
+        )
+
+        blob_service = BlobServiceClient(
+            account_url=f"https://{storage_account}.blob.core.windows.net",
+            credential=credential,
+        )
+
+        blob_client = blob_service.get_blob_client(container=container, blob=blob_name)
+        return blob_client.download_blob().readall()
+
+    # ==========================================
+    # GCS RAW STORAGE
+    # ==========================================
+
+    def _store_to_gcs(self, content_id: str, filename: str, file_data: bytes) -> Dict[str, Any]:
+        """Store raw content to Google Cloud Storage."""
+        try:
+            from google.cloud import storage as gcs_storage  # type: ignore
+        except ImportError:
+            raise ImportError(
+                "The `google-cloud-storage` package is not installed. "
+                "Please install it via `pip install google-cloud-storage`."
+            )
+
+        config = self.storage_config
+        if not isinstance(config, GcsConfig):
+            raise ValueError("Storage config is not GcsConfig")
+
+        # Build blob name: {prefix}/{knowledge_id}/{content_id}/{filename}
+        prefix = config.prefix.rstrip("/") if config.prefix else "raw"
+        if self.knowledge_id:
+            blob_name = f"{prefix}/{self.knowledge_id}/{content_id}/{filename}"
+        else:
+            blob_name = f"{prefix}/{content_id}/{filename}"
+
+        # Build client kwargs
+        client_kwargs: Dict[str, Any] = {}
+        if config.project:
+            client_kwargs["project"] = config.project
+
+        client = gcs_storage.Client(**client_kwargs)
+        bucket = client.bucket(config.bucket_name)
+        blob = bucket.blob(blob_name)
+        blob.upload_from_string(file_data)
+
+        log_info(f"Stored raw content to gs://{config.bucket_name}/{blob_name}")
+
+        return {
+            "raw_storage_type": "gcs",
+            "raw_storage_blob_name": blob_name,
+            "raw_storage_bucket": config.bucket_name,
+            "raw_storage_config_id": config.id,
+        }
+
+    def _fetch_from_gcs(self, agno_metadata: Dict[str, Any]) -> bytes:
+        """Fetch raw content from Google Cloud Storage."""
+        try:
+            from google.cloud import storage as gcs_storage  # type: ignore
+        except ImportError:
+            raise ImportError(
+                "The `google-cloud-storage` package is not installed. "
+                "Please install it via `pip install google-cloud-storage`."
+            )
+
+        bucket_name = agno_metadata.get("raw_storage_bucket")
+        blob_name = agno_metadata.get("raw_storage_blob_name")
+        config_id = agno_metadata.get("raw_storage_config_id")
+
+        if not bucket_name or not blob_name:
+            raise ValueError("Missing raw_storage_bucket or raw_storage_blob_name in metadata")
+
+        config = self._resolve_config(config_id)
+
+        # Build client kwargs
+        client_kwargs: Dict[str, Any] = {}
+        if isinstance(config, GcsConfig) and config.project:
+            client_kwargs["project"] = config.project
+
+        client = gcs_storage.Client(**client_kwargs)
+        bucket = client.bucket(bucket_name)
+        blob = bucket.blob(blob_name)
+        return blob.download_as_bytes()
 
     # ==========================================
     # ORIGINAL SOURCE FETCHERS

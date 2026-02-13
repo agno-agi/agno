@@ -331,6 +331,39 @@ class ReaderFactory:
         return getattr(module, class_name)
 
     @classmethod
+    def get_reader_key_for_class_name(cls, class_name: str) -> Optional[str]:
+        """Map a reader class name back to its reader key.
+
+        Args:
+            class_name: The reader class name (e.g., "PDFReader", "CSVReader")
+
+        Returns:
+            The reader key (e.g., "pdf", "csv") or None if not found.
+        """
+        reader_class_map: Dict[str, tuple] = {
+            "pdf": ("agno.knowledge.reader.pdf_reader", "PDFReader"),
+            "csv": ("agno.knowledge.reader.csv_reader", "CSVReader"),
+            "excel": ("agno.knowledge.reader.excel_reader", "ExcelReader"),
+            "field_labeled_csv": ("agno.knowledge.reader.field_labeled_csv_reader", "FieldLabeledCSVReader"),
+            "docx": ("agno.knowledge.reader.docx_reader", "DocxReader"),
+            "pptx": ("agno.knowledge.reader.pptx_reader", "PPTXReader"),
+            "json": ("agno.knowledge.reader.json_reader", "JSONReader"),
+            "markdown": ("agno.knowledge.reader.markdown_reader", "MarkdownReader"),
+            "text": ("agno.knowledge.reader.text_reader", "TextReader"),
+            "website": ("agno.knowledge.reader.website_reader", "WebsiteReader"),
+            "firecrawl": ("agno.knowledge.reader.firecrawl_reader", "FirecrawlReader"),
+            "tavily": ("agno.knowledge.reader.tavily_reader", "TavilyReader"),
+            "youtube": ("agno.knowledge.reader.youtube_reader", "YouTubeReader"),
+            "arxiv": ("agno.knowledge.reader.arxiv_reader", "ArxivReader"),
+            "wikipedia": ("agno.knowledge.reader.wikipedia_reader", "WikipediaReader"),
+            "web_search": ("agno.knowledge.reader.web_search_reader", "WebSearchReader"),
+        }
+        for key, (_, cls_name) in reader_class_map.items():
+            if cls_name == class_name:
+                return key
+        return None
+
+    @classmethod
     def create_reader(cls, reader_key: str, **kwargs) -> Reader:
         """Create a reader instance with the given key and optional overrides."""
         if reader_key in cls._reader_cache:
