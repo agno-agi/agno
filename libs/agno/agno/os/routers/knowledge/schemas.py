@@ -18,7 +18,7 @@ class ContentStatus(str, Enum):
 class ContentStatusResponse(BaseModel):
     """Response model for content status endpoint."""
 
-    content_id: Optional[str] = Field(None, description="Content ID")
+    id: Optional[str] = Field(None, description="Content ID")
     status: ContentStatus = Field(..., description="Current processing status of the content")
     status_message: str = Field("", description="Status message or error details")
 
