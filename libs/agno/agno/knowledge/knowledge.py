@@ -7,7 +7,7 @@ from enum import Enum
 from io import BytesIO
 from os.path import basename
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple, Union, cast, overload
+from typing import Any, ClassVar, Dict, List, Optional, Set, Tuple, Union, cast, overload
 
 from httpx import AsyncClient
 
@@ -1449,7 +1449,7 @@ class Knowledge(RemoteKnowledge):
         content.metadata = self._set_agno_metadata(content.metadata, "processing", processing)
 
     # Mapping from chunking implementation class names to ChunkingStrategyType enum values
-    _CHUNKING_CLASS_TO_TYPE: Dict[str, str] = {
+    _CHUNKING_CLASS_TO_TYPE: ClassVar[Dict[str, str]] = {
         "AgenticChunking": "AgenticChunker",
         "CodeChunking": "CodeChunker",
         "DocumentChunking": "DocumentChunker",
