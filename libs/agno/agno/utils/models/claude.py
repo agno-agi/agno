@@ -39,6 +39,29 @@ ROLE_MAP = {
 }
 
 
+def _apply_cache_control(content: list, message: Message) -> list:
+    """Apply cache_control from message.provider_data to the last content block.
+
+    Anthropic's convention is to place a cache breakpoint on the last content
+    block of a message.  Content blocks may be plain dicts **or** Pydantic-style
+    SDK objects (``TextBlock``, ``ToolUseBlock``, etc.).  When the last block is
+    an SDK object we convert it to a dict via ``model_dump()`` so that the
+    ``cache_control`` key can be injected.
+    """
+    if not content or not message.provider_data or "cache_control" not in message.provider_data:
+        return content
+
+    last = content[-1]
+
+    # SDK Pydantic objects (TextBlock, ToolUseBlock, …) → dict
+    if hasattr(last, "model_dump"):
+        last = last.model_dump()
+
+    last["cache_control"] = message.provider_data["cache_control"]
+    content[-1] = last
+    return content
+
+
 def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
     """
     Add an image to a message by converting it to base64 encoded format.
@@ -311,6 +334,8 @@ def format_messages(
             if message.videos is not None and len(message.videos) > 0:
                 log_warning("Video input is currently unsupported.")
 
+            content = _apply_cache_control(content, message)
+
         elif message.role == "assistant":
             content = []
 
@@ -347,6 +372,9 @@ def format_messages(
                             type="tool_use",
                         )
                     )
+
+            content = _apply_cache_control(content, message)
+
         elif message.role == "tool":
             content = []
 
@@ -360,6 +388,8 @@ def format_messages(
                     "content": str(tool_result),
                 }
             )
+
+            content = _apply_cache_control(content, message)
 
         # Skip empty assistant responses
         if message.role == "assistant" and not content:

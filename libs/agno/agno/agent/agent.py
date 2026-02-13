@@ -247,6 +247,9 @@ class Agent:
     timezone_identifier: Optional[str] = None
     # If True, resolve session_state, dependencies, and metadata in the user and system messages
     resolve_in_context: bool = True
+    # If True, split system message into cached (static) and uncached (dynamic) parts
+    # for prompt caching. Only effective with Claude models.
+    cache_system_prompt_blocks: bool = False
 
     # --- Learning Machine ---
     # LearningMachine for unified learning capabilities
@@ -430,6 +433,7 @@ class Agent:
         add_location_to_context: bool = False,
         timezone_identifier: Optional[str] = None,
         resolve_in_context: bool = True,
+        cache_system_prompt_blocks: bool = False,
         learning: Optional[Union[bool, LearningMachine]] = None,
         add_learnings_to_context: bool = True,
         additional_input: Optional[List[Union[str, Dict, BaseModel, Message]]] = None,
@@ -577,6 +581,7 @@ class Agent:
         self.add_location_to_context = add_location_to_context
         self.timezone_identifier = timezone_identifier
         self.resolve_in_context = resolve_in_context
+        self.cache_system_prompt_blocks = cache_system_prompt_blocks
         self.learning = learning
         self.add_learnings_to_context = add_learnings_to_context
         self.additional_input = additional_input
@@ -762,7 +767,7 @@ class Agent:
         run_context: Optional[RunContext] = None,
         tools: Optional[List[Union[Function, dict]]] = None,
         add_session_state_to_context: Optional[bool] = None,
-    ) -> Optional[Message]:
+    ) -> Optional[Union[Message, List[Message]]]:
         return _messages.get_system_message(
             self,
             session=session,
@@ -777,7 +782,7 @@ class Agent:
         run_context: Optional[RunContext] = None,
         tools: Optional[List[Union[Function, dict]]] = None,
         add_session_state_to_context: Optional[bool] = None,
-    ) -> Optional[Message]:
+    ) -> Optional[Union[Message, List[Message]]]:
         return await _messages.aget_system_message(
             self,
             session=session,

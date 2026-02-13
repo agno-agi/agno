@@ -4,7 +4,7 @@ import pytest
 
 from agno.media import File
 from agno.models.message import Message
-from agno.utils.models.claude import _format_file_for_message, format_messages
+from agno.utils.models.claude import _apply_cache_control, _format_file_for_message, format_messages
 
 
 class TestFormatFileForMessage:
@@ -238,3 +238,166 @@ class TestFormatMessagesMultiBlockCache:
         assert chat_messages[0]["role"] == "user"
         assert chat_messages[1]["role"] == "assistant"
         assert chat_messages[2]["role"] == "user"
+
+
+class TestApplyCacheControl:
+    """Tests for _apply_cache_control helper."""
+
+    def test_no_provider_data_returns_unchanged(self):
+        msg = Message(role="user", content="hi")
+        content = [{"type": "text", "text": "hi"}]
+        result = _apply_cache_control(content, msg)
+        assert result == content
+        assert "cache_control" not in result[0]
+
+    def test_empty_content_returns_unchanged(self):
+        msg = Message(role="user", content="hi", provider_data={"cache_control": {"type": "ephemeral"}})
+        result = _apply_cache_control([], msg)
+        assert result == []
+
+    def test_dict_block_gets_cache_control(self):
+        msg = Message(role="user", content="hi", provider_data={"cache_control": {"type": "ephemeral"}})
+        content = [{"type": "text", "text": "hi"}]
+        result = _apply_cache_control(content, msg)
+        assert result[-1]["cache_control"] == {"type": "ephemeral"}
+
+    def test_only_last_block_gets_cache_control(self):
+        msg = Message(role="user", content="hi", provider_data={"cache_control": {"type": "ephemeral"}})
+        content = [
+            {"type": "text", "text": "block1"},
+            {"type": "text", "text": "block2"},
+        ]
+        result = _apply_cache_control(content, msg)
+        assert "cache_control" not in result[0]
+        assert result[1]["cache_control"] == {"type": "ephemeral"}
+
+    def test_sdk_object_converted_to_dict(self):
+        from anthropic.types import TextBlock
+
+        msg = Message(role="assistant", content="hi", provider_data={"cache_control": {"type": "ephemeral"}})
+        content = [TextBlock(text="hello", type="text")]
+        result = _apply_cache_control(content, msg)
+        assert isinstance(result[0], dict)
+        assert result[0]["cache_control"] == {"type": "ephemeral"}
+        assert result[0]["text"] == "hello"
+
+    def test_provider_data_without_cache_control_key(self):
+        msg = Message(role="user", content="hi", provider_data={"other": "data"})
+        content = [{"type": "text", "text": "hi"}]
+        result = _apply_cache_control(content, msg)
+        assert "cache_control" not in result[0]
+
+
+class TestNonSystemCacheControl:
+    """Tests for cache_control on user, assistant, and tool messages in format_messages()."""
+
+    def test_user_message_with_cache_control(self):
+        messages = [
+            Message(
+                role="user",
+                content="A long document to cache",
+                provider_data={"cache_control": {"type": "ephemeral"}},
+            ),
+        ]
+        chat_messages, _ = format_messages(messages)
+
+        assert len(chat_messages) == 1
+        content = chat_messages[0]["content"]
+        assert content[-1]["cache_control"] == {"type": "ephemeral"}
+
+    def test_user_message_without_cache_control_unchanged(self):
+        messages = [
+            Message(role="user", content="Simple message"),
+        ]
+        chat_messages, _ = format_messages(messages)
+
+        content = chat_messages[0]["content"]
+        assert "cache_control" not in content[-1]
+
+    def test_tool_message_with_cache_control(self):
+        messages = [
+            Message(
+                role="tool",
+                content="Large tool result",
+                tool_call_id="call_123",
+                provider_data={"cache_control": {"type": "ephemeral"}},
+            ),
+        ]
+        chat_messages, _ = format_messages(messages)
+
+        assert len(chat_messages) == 1
+        content = chat_messages[0]["content"]
+        assert content[-1]["cache_control"] == {"type": "ephemeral"}
+        assert content[-1]["type"] == "tool_result"
+
+    def test_assistant_message_with_cache_control_converts_sdk_objects(self):
+        messages = [
+            Message(
+                role="assistant",
+                content="Hello there",
+                provider_data={"cache_control": {"type": "ephemeral"}},
+            ),
+        ]
+        chat_messages, _ = format_messages(messages)
+
+        assert len(chat_messages) == 1
+        content = chat_messages[0]["content"]
+        # The TextBlock should have been converted to a dict
+        assert isinstance(content[-1], dict)
+        assert content[-1]["cache_control"] == {"type": "ephemeral"}
+        assert content[-1]["text"] == "Hello there"
+
+    def test_assistant_with_tool_calls_cache_on_last_block(self):
+        import json
+
+        messages = [
+            Message(
+                role="assistant",
+                content="Let me search",
+                tool_calls=[
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {"name": "search", "arguments": json.dumps({"q": "test"})},
+                    }
+                ],
+                provider_data={"cache_control": {"type": "ephemeral"}},
+            ),
+        ]
+        chat_messages, _ = format_messages(messages)
+
+        content = chat_messages[0]["content"]
+        # Last block is the tool_use, should have cache_control
+        assert isinstance(content[-1], dict)
+        assert content[-1]["cache_control"] == {"type": "ephemeral"}
+        assert content[-1]["type"] == "tool_use"
+        # Earlier blocks should not have cache_control
+        for block in content[:-1]:
+            block_dict = (
+                block if isinstance(block, dict) else block.model_dump() if hasattr(block, "model_dump") else block
+            )
+            assert "cache_control" not in block_dict
+
+    def test_mixed_system_and_user_cache_control(self):
+        messages = [
+            Message(
+                role="system",
+                content="System instructions",
+                provider_data={"cache_control": {"type": "ephemeral"}},
+            ),
+            Message(
+                role="user",
+                content="Cached user input",
+                provider_data={"cache_control": {"type": "ephemeral"}},
+            ),
+        ]
+        chat_messages, system_message = format_messages(messages)
+
+        # System message should be structured blocks
+        assert isinstance(system_message, list)
+        assert system_message[0]["cache_control"] == {"type": "ephemeral"}
+
+        # User message should also have cache_control
+        assert len(chat_messages) == 1
+        content = chat_messages[0]["content"]
+        assert content[-1]["cache_control"] == {"type": "ephemeral"}

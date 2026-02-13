@@ -109,12 +109,17 @@ def get_system_message(
     run_context: Optional[RunContext] = None,
     tools: Optional[List[Union[Function, dict]]] = None,
     add_session_state_to_context: Optional[bool] = None,
-) -> Optional[Message]:
+) -> Optional[Union[Message, List[Message]]]:
     """Return the system message for the Agent.
 
     1. If the system_message is provided, use that.
     2. If build_context is False, return None.
     3. Build and return the default system message for the Agent.
+
+    When ``agent.cache_system_prompt_blocks`` is True, returns a list of two
+    ``Message`` objects: the first contains the static (cacheable) parts with
+    ``cache_control`` in ``provider_data``, the second contains the dynamic
+    (per-request) parts.
     """
 
     # Extract values from run_context
@@ -226,38 +231,51 @@ def get_system_message(
 
     # 3.3 Build the default system message for the Agent.
     system_message_content: str = ""
+    # When cache_system_prompt_blocks is True we also accumulate static vs dynamic parts.
+    static_content: str = ""
+    dynamic_content: str = ""
     # 3.3.1 First add the Agent description if provided
     if agent.description is not None:
         system_message_content += f"{agent.description}\n"
+        static_content += f"{agent.description}\n"
     # 3.3.2 Then add the Agent role if provided
     if agent.role is not None:
         system_message_content += f"\n<your_role>\n{agent.role}\n</your_role>\n\n"
+        static_content += f"\n<your_role>\n{agent.role}\n</your_role>\n\n"
     # 3.3.3 Then add instructions for the Agent
     if len(instructions) > 0:
+        instructions_block = ""
         if agent.use_instruction_tags:
-            system_message_content += "<instructions>"
+            instructions_block += "<instructions>"
             if len(instructions) > 1:
                 for _upi in instructions:
-                    system_message_content += f"\n- {_upi}"
+                    instructions_block += f"\n- {_upi}"
             else:
-                system_message_content += "\n" + instructions[0]
-            system_message_content += "\n</instructions>\n\n"
+                instructions_block += "\n" + instructions[0]
+            instructions_block += "\n</instructions>\n\n"
         else:
             if len(instructions) > 1:
                 for _upi in instructions:
-                    system_message_content += f"- {_upi}\n"
+                    instructions_block += f"- {_upi}\n"
             else:
-                system_message_content += instructions[0] + "\n\n"
+                instructions_block += instructions[0] + "\n\n"
+        system_message_content += instructions_block
+        static_content += instructions_block
     # 3.3.4 Add additional information
     if len(additional_information) > 0:
-        system_message_content += "<additional_information>"
+        ai_block = "<additional_information>"
         for _ai in additional_information:
-            system_message_content += f"\n- {_ai}"
-        system_message_content += "\n</additional_information>\n\n"
+            ai_block += f"\n- {_ai}"
+        ai_block += "\n</additional_information>\n\n"
+        system_message_content += ai_block
+        dynamic_content += ai_block
     # 3.3.5 Then add instructions for the tools
     if agent._tool_instructions is not None:
+        tool_instr_block = ""
         for _ti in agent._tool_instructions:
-            system_message_content += f"{_ti}\n"
+            tool_instr_block += f"{_ti}\n"
+        system_message_content += tool_instr_block
+        static_content += tool_instr_block
 
     # Format the system message with the session state variables
     if agent.resolve_in_context:
@@ -266,18 +284,32 @@ def get_system_message(
             system_message_content,
             run_context=run_context,
         )
+        static_content = format_message_with_state_variables(
+            agent,
+            static_content,
+            run_context=run_context,
+        )
+        dynamic_content = format_message_with_state_variables(
+            agent,
+            dynamic_content,
+            run_context=run_context,
+        )
 
     # 3.3.7 Then add the expected output
     if agent.expected_output is not None:
-        system_message_content += f"<expected_output>\n{agent.expected_output.strip()}\n</expected_output>\n\n"
+        expected_block = f"<expected_output>\n{agent.expected_output.strip()}\n</expected_output>\n\n"
+        system_message_content += expected_block
+        static_content += expected_block
     # 3.3.8 Then add additional context
     if agent.additional_context is not None:
         system_message_content += f"{agent.additional_context}\n"
+        static_content += f"{agent.additional_context}\n"
     # 3.3.8.1 Then add skills to the system prompt
     if agent.skills is not None:
         skills_snippet = agent.skills.get_system_prompt_snippet()
         if skills_snippet:
             system_message_content += f"\n{skills_snippet}\n"
+            static_content += f"\n{skills_snippet}\n"
     # 3.3.9 Then add memories to the system prompt
     if agent.add_memories_to_context:
         _memory_manager_not_set = False
@@ -290,25 +322,29 @@ def get_system_message(
         user_memories = agent.memory_manager.get_user_memories(user_id=user_id)  # type: ignore
 
         if user_memories and len(user_memories) > 0:
-            system_message_content += "You have access to user info and preferences from previous interactions that you can use to personalize your response:\n\n"
-            system_message_content += "<memories_from_previous_interactions>"
+            memory_block = "You have access to user info and preferences from previous interactions that you can use to personalize your response:\n\n"
+            memory_block += "<memories_from_previous_interactions>"
             for _memory in user_memories:  # type: ignore
-                system_message_content += f"\n- {_memory.memory}"
-            system_message_content += "\n</memories_from_previous_interactions>\n\n"
-            system_message_content += (
+                memory_block += f"\n- {_memory.memory}"
+            memory_block += "\n</memories_from_previous_interactions>\n\n"
+            memory_block += (
                 "Note: this information is from previous interactions and may be updated in this conversation. "
                 "You should always prefer information from this conversation over the past memories.\n"
             )
+            system_message_content += memory_block
+            dynamic_content += memory_block
         else:
-            system_message_content += (
+            no_memory_block = (
                 "You have the capability to retain memories from previous interactions with the user, "
                 "but have not had any interactions with the user yet.\n"
             )
+            system_message_content += no_memory_block
+            dynamic_content += no_memory_block
         if _memory_manager_not_set:
             agent.memory_manager = None
 
         if agent.enable_agentic_memory:
-            system_message_content += (
+            agentic_memory_block = (
                 "\n<updating_user_memories>\n"
                 "- You have access to the `update_user_memory` tool that you can use to add new memories, update existing memories, delete memories, or clear all memories.\n"
                 "- If the user's message includes information that should be captured as a memory, use the `update_user_memory` tool to update your memory database.\n"
@@ -318,6 +354,8 @@ def get_system_message(
                 "- If you use the `update_user_memory` tool, remember to pass on the response to the user.\n"
                 "</updating_user_memories>\n\n"
             )
+            system_message_content += agentic_memory_block
+            dynamic_content += agentic_memory_block
 
     # 3.3.10 Then add cultural knowledge to the system prompt
     if agent.add_culture_to_context:
@@ -329,7 +367,7 @@ def get_system_message(
         cultural_knowledge = agent.culture_manager.get_all_knowledge()  # type: ignore
 
         if cultural_knowledge and len(cultural_knowledge) > 0:
-            system_message_content += (
+            culture_block = (
                 "You have access to shared **Cultural Knowledge**, which provides context, norms, rules and guidance "
                 "for your reasoning, communication, and decision-making. "
                 "Cultural Knowledge represents the collective understanding, values, rules and practices that have "
@@ -345,27 +383,31 @@ def get_system_message(
                 "collective intelligence of the system.\n\n"
                 "Below is the currently available Cultural Knowledge for this context:\n\n"
             )
-            system_message_content += "<cultural_knowledge>"
+            culture_block += "<cultural_knowledge>"
             for _knowledge in cultural_knowledge:  # type: ignore
-                system_message_content += "\n---"
-                system_message_content += f"\nName: {_knowledge.name}"
-                system_message_content += f"\nSummary: {_knowledge.summary}"
-                system_message_content += f"\nContent: {_knowledge.content}"
-            system_message_content += "\n</cultural_knowledge>\n"
+                culture_block += "\n---"
+                culture_block += f"\nName: {_knowledge.name}"
+                culture_block += f"\nSummary: {_knowledge.summary}"
+                culture_block += f"\nContent: {_knowledge.content}"
+            culture_block += "\n</cultural_knowledge>\n"
+            system_message_content += culture_block
+            dynamic_content += culture_block
         else:
-            system_message_content += (
+            no_culture_block = (
                 "You have the capability to access shared **Cultural Knowledge**, which normally provides "
                 "context, norms, and guidance for your behavior and reasoning. However, no cultural knowledge "
                 "is currently available in this session.\n"
                 "Proceed thoughtfully and document any useful insights you create — they may become future "
                 "Cultural Knowledge for others.\n\n"
             )
+            system_message_content += no_culture_block
+            dynamic_content += no_culture_block
 
         if _culture_manager_not_set:
             agent.culture_manager = None
 
         if agent.enable_agentic_culture:
-            system_message_content += (
+            agentic_culture_block = (
                 "\n<contributing_to_culture>\n"
                 "When you discover an insight, pattern, rule, or best practice that will help future agents, use the `create_or_update_cultural_knowledge` tool to add or update entries in the shared cultural knowledge.\n"
                 "\n"
@@ -379,17 +421,21 @@ def get_system_message(
                 "Mention your contribution to the user only if it is relevant to their request or they asked to be notified.\n"
                 "</contributing_to_culture>\n\n"
             )
+            system_message_content += agentic_culture_block
+            dynamic_content += agentic_culture_block
 
     # 3.3.11 Then add a summary of the interaction to the system prompt
     if agent.add_session_summary_to_context and session.summary is not None:
-        system_message_content += "Here is a brief summary of your previous interactions:\n\n"
-        system_message_content += "<summary_of_previous_interactions>\n"
-        system_message_content += session.summary.summary
-        system_message_content += "\n</summary_of_previous_interactions>\n\n"
-        system_message_content += (
+        summary_block = "Here is a brief summary of your previous interactions:\n\n"
+        summary_block += "<summary_of_previous_interactions>\n"
+        summary_block += session.summary.summary
+        summary_block += "\n</summary_of_previous_interactions>\n\n"
+        summary_block += (
             "Note: this information is from previous interactions and may be outdated. "
             "You should ALWAYS prefer information from this conversation over the past summary.\n\n"
         )
+        system_message_content += summary_block
+        dynamic_content += summary_block
 
     # 3.3.12 then add learnings to the system prompt
     if agent._learning is not None and agent.add_learnings_to_context:
@@ -400,6 +446,7 @@ def get_system_message(
         )
         if learning_context:
             system_message_content += learning_context + "\n"
+            dynamic_content += learning_context + "\n"
 
     # 3.3.13 then add search_knowledge instructions to the system prompt
     _resolved_knowledge = _get_resolved_knowledge(agent, run_context)
@@ -411,11 +458,13 @@ def get_system_message(
             )
             if knowledge_context is not None:
                 system_message_content += knowledge_context + "\n"
+                static_content += knowledge_context + "\n"
 
     # 3.3.14 Add the system message from the Model
     system_message_from_model = agent.model.get_system_message_for_model(tools)
     if system_message_from_model is not None:
         system_message_content += system_message_from_model
+        static_content += system_message_from_model
 
     # 3.3.15 Add the JSON output prompt if output_schema is provided and the model does not support native structured outputs or JSON schema outputs
     # or if use_json_mode is True
@@ -427,22 +476,46 @@ def get_system_message(
             and (not agent.use_json_mode or agent.structured_outputs is True)
         )
     ):
-        system_message_content += f"{get_json_output_prompt(output_schema)}"  # type: ignore
+        json_prompt = f"{get_json_output_prompt(output_schema)}"  # type: ignore
+        system_message_content += json_prompt
+        static_content += json_prompt
 
     # 3.3.16 Add the response model format prompt if output_schema is provided (Pydantic only)
     if output_schema is not None and agent.parser_model is not None and not isinstance(output_schema, dict):
-        system_message_content += f"{get_response_model_format_prompt(output_schema)}"
+        resp_format = f"{get_response_model_format_prompt(output_schema)}"
+        system_message_content += resp_format
+        static_content += resp_format
 
     # 3.3.17 Add the session state to the system message
     if add_session_state_to_context and session_state is not None:
-        system_message_content += f"\n<session_state>\n{session_state}\n</session_state>\n\n"
+        session_state_block = f"\n<session_state>\n{session_state}\n</session_state>\n\n"
+        system_message_content += session_state_block
+        dynamic_content += session_state_block
 
     # Return the system message
-    return (
-        Message(role=agent.system_message_role, content=system_message_content.strip())  # type: ignore
-        if system_message_content
-        else None
-    )
+    if not system_message_content:
+        return None
+
+    if agent.cache_system_prompt_blocks:
+        messages: List[Message] = []
+        if static_content.strip():
+            messages.append(
+                Message(
+                    role=agent.system_message_role,
+                    content=static_content.strip(),
+                    provider_data={"cache_control": {"type": "ephemeral"}},
+                )
+            )
+        if dynamic_content.strip():
+            messages.append(
+                Message(
+                    role=agent.system_message_role,
+                    content=dynamic_content.strip(),
+                )
+            )
+        return messages or None
+
+    return Message(role=agent.system_message_role, content=system_message_content.strip())  # type: ignore
 
 
 async def aget_system_message(
@@ -451,12 +524,17 @@ async def aget_system_message(
     run_context: Optional[RunContext] = None,
     tools: Optional[List[Union[Function, dict]]] = None,
     add_session_state_to_context: Optional[bool] = None,
-) -> Optional[Message]:
+) -> Optional[Union[Message, List[Message]]]:
     """Return the system message for the Agent.
 
     1. If the system_message is provided, use that.
     2. If build_context is False, return None.
     3. Build and return the default system message for the Agent.
+
+    When ``agent.cache_system_prompt_blocks`` is True, returns a list of two
+    ``Message`` objects: the first contains the static (cacheable) parts with
+    ``cache_control`` in ``provider_data``, the second contains the dynamic
+    (per-request) parts.
     """
 
     # Extract values from run_context
@@ -569,38 +647,51 @@ async def aget_system_message(
 
     # 3.3 Build the default system message for the Agent.
     system_message_content: str = ""
+    # When cache_system_prompt_blocks is True we also accumulate static vs dynamic parts.
+    static_content: str = ""
+    dynamic_content: str = ""
     # 3.3.1 First add the Agent description if provided
     if agent.description is not None:
         system_message_content += f"{agent.description}\n"
+        static_content += f"{agent.description}\n"
     # 3.3.2 Then add the Agent role if provided
     if agent.role is not None:
         system_message_content += f"\n<your_role>\n{agent.role}\n</your_role>\n\n"
+        static_content += f"\n<your_role>\n{agent.role}\n</your_role>\n\n"
     # 3.3.3 Then add instructions for the Agent
     if len(instructions) > 0:
+        instructions_block = ""
         if agent.use_instruction_tags:
-            system_message_content += "<instructions>"
+            instructions_block += "<instructions>"
             if len(instructions) > 1:
                 for _upi in instructions:
-                    system_message_content += f"\n- {_upi}"
+                    instructions_block += f"\n- {_upi}"
             else:
-                system_message_content += "\n" + instructions[0]
-            system_message_content += "\n</instructions>\n\n"
+                instructions_block += "\n" + instructions[0]
+            instructions_block += "\n</instructions>\n\n"
         else:
             if len(instructions) > 1:
                 for _upi in instructions:
-                    system_message_content += f"- {_upi}\n"
+                    instructions_block += f"- {_upi}\n"
             else:
-                system_message_content += instructions[0] + "\n\n"
+                instructions_block += instructions[0] + "\n\n"
+        system_message_content += instructions_block
+        static_content += instructions_block
     # 3.3.4 Add additional information
     if len(additional_information) > 0:
-        system_message_content += "<additional_information>"
+        ai_block = "<additional_information>"
         for _ai in additional_information:
-            system_message_content += f"\n- {_ai}"
-        system_message_content += "\n</additional_information>\n\n"
+            ai_block += f"\n- {_ai}"
+        ai_block += "\n</additional_information>\n\n"
+        system_message_content += ai_block
+        dynamic_content += ai_block
     # 3.3.5 Then add instructions for the tools
     if agent._tool_instructions is not None:
+        tool_instr_block = ""
         for _ti in agent._tool_instructions:
-            system_message_content += f"{_ti}\n"
+            tool_instr_block += f"{_ti}\n"
+        system_message_content += tool_instr_block
+        static_content += tool_instr_block
 
     # Format the system message with the session state variables
     if agent.resolve_in_context:
@@ -609,18 +700,32 @@ async def aget_system_message(
             system_message_content,
             run_context=run_context,
         )
+        static_content = format_message_with_state_variables(
+            agent,
+            static_content,
+            run_context=run_context,
+        )
+        dynamic_content = format_message_with_state_variables(
+            agent,
+            dynamic_content,
+            run_context=run_context,
+        )
 
     # 3.3.7 Then add the expected output
     if agent.expected_output is not None:
-        system_message_content += f"<expected_output>\n{agent.expected_output.strip()}\n</expected_output>\n\n"
+        expected_block = f"<expected_output>\n{agent.expected_output.strip()}\n</expected_output>\n\n"
+        system_message_content += expected_block
+        static_content += expected_block
     # 3.3.8 Then add additional context
     if agent.additional_context is not None:
         system_message_content += f"{agent.additional_context}\n"
+        static_content += f"{agent.additional_context}\n"
     # 3.3.8.1 Then add skills to the system prompt
     if agent.skills is not None:
         skills_snippet = agent.skills.get_system_prompt_snippet()
         if skills_snippet:
             system_message_content += f"\n{skills_snippet}\n"
+            static_content += f"\n{skills_snippet}\n"
     # 3.3.9 Then add memories to the system prompt
     if agent.add_memories_to_context:
         _memory_manager_not_set = False
@@ -636,25 +741,29 @@ async def aget_system_message(
             user_memories = agent.memory_manager.get_user_memories(user_id=user_id)  # type: ignore
 
         if user_memories and len(user_memories) > 0:
-            system_message_content += "You have access to user info and preferences from previous interactions that you can use to personalize your response:\n\n"
-            system_message_content += "<memories_from_previous_interactions>"
+            memory_block = "You have access to user info and preferences from previous interactions that you can use to personalize your response:\n\n"
+            memory_block += "<memories_from_previous_interactions>"
             for _memory in user_memories:  # type: ignore
-                system_message_content += f"\n- {_memory.memory}"
-            system_message_content += "\n</memories_from_previous_interactions>\n\n"
-            system_message_content += (
+                memory_block += f"\n- {_memory.memory}"
+            memory_block += "\n</memories_from_previous_interactions>\n\n"
+            memory_block += (
                 "Note: this information is from previous interactions and may be updated in this conversation. "
                 "You should always prefer information from this conversation over the past memories.\n"
             )
+            system_message_content += memory_block
+            dynamic_content += memory_block
         else:
-            system_message_content += (
+            no_memory_block = (
                 "You have the capability to retain memories from previous interactions with the user, "
                 "but have not had any interactions with the user yet.\n"
             )
+            system_message_content += no_memory_block
+            dynamic_content += no_memory_block
         if _memory_manager_not_set:
             agent.memory_manager = None
 
         if agent.enable_agentic_memory:
-            system_message_content += (
+            agentic_memory_block = (
                 "\n<updating_user_memories>\n"
                 "- You have access to the `update_user_memory` tool that you can use to add new memories, update existing memories, delete memories, or clear all memories.\n"
                 "- If the user's message includes information that should be captured as a memory, use the `update_user_memory` tool to update your memory database.\n"
@@ -664,6 +773,8 @@ async def aget_system_message(
                 "- If you use the `update_user_memory` tool, remember to pass on the response to the user.\n"
                 "</updating_user_memories>\n\n"
             )
+            system_message_content += agentic_memory_block
+            dynamic_content += agentic_memory_block
 
     # 3.3.10 Then add cultural knowledge to the system prompt
     if agent.add_culture_to_context:
@@ -675,7 +786,7 @@ async def aget_system_message(
         cultural_knowledge = await agent.culture_manager.aget_all_knowledge()  # type: ignore
 
         if cultural_knowledge and len(cultural_knowledge) > 0:
-            system_message_content += (
+            culture_block = (
                 "You have access to shared **Cultural Knowledge**, which provides context, norms, rules and guidance "
                 "for your reasoning, communication, and decision-making.\n\n"
                 "Cultural Knowledge represents the collective understanding, values, rules and practices that have "
@@ -691,27 +802,31 @@ async def aget_system_message(
                 "collective intelligence of the system.\n\n"
                 "Below is the currently available Cultural Knowledge for this context:\n\n"
             )
-            system_message_content += "<cultural_knowledge>"
+            culture_block += "<cultural_knowledge>"
             for _knowledge in cultural_knowledge:  # type: ignore
-                system_message_content += "\n---"
-                system_message_content += f"\nName: {_knowledge.name}"
-                system_message_content += f"\nSummary: {_knowledge.summary}"
-                system_message_content += f"\nContent: {_knowledge.content}"
-            system_message_content += "\n</cultural_knowledge>\n"
+                culture_block += "\n---"
+                culture_block += f"\nName: {_knowledge.name}"
+                culture_block += f"\nSummary: {_knowledge.summary}"
+                culture_block += f"\nContent: {_knowledge.content}"
+            culture_block += "\n</cultural_knowledge>\n"
+            system_message_content += culture_block
+            dynamic_content += culture_block
         else:
-            system_message_content += (
+            no_culture_block = (
                 "You have the capability to access shared **Cultural Knowledge**, which normally provides "
                 "context, norms, and guidance for your behavior and reasoning. However, no cultural knowledge "
                 "is currently available in this session.\n"
                 "Proceed thoughtfully and document any useful insights you create — they may become future "
                 "Cultural Knowledge for others.\n\n"
             )
+            system_message_content += no_culture_block
+            dynamic_content += no_culture_block
 
         if _culture_manager_not_set:
             agent.culture_manager = None
 
         if agent.enable_agentic_culture:
-            system_message_content += (
+            agentic_culture_block = (
                 "\n<contributing_to_culture>\n"
                 "When you discover an insight, pattern, rule, or best practice that will help future agents, use the `create_or_update_cultural_knowledge` tool to add or update entries in the shared cultural knowledge.\n"
                 "\n"
@@ -725,17 +840,21 @@ async def aget_system_message(
                 "Mention your contribution to the user only if it is relevant to their request or they asked to be notified.\n"
                 "</contributing_to_culture>\n\n"
             )
+            system_message_content += agentic_culture_block
+            dynamic_content += agentic_culture_block
 
     # 3.3.11 Then add a summary of the interaction to the system prompt
     if agent.add_session_summary_to_context and session.summary is not None:
-        system_message_content += "Here is a brief summary of your previous interactions:\n\n"
-        system_message_content += "<summary_of_previous_interactions>\n"
-        system_message_content += session.summary.summary
-        system_message_content += "\n</summary_of_previous_interactions>\n\n"
-        system_message_content += (
+        summary_block = "Here is a brief summary of your previous interactions:\n\n"
+        summary_block += "<summary_of_previous_interactions>\n"
+        summary_block += session.summary.summary
+        summary_block += "\n</summary_of_previous_interactions>\n\n"
+        summary_block += (
             "Note: this information is from previous interactions and may be outdated. "
             "You should ALWAYS prefer information from this conversation over the past summary.\n\n"
         )
+        system_message_content += summary_block
+        dynamic_content += summary_block
 
     # 3.3.12 then add learnings to the system prompt
     if agent._learning is not None and agent.add_learnings_to_context:
@@ -746,6 +865,7 @@ async def aget_system_message(
         )
         if learning_context:
             system_message_content += learning_context + "\n"
+            dynamic_content += learning_context + "\n"
 
     # 3.3.13 then add search_knowledge instructions to the system prompt
     _resolved_knowledge = _get_resolved_knowledge(agent, run_context)
@@ -759,17 +879,20 @@ async def aget_system_message(
             )
             if knowledge_context is not None:
                 system_message_content += knowledge_context + "\n"
+                static_content += knowledge_context + "\n"
         elif callable(build_context_fn):
             knowledge_context = build_context_fn(
                 enable_agentic_filters=agent.enable_agentic_knowledge_filters,
             )
             if knowledge_context is not None:
                 system_message_content += knowledge_context + "\n"
+                static_content += knowledge_context + "\n"
 
     # 3.3.14 Add the system message from the Model
     system_message_from_model = agent.model.get_system_message_for_model(tools)
     if system_message_from_model is not None:
         system_message_content += system_message_from_model
+        static_content += system_message_from_model
 
     # 3.3.15 Add the JSON output prompt if output_schema is provided and the model does not support native structured outputs or JSON schema outputs
     # or if use_json_mode is True
@@ -781,22 +904,46 @@ async def aget_system_message(
             and (not agent.use_json_mode or agent.structured_outputs is True)
         )
     ):
-        system_message_content += f"{get_json_output_prompt(output_schema)}"  # type: ignore
+        json_prompt = f"{get_json_output_prompt(output_schema)}"  # type: ignore
+        system_message_content += json_prompt
+        static_content += json_prompt
 
     # 3.3.16 Add the response model format prompt if output_schema is provided (Pydantic only)
     if output_schema is not None and agent.parser_model is not None and not isinstance(output_schema, dict):
-        system_message_content += f"{get_response_model_format_prompt(output_schema)}"
+        resp_format = f"{get_response_model_format_prompt(output_schema)}"
+        system_message_content += resp_format
+        static_content += resp_format
 
     # 3.3.17 Add the session state to the system message
     if add_session_state_to_context and session_state is not None:
-        system_message_content += get_formatted_session_state_for_system_message(agent, session_state)
+        session_state_block = get_formatted_session_state_for_system_message(agent, session_state)
+        system_message_content += session_state_block
+        dynamic_content += session_state_block
 
     # Return the system message
-    return (
-        Message(role=agent.system_message_role, content=system_message_content.strip())  # type: ignore
-        if system_message_content
-        else None
-    )
+    if not system_message_content:
+        return None
+
+    if agent.cache_system_prompt_blocks:
+        messages: List[Message] = []
+        if static_content.strip():
+            messages.append(
+                Message(
+                    role=agent.system_message_role,
+                    content=static_content.strip(),
+                    provider_data={"cache_control": {"type": "ephemeral"}},
+                )
+            )
+        if dynamic_content.strip():
+            messages.append(
+                Message(
+                    role=agent.system_message_role,
+                    content=dynamic_content.strip(),
+                )
+            )
+        return messages or None
+
+    return Message(role=agent.system_message_role, content=system_message_content.strip())  # type: ignore
 
 
 def get_formatted_session_state_for_system_message(agent: Agent, session_state: Dict[str, Any]) -> str:
@@ -1189,16 +1336,20 @@ def get_run_messages(
     run_messages = RunMessages()
 
     # 1. Add system message to run_messages
-    system_message = get_system_message(
+    system_result = get_system_message(
         agent,
         session=session,
         run_context=run_context,
         tools=tools,
         add_session_state_to_context=add_session_state_to_context,
     )
-    if system_message is not None:
-        run_messages.system_message = system_message
-        run_messages.messages.append(system_message)
+    if system_result is not None:
+        if isinstance(system_result, list):
+            run_messages.system_message = system_result[0]
+            run_messages.messages.extend(system_result)
+        else:
+            run_messages.system_message = system_result
+            run_messages.messages.append(system_result)
 
     # 2. Add extra messages to run_messages if provided
     if agent.additional_input is not None:
@@ -1391,16 +1542,20 @@ async def aget_run_messages(
     run_messages = RunMessages()
 
     # 1. Add system message to run_messages
-    system_message = await aget_system_message(
+    system_result = await aget_system_message(
         agent,
         session=session,
         run_context=run_context,
         tools=tools,
         add_session_state_to_context=add_session_state_to_context,
     )
-    if system_message is not None:
-        run_messages.system_message = system_message
-        run_messages.messages.append(system_message)
+    if system_result is not None:
+        if isinstance(system_result, list):
+            run_messages.system_message = system_result[0]
+            run_messages.messages.extend(system_result)
+        else:
+            run_messages.system_message = system_result
+            run_messages.messages.append(system_result)
 
     # 2. Add extra messages to run_messages if provided
     if agent.additional_input is not None:
