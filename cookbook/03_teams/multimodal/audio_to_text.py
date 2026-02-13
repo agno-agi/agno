@@ -1,9 +1,19 @@
+"""
+Audio To Text
+=============================
+
+Demonstrates team-based audio transcription and follow-up content analysis.
+"""
+
 import requests
 from agno.agent import Agent
 from agno.media import Audio
 from agno.models.google import Gemini
 from agno.team import Team
 
+# ---------------------------------------------------------------------------
+# Create Members
+# ---------------------------------------------------------------------------
 transcription_specialist = Agent(
     name="Transcription Specialist",
     role="Convert audio to accurate text transcriptions",
@@ -25,7 +35,9 @@ content_analyzer = Agent(
     ],
 )
 
-# Create a team for collaborative audio-to-text processing
+# ---------------------------------------------------------------------------
+# Create Team
+# ---------------------------------------------------------------------------
 audio_team = Team(
     name="Audio Analysis Team",
     model=Gemini(id="gemini-3-flash-preview"),
@@ -38,13 +50,16 @@ audio_team = Team(
     markdown=True,
 )
 
-url = "https://agno-public.s3.us-east-1.amazonaws.com/demo_data/QA-01.mp3"
+# ---------------------------------------------------------------------------
+# Run Team
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    url = "https://agno-public.s3.us-east-1.amazonaws.com/demo_data/QA-01.mp3"
+    response = requests.get(url)
+    audio_content = response.content
 
-response = requests.get(url)
-audio_content = response.content
-
-audio_team.print_response(
-    "Give a transcript of this audio conversation. Use speaker A, speaker B to identify speakers.",
-    audio=[Audio(content=audio_content)],
-    stream=True,
-)
+    audio_team.print_response(
+        "Give a transcript of this audio conversation. Use speaker A, speaker B to identify speakers.",
+        audio=[Audio(content=audio_content)],
+        stream=True,
+    )

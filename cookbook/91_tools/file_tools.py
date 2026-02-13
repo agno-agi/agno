@@ -11,6 +11,11 @@ from pathlib import Path
 from agno.agent import Agent
 from agno.tools.file import FileTools
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
+
 # Example 1: All functions enabled (default behavior)
 agent_full = Agent(
     tools=[
@@ -81,25 +86,31 @@ agent_writer = Agent(
 )
 
 # Example usage
-print("=== Full File Management Example ===")
-agent_full.print_response(
-    "What is the most advanced LLM currently? Save the answer to a file.", markdown=True
-)
 
-print("\n=== Read-Only File Operations Example ===")
-agent_readonly.print_response(
-    "Search for all files in the directory and list their names and sizes",
-    markdown=True,
-)
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    print("=== Full File Management Example ===")
+    agent_full.print_response(
+        "What is the most advanced LLM currently? Save the answer to a file.",
+        markdown=True,
+    )
 
-print("\n=== File Writing Example ===")
-agent_writer.print_response(
-    "Create a summary of Python best practices and save it to 'python_guide.txt'",
-    markdown=True,
-)
+    print("\n=== Read-Only File Operations Example ===")
+    agent_readonly.print_response(
+        "Search for all files in the directory and list their names and sizes",
+        markdown=True,
+    )
 
-print("\n=== File Search Example ===")
-agent_full.print_response(
-    "Search for all files which have an extension '.txt' and save the answer to a new file named 'all_txt_files.txt'",
-    markdown=True,
-)
+    print("\n=== File Writing Example ===")
+    agent_writer.print_response(
+        "Create a summary of Python best practices and save it to 'python_guide.txt'",
+        markdown=True,
+    )
+
+    print("\n=== File Search Example ===")
+    agent_full.print_response(
+        "Search for all files which have an extension '.txt' and save the answer to a new file named 'all_txt_files.txt'",
+        markdown=True,
+    )
