@@ -460,6 +460,7 @@ def _run(
                     run_messages=run_messages,
                     user_id=user_id,
                     existing_future=memory_future,
+                    run_response=run_response,
                 )
 
                 # Start learning extraction as a background task (runs concurrently with the main execution)
@@ -829,6 +830,7 @@ def _run_stream(
                     run_messages=run_messages,
                     user_id=user_id,
                     existing_future=memory_future,
+                    run_response=run_response,
                 )
 
                 # Start learning extraction as a background task (runs concurrently with the main execution)
@@ -1503,6 +1505,7 @@ async def _arun(
                     run_messages=run_messages,
                     user_id=user_id,
                     existing_task=memory_task,
+                    run_response=run_response,
                 )
 
                 # Start learning extraction as a background task
@@ -1991,6 +1994,7 @@ async def _arun_stream(
                     run_messages=run_messages,
                     user_id=user_id,
                     existing_task=memory_task,
+                    run_response=run_response,
                 )
 
                 # Start learning extraction as a background task
