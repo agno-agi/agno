@@ -6,7 +6,7 @@ from original files) and raw file access by agents.
 """
 
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, cast
 
 from agno.knowledge.remote_content.config import (
     AzureBlobConfig,
@@ -14,6 +14,7 @@ from agno.knowledge.remote_content.config import (
     LocalStorageConfig,
     RemoteContentConfig,
     S3Config,
+    SharePointConfig,
 )
 from agno.utils.log import log_error, log_info
 
@@ -482,14 +483,15 @@ class RawStorage:
         config_id = agno_metadata.get("source_config_id")
         config = self._resolve_config(config_id)
 
-        if not config or not hasattr(config, "_get_access_token"):
+        if not config or not isinstance(config, SharePointConfig):
             raise ValueError(f"SharePoint config {config_id} not found or invalid")
 
-        access_token = config._get_access_token()
+        sp_config = cast(SharePointConfig, config)
+        access_token = sp_config._get_access_token()
         if not access_token:
             raise ValueError("Failed to acquire SharePoint access token")
 
-        site_id = config._get_site_id(access_token)
+        site_id = sp_config._get_site_id(access_token)
         if not site_id:
             raise ValueError("Failed to get SharePoint site ID")
 
@@ -551,13 +553,14 @@ class RawStorage:
         if not storage_account or not container or not blob_name:
             raise ValueError("Missing azure_storage_account, azure_container, or azure_blob_name in metadata")
 
-        if not config or not hasattr(config, "tenant_id"):
+        if not config or not isinstance(config, AzureBlobConfig):
             raise ValueError(f"Azure Blob config {config_id} not found or invalid")
 
+        azure_config = cast(AzureBlobConfig, config)
         credential = ClientSecretCredential(
-            tenant_id=config.tenant_id,
-            client_id=config.client_id,
-            client_secret=config.client_secret,
+            tenant_id=azure_config.tenant_id,
+            client_id=azure_config.client_id,
+            client_secret=azure_config.client_secret,
         )
 
         blob_service = BlobServiceClient(
