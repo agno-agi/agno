@@ -8,7 +8,7 @@ Demonstrates team-level automatic input validation using input_schema.
 from typing import List
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.team import Team
 from agno.tools.hackernews import HackerNewsTools
 from agno.tools.websearch import WebSearchTools
@@ -39,7 +39,7 @@ class ResearchProject(BaseModel):
 # ---------------------------------------------------------------------------
 hackernews_agent = Agent(
     name="HackerNews Researcher",
-    model=OpenAIChat(id="o3-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     tools=[HackerNewsTools()],
     role="Research trending topics and discussions on HackerNews",
     instructions=[
@@ -51,7 +51,7 @@ hackernews_agent = Agent(
 
 web_researcher = Agent(
     name="Web Researcher",
-    model=OpenAIChat(id="o3-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     tools=[WebSearchTools()],
     role="Conduct comprehensive web research",
     instructions=[
@@ -66,7 +66,7 @@ web_researcher = Agent(
 # ---------------------------------------------------------------------------
 research_team = Team(
     name="Research Team with Input Validation",
-    model=OpenAIChat(id="o3-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     members=[hackernews_agent, web_researcher],
     delegate_to_all_members=True,
     input_schema=ResearchProject,

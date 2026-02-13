@@ -6,7 +6,7 @@ Demonstrates two-layer caching for team leader and member responses.
 """
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.team import Team
 
 # ---------------------------------------------------------------------------
@@ -15,13 +15,13 @@ from agno.team import Team
 researcher = Agent(
     name="Researcher",
     role="Research and gather information",
-    model=OpenAIChat(id="gpt-4o", cache_response=True),
+    model=OpenAIResponses(id="gpt-5.2", cache_response=True),
 )
 
 writer = Agent(
     name="Writer",
     role="Write clear and engaging content",
-    model=OpenAIChat(id="gpt-4o", cache_response=True),
+    model=OpenAIResponses(id="gpt-5.2", cache_response=True),
 )
 
 # ---------------------------------------------------------------------------
@@ -29,7 +29,7 @@ writer = Agent(
 # ---------------------------------------------------------------------------
 content_team = Team(
     members=[researcher, writer],
-    model=OpenAIChat(id="gpt-4o", cache_response=True),
+    model=OpenAIResponses(id="gpt-5.2", cache_response=True),
     markdown=True,
     debug_mode=True,
 )

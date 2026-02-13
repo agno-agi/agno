@@ -9,7 +9,7 @@ from typing import Optional
 
 from agno.agent import Agent
 from agno.exceptions import CheckTrigger, InputCheckError
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.run.team import TeamRunInput
 from agno.session.team import TeamSession
 from agno.team import Team
@@ -38,7 +38,7 @@ def comprehensive_team_input_validation(run_input: TeamRunInput, team: Team) -> 
 
     validator_agent = Agent(
         name="Team Input Validator",
-        model=OpenAIChat(id="gpt-5.2"),
+        model=OpenAIResponses(id="gpt-5.2"),
         instructions=[
             "You are a team input validation specialist. Analyze user requests for team execution:",
             "1. RELEVANCE: Ensure the request is appropriate for this specific team's capabilities",
@@ -115,7 +115,7 @@ def transform_team_input(
 
     transformer_agent = Agent(
         name="Team Input Transformer",
-        model=OpenAIChat(id="gpt-5.2"),
+        model=OpenAIResponses(id="gpt-5.2"),
         instructions=[
             "You are a team input transformation specialist.",
             "Rewrite user requests to maximize the collective capabilities of the team.",
@@ -149,37 +149,37 @@ def transform_team_input(
 # ---------------------------------------------------------------------------
 frontend_agent = Agent(
     name="Frontend Developer",
-    model=OpenAIChat(id="gpt-5.2"),
+    model=OpenAIResponses(id="gpt-5.2"),
     description="Expert in React, TypeScript, and modern frontend development",
 )
 
 backend_agent = Agent(
     name="Backend Developer",
-    model=OpenAIChat(id="gpt-5.2"),
+    model=OpenAIResponses(id="gpt-5.2"),
     description="Specialist in Node.js, APIs, databases, and server architecture",
 )
 
 devops_agent = Agent(
     name="DevOps Engineer",
-    model=OpenAIChat(id="gpt-5.2"),
+    model=OpenAIResponses(id="gpt-5.2"),
     description="Expert in deployment, CI/CD, cloud infrastructure, and monitoring",
 )
 
 research_agent = Agent(
     name="Research Analyst",
-    model=OpenAIChat(id="gpt-5.2"),
+    model=OpenAIResponses(id="gpt-5.2"),
     role="Expert in market research, data analysis, and competitive intelligence",
 )
 
 strategy_agent = Agent(
     name="Strategy Consultant",
-    model=OpenAIChat(id="gpt-5.2"),
+    model=OpenAIResponses(id="gpt-5.2"),
     role="Specialist in business strategy, planning, and decision frameworks",
 )
 
 financial_agent = Agent(
     name="Financial Advisor",
-    model=OpenAIChat(id="gpt-5.2"),
+    model=OpenAIResponses(id="gpt-5.2"),
     role="Expert in financial planning, investment analysis, and risk assessment",
 )
 
@@ -203,7 +203,7 @@ dev_team = Team(
 
 consulting_team = Team(
     name="Business Consulting Team",
-    model=OpenAIChat(id="gpt-5.2"),
+    model=OpenAIResponses(id="gpt-5.2"),
     members=[research_agent, strategy_agent, financial_agent],
     pre_hooks=[transform_team_input],
     instructions=[

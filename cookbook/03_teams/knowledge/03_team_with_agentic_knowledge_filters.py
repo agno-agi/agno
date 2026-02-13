@@ -7,7 +7,7 @@ Demonstrates AI-driven dynamic knowledge filtering for team retrieval.
 
 from agno.agent import Agent
 from agno.knowledge.knowledge import Knowledge
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.team import Team
 from agno.utils.media import (
     SampleDataFileExtension,
@@ -83,7 +83,7 @@ web_agent = Agent(
     name="Knowledge Search Agent",
     role="Handle knowledge search",
     knowledge=knowledge,
-    model=OpenAIChat(id="o3-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     instructions=["Always take into account filters"],
 )
 
@@ -93,7 +93,7 @@ web_agent = Agent(
 team_with_knowledge = Team(
     name="Team with Knowledge",
     members=[web_agent],
-    model=OpenAIChat(id="o3-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     knowledge=knowledge,
     show_members_responses=True,
     markdown=True,

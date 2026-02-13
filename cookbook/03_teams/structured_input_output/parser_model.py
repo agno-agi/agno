@@ -9,8 +9,7 @@ import random
 from typing import List
 
 from agno.agent import Agent, RunOutput
-from agno.models.anthropic import Claude
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.team import Team
 from pydantic import BaseModel, Field
 from rich.pretty import pprint
@@ -69,13 +68,13 @@ class NationalParkAdventure(BaseModel):
 # ---------------------------------------------------------------------------
 itinerary_planner = Agent(
     name="Itinerary Planner",
-    model=Claude(id="claude-sonnet-4-20250514"),
+    model=OpenAIResponses(id="gpt-5.2"),
     description="You help people plan amazing national park adventures and provide detailed park guides.",
 )
 
 weather_expert = Agent(
     name="Weather Expert",
-    model=Claude(id="claude-sonnet-4-20250514"),
+    model=OpenAIResponses(id="gpt-5.2"),
     description="You are a weather expert and can provide detailed weather information for a given location.",
 )
 
@@ -83,10 +82,10 @@ weather_expert = Agent(
 # Create Team
 # ---------------------------------------------------------------------------
 national_park_expert = Team(
-    model=OpenAIChat(id="o3-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     members=[itinerary_planner, weather_expert],
     output_schema=NationalParkAdventure,
-    parser_model=OpenAIChat(id="o3-mini"),
+    parser_model=OpenAIResponses(id="gpt-5.2-mini"),
 )
 
 # ---------------------------------------------------------------------------

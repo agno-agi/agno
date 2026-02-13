@@ -7,7 +7,7 @@ Demonstrates resolving external tool execution requirements in team flows.
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.team import Team
 from agno.tools import tool
 from agno.utils import pprint
@@ -33,7 +33,7 @@ def send_email(to: str, subject: str, body: str) -> str:
 # ---------------------------------------------------------------------------
 email_agent = Agent(
     name="EmailAgent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     tools=[send_email],
     db=db,
     telemetry=False,
@@ -44,7 +44,7 @@ email_agent = Agent(
 # ---------------------------------------------------------------------------
 team = Team(
     name="CommunicationTeam",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     members=[email_agent],
     db=db,
     telemetry=False,

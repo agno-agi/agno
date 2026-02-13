@@ -8,7 +8,7 @@ Demonstrates per-run output_schema overrides across sync/async and streaming mod
 import asyncio
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.team import Team
 from agno.tools.websearch import WebSearchTools
 from pydantic import BaseModel
@@ -31,7 +31,7 @@ class BookSchema(BaseModel):
 # ---------------------------------------------------------------------------
 researcher = Agent(
     name="Researcher",
-    model=OpenAIChat("gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     role="Researches information.",
     tools=[WebSearchTools()],
 )
@@ -41,7 +41,7 @@ researcher = Agent(
 # ---------------------------------------------------------------------------
 team = Team(
     name="Research Team",
-    model=OpenAIChat("gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     members=[researcher],
     output_schema=PersonSchema,
     markdown=False,
@@ -49,8 +49,8 @@ team = Team(
 
 parser_team = Team(
     name="Parser Team",
-    model=OpenAIChat("gpt-4o"),
-    parser_model=OpenAIChat("gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
+    parser_model=OpenAIResponses(id="gpt-5.2"),
     members=[researcher],
     output_schema=PersonSchema,
     markdown=False,
@@ -58,7 +58,7 @@ parser_team = Team(
 
 json_team = Team(
     name="JSON Team",
-    model=OpenAIChat("gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     members=[researcher],
     output_schema=PersonSchema,
     use_json_mode=True,

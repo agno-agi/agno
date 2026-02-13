@@ -8,7 +8,7 @@ Demonstrates passing dependencies on run and propagating them to member agents.
 from datetime import datetime
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.team import Team
 
 
@@ -47,13 +47,13 @@ def get_current_context() -> dict:
 # ---------------------------------------------------------------------------
 profile_agent = Agent(
     name="ProfileAnalyst",
-    model=OpenAIChat(id="gpt-5.2"),
+    model=OpenAIResponses(id="gpt-5.2"),
     instructions="You analyze user profiles and provide personalized recommendations.",
 )
 
 context_agent = Agent(
     name="ContextAnalyst",
-    model=OpenAIChat(id="gpt-5.2"),
+    model=OpenAIResponses(id="gpt-5.2"),
     instructions="You analyze current context and timing to provide relevant insights.",
 )
 
@@ -62,7 +62,7 @@ context_agent = Agent(
 # ---------------------------------------------------------------------------
 team = Team(
     name="PersonalizationTeam",
-    model=OpenAIChat(id="gpt-5.2"),
+    model=OpenAIResponses(id="gpt-5.2"),
     members=[profile_agent, context_agent],
     markdown=True,
     show_members_responses=True,

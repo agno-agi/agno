@@ -7,7 +7,7 @@ Demonstrates post-hook notifications after team response generation.
 
 import asyncio
 
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.run import RunContext
 from agno.run.team import TeamRunOutput
 from agno.team import Team
@@ -36,7 +36,7 @@ def send_notification(run_output: TeamRunOutput, run_context: RunContext) -> Non
 # ---------------------------------------------------------------------------
 team = Team(
     name="Financial Report Team",
-    model=OpenAIChat(id="gpt-5.2"),
+    model=OpenAIResponses(id="gpt-5.2"),
     members=[],
     post_hooks=[send_notification],
     tools=[YFinanceTools()],
