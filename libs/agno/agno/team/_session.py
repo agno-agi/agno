@@ -508,7 +508,7 @@ def update_session_metrics(team: "Team", session: TeamSession, run_response: Tea
     session-level SessionMetrics (details: List[ModelMetrics]) using explicit
     accumulation, matching the agent storage pattern.
     """
-    from agno.metrics import ModelMetrics, SessionMetrics
+    from agno.metrics import ModelMetrics
     from agno.team._storage import get_session_metrics_internal
 
     session_metrics = get_session_metrics_internal(team, session=session)

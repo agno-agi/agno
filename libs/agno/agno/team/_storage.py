@@ -1233,8 +1233,6 @@ def delete(
 
 
 def get_session_metrics(team: "Team", session_id: Optional[str] = None):
-    from agno.metrics import SessionMetrics
-
     session_id = session_id or team.session_id
     if session_id is None:
         raise Exception("Session ID is not set")
@@ -1242,8 +1240,6 @@ def get_session_metrics(team: "Team", session_id: Optional[str] = None):
 
 
 async def aget_session_metrics(team: "Team", session_id: Optional[str] = None):
-    from agno.metrics import SessionMetrics
-
     session_id = session_id or team.session_id
     if session_id is None:
         raise Exception("Session ID is not set")
