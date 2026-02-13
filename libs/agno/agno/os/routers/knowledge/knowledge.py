@@ -1430,6 +1430,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
         background_tasks.add_task(process_refresh, knowledge, content_id)
 
         return ContentStatusResponse(
+            content_id=content_id,
             status=ContentStatus.PROCESSING,
             status_message="Refreshing content",
         )
