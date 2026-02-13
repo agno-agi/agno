@@ -852,7 +852,7 @@ class Milvus(VectorDb):
             sparse_search_param = {
                 "data": [sparse_vector],
                 "anns_field": "sparse_vector",
-                "param": {"metric_type": "IP", "params": {"drop_ratio_build": 0.2}},
+                "param": {"metric_type": "IP", "params": {"drop_ratio_search": 0.2}},
                 "limit": limit * 2,  # Match dense search limit to ensure balanced candidate pool for reranking
             }
 
@@ -941,7 +941,7 @@ class Milvus(VectorDb):
             sparse_search_param = {
                 "data": [sparse_vector],
                 "anns_field": "sparse_vector",
-                "param": {"metric_type": "IP", "params": {"drop_ratio_build": 0.2}},
+                "param": {"metric_type": "IP", "params": {"drop_ratio_search": 0.2}},
                 "limit": limit * 2,  # Match dense search limit to ensure balanced candidate pool for reranking
             }
 
