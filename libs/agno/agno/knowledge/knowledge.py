@@ -1270,7 +1270,7 @@ class Knowledge(RemoteKnowledge):
     ) -> None:
         """Synchronously load content."""
         # Store raw content if applicable
-        self._maybe_store_raw(content, store_raw)
+        self._determine_store_raw(content, store_raw)
         # Capture reader and chunking config in _agno metadata
         self._store_processing_config(content)
         # Mark refresh_available if raw storage or cloud source is available
@@ -1302,7 +1302,7 @@ class Knowledge(RemoteKnowledge):
         store_raw: Optional[bool] = None,
     ) -> None:
         # Store raw content if applicable
-        self._maybe_store_raw(content, store_raw)
+        self._determine_store_raw(content, store_raw)
         # Capture reader and chunking config in _agno metadata
         self._store_processing_config(content)
         # Mark refresh_available if raw storage or cloud source is available
@@ -1324,7 +1324,7 @@ class Knowledge(RemoteKnowledge):
         if content.remote_content:
             await self._aload_from_remote_content(content, upsert, skip_if_exists)
 
-    def _maybe_store_raw(self, content: Content, store_raw: Optional[bool] = None) -> None:
+    def _determine_store_raw(self, content: Content, store_raw: Optional[bool] = None) -> None:
         """Store raw content to the configured raw storage backend if applicable.
 
         If the content source is the same S3 bucket as the raw storage, skips the copy
