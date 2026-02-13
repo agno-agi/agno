@@ -87,7 +87,7 @@ knowledge_s3 = Knowledge(
     contents_db=contents_db,
     vector_db=vector_db,
     content_sources=[s3_docs],  # Document source for ingestion
-    raw_storage_config=s3_raw,  # Separate config for raw storage (not in content_sources)
+    raw_storage_config=s3_docs,  # Separate config for raw storage (not in content_sources)
 )
 
 # ============================================================================
