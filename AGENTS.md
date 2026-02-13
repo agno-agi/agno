@@ -122,29 +122,6 @@ Format:
 
 ---
 
-## Design Documents
-
-The `specs/` folder contains design documents for ongoing initiatives.
-
-**Always read the design document first**.
-
-Each spec follows this structure:
-```
-specs/agno/<spec-name>/
-├── design.md           # The specification
-├── implementation.md   # Current status and what's done
-├── prompts.md          # Prompts used for testing
-└── notes.md            # Notes on the design and implementation
-```
-
-**Workflow:**
-1. Read `design.md` to understand what we're building
-2. Check `implementation.md` for current status
-3. Find the relevant code in `libs/agno`
-4. Create/update cookbooks to test patterns
-
----
-
 ## Code Locations
 
 | What | Where |
@@ -222,11 +199,11 @@ Both scripts must pass with no errors before code review.
 **PR Title Format:**
 
 PR titles must follow one of these formats:
-- `[type] description` — e.g., `[feat] add workflow serialization`
 - `type: description` — e.g., `feat: add workflow serialization`
+- `[type] description` — e.g., `[feat] add workflow serialization`
 - `type-kebab-case` — e.g., `feat-workflow-serialization`
 
-Valid types: `feat`, `fix`, `cookbook`, `test`, `refactor`, `build`, `ci`, `chore`, `perf`, `style`, `revert`
+Valid types: `feat`, `fix`, `cookbook`, `test`, `refactor`, `chore`, `style`, `revert`, `release`
 
 **PR Description:**
 

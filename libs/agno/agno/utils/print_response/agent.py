@@ -710,7 +710,7 @@ async def aprint_response(
             live_log.update(Group(*panels))
 
         # Run the agent
-        run_response = await agent.arun(
+        run_response = await agent.arun(  # type: ignore[misc]
             input=input,
             session_id=session_id,
             session_state=session_state,

@@ -1,9 +1,20 @@
+"""
+Anthropic Csv Input
+===================
+
+Cookbook example for `anthropic/csv_input.py`.
+"""
+
 from pathlib import Path
 
 from agno.agent import Agent
 from agno.media import File
 from agno.models.anthropic import Claude
 from agno.utils.media import download_file
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 csv_path = Path(__file__).parent.joinpath("IMDB-Movie-Data.csv")
 
@@ -25,3 +36,10 @@ agent.print_response(
         ),
     ],
 )
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

@@ -1,8 +1,19 @@
+"""
+Cometapi Structured Output
+==========================
+
+Cookbook example for `cometapi/structured_output.py`.
+"""
+
 from typing import List
 
 from agno.agent import Agent
 from agno.models.cometapi import CometAPI
 from pydantic import BaseModel, Field
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 
 class MovieScript(BaseModel):
@@ -23,3 +34,10 @@ agent = Agent(
 )
 
 agent.print_response("Generate a movie script about a time-traveling detective")
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

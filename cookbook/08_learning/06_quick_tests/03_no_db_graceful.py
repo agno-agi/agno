@@ -18,9 +18,9 @@ from agno.agent import Agent
 from agno.learn import LearningMachine, LearningMode, UserProfileConfig
 from agno.models.openai import OpenAIResponses
 
-# ============================================================================
-# Setup - Intentionally NO database
-# ============================================================================
+# ---------------------------------------------------------------------------
+# Create Agent - Intentionally NO database
+# ---------------------------------------------------------------------------
 
 # Note: No db parameter - this is the edge case we're testing
 agent = Agent(
@@ -33,9 +33,9 @@ agent = Agent(
     markdown=True,
 )
 
-# ============================================================================
-# Demo
-# ============================================================================
+# ---------------------------------------------------------------------------
+# Run Demo
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     user_id = "no_db_test@example.com"
@@ -45,7 +45,7 @@ if __name__ == "__main__":
     print("=" * 60 + "\n")
 
     # Check that LearningMachine exists but has no DB
-    lm = agent.get_learning_machine()
+    lm = agent.learning_machine
     print(f"LearningMachine exists: {lm is not None}")
     if lm:
         print(f"DB is None: {lm.db is None}")
