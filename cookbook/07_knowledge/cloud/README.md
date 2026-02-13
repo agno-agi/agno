@@ -63,6 +63,33 @@ Full example with SharePoint, GitHub, and Azure Blob sources.
 .venvs/demo/bin/python cookbook/07_knowledge/cloud/cloud_agentos.py
 ```
 
+### `raw_storage.py` — Raw Content Storage & Refresh
+
+Store raw file bytes during ingestion and refresh (re-embed) content later. Shows both local filesystem storage (dev) and S3 storage (production).
+
+```bash
+# Start the server (uses local filesystem storage)
+.venvs/demo/bin/python cookbook/07_knowledge/cloud/raw_storage.py
+
+# Upload a file with raw storage enabled
+curl -X POST http://localhost:7777/v1/knowledge/raw-storage-local-demo/content \
+  -F "file=@report.pdf" \
+  -F "name=Q4 Report" \
+  -F "store_raw=true"
+
+# Refresh content (re-embed from stored raw bytes)
+curl -X POST http://localhost:7777/v1/knowledge/content/{content_id}/refresh
+```
+
+SDK usage:
+```python
+knowledge.insert(
+    name="Q4 Report",
+    path="/path/to/report.pdf",
+    store_raw=True,
+)
+```
+
 ### Provider-Specific Examples
 
 - `azure_blob.py` — Azure Blob Storage integration
@@ -133,6 +160,15 @@ Response includes `meta` with pagination info:
 
 ### Upload Content
 ```
+POST /v1/knowledge/{knowledge_id}/content
+```
+
+Form fields:
+- `file` — File to upload
+- `name` — Content name
+- `store_raw` — (optional) `true` to store raw file bytes for later refresh
+
+```
 POST /v1/knowledge/{knowledge_id}/remote-content
 ```
 
@@ -141,6 +177,14 @@ Body:
 {
   "name": "My Document",
   "config_id": "source-id",
-  "path": "folder/file.pdf"
+  "path": "folder/file.pdf",
+  "store_raw": true
 }
 ```
+
+### Refresh Content
+```
+POST /v1/knowledge/content/{content_id}/refresh
+```
+
+Re-fetches content from raw storage or original cloud source and re-embeds it. Returns 202 on success, 404 if content not found, 422 if no source available.
