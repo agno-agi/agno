@@ -39,6 +39,7 @@ try:
         GoogleSearch,
         GoogleSearchRetrieval,
         GroundingMetadata,
+        HttpOptions,
         Operation,
         Part,
         Retrieval,
@@ -89,6 +90,12 @@ class Gemini(Model):
     url_context: bool = False
     vertexai_search: bool = False
     vertexai_search_datastore: Optional[str] = None
+
+    # Parallel web search grounding (Vertex AI only)
+    # Uses Parallel Web Systems' search API for grounding with public web data
+    parallel_search: bool = False
+    parallel_api_key: Optional[str] = None
+    parallel_endpoint: Optional[str] = None
 
     # Gemini File Search capabilities
     file_search_store_names: Optional[List[str]] = None
@@ -321,10 +328,51 @@ class Gemini(Model):
                 Tool(retrieval=Retrieval(vertex_ai_search=VertexAISearch(datastore=self.vertexai_search_datastore)))
             )
 
+        # Track if we need to use raw parallel tool (SDK doesn't support parallelAiSearch yet)
+        parallel_raw_tool: Optional[Dict[str, Any]] = None
+        if self.parallel_search:
+            log_debug("Gemini Parallel web search grounding enabled.")
+            if not self.vertexai:
+                log_error("Parallel search grounding is only available with Vertex AI. Set vertexai=True.")
+                raise ValueError("Parallel search grounding requires vertexai=True.")
+            # Verify Vertex AI credentials are configured
+            project_id = self.project_id or getenv("GOOGLE_CLOUD_PROJECT")
+            location = self.location or getenv("GOOGLE_CLOUD_LOCATION")
+            if not project_id or not location:
+                log_error(
+                    "Parallel search grounding requires Vertex AI with proper GCP credentials. "
+                    "Set GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_LOCATION environment variables, "
+                    "and authenticate with: gcloud auth application-default login"
+                )
+                raise ValueError(
+                    "Parallel search grounding requires GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_LOCATION to be set."
+                )
+            parallel_key = self.parallel_api_key or getenv("PARALLEL_API_KEY")
+            if not parallel_key:
+                log_error("PARALLEL_API_KEY not set. Please set the PARALLEL_API_KEY environment variable.")
+                raise ValueError("parallel_api_key must be provided when parallel_search is enabled.")
+            # Use the dedicated parallelAiSearch tool type (first-party Vertex AI integration)
+            # Note: The Python SDK doesn't have ParallelAiSearch in the Tool class yet,
+            # so we pass it as a raw dict which will be merged into the request
+            if self.parallel_endpoint:
+                log_warning(
+                    "parallel_endpoint is ignored for Parallel grounding. "
+                    "The native Vertex AI integration uses Parallel's default endpoint."
+                )
+            parallel_raw_tool = {"parallelAiSearch": {"api_key": parallel_key}}
+
         self._append_file_search_tool(builtin_tools)
 
         # Set tools in config
-        if builtin_tools:
+        # Note: For parallel_search, we use http_options.extra_body since the SDK
+        # doesn't have ParallelAiSearch in the Tool class yet
+        if parallel_raw_tool:
+            # Use extra_body to inject the raw parallelAiSearch tool
+            # This bypasses SDK validation and sends the tool directly to the API
+            if tools:
+                log_info("Parallel search grounding enabled. External tools will be disabled.")
+            config["http_options"] = HttpOptions(extra_body={"tools": [parallel_raw_tool]})
+        elif builtin_tools:
             if tools:
                 log_info("Built-in tools enabled. External tools will be disabled.")
             config["tools"] = builtin_tools
