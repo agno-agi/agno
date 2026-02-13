@@ -462,16 +462,9 @@ def _initialize_member(team: "Team", member: Union["Team", Agent], debug_mode: O
             member.model = team.model
             log_info(f"Agent '{member.name or member.id}' inheriting model from Team: {team.model.id}")
 
-        # Inherit team media_storage if agent has no explicit media_storage
-        if member.media_storage is None and team.media_storage is not None:
-            member.media_storage = team.media_storage
-
     elif isinstance(member, Team):
         member.parent_team_id = team.id
         member.set_id()
-        # Inherit parent team media_storage if sub-team has no explicit media_storage
-        if member.media_storage is None and team.media_storage is not None:
-            member.media_storage = team.media_storage
         # Initialize the sub-team's model first so it has its model set
         member._set_default_model()
         # Then let the sub-team initialize its own members so they inherit from the sub-team
