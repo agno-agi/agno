@@ -300,14 +300,14 @@ class OxylabsTools(Toolkit):
             return self._error_response("search_amazon_products", error_msg, {"query": query})
 
     def scrape_website(self, url: str, render_javascript: bool = False) -> str:
-        """Scrape content from any website URL.
+        """Scrape content from any website URL and return full Markdown content.
 
         Args:
-            url: Website URL to scrape (must start with http:// or ht   ps://)
+            url: Website URL to scrape (must start with http:// or https://)
             render_javascript: Whether to enable JavaScript rendering for dynamic content (default: False)
 
         Returns:
-            JSON of results
+            JSON containing full Markdown content of the scraped website
         """
         try:
             if not url or not isinstance(url, str):
@@ -332,7 +332,9 @@ class OxylabsTools(Toolkit):
             log_debug(f"Website scraping: {url} (JS rendering: {render_javascript})")
 
             response: Response = self.client.universal.scrape_url(
-                url=url, render=render.HTML if render_javascript else None, parse=True
+                url=url,
+                render=render.HTML if render_javascript else None,
+                markdown=True,
             )
 
             content_info = {"url": url, "javascript_rendered": render_javascript}
@@ -342,25 +344,25 @@ class OxylabsTools(Toolkit):
                 content = result.content
                 status_code = getattr(result, "status_code", None)
 
-                content_preview = ""
+                markdown_content = ""
                 content_length = 0
 
                 if content:
                     try:
                         content_str = str(content)
                         content_length = len(content_str)
-                        content_preview = content_str[:1000] if content_length > 1000 else content_str
+                        markdown_content = content_str
                         content_info["scraped"] = True
                     except Exception as e:
                         log_debug(f"Could not process content: {e}")
-                        content_preview = "Content available but processing failed"
+                        markdown_content = "Content available but processing failed"
                         content_info["scraped"] = False
 
                 content_info.update(
                     {
                         "status_code": status_code,
                         "content_length": content_length,
-                        "content_preview": content_preview.strip(),
+                        "markdown_content": markdown_content,
                         "has_content": content_length > 0,
                     }
                 )
