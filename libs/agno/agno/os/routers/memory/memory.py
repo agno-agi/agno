@@ -1,6 +1,6 @@
 import logging
 import math
-from typing import List, Optional, Union, cast
+from typing import Any, Dict, List, Optional, Union, cast
 from uuid import uuid4
 
 from fastapi import Depends, HTTPException, Path, Query, Request
@@ -29,10 +29,288 @@ from agno.os.schema import (
     ValidationErrorResponse,
 )
 from agno.os.settings import AgnoAPISettings
-from agno.os.utils import get_db
+from agno.os.utils import get_db, to_utc_datetime
 from agno.remote.base import RemoteDb
 
 logger = logging.getLogger(__name__)
+
+# Prefixes for learning-sourced memory IDs
+LM_MEM_PREFIX = "lm_mem_"
+LM_PROFILE_PREFIX = "lm_profile_"
+
+
+def _is_learning_memory_id(memory_id: str) -> bool:
+    """Check if a memory ID refers to a learning-sourced memory."""
+    return memory_id.startswith(LM_MEM_PREFIX) or memory_id.startswith(LM_PROFILE_PREFIX)
+
+
+def _format_profile_as_memory(content: Dict[str, Any], user_id: str, updated_at: Any) -> Optional[UserMemorySchema]:
+    """Convert a user_profile learning content dict into a UserMemorySchema."""
+    skip_fields = {"user_id", "agent_id", "team_id", "created_at", "updated_at"}
+    profile_parts = []
+    for key, value in content.items():
+        if key not in skip_fields and value is not None:
+            label = key.replace("_", " ").title()
+            profile_parts.append(f"{label}: {value}")
+    if profile_parts:
+        return UserMemorySchema(
+            memory_id=f"{LM_PROFILE_PREFIX}{user_id}",
+            memory="; ".join(profile_parts),
+            topics=["user_profile"],
+            user_id=user_id,
+            updated_at=to_utc_datetime(updated_at),
+        )
+    return None
+
+
+async def _get_learning_memories(
+    db: Union[BaseDb, AsyncBaseDb],
+    user_id: str,
+) -> List[UserMemorySchema]:
+    """Fetch user_memory and user_profile learnings and convert to UserMemorySchema.
+
+    Returns an empty list if the DB has no learnings table configured.
+    """
+    results: List[UserMemorySchema] = []
+
+    try:
+        # Fetch user_memory learnings
+        if isinstance(db, AsyncBaseDb):
+            mem_learning = await db.get_learning(learning_type="user_memory", user_id=user_id)
+        else:
+            mem_learning = db.get_learning(learning_type="user_memory", user_id=user_id)
+
+        if mem_learning and mem_learning.get("content"):
+            content = mem_learning["content"]
+            memories_list = content.get("memories", [])
+            updated_at = mem_learning.get("updated_at")
+            for entry in memories_list:
+                if isinstance(entry, dict) and entry.get("content"):
+                    results.append(
+                        UserMemorySchema(
+                            memory_id=f"{LM_MEM_PREFIX}{entry.get('id', 'unknown')}",
+                            memory=entry["content"],
+                            topics=["user_memory"],
+                            user_id=user_id,
+                            updated_at=to_utc_datetime(updated_at),
+                        )
+                    )
+
+        # Fetch user_profile learnings
+        if isinstance(db, AsyncBaseDb):
+            profile_learning = await db.get_learning(learning_type="user_profile", user_id=user_id)
+        else:
+            profile_learning = db.get_learning(learning_type="user_profile", user_id=user_id)
+
+        if profile_learning and profile_learning.get("content"):
+            profile_mem = _format_profile_as_memory(
+                content=profile_learning["content"],
+                user_id=user_id,
+                updated_at=profile_learning.get("updated_at"),
+            )
+            if profile_mem:
+                results.append(profile_mem)
+
+    except Exception as e:
+        logger.debug(f"Failed to fetch learning memories for user {user_id}: {e}")
+
+    return results
+
+
+async def _get_learning_memory_by_id(
+    db: Union[BaseDb, AsyncBaseDb],
+    memory_id: str,
+    user_id: Optional[str],
+) -> UserMemorySchema:
+    """Fetch a single learning-sourced memory by its prefixed ID."""
+    try:
+        if memory_id.startswith(LM_MEM_PREFIX):
+            entry_id = memory_id[len(LM_MEM_PREFIX) :]
+            if isinstance(db, AsyncBaseDb):
+                learning = await db.get_learning(learning_type="user_memory", user_id=user_id)
+            else:
+                learning = db.get_learning(learning_type="user_memory", user_id=user_id)
+
+            if learning and learning.get("content"):
+                for entry in learning["content"].get("memories", []):
+                    if isinstance(entry, dict) and entry.get("id") == entry_id:
+                        return UserMemorySchema(
+                            memory_id=memory_id,
+                            memory=entry["content"],
+                            topics=["user_memory"],
+                            user_id=user_id or learning["content"].get("user_id", ""),
+                            updated_at=to_utc_datetime(learning.get("updated_at")),
+                        )
+
+        elif memory_id.startswith(LM_PROFILE_PREFIX):
+            profile_user_id = user_id or memory_id[len(LM_PROFILE_PREFIX) :]
+            if isinstance(db, AsyncBaseDb):
+                learning = await db.get_learning(learning_type="user_profile", user_id=profile_user_id)
+            else:
+                learning = db.get_learning(learning_type="user_profile", user_id=profile_user_id)
+
+            if learning and learning.get("content"):
+                profile_mem = _format_profile_as_memory(
+                    content=learning["content"],
+                    user_id=profile_user_id,
+                    updated_at=learning.get("updated_at"),
+                )
+                if profile_mem:
+                    return profile_mem
+
+    except Exception as e:
+        logger.debug(f"Failed to fetch learning memory {memory_id}: {e}")
+
+    raise HTTPException(status_code=404, detail=f"Memory with ID {memory_id} not found")
+
+
+async def _delete_learning_memory(
+    db: Union[BaseDb, AsyncBaseDb],
+    memory_id: str,
+    user_id: Optional[str],
+) -> None:
+    """Delete a single learning-sourced memory by its prefixed ID."""
+    if memory_id.startswith(LM_MEM_PREFIX):
+        entry_id = memory_id[len(LM_MEM_PREFIX) :]
+        if isinstance(db, AsyncBaseDb):
+            learning = await db.get_learning(learning_type="user_memory", user_id=user_id)
+        else:
+            learning = db.get_learning(learning_type="user_memory", user_id=user_id)
+
+        if not learning or not learning.get("content"):
+            raise HTTPException(status_code=404, detail=f"Memory with ID {memory_id} not found")
+
+        content = learning["content"]
+        original_memories = content.get("memories", [])
+        updated_memories = [m for m in original_memories if not (isinstance(m, dict) and m.get("id") == entry_id)]
+
+        if len(updated_memories) == len(original_memories):
+            raise HTTPException(status_code=404, detail=f"Memory with ID {memory_id} not found")
+
+        effective_user_id = user_id or content.get("user_id", "")
+        learning_id = f"memories_{effective_user_id}"
+
+        if not updated_memories:
+            if isinstance(db, AsyncBaseDb):
+                await db.delete_learning(id=learning_id)
+            else:
+                db.delete_learning(id=learning_id)
+        else:
+            content["memories"] = updated_memories
+            if isinstance(db, AsyncBaseDb):
+                await db.upsert_learning(
+                    id=learning_id,
+                    learning_type="user_memory",
+                    user_id=effective_user_id,
+                    content=content,
+                )
+            else:
+                db.upsert_learning(
+                    id=learning_id,
+                    learning_type="user_memory",
+                    user_id=effective_user_id,
+                    content=content,
+                )
+
+    elif memory_id.startswith(LM_PROFILE_PREFIX):
+        profile_user_id = user_id or memory_id[len(LM_PROFILE_PREFIX) :]
+        learning_id = f"user_profile_{profile_user_id}"
+        if isinstance(db, AsyncBaseDb):
+            await db.delete_learning(id=learning_id)
+        else:
+            db.delete_learning(id=learning_id)
+
+
+async def _update_learning_memory(
+    db: Union[BaseDb, AsyncBaseDb],
+    memory_id: str,
+    user_id: str,
+    new_memory_text: str,
+) -> UserMemorySchema:
+    """Update a single learning-sourced memory's content."""
+    if memory_id.startswith(LM_PROFILE_PREFIX):
+        raise HTTPException(
+            status_code=400,
+            detail="User profile memories cannot be updated through this endpoint. Use agent tools instead.",
+        )
+
+    if not memory_id.startswith(LM_MEM_PREFIX):
+        raise HTTPException(status_code=400, detail=f"Invalid learning memory ID: {memory_id}")
+
+    entry_id = memory_id[len(LM_MEM_PREFIX) :]
+    if isinstance(db, AsyncBaseDb):
+        learning = await db.get_learning(learning_type="user_memory", user_id=user_id)
+    else:
+        learning = db.get_learning(learning_type="user_memory", user_id=user_id)
+
+    if not learning or not learning.get("content"):
+        raise HTTPException(status_code=404, detail=f"Memory with ID {memory_id} not found")
+
+    content = learning["content"]
+    found = False
+    for entry in content.get("memories", []):
+        if isinstance(entry, dict) and entry.get("id") == entry_id:
+            entry["content"] = new_memory_text
+            found = True
+            break
+
+    if not found:
+        raise HTTPException(status_code=404, detail=f"Memory with ID {memory_id} not found")
+
+    effective_user_id = user_id or content.get("user_id", "")
+    learning_id = f"memories_{effective_user_id}"
+    if isinstance(db, AsyncBaseDb):
+        await db.upsert_learning(
+            id=learning_id,
+            learning_type="user_memory",
+            user_id=effective_user_id,
+            content=content,
+        )
+    else:
+        db.upsert_learning(
+            id=learning_id,
+            learning_type="user_memory",
+            user_id=effective_user_id,
+            content=content,
+        )
+
+    return UserMemorySchema(
+        memory_id=memory_id,
+        memory=new_memory_text,
+        topics=["user_memory"],
+        user_id=effective_user_id,
+        updated_at=to_utc_datetime(learning.get("updated_at")),
+    )
+
+
+async def _augment_stats_with_learnings(
+    db: Union[BaseDb, AsyncBaseDb],
+    stats_data: List[UserStatsSchema],
+    user_id: Optional[str],
+) -> List[UserStatsSchema]:
+    """Augment user memory stats with learning memory counts."""
+    if user_id:
+        # Single user: get learning memories and add to matching stats
+        learning_memories = await _get_learning_memories(db, user_id)
+        if learning_memories:
+            learning_count = len(learning_memories)
+            found = False
+            for stat in stats_data:
+                if stat.user_id == user_id:
+                    stat.total_memories += learning_count
+                    found = True
+                    break
+            if not found:
+                # User has learning memories but no regular memories
+                latest_updated = max((m.updated_at for m in learning_memories if m.updated_at), default=None)
+                stats_data.append(
+                    UserStatsSchema(
+                        user_id=user_id,
+                        total_memories=learning_count,
+                        last_memory_updated_at=latest_updated,
+                    )
+                )
+    return stats_data
 
 
 def get_memory_router(
@@ -173,6 +451,12 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 table=table,
                 headers=headers,
             )
+
+        # Handle learning-sourced memory IDs
+        if _is_learning_memory_id(memory_id):
+            await _delete_learning_memory(db, memory_id, user_id)
+            return
+
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
             await db.delete_user_memory(memory_id=memory_id, user_id=user_id)
@@ -216,11 +500,24 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 headers=headers,
             )
 
-        if isinstance(db, AsyncBaseDb):
-            db = cast(AsyncBaseDb, db)
-            await db.delete_user_memories(memory_ids=request.memory_ids, user_id=request.user_id)
-        else:
-            db.delete_user_memories(memory_ids=request.memory_ids, user_id=request.user_id)
+        # Partition IDs into regular and learning-sourced
+        regular_ids = [mid for mid in request.memory_ids if not _is_learning_memory_id(mid)]
+        learning_ids = [mid for mid in request.memory_ids if _is_learning_memory_id(mid)]
+
+        # Delete regular memories
+        if regular_ids:
+            if isinstance(db, AsyncBaseDb):
+                db_async = cast(AsyncBaseDb, db)
+                await db_async.delete_user_memories(memory_ids=regular_ids, user_id=request.user_id)
+            else:
+                db.delete_user_memories(memory_ids=regular_ids, user_id=request.user_id)
+
+        # Delete learning-sourced memories
+        for mid in learning_ids:
+            try:
+                await _delete_learning_memory(db, mid, request.user_id)
+            except HTTPException:
+                pass  # Skip not-found errors in batch delete
 
     @router.get(
         "/memories",
@@ -321,13 +618,31 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             )
 
         memories = [UserMemorySchema.from_dict(user_memory) for user_memory in user_memories]  # type: ignore
+        data = [memory for memory in memories if memory is not None]
+
+        # Merge learning memories on page 1 when user_id is specified
+        learning_count = 0
+        if user_id and not isinstance(db, RemoteDb) and page == 1:
+            learning_memories = await _get_learning_memories(db, user_id)
+            # Apply search_content filter
+            if search_content and learning_memories:
+                search_lower = search_content.lower()
+                learning_memories = [m for m in learning_memories if search_lower in m.memory.lower()]
+            # Apply topics filter
+            if topics and learning_memories:
+                topics_set = set(topics)
+                learning_memories = [m for m in learning_memories if m.topics and topics_set.intersection(m.topics)]
+            learning_count = len(learning_memories)
+            data.extend(learning_memories)
+
+        adjusted_total = total_count + learning_count  # type: ignore
         return PaginatedResponse(
-            data=[memory for memory in memories if memory is not None],
+            data=data,
             meta=PaginationInfo(
                 page=page,
                 limit=limit,
-                total_count=total_count,  # type: ignore
-                total_pages=math.ceil(total_count / limit) if limit is not None and limit > 0 else 0,  # type: ignore
+                total_count=adjusted_total,
+                total_pages=math.ceil(adjusted_total / limit) if limit is not None and limit > 0 else 0,  # type: ignore
             ),
         )
 
@@ -380,6 +695,10 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 table=table,
                 headers=headers,
             )
+
+        # Handle learning-sourced memory IDs
+        if _is_learning_memory_id(memory_id):
+            return await _get_learning_memory_by_id(db, memory_id, user_id)
 
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
@@ -510,6 +829,10 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 headers=headers,
             )
 
+        # Handle learning-sourced memory IDs
+        if _is_learning_memory_id(memory_id):
+            return await _update_learning_memory(db, memory_id, payload.user_id, payload.memory)
+
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
             user_memory = await db.upsert_user_memory(
@@ -607,8 +930,16 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                     page=page,
                     user_id=user_id,
                 )
+
+            # Augment stats with learning memory counts
+            stats_data = [UserStatsSchema.from_dict(stats) for stats in user_stats]
+            try:
+                stats_data = await _augment_stats_with_learnings(db, stats_data, user_id)
+            except Exception:
+                pass  # Graceful degradation if learnings table not available
+
             return PaginatedResponse(
-                data=[UserStatsSchema.from_dict(stats) for stats in user_stats],
+                data=stats_data,
                 meta=PaginationInfo(
                     page=page,
                     limit=limit,
