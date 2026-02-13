@@ -179,8 +179,11 @@ def format_sse_event(event: Union[RunOutputEvent, TeamRunOutputEvent, WorkflowRu
         ```
     """
     try:
-        # Parse the JSON to extract the event type
-        event_type = event.event or "message"
+        # Parse the JSON to extract the event type.
+        # Some objects (e.g. RunOutput from RemoteAgent in a Team) have
+        # 'events' (plural) instead of 'event', so use getattr with a
+        # fallback to avoid AttributeError.
+        event_type = getattr(event, "event", None) or "message"
 
         # Serialize to valid JSON with double quotes and no newlines
         clean_json = event.to_json(separators=(",", ":"), indent=None)
