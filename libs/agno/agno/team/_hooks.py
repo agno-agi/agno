@@ -434,8 +434,12 @@ def _execute_post_hooks(
     if team._run_hooks_in_background is True and background_tasks is not None:
         bg_args = copy_args_for_background(all_args)
         for hook in hooks:
-            filtered_args = filter_hook_args(hook, bg_args)
-            background_tasks.add_task(hook, **filtered_args)
+            if is_guardrail_hook(hook):
+                filtered_args = filter_hook_args(hook, all_args)
+                hook(**filtered_args)
+            else:
+                filtered_args = filter_hook_args(hook, bg_args)
+                background_tasks.add_task(hook, **filtered_args)
         return
 
     for i, hook in enumerate(hooks):
@@ -518,8 +522,17 @@ async def _aexecute_post_hooks(
     if team._run_hooks_in_background is True and background_tasks is not None:
         bg_args = copy_args_for_background(all_args)
         for hook in hooks:
-            filtered_args = filter_hook_args(hook, bg_args)
-            background_tasks.add_task(hook, **filtered_args)
+            if is_guardrail_hook(hook):
+                filtered_args = filter_hook_args(hook, all_args)
+                from inspect import iscoroutinefunction
+
+                if iscoroutinefunction(hook):
+                    await hook(**filtered_args)
+                else:
+                    hook(**filtered_args)
+            else:
+                filtered_args = filter_hook_args(hook, bg_args)
+                background_tasks.add_task(hook, **filtered_args)
         return
 
     for i, hook in enumerate(hooks):

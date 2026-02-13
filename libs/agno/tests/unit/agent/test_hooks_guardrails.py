@@ -1,0 +1,281 @@
+"""Tests for guardrail behavior in hook execution under background mode."""
+
+from typing import Any, List, Union
+from unittest.mock import MagicMock
+
+import pytest
+
+from agno.agent._hooks import (
+    aexecute_post_hooks,
+    aexecute_pre_hooks,
+    execute_post_hooks,
+    execute_pre_hooks,
+)
+from agno.exceptions import InputCheckError, OutputCheckError
+from agno.guardrails.base import BaseGuardrail
+from agno.run import RunContext
+from agno.run.agent import RunInput
+from agno.run.team import TeamRunInput
+from agno.utils.hooks import is_guardrail_hook, normalize_pre_hooks
+
+
+class BlockingGuardrail(BaseGuardrail):
+    """Guardrail that raises InputCheckError."""
+
+    def check(self, run_input: Union[RunInput, TeamRunInput]) -> None:
+        raise InputCheckError("blocked by guardrail")
+
+    async def async_check(self, run_input: Union[RunInput, TeamRunInput]) -> None:
+        raise InputCheckError("blocked by guardrail (async)")
+
+
+class OutputBlockingGuardrail(BaseGuardrail):
+    """Guardrail that raises OutputCheckError."""
+
+    def check(self, **kwargs: Any) -> None:
+        raise OutputCheckError("blocked output")
+
+    async def async_check(self, **kwargs: Any) -> None:
+        raise OutputCheckError("blocked output (async)")
+
+
+class PassthroughGuardrail(BaseGuardrail):
+    """Guardrail that passes (no error)."""
+
+    def __init__(self):
+        self.call_count = 0
+
+    def check(self, **kwargs: Any) -> None:
+        self.call_count += 1
+
+    async def async_check(self, **kwargs: Any) -> None:
+        self.call_count += 1
+
+
+def _make_agent(run_hooks_in_background: bool = True) -> MagicMock:
+    agent = MagicMock()
+    agent._run_hooks_in_background = run_hooks_in_background
+    agent.debug_mode = False
+    agent.events_to_skip = None
+    agent.store_events = False
+    return agent
+
+
+def _make_background_tasks() -> MagicMock:
+    bt = MagicMock()
+    bt.tasks: List = []
+
+    def add_task(fn, **kwargs):
+        bt.tasks.append((fn, kwargs))
+
+    bt.add_task = add_task
+    return bt
+
+
+def _make_session() -> MagicMock:
+    return MagicMock()
+
+
+def _make_run_context() -> RunContext:
+    return RunContext(run_id="r1", session_id="s1", session_state={}, metadata={"key": "val"})
+
+
+def _make_run_input() -> RunInput:
+    return RunInput(input_content="test input")
+
+
+class TestIsGuardrailHook:
+    def test_bound_guardrail_check_detected(self):
+        g = PassthroughGuardrail()
+        assert is_guardrail_hook(g.check) is True
+        assert is_guardrail_hook(g.async_check) is True
+
+    def test_plain_function_not_detected(self):
+        def plain_hook(**kwargs):
+            pass
+
+        assert is_guardrail_hook(plain_hook) is False
+
+    def test_normalize_pre_hooks_produces_guardrail_hooks(self):
+        g = BlockingGuardrail()
+        hooks = normalize_pre_hooks([g], async_mode=False)
+        assert hooks is not None
+        assert is_guardrail_hook(hooks[0]) is True
+
+
+class TestPreHookGuardrailInBackground:
+    def test_guardrail_runs_sync_in_global_background_mode(self):
+        agent = _make_agent(run_hooks_in_background=True)
+        bt = _make_background_tasks()
+        guardrail = BlockingGuardrail()
+        hooks = normalize_pre_hooks([guardrail], async_mode=False)
+
+        with pytest.raises(InputCheckError, match="blocked by guardrail"):
+            list(
+                execute_pre_hooks(
+                    agent=agent,
+                    hooks=hooks,
+                    run_response=MagicMock(),
+                    run_input=_make_run_input(),
+                    session=_make_session(),
+                    run_context=_make_run_context(),
+                    background_tasks=bt,
+                )
+            )
+        assert len(bt.tasks) == 0
+
+    @pytest.mark.asyncio
+    async def test_async_guardrail_runs_sync_in_global_background_mode(self):
+        agent = _make_agent(run_hooks_in_background=True)
+        bt = _make_background_tasks()
+        guardrail = BlockingGuardrail()
+        hooks = normalize_pre_hooks([guardrail], async_mode=True)
+
+        with pytest.raises(InputCheckError, match="blocked by guardrail"):
+            async for _ in aexecute_pre_hooks(
+                agent=agent,
+                hooks=hooks,
+                run_response=MagicMock(),
+                run_input=_make_run_input(),
+                session=_make_session(),
+                run_context=_make_run_context(),
+                background_tasks=bt,
+            ):
+                pass
+        assert len(bt.tasks) == 0
+
+    def test_non_guardrail_hook_goes_to_background(self):
+        agent = _make_agent(run_hooks_in_background=True)
+        bt = _make_background_tasks()
+
+        def plain_hook(**kwargs):
+            pass
+
+        hooks = [plain_hook]
+
+        list(
+            execute_pre_hooks(
+                agent=agent,
+                hooks=hooks,
+                run_response=MagicMock(),
+                run_input=_make_run_input(),
+                session=_make_session(),
+                run_context=_make_run_context(),
+                background_tasks=bt,
+            )
+        )
+        assert len(bt.tasks) == 1
+
+
+class TestPostHookGuardrailInBackground:
+    def test_output_guardrail_runs_sync_in_global_background_mode(self):
+        agent = _make_agent(run_hooks_in_background=True)
+        bt = _make_background_tasks()
+        guardrail = OutputBlockingGuardrail()
+        hooks = [guardrail.check]
+
+        with pytest.raises(OutputCheckError, match="blocked output"):
+            list(
+                execute_post_hooks(
+                    agent=agent,
+                    hooks=hooks,
+                    run_output=MagicMock(),
+                    session=_make_session(),
+                    run_context=_make_run_context(),
+                    background_tasks=bt,
+                )
+            )
+        assert len(bt.tasks) == 0
+
+    @pytest.mark.asyncio
+    async def test_async_output_guardrail_runs_sync_in_global_background_mode(self):
+        agent = _make_agent(run_hooks_in_background=True)
+        bt = _make_background_tasks()
+        guardrail = OutputBlockingGuardrail()
+        hooks = [guardrail.async_check]
+
+        with pytest.raises(OutputCheckError, match="blocked output"):
+            async for _ in aexecute_post_hooks(
+                agent=agent,
+                hooks=hooks,
+                run_output=MagicMock(),
+                session=_make_session(),
+                run_context=_make_run_context(),
+                background_tasks=bt,
+            ):
+                pass
+        assert len(bt.tasks) == 0
+
+    def test_non_guardrail_post_hook_goes_to_background(self):
+        agent = _make_agent(run_hooks_in_background=True)
+        bt = _make_background_tasks()
+
+        def plain_post_hook(**kwargs):
+            pass
+
+        hooks = [plain_post_hook]
+        list(
+            execute_post_hooks(
+                agent=agent,
+                hooks=hooks,
+                run_output=MagicMock(),
+                session=_make_session(),
+                run_context=_make_run_context(),
+                background_tasks=bt,
+            )
+        )
+        assert len(bt.tasks) == 1
+
+
+class TestDebugModeFalse:
+    def test_debug_mode_false_not_overridden_by_agent(self):
+        agent = _make_agent()
+        agent.debug_mode = True
+        guardrail = PassthroughGuardrail()
+        hooks = normalize_pre_hooks([guardrail], async_mode=False)
+
+        captured_args = {}
+        original_check = guardrail.check
+
+        def spy_check(**kwargs):
+            captured_args.update(kwargs)
+            return original_check(**kwargs)
+
+        hooks = [spy_check]
+
+        list(
+            execute_pre_hooks(
+                agent=agent,
+                hooks=hooks,
+                run_response=MagicMock(),
+                run_input=_make_run_input(),
+                session=_make_session(),
+                run_context=_make_run_context(),
+                debug_mode=False,
+            )
+        )
+        assert captured_args.get("debug_mode") is False
+
+
+class TestMetadataInjection:
+    def test_metadata_from_run_context_passed_to_hooks(self):
+        agent = _make_agent(run_hooks_in_background=False)
+        captured_args = {}
+
+        def spy_hook(**kwargs):
+            captured_args.update(kwargs)
+
+        run_context = _make_run_context()
+        run_context.metadata = {"env": "test", "version": "2.5"}
+
+        list(
+            execute_pre_hooks(
+                agent=agent,
+                hooks=[spy_hook],
+                run_response=MagicMock(),
+                run_input=_make_run_input(),
+                session=_make_session(),
+                run_context=run_context,
+            )
+        )
+        assert captured_args.get("metadata") == {"env": "test", "version": "2.5"}

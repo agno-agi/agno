@@ -60,13 +60,7 @@ class PIIDetectionGuardrail(BaseGuardrail):
                         return "*" * len(match.group(0))
 
                     content = self.pii_patterns[pii_type].sub(mask_match, content)
-                if isinstance(run_input.input_content, str):
-                    run_input.input_content = content
-                else:
-                    from agno.utils.log import log_warning
-
-                    log_warning("PII masking applied but original input was not a string; masked content set as string")
-                    run_input.input_content = content
+                run_input.input_content = content
                 return
             else:
                 raise InputCheckError(
@@ -90,13 +84,7 @@ class PIIDetectionGuardrail(BaseGuardrail):
                         return "*" * len(match.group(0))
 
                     content = self.pii_patterns[pii_type].sub(mask_match, content)
-                if isinstance(run_input.input_content, str):
-                    run_input.input_content = content
-                else:
-                    from agno.utils.log import log_warning
-
-                    log_warning("PII masking applied but original input was not a string; masked content set as string")
-                    run_input.input_content = content
+                run_input.input_content = content
                 return
             else:
                 raise InputCheckError(
