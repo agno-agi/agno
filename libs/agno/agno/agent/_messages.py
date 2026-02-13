@@ -98,6 +98,17 @@ def format_message_with_state_variables(
         return message
 
 
+def _build_additional_info_block(items: List[str]) -> str:
+    """Build an ``<additional_information>`` XML block from a list of items."""
+    if not items:
+        return ""
+    block = "<additional_information>"
+    for item in items:
+        block += f"\n- {item}"
+    block += "\n</additional_information>\n\n"
+    return block
+
+
 # ---------------------------------------------------------------------------
 # System message
 # ---------------------------------------------------------------------------
@@ -184,10 +195,14 @@ def get_system_message(
         instructions.extend(_model_instructions)
 
     # 3.2 Build a list of additional information for the system message
+    # Static items don't change between requests; dynamic items do.
     additional_information: List[str] = []
+    static_additional_information: List[str] = []
+    dynamic_additional_information: List[str] = []
     # 3.2.1 Add instructions for using markdown
     if agent.markdown and output_schema is None:
         additional_information.append("Use markdown to format your answers.")
+        static_additional_information.append("Use markdown to format your answers.")
     # 3.2.2 Add the current datetime
     if agent.add_datetime_to_context:
         from datetime import datetime
@@ -205,6 +220,7 @@ def get_system_message(
         time = datetime.now(tz) if tz else datetime.now()
 
         additional_information.append(f"The current time is {time}.")
+        dynamic_additional_information.append(f"The current time is {time}.")
 
     # 3.2.3 Add the current location
     if agent.add_location_to_context:
@@ -224,10 +240,12 @@ def get_system_message(
             )
             if location_str:
                 additional_information.append(f"Your approximate location is: {location_str}.")
+                dynamic_additional_information.append(f"Your approximate location is: {location_str}.")
 
     # 3.2.4 Add agent name if provided
     if agent.name is not None and agent.add_name_to_context:
         additional_information.append(f"Your name is: {agent.name}.")
+        static_additional_information.append(f"Your name is: {agent.name}.")
 
     # 3.3 Build the default system message for the Agent.
     system_message_content: str = ""
@@ -262,13 +280,15 @@ def get_system_message(
         system_message_content += instructions_block
         static_content += instructions_block
     # 3.3.4 Add additional information
-    if len(additional_information) > 0:
-        ai_block = "<additional_information>"
-        for _ai in additional_information:
-            ai_block += f"\n- {_ai}"
-        ai_block += "\n</additional_information>\n\n"
+    ai_block = _build_additional_info_block(additional_information)
+    if ai_block:
         system_message_content += ai_block
-        dynamic_content += ai_block
+    static_ai_block = _build_additional_info_block(static_additional_information)
+    if static_ai_block:
+        static_content += static_ai_block
+    dynamic_ai_block = _build_additional_info_block(dynamic_additional_information)
+    if dynamic_ai_block:
+        dynamic_content += dynamic_ai_block
     # 3.3.5 Then add instructions for the tools
     if agent._tool_instructions is not None:
         tool_instr_block = ""
@@ -600,10 +620,14 @@ async def aget_system_message(
         instructions.extend(_model_instructions)
 
     # 3.2 Build a list of additional information for the system message
+    # Static items don't change between requests; dynamic items do.
     additional_information: List[str] = []
+    static_additional_information: List[str] = []
+    dynamic_additional_information: List[str] = []
     # 3.2.1 Add instructions for using markdown
     if agent.markdown and output_schema is None:
         additional_information.append("Use markdown to format your answers.")
+        static_additional_information.append("Use markdown to format your answers.")
     # 3.2.2 Add the current datetime
     if agent.add_datetime_to_context:
         from datetime import datetime
@@ -621,6 +645,7 @@ async def aget_system_message(
         time = datetime.now(tz) if tz else datetime.now()
 
         additional_information.append(f"The current time is {time}.")
+        dynamic_additional_information.append(f"The current time is {time}.")
 
     # 3.2.3 Add the current location
     if agent.add_location_to_context:
@@ -640,10 +665,12 @@ async def aget_system_message(
             )
             if location_str:
                 additional_information.append(f"Your approximate location is: {location_str}.")
+                dynamic_additional_information.append(f"Your approximate location is: {location_str}.")
 
     # 3.2.4 Add agent name if provided
     if agent.name is not None and agent.add_name_to_context:
         additional_information.append(f"Your name is: {agent.name}.")
+        static_additional_information.append(f"Your name is: {agent.name}.")
 
     # 3.3 Build the default system message for the Agent.
     system_message_content: str = ""
@@ -678,13 +705,15 @@ async def aget_system_message(
         system_message_content += instructions_block
         static_content += instructions_block
     # 3.3.4 Add additional information
-    if len(additional_information) > 0:
-        ai_block = "<additional_information>"
-        for _ai in additional_information:
-            ai_block += f"\n- {_ai}"
-        ai_block += "\n</additional_information>\n\n"
+    ai_block = _build_additional_info_block(additional_information)
+    if ai_block:
         system_message_content += ai_block
-        dynamic_content += ai_block
+    static_ai_block = _build_additional_info_block(static_additional_information)
+    if static_ai_block:
+        static_content += static_ai_block
+    dynamic_ai_block = _build_additional_info_block(dynamic_additional_information)
+    if dynamic_ai_block:
+        dynamic_content += dynamic_ai_block
     # 3.3.5 Then add instructions for the tools
     if agent._tool_instructions is not None:
         tool_instr_block = ""
