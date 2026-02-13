@@ -1,7 +1,7 @@
 """Example demonstrating how to set up retries with vLLM."""
 
 from agno.agent import Agent
-from agno.models.vllm import vLLM
+from agno.models.vllm import VLLM
 
 # ---------------------------------------------------------------------------
 # Create Agent
@@ -11,7 +11,7 @@ from agno.models.vllm import vLLM
 wrong_model_id = "vllm-wrong-id"
 
 agent = Agent(
-    model=vLLM(
+    model=VLLM(
         id=wrong_model_id,
         retries=3,  # Number of times to retry the request.
         delay_between_retries=1,  # Delay between retries in seconds.

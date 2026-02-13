@@ -35,10 +35,6 @@ agent = Agent(
     tools=[YFinanceTools()],
     instructions="You are a stock price analyst. Answer with concise, well-sourced updates.",
     debug_mode=True,
-    trace_attributes={
-        "session.id": "demo-session-001",
-        "environment": "development",
-    },
 )
 
 

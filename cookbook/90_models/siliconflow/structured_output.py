@@ -39,7 +39,7 @@ class MovieScript(BaseModel):
 json_mode_agent = Agent(
     model=Siliconflow(id="openai/gpt-oss-120b"),
     description="You help people write movie scripts.",
-    response_model=MovieScript,
+    output_schema=MovieScript,
     use_json_mode=True,
 )
 

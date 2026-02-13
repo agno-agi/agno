@@ -2,7 +2,7 @@
 
 from agno.agent import Agent
 from agno.db.postgres.postgres import PostgresDb
-from agno.knowledge import PDFUrlKnowledgeBase
+from agno.knowledge import Knowledge
 from agno.models.google import Gemini
 from agno.tools.websearch import WebSearchTools
 from agno.vectordb.pgvector import PgVector
@@ -13,16 +13,18 @@ from agno.vectordb.pgvector import PgVector
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
-knowledge_base = PDFUrlKnowledgeBase(
-    urls=["https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"],
+knowledge = Knowledge(
     vector_db=PgVector(table_name="recipes", db_url=db_url),
 )
-knowledge_base.load(recreate=True)  # Comment out after first run
+knowledge.insert(
+    name="Thai Recipes",
+    url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
+)
 
 agent = Agent(
     model=Gemini(id="gemini-2.0-flash-001"),
     tools=[WebSearchTools()],
-    knowledge=knowledge_base,
+    knowledge=knowledge,
     # Store the memories and summary in a database
     db=PostgresDb(db_url=db_url, memory_table="agent_memory"),
     update_memory_on_run=True,
