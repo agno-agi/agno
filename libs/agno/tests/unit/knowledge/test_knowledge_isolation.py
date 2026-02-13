@@ -3,7 +3,6 @@
 Tests that knowledge instances with isolate_vector_search=True filter by linked_to.
 """
 
-import asyncio
 from typing import Any, Dict, List
 from unittest.mock import MagicMock
 
