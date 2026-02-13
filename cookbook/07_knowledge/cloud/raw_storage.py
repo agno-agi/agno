@@ -6,7 +6,7 @@ This cookbook demonstrates how to store raw file contents during ingestion
 and refresh (re-embed) content later without needing the original file.
 
 Key Concepts:
-- raw_storage_id: Points to a content source config used for raw file storage
+- raw_storage_config: Config object (S3Config or LocalStorageConfig) for raw file storage
 - store_raw: Parameter on insert() and API to trigger raw storage
 - LocalStorageConfig: Dev-friendly storage to local filesystem (no cloud needed)
 - S3Config: Production raw storage to S3
@@ -54,8 +54,7 @@ knowledge_local = Knowledge(
     description="Demo with local raw storage",
     contents_db=contents_db,
     vector_db=vector_db,
-    content_sources=[local_storage],
-    raw_storage_id="local-raw",  # Points to the LocalStorageConfig above
+    raw_storage_config=local_storage,  # Pass the config object directly
 )
 
 # ============================================================================
@@ -87,8 +86,8 @@ knowledge_s3 = Knowledge(
     description="Demo with S3 raw storage",
     contents_db=contents_db,
     vector_db=vector_db,
-    content_sources=[s3_raw, s3_docs],  # Both configs registered
-    raw_storage_id="s3-raw",  # Points to the S3Config used for raw storage
+    content_sources=[s3_docs],  # Document source for ingestion
+    raw_storage_config=s3_raw,  # Separate config for raw storage (not in content_sources)
 )
 
 # ============================================================================
@@ -110,8 +109,8 @@ knowledge_s3.insert(
 )
 
 # store_raw behavior:
-# - store_raw=None (default): auto-stores if raw_storage_id is configured
-# - store_raw=True: force store (warns if no raw_storage_id)
+# - store_raw=None (default): auto-stores if raw_storage_config is set
+# - store_raw=True: force store (warns if no raw_storage_config)
 # - store_raw=False: skip raw storage even if configured
 
 # Refresh content (re-embed from stored raw bytes):

@@ -49,8 +49,8 @@ class Knowledge(RemoteKnowledge):
     max_results: int = 10
     readers: Optional[Dict[str, Reader]] = None
     content_sources: Optional[List[RemoteContentConfig]] = None
-    # ID of an S3Config or LocalStorageConfig in content_sources used for raw file storage
-    raw_storage_id: Optional[str] = None
+    # S3Config or LocalStorageConfig used for raw file storage (does not need to be in content_sources)
+    raw_storage_config: Optional[RemoteContentConfig] = None
     # Opt-in flag to enable vector search filtering by knowledge instanceP:
     # When enabled, search results are filtered to only include documents from this knowledge instance
     # Requires re-indexing existing data to include linked_to in document metadata
@@ -70,22 +70,17 @@ class Knowledge(RemoteKnowledge):
 
     @property
     def raw_storage(self):
-        """Lazily initialize RawStorage from raw_storage_id config."""
+        """Lazily initialize RawStorage from raw_storage_config."""
         if self._raw_storage is not None:
             return self._raw_storage
 
-        if not self.raw_storage_id:
-            return None
-
-        config = self._get_remote_config_by_id(self.raw_storage_id)
-        if config is None:
-            log_warning(f"raw_storage_id '{self.raw_storage_id}' not found in content_sources")
+        if not self.raw_storage_config:
             return None
 
         from agno.knowledge.raw_storage import RawStorage
 
         self._raw_storage = RawStorage(
-            storage_config=config,
+            storage_config=self.raw_storage_config,
             content_sources=self.content_sources,
         )
         return self._raw_storage
@@ -149,7 +144,7 @@ class Knowledge(RemoteKnowledge):
             exclude: Optional list of file patterns to exclude
             upsert: Whether to update existing content if it already exists (only used when skip_if_exists=False)
             skip_if_exists: Whether to skip inserting content if it already exists (default: False)
-            store_raw: Whether to store raw content. None=auto (store if raw_storage_id configured),
+            store_raw: Whether to store raw content. None=auto (store if raw_storage_config set),
                 True=force store, False=skip raw storage.
         """
         # Validation: At least one of the parameters must be provided
@@ -1293,7 +1288,7 @@ class Knowledge(RemoteKnowledge):
 
         Args:
             content: Content with file_data to store
-            store_raw: None=auto (store if raw_storage_id configured), True=force, False=skip
+            store_raw: None=auto (store if raw_storage_config set), True=force, False=skip
         """
         # Determine if we should store
         should_store = store_raw if store_raw is not None else (self.raw_storage is not None)
@@ -1301,7 +1296,7 @@ class Knowledge(RemoteKnowledge):
             return
 
         if store_raw is True and self.raw_storage is None:
-            log_warning("store_raw=True but no raw_storage_id configured on Knowledge")
+            log_warning("store_raw=True but no raw_storage_config set on Knowledge")
             return
 
         if self.raw_storage is None:
