@@ -1,10 +1,8 @@
 """
-This example shows how to instrument your agno agent with OpenInference
-and send traces to Arize Phoenix
+Arize Phoenix Workflow Via OpenInference
+========================================
 
-Install dependencies:
-uv pip install openai opentelemetry-sdk opentelemetry-exporter-otlp
-uv pip install -U openinference-instrumentation-agno arize-phoenix
+Demonstrates tracing a multi-step Agno workflow in Arize Phoenix.
 """
 
 import os
@@ -17,19 +15,25 @@ from agno.workflow.types import StepInput
 from agno.workflow.workflow import Workflow
 from phoenix.otel import register
 
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
 os.environ["PHOENIX_CLIENT_HEADERS"] = f"api_key={os.getenv('ARIZE_PHOENIX_API_KEY')}"
 os.environ["PHOENIX_COLLECTOR_ENDPOINT"] = (
     "https://app.phoenix.arize.com/"  # Add the suffix for your organization
 )
 
-# configure the Phoenix tracer
+# Configure the Phoenix tracer
 tracer_provider = register(
     project_name="default",  # Default is 'default'
     auto_instrument=True,  # Automatically use the installed OpenInference instrumentation
 )
 
 
-# === BASIC AGENTS ===
+# ---------------------------------------------------------------------------
+# Create Workflow
+# ---------------------------------------------------------------------------
+# Basic agents
 researcher = Agent(
     name="Researcher",
     instructions="Research the given topic and provide detailed findings.",
@@ -52,15 +56,14 @@ writer = Agent(
     instructions="Write a comprehensive article based on all available research and verification.",
 )
 
-# === CONDITION EVALUATOR ===
 
-
+# Condition evaluator
 def needs_fact_checking(step_input: StepInput) -> bool:
-    """Determine if the research contains claims that need fact-checking"""
+    """Determine if the research contains claims that need fact-checking."""
     return True
 
 
-# === WORKFLOW STEPS ===
+# Workflow steps
 research_step = Step(
     name="research",
     description="Research the topic",
@@ -73,7 +76,6 @@ summarize_step = Step(
     agent=summarizer,
 )
 
-# Conditional fact-checking step
 fact_check_step = Step(
     name="fact_check",
     description="Verify facts and claims",
@@ -86,7 +88,6 @@ write_article = Step(
     agent=writer,
 )
 
-# === BASIC LINEAR WORKFLOW ===
 basic_workflow = Workflow(
     name="Basic Linear Workflow",
     description="Research -> Summarize -> Condition(Fact Check) -> Write Article",
@@ -103,6 +104,10 @@ basic_workflow = Workflow(
     ],
 )
 
+
+# ---------------------------------------------------------------------------
+# Run Workflow
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     print("Running Basic Linear Workflow Example")
     print("=" * 50)

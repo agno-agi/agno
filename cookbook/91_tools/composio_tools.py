@@ -1,5 +1,17 @@
+"""
+Composio Tools
+=============================
+
+Demonstrates composio tools.
+"""
+
 from agno.agent import Agent
 from composio_agno import Action, ComposioToolSet
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 
 toolset = ComposioToolSet()
 composio_tools = toolset.get_tools(
@@ -7,4 +19,8 @@ composio_tools = toolset.get_tools(
 )
 agent = Agent(tools=composio_tools)
 
-agent.print_response("Can you star agno-agi/agno repo?")
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    agent.print_response("Can you star agno-agi/agno repo?")

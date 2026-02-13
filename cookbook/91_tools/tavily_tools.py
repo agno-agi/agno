@@ -1,5 +1,17 @@
+"""
+Tavily Tools
+=============================
+
+Demonstrates tavily tools.
+"""
+
 from agno.agent import Agent
 from agno.tools.tavily import TavilyTools
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 
 # Example 1: default TavilyTools
 agent = Agent(tools=[TavilyTools()])
@@ -69,39 +81,44 @@ combined_agent = Agent(
 # ============================================================================
 
 # Test search agents
-print("=" * 80)
-print("SEARCH EXAMPLES")
-print("=" * 80)
 
-agent.print_response(
-    "Search for 'language models' and recent developments", markdown=True
-)
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    print("=" * 80)
+    print("SEARCH EXAMPLES")
+    print("=" * 80)
 
-context_agent.print_response(
-    "Get detailed context about artificial intelligence trends", markdown=True
-)
+    agent.print_response(
+        "Search for 'language models' and recent developments", markdown=True
+    )
 
-# Test extract agents
-print("\n" + "=" * 80)
-print("EXTRACT EXAMPLES")
-print("=" * 80)
+    context_agent.print_response(
+        "Get detailed context about artificial intelligence trends", markdown=True
+    )
 
-extract_agent.print_response(
-    "Extract the main content from https://docs.tavily.com/documentation/api-reference/endpoint/extract",
-    markdown=True,
-)
+    # Test extract agents
+    print("\n" + "=" * 80)
+    print("EXTRACT EXAMPLES")
+    print("=" * 80)
 
-advanced_extract_agent.print_response(
-    "Extract content with images from https://github.com/anthropics/anthropic-sdk-python",
-    markdown=True,
-)
+    extract_agent.print_response(
+        "Extract the main content from https://docs.tavily.com/documentation/api-reference/endpoint/extract",
+        markdown=True,
+    )
 
-# Test combined agent
-print("\n" + "=" * 80)
-print("COMBINED SEARCH & EXTRACT")
-print("=" * 80)
+    advanced_extract_agent.print_response(
+        "Extract content with images from https://github.com/anthropics/anthropic-sdk-python",
+        markdown=True,
+    )
 
-combined_agent.print_response(
-    "Search for 'Tavily API documentation' and extract content from the most relevant result",
-    markdown=True,
-)
+    # Test combined agent
+    print("\n" + "=" * 80)
+    print("COMBINED SEARCH & EXTRACT")
+    print("=" * 80)
+
+    combined_agent.print_response(
+        "Search for 'Tavily API documentation' and extract content from the most relevant result",
+        markdown=True,
+    )

@@ -13,6 +13,10 @@ from agno.models.google import Gemini
 from google import genai
 from google.genai.types import UploadFileConfig
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 client = genai.Client()
 
 # Download txt file
@@ -60,6 +64,9 @@ cache = client.caches.create(
     },
 )
 
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     agent = Agent(

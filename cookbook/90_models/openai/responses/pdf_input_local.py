@@ -1,9 +1,20 @@
+"""
+Openai Pdf Input Local
+======================
+
+Cookbook example for `openai/responses/pdf_input_local.py`.
+"""
+
 from pathlib import Path
 
 from agno.agent import Agent
 from agno.media import File
 from agno.models.openai.responses import OpenAIResponses
 from agno.utils.media import download_file
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 pdf_path = Path(__file__).parent.joinpath("ThaiRecipes.pdf")
 
@@ -24,3 +35,10 @@ agent.print_response(
     files=[File(filepath=pdf_path)],
 )
 agent.print_response("Suggest me a recipe from the attached file.")
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

@@ -1,3 +1,10 @@
+"""
+Google Video Input File Upload
+==============================
+
+Cookbook example for `google/gemini/video_input_file_upload.py`.
+"""
+
 import time
 from pathlib import Path
 
@@ -6,6 +13,10 @@ from agno.media import Video
 from agno.models.google import Gemini
 from agno.utils.log import logger
 from google.genai.types import UploadFileConfig
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 model = Gemini(id="gemini-3-flash-preview")
 agent = Agent(
@@ -44,6 +55,10 @@ if not video_file:
         logger.info(f"Uploaded video: {video_file}")
     except Exception as e:
         logger.error(f"Error uploading video: {e}")
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     agent.print_response(

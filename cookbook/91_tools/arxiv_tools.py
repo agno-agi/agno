@@ -11,6 +11,11 @@ Run: `uv pip install arxiv` to install the dependencies
 from agno.agent import Agent
 from agno.tools.arxiv import ArxivTools
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
+
 # Example 1: All functions enabled (default behavior)
 agent_full = Agent(
     tools=[ArxivTools()],  # All functions enabled by default
@@ -71,16 +76,22 @@ agent_focused = Agent(
 )
 
 # Basic search example
-print("=== ArXiv Paper Search Example ===")
-agent_full.print_response("Search arxiv for 'language models'", markdown=True)
 
-print("\n=== Focused Research Example ===")
-agent_focused.print_response(
-    "Find recent papers on 'transformer architectures' and provide detailed analysis",
-    markdown=True,
-)
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    print("=== ArXiv Paper Search Example ===")
+    agent_full.print_response("Search arxiv for 'language models'", markdown=True)
 
-print("\n=== Search-Only Example ===")
-agent_search_only.print_response(
-    "Search for papers related to 'machine learning interpretability'", markdown=True
-)
+    print("\n=== Focused Research Example ===")
+    agent_focused.print_response(
+        "Find recent papers on 'transformer architectures' and provide detailed analysis",
+        markdown=True,
+    )
+
+    print("\n=== Search-Only Example ===")
+    agent_search_only.print_response(
+        "Search for papers related to 'machine learning interpretability'",
+        markdown=True,
+    )

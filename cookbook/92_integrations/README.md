@@ -2,30 +2,38 @@
 
 Integration examples showing how to connect Agno agents with external platforms and services.
 
+## Directories
 
-## Available Integrations
+### [a2a](./a2a/)
+A2A (Agent-to-Agent) protocol examples, including a basic server/client flow.
 
-### [Discord](./discord/)
-Discord bot implementation with media support and user memory capabilities.
+### [discord](./discord/)
+Discord bot examples, including media handling and memory-enabled bots.
 
-### [A2A - Agent to Agent](./a2a/)
-Agent-to-agent communication using Google's A2A protocol for distributed agent systems.
+### [memory](./memory/)
+External memory service integrations (Mem0, Memori, and Zep).
 
-### [Observability](./observability/)
-Monitoring and observability integrations for agent performance tracking.
+### [observability](./observability/)
+Tracing and monitoring integrations for agent and workflow execution.
 
-## Setup
+### [rag](./rag/)
+Third-party RAG and retrieval-stack integrations (Infinity reranker, LightRAG, LangChain + Qdrant).
 
-Install required dependencies based on the integration you want to use:
+### [surrealdb](./surrealdb/)
+SurrealDB-backed memory manager integration examples.
+
+## Running Examples
+
+Use the demo environment:
 
 ```bash
-# For Discord integration
-uv pip install discord.py agno
-
-# For A2A integration
-uv pip install a2a-python agno
+.venvs/demo/bin/python cookbook/92_integrations/<folder>/<file>.py
 ```
 
-## Getting Started
+## Validation
 
-Navigate to the specific integration directory for detailed documentation and examples.
+Run the cookbook pattern checker on this section:
+
+```bash
+.venvs/demo/bin/python cookbook/scripts/check_cookbook_pattern.py --base-dir cookbook/92_integrations --recursive
+```
