@@ -12,12 +12,12 @@ class OpenAILike(OpenAIChat):
     Args:
         id (str): The id of the OpenAI model to use. Defaults to "not-provided".
         name (str): The name of the OpenAI model to use. Defaults to "OpenAILike".
-        api_key (Optional[str]): The API key to use. Defaults to "not-provided".
+        api_key (Optional[str]): The API key to use. If not provided, reads from OPENAI_API_KEY env var.
     """
 
     id: str = "not-provided"
     name: str = "OpenAILike"
-    api_key: Optional[str] = "not-provided"
+    api_key: Optional[str] = None
 
     default_role_map = {
         "system": "system",
