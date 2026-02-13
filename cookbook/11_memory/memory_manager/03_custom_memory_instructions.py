@@ -55,7 +55,7 @@ I am interested to learn about the history of the universe and other astronomica
     print("John Doe's memories:")
     pprint(memories)
 
-    memory = MemoryManager(model=Claude(id="claude-3-5-sonnet-latest"), db=memory_db)
+    memory = MemoryManager(model=Claude(id="claude-sonnet-4-5-20250929"), db=memory_db)
     jane_doe_id = "jane_doe@example.com"
 
     memory.create_user_memories(

@@ -1,22 +1,14 @@
 # Test Log: dependencies
 
-> Updated: 2026-02-08 15:49:52
-
-## Pattern Check
-
-**Status:** PASS
-
-**Result:** Checked 3 file(s) in /Users/ab/conductor/workspaces/agno/colombo/cookbook/03_teams/dependencies. Violations: 0
-
----
+> Updated: 2026-02-12
 
 ### dependencies_in_context.py
 
 **Status:** PASS
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/dependencies/dependencies_in_context.py`.
+**Description:** Demonstrates team-level `dependencies` dict with callable factories (`get_user_profile`, `get_current_context`) and `add_dependencies_to_context=True` for template-based injection into team instructions.
 
-**Result:** Executed successfully. Duration: 58.34s. Tail: ife admin (meals/groceries) to reduce weekday decision fatigue. | - Aim for a **clean wind-down** so Monday starts strong. |  | --- |  | ### If you answer these two, I’ll tailor this into a precise schedule + “Top 3” outcomes | 1) Are you **on-call** this week?   | 2) What’s your main work theme right now (infra, product, ML integration, fintech/data, etc.)?
+**Result:** Completed successfully in ~58s. Dependencies resolved at runtime and injected into instruction templates via `{user_profile}` and `{current_context}` placeholders. Team produced personalized workday priorities.
 
 ---
 
@@ -24,9 +16,9 @@
 
 **Status:** PASS
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/dependencies/dependencies_in_tools.py`.
+**Description:** Demonstrates two patterns: (1) runtime `add_dependencies_to_context=True` via `team.run()` kwargs, and (2) accessing dependencies inside team tools via `run_context.dependencies`. Uses both callable factories and raw dict values.
 
-**Result:** Executed successfully. Duration: 57.65s. Tail: tices. | - **Foster Innovation**: Encourage a culture where experimentation and problem-solving are welcome. |  | These insights and recommendations are aimed at enhancing 'Engineering Team Alpha's' productivity and addressing any performance issues. If you have specific data points or need further tailored recommendations, feel free to provide more context!
+**Result:** Both patterns completed successfully in ~58s. Personalization team used context dependencies for instruction templates. Performance team accessed `team_metrics` and `current_context` through `RunContext.dependencies` in the `analyze_team_performance` tool.
 
 ---
 
@@ -34,8 +26,8 @@
 
 **Status:** PASS
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/dependencies/dependencies_to_members.py`.
+**Description:** Demonstrates passing dependencies via `team.print_response()` kwargs with `add_dependencies_to_context=True` and `show_members_responses=True`. Dependencies propagate to member agents (ProfileAnalyst, ContextAnalyst).
 
-**Result:** Executed successfully. Duration: 54.81s. Tail:  app, ML platform, infra,  ┃ | ┃ fintech, etc.) and whether you’re on-call, I’ll tailor items #3–#4 into a    ┃ | ┃ specific mini-plan with suggested next steps.                                ┃ | ┃                                                                              ┃ | ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+**Result:** Completed successfully in ~55s. Dependencies passed at call time were propagated to member agents. Both members produced responses informed by the injected user profile and context data.
 
 ---

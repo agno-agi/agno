@@ -81,9 +81,9 @@ if __name__ == "__main__":
     asyncio.run(
         knowledge.ainsert_many(
             urls=[
-                "https://docs.agno.com/basics/agents/overview.md",
-                "https://docs.agno.com/basics/tools/overview.md",
-                "https://docs.agno.com/basics/knowledge/overview.md",
+                "https://docs.agno.com/agents/overview.md",
+                "https://docs.agno.com/tools/overview.md",
+                "https://docs.agno.com/knowledge/overview.md",
             ]
         )
     )

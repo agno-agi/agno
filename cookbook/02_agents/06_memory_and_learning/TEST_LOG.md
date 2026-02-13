@@ -1,25 +1,8 @@
-# TEST LOG
+# Test Log — 06_memory_and_learning
 
-Generated: 2026-02-10 UTC
+Tested: 2026-02-12 | Branch: cookbook/v25-merge-fixes
 
-Pattern Check: Checked 1 file(s) in cookbook/02_agents/learning. Violations: 0
-
-### learning_machine.py
-
-**Status:** PASS
-
-**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
-
-**Result:** Completed successfully.
-
----
-
-### memory_manager.py
-
-**Status:** PASS
-
-**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
-
-**Result:** Structure check passed. Exits 0.
-
----
+| File | Status | Notes |
+|------|--------|-------|
+| learning_machine.py | PASS | Profile update tool stores name, second run recalls "Alex" from memory |
+| memory_manager.py | PASS | Memory manager stores Alice's Python preference, recalls it in second interaction |

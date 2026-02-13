@@ -1,143 +1,38 @@
-# TEST_LOG for cookbook/04_workflows/07_cel_expressions
-
-Generated: 2026-02-08 16:39:09
-
-### condition/cel_additional_data.py
-
-**Status:** PASS
-
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
-
-**Result:** Executed successfully. ┃ • Check for typos and grammatical errors. ┃
-
----
-
-### condition/cel_basic.py
-
-**Status:** PASS
-
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
-
-**Result:** Executed successfully. Completed in 1.5s
-
----
-
-### condition/cel_previous_step.py
-
-**Status:** PASS
-
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
-
-**Result:** Executed successfully. DEBUG My API returns 500 errors when I send POST requests with JSON payloads.
-
----
-
-### condition/cel_previous_step_outputs.py
-
-**Status:** FAIL
-
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
-
-**Result:** Timed out after 35s. ┃ • Implement robust error handling mechanisms within automated systems to ┃
-
----
-
-### condition/cel_session_state.py
-
-**Status:** PASS
-
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
-
-**Result:** Executed successfully. ┃ previously. Understanding the specific error message can help us target ┃
-
----
-
-### loop/cel_compound_exit.py
-
-**Status:** PASS
-
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
-
-**Result:** Executed successfully. - **Accountability**: Determining liability when AI systems make errors in
-
----
-
-### loop/cel_content_keyword.py
-
-**Status:** PASS
-
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
-
-**Result:** Executed successfully. Completed in 1.5s
-
----
-
-### loop/cel_iteration_limit.py
-
-**Status:** PASS
-
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
-
-**Result:** Executed successfully. Completed in 6.0s
-
----
-
-### loop/cel_step_outputs_check.py
-
-**Status:** PASS
-
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
-
-**Result:** Executed successfully. Completed in 10.9s
-
----
-
-### router/cel_additional_data_route.py
-
-**Status:** PASS
-
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
-
-**Result:** Executed successfully. Completed in 1.8s
-
----
-
-### router/cel_previous_step_route.py
-
-**Status:** PASS
-
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
-
-**Result:** Executed successfully. DEBUG My API keeps returning 503 errors.
-
----
-
-### router/cel_session_state_route.py
-
-**Status:** PASS
-
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
-
-**Result:** Executed successfully. Completed in 10.1s
-
----
-
-### router/cel_ternary.py
-
-**Status:** PASS
-
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
-
-**Result:** Executed successfully. Completed in 5.9s
-
----
-
-### router/cel_using_step_choices.py
-
-**Status:** PASS
-
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
-
-**Result:** Executed successfully. ┃ error correction, and fault-tolerant systems are crucial for realizing ┃
-
----
+# Test Log — 07_cel_expressions
+
+Tested: 2026-02-12 | Branch: cookbook/v25-merge-fixes
+
+## condition/
+
+| File | Status | Notes |
+|------|--------|-------|
+| cel_basic.py | PASS | Completed in ~1.3s, urgent/normal routing via CEL |
+| cel_additional_data.py | PASS | Completed in ~2.3s, priority gate with additional data |
+| cel_previous_step.py | PASS | Completed in ~1.9s, routing based on previous step classification |
+| cel_previous_step_outputs.py | PASS | Completed in ~38s, safety research with CEL output checks |
+| cel_session_state.py | PASS | Completed in ~2.5s, retry counter via session state |
+
+## loop/
+
+| File | Status | Notes |
+|------|--------|-------|
+| cel_compound_exit.py | PASS | Completed in ~78s, research loop with compound exit (2/5 iterations) |
+| cel_content_keyword.py | PASS | Completed in ~2s, editing loop exited on "DONE" keyword (1/5 iterations) |
+| cel_iteration_limit.py | PASS | Completed in ~12s, writing loop with iteration limit (2/10 iterations) |
+| cel_step_outputs_check.py | PASS | Completed in ~19s, research loop with quality approval (1/5 iterations) |
+
+## router/
+
+| File | Status | Notes |
+|------|--------|-------|
+| cel_additional_data_route.py | PASS | Completed in ~2s, content format routing (tweet writer) |
+| cel_previous_step_route.py | PASS | Completed in ~2s, support routing based on classification |
+| cel_session_state_route.py | PASS | Completed in ~22s, adaptive routing based on session state |
+| cel_ternary.py | PASS | Completed in ~15s, ternary routing for image/video |
+| cel_using_step_choices.py | PASS | Completed in ~24s, router with step_choices parameter |
+
+## Summary
+
+- **PASS:** 14
+- **FAIL:** 0
+- **SKIP:** 0

@@ -1,22 +1,14 @@
 # Test Log: tools
 
-> Updated: 2026-02-08 15:49:52
-
-## Pattern Check
-
-**Status:** PASS
-
-**Result:** Checked 4 file(s) in /Users/ab/conductor/workspaces/agno/colombo/cookbook/03_teams/tools. Violations: 0
-
----
+> Updated: 2026-02-12
 
 ### async_tools.py
 
-**Status:** FAIL
+**Status:** SKIP
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/tools/async_tools.py`.
+**Description:** Async tools using AgentQL for web scraping.
 
-**Result:** Exited with code 1. Tail:      from agno.utils.models.mistral import format_messages |   File "/Users/ab/conductor/workspaces/agno/colombo/libs/agno/agno/utils/models/mistral.py", line 21, in <module> |     raise ImportError("`mistralai` not installed. Please install using `pip install mistralai`") | ImportError: `mistralai` not installed. Please install using `pip install mistralai`
+**Result:** Missing: agentql package not installed.
 
 ---
 
@@ -24,9 +16,9 @@
 
 **Status:** PASS
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/tools/custom_tools.py`.
+**Description:** Custom team tools with FAQ answering and web search member. Demonstrates team-level tools alongside member agents.
 
-**Result:** Executed successfully. Duration: 6.21s. Tail: ┃ | ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛ | Team Session Info: |    Session ID: 8afe0583-c133-430c-b0b9-86b26570a170 |    Session State: None |  | Team Tools Available: |    - answer_from_known_questions: Answer a question from a small built-in FAQ. |  | Team Members: |    - Web Agent: Search the web for information
+**Result:** Completed successfully. Team tools and member delegation both worked correctly.
 
 ---
 
@@ -34,18 +26,18 @@
 
 **Status:** PASS
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/tools/member_tool_hooks.py`.
+**Description:** Member-level tool hooks with pre/post hooks on medical data read/write tools. Demonstrates permission checking via hooks.
 
-**Result:** Executed successfully. Duration: 1.03s. Tail: ━━━━━━━━━━━━━━━━━━━━━━━━━━━┓ | ┃                                                                              ┃ | ┃ Update my family history to 'Father: hypertension'                           ┃ | ┃                                                                              ┃ | ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+**Result:** Completed successfully. Reader agent fetched data, writer agent correctly had permission denied by pre-hook for unauthorized customer. Hook system working as designed.
 
 ---
 
 ### tool_hooks.py
 
-**Status:** FAIL
+**Status:** SKIP
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/tools/tool_hooks.py`.
+**Description:** Team tool hooks using RedditTools.
 
-**Result:** Exited with code 1. Tail: ols/tool_hooks.py", line 16, in <module> |     from agno.tools.reddit import RedditTools |   File "/Users/ab/conductor/workspaces/agno/colombo/libs/agno/agno/tools/reddit.py", line 11, in <module> |     raise ImportError("praw` not installed. Please install using `pip install praw`") | ImportError: praw` not installed. Please install using `pip install praw`
+**Result:** Missing: praw package not installed.
 
 ---

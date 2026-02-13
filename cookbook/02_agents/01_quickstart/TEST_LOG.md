@@ -1,35 +1,9 @@
-# TEST LOG
+# Test Log — 01_quickstart
 
-Generated: 2026-02-10 UTC
+Tested: 2026-02-12 | Branch: cookbook/v25-merge-fixes
 
-Pattern Check: Checked 3 file(s) in cookbook/02_agents/01_quickstart. Violations: 0
-
-### basic_agent.py
-
-**Status:** PASS
-
-**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
-
-**Result:** Completed successfully.
-
----
-
-### agent_with_instructions.py
-
-**Status:** PASS
-
-**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
-
-**Result:** Completed successfully.
-
----
-
-### agent_with_tools.py
-
-**Status:** PASS
-
-**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
-
-**Result:** Completed successfully.
-
----
+| File | Status | Notes |
+|------|--------|-------|
+| basic_agent.py | PASS | Agent responds with self-introduction |
+| agent_with_instructions.py | PASS | Agent provides structured debugging advice |
+| agent_with_tools.py | PASS | Agent uses search_news tool and summarizes headline |

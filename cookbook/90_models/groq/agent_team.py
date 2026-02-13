@@ -7,7 +7,7 @@ Cookbook example for `groq/agent_team.py`.
 
 from agno.agent import Agent
 from agno.models.groq import Groq
-from agno.team.team import Team
+from agno.team import Team
 from agno.tools.websearch import WebSearchTools
 from agno.tools.yfinance import YFinanceTools
 

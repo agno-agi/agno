@@ -1,83 +1,20 @@
-# TEST_LOG for cookbook/04_workflows/05_conditional_branching
+# Test Log — 05_conditional_branching
 
-Generated: 2026-02-08 16:39:09
+Tested: 2026-02-12 | Branch: cookbook/v25-merge-fixes
 
-### loop_in_choices.py
+| File | Status | Notes |
+|------|--------|-------|
+| loop_in_choices.py | PASS | Completed in ~31s, router with loop choice, 2/2 iterations |
+| nested_choices.py | PASS | Completed in ~5s, nested router selected steps_group_1 with 2 steps |
+| router_basic.py | PASS | Completed in ~26s, topic router selected "Tech Research" step |
+| router_with_loop.py | PASS | Completed in ~26s, router with iterative research loop |
+| selector_media_pipeline.py | PASS | Completed in ~41s, image generation and description pipeline |
+| selector_types.py | PASS | Completed in ~4s, 3 router selector patterns demonstrated |
+| step_choices_parameter.py | PASS | Completed in ~2s, dynamic step selection via step_choices |
+| string_selector.py | PASS | Completed in ~17s, string-based topic router |
 
-**Status:** PASS
+## Summary
 
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
-
-**Result:** Executed successfully. ┃ Jupyter, in particular, is exceptional for data visualization and ┃
-
----
-
-### nested_choices.py
-
-**Status:** PASS
-
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
-
-**Result:** Executed successfully. Completed in 2.8s
-
----
-
-### router_basic.py
-
-**Status:** FAIL
-
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
-
-**Result:** Timed out after 35s. DEBUG ********************** TOOL METRICS **********************
-
----
-
-### router_with_loop.py
-
-**Status:** FAIL
-
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
-
-**Result:** Timed out after 35s. DEBUG Creating new async OpenAI client for model gpt-4o
-
----
-
-### selector_media_pipeline.py
-
-**Status:** FAIL
-
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
-
-**Result:** Timed out after 35s. DEBUG Running: generate_image(prompt=...)
-
----
-
-### selector_types.py
-
-**Status:** PASS
-
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
-
-**Result:** Executed successfully. Completed in 2.4s
-
----
-
-### step_choices_parameter.py
-
-**Status:** PASS
-
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
-
-**Result:** Executed successfully. Completed in 1.7s
-
----
-
-### string_selector.py
-
-**Status:** PASS
-
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
-
-**Result:** Executed successfully. Completed in 8.4s
-
----
+- **PASS:** 8
+- **FAIL:** 0
+- **SKIP:** 0

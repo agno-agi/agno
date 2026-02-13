@@ -1,15 +1,7 @@
-# TEST LOG
+# Test Log — 16_skills
 
-Generated: 2026-02-10 UTC
+Tested: 2026-02-12 | Branch: cookbook/v25-merge-fixes
 
-Pattern Check: Checked 1 file(s) in cookbook/02_agents/skills. Violations: 0
-
-### basic_skills.py
-
-**Status:** PASS
-
-**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
-
-**Result:** Completed successfully.
-
----
+| File | Status | Notes |
+|------|--------|-------|
+| basic_skills.py | PASS | Skills-based agent reviews code, suggests calculate_total simplification |

@@ -11,7 +11,7 @@ from agno.agent import Agent
 from agno.knowledge.embedder.cohere import CohereEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reranker.cohere import CohereReranker
-from agno.models.openai import OpenAIResponses
+from agno.models.anthropic import Claude
 from agno.tools.reasoning import ReasoningTools
 from agno.vectordb.lancedb import LanceDb, SearchType
 
@@ -33,7 +33,7 @@ knowledge = Knowledge(
 # Create Agent
 # ---------------------------------------------------------------------------
 agent = Agent(
-    model=OpenAIResponses(id="gpt-5.2"),
+    model=Claude(id="claude-sonnet-4-20250514"),
     # Agentic RAG is enabled by default when `knowledge` is provided to the Agent.
     knowledge=knowledge,
     # search_knowledge=True gives the Agent the ability to search on demand
@@ -52,7 +52,7 @@ agent = Agent(
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     asyncio.run(
-        knowledge.ainsert_many(urls=["https://docs.agno.com/basics/agents/overview.md"])
+        knowledge.ainsert_many(urls=["https://docs.agno.com/agents/overview.md"])
     )
     agent.print_response(
         "What are Agents?",

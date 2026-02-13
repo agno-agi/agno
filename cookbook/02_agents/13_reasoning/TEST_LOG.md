@@ -1,25 +1,8 @@
-# TEST LOG
+# Test Log — 13_reasoning
 
-Generated: 2026-02-10 UTC
+Tested: 2026-02-12 | Branch: cookbook/v25-merge-fixes
 
-Pattern Check: Checked 1 file(s) in cookbook/02_agents/reasoning. Violations: 0
-
-### basic_reasoning.py
-
-**Status:** PASS
-
-**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
-
-**Result:** Completed successfully.
-
----
-
-### reasoning_with_model.py
-
-**Status:** PASS
-
-**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
-
-**Result:** Structure check passed. Exits 0.
-
----
+| File | Status | Notes |
+|------|--------|-------|
+| basic_reasoning.py | PASS | Reasoning agent solves bat-and-ball problem correctly ($0.05) |
+| reasoning_with_model.py | PASS | Reasoning model with structured steps solves sheep problem (9 left) |

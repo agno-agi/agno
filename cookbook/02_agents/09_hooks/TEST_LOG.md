@@ -1,55 +1,11 @@
-# TEST LOG
+# Test Log — 09_hooks
 
-Generated: 2026-02-10 UTC
+Tested: 2026-02-12 | Branch: cookbook/v25-merge-fixes
 
-Pattern Check: Checked 4 file(s) in cookbook/02_agents/hooks. Violations: 0
-
-### post_hook_output.py
-
-**Status:** PASS
-
-**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
-
-**Result:** Completed successfully.
-
----
-
-### pre_hook_input.py
-
-**Status:** PASS
-
-**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
-
-**Result:** Completed successfully.
-
----
-
-### session_state_hooks.py
-
-**Status:** PASS
-
-**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
-
-**Result:** Completed successfully.
-
----
-
-### stream_hook.py
-
-**Status:** PASS
-
-**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
-
-**Result:** Completed successfully.
-
----
-
-### tool_hooks.py
-
-**Status:** PASS
-
-**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
-
-**Result:** Structure check passed. Exits 0.
-
----
+| File | Status | Notes |
+|------|--------|-------|
+| post_hook_output.py | PASS | Post-hook validates output length and quality, blocks short/empty and passes normal |
+| pre_hook_input.py | PASS | Pre-hook validates financial advisor input, blocks vague/off-topic/unsafe content |
+| session_state_hooks.py | PASS | Session state hooks track topics across runs, state persists |
+| stream_hook.py | PASS | Stream hook logs tool calls with timing, Apple stock analysis streamed |
+| tool_hooks.py | PASS | Tool hooks log and time web_search calls, Tokyo population query |

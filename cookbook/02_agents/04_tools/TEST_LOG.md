@@ -1,55 +1,11 @@
-# TEST LOG
+# Test Log — 04_tools
 
-Generated: 2026-02-10 UTC
+Tested: 2026-02-12 | Branch: cookbook/v25-merge-fixes
 
-Pattern Check: Checked 3 file(s) in cookbook/02_agents/callable_factories. Violations: 0 (2 violations fixed: added section banners to 02_session_state_tools.py and 03_team_callable_members.py)
-
-### 01_callable_tools.py
-
-**Status:** PASS
-
-**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
-
-**Result:** Completed successfully.
-
----
-
-### 02_session_state_tools.py
-
-**Status:** PASS
-
-**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
-
-**Result:** Completed successfully.
-
----
-
-### 03_team_callable_members.py
-
-**Status:** PASS
-
-**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
-
-**Result:** Completed successfully.
-
----
-
-### tool_call_limit.py
-
-**Status:** PASS
-
-**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
-
-**Result:** Structure check passed. Exits 0.
-
----
-
-### tool_choice.py
-
-**Status:** PASS
-
-**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
-
-**Result:** Structure check passed. Exits 0.
-
----
+| File | Status | Notes |
+|------|--------|-------|
+| 01_callable_tools.py | PASS | Role-based callable tools (user/admin), web search and internal doc tools |
+| 02_session_state_tools.py | PASS | Factory-resolved greet/farewell modes with session state tools |
+| 03_team_callable_members.py | PASS | Team with researcher+writer callable members, produces Python history summary |
+| tool_call_limit.py | PASS | Tool call limit enforced, stock price retrieved but news hit limit (expected behavior) |
+| tool_choice.py | PASS | Tool choice forces get_weather, first call uses "none" (no tool), second forces tool call |

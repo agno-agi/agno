@@ -1,35 +1,9 @@
-# TEST LOG
+# Test Log — 15_dependencies
 
-Generated: 2026-02-10 UTC
+Tested: 2026-02-12 | Branch: cookbook/v25-merge-fixes
 
-Pattern Check: Checked 3 file(s) in cookbook/02_agents/dependencies. Violations: 0
-
-### dependencies_in_context.py
-
-**Status:** PASS
-
-**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
-
-**Result:** Completed successfully.
-
----
-
-### dependencies_in_tools.py
-
-**Status:** PASS
-
-**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
-
-**Result:** Completed successfully.
-
----
-
-### dynamic_tools.py
-
-**Status:** PASS
-
-**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
-
-**Result:** Completed successfully.
-
----
+| File | Status | Notes |
+|------|--------|-------|
+| dependencies_in_context.py | PASS | Dependencies injected into context (HackerNews analyst with user interests) |
+| dependencies_in_tools.py | PASS | Dependencies injected into tools (user profile analysis with interests) |
+| dynamic_tools.py | PASS | Dynamic tools (get_time, get_project) resolved and called correctly |

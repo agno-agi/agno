@@ -1,22 +1,14 @@
 # Test Log: context_management
 
-> Updated: 2026-02-08 15:49:52
-
-## Pattern Check
-
-**Status:** PASS
-
-**Result:** Checked 3 file(s) in /Users/ab/conductor/workspaces/agno/colombo/cookbook/03_teams/context_management. Violations: 0
-
----
+> Updated: 2026-02-12
 
 ### few_shot_learning.py
 
 **Status:** PASS
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/context_management/few_shot_learning.py`.
+**Description:** Demonstrates `additional_input` with Message-based few-shot examples guiding team support responses across 3 customer scenarios. Uses o3-mini.
 
-**Result:** Executed successfully. Duration: 36.24s. Tail:                            ┃ | ┃ Could you please reply with your account details so we can proceed? Thank    ┃ | ┃ you for your patience.                                                       ┃ | ┃                                                                              ┃ | ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+**Result:** All 3 scenarios executed successfully. Team correctly followed the few-shot patterns for delegation.
 
 ---
 
@@ -24,9 +16,9 @@
 
 **Status:** PASS
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/context_management/filter_tool_calls_from_history.py`.
+**Description:** Demonstrates `max_tool_calls_from_history=3` to limit historical tool results in team context. 4 sequential research runs using WebSearchTools with SqliteDb persistence.
 
-**Result:** Executed successfully. Duration: 108.62s. Tail: db/sqlite/sqlite.py", line 1039, in upsert_session |     raise e |   File "/Users/ab/conductor/workspaces/agno/colombo/libs/agno/agno/db/sqlite/sqlite.py", line 998, in upsert_session |     return TeamSession.from_dict(session_raw) |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ | NameError: name 'requirements' is not defined. Did you mean: 'RunRequirement'?
+**Result:** All 4 sequential runs completed successfully within timeout. Tool calls from earlier runs were properly filtered in later context windows.
 
 ---
 
@@ -34,8 +26,8 @@
 
 **Status:** PASS
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/context_management/introduction.py`.
+**Description:** Demonstrates `introduction` parameter for setting a reusable team greeting message. Uses SqliteDb for session persistence.
 
-**Result:** Executed successfully. Duration: 47.79s. Tail: db/sqlite/sqlite.py", line 1039, in upsert_session |     raise e |   File "/Users/ab/conductor/workspaces/agno/colombo/libs/agno/agno/db/sqlite/sqlite.py", line 998, in upsert_session |     return TeamSession.from_dict(session_raw) |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ | NameError: name 'requirements' is not defined. Did you mean: 'RunRequirement'?
+**Result:** Both runs completed successfully. Introduction message was displayed on first interaction. Second run leveraged session history.
 
 ---

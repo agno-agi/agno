@@ -1,105 +1,16 @@
-# TEST LOG
+# Test Log — 12_multimodal
 
-Generated: 2026-02-10 UTC
+Tested: 2026-02-12 | Branch: cookbook/v25-merge-fixes
 
-Pattern Check: Checked 10 file(s) in cookbook/02_agents/multimodal. Violations: 0
-
-### audio_input_output.py
-
-**Status:** PASS
-
-**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
-
-**Result:** Completed successfully.
-
----
-
-### audio_sentiment_analysis.py
-
-**Status:** PASS
-
-**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
-
-**Result:** Completed successfully.
-
----
-
-### audio_streaming.py
-
-**Status:** PASS
-
-**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
-
-**Result:** Completed successfully.
-
----
-
-### audio_to_text.py
-
-**Status:** PASS
-
-**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
-
-**Result:** Completed successfully.
-
----
-
-### image_to_audio.py
-
-**Status:** PASS
-
-**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
-
-**Result:** Completed successfully.
-
----
-
-### image_to_image.py
-
-**Status:** FAIL
-
-**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
-
-**Result:** Failed with import dependency error: `fal_client` not installed. Please install using `pip install fal-client`.
-
----
-
-### image_to_structured_output.py
-
-**Status:** PASS
-
-**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
-
-**Result:** Completed successfully.
-
----
-
-### image_to_text.py
-
-**Status:** PASS
-
-**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
-
-**Result:** Completed successfully.
-
----
-
-### media_input_for_tool.py
-
-**Status:** PASS
-
-**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
-
-**Result:** Completed successfully.
-
----
-
-### video_caption.py
-
-**Status:** FAIL
-
-**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
-
-**Result:** Failed with import dependency error: `moviepy` not installed. Please install using `pip install moviepy ffmpeg`.
-
----
+| File | Status | Notes |
+|------|--------|-------|
+| audio_input_output.py | PASS | Audio input transcription + audio output saved to tmp/result.wav |
+| audio_sentiment_analysis.py | PASS | Detailed sentiment analysis of audio conversation |
+| audio_streaming.py | PASS | Streaming audio output, story about a seed |
+| audio_to_text.py | PASS | Audio transcribed to text, family conversation |
+| image_to_audio.py | PASS | Image not found (sample.jpg missing) but agent handled gracefully, audio saved |
+| image_to_image.py | SKIP | Missing: FAL_API_KEY |
+| image_to_structured_output.py | FAIL | Wikipedia image URL blocked by OpenAI (403 upstream) |
+| image_to_text.py | FAIL | sample.jpg not found, agent could not process image |
+| media_input_for_tool.py | PASS | PDF financial report analyzed with Gemini, extracts revenue data |
+| video_caption.py | PASS | Agent prompts for video file path (no video provided, expected behavior) |

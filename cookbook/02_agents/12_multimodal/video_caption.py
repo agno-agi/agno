@@ -6,12 +6,12 @@ Please install dependencies using:.
 """
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIResponses
+from agno.models.openai import OpenAIChat
 from agno.tools.moviepy_video import MoviePyVideoTools
 from agno.tools.openai import OpenAITools
 
 video_tools = MoviePyVideoTools(
-    process_video=True, generate_captions=True, embed_captions=True
+    enable_process_video=True, enable_generate_captions=True, enable_embed_captions=True
 )
 
 openai_tools = OpenAITools()
@@ -21,7 +21,7 @@ openai_tools = OpenAITools()
 # ---------------------------------------------------------------------------
 video_caption_agent = Agent(
     name="Video Caption Generator Agent",
-    model=OpenAIResponses(
+    model=OpenAIChat(
         id="gpt-4o",
     ),
     tools=[video_tools, openai_tools],
