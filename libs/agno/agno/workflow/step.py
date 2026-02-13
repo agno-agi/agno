@@ -1515,6 +1515,7 @@ class Step:
         images = getattr(response, "images", None)
         videos = getattr(response, "videos", None)
         audio = getattr(response, "audio", None)
+        files = getattr(response, "files", None)
 
         # Extract metrics from response
         metrics = self._extract_metrics_from_response(response)
@@ -1530,6 +1531,7 @@ class Step:
             images=images,
             videos=videos,
             audio=audio,
+            files=files,
             metrics=metrics,
         )
 
