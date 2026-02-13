@@ -2664,8 +2664,7 @@ class Knowledge(RemoteKnowledge):
         return value
 
     # --- Metadata Helpers ---
-
-    RESERVED_METADATA_KEY = "_agno"
+    # RESERVED_METADATA_KEY inherited from BaseLoader
 
     @staticmethod
     def _merge_user_metadata(
