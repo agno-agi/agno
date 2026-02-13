@@ -865,12 +865,51 @@ class FunctionCall(BaseModel):
 
     def execute(self) -> FunctionExecutionResult:
         """Runs the function call."""
-        from inspect import isgenerator, isgeneratorfunction
+        from inspect import isgenerator, isgeneratorfunction, signature
 
         if self.function.entrypoint is None:
             return FunctionExecutionResult(status="failure", error="Entrypoint is not set")
 
         log_debug(f"Running: {self.get_call_str()}")
+
+        entry_sig = signature(self.function.entrypoint)
+
+        # Try to get team context from agent if available
+        if "team" in entry_sig.parameters and self.function._agent is not None:
+            agent = self.function._agent
+
+            # Check if agent has team_id and we can get the team from somewhere
+            if hasattr(agent, "_team") and agent._team is not None:
+                self.function._team = agent._team
+            elif hasattr(agent, "team") and agent.team is not None:
+                self.function._team = agent.team
+            elif hasattr(agent, "team_id") and agent.team_id is not None:
+                # Try to find the team object by looking at the agent's context
+                # This is a workaround for the missing team propagation
+                team_id = agent.team_id
+
+                # Try to access team from module-level or other context
+                try:
+                    import inspect
+
+                    frame = inspect.currentframe()
+                    while frame:
+                        local_vars = frame.f_locals
+                        for var_name, var_value in local_vars.items():
+                            if (
+                                hasattr(var_value, "name")
+                                and hasattr(var_value, "id")
+                                and var_value.__class__.__name__ == "Team"
+                                and (var_value.name == team_id or getattr(var_value, "id", None) == team_id)
+                            ):
+                                self.function._team = var_value
+                                break
+                        if self.function._team:
+                            break
+                        frame = frame.f_back
+                except Exception:
+                    # Silently continue if frame inspection fails
+                    pass
 
         # Execute pre-hook if it exists
         self._handle_pre_hook()
