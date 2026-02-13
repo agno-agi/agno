@@ -156,16 +156,24 @@ class BaseLoader:
     ) -> Dict[str, Any]:
         """Merge provider metadata with user-provided metadata.
 
-        User metadata takes precedence over provider metadata.
+        Provider metadata (source_type, bucket info, etc.) is stored under the
+        reserved ``_agno`` key so that user PATCH updates cannot overwrite it.
+        User metadata is stored at the top level.
 
         Args:
             provider_metadata: Metadata from the provider (e.g., GitHub, Azure)
             user_metadata: User-provided metadata
 
         Returns:
-            Merged metadata dictionary
+            Merged metadata dictionary with provider fields under ``_agno``
         """
-        return {**provider_metadata, **(user_metadata or {})}
+        merged: Dict[str, Any] = dict(user_metadata or {})
+        # Store provider metadata under reserved _agno key
+        existing_agno = merged.get("_agno", {})
+        if not isinstance(existing_agno, dict):
+            existing_agno = {}
+        merged["_agno"] = {**existing_agno, **provider_metadata}
+        return merged
 
     def _files_to_dict_list(self, files: List[FileToProcess]) -> List[Dict[str, Any]]:
         """Convert FileToProcess objects to dict list for compatibility.

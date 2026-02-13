@@ -631,6 +631,25 @@ class GitHubConfig(RemoteContentConfig):
         )
 
 
+class LocalStorageConfig(RemoteContentConfig):
+    """Configuration for local filesystem storage.
+
+    Stores raw content files to a local directory. Useful for development
+    and testing without needing cloud credentials.
+
+    Example:
+        ```python
+        config = LocalStorageConfig(
+            id="local-raw",
+            name="Local Raw Storage",
+            base_path="/tmp/knowledge-raw-storage",
+        )
+        ```
+    """
+
+    base_path: str
+
+
 class AzureBlobConfig(RemoteContentConfig):
     """Configuration for Azure Blob Storage content source.
 
