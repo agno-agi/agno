@@ -238,8 +238,26 @@ class TestRouterFromDict:
         with pytest.raises(ValueError, match="not found in registry"):
             Router.from_dict(data, registry=registry_with_functions)
 
-    def test_from_dict_raises_without_selector(self, registry_with_functions):
-        """Test from_dict raises error when no selector provided."""
+    def test_from_dict_without_selector_uses_hitl(self, registry_with_functions):
+        """Test from_dict allows no selector when using HITL."""
+        # With HITL, selector is optional
+        data = {
+            "type": "Router",
+            "name": "hitl-router",
+            "description": None,
+            "selector": None,
+            "requires_user_input": True,
+            "choices": [],
+        }
+
+        router = Router.from_dict(data, registry=registry_with_functions)
+        assert router.name == "hitl-router"
+        assert router.selector is None
+        assert router.requires_user_input is True
+
+    def test_from_dict_without_selector_and_without_hitl(self, registry_with_functions):
+        """Test from_dict allows no selector even without HITL (but won't function)."""
+        # Router without selector and without HITL will be created but won't work at runtime
         data = {
             "type": "Router",
             "name": "no-selector-router",
@@ -248,8 +266,11 @@ class TestRouterFromDict:
             "choices": [],
         }
 
-        with pytest.raises(ValueError, match="requires a selector"):
-            Router.from_dict(data, registry=registry_with_functions)
+        # This now succeeds at deserialization time - validation happens at execution time
+        router = Router.from_dict(data, registry=registry_with_functions)
+        assert router.name == "no-selector-router"
+        assert router.selector is None
+        assert router.requires_user_input is False
 
     def test_from_dict_with_multiple_choices(self, registry_with_functions):
         """Test from_dict with multiple choice steps."""
