@@ -61,8 +61,9 @@ def test_init_registers_default_tools(tools):
     assert "pin_message" in names
     assert "get_chat" in names
     assert "get_updates" in names
+    assert "get_file" in names
     assert "send_chat_action" in names
-    assert len(names) == 11
+    assert len(names) == 12
 
 
 def test_enable_flags():
@@ -78,6 +79,7 @@ def test_enable_flags():
             enable_pin_message=False,
             enable_get_chat=False,
             enable_get_updates=False,
+            enable_get_file=False,
             enable_send_chat_action=False,
         )
         names = [f.name for f in tools.functions.values()]
@@ -98,9 +100,10 @@ def test_all_flag():
             enable_pin_message=False,
             enable_get_chat=False,
             enable_get_updates=False,
+            enable_get_file=False,
             enable_send_chat_action=False,
         )
-        assert len(tools.functions) == 11
+        assert len(tools.functions) == 12
 
 
 def test_missing_token_logs_error():
@@ -236,6 +239,27 @@ def test_get_updates(mock_post, tools):
 
     payload = mock_post.call_args[1]["json"]
     assert payload["limit"] == 5
+
+
+@patch("agno.tools.telegram.httpx.post")
+def test_get_file(mock_post, tools):
+    file_data = {"file_id": "abc123", "file_path": "photos/file_0.jpg", "file_size": 1024}
+    mock_post.return_value = _ok_response(file_data)
+    result = json.loads(tools.get_file("abc123"))
+    assert result["ok"] is True
+    assert result["result"]["file_path"] == "photos/file_0.jpg"
+    assert "download_url" in result["result"]
+    assert "photos/file_0.jpg" in result["result"]["download_url"]
+    assert "getFile" in mock_post.call_args[0][0]
+
+
+@patch("agno.tools.telegram.httpx.post")
+def test_get_file_no_file_path(mock_post, tools):
+    """When file_path is missing, no download_url should be added."""
+    mock_post.return_value = _ok_response({"file_id": "abc123", "file_size": 1024})
+    result = json.loads(tools.get_file("abc123"))
+    assert result["ok"] is True
+    assert "download_url" not in result.get("result", {})
 
 
 # ---- Utility ----

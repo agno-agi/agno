@@ -26,6 +26,7 @@ class TelegramTools(Toolkit):
         enable_pin_message: bool = True,
         enable_get_chat: bool = True,
         enable_get_updates: bool = True,
+        enable_get_file: bool = True,
         enable_send_chat_action: bool = True,
         all: bool = False,
         **kwargs,
@@ -71,6 +72,8 @@ class TelegramTools(Toolkit):
             tools.append(self.get_chat)
         if all or enable_get_updates:
             tools.append(self.get_updates)
+        if all or enable_get_file:
+            tools.append(self.get_file)
         if all or enable_send_chat_action:
             tools.append(self.send_chat_action)
 
@@ -393,6 +396,32 @@ class TelegramTools(Toolkit):
             return json.dumps(result)
         except httpx.HTTPStatusError as e:
             logger.error(f"Error getting updates: {e}")
+            return json.dumps({"ok": False, "error": str(e)})
+
+    def get_file(self, file_id: str) -> str:
+        """Get a file's download URL from Telegram by its file_id.
+
+        Use this to retrieve photos, documents, audio, or video from received messages.
+        The file_id can be found in incoming updates (e.g. message.photo[-1].file_id).
+
+        Args:
+            file_id: The file identifier from a Telegram message.
+
+        Returns:
+            A JSON string with file info including the download URL.
+        """
+        log_debug(f"Getting file info for file_id={file_id}")
+        try:
+            result = self._make_request("getFile", file_id=file_id)
+            # Build the full download URL if file_path is present
+            if result.get("ok") and result.get("result", {}).get("file_path"):
+                file_path = result["result"]["file_path"]
+                result["result"]["download_url"] = (
+                    f"https://api.telegram.org/file/bot{self.token}/{file_path}"
+                )
+            return json.dumps(result)
+        except httpx.HTTPStatusError as e:
+            logger.error(f"Error getting file: {e}")
             return json.dumps({"ok": False, "error": str(e)})
 
     # ---- Utility ----
