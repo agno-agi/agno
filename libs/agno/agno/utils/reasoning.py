@@ -101,8 +101,6 @@ def update_run_output_with_reasoning(
             reasoning_content += f"Result: {step.result}\n"
         reasoning_content += "\n"
 
-    # Add to existing reasoning_content or set it
-    if not run_response.reasoning_content:
-        run_response.reasoning_content = reasoning_content
-    else:
-        run_response.reasoning_content += reasoning_content
+    # Set reasoning_content from all steps (not append, since the loop
+    # above already iterates ALL reasoning_steps including previous ones)
+    run_response.reasoning_content = reasoning_content
