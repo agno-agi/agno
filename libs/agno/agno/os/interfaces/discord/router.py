@@ -253,37 +253,16 @@ def attach_routes(
                     await _download_attachment(attachment, images, files, audio_list, videos)
 
             # Run agent/team/workflow
-            response = None
-            if agent:
-                response = await agent.arun(
-                    message_text,
-                    user_id=user_id,
-                    session_id=session_id,
-                    images=images or None,
-                    files=files or None,
-                    audio=audio_list or None,
-                    videos=videos or None,
-                )
-            elif team:
-                response = await team.arun(  # type: ignore
-                    message_text,
-                    user_id=user_id,
-                    session_id=session_id,
-                    images=images or None,
-                    files=files or None,
-                    audio=audio_list or None,
-                    videos=videos or None,
-                )
-            elif workflow:
-                response = await workflow.arun(  # type: ignore
-                    message_text,
-                    user_id=user_id,
-                    session_id=session_id,
-                    images=images or None,
-                    files=files or None,
-                    audio=audio_list or None,
-                    videos=videos or None,
-                )
+            entity = agent or team or workflow
+            response = await entity.arun(  # type: ignore[union-attr]
+                message_text,
+                user_id=user_id,
+                session_id=session_id,
+                images=images or None,
+                files=files or None,
+                audio=audio_list or None,
+                videos=videos or None,
+            )
 
             if not response:
                 await _send_followup(application_id, interaction_token, "No response generated.")
