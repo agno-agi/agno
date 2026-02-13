@@ -1,10 +1,12 @@
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 #!/usr/bin/env python3
-"""Validate or generate conventional commit messages.
+"""
+Commit Message
+=============================
 
-Usage:
-    ./commit_message.py validate "feat: add new feature"
-    ./commit_message.py generate feat "add user authentication"
-    ./commit_message.py types
+Validate or generate conventional commit messages.
 """
 
 import json
@@ -77,6 +79,9 @@ def list_types() -> dict:
     return {"types": COMMIT_TYPES}
 
 
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     try:
         if len(sys.argv) < 2:

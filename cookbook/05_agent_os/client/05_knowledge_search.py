@@ -14,6 +14,10 @@ import asyncio
 
 from agno.client import AgentOSClient
 
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
+
 
 async def main():
     client = AgentOSClient(base_url="http://localhost:7777")
@@ -65,6 +69,10 @@ async def main():
     except Exception as e:
         print(f"   Error searching: {e}")
 
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     asyncio.run(main())

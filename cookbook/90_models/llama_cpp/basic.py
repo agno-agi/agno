@@ -1,5 +1,16 @@
+"""
+Llama Cpp Basic
+===============
+
+Cookbook example for `llama_cpp/basic.py`.
+"""
+
 from agno.agent import Agent, RunOutput  # noqa
 from agno.models.llama_cpp import LlamaCpp
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 agent = Agent(model=LlamaCpp(id="ggml-org/gpt-oss-20b-GGUF"), markdown=True)
 
@@ -8,4 +19,13 @@ agent = Agent(model=LlamaCpp(id="ggml-org/gpt-oss-20b-GGUF"), markdown=True)
 # print(run.content)
 
 # Print the response in the terminal
-agent.print_response("Share a 2 sentence horror story")
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    # --- Sync ---
+    agent.print_response("Share a 2 sentence horror story")
+
+    # --- Sync + Streaming ---
+    agent.print_response("Share a 2 sentence horror story", stream=True)

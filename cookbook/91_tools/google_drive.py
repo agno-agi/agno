@@ -22,6 +22,11 @@ The Tool Kit Functions are:
 from agno.agent import Agent
 from agno.tools.google_drive import GoogleDriveTools
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
+
 google_drive_tools = GoogleDriveTools(auth_port=5050)
 
 agent = Agent(
@@ -33,15 +38,20 @@ agent = Agent(
 )
 
 # Example 1: List files in Google Drive
-agent.print_response("Please list the files in my Google Drive")
 
-# Example 2: Upload a file to Google Drive
-# file_path = ...
-# agent.print_response(
-#     "Please upload this file to my Google Drive", files=[File(path=file_path)]
-# )
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    agent.print_response("Please list the files in my Google Drive")
 
-# Example 3: Download a file from Google Drive
-# agent.print_response(
-#     "Please download the 'test.txt' file from my Google Drive. It's in the 'test_files' folder."
-# )
+    # Example 2: Upload a file to Google Drive
+    # file_path = ...
+    # agent.print_response(
+    #     "Please upload this file to my Google Drive", files=[File(path=file_path)]
+    # )
+
+    # Example 3: Download a file from Google Drive
+    # agent.print_response(
+    #     "Please download the 'test.txt' file from my Google Drive. It's in the 'test_files' folder."
+    # )

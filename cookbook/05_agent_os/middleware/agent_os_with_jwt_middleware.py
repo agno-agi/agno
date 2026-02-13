@@ -17,6 +17,10 @@ from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.os.middleware import JWTMiddleware
 
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
+
 # JWT Secret (use environment variable in production)
 JWT_SECRET = "a-string-secret-at-least-256-bits-long"
 
@@ -67,6 +71,10 @@ app.add_middleware(
     # In production scenarios, you will probably also want token validation. Be careful setting this to False.
     validate=False,
 )
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     """
