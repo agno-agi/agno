@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import fields as dc_fields
-
 from typing import (
     TYPE_CHECKING,
     Any,
     Dict,
     List,
     Optional,
+    Tuple,
     Type,
     Union,
     cast,
@@ -22,9 +22,9 @@ if TYPE_CHECKING:
 
 from agno.db.base import BaseDb, ComponentType, SessionType
 from agno.db.utils import db_from_dict
+from agno.metrics import Metrics, ModelMetrics, SessionMetrics
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.metrics import Metrics, ModelMetrics, SessionMetrics
 from agno.registry.registry import Registry
 from agno.run.agent import RunOutput
 from agno.session import AgentSession, TeamSession, WorkflowSession
@@ -310,8 +310,6 @@ def get_session_metrics_internal(agent: Agent, session: AgentSession) -> Session
 
 def update_session_metrics(agent: Agent, session: AgentSession, run_response: RunOutput) -> None:
     """Calculate session metrics - convert run Metrics to SessionMetrics."""
-    from typing import Tuple
-
     session_metrics = get_session_metrics_internal(agent, session=session)
     # Add the metrics for the current run to the session metrics
     if session_metrics is None:

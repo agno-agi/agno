@@ -5,8 +5,8 @@ from datetime import date, datetime
 from typing import TYPE_CHECKING, Any, Dict, Optional, Union
 from uuid import UUID
 
-from agno.models.message import Message
 from agno.metrics import Metrics, ModelMetrics, SessionMetrics
+from agno.models.message import Message
 from agno.utils.log import log_error, log_warning
 
 if TYPE_CHECKING:

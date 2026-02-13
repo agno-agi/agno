@@ -30,9 +30,9 @@ from agno.knowledge.protocol import KnowledgeProtocol
 from agno.learn.machine import LearningMachine
 from agno.media import Audio, File, Image, Video
 from agno.memory import MemoryManager
+from agno.metrics import SessionMetrics
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.metrics import SessionMetrics
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
 from agno.registry.registry import Registry

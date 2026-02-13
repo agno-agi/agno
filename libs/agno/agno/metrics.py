@@ -5,7 +5,6 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
 from agno.utils.timer import Timer
 
-
 if TYPE_CHECKING:
     from agno.models.base import Model
     from agno.models.response import ModelResponse
@@ -57,7 +56,9 @@ class ModelMetrics:
         return cls(**{k: v for k, v in data.items() if k in valid})
 
     @classmethod
-    def for_session(cls, model_metric: "ModelMetrics", duration: Optional[float] = None, total_runs: int = 1) -> "ModelMetrics":
+    def for_session(
+        cls, model_metric: "ModelMetrics", duration: Optional[float] = None, total_runs: int = 1
+    ) -> "ModelMetrics":
         """Create a ModelMetrics with session aggregation fields populated."""
         return cls(
             id=model_metric.id,
@@ -75,9 +76,6 @@ class ModelMetrics:
             average_duration=duration,
             total_runs=total_runs,
         )
-
-    # Backward compatibility alias
-    from_model_metrics = for_session
 
     def accumulate(self, other: "ModelMetrics") -> None:
         """Accumulate token counts from another ModelMetrics into this one."""
@@ -260,26 +258,6 @@ class Metrics:
                 ]
             filtered["details"] = converted_details
         return cls(**filtered)
-
-    @classmethod
-    def from_metrics(cls, other: "Metrics") -> "Metrics":
-        """Backward compat: create a Metrics from another Metrics (copy token fields).
-
-        Previously used to bridge MessageMetrics from RunMetrics. Now both are the same class,
-        so this just copies token fields (excluding timer and details).
-        """
-        return cls(
-            input_tokens=other.input_tokens,
-            output_tokens=other.output_tokens,
-            total_tokens=other.total_tokens,
-            audio_input_tokens=other.audio_input_tokens,
-            audio_output_tokens=other.audio_output_tokens,
-            audio_total_tokens=other.audio_total_tokens,
-            cache_read_tokens=other.cache_read_tokens,
-            cache_write_tokens=other.cache_write_tokens,
-            reasoning_tokens=other.reasoning_tokens,
-            provider_metrics=other.provider_metrics,
-        )
 
     def __add__(self, other: "Metrics") -> "Metrics":
         # Create new instance of the same type as self

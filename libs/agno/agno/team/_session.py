@@ -8,6 +8,7 @@ from typing import (
     Dict,
     List,
     Optional,
+    Tuple,
     cast,
 )
 
@@ -507,8 +508,6 @@ def update_session_metrics(team: "Team", session: TeamSession, run_response: Tea
     session-level SessionMetrics (details: List[ModelMetrics]) using explicit
     accumulation, matching the agent storage pattern.
     """
-    from typing import Tuple
-
     from agno.metrics import ModelMetrics, SessionMetrics
     from agno.team._storage import get_session_metrics_internal
 

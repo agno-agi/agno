@@ -31,8 +31,8 @@ from pydantic import BaseModel
 
 from agno.exceptions import AgentRunException, ModelProviderError, RetryableModelProviderError
 from agno.media import Audio, File, Image, Video
-from agno.models.message import Citations, Message
 from agno.metrics import Metrics, ToolCallMetrics
+from agno.models.message import Citations, Message
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
 from agno.run.agent import CustomEvent, RunContentEvent, RunOutput, RunOutputEvent
 from agno.run.requirement import RunRequirement
@@ -1251,7 +1251,7 @@ class Model(ABC):
         if provider_response.citations is not None:
             assistant_message.citations = provider_response.citations
 
-        # Add usage metrics if provided - convert RunMetrics to Metrics
+        # Add usage metrics if provided
         if provider_response.response_usage is not None:
             if assistant_message.metrics is None:
                 # Initialize if not already initialized
@@ -1529,15 +1529,14 @@ class Model(ABC):
 
             # Accumulate metrics at the end of the stream if run_response is provided
             if run_response is not None and assistant_message.metrics is not None:
-                from agno.metrics import RunMetrics, accumulate_model_metrics
+                from agno.metrics import accumulate_model_metrics
 
                 # Get model_type from run_response context if available, otherwise default to "model"
                 model_type = getattr(run_response, "_current_model_type", "model")
 
                 # Create a ModelResponse with the metrics from the assistant message
                 model_response_with_metrics = ModelResponse()
-                # Convert Metrics back to RunMetrics for accumulation
-                run_metrics = RunMetrics(
+                model_response_with_metrics.response_usage = Metrics(
                     input_tokens=assistant_message.metrics.input_tokens,
                     output_tokens=assistant_message.metrics.output_tokens,
                     total_tokens=assistant_message.metrics.total_tokens,
@@ -1550,7 +1549,6 @@ class Model(ABC):
                     time_to_first_token=assistant_message.metrics.time_to_first_token,
                     provider_metrics=assistant_message.metrics.provider_metrics,
                 )
-                model_response_with_metrics.response_usage = run_metrics
                 accumulate_model_metrics(model_response_with_metrics, self, model_type, run_response)
 
             log_debug(f"{self.get_provider()} Response Stream End", center=True, symbol="-")
@@ -1832,15 +1830,14 @@ class Model(ABC):
 
             # Accumulate metrics at the end of the stream if run_response is provided
             if run_response is not None and assistant_message.metrics is not None:
-                from agno.metrics import RunMetrics, accumulate_model_metrics
+                from agno.metrics import accumulate_model_metrics
 
                 # Get model_type from run_response context if available, otherwise default to "model"
                 model_type = getattr(run_response, "_current_model_type", "model")
 
                 # Create a ModelResponse with the metrics from the assistant message
                 model_response_with_metrics = ModelResponse()
-                # Convert Metrics back to RunMetrics for accumulation
-                run_metrics = RunMetrics(
+                model_response_with_metrics.response_usage = Metrics(
                     input_tokens=assistant_message.metrics.input_tokens,
                     output_tokens=assistant_message.metrics.output_tokens,
                     total_tokens=assistant_message.metrics.total_tokens,
@@ -1853,7 +1850,6 @@ class Model(ABC):
                     time_to_first_token=assistant_message.metrics.time_to_first_token,
                     provider_metrics=assistant_message.metrics.provider_metrics,
                 )
-                model_response_with_metrics.response_usage = run_metrics
                 accumulate_model_metrics(model_response_with_metrics, self, model_type, run_response)
 
             log_debug(f"{self.get_provider()} Async Response Stream End", center=True, symbol="-")

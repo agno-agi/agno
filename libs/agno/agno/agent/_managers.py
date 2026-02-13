@@ -69,7 +69,9 @@ def make_memories(
         ]
         if len(non_empty_messages) > 0:
             if agent.memory_manager is not None and agent.update_memory_on_run:
-                agent.memory_manager.create_user_memories(messages=non_empty_messages, user_id=user_id, agent_id=agent.id, run_response=run_response)  # type: ignore
+                agent.memory_manager.create_user_memories(
+                    messages=non_empty_messages, user_id=user_id, agent_id=agent.id, run_response=run_response
+                )  # type: ignore
             else:
                 log_warning(
                     "Unable to add messages to memory: memory_manager not configured or update_memory_on_run is disabled"
@@ -200,7 +202,9 @@ def start_memory_future(
         and not agent.enable_agentic_memory
     ):
         log_debug("Starting memory creation in background thread.")
-        return agent.background_executor.submit(make_memories, agent, run_messages=run_messages, user_id=user_id, run_response=run_response)
+        return agent.background_executor.submit(
+            make_memories, agent, run_messages=run_messages, user_id=user_id, run_response=run_response
+        )
 
     return None
 

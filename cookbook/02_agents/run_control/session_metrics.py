@@ -1,3 +1,7 @@
+"""
+Demonstrates session-level metrics that accumulate across multiple runs.
+"""
+
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIChat

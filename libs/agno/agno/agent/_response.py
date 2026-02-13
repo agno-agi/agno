@@ -62,13 +62,6 @@ from agno.utils.reasoning import (
 )
 from agno.utils.string import parse_response_dict_str, parse_response_model_str
 
-
-def recalculate_metrics_after_session_summary(agent: Agent, run_response: RunOutput, run_messages: RunMessages) -> None:
-    """Recalculate run metrics to include session summary model metrics."""
-    # Metrics are now accumulated immediately during model calls, so no recalculation needed
-    pass
-
-
 ###########################################################################
 # Reasoning
 ###########################################################################

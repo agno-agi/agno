@@ -18,8 +18,8 @@ if TYPE_CHECKING:
     from agno.agent.agent import Agent
 
 from agno.db.base import SessionType
-from agno.models.message import Message
 from agno.metrics import SessionMetrics
+from agno.models.message import Message
 from agno.run import RunStatus
 from agno.run.agent import RunOutput
 from agno.session import AgentSession, TeamSession, WorkflowSession

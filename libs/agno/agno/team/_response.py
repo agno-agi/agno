@@ -475,7 +475,6 @@ async def agenerate_response_with_output_model_stream(
     run_response.messages = messages_for_run_response
 
 
-
 # ---------------------------------------------------------------------------
 # Reasoning
 # ---------------------------------------------------------------------------
@@ -900,7 +899,6 @@ def _update_run_response(
 
     # Update the TeamRunOutput messages
     run_response.messages = messages_for_run_response
-
 
     if model_response.tool_executions:
         for tool_call in model_response.tool_executions:

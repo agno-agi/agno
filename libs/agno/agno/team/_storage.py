@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import fields as dc_fields
-
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -24,9 +23,9 @@ from pydantic import BaseModel
 from agno.agent import Agent
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, SessionType
 from agno.db.utils import db_from_dict
+from agno.metrics import Metrics, ModelMetrics, SessionMetrics
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.metrics import Metrics, ModelMetrics, SessionMetrics
 from agno.models.utils import get_model
 from agno.registry.registry import Registry
 from agno.run.agent import RunOutput
@@ -1231,7 +1230,6 @@ def delete(
         raise ValueError("Cannot delete team without an id")
 
     return db_.delete_component(component_id=team.id, hard_delete=hard_delete)
-
 
 
 def get_session_metrics(team: "Team", session_id: Optional[str] = None):
