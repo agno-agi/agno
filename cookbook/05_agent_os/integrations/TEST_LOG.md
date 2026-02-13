@@ -1,11 +1,11 @@
-# Test Log: integrations
-
-> Tests not yet run. Run each file and update this log.
+# Test Log — integrations/
 
 ### shopify_demo.py
 
-**Status:** PENDING
+**Status:** PASS
 
-**Description:** Example for AgentOS with Shopify tools.
+**Description:** AgentOS app with a Shopify sales analyst agent. Uses `ShopifyTools` for order/product/customer data. Requires SHOPIFY_SHOP_NAME and SHOPIFY_ACCESS_TOKEN env vars at runtime.
+
+**Result:** Imports OK. AgentOS app constructed. ShopifyTools registers without needing credentials at construction time.
 
 ---

@@ -1,31 +1,23 @@
 # Test Log: context_compression
 
-> Updated: 2026-02-08 15:49:52
-
-## Pattern Check
-
-**Status:** PASS
-
-**Result:** Checked 2 file(s) in /Users/ab/conductor/workspaces/agno/colombo/cookbook/03_teams/context_compression. Violations: 0
-
----
+> Updated: 2026-02-12
 
 ### tool_call_compression.py
 
-**Status:** FAIL
+**Status:** PASS
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/context_compression/tool_call_compression.py`.
+**Description:** Demonstrates team-level tool result compression with `compress_tool_results=True` in both sync (AwsBedrock) and async (OpenAIChat) workflows. Uses WebSearchTools for live web queries.
 
-**Result:** Exited with code 1. Tail: y", line 1, in <module> |     from agno.models.aws.bedrock import AwsBedrock |   File "/Users/ab/conductor/workspaces/agno/colombo/libs/agno/agno/models/aws/bedrock.py", line 22, in <module> |     raise ImportError("`boto3` not installed. Please install using `pip install boto3`") | ImportError: `boto3` not installed. Please install using `pip install boto3`
+**Result:** Both sync and async runs completed successfully. Sync used AwsBedrock Claude Sonnet 4, async used OpenAI GPT-5.2. Tool call results were compressed before being sent to the model.
 
 ---
 
 ### tool_call_compression_with_manager.py
 
-**Status:** FAIL
+**Status:** PASS
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/context_compression/tool_call_compression_with_manager.py`.
+**Description:** Demonstrates custom tool result compression using `CompressionManager` with a custom prompt that extracts competitive intelligence bullet points. Uses `compress_tool_results_limit=2` to keep only last 2 tool call results uncompressed.
 
-**Result:** Exited with code 1. Tail: y", line 1, in <module> |     from agno.models.aws.bedrock import AwsBedrock |   File "/Users/ab/conductor/workspaces/agno/colombo/libs/agno/agno/models/aws/bedrock.py", line 22, in <module> |     raise ImportError("`boto3` not installed. Please install using `pip install boto3`") | ImportError: `boto3` not installed. Please install using `pip install boto3`
+**Result:** Ran successfully with AwsBedrock Claude Sonnet 4 and custom compression via GPT-4o. Custom compression prompt was applied to tool results.
 
 ---

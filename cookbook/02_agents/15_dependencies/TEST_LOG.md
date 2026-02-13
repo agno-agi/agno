@@ -1,33 +1,9 @@
-# Test Log -- 15_dependencies
+# Test Log — 15_dependencies
 
-**Tested:** 2026-02-13
-**Environment:** .venvs/demo/bin/python, pgvector: running
+Tested: 2026-02-12 | Branch: cookbook/v25-merge-fixes
 
----
-
-### dependencies_in_context.py
-
-**Status:** PASS
-**Tier:** untagged
-**Description:** Demonstrates dependencies in context. Ran successfully and produced expected output.
-**Result:** Completed successfully in 19s.
-
----
-
-### dependencies_in_tools.py
-
-**Status:** PASS
-**Tier:** untagged
-**Description:** Demonstrates dependencies in tools. Ran successfully and produced expected output.
-**Result:** Completed successfully in 11s.
-
----
-
-### dynamic_tools.py
-
-**Status:** PASS
-**Tier:** untagged
-**Description:** Demonstrates dynamic tools. Ran successfully and produced expected output.
-**Result:** Completed successfully in 3s.
-
----
+| File | Status | Notes |
+|------|--------|-------|
+| dependencies_in_context.py | PASS | Dependencies injected into context (HackerNews analyst with user interests) |
+| dependencies_in_tools.py | PASS | Dependencies injected into tools (user profile analysis with interests) |
+| dynamic_tools.py | PASS | Dynamic tools (get_time, get_project) resolved and called correctly |

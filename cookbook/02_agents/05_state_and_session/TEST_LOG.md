@@ -1,114 +1,18 @@
-# Test Log -- 05_state_and_session
+# Test Log — 05_state_and_session
 
-**Tested:** 2026-02-13
-**Environment:** .venvs/demo/bin/python, pgvector: running
+Tested: 2026-02-12 | Branch: cookbook/v25-merge-fixes
 
----
-
-### agentic_session_state.py
-
-**Status:** PASS
-**Tier:** untagged
-**Description:** Demonstrates agentic session state. Ran successfully and produced expected output.
-**Result:** Completed successfully in 20s.
-
----
-
-### chat_history.py
-
-**Status:** PASS
-**Tier:** untagged
-**Description:** Demonstrates chat history. Ran successfully and produced expected output.
-**Result:** Completed successfully in 19s.
-
----
-
-### dynamic_session_state.py
-
-**Status:** PASS
-**Tier:** untagged
-**Description:** Demonstrates dynamic session state. Ran successfully and produced expected output.
-**Result:** Completed successfully in 5s.
-
----
-
-### last_n_session_messages.py
-
-**Status:** FAIL
-**Tier:** untagged
-**Description:** Demonstrates last n session messages. Failed due to missing dependency: ModuleNotFoundError: No module named 'aiosqlite'
-**Result:** Missing dependency - should be reclassified as SKIP or dependency added to demo env.
-
----
-
-### persistent_session.py
-
-**Status:** PASS
-**Tier:** untagged
-**Description:** Demonstrates persistent session. Ran successfully and produced expected output.
-**Result:** Completed successfully in 17s.
-
----
-
-### session_options.py
-
-**Status:** PASS
-**Tier:** untagged
-**Description:** Demonstrates session options. Ran successfully and produced expected output.
-**Result:** Completed successfully in 10s.
-
----
-
-### session_state_advanced.py
-
-**Status:** PASS
-**Tier:** untagged
-**Description:** Demonstrates session state advanced. Ran successfully and produced expected output.
-**Result:** Completed successfully in 32s.
-
----
-
-### session_state_basic.py
-
-**Status:** PASS
-**Tier:** untagged
-**Description:** Demonstrates session state basic. Ran successfully and produced expected output.
-**Result:** Completed successfully in 13s.
-
----
-
-### session_state_events.py
-
-**Status:** PASS
-**Tier:** untagged
-**Description:** Demonstrates session state events. Ran successfully and produced expected output.
-**Result:** Completed successfully in 13s.
-
----
-
-### session_state_manual_update.py
-
-**Status:** PASS
-**Tier:** untagged
-**Description:** Demonstrates session state manual update. Ran successfully and produced expected output.
-**Result:** Completed successfully in 10s.
-
----
-
-### session_state_multiple_users.py
-
-**Status:** PASS
-**Tier:** untagged
-**Description:** Demonstrates session state multiple users. Ran successfully and produced expected output.
-**Result:** Completed successfully in 32s.
-
----
-
-### session_summary.py
-
-**Status:** PASS
-**Tier:** untagged
-**Description:** Demonstrates session summary. Ran successfully and produced expected output.
-**Result:** Completed successfully in 23s.
-
----
+| File | Status | Notes |
+|------|--------|-------|
+| agentic_session_state.py | PASS | Shopping list via update_session_state tool, add/remove items across runs |
+| chat_history.py | PASS | Multi-turn chat history with space facts, persists across sessions |
+| dynamic_session_state.py | PASS | Dynamic session state with customer create/retrieve, hooks log state changes |
+| last_n_session_messages.py | PASS | Multi-user session isolation, user 2 only sees own history (currency/population) |
+| persistent_session.py | PASS | Persistent session with SQLite, space facts across multiple runs |
+| session_options.py | PASS | Session options: use_history + scrub_history, verifies stored vs used messages |
+| session_state_advanced.py | PASS | Advanced session state with shopping list: add, remove, clear, replace operations |
+| session_state_basic.py | PASS | Basic session state with shopping list add_item tool |
+| session_state_events.py | PASS | Session state events, shopping list updated via tools |
+| session_state_manual_update.py | PASS | Manual session state update (add chocolate), persists across runs |
+| session_state_multiple_users.py | PASS | Multi-user session state isolation, 3 users with separate shopping lists |
+| session_summary.py | PASS | Session summary generated after multi-turn conversation about hobbies |

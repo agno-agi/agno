@@ -1,51 +1,11 @@
-# Test Log -- 08_guardrails
+# Test Log — 08_guardrails
 
-**Tested:** 2026-02-13
-**Environment:** .venvs/demo/bin/python, pgvector: running
+Tested: 2026-02-12 | Branch: cookbook/v25-merge-fixes
 
----
-
-### custom_guardrail.py
-
-**Status:** PASS
-**Tier:** untagged
-**Description:** Demonstrates custom guardrail. Ran successfully and produced expected output.
-**Result:** Completed successfully in 18s.
-
----
-
-### openai_moderation.py
-
-**Status:** PASS
-**Tier:** untagged
-**Description:** Demonstrates openai moderation. Ran successfully and produced expected output.
-**Result:** Completed successfully in 18s.
-
----
-
-### output_guardrail.py
-
-**Status:** PASS
-**Tier:** untagged
-**Description:** Demonstrates output guardrail. Ran successfully and produced expected output.
-**Result:** Completed successfully in 11s.
-
----
-
-### pii_detection.py
-
-**Status:** PASS
-**Tier:** untagged
-**Description:** Demonstrates pii detection. Ran successfully and produced expected output.
-**Result:** Completed successfully in 20s.
-
----
-
-### prompt_injection.py
-
-**Status:** PASS
-**Tier:** untagged
-**Description:** Demonstrates prompt injection. Ran successfully and produced expected output.
-**Result:** Completed successfully in 4s.
-
----
+| File | Status | Notes |
+|------|--------|-------|
+| custom_guardrail.py | PASS | Custom guardrail blocks "bomb" keyword, allows normal password security question |
+| openai_moderation.py | PASS | OpenAI moderation blocks hate speech and violent image content |
+| output_guardrail.py | PASS | Output guardrail checks for clean architecture response quality |
+| pii_detection.py | PASS | PII detection blocks SSN in input, agent advises secure handling |
+| prompt_injection.py | PASS | Detects jailbreak and subtle injection attempts, blocks appropriately |

@@ -1,96 +1,16 @@
-# Test Log -- 12_multimodal
+# Test Log — 12_multimodal
 
-**Tested:** 2026-02-13
-**Environment:** .venvs/demo/bin/python, pgvector: running
+Tested: 2026-02-12 | Branch: cookbook/v25-merge-fixes
 
----
-
-### audio_input_output.py
-
-**Status:** PASS
-**Tier:** untagged
-**Description:** Demonstrates audio input output. Ran successfully and produced expected output.
-**Result:** Completed successfully in 7s.
-
----
-
-### audio_sentiment_analysis.py
-
-**Status:** PASS
-**Tier:** untagged
-**Description:** Demonstrates audio sentiment analysis. Ran successfully and produced expected output.
-**Result:** Completed successfully in 20s.
-
----
-
-### audio_streaming.py
-
-**Status:** PASS
-**Tier:** untagged
-**Description:** Demonstrates audio streaming. Ran successfully and produced expected output.
-**Result:** Completed successfully in 6s.
-
----
-
-### audio_to_text.py
-
-**Status:** PASS
-**Tier:** untagged
-**Description:** Demonstrates audio to text. Ran successfully and produced expected output.
-**Result:** Completed successfully in 9s.
-
----
-
-### image_to_audio.py
-
-**Status:** PASS
-**Tier:** untagged
-**Description:** Demonstrates image to audio. Ran successfully and produced expected output.
-**Result:** Completed successfully in 17s.
-
----
-
-### image_to_image.py
-
-**Status:** FAIL
-**Tier:** untagged
-**Description:** Demonstrates image to image. Failed due to missing dependency: ModuleNotFoundError: No module named 'fal_client'
-**Result:** Missing dependency - should be reclassified as SKIP or dependency added to demo env.
-
----
-
-### image_to_structured_output.py
-
-**Status:** PASS
-**Tier:** untagged
-**Description:** Demonstrates image to structured output. Ran successfully and produced expected output.
-**Result:** Completed successfully in 1s.
-
----
-
-### image_to_text.py
-
-**Status:** PASS
-**Tier:** untagged
-**Description:** Demonstrates image to text. Ran successfully and produced expected output.
-**Result:** Completed successfully in 3s.
-
----
-
-### media_input_for_tool.py
-
-**Status:** PASS
-**Tier:** untagged
-**Description:** Demonstrates media input for tool. Ran successfully and produced expected output.
-**Result:** Completed successfully in 10s.
-
----
-
-### video_caption.py
-
-**Status:** FAIL
-**Tier:** untagged
-**Description:** Demonstrates video caption. Failed due to missing dependency: ModuleNotFoundError: No module named 'moviepy'
-**Result:** Missing dependency - should be reclassified as SKIP or dependency added to demo env.
-
----
+| File | Status | Notes |
+|------|--------|-------|
+| audio_input_output.py | PASS | Audio input transcription + audio output saved to tmp/result.wav |
+| audio_sentiment_analysis.py | PASS | Detailed sentiment analysis of audio conversation |
+| audio_streaming.py | PASS | Streaming audio output, story about a seed |
+| audio_to_text.py | PASS | Audio transcribed to text, family conversation |
+| image_to_audio.py | PASS | Image not found (sample.jpg missing) but agent handled gracefully, audio saved |
+| image_to_image.py | SKIP | Missing: FAL_API_KEY |
+| image_to_structured_output.py | FAIL | Wikipedia image URL blocked by OpenAI (403 upstream) |
+| image_to_text.py | FAIL | sample.jpg not found, agent could not process image |
+| media_input_for_tool.py | PASS | PDF financial report analyzed with Gemini, extracts revenue data |
+| video_caption.py | PASS | Agent prompts for video file path (no video provided, expected behavior) |

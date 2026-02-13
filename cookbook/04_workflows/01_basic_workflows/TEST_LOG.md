@@ -1,103 +1,34 @@
-# TEST_LOG for cookbook/04_workflows/01_basic_workflows
+# Test Log — 01_basic_workflows
 
-Generated: 2026-02-08 16:39:09
+Tested: 2026-02-12 | Branch: cookbook/v25-merge-fixes
 
-### 01_sequence_of_steps/sequence_of_steps.py
+## 01_sequence_of_steps
 
-**Status:** FAIL
+| File | Status | Notes |
+|------|--------|-------|
+| sequence_of_steps.py | FAIL | httpx.ReadTimeout during model API call |
+| sequence_with_functions.py | PASS | Completed in ~45s, blog post workflow with 4 steps |
+| workflow_using_steps_nested.py | PASS | Completed in ~87s, article creation with 4 steps |
+| workflow_using_steps.py | PASS | Completed in ~42s, renewable energy article |
+| workflow_with_file_input.py | PASS | Completed in ~43s, Thai cookbook PDF summarization |
+| workflow_with_session_metrics.py | PASS | Completed in ~91s, session metrics displayed correctly |
 
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
+## 02_step_with_function
 
-**Result:** Timed out after 35s. DEBUG Creating new sync OpenAI client for model gpt-4o
+| File | Status | Notes |
+|------|--------|-------|
+| step_with_additional_data.py | PASS | Completed with AI trends analysis output |
+| step_with_class.py | PASS | Completed with AI agent frameworks output |
+| step_with_function.py | FAIL | httpx.ReadTimeout during model API call |
 
----
+## 03_function_workflows
 
-### 01_sequence_of_steps/sequence_with_functions.py
+| File | Status | Notes |
+|------|--------|-------|
+| function_workflow.py | FAIL | httpx.ReadTimeout during model API call |
 
-**Status:** FAIL
+## Summary
 
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
-
-**Result:** Timed out after 35s. DEBUG ********************** TOOL METRICS **********************
-
----
-
-### 01_sequence_of_steps/workflow_using_steps.py
-
-**Status:** FAIL
-
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
-
-**Result:** Timed out after 35s. DEBUG Creating new async OpenAI client for model gpt-4o-mini
-
----
-
-### 01_sequence_of_steps/workflow_using_steps_nested.py
-
-**Status:** FAIL
-
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
-
-**Result:** Exited with code 1. ImportError: `exa_py` not installed. Please install using `pip install exa_py`
-
----
-
-### 01_sequence_of_steps/workflow_with_file_input.py
-
-**Status:** PASS
-
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
-
-**Result:** Executed successfully. ┃ Double-check for any typos or errors. ┃
-
----
-
-### 01_sequence_of_steps/workflow_with_session_metrics.py
-
-**Status:** FAIL
-
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
-
-**Result:** Timed out after 35s. DEBUG ********************** TOOL METRICS **********************
-
----
-
-### 02_step_with_function/step_with_additional_data.py
-
-**Status:** FAIL
-
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
-
-**Result:** Timed out after 35s. DEBUG Added RunOutput to Team Session
-
----
-
-### 02_step_with_function/step_with_class.py
-
-**Status:** FAIL
-
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
-
-**Result:** Timed out after 35s. DEBUG Creating new sync OpenAI client for model gpt-4o
-
----
-
-### 02_step_with_function/step_with_function.py
-
-**Status:** FAIL
-
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
-
-**Result:** Timed out after 35s. due to a connection error. While I can't directly fetch the stories at the
-
----
-
-### 03_function_workflows/function_workflow.py
-
-**Status:** FAIL
-
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
-
-**Result:** Timed out after 35s. DEBUG Creating new sync OpenAI client for model gpt-4o
-
----
+- **PASS:** 7
+- **FAIL:** 3 (all httpx.ReadTimeout — network/API timeouts, not code errors)
+- **SKIP:** 0

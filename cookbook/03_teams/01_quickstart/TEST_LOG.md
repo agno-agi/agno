@@ -1,22 +1,14 @@
 # Test Log: 01_quickstart
 
-> Updated: 2026-02-08 15:49:52
-
-## Pattern Check
-
-**Status:** PASS
-
-**Result:** Checked 11 file(s) in /Users/ab/conductor/workspaces/agno/colombo/cookbook/03_teams/01_quickstart. Violations: 0
-
----
+> Updated: 2026-02-12
 
 ### 01_basic_coordination.py
 
-**Status:** FAIL
+**Status:** PASS
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/01_quickstart/01_basic_coordination.py`.
+**Description:** Team delegated tasks to HN researcher and article reader with structured output. Uses HackerNewsTools, Newspaper4kTools, and WebSearchTools across agents.
 
-**Result:** Exited with code 1. Tail: ols.newspaper4k import Newspaper4kTools |   File "/Users/ab/conductor/workspaces/agno/colombo/libs/agno/agno/tools/newspaper4k.py", line 10, in <module> |     raise ImportError("`newspaper4k` not installed. Please run `pip install newspaper4k lxml_html_clean`.") | ImportError: `newspaper4k` not installed. Please run `pip install newspaper4k lxml_html_clean`.
+**Result:** Completed successfully. Team coordination and delegation worked. Article reader had 403 on one URL but team completed with valid output.
 
 ---
 
@@ -24,9 +16,9 @@
 
 **Status:** PASS
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/01_quickstart/02_respond_directly_router_team.py`.
+**Description:** Language routing with `respond_directly=True`. Router team delegates to language-specific agents. Tests 4 languages + unsupported language fallback.
 
-**Result:** Executed successfully. Duration: 31.64s. Tail:                            ┃ | ┃ I can only answer in the following languages: English, Spanish, Japanese,    ┃ | ┃ French and German. Please ask your question in one of these languages.       ┃ | ┃                                                                              ┃ | ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+**Result:** All language queries routed correctly. Italian (unsupported) correctly returned fallback message.
 
 ---
 
@@ -34,9 +26,9 @@
 
 **Status:** PASS
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/01_quickstart/03_delegate_to_all_members.py`.
+**Description:** Collaborative execution with `delegate_to_all_members=True`. All members participate in discussion.
 
-**Result:** Executed successfully. Duration: 59.93s. Tail: you’re not only learning   ┃ | ┃ syntax but also developing the problem-solving abilities required in real    ┃ | ┃ coding scenarios. Happy coding!                                              ┃ | ┃                                                                              ┃ | ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+**Result:** Completed successfully. All members contributed to comprehensive coding learning advice.
 
 ---
 
@@ -44,9 +36,9 @@
 
 **Status:** PASS
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/01_quickstart/04_respond_directly_with_history.py`.
+**Description:** `respond_directly=True` with SQLite history persistence. Multi-turn history across requests.
 
-**Result:** Executed successfully. Duration: 16.79s. Tail: db/sqlite/sqlite.py", line 1039, in upsert_session |     raise e |   File "/Users/ab/conductor/workspaces/agno/colombo/libs/agno/agno/db/sqlite/sqlite.py", line 998, in upsert_session |     return TeamSession.from_dict(session_raw) |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ | NameError: name 'requirements' is not defined. Did you mean: 'RunRequirement'?
+**Result:** Completed successfully. Multi-turn history maintained across requests.
 
 ---
 
@@ -54,9 +46,9 @@
 
 **Status:** PASS
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/01_quickstart/05_team_history.py`.
+**Description:** Shared team history via `add_team_history_to_members=True` with SqliteDb. Multi-turn cross-language conversation.
 
-**Result:** Executed successfully. Duration: 20.65s. Tail: db/sqlite/sqlite.py", line 1039, in upsert_session |     raise e |   File "/Users/ab/conductor/workspaces/agno/colombo/libs/agno/agno/db/sqlite/sqlite.py", line 998, in upsert_session |     return TeamSession.from_dict(session_raw) |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ | NameError: name 'requirements' is not defined. Did you mean: 'RunRequirement'?
+**Result:** Completed successfully. Team history shared with all members. Second request built on prior context.
 
 ---
 
@@ -64,9 +56,9 @@
 
 **Status:** PASS
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/01_quickstart/06_history_of_members.py`.
+**Description:** Per-member history with `add_history_to_context=True` on individual agents. Each member maintains independent history.
 
-**Result:** Executed successfully. Duration: 14.79s. Tail: db/sqlite/sqlite.py", line 1039, in upsert_session |     raise e |   File "/Users/ab/conductor/workspaces/agno/colombo/libs/agno/agno/db/sqlite/sqlite.py", line 998, in upsert_session |     return TeamSession.from_dict(session_raw) |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ | NameError: name 'requirements' is not defined. Did you mean: 'RunRequirement'?
+**Result:** Completed successfully. Member-level history maintained independently.
 
 ---
 
@@ -74,9 +66,9 @@
 
 **Status:** PASS
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/01_quickstart/07_share_member_interactions.py`.
+**Description:** `share_member_interactions=True` so team sees what members did during current run. Technical support team use case.
 
-**Result:** Executed successfully. Duration: 35.33s. Tail: db/sqlite/sqlite.py", line 1039, in upsert_session |     raise e |   File "/Users/ab/conductor/workspaces/agno/colombo/libs/agno/agno/db/sqlite/sqlite.py", line 998, in upsert_session |     return TeamSession.from_dict(session_raw) |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ | NameError: name 'requirements' is not defined. Did you mean: 'RunRequirement'?
+**Result:** Completed successfully. Team coordinator saw member execution details and synthesized a support response.
 
 ---
 
@@ -84,9 +76,9 @@
 
 **Status:** PASS
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/01_quickstart/08_concurrent_member_agents.py`.
+**Description:** Async streaming with `stream_member_events=True` for real-time event streaming with concurrent tools. Uses HackerNewsTools and WebSearchTools.
 
-**Result:** Executed successfully. Duration: 44.32s. Tail: DEBUG ************************  METRICS  *************************               | DEBUG ------------- OpenAI Async Response Stream End -------------               | DEBUG Added RunOutput to Team Session                                            | DEBUG **** Team Run End: 963de671-a676-44d2-b910-a0e2200106d0 ****               | Total execution time: 43.94s
+**Result:** Completed in ~80s. Concurrent member execution with real-time event streaming. HN API had read timeout but team still completed.
 
 ---
 
@@ -94,19 +86,9 @@
 
 **Status:** PASS
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/01_quickstart/broadcast_mode.py`.
+**Description:** `TeamMode.broadcast` where all members receive the same task for independent parallel evaluation. PM, Engineer, and Safety agents.
 
-**Result:** Executed successfully. Duration: 111.75s. Tail: agement rates, takeover    ┃ | ┃ latency outliers). Otherwise, delay until those controls are proven in       ┃ | ┃ drills (including kill-switch and incident response).                        ┃ | ┃                                                                              ┃ | ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
-
----
-
-### caching/cache_team_response.py
-
-**Status:** PASS
-
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/01_quickstart/caching/cache_team_response.py`.
-
-**Result:** Executed successfully. Duration: 0.8s. Tail: Completed successfully with cached team response output.
+**Result:** Completed successfully. All members provided independent evaluations.
 
 ---
 
@@ -114,9 +96,9 @@
 
 **Status:** FAIL
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/01_quickstart/nested_teams.py`.
+**Description:** Teams as members of a parent team (2-level nesting). Research Team feeds into Writing Team.
 
-**Result:** Timed out before completion. Tail: e>                                                               | DEBUG =========================== user ===========================               | DEBUG Provide references/source material and best-practice bullets on startup    |       implications for adopting AI/tech initiative: benefits, risks, governance, |       metrics, rollout, security/compliance.
+**Result:** Timed out after 120s. Nested team delegation too slow to complete within timeout.
 
 ---
 
@@ -124,8 +106,8 @@
 
 **Status:** PASS
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/01_quickstart/task_mode.py`.
+**Description:** `TeamMode.tasks` for autonomous task decomposition with dependencies. QA testing plan generation.
 
-**Result:** Executed successfully. Duration: 143.84s. Tail:                            ┃ | ┃     • Exit criteria: Outcome recorded (metrics, incidents, learnings);       ┃ | ┃       follow-up tickets created and prioritized.                             ┃ | ┃                                                                              ┃ | ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+**Result:** Completed successfully. Task decomposition and execution produced detailed QA testing checklist.
 
 ---

@@ -1,41 +1,33 @@
 # Test Log: search_coordination
 
-> Updated: 2026-02-08 15:49:52
-
-## Pattern Check
-
-**Status:** PASS
-
-**Result:** Checked 3 file(s) in /Users/ab/conductor/workspaces/agno/colombo/cookbook/03_teams/search_coordination. Violations: 0
-
----
+> Updated: 2026-02-12
 
 ### 01_coordinated_agentic_rag.py
 
-**Status:** FAIL
+**Status:** PASS
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/search_coordination/01_coordinated_agentic_rag.py`.
+**Description:** Coordinated agentic RAG with team search coordination using LanceDB knowledge base.
 
-**Result:** Exited with code 1. Tail: |     from agno.knowledge.embedder.cohere import CohereEmbedder |   File "/Users/ab/conductor/workspaces/agno/colombo/libs/agno/agno/knowledge/embedder/cohere.py", line 13, in <module> |     raise ImportError("`cohere` not installed. Please install using `pip install cohere`.") | ImportError: `cohere` not installed. Please install using `pip install cohere`.
+**Result:** Completed successfully. Knowledge inserted from docs URL. Team coordinated retrieval and produced comprehensive answer about agents.
 
 ---
 
 ### 02_coordinated_reasoning_rag.py
 
-**Status:** FAIL
+**Status:** FAIL (timeout)
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/search_coordination/02_coordinated_reasoning_rag.py`.
+**Description:** Coordinated reasoning RAG with team search coordination. Similar to 01 but with reasoning model.
 
-**Result:** Exited with code 1. Tail: |     from agno.knowledge.embedder.cohere import CohereEmbedder |   File "/Users/ab/conductor/workspaces/agno/colombo/libs/agno/agno/knowledge/embedder/cohere.py", line 13, in <module> |     raise ImportError("`cohere` not installed. Please install using `pip install cohere`.") | ImportError: `cohere` not installed. Please install using `pip install cohere`.
+**Result:** Timed out at 120s. Knowledge insertion worked but team reasoning took too long to complete.
 
 ---
 
 ### 03_distributed_infinity_search.py
 
-**Status:** FAIL
+**Status:** SKIP
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/search_coordination/03_distributed_infinity_search.py`.
+**Description:** Distributed infinity search requiring infinity_client package.
 
-**Result:** Exited with code 1. Tail: |     from agno.knowledge.embedder.cohere import CohereEmbedder |   File "/Users/ab/conductor/workspaces/agno/colombo/libs/agno/agno/knowledge/embedder/cohere.py", line 13, in <module> |     raise ImportError("`cohere` not installed. Please install using `pip install cohere`.") | ImportError: `cohere` not installed. Please install using `pip install cohere`.
+**Result:** Missing: infinity_client not installed.
 
 ---

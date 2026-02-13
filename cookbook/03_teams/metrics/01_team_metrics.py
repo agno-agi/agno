@@ -7,7 +7,6 @@ Demonstrates retrieving team, session, and member-level execution metrics.
 
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
-from agno.db.surrealdb import SurrealDb
 from agno.models.openai import OpenAIChat
 from agno.team import Team
 from agno.tools.yfinance import YFinanceTools
@@ -19,15 +18,6 @@ from rich.pretty import pprint
 # ---------------------------------------------------------------------------
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 db = PostgresDb(db_url=db_url, session_table="team_metrics_sessions")
-
-SURREALDB_URL = "ws://localhost:8000"
-SURREALDB_USER = "root"
-SURREALDB_PASSWORD = "root"
-SURREALDB_NAMESPACE = "agno"
-SURREALDB_DATABASE = "agent_os_demo"
-
-creds = {"username": SURREALDB_USER, "password": SURREALDB_PASSWORD}
-db = SurrealDb(None, SURREALDB_URL, creds, SURREALDB_NAMESPACE, SURREALDB_DATABASE)
 
 # ---------------------------------------------------------------------------
 # Create Members

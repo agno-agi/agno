@@ -1,12 +1,11 @@
 # Test Log: firestore
 
-> Tests not yet run. Run each file and update this log.
+**Date:** 2026-02-11
 
 ### firestore_for_agent.py
-
-**Status:** PENDING
-
-**Description:** Pending test coverage for `firestore_for_agent.py`.
+**Status:** SKIP
+**Description:** Google Cloud Firestore / GCP credentials not available locally.
 
 ---
 
+**Totals:** 0 PASS, 0 FAIL, 1 SKIP
