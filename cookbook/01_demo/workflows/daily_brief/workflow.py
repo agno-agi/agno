@@ -124,7 +124,7 @@ email_agent = Agent(
 news_agent = Agent(
     name="News Scanner",
     model=OpenAIResponses(id="gpt-5.2"),
-    tools=[ParallelTools()],
+    tools=[ParallelTools(enable_extract=False)],
     instructions=[
         "You scan for relevant news and industry updates.",
         "Focus on: AI/ML developments, competitor news, market trends.",

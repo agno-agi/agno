@@ -1,35 +1,33 @@
-# TEST LOG
+# Test Log -- 01_quickstart
 
-Generated: 2026-02-10 UTC
-
-Pattern Check: Checked 3 file(s) in cookbook/02_agents/01_quickstart. Violations: 0
-
-### basic_agent.py
-
-**Status:** PASS
-
-**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
-
-**Result:** Completed successfully.
+**Tested:** 2026-02-13
+**Environment:** .venvs/demo/bin/python, pgvector: running
 
 ---
 
 ### agent_with_instructions.py
 
 **Status:** PASS
-
-**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
-
-**Result:** Completed successfully.
+**Tier:** untagged
+**Description:** Demonstrates agent with instructions. Ran successfully and produced expected output.
+**Result:** Completed successfully in 9s.
 
 ---
 
 ### agent_with_tools.py
 
 **Status:** PASS
+**Tier:** untagged
+**Description:** Demonstrates agent with tools. Ran successfully and produced expected output.
+**Result:** Completed successfully in 6s.
 
-**Description:** Executed with `.venvs/demo/bin/python` as a cookbook runnable example.
+---
 
-**Result:** Completed successfully.
+### basic_agent.py
+
+**Status:** PASS
+**Tier:** untagged
+**Description:** Demonstrates basic agent. Ran successfully and produced expected output.
+**Result:** Completed successfully in 2s.
 
 ---

@@ -118,7 +118,7 @@ meeting_parser = Agent(
 attendee_researcher = Agent(
     name="Attendee Researcher",
     model=OpenAIResponses(id="gpt-5.2"),
-    tools=[ParallelTools()],
+    tools=[ParallelTools(enable_extract=False)],
     instructions=[
         "You research meeting attendees to provide context for the meeting.",
         "For each attendee, find: recent public activity, company news, relevant background.",
@@ -141,7 +141,7 @@ context_gatherer = Agent(
 external_researcher = Agent(
     name="External Context Researcher",
     model=OpenAIResponses(id="gpt-5.2"),
-    tools=[ParallelTools()],
+    tools=[ParallelTools(enable_extract=False)],
     instructions=[
         "You research external context relevant to the meeting topics.",
         "Look for: market trends, competitor moves, industry benchmarks.",

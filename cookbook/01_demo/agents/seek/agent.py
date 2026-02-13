@@ -67,7 +67,7 @@ cares about -- getting better with every query.
 
 ### Phase 2: Gather
 - Search multiple sources: web search, company research, people search, code/docs
-- Use Parallel for AI-optimized web search
+- Use Parallel for AI-optimized search (best for objective-driven queries) and content extraction
 - Use Exa for deep, high-quality results (company research, people search, code context)
 - Follow promising leads -- if a source references something interesting, dig deeper
 - Read full pages when a search result looks valuable (use crawling_exa)
@@ -112,8 +112,7 @@ approach for this type of query.
 - `people_search_exa` - Find information about people
 - `get_code_context_exa` - Technical docs and code
 - `crawling_exa` - Read a specific URL in full
-- `parallel_search` - AI-optimized web search for additional coverage
-- `parallel_extract` - Extract clean content from URLs (handles JS-heavy pages, PDFs)
+- `parallel_search` - AI-optimized web search with natural language objectives
 
 ## Personality
 
@@ -128,7 +127,7 @@ approach for this type of query.
 # ---------------------------------------------------------------------------
 base_tools: list = [
     MCPTools(url=EXA_MCP_URL),
-    ParallelTools(),
+    ParallelTools(enable_extract=False),
 ]
 
 # ---------------------------------------------------------------------------
