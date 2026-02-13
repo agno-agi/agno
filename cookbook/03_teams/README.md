@@ -19,9 +19,12 @@ Cookbooks for building multi-agent teams in Agno.
 - `hooks/` - Input pre-hooks, output post-hooks, and stream hooks.
 - `human_in_the_loop/` - Confirmation, external execution, and user-input-required flows.
 - `knowledge/` - Team knowledge, filters, and custom retrievers.
+- `learning/` - Team learning patterns (always, configured, entity memory, session planning, learned knowledge, decision log).
 - `memory/` - Memory manager, agentic memory, and LearningMachine examples.
 - `metrics/` - Team/session/member metrics inspection.
+- `modes/` - Team execution modes (coordinate, route, broadcast, tasks) with examples for each.
 - `multimodal/` - Audio, image, and video workflows.
+- `other/` - Additional patterns (background execution).
 - `reasoning/` - Multi-purpose reasoning team patterns.
 - `run_control/` - Cancellation, retries, model inheritance, and remote teams.
 - `search_coordination/` - Coordinated RAG/search patterns across members.
@@ -29,4 +32,5 @@ Cookbooks for building multi-agent teams in Agno.
 - `state/` - Shared session state across members and nested teams.
 - `streaming/` - Response streaming and event monitoring.
 - `structured_input_output/` - Structured input/output schemas, overrides, and streaming.
+- `task_mode/` - Task mode examples (basic, parallel, tools, async, dependencies, custom tools, multi-run).
 - `tools/` - Custom tools and tool hook patterns.
