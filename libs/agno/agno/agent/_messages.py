@@ -49,6 +49,45 @@ def _get_resolved_knowledge(agent: "Agent", run_context: Optional[RunContext] = 
 
 
 # ---------------------------------------------------------------------------
+# Dependency injection into message content
+# ---------------------------------------------------------------------------
+
+
+def _inject_dependencies_block(content: Any, dependencies_block: str) -> Any:
+    """Inject a dependencies block into message content, handling both string and multimodal formats.
+
+    Args:
+        content: The message content (str or list of multimodal parts).
+        dependencies_block: The formatted dependencies string to inject.
+
+    Returns:
+        The modified content with dependencies injected.
+    """
+    if isinstance(content, str):
+        return content + dependencies_block
+    elif isinstance(content, list) and len(content) > 0 and isinstance(content[0], dict):
+        # Multimodal with "type" key (OpenAI format)
+        if "type" in content[0]:
+            for part in reversed(content):
+                if isinstance(part, dict) and part.get("type") == "text" and isinstance(part.get("text"), str):
+                    part["text"] += dependencies_block
+                    return content
+            # No text part found, append one
+            content.append({"type": "text", "text": dependencies_block.lstrip("\n")})
+            return content
+        # Dicts with "text" but no "type" key (some providers)
+        if "text" in content[0]:
+            for part in reversed(content):
+                if isinstance(part, dict) and isinstance(part.get("text"), str):
+                    part["text"] += dependencies_block
+                    return content
+            content.append({"text": dependencies_block.lstrip("\n")})
+            return content
+    # Fallback: convert to string
+    return (get_text_from_message(content) if content is not None else "") + dependencies_block
+
+
+# ---------------------------------------------------------------------------
 # Message formatting
 # ---------------------------------------------------------------------------
 
@@ -1291,7 +1330,17 @@ def get_run_messages(
 
     # 4.2 If input is provided as a Message, use it directly
     elif isinstance(input, Message):
-        user_message = input
+        from copy import deepcopy
+
+        user_message = deepcopy(input)
+        # Inject dependencies into the copied message if needed
+        if add_dependencies_to_context and run_context.dependencies:
+            dependencies_block = (
+                "\n\n<additional context>\n"
+                + convert_dependencies_to_string(agent, run_context.dependencies)
+                + "\n</additional context>"
+            )
+            user_message.content = _inject_dependencies_block(user_message.content, dependencies_block)
 
     # 4.3 If input is provided as a dict, try to validate it as a Message
     elif isinstance(input, dict):
@@ -1321,12 +1370,15 @@ def get_run_messages(
         and len(input) > 0
         and (isinstance(input[0], Message) or (isinstance(input[0], dict) and "role" in input[0]))
     ):
+        from copy import deepcopy
+
         for _m in input:
             if isinstance(_m, Message):
-                run_messages.messages.append(_m)
+                _m_copy = deepcopy(_m)
+                run_messages.messages.append(_m_copy)
                 if run_messages.extra_messages is None:
                     run_messages.extra_messages = []
-                run_messages.extra_messages.append(_m)
+                run_messages.extra_messages.append(_m_copy)
             elif isinstance(_m, dict):
                 try:
                     msg = Message.model_validate(_m)
@@ -1336,6 +1388,19 @@ def get_run_messages(
                     run_messages.extra_messages.append(msg)
                 except Exception as e:
                     log_warning(f"Failed to validate message: {e}")
+
+        # 5.1 Inject dependencies into the last user message if needed
+        if add_dependencies_to_context and run_context.dependencies:
+            dependencies_block = (
+                "\n\n<additional context>\n"
+                + convert_dependencies_to_string(agent, run_context.dependencies)
+                + "\n</additional context>"
+            )
+            user_role = agent.user_message_role or "user"
+            for _msg in reversed(run_messages.messages):
+                if _msg.role == user_role:
+                    _msg.content = _inject_dependencies_block(_msg.content, dependencies_block)
+                    break
 
     # Add user message to run_messages
     if user_message is not None:
@@ -1493,7 +1558,17 @@ async def aget_run_messages(
 
     # 4.2 If input is provided as a Message, use it directly
     elif isinstance(input, Message):
-        user_message = input
+        from copy import deepcopy
+
+        user_message = deepcopy(input)
+        # Inject dependencies into the copied message if needed
+        if add_dependencies_to_context and run_context.dependencies:
+            dependencies_block = (
+                "\n\n<additional context>\n"
+                + convert_dependencies_to_string(agent, run_context.dependencies)
+                + "\n</additional context>"
+            )
+            user_message.content = _inject_dependencies_block(user_message.content, dependencies_block)
 
     # 4.3 If input is provided as a dict, try to validate it as a Message
     elif isinstance(input, dict):
@@ -1523,12 +1598,15 @@ async def aget_run_messages(
         and len(input) > 0
         and (isinstance(input[0], Message) or (isinstance(input[0], dict) and "role" in input[0]))
     ):
+        from copy import deepcopy
+
         for _m in input:
             if isinstance(_m, Message):
-                run_messages.messages.append(_m)
+                _m_copy = deepcopy(_m)
+                run_messages.messages.append(_m_copy)
                 if run_messages.extra_messages is None:
                     run_messages.extra_messages = []
-                run_messages.extra_messages.append(_m)
+                run_messages.extra_messages.append(_m_copy)
             elif isinstance(_m, dict):
                 try:
                     msg = Message.model_validate(_m)
@@ -1538,6 +1616,19 @@ async def aget_run_messages(
                     run_messages.extra_messages.append(msg)
                 except Exception as e:
                     log_warning(f"Failed to validate message: {e}")
+
+        # 5.1 Inject dependencies into the last user message if needed
+        if add_dependencies_to_context and run_context.dependencies:
+            dependencies_block = (
+                "\n\n<additional context>\n"
+                + convert_dependencies_to_string(agent, run_context.dependencies)
+                + "\n</additional context>"
+            )
+            user_role = agent.user_message_role or "user"
+            for _msg in reversed(run_messages.messages):
+                if _msg.role == user_role:
+                    _msg.content = _inject_dependencies_block(_msg.content, dependencies_block)
+                    break
 
     # Add user message to run_messages
     if user_message is not None:

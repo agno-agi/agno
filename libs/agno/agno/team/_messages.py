@@ -52,6 +52,40 @@ from agno.utils.team import (
 from agno.utils.timer import Timer
 
 
+def _inject_dependencies_block(content: Any, dependencies_block: str) -> Any:
+    """Inject a dependencies block into message content, handling both string and multimodal formats.
+
+    Args:
+        content: The message content (str or list of multimodal parts).
+        dependencies_block: The formatted dependencies string to inject.
+
+    Returns:
+        The modified content with dependencies injected.
+    """
+    if isinstance(content, str):
+        return content + dependencies_block
+    elif isinstance(content, list) and len(content) > 0 and isinstance(content[0], dict):
+        # Multimodal with "type" key (OpenAI format)
+        if "type" in content[0]:
+            for part in reversed(content):
+                if isinstance(part, dict) and part.get("type") == "text" and isinstance(part.get("text"), str):
+                    part["text"] += dependencies_block
+                    return content
+            # No text part found, append one
+            content.append({"type": "text", "text": dependencies_block.lstrip("\n")})
+            return content
+        # Dicts with "text" but no "type" key (some providers)
+        if "text" in content[0]:
+            for part in reversed(content):
+                if isinstance(part, dict) and isinstance(part.get("text"), str):
+                    part["text"] += dependencies_block
+                    return content
+            content.append({"text": dependencies_block.lstrip("\n")})
+            return content
+    # Fallback: convert to string
+    return (get_text_from_message(content) if content is not None else "") + dependencies_block
+
+
 def _get_tool_names(member: Any) -> List[str]:
     """Extract tool names from a member's tools list."""
     tool_names: List[str] = []
@@ -1077,6 +1111,15 @@ def _get_user_message(
             else:
                 input_content = str(input_message)
 
+            # Inject dependencies if needed
+            if add_dependencies_to_context and run_context.dependencies is not None:
+                dependencies_block = (
+                    "\n\n<additional context>\n"
+                    + _convert_dependencies_to_string(team, run_context.dependencies)
+                    + "\n</additional context>"
+                )
+                input_content = _inject_dependencies_block(input_content, dependencies_block)
+
             return Message(
                 role="user",
                 content=input_content,
@@ -1089,7 +1132,18 @@ def _get_user_message(
 
         # If message is provided as a Message, use it directly
         elif isinstance(input_message, Message):
-            return input_message
+            from copy import deepcopy
+
+            msg_copy = deepcopy(input_message)
+            # Inject dependencies if needed
+            if add_dependencies_to_context and run_context.dependencies is not None:
+                dependencies_block = (
+                    "\n\n<additional context>\n"
+                    + _convert_dependencies_to_string(team, run_context.dependencies)
+                    + "\n</additional context>"
+                )
+                msg_copy.content = _inject_dependencies_block(msg_copy.content, dependencies_block)
+            return msg_copy
         # If message is provided as a dict, try to validate it as a Message
         elif isinstance(input_message, dict):
             try:
@@ -1235,6 +1289,15 @@ async def _aget_user_message(
             else:
                 input_content = str(input_message)
 
+            # Inject dependencies if needed
+            if add_dependencies_to_context and run_context.dependencies is not None:
+                dependencies_block = (
+                    "\n\n<additional context>\n"
+                    + _convert_dependencies_to_string(team, run_context.dependencies)
+                    + "\n</additional context>"
+                )
+                input_content = _inject_dependencies_block(input_content, dependencies_block)
+
             return Message(
                 role="user",
                 content=input_content,
@@ -1247,7 +1310,18 @@ async def _aget_user_message(
 
         # If message is provided as a Message, use it directly
         elif isinstance(input_message, Message):
-            return input_message
+            from copy import deepcopy
+
+            msg_copy = deepcopy(input_message)
+            # Inject dependencies if needed
+            if add_dependencies_to_context and run_context.dependencies is not None:
+                dependencies_block = (
+                    "\n\n<additional context>\n"
+                    + _convert_dependencies_to_string(team, run_context.dependencies)
+                    + "\n</additional context>"
+                )
+                msg_copy.content = _inject_dependencies_block(msg_copy.content, dependencies_block)
+            return msg_copy
         # If message is provided as a dict, try to validate it as a Message
         elif isinstance(input_message, dict):
             try:
