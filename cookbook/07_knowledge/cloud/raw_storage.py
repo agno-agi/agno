@@ -75,7 +75,7 @@ s3_raw = S3Config(
 s3_docs = S3Config(
     id="s3-docs",
     name="Company Documents",
-    bucket_name=getenv("S3_BUCKET_NAME", "my-company-docs"),
+    bucket_name=getenv("S3_BUCKET_NAME", "knowledge-testing-docs"),
     region=getenv("AWS_REGION", "us-east-1"),
     aws_access_key_id=getenv("AWS_ACCESS_KEY_ID"),
     aws_secret_access_key=getenv("AWS_SECRET_ACCESS_KEY"),
@@ -125,7 +125,7 @@ knowledge_local.refresh_content("content-id-here")
 # ============================================================================
 
 # Use the local storage version for this demo
-agent_os = AgentOS(knowledge=[knowledge_local])
+agent_os = AgentOS(knowledge=[knowledge_local, knowledge_s3])
 app = agent_os.get_app()
 
 if __name__ == "__main__":
