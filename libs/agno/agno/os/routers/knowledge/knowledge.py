@@ -1392,10 +1392,9 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
         request: Request,
         background_tasks: BackgroundTasks,
         content_id: str = Path(..., description="Content ID to refresh"),
-        db_id: Optional[str] = Query(default=None, description="Database ID"),
         knowledge_id: Optional[str] = Query(default=None, description="Knowledge base ID (name)"),
     ) -> ContentResponseSchema:
-        knowledge = get_knowledge_instance(knowledge_instances, db_id, knowledge_id)
+        knowledge = get_knowledge_instance(knowledge_instances, knowledge_id=knowledge_id)
 
         if isinstance(knowledge, RemoteKnowledge):
             raise HTTPException(status_code=501, detail="Content refresh not yet supported for RemoteKnowledge")
