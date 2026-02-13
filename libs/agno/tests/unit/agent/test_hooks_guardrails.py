@@ -279,3 +279,31 @@ class TestMetadataInjection:
             )
         )
         assert captured_args.get("metadata") == {"env": "test", "version": "2.5"}
+
+
+class TestPIIGuardrailTypeSafety:
+    def test_mask_pii_masks_and_assigns_string(self):
+        from agno.guardrails.pii import PIIDetectionGuardrail
+
+        guardrail = PIIDetectionGuardrail(mask_pii=True, enable_email_check=True)
+        run_input = RunInput(input_content="Contact me at user@example.com")
+        guardrail.check(run_input)
+        assert "@" not in run_input.input_content
+        assert isinstance(run_input.input_content, str)
+
+    @pytest.mark.asyncio
+    async def test_async_mask_pii_masks_and_assigns_string(self):
+        from agno.guardrails.pii import PIIDetectionGuardrail
+
+        guardrail = PIIDetectionGuardrail(mask_pii=True, enable_email_check=True)
+        run_input = RunInput(input_content="My SSN is 123-45-6789")
+        await guardrail.async_check(run_input)
+        assert "123-45-6789" not in run_input.input_content
+
+    def test_detect_pii_raises_without_masking(self):
+        from agno.guardrails.pii import PIIDetectionGuardrail
+
+        guardrail = PIIDetectionGuardrail(mask_pii=False, enable_email_check=True)
+        run_input = RunInput(input_content="Contact user@example.com")
+        with pytest.raises(InputCheckError, match="Potential PII detected"):
+            guardrail.check(run_input)
