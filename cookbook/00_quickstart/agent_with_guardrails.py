@@ -28,7 +28,7 @@ from agno.exceptions import InputCheckError
 from agno.guardrails import PIIDetectionGuardrail, PromptInjectionGuardrail
 from agno.guardrails.base import BaseGuardrail
 from agno.models.google import Gemini
-from agno.run.agent import RunInput
+from agno.run.agent import RunInput, RunOutput
 from agno.run.team import TeamRunInput
 from agno.tools.yfinance import YFinanceTools
 
@@ -116,18 +116,22 @@ if __name__ == "__main__":
         ("URGENT!!! BUY NOW!!!! THIS IS AMAZING!!!!", "spam"),
     ]
 
+    def was_blocked(response: RunOutput) -> bool:
+        """Check if a guardrail blocked the request before it reached the model."""
+        return response.metrics is not None and response.metrics.total_tokens == 0
+
     for prompt, test_type in test_cases:
         print(f"\n{'=' * 60}")
         print(f"Test: {test_type.upper()}")
         print(f"Input: {prompt[:50]}{'...' if len(prompt) > 50 else ''}")
         print(f"{'=' * 60}")
 
-        try:
-            agent_with_guardrails.print_response(prompt, stream=True)
+        response = agent_with_guardrails.run(prompt)
+
+        if was_blocked(response):
+            print(f"\n[BLOCKED] {response.content}")
+        else:
             print("\n[OK] Request processed successfully")
-        except InputCheckError as e:
-            print(f"\n[BLOCKED] {e.message}")
-            print(f"   Trigger: {e.check_trigger}")
 
 # ---------------------------------------------------------------------------
 # More Examples

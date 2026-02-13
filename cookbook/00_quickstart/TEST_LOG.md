@@ -2,8 +2,8 @@
 
 Test results for `cookbook/00_quickstart/` examples.
 
-**Test Date:** 2026-02-10 (re-validated)
-**Environment:** `.venvs/demo/bin/python` with `direnv` exports loaded
+**Test Date:** 2026-02-13
+**Environment:** `.venvs/demo/bin/python` with `.envrc` exports loaded
 **Model:** `gemini-3-flash-preview` (Google Gemini)
 **Database:** SQLite (`tmp/agents.db`) and ChromaDB (`tmp/chromadb/`)
 
@@ -21,13 +21,23 @@ Test results for `cookbook/00_quickstart/` examples.
 
 ---
 
-### style_guide_compliance_scan
+### ruff format
 
 **Status:** PASS
 
-**Description:** Validates module docstring with `=====` underline, section banners, import placement, `if __name__ == "__main__":` gate, and no emoji characters.
+**Description:** Validates code formatting with ruff.
 
-**Result:** All 13 runnable files comply with `cookbook/STYLE_GUIDE.md`. No emoji characters found.
+**Result:** `.venvs/demo/bin/ruff format cookbook/00_quickstart/` reported `14 files left unchanged`.
+
+---
+
+### ruff check
+
+**Status:** PASS
+
+**Description:** Validates code linting with ruff.
+
+**Result:** `.venvs/demo/bin/ruff check cookbook/00_quickstart/` reported `All checks passed!`.
 
 ---
 
@@ -39,7 +49,7 @@ Test results for `cookbook/00_quickstart/` examples.
 
 **Description:** Finance Agent with YFinanceTools fetches real-time market data for NVIDIA.
 
-**Result:** Exited `0`; produced investment brief with price ($190.04), market cap ($4.63T), P/E, 52-week range, key drivers, and risks.
+**Result:** Exited `0`; produced investment brief with price, market cap, P/E, 52-week range, key drivers, and risks. Included analyst recommendations and technical indicators.
 
 ---
 
@@ -79,7 +89,7 @@ Test results for `cookbook/00_quickstart/` examples.
 
 **Description:** Agent with MemoryManager extracts and recalls user preferences.
 
-**Result:** Exited `0`; agent stored two memories ("interested in AI and semiconductor stocks", "moderate risk tolerance") and used them to personalize stock recommendations.
+**Result:** Exited `0`; agent stored memory about user's AI/semiconductor interest and moderate risk tolerance. Used preferences to personalize stock recommendations. `get_user_memories()` returned stored memories.
 
 ---
 
@@ -117,9 +127,9 @@ Test results for `cookbook/00_quickstart/` examples.
 
 **Status:** PASS
 
-**Description:** Tests PII detection, prompt injection, and custom spam guardrails.
+**Description:** Tests PII detection, prompt injection, and custom spam guardrails using `agent.run()` with response inspection.
 
-**Result:** Exited `0`; four test cases executed: normal request processed, PII (SSN) blocked, prompt injection blocked, spam (excessive exclamation marks) blocked.
+**Result:** Exited `0`; four test cases executed: normal request processed with full response, PII (SSN) blocked, prompt injection blocked, spam (excessive exclamation marks) blocked. Blocked requests return error message as content with 0 tokens.
 
 ---
 
@@ -149,7 +159,7 @@ Test results for `cookbook/00_quickstart/` examples.
 
 **Description:** Three-step workflow: Data Gathering, Analysis, Report Writing for NVIDIA.
 
-**Result:** Exited `0` in ~30.8s; all three steps completed, final report included recommendation (BUY), key metrics table, and rationale.
+**Result:** Exited `0` in ~34s; all three steps completed, final report included recommendation, key metrics table, and rationale.
 
 ---
 
@@ -159,7 +169,7 @@ Test results for `cookbook/00_quickstart/` examples.
 
 **Description:** Startup-only validation for long-running AgentOS server.
 
-**Result:** Server started successfully on `http://localhost:7777` with all 10 agents, 1 team, and 1 workflow registered. Uvicorn startup complete. Process terminated cleanly after 15s.
+**Result:** Server started successfully on `http://localhost:7777` with all 10 agents, 1 team, and 1 workflow registered. HTTP 200 response confirmed. Uvicorn startup complete. Process terminated cleanly.
 
 ---
 
@@ -178,7 +188,7 @@ Test results for `cookbook/00_quickstart/` examples.
 | `agent_with_guardrails.py` | PASS | All 4 guardrail test cases passed (normal, PII, injection, spam) |
 | `human_in_the_loop.py` | PASS | Confirmation flow exercised with stdin approval |
 | `multi_agent_team.py` | PASS | Bull/Bear team collaboration completed |
-| `sequential_workflow.py` | PASS | Three-step workflow completed in ~33.6s |
-| `run.py` | PASS | AgentOS server startup validated |
+| `sequential_workflow.py` | PASS | Three-step workflow completed in ~34s |
+| `run.py` | PASS | AgentOS server startup validated, HTTP 200 |
 
 **Overall:** 13 PASS, 0 FAIL
