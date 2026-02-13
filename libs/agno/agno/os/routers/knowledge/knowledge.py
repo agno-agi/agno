@@ -11,6 +11,7 @@ from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader import ReaderFactory
 from agno.knowledge.reader.base import Reader
 from agno.knowledge.utils import get_all_chunkers_info, get_all_readers_info, get_content_types_to_readers_mapping
+from agno.knowledge.remote_content.config import S3Config
 from agno.os.auth import get_auth_token_from_request, get_authentication_dependency
 from agno.os.routers.knowledge.schemas import (
     ChunkerSchema,
@@ -698,7 +699,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
         # Handle the case where content is not found
         if knowledge_status is None:
             return ContentStatusResponse(
-                status=ContentStatus.FAILED, status_message=status_message or "Content not found"
+                id=content_id, status=ContentStatus.FAILED, status_message=status_message or "Content not found"
             )
 
         # Convert knowledge ContentStatus to schema ContentStatus (they have same values)
@@ -722,7 +723,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
         else:
             status = ContentStatus.PROCESSING
 
-        return ContentStatusResponse(status=status, status_message=status_message or "")
+        return ContentStatusResponse(id=content_id, status=status, status_message=status_message or "")
 
     @router.post(
         "/knowledge/search",
@@ -1316,8 +1317,8 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
         if config is None:
             raise HTTPException(status_code=404, detail=f"Content source not found: {source_id}")
 
-        # Check if this config type supports list_files
-        if not hasattr(config, "list_files"):
+        # Only S3 sources support file listing
+        if not isinstance(config, S3Config):
             raise HTTPException(
                 status_code=400,
                 detail=f"Source type '{type(config).__name__}' does not support file listing.",
