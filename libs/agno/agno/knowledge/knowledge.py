@@ -960,6 +960,10 @@ class Knowledge(RemoteKnowledge):
         2. If exclude is specified, file must not match any exclude pattern
         3. If neither specified, include all files
 
+        Patterns without path separators (e.g. ``*.go``) are matched against
+        the filename only so they work when *file_path* is a full or relative
+        path that contains directories.
+
         Args:
             file_path: Path to the file to check
             include: Optional list of include patterns (glob-style)
@@ -969,15 +973,22 @@ class Knowledge(RemoteKnowledge):
             bool: True if file should be included, False otherwise
         """
         import fnmatch
+        import os
+
+        file_name = os.path.basename(file_path)
+
+        def _matches(path: str, name: str, pattern: str) -> bool:
+            """Match pattern against both the full path and the basename."""
+            return fnmatch.fnmatch(path, pattern) or fnmatch.fnmatch(name, pattern)
 
         # If include patterns specified, file must match at least one
         if include:
-            if not any(fnmatch.fnmatch(file_path, pattern) for pattern in include):
+            if not any(_matches(file_path, file_name, pattern) for pattern in include):
                 return False
 
         # If exclude patterns specified, file must not match any
         if exclude:
-            if any(fnmatch.fnmatch(file_path, pattern) for pattern in exclude):
+            if any(_matches(file_path, file_name, pattern) for pattern in exclude):
                 return False
 
         return True
