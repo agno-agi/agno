@@ -1,113 +1,121 @@
-# Agno AgentOS Demo
+# Agno Demo
 
-This demo shows how to run a multi-agent system using the **Agno AgentOS: a high performance runtime for multi-agent systems**:
+6 self-learning agents, 2 teams, and 2 workflows served via AgentOS. Each agent learns from interactions and improves with every use.
+
+## Architecture
+
+All agents share a common foundation:
+
+- **Model**: `OpenAIResponses(id="gpt-5.2")`
+- **Storage**: PostgreSQL + PgVector for knowledge, learnings, and chat history
+- **Knowledge**: Dual knowledge system -- static curated knowledge + dynamic learnings discovered at runtime
+- **Search**: Hybrid search (semantic + keyword) with OpenAI embeddings (`text-embedding-3-small`)
+- **Learning**: `LearningMachine` in `AGENTIC` mode -- agents decide when to save learnings
+
+## Agents
+
+### Dash - Self-Learning Data Agent
+
+Analyzes an F1 racing dataset via SQL. Provides insights and context, not just raw query results. Remembers column quirks, date formats, and successful queries across sessions.
+
+### Scout - Self-Learning Context Agent
+
+Finds information (context) across company S3 storage using grep-like search and full document reads. Knows what sources exist and routes queries to the right bucket. Learns intent from repeated use.
+
+### Pal - Personal Agent that Learns
+
+Captures and retrieves personal knowledge: notes, bookmarks, people, meetings, projects. Uses DuckDB for structured content and the learning system for schema and research findings.
+
+### Seek - Deep Research Agent
+
+Conducts exhaustive multi-source research and produces structured, well-sourced reports. Follows a 4-phase methodology: scope, gather, analyze, synthesize.
+
+### Dex - Relationship Intelligence Agent
+
+Builds living profiles of people you interact with. Tracks interactions, maps connections, and prepares meeting briefs with full context.
+
+### Ace - Response Agent
+
+Drafts replies to emails, messages, and questions. Learns your tone, communication style, and preferences for different contexts (client vs. team vs. exec).
+
+## Teams
+
+| Team | Members | Mode | Purpose |
+|------|---------|------|---------|
+| **Research Team** | Seek + Scout + Dex | Coordinate | Breaks research into dimensions (external, internal, people) and delegates to specialists. Synthesizes findings into a comprehensive report. |
+| **Support Team** | Ace + Scout + Dash | Route | Routes questions to the right specialist: data/metrics to Dash, internal docs to Scout, drafting to Ace. |
+
+## Workflows
+
+| Workflow | Steps | Purpose |
+|----------|-------|---------|
+| **Daily Brief** | 3 parallel gatherers (calendar, email, news) then 1 synthesizer | Morning briefing with priorities, schedule highlights, inbox summary, and industry news. Uses mock calendar/email data and live DuckDuckGo for news. |
+| **Meeting Prep** | Parse meeting, then 3 parallel researchers (attendees, internal docs, external context), then 1 synthesizer | Deep preparation with attendee context, key data points, talking points, and anticipated questions. Uses mock meeting data and live DuckDuckGo. |
 
 ## Getting Started
 
-### 0. Clone the repository
-
-```shell
+### 1. Clone the repo
+```bash
 git clone https://github.com/agno-agi/agno.git
 cd agno
 ```
 
-### 1. Create a virtual environment
-
-```shell
-uv venv .demoenv --python 3.12
-source .demoenv/bin/activate
+### 2. Create and activate the demo virtual environment
+```bash
+./scripts/demo_setup.sh
+source .venvs/demo/bin/activate
 ```
 
-### 2. Install dependencies
-
-```shell
-uv pip install -r cookbook/01_demo/requirements.txt
-```
-
-### 3. Run Postgres with PgVector
-
-We'll use postgres for storing agent sessions, memories, metrics, evals and knowledge. Install [docker desktop](https://docs.docker.com/desktop/install/mac-install/) and run the following command to start a postgres container with PgVector.
-
-```shell
+### 3. Run PgVector
+```bash
 ./cookbook/scripts/run_pgvector.sh
 ```
 
-OR use the docker run command directly:
-
-```shell
-docker run -d \
-  -e POSTGRES_DB=ai \
-  -e POSTGRES_USER=ai \
-  -e POSTGRES_PASSWORD=ai \
-  -e PGDATA=/var/lib/postgresql \
-  -v pgvolume:/var/lib/postgresql \
-  -p 5532:5432 \
-  --name pgvector \
-  agnohq/pgvector:18
+### 4. Load data for Dash (F1 dataset)
+```bash
+python -m cookbook.01_demo.agents.dash.scripts.load_data
+python -m cookbook.01_demo.agents.dash.scripts.load_knowledge
 ```
 
-### 4. Export API Keys
-
-We'll use OpenAI, Anthropic and Parallel Search services. Please export the following environment variables:
-
-```shell
-export ANTHROPIC_API_KEY=***
-export OPENAI_API_KEY=***
-export PARALLEL_API_KEY=***
+### 5. Load knowledge for Scout (enterprise docs)
+```bash
+python -m cookbook.01_demo.agents.scout.scripts.load_knowledge
 ```
 
-### 5. Run the demo AgentOS
-
-```shell
-python cookbook/01_demo/run.py
+### 6. Export environment variables
+```bash
+export OPENAI_API_KEY="..."      # Required for all agents
+export EXA_API_KEY="..."         # Optional because Exa MCP is currently free
 ```
 
-### 6. Connect to the AgentOS UI
-
-- Open the web interface: [os.agno.com](https://os.agno.com/)
-- Connect to http://localhost:7777 to interact with the demo AgentOS.
-
-### Load Knowledge Base for the Agno Knowledge Agent
-
-The Agno Knowledge Agent is a great example of building a knowledge agent using Agentic RAG. It loads the Agno documentation into pgvector and answers questions from the docs. It uses the OpenAI embedding model to embed the docs and the pgvector to store the embeddings.
-
-To populate the knowledge base, run the following command:
-
-```sh
-python cookbook/01_demo/agents/agno_knowledge_agent.py
+### 7. Run the demo
+```bash
+python -m cookbook.01_demo.run
 ```
 
-### Load data for the SQL Agent
+### 8. Connect via AgentOS
 
-To load the data for the SQL Agent, run:
+- Open [os.agno.com](https://os.agno.com) in your browser
+- Click on "Add AgentOS"
+- Add `http://localhost:7777` as an endpoint
+- Click "Connect"
+- You should see the demo agents and workflows
+- Interact with the agents and workflows via the web interface
 
-```sh
-python cookbook/01_demo/agents/sql/load_f1_data.py
+### Evals
+
+16 test cases covering all agents, both teams, and both workflows. Uses string-matching validation with `all` or `any` match modes.
+
+```bash
+# Run all evals
+python -m cookbook.01_demo.evals.run_evals
+
+# Filter by agent
+python -m cookbook.01_demo.evals.run_evals --agent dash
+
+# Filter by category
+python -m cookbook.01_demo.evals.run_evals --category dash_basic
+
+# Verbose mode (show full responses on failure)
+python -m cookbook.01_demo.evals.run_evals --verbose
 ```
-
-To populate the knowledge base, run:
-
-```sh
-python cookbook/01_demo/agents/sql/load_sql_knowledge.py
-```
-
-### Load Knowledge Base for the Deep Knowledge Agent
-
-The Deep Knowledge Agent is a great example of building a deep research agent using Agno.
-
-To populate the knowledge base, run the following command:
-
-```sh
-python cookbook/01_demo/agents/deep_knowledge_agent.py
-```
-
----
-
-## Additional Resources
-
-Need help, have a question, or want to connect with the community?
-
-- 📚 **[Read the Agno Docs](https://docs.agno.com)** for more in-depth information.
-- 💬 **Chat with us on [Discord](https://agno.link/discord)** for live discussions.
-- ❓ **Ask a question on [Discourse](https://agno.link/community)** for community support.
-- 🐛 **[Report an Issue](https://github.com/agno-agi/agno/issues)** on GitHub if you find a bug or have a feature request.

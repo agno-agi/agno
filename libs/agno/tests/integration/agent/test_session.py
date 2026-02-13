@@ -393,7 +393,7 @@ def test_session_state_in_run_completed_event_stream(shared_db):
 
     run_completed_event = None
 
-    for event in agent.run("Add oranges to my shopping list", stream=True, stream_intermediate_steps=True):
+    for event in agent.run("Add oranges to my shopping list", stream=True, stream_events=True):
         if hasattr(event, "event") and event.event == "RunCompleted":
             run_completed_event = event
             break

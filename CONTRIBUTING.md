@@ -19,7 +19,7 @@ To maintain a clear and organized project history, please adhere to the followin
 
 1.  **Title Format:** Your PR title must start with a type tag enclosed in square brackets, followed by a space and a concise subject.
     - Example: `[feat] Add user authentication`
-    - Valid types: `[feat]`, `[fix]`, `[docs]`, `[test]`, `[refactor]`, `[build]`, `[ci]`, `[chore]`, `[perf]`, `[style]`, `[revert]`.
+    - Valid types: `[feat]`, `[fix]`, `[cookbook]`, `[test]`, `[refactor]`, `[chore]`, `[style]`, `[revert]`, `[release]`.
 2.  **Link to Issue:** The PR description should ideally reference the issue it addresses using keywords like `fixes #<issue_number>`, `closes #<issue_number>`, or `resolves #<issue_number>`.
     - Example: `This PR fixes #42 by implementing the new login flow.`
 
@@ -78,8 +78,8 @@ Make sure all tests pass before submitting your pull request. If you add new fea
    - The `VectorDb` interface is defined in `libs/agno/agno/vectordb/base
    - Import your `VectorDb` Class in `libs/agno/agno/vectordb/<your_db>/__init__.py`.
    - Checkout the [`libs/agno/agno/vectordb/pgvector/pgvector`](https://github.com/agno-agi/agno/blob/main/libs/agno/agno/vectordb/pgvector/pgvector.py) file for an example.
-4. Add a recipe for using your `VectorDb` under `cookbook/knowledge/vector_db/<your_db>`.
-   - Checkout [`cookbook/knowledge/vector_db/pgvector/pgvector_db`](https://github.com/agno-agi/agno/blob/main/cookbook/knowledge/vector_db/pgvector/pgvector_db.py) for an example.
+4. Add a recipe for using your `VectorDb` under `cookbook/07_knowledge/vector_db/<your_db>`.
+   - Checkout [`cookbook/07_knowledge/vector_db/pgvector/pgvector_db`](https://github.com/agno-agi/agno/blob/main/cookbook/07_knowledge/vector_db/pgvector/pgvector_db.py) for an example.
 5. Important: Format and validate your code by running `./scripts/format.sh` and `./scripts/validate.sh`.
 6. Submit a pull request.
 

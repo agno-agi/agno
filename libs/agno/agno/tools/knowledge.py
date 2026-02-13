@@ -1,9 +1,10 @@
 import json
 from textwrap import dedent
-from typing import Any, Dict, List, Optional
+from typing import Any, List, Optional
 
 from agno.knowledge.document import Document
 from agno.knowledge.knowledge import Knowledge
+from agno.run import RunContext
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_error
 
@@ -55,7 +56,7 @@ class KnowledgeTools(Toolkit):
             **kwargs,
         )
 
-    def think(self, session_state: Dict[str, Any], thought: str) -> str:
+    def think(self, run_context: RunContext, thought: str) -> str:
         """Use this tool as a scratchpad to reason about the question, refine your approach, brainstorm search terms, or revise your plan.
 
         Call `Think` whenever you need to figure out what to do next, analyze the user's question, or plan your approach.
@@ -71,8 +72,10 @@ class KnowledgeTools(Toolkit):
             log_debug(f"Thought: {thought}")
 
             # Add the thought to the Agent state
+            session_state = run_context.session_state
             if session_state is None:
                 session_state = {}
+                run_context.session_state = session_state
             if "thoughts" not in session_state:
                 session_state["thoughts"] = []
             session_state["thoughts"].append(thought)
@@ -89,7 +92,7 @@ class KnowledgeTools(Toolkit):
             log_error(f"Error recording thought: {e}")
             return f"Error recording thought: {e}"
 
-    def search_knowledge(self, session_state: Dict[str, Any], query: str) -> str:
+    def search_knowledge(self, run_context: RunContext, query: str) -> str:
         """Use this tool to search the knowledge base for relevant information.
         After thinking through the question, use this tool as many times as needed to search for relevant information.
 
@@ -111,7 +114,7 @@ class KnowledgeTools(Toolkit):
             log_error(f"Error searching knowledge base: {e}")
             return f"Error searching knowledge base: {e}"
 
-    def analyze(self, session_state: Dict[str, Any], analysis: str) -> str:
+    def analyze(self, run_context: RunContext, analysis: str) -> str:
         """Use this tool to evaluate whether the returned documents are correct and sufficient.
         If not, go back to "Think" or "Search" with refined queries.
 
@@ -125,8 +128,10 @@ class KnowledgeTools(Toolkit):
             log_debug(f"Analysis: {analysis}")
 
             # Add the thought to the Agent state
+            session_state = run_context.session_state
             if session_state is None:
                 session_state = {}
+                run_context.session_state = session_state
             if "analysis" not in session_state:
                 session_state["analysis"] = []
             session_state["analysis"].append(analysis)

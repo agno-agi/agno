@@ -86,7 +86,7 @@ async def knowledge_base(setup_csv_files):
         chunk=False,
     )
 
-    await knowledge.add_content_async(
+    await knowledge.ainsert(
         path=str(csv_dir),
         reader=reader,
         metadata={"data_type": "sales", "region": "north_america", "currency": "USD"},

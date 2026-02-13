@@ -65,7 +65,7 @@ class AgentResponse(BaseModel):
             "enable_agentic_knowledge_filters": False,
             # Memory defaults
             "enable_agentic_memory": False,
-            "enable_user_memories": False,
+            "update_memory_on_run": False,
             # Reasoning defaults
             "reasoning": False,
             "reasoning_min_steps": 1,
@@ -151,8 +151,9 @@ class AgentResponse(BaseModel):
             "cache_session": agent.cache_session,
         }
 
+        contents_db = getattr(agent.knowledge, "contents_db", None) if agent.knowledge else None
         knowledge_info = {
-            "db_id": agent.knowledge.contents_db.id if agent.knowledge and agent.knowledge.contents_db else None,
+            "db_id": contents_db.id if contents_db else None,
             "knowledge_table": knowledge_table,
             "enable_agentic_knowledge_filters": agent.enable_agentic_knowledge_filters,
             "knowledge_filters": agent.knowledge_filters,
@@ -163,9 +164,10 @@ class AgentResponse(BaseModel):
         if agent.memory_manager is not None:
             memory_info = {
                 "enable_agentic_memory": agent.enable_agentic_memory,
-                "enable_user_memories": agent.enable_user_memories,
+                "update_memory_on_run": agent.update_memory_on_run,
+                "enable_user_memories": agent.enable_user_memories,  # Soon to be deprecated. Use update_memory_on_run
                 "metadata": agent.metadata,
-                "memory_table": agent.db.memory_table_name if agent.db and agent.enable_user_memories else None,
+                "memory_table": agent.db.memory_table_name if agent.db and agent.update_memory_on_run else None,
             }
 
             if agent.memory_manager.model is not None:

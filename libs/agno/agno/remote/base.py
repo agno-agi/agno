@@ -2,7 +2,7 @@ import time
 from abc import abstractmethod
 from dataclasses import dataclass, field
 from datetime import date
-from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, List, Optional, Sequence, Tuple, Union
+from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, List, Literal, Optional, Sequence, Tuple, Union
 
 from pydantic import BaseModel
 
@@ -18,6 +18,8 @@ if TYPE_CHECKING:
     from fastapi import UploadFile
 
     from agno.client import AgentOSClient
+    from agno.client.a2a import A2AClient
+    from agno.client.a2a.schemas import AgentCard
     from agno.os.routers.evals.schemas import EvalSchema
     from agno.os.routers.knowledge.schemas import (
         ConfigResponseSchema,
@@ -64,7 +66,7 @@ class RemoteDb:
         """Create a RemoteDb instance from an AgentResponse/TeamResponse/WorkflowResponse and ConfigResponse.
 
         Args:
-            response: The agent, team, or workflow response containing the db_id.
+            db_id (str): The id of the remote database
             client: The AgentOSClient for remote operations.
             config: The ConfigResponse containing database table information.
 
@@ -251,14 +253,18 @@ class RemoteDb:
 class RemoteKnowledge:
     client: "AgentOSClient"
     contents_db: Optional[RemoteDb] = None
+    knowledge_id: Optional[str] = None
+
+    def _get_db_id(self) -> Optional[str]:
+        return self.contents_db.id if self.contents_db else None
 
     async def get_config(self, headers: Optional[Dict[str, str]] = None) -> "ConfigResponseSchema":
-        return await self.client.get_knowledge_config(
-            db_id=self.contents_db.id if self.contents_db else None, headers=headers
-        )
+        return await self.client.get_knowledge_config(db_id=self._get_db_id(), headers=headers)
 
     async def search_knowledge(self, query: str, **kwargs: Any) -> "PaginatedResponse[VectorSearchResult]":
-        return await self.client.search_knowledge(query, **kwargs)
+        return await self.client.search_knowledge(
+            query, db_id=self._get_db_id(), knowledge_id=self.knowledge_id, **kwargs
+        )
 
     async def upload_content(
         self,
@@ -272,7 +278,6 @@ class RemoteKnowledge:
         chunker: Optional[str] = None,
         chunk_size: Optional[int] = None,
         chunk_overlap: Optional[int] = None,
-        db_id: Optional[str] = None,
         **kwargs: Any,
     ) -> "ContentResponseSchema":
         return await self.client.upload_knowledge_content(
@@ -286,7 +291,8 @@ class RemoteKnowledge:
             chunker=chunker,
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,
-            db_id=db_id,
+            db_id=self._get_db_id(),
+            knowledge_id=self.knowledge_id,
             **kwargs,
         )
 
@@ -297,7 +303,6 @@ class RemoteKnowledge:
         description: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
         reader_id: Optional[str] = None,
-        db_id: Optional[str] = None,
         **kwargs: Any,
     ) -> "ContentResponseSchema":
         return await self.client.update_knowledge_content(
@@ -306,7 +311,8 @@ class RemoteKnowledge:
             description=description,
             metadata=metadata,
             reader_id=reader_id,
-            db_id=db_id,
+            db_id=self._get_db_id(),
+            knowledge_id=self.knowledge_id,
             **kwargs,
         )
 
@@ -316,42 +322,59 @@ class RemoteKnowledge:
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
-        db_id: Optional[str] = None,
         **kwargs: Any,
     ) -> "PaginatedResponse[ContentResponseSchema]":
         return await self.client.list_knowledge_content(
-            limit=limit, page=page, sort_by=sort_by, sort_order=sort_order, db_id=db_id, **kwargs
+            limit=limit,
+            page=page,
+            sort_by=sort_by,
+            sort_order=sort_order,
+            db_id=self._get_db_id(),
+            knowledge_id=self.knowledge_id,
+            **kwargs,
         )
 
-    async def get_content_by_id(
-        self, content_id: str, db_id: Optional[str] = None, **kwargs: Any
-    ) -> "ContentResponseSchema":
-        return await self.client.get_knowledge_content(content_id=content_id, db_id=db_id, **kwargs)
+    async def get_content_by_id(self, content_id: str, **kwargs: Any) -> "ContentResponseSchema":
+        return await self.client.get_knowledge_content(
+            content_id=content_id, db_id=self._get_db_id(), knowledge_id=self.knowledge_id, **kwargs
+        )
 
-    async def delete_content_by_id(self, content_id: str, db_id: Optional[str] = None, **kwargs: Any) -> None:
-        await self.client.delete_knowledge_content(content_id=content_id, db_id=db_id, **kwargs)
+    async def delete_content_by_id(self, content_id: str, **kwargs: Any) -> None:
+        await self.client.delete_knowledge_content(
+            content_id=content_id, db_id=self._get_db_id(), knowledge_id=self.knowledge_id, **kwargs
+        )
 
-    async def delete_all_content(self, db_id: Optional[str] = None, **kwargs: Any) -> None:
-        await self.client.delete_all_knowledge_content(db_id=db_id, **kwargs)
+    async def delete_all_content(self, **kwargs: Any) -> None:
+        await self.client.delete_all_knowledge_content(
+            db_id=self._get_db_id(), knowledge_id=self.knowledge_id, **kwargs
+        )
 
-    async def get_content_status(
-        self, content_id: str, db_id: Optional[str] = None, **kwargs: Any
-    ) -> "ContentStatusResponse":
-        return await self.client.get_knowledge_content_status(content_id=content_id, db_id=db_id, **kwargs)
+    async def get_content_status(self, content_id: str, **kwargs: Any) -> "ContentStatusResponse":
+        return await self.client.get_knowledge_content_status(
+            content_id=content_id, db_id=self._get_db_id(), knowledge_id=self.knowledge_id, **kwargs
+        )
 
 
 @dataclass
 class BaseRemote:
     # Private cache for OS config with TTL: (config, timestamp)
     _cached_config: Optional[Tuple["ConfigResponse", float]] = field(default=None, init=False, repr=False)
+    # Private cache for agent card with TTL: (agent_card, timestamp)
+    _cached_agent_card: Optional[Tuple[Optional["AgentCard"], float]] = field(default=None, init=False, repr=False)
 
     def __init__(
         self,
         base_url: str,
         timeout: float = 60.0,
+        protocol: Literal["agentos", "a2a"] = "agentos",
+        a2a_protocol: Literal["json-rpc", "rest"] = "rest",
         config_ttl: float = 300.0,
     ):
         """Initialize BaseRemote for remote execution.
+
+        Supports two protocols:
+        - "agentos": Agno's proprietary AgentOS REST API (default)
+        - "a2a": A2A (Agent-to-Agent) protocol for cross-framework communication
 
         For local execution, provide agent/team/workflow instances.
         For remote execution, provide base_url.
@@ -359,16 +382,29 @@ class BaseRemote:
         Args:
             base_url: Base URL for remote instance (e.g., "http://localhost:7777")
             timeout: Request timeout in seconds (default: 60)
+            protocol: Communication protocol - "agentos" (default) or "a2a"
+            a2a_protocol: For A2A protocol only - Whether to use JSON-RPC or REST protocol.
             config_ttl: Time-to-live for cached config in seconds (default: 300)
         """
         self.base_url = base_url.rstrip("/")
         self.timeout: float = timeout
+        self.protocol = protocol
+        self.a2a_protocol = a2a_protocol
         self.config_ttl: float = config_ttl
         self._cached_config = None
+        self._cached_agent_card = None
 
-        self.client = self.get_client()
+        self.agentos_client = None
+        self.a2a_client = None
 
-    def get_client(self) -> "AgentOSClient":
+        if protocol == "agentos":
+            self.agentos_client = self.get_os_client()
+        elif protocol == "a2a":
+            self.a2a_client = self.get_a2a_client()
+        else:
+            raise ValueError(f"Invalid protocol: {protocol}")
+
+    def get_os_client(self) -> "AgentOSClient":
         """Get an AgentOSClient for fetching remote configuration.
 
         This is used internally by AgentOS to fetch configuration from remote
@@ -384,10 +420,30 @@ class BaseRemote:
             timeout=self.timeout,
         )
 
+    def get_a2a_client(self) -> "A2AClient":
+        """Get an A2AClient for A2A protocol communication.
+
+        Returns cached client if available, otherwise creates a new one.
+        This method provides lazy initialization of the A2A client.
+
+        Returns:
+            A2AClient: Client configured for A2A protocol communication
+        """
+        from agno.client.a2a import A2AClient
+
+        return A2AClient(
+            base_url=self.base_url,
+            timeout=int(self.timeout),
+            protocol=self.a2a_protocol,
+        )
+
     @property
-    def _config(self) -> "ConfigResponse":
+    def _config(self) -> Optional["ConfigResponse"]:
         """Get the OS config from remote, cached with TTL."""
         from agno.os.schema import ConfigResponse
+
+        if self.protocol == "a2a":
+            return None
 
         current_time = time.time()
 
@@ -398,15 +454,15 @@ class BaseRemote:
                 return config
 
         # Fetch fresh config
-        config: ConfigResponse = self.client.get_config()  # type: ignore
+        config: ConfigResponse = self.agentos_client.get_config()  # type: ignore
         self._cached_config = (config, current_time)
         return config
 
-    def refresh_os_config(self) -> "ConfigResponse":
+    async def refresh_os_config(self) -> "ConfigResponse":
         """Force refresh the cached OS config."""
         from agno.os.schema import ConfigResponse
 
-        config: ConfigResponse = self.client.get_config()
+        config: ConfigResponse = await self.agentos_client.aget_config()  # type: ignore
         self._cached_config = (config, time.time())
         return config
 
@@ -436,6 +492,60 @@ class BaseRemote:
         if auth_token:
             return {"Authorization": f"Bearer {auth_token}"}
         return None
+
+    def get_agent_card(self) -> Optional["AgentCard"]:
+        """Get agent card for A2A protocol agents, cached with TTL.
+
+        Fetches the agent card from the standard /.well-known/agent.json endpoint
+        to populate agent metadata (name, description, etc.) for A2A agents.
+
+        Returns None for non-A2A protocols or if the server doesn't support agent cards.
+        """
+        if self.protocol != "a2a":
+            return None
+
+        current_time = time.time()
+
+        # Check if cache is valid
+        if self._cached_agent_card is not None:
+            agent_card, cached_at = self._cached_agent_card
+            if current_time - cached_at < self.config_ttl:
+                return agent_card
+
+        try:
+            agent_card = self.a2a_client.get_agent_card()  # type: ignore
+            self._cached_agent_card = (agent_card, current_time)
+            return agent_card
+        except Exception:
+            self._cached_agent_card = (None, current_time)
+            return None
+
+    async def aget_agent_card(self) -> Optional["AgentCard"]:
+        """Get agent card for A2A protocol agents, cached with TTL.
+
+        Fetches the agent card from the standard /.well-known/agent.json endpoint
+        to populate agent metadata (name, description, etc.) for A2A agents.
+
+        Returns None for non-A2A protocols or if the server doesn't support agent cards.
+        """
+        if self.protocol != "a2a":
+            return None
+
+        current_time = time.time()
+
+        # Check if cache is valid
+        if self._cached_agent_card is not None:
+            agent_card, cached_at = self._cached_agent_card
+            if current_time - cached_at < self.config_ttl:
+                return agent_card
+
+        try:
+            agent_card = await self.a2a_client.aget_agent_card()  # type: ignore
+            self._cached_agent_card = (agent_card, current_time)
+            return agent_card
+        except Exception:
+            self._cached_agent_card = (None, current_time)
+            return None
 
     @abstractmethod
     def arun(  # type: ignore
@@ -480,5 +590,5 @@ class BaseRemote:
         raise NotImplementedError("acontinue_run method must be implemented by the subclass")
 
     @abstractmethod
-    async def cancel_run(self, run_id: str) -> bool:
+    async def acancel_run(self, run_id: str) -> bool:
         raise NotImplementedError("cancel_run method must be implemented by the subclass")

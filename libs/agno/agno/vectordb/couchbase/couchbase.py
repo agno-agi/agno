@@ -100,7 +100,7 @@ class CouchbaseSearch(VectorDb):
             from agno.knowledge.embedder.openai import OpenAIEmbedder
 
             embedder = OpenAIEmbedder()
-            log_info("Embedder not provided, using OpenAIEmbedder as default.")
+            log_debug("Embedder not provided, using OpenAIEmbedder as default.")
         self.embedder = embedder
         self.overwrite = overwrite
         self.is_global_level_index = is_global_level_index

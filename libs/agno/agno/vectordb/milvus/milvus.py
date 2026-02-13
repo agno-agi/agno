@@ -89,7 +89,7 @@ class Milvus(VectorDb):
             from agno.knowledge.embedder.openai import OpenAIEmbedder
 
             embedder = OpenAIEmbedder()
-            log_info("Embedder not provided, using OpenAIEmbedder as default.")
+            log_debug("Embedder not provided, using OpenAIEmbedder as default.")
         self.embedder: Embedder = embedder
         self.dimensions: Optional[int] = self.embedder.dimensions
 
@@ -241,7 +241,7 @@ class Milvus(VectorDb):
             "id": doc_id,
             "text": cleaned_content,
             "name": document.name,
-            "content_id": document.content_id,
+            "content_id": document.content_id or "",
             "meta_data": meta_data_str,
             "content": cleaned_content,
             "usage": usage_str,
@@ -334,6 +334,7 @@ class Milvus(VectorDb):
             scroll_result = self.client.query(
                 collection_name=self.collection,
                 filter=expr,
+                output_fields=["id"],
                 limit=1,
             )
             return len(scroll_result) > 0 and len(scroll_result[0]) > 0
@@ -363,6 +364,7 @@ class Milvus(VectorDb):
             scroll_result = self.client.query(
                 collection_name=self.collection,
                 filter=expr,
+                output_fields=["id"],
                 limit=1,
             )
             return len(scroll_result) > 0 and len(scroll_result[0]) > 0
@@ -429,7 +431,7 @@ class Milvus(VectorDb):
                     "id": doc_id,
                     "vector": document.embedding,
                     "name": document.name,
-                    "content_id": document.content_id,
+                    "content_id": document.content_id or "",
                     "meta_data": meta_data,
                     "content": cleaned_content,
                     "usage": document.usage,
@@ -512,7 +514,7 @@ class Milvus(VectorDb):
                     "id": doc_id,
                     "vector": document.embedding,
                     "name": document.name,
-                    "content_id": document.content_id,
+                    "content_id": document.content_id or "",
                     "meta_data": meta_data,
                     "content": cleaned_content,
                     "usage": document.usage,
@@ -547,30 +549,41 @@ class Milvus(VectorDb):
             filters (Optional[Dict[str, Any]]): Filters to apply while upserting
         """
         log_debug(f"Upserting {len(documents)} documents")
-        for document in documents:
-            document.embed(embedder=self.embedder)
-            cleaned_content = document.content.replace("\x00", "\ufffd")
-            doc_id = md5(cleaned_content.encode()).hexdigest()
 
-            meta_data = document.meta_data or {}
-            if filters:
-                meta_data.update(filters)
+        if self.search_type == SearchType.hybrid:
+            for document in documents:
+                document.embed(embedder=self.embedder)
+                data = self._prepare_document_data(content_hash=content_hash, document=document, include_vectors=True)
+                self.client.upsert(
+                    collection_name=self.collection,
+                    data=data,
+                )
+                log_debug(f"Upserted hybrid document: {document.name} ({document.meta_data})")
+        else:
+            for document in documents:
+                document.embed(embedder=self.embedder)
+                cleaned_content = document.content.replace("\x00", "\ufffd")
+                doc_id = md5(cleaned_content.encode()).hexdigest()
 
-            data = {
-                "id": doc_id,
-                "vector": document.embedding,
-                "name": document.name,
-                "content_id": document.content_id,
-                "meta_data": document.meta_data,
-                "content": cleaned_content,
-                "usage": document.usage,
-                "content_hash": content_hash,
-            }
-            self.client.upsert(
-                collection_name=self.collection,
-                data=data,
-            )
-            log_debug(f"Upserted document: {document.name} ({document.meta_data})")
+                meta_data = document.meta_data or {}
+                if filters:
+                    meta_data.update(filters)
+
+                data = {
+                    "id": doc_id,
+                    "vector": document.embedding,
+                    "name": document.name,
+                    "content_id": document.content_id or "",
+                    "meta_data": meta_data,  # type: ignore[dict-item]
+                    "content": cleaned_content,
+                    "usage": document.usage,  # type: ignore[dict-item]
+                    "content_hash": content_hash,
+                }
+                self.client.upsert(
+                    collection_name=self.collection,
+                    data=data,
+                )
+                log_debug(f"Upserted document: {document.name} ({document.meta_data})")
 
     async def async_upsert(
         self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
@@ -616,28 +629,46 @@ class Milvus(VectorDb):
             embed_tasks = [document.async_embed(embedder=self.embedder) for document in documents]
             await asyncio.gather(*embed_tasks, return_exceptions=True)
 
-        async def process_document(document):
-            cleaned_content = document.content.replace("\x00", "\ufffd")
-            doc_id = md5(cleaned_content.encode()).hexdigest()
-            data = {
-                "id": doc_id,
-                "vector": document.embedding,
-                "name": document.name,
-                "content_id": document.content_id,
-                "meta_data": document.meta_data,
-                "content": cleaned_content,
-                "usage": document.usage,
-                "content_hash": content_hash,
-            }
-            await self.async_client.upsert(
-                collection_name=self.collection,
-                data=data,
-            )
-            log_debug(f"Upserted document asynchronously: {document.name} ({document.meta_data})")
-            return data
+        if self.search_type == SearchType.hybrid:
 
-        # Process all documents in parallel
-        await asyncio.gather(*[process_document(doc) for doc in documents])
+            async def process_hybrid_document(document):
+                data = self._prepare_document_data(content_hash=content_hash, document=document, include_vectors=True)
+                await self.async_client.upsert(
+                    collection_name=self.collection,
+                    data=data,
+                )
+                log_debug(f"Upserted hybrid document asynchronously: {document.name} ({document.meta_data})")
+                return data
+
+            await asyncio.gather(*[process_hybrid_document(doc) for doc in documents])
+        else:
+
+            async def process_document(document):
+                cleaned_content = document.content.replace("\x00", "\ufffd")
+                doc_id = md5(cleaned_content.encode()).hexdigest()
+
+                meta_data = document.meta_data or {}
+                if filters:
+                    meta_data.update(filters)
+
+                data = {
+                    "id": doc_id,
+                    "vector": document.embedding,
+                    "name": document.name,
+                    "content_id": document.content_id or "",
+                    "meta_data": meta_data,  # type: ignore[dict-item]
+                    "content": cleaned_content,
+                    "usage": document.usage,  # type: ignore[dict-item]
+                    "content_hash": content_hash,
+                }
+                await self.async_client.upsert(
+                    collection_name=self.collection,
+                    data=data,
+                )
+                log_debug(f"Upserted document asynchronously: {document.name} ({document.meta_data})")
+                return data
+
+            await asyncio.gather(*[process_document(doc) for doc in documents])
 
         log_debug(f"Upserted {len(documents)} documents asynchronously in parallel")
 

@@ -1,11 +1,12 @@
 """JWT Middleware for AgentOS - JWT Authentication with optional RBAC."""
 
 import fnmatch
+import hmac
 import json
 import re
 from enum import Enum
 from os import getenv
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Union
 
 import jwt
 from fastapi import Request, Response
@@ -13,6 +14,7 @@ from fastapi.responses import JSONResponse
 from jwt import PyJWK
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from agno.os.auth import INTERNAL_SERVICE_SCOPES
 from agno.os.scopes import (
     AgentOSScope,
     get_accessible_resource_ids,
@@ -168,7 +170,9 @@ class JWTValidator:
             except Exception as e:
                 log_warning(f"Failed to parse JWKS key: {e}")
 
-    def validate_token(self, token: str, expected_audience: Optional[str] = None) -> Dict[str, Any]:
+    def validate_token(
+        self, token: str, expected_audience: Optional[Union[str, Iterable[str]]] = None
+    ) -> Dict[str, Any]:
         """
         Validate JWT token and extract claims.
 
@@ -191,10 +195,9 @@ class JWTValidator:
         }
 
         # Configure audience verification
-        if expected_audience:
-            decode_kwargs["audience"] = expected_audience
-        else:
-            decode_options["verify_aud"] = False
+        # We'll decode without audience verification and if we need to verify the audience,
+        # we'll manually verify the audience to provide better error messages
+        decode_options["verify_aud"] = False
 
         # If validation is disabled, decode without signature verification
         if not self.validate:
@@ -206,6 +209,7 @@ class JWTValidator:
             decode_kwargs["options"] = decode_options
 
         last_exception: Optional[Exception] = None
+        payload: Optional[Dict[str, Any]] = None
 
         # Try JWKS keys first if configured
         if self.jwks_keys:
@@ -222,9 +226,7 @@ class JWTValidator:
                     jwk = self.jwks_keys["_default"]
 
                 if jwk:
-                    return jwt.decode(token, jwk.key, **decode_kwargs)
-            except jwt.InvalidAudienceError:
-                raise
+                    payload = jwt.decode(token, jwk.key, **decode_kwargs)
             except jwt.ExpiredSignatureError:
                 raise
             except jwt.InvalidTokenError as e:
@@ -233,20 +235,54 @@ class JWTValidator:
                 last_exception = e
 
         # Try each static verification key until one succeeds
-        for key in self.verification_keys:
-            try:
-                return jwt.decode(token, key, **decode_kwargs)
-            except jwt.InvalidAudienceError:
-                raise
-            except jwt.ExpiredSignatureError:
-                raise
-            except jwt.InvalidTokenError as e:
-                last_exception = e
-                continue
+        if payload is None:
+            for key in self.verification_keys:
+                try:
+                    payload = jwt.decode(token, key, **decode_kwargs)
+                    break
+                except jwt.ExpiredSignatureError:
+                    raise
+                except jwt.InvalidTokenError as e:
+                    last_exception = e
+                    continue
 
-        if last_exception:
-            raise last_exception
-        raise jwt.InvalidTokenError("No verification keys configured")
+        if payload is None:
+            if last_exception:
+                raise last_exception
+            raise jwt.InvalidTokenError("No verification keys configured")
+
+        # Manually verify audience if expected_audience was provided
+        if expected_audience:
+            token_audience = payload.get(self.audience_claim)
+            if token_audience is None:
+                raise jwt.InvalidTokenError(
+                    f'Token is missing the "{self.audience_claim}" claim. '
+                    f"Audience verification requires this claim to be present in the token."
+                )
+
+            # Normalize expected_audience to a list
+            if isinstance(expected_audience, str):
+                expected_audiences = [expected_audience]
+            elif isinstance(expected_audience, Iterable):
+                expected_audiences = list(expected_audience)
+            else:
+                expected_audiences = []
+
+            # Normalize token_audience to a list
+            if isinstance(token_audience, str):
+                token_audiences = [token_audience]
+            elif isinstance(token_audience, list):
+                token_audiences = token_audience
+            else:
+                token_audiences = [token_audience] if token_audience else []
+
+            # Check if any token audience matches any expected audience
+            if not any(aud in expected_audiences for aud in token_audiences):
+                raise jwt.InvalidAudienceError(
+                    f"Invalid audience. Expected one of: {expected_audiences}, got: {token_audiences}"
+                )
+
+        return payload
 
     def extract_claims(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -364,6 +400,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
         user_id_claim: str = "sub",
         session_id_claim: str = "session_id",
         audience_claim: str = "aud",
+        audience: Optional[Union[str, Iterable[str]]] = None,
         verify_audience: bool = False,
         dependencies_claims: Optional[List[str]] = None,
         session_state_claims: Optional[List[str]] = None,
@@ -400,7 +437,8 @@ class JWTMiddleware(BaseHTTPMiddleware):
             user_id_claim: JWT claim name for user ID (default: "sub")
             session_id_claim: JWT claim name for session ID (default: "session_id")
             audience_claim: JWT claim name for audience/OS ID (default: "aud")
-            verify_audience: Whether to verify the audience claim matches AgentOS ID (default: False)
+            audience: Optional expected audience claim to validate against the token's audience claim (default: AgentOS ID)
+            verify_audience: Whether to verify the token's audience claim matches the expected audience claim (default: False)
             dependencies_claims: A list of claims to extract from the JWT token for dependencies
             session_state_claims: A list of claims to extract from the JWT token for session state
             scope_mappings: Optional dictionary mapping route patterns to required scopes.
@@ -452,6 +490,8 @@ class JWTMiddleware(BaseHTTPMiddleware):
         self.verify_audience = verify_audience
         self.dependencies_claims: List[str] = dependencies_claims or []
         self.session_state_claims: List[str] = session_state_claims or []
+
+        self.audience = audience
 
         # RBAC configuration (opt-in via scope_mappings)
         self.authorization = authorization
@@ -646,9 +686,40 @@ class JWTMiddleware(BaseHTTPMiddleware):
             error_msg = self._get_missing_token_error_message()
             return self._create_error_response(401, error_msg, origin, cors_allowed_origins)
 
+        # Check for internal service token (used by scheduler executor)
+        internal_token = getattr(request.app.state, "internal_service_token", None)
+        if internal_token and hmac.compare_digest(token, internal_token):
+            request.state.authenticated = True
+            request.state.user_id = "__scheduler__"
+            request.state.session_id = None
+            internal_scopes = list(INTERNAL_SERVICE_SCOPES)
+            request.state.scopes = internal_scopes
+            request.state.authorization_enabled = self.authorization or False
+
+            # Enforce RBAC for internal token (do not skip scope checks)
+            if self.authorization:
+                required_scopes = self._get_required_scopes(method, path)
+                if required_scopes:
+                    if not has_required_scopes(
+                        internal_scopes,
+                        required_scopes,
+                        admin_scope=self.admin_scope,
+                    ):
+                        log_warning(
+                            f"Internal service token denied for {method} {path}. "
+                            f"Required: {required_scopes}, Token has: {internal_scopes}"
+                        )
+                        return self._create_error_response(
+                            403, "Insufficient permissions", origin, cors_allowed_origins
+                        )
+
+            return await call_next(request)
+
         try:
             # Validate token and extract claims (with audience verification if configured)
-            expected_audience = agent_os_id if self.verify_audience else None
+            expected_audience = None
+            if self.verify_audience:
+                expected_audience = self.audience or agent_os_id
             payload: Dict[str, Any] = self.validator.validate_token(token, expected_audience)  # type: ignore
 
             # Extract standard claims and store in request.state
@@ -755,11 +826,10 @@ class JWTMiddleware(BaseHTTPMiddleware):
             request.state.authenticated = True
 
         except jwt.InvalidAudienceError:
-            log_warning(f"Invalid audience - expected: {agent_os_id}")
+            log_warning(f"Invalid token audience - expected: {expected_audience}")
             return self._create_error_response(
-                401, "Invalid audience - token not valid for this AgentOS instance", origin, cors_allowed_origins
+                401, "Invalid token audience - token not valid for this AgentOS instance", origin, cors_allowed_origins
             )
-
         except jwt.ExpiredSignatureError as e:
             if self.validate:
                 log_warning(f"Token has expired: {str(e)}")

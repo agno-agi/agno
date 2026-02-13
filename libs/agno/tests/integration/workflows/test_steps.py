@@ -6,9 +6,12 @@ from typing import AsyncIterator
 import pytest
 
 from agno.run.workflow import (
+    StepCompletedEvent,
     StepsExecutionCompletedEvent,
     StepsExecutionStartedEvent,
+    StepStartedEvent,
     WorkflowCompletedEvent,
+    WorkflowRunOutput,
 )
 from agno.workflow import Step, StepInput, StepOutput, Steps, Workflow
 
@@ -424,3 +427,224 @@ def test_steps_with_other_workflow_steps(shared_db):
     # Grouped container still carries nested results
     grouped_steps_container = response.step_results[1]
     assert find_content_in_steps(grouped_steps_container, "grouped2_grouped1_individual_output")
+
+
+# ============================================================================
+# EARLY TERMINATION / STOP PROPAGATION TESTS
+# ============================================================================
+
+
+def early_stop_step(step_input: StepInput) -> StepOutput:
+    """Step that requests early termination."""
+    return StepOutput(
+        content="Early stop requested",
+        success=True,
+        stop=True,
+    )
+
+
+def should_not_run_step(step_input: StepInput) -> StepOutput:
+    """Step that should not run after early stop."""
+    return StepOutput(
+        content="This step should not have run",
+        success=True,
+    )
+
+
+def normal_step(step_input: StepInput) -> StepOutput:
+    """Normal step that doesn't request stop."""
+    return StepOutput(
+        content="Normal step output",
+        success=True,
+    )
+
+
+def test_steps_propagates_stop_flag():
+    """Test that Steps propagates stop flag from inner steps."""
+    step1 = Step(name="normal", executor=normal_step)
+    step2 = Step(name="stop_step", executor=early_stop_step)
+
+    steps = Steps(
+        name="Stop Steps",
+        steps=[step1, step2],
+    )
+    step_input = StepInput(input="test")
+
+    result = steps.execute(step_input)
+
+    assert isinstance(result, StepOutput)
+    assert result.stop is True, "Steps should propagate stop=True from inner step"
+
+
+def test_steps_stop_propagation_in_workflow(shared_db):
+    """Test that workflow stops when Steps' inner step returns stop=True."""
+    step1 = Step(name="normal", executor=normal_step)
+    step2 = Step(name="stop_step", executor=early_stop_step)
+
+    workflow = Workflow(
+        name="Steps Stop Propagation Test",
+        db=shared_db,
+        steps=[
+            Steps(
+                name="stop_steps",
+                steps=[step1, step2],
+            ),
+            should_not_run_step,  # This should NOT execute
+        ],
+    )
+
+    response = workflow.run(input="test")
+
+    assert isinstance(response, WorkflowRunOutput)
+    # Should only have 1 step result (the Steps container), not 2
+    assert len(response.step_results) == 1, "Workflow should stop after Steps with stop=True"
+    assert response.step_results[0].stop is True
+
+
+def test_steps_stops_inner_steps_on_stop_flag():
+    """Test that Steps stops executing remaining inner steps when one returns stop=True."""
+    step1 = Step(name="first", executor=normal_step)
+    step2 = Step(name="stop_step", executor=early_stop_step)
+    step3 = Step(name="should_not_run", executor=should_not_run_step)
+
+    steps = Steps(
+        name="Inner Stop Steps",
+        steps=[step1, step2, step3],
+    )
+    step_input = StepInput(input="test")
+
+    result = steps.execute(step_input)
+
+    assert isinstance(result, StepOutput)
+    assert result.stop is True
+    # Should only have 2 step results (first and stop_step), not 3
+    assert len(result.steps) == 2, "Steps should stop after inner step with stop=True"
+    assert result.steps[0].content == "Normal step output"
+    assert result.steps[1].content == "Early stop requested"
+
+
+def test_steps_streaming_propagates_stop(shared_db):
+    """Test that streaming Steps propagates stop flag and stops workflow."""
+    step1 = Step(name="normal", executor=normal_step)
+    step2 = Step(name="stop_step", executor=early_stop_step)
+
+    workflow = Workflow(
+        name="Streaming Steps Stop Test",
+        db=shared_db,
+        steps=[
+            Steps(
+                name="stop_steps",
+                steps=[step1, step2],
+            ),
+            should_not_run_step,
+        ],
+    )
+
+    events = list(workflow.run(input="test", stream=True, stream_events=True))
+
+    # Verify that the Steps completed with stop propagation
+    steps_completed = [e for e in events if isinstance(e, StepsExecutionCompletedEvent)]
+    assert len(steps_completed) == 1
+
+    # Check that inner step has stop=True in results
+    step_results = steps_completed[0].step_results or []
+    assert len(step_results) == 2
+    assert step_results[1].stop is True
+
+    # Most importantly: verify should_not_run_step was NOT executed
+    step_events = [e for e in events if isinstance(e, (StepStartedEvent, StepCompletedEvent))]
+    step_names = [e.step_name for e in step_events]
+    assert "should_not_run_step" not in step_names, "Workflow should have stopped before should_not_run_step"
+
+
+@pytest.mark.asyncio
+async def test_async_steps_propagates_stop():
+    """Test that async Steps propagates stop flag."""
+    step1 = Step(name="normal", executor=normal_step)
+    step2 = Step(name="stop_step", executor=early_stop_step)
+
+    steps = Steps(
+        name="Async Stop Steps",
+        steps=[step1, step2],
+    )
+    step_input = StepInput(input="test")
+
+    result = await steps.aexecute(step_input)
+
+    assert isinstance(result, StepOutput)
+    assert result.stop is True, "Async Steps should propagate stop=True from inner step"
+
+
+@pytest.mark.asyncio
+async def test_async_steps_streaming_propagates_stop(shared_db):
+    """Test that async streaming Steps propagates stop flag and stops workflow."""
+    step1 = Step(name="normal", executor=normal_step)
+    step2 = Step(name="stop_step", executor=early_stop_step)
+
+    workflow = Workflow(
+        name="Async Streaming Steps Stop Test",
+        db=shared_db,
+        steps=[
+            Steps(
+                name="stop_steps",
+                steps=[step1, step2],
+            ),
+            should_not_run_step,
+        ],
+    )
+
+    events = []
+    async for event in workflow.arun(input="test", stream=True, stream_events=True):
+        events.append(event)
+
+    # Verify that the Steps completed with stop propagation
+    steps_completed = [e for e in events if isinstance(e, StepsExecutionCompletedEvent)]
+    assert len(steps_completed) == 1
+
+    # Check that inner step has stop=True in results
+    step_results = steps_completed[0].step_results or []
+    assert len(step_results) == 2
+    assert step_results[1].stop is True
+
+    # Most importantly: verify should_not_run_step was NOT executed
+    step_events = [e for e in events if isinstance(e, (StepStartedEvent, StepCompletedEvent))]
+    step_names = [e.step_name for e in step_events]
+    assert "should_not_run_step" not in step_names, "Workflow should have stopped before should_not_run_step"
+
+
+def test_steps_first_step_stops():
+    """Test Steps when first step requests stop."""
+    step1 = Step(name="stop_first", executor=early_stop_step)
+    step2 = Step(name="should_not_run", executor=should_not_run_step)
+
+    steps = Steps(
+        name="First Stop Steps",
+        steps=[step1, step2],
+    )
+    step_input = StepInput(input="test")
+
+    result = steps.execute(step_input)
+
+    assert isinstance(result, StepOutput)
+    assert result.stop is True
+    # Should only have 1 step result
+    assert len(result.steps) == 1, "Steps should stop after first step with stop=True"
+    assert result.steps[0].content == "Early stop requested"
+
+
+def test_steps_no_stop():
+    """Test Steps when no inner steps request stop."""
+    step1 = Step(name="first", executor=normal_step)
+    step2 = Step(name="second", executor=step2_function)
+
+    steps = Steps(
+        name="No Stop Steps",
+        steps=[step1, step2],
+    )
+    step_input = StepInput(input="test")
+
+    result = steps.execute(step_input)
+
+    assert isinstance(result, StepOutput)
+    assert result.stop is False, "Steps should not set stop when no inner step requests it"
+    assert len(result.steps) == 2

@@ -14,7 +14,6 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import (
     TYPE_CHECKING,
-    Any,
     AsyncIterator,
     Callable,
     Dict,
@@ -29,6 +28,7 @@ from typing import (
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
+from agno.run.base import RunContext
 from agno.run.messages import RunMessages
 from agno.tools import Toolkit
 from agno.tools.function import Function
@@ -87,9 +87,7 @@ class ReasoningConfig:
     telemetry: bool = True
     debug_mode: bool = False
     debug_level: Literal[1, 2] = 1
-    session_state: Optional[Dict[str, Any]] = None
-    dependencies: Optional[Dict[str, Any]] = None
-    metadata: Optional[Dict[str, Any]] = None
+    run_context: Optional[RunContext] = None
 
 
 @dataclass
@@ -161,9 +159,7 @@ class ReasoningManager:
             telemetry=self.config.telemetry,
             debug_mode=self.config.debug_mode,
             debug_level=self.config.debug_level,
-            session_state=self.config.session_state,
-            dependencies=self.config.dependencies,
-            metadata=self.config.metadata,
+            run_context=self.config.run_context,
         )
 
     def _get_default_reasoning_agent(self, model: Model) -> Optional["Agent"]:
@@ -183,9 +179,7 @@ class ReasoningManager:
             telemetry=self.config.telemetry,
             debug_mode=self.config.debug_mode,
             debug_level=self.config.debug_level,
-            session_state=self.config.session_state,
-            dependencies=self.config.dependencies,
-            metadata=self.config.metadata,
+            run_context=self.config.run_context,
         )
 
     def is_native_reasoning_model(self, model: Optional[Model] = None) -> bool:
@@ -937,7 +931,7 @@ class ReasoningManager:
             log_debug(f"Step {step_count}", center=True, symbol="=")
             step_count += 1
             try:
-                reasoning_agent_response: RunOutput = await reasoning_agent.arun(
+                reasoning_agent_response: RunOutput = await reasoning_agent.arun(  # type: ignore[misc]
                     input=run_messages.get_input_messages()
                 )
 

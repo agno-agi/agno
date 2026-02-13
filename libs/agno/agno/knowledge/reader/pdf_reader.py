@@ -200,10 +200,11 @@ class BasePDFReader(Reader):
         super().__init__(chunking_strategy=chunking_strategy, **kwargs)
 
     @classmethod
-    def get_supported_chunking_strategies(self) -> List[ChunkingStrategyType]:
+    def get_supported_chunking_strategies(cls) -> List[ChunkingStrategyType]:
         """Get the list of supported chunking strategies for PDF readers."""
         return [
             ChunkingStrategyType.DOCUMENT_CHUNKER,
+            ChunkingStrategyType.CODE_CHUNKER,
             ChunkingStrategyType.FIXED_SIZE_CHUNKER,
             ChunkingStrategyType.AGENTIC_CHUNKER,
             ChunkingStrategyType.SEMANTIC_CHUNKER,
@@ -231,8 +232,9 @@ class BasePDFReader(Reader):
             return True
 
         # Use provided password or fall back to instance password
-        pdf_password = password or self.password
-        if not pdf_password:
+        # Note: Empty string "" is a valid password for PDFs with blank user password
+        pdf_password = self.password if password is None else password
+        if pdf_password is None:
             log_error(f'PDF file "{doc_name}" is password protected but no password provided')
             return False
 
@@ -334,7 +336,7 @@ class PDFReader(BasePDFReader):
     """Reader for PDF files"""
 
     @classmethod
-    def get_supported_content_types(self) -> List[ContentType]:
+    def get_supported_content_types(cls) -> List[ContentType]:
         return [ContentType.PDF]
 
     def read(

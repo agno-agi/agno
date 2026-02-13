@@ -82,10 +82,13 @@ def simple_workflow(mock_agent, tmp_path):
     )
 
 
-@pytest.fixture
-def simple_workflow_with_async_db(mock_agent, tmp_path):
+@pytest_asyncio.fixture
+async def simple_workflow_with_async_db(mock_agent, tmp_path):
     """Create a simple workflow for testing with async database"""
-    db = AsyncSqliteDb(session_table="workflow_session", db_file=tmp_path / "workflow_bg_test.db")
+    db = AsyncSqliteDb(session_table="workflow_session", db_file=str(tmp_path / "workflow_bg_test.db"))
+
+    # Initialize tables before using
+    await db._create_all_tables()
 
     return Workflow(
         name="Test Background Workflow with Async DB",
