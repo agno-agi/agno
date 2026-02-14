@@ -1,0 +1,9 @@
+agno
+python-dotenv
+googlemaps
+google-generativeai
+google-genai
+fastapi
+sqlalchemy
+google-maps-places
+uvicorn
