@@ -1769,12 +1769,11 @@ class Model(ABC):
             stream_data.response_role = model_response_delta.role  # type: ignore
 
         if model_response_delta.response_usage is not None:
-            if stream_data.response_metrics is None:
-                stream_data.response_metrics = Metrics()
-
             if self.is_cumulative_usage:
-                stream_data.response_metrics = model_response_delta.response_usage
+                stream_data.response_metrics = Metrics() + model_response_delta.response_usage
             else:
+                if stream_data.response_metrics is None:
+                    stream_data.response_metrics = Metrics()
                 stream_data.response_metrics += model_response_delta.response_usage
 
         # Update stream_data content
