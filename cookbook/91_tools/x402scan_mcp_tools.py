@@ -17,10 +17,13 @@ Getting Started:
 Configuration:
 - Wallet location: ~/.x402scan-mcp/wallet.json (auto-generated)
 - Environment variable: X402_PRIVATE_KEY (optional, use existing wallet)
+
+Skills: https://github.com/merit-systems/x402scan-skills
 """
 
 import asyncio
 from inspect import iscoroutinefunction
+from pathlib import Path
 from typing import Any, Callable, Dict, List
 
 from agno.agent import Agent
@@ -271,26 +274,23 @@ async def skills_example() -> None:
     - Pricing guidance and cost optimization
     - Best practices for each API provider
     
-    Install skills from: https://github.com/merit-systems/x402scan-skills
+    Setup:
+        git clone https://github.com/merit-systems/x402scan-skills ~/x402scan-skills
+    
+    Then pass skills directory to agent.
     """
+    # Check if skills directory exists
+    skills_dir = Path.home() / "x402scan-skills" / "skills"
+    if not skills_dir.exists():
+        print(f"⚠️  Skills not found at {skills_dir}")
+        print("Install: git clone https://github.com/merit-systems/x402scan-skills ~/x402scan-skills")
+        return
+    
     async with MCPTools("npx -y @x402scan/mcp@latest") as x402:
-        # Clone skills repo (in production, install locally first)
-        import subprocess
-        skills_dir = "/tmp/x402scan-skills/skills"
-        
-        try:
-            subprocess.run(
-                ["git", "clone", "https://github.com/merit-systems/x402scan-skills", "/tmp/x402scan-skills"],
-                capture_output=True,
-                check=False,
-            )
-        except:
-            pass  # Skills may already exist
-        
         agent = Agent(
             model=Claude(id="claude-sonnet-4-20250514"),
             tools=[x402],
-            skills=Skills(loaders=[LocalSkills(skills_dir)]),
+            skills=Skills(loaders=[LocalSkills(str(skills_dir))]),
             instructions="""You are a research agent with access to x402 skills.
             
             Available skills provide guidance for:
@@ -313,6 +313,120 @@ async def skills_example() -> None:
         )
 
 
+# Example 7: Production-ready with cost controls
+async def production_example() -> None:
+    """
+    Production-ready agent with real cost controls and error handling.
+    
+    Features:
+    - Hard spending limits (rejects requests over limit)
+    - Graceful error handling
+    - Transaction logging
+    - Balance checks before operations
+    - Session cost reporting
+    """
+    
+    class CostController:
+        def __init__(self, max_spend: float = 5.0):
+            self.max_spend = max_spend
+            self.total_spent = 0.0
+            self.transactions = []
+        
+        def can_spend(self, estimated_cost: float) -> bool:
+            return (self.total_spent + estimated_cost) <= self.max_spend
+        
+        def record_transaction(self, url: str, cost: float, success: bool):
+            self.transactions.append({
+                "url": url,
+                "cost": cost,
+                "success": success,
+            })
+            if success:
+                self.total_spent += cost
+        
+        def get_report(self) -> str:
+            successful = [t for t in self.transactions if t["success"]]
+            failed = [t for t in self.transactions if not t["success"]]
+            return f"""Cost Report:
+- Total Spent: ${self.total_spent:.2f} / ${self.max_spend:.2f}
+- Successful Transactions: {len(successful)}
+- Failed Transactions: {len(failed)}
+- Remaining Budget: ${self.max_spend - self.total_spent:.2f}"""
+    
+    cost_controller = CostController(max_spend=5.0)
+    
+    async def production_hook(
+        function_name: str, function_call: Callable, arguments: Dict[str, Any]
+    ) -> Any:
+        if function_name == "fetch":
+            url = arguments.get("url", "")
+            estimated_cost = 0.05
+            
+            # Hard limit enforcement
+            if not cost_controller.can_spend(estimated_cost):
+                logger.error(f"Budget exceeded. Cannot make request to {url}")
+                return {
+                    "error": "Budget limit reached",
+                    "spent": cost_controller.total_spent,
+                    "limit": cost_controller.max_spend
+                }
+            
+            # Execute with error handling
+            try:
+                if iscoroutinefunction(function_call):
+                    result = await function_call(**arguments)
+                else:
+                    result = function_call(**arguments)
+                
+                actual_cost = result.get("cost", estimated_cost) if isinstance(result, dict) else estimated_cost
+                cost_controller.record_transaction(url, actual_cost, True)
+                logger.info(f"✓ {url}: ${actual_cost:.4f}")
+                return result
+            
+            except Exception as e:
+                logger.error(f"✗ {url}: {str(e)}")
+                cost_controller.record_transaction(url, 0, False)
+                return {"error": str(e)}
+        
+        # Non-fetch calls pass through
+        if iscoroutinefunction(function_call):
+            return await function_call(**arguments)
+        return function_call(**arguments)
+    
+    async with MCPTools("npx -y @x402scan/mcp@latest") as x402:
+        agent = Agent(
+            model=Claude(id="claude-sonnet-4-20250514"),
+            tools=[x402],
+            tool_hooks=[production_hook],
+            instructions="""Production research agent with strict cost controls.
+            
+            Rules:
+            - $5.00 hard limit per session
+            - Check balance before starting
+            - Use free sources first, paid only when necessary
+            - Always provide sources for paid data
+            - Gracefully handle errors
+            
+            If budget is exhausted, stop and report findings so far.""",
+            markdown=True,
+        )
+        
+        print("\n" + "="*60)
+        print("PRODUCTION AGENT SESSION")
+        print("="*60)
+        
+        await agent.aprint_response(
+            "Research the top 3 companies in AI infrastructure. "
+            "Find funding, key people, and recent news. "
+            "Optimize for cost - use paid APIs only for critical data.",
+            stream=True,
+        )
+        
+        print("\n" + "="*60)
+        print(cost_controller.get_report())
+        print("="*60 + "\n")
+
+
 # ---------------------------------------------------------------------------
 # Run Agent
 # ---------------------------------------------------------------------------
@@ -329,3 +443,4 @@ if __name__ == "__main__":
     # asyncio.run(spending_tracker_example())  # Tool hooks for cost tracking
     # asyncio.run(structured_research_example())  # Structured outputs with cost attribution
     # asyncio.run(skills_example())  # Load x402 skills for structured workflows
+    # asyncio.run(production_example())  # Production-ready with hard cost limits
