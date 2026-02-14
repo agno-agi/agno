@@ -44,11 +44,13 @@ async def onboarding_example() -> None:
     First-time setup: Check balance, get deposit address, and discover APIs.
     
     On first run:
-    - Wallet auto-generated at ~/.x402scan-mcp/wallet.json
+    - Wallet auto-generated at ~/.x402scan-mcp/wallet.json (unique per user)
     - Balance will be $0
-    - Agent shows you how to fund it
+    - Agent shows your unique deposit address + deposit link
+    - Each user gets a different address
     
-    To use an existing wallet, set X402_PRIVATE_KEY environment variable.
+    To fund: Send USDC on Base to the address shown.
+    To use existing wallet: Set X402_PRIVATE_KEY environment variable.
     """
     async with MCPTools("npx -y @x402scan/mcp@latest") as x402:
         agent = Agent(
@@ -58,8 +60,10 @@ async def onboarding_example() -> None:
             
             Steps:
             1. Check wallet balance with get_wallet_info
-            2. Show the deposit address (users can fund with USDC on Base)
-            3. Discover available paid APIs with discover_api_endpoints
+            2. Show the unique deposit address (each user gets a different one)
+            3. Show the deposit link: https://x402scan.com/mcp/deposit/{address}
+            4. Explain: Send USDC on Base network to this address
+            5. Discover available paid APIs with discover_api_endpoints
             
             Be helpful and encouraging - this is their first time.""",
             markdown=True,
