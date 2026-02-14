@@ -7,7 +7,7 @@ Demonstrates team-level agentic memory creation and updates during runs.
 
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.team import Team
 
 # ---------------------------------------------------------------------------
@@ -21,14 +21,14 @@ john_doe_id = "john_doe@example.com"
 # Create Members
 # ---------------------------------------------------------------------------
 agent = Agent(
-    model=OpenAIChat(id="o3-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
 )
 
 # ---------------------------------------------------------------------------
 # Create Team
 # ---------------------------------------------------------------------------
 team = Team(
-    model=OpenAIChat(id="o3-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     members=[agent],
     db=db,
     enable_agentic_memory=True,

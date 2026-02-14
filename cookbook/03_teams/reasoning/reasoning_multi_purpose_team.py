@@ -12,8 +12,7 @@ from textwrap import dedent
 from agno.agent import Agent
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
-from agno.models.anthropic import Claude
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.team import Team
 from agno.tools.calculator import CalculatorTools
 from agno.tools.e2b import E2BTools
@@ -48,7 +47,7 @@ agno_assist_knowledge = Knowledge(
 web_agent = Agent(
     name="Web Agent",
     role="Search the web for information",
-    model=Claude(id="claude-3-5-sonnet-latest"),
+    model=OpenAIResponses(id="gpt-5.2"),
     tools=[WebSearchTools()],
     instructions=["Always include sources"],
 )
@@ -56,7 +55,7 @@ web_agent = Agent(
 finance_agent = Agent(
     name="Finance Agent",
     role="Get financial data",
-    model=Claude(id="claude-3-5-sonnet-latest"),
+    model=OpenAIResponses(id="gpt-5.2"),
     tools=[YFinanceTools()],
     instructions=["Use tables to display data"],
 )
@@ -64,7 +63,7 @@ finance_agent = Agent(
 writer_agent = Agent(
     name="Write Agent",
     role="Write content",
-    model=Claude(id="claude-3-5-sonnet-latest"),
+    model=OpenAIResponses(id="gpt-5.2"),
     description="You are an AI agent that can write content.",
     instructions=[
         "You are a versatile writer who can create content on any topic.",
@@ -79,7 +78,7 @@ writer_agent = Agent(
 medical_agent = Agent(
     name="Medical Agent",
     role="Medical researcher",
-    model=Claude(id="claude-3-5-sonnet-latest"),
+    model=OpenAIResponses(id="gpt-5.2"),
     tools=[PubmedTools()],
     instructions=[
         "You are a medical agent that can answer questions about medical topics.",
@@ -89,7 +88,7 @@ medical_agent = Agent(
 
 calculator_agent = Agent(
     name="Calculator Agent",
-    model=Claude(id="claude-3-5-sonnet-latest"),
+    model=OpenAIResponses(id="gpt-5.2"),
     role="Calculate",
     tools=[CalculatorTools()],
 )
@@ -97,7 +96,7 @@ calculator_agent = Agent(
 agno_assist = Agent(
     name="Agno Assist",
     role="You help answer questions about the Agno framework.",
-    model=OpenAIChat(id="o3-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     instructions="Search your knowledge before answering the question. Help me to write working code for Agno Agents.",
     tools=[
         KnowledgeTools(
@@ -113,7 +112,7 @@ agno_assist = Agent(
 github_agent = Agent(
     name="Github Agent",
     role="Do analysis on Github repositories",
-    model=OpenAIChat(id="o3-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     instructions=[
         "Use your tools to answer questions about the repo: agno-agi/agno",
         "Do not create any issues or pull requests unless explicitly asked to do so",
@@ -132,7 +131,7 @@ github_agent = Agent(
 local_python_agent = Agent(
     name="Local Python Agent",
     role="Run Python code locally",
-    model=OpenAIChat(id="o3-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     instructions=["Use your tools to run Python code locally"],
     tools=[
         FileTools(base_dir=cwd),
@@ -147,7 +146,7 @@ local_python_agent = Agent(
 
 code_agent = Agent(
     name="Code Agent",
-    model=Claude(id="claude-3-5-sonnet-latest"),
+    model=OpenAIResponses(id="gpt-5.2"),
     role="Execute and test code",
     tools=[E2BTools()],
     instructions=[
@@ -162,7 +161,7 @@ code_agent = Agent(
 # ---------------------------------------------------------------------------
 sync_agent_team = Team(
     name="Multi-Purpose Team",
-    model=Claude(id="claude-3-7-sonnet-latest"),
+    model=OpenAIResponses(id="gpt-5.2"),
     tools=[ReasoningTools(add_instructions=True, add_few_shot=True)],
     members=[
         web_agent,
@@ -187,7 +186,7 @@ sync_agent_team = Team(
 
 async_agent_team = Team(
     name="Multi-Purpose Agent Team",
-    model=Claude(id="claude-3-5-sonnet-latest"),
+    model=OpenAIResponses(id="gpt-5.2"),
     tools=[ReasoningTools()],
     members=[
         web_agent,

@@ -10,8 +10,7 @@ from typing import Any, Callable
 from uuid import uuid4
 
 from agno.agent import Agent
-from agno.models.anthropic.claude import Claude
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.team import Team
 from agno.tools.reddit import RedditTools
 from agno.tools.websearch import WebSearchTools
@@ -53,7 +52,7 @@ website_agent = Agent(
     name="Website Agent",
     id="website-agent",
     role="Search the website for information",
-    model=OpenAIChat(id="o3-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     tools=[WebSearchTools()],
     instructions=[
         "Search the website for information",
@@ -68,7 +67,7 @@ user_id = str(uuid4())
 
 company_info_team = Team(
     name="Company Info Team",
-    model=Claude(id="claude-3-7-sonnet-latest"),
+    model=OpenAIResponses(id="gpt-5.2"),
     members=[reddit_agent, website_agent],
     markdown=True,
     instructions=[

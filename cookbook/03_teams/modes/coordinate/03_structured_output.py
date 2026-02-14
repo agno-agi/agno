@@ -14,7 +14,9 @@ from agno.team.mode import TeamMode
 from agno.team.team import Team
 from pydantic import BaseModel, Field
 
-# -- Output schema -----------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Output Schema
+# ---------------------------------------------------------------------------
 
 
 class CompanyBrief(BaseModel):
@@ -25,7 +27,9 @@ class CompanyBrief(BaseModel):
     outlook: str = Field(..., description="Brief forward-looking assessment")
 
 
-# -- Member agents -----------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Create Members
+# ---------------------------------------------------------------------------
 
 market_analyst = Agent(
     name="Market Analyst",
@@ -47,7 +51,9 @@ risk_analyst = Agent(
     ],
 )
 
-# -- Coordinate team with structured output ----------------------------------
+# ---------------------------------------------------------------------------
+# Output Schema
+# ---------------------------------------------------------------------------
 
 team = Team(
     name="Company Analysis Team",
@@ -64,7 +70,9 @@ team = Team(
     show_members_responses=True,
 )
 
-# -- Run ---------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Run Team
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     from rich.pretty import pprint

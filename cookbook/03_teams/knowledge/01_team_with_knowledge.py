@@ -10,7 +10,7 @@ from pathlib import Path
 from agno.agent import Agent
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.team import Team
 from agno.tools.websearch import WebSearchTools
 from agno.vectordb.lancedb import LanceDb, SearchType
@@ -39,7 +39,7 @@ agno_docs_knowledge.insert(url="https://docs.agno.com/llms-full.txt")
 web_agent = Agent(
     name="Web Search Agent",
     role="Handle web search requests",
-    model=OpenAIChat(id="o3-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     tools=[WebSearchTools()],
     instructions=["Always include sources"],
 )
@@ -50,7 +50,7 @@ web_agent = Agent(
 team_with_knowledge = Team(
     name="Team with Knowledge",
     members=[web_agent],
-    model=OpenAIChat(id="o3-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     knowledge=agno_docs_knowledge,
     show_members_responses=True,
     markdown=True,

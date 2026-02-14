@@ -6,7 +6,7 @@ Demonstrates team-level typed output using Pydantic schemas.
 """
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.team import Team
 from agno.tools.websearch import WebSearchTools
 from agno.utils.pprint import pprint_run_response
@@ -35,7 +35,7 @@ class StockReport(BaseModel):
 # ---------------------------------------------------------------------------
 stock_searcher = Agent(
     name="Stock Searcher",
-    model=OpenAIChat("gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     output_schema=StockAnalysis,
     role="Searches for information on stocks and provides price analysis.",
     tools=[WebSearchTools()],
@@ -43,7 +43,7 @@ stock_searcher = Agent(
 
 company_info_agent = Agent(
     name="Company Info Searcher",
-    model=OpenAIChat("gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     role="Searches for information about companies and recent news.",
     output_schema=CompanyAnalysis,
     tools=[WebSearchTools()],
@@ -54,7 +54,7 @@ company_info_agent = Agent(
 # ---------------------------------------------------------------------------
 team = Team(
     name="Stock Research Team",
-    model=OpenAIChat("gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     respond_directly=True,
     members=[stock_searcher, company_info_agent],
     output_schema=StockReport,

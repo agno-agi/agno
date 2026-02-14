@@ -9,7 +9,7 @@ from typing import List
 
 from agno.agent import Agent
 from agno.media import Image
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.team import Team
 from pydantic import BaseModel, Field
 from rich.pretty import pprint
@@ -32,7 +32,7 @@ class MovieScript(BaseModel):
 image_analyst = Agent(
     name="Image Analyst",
     role="Analyze visual content and extract key elements",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     instructions=[
         "Analyze images for visual elements, setting, and characters",
         "Focus on details that can inspire creative content",
@@ -42,7 +42,7 @@ image_analyst = Agent(
 script_writer = Agent(
     name="Script Writer",
     role="Create structured movie scripts from visual inspiration",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     instructions=[
         "Transform visual analysis into compelling movie concepts",
         "Follow the structured output format precisely",
@@ -55,7 +55,7 @@ script_writer = Agent(
 movie_team = Team(
     name="Movie Script Team",
     members=[image_analyst, script_writer],
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     instructions=[
         "Create structured movie scripts from visual content.",
         "Image Analyst: First analyze the image for visual elements and context.",

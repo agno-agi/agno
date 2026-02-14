@@ -239,3 +239,22 @@ gh api repos/agno-agi/agno/pulls/<PR_NUMBER> -X PATCH -f body="$(cat /path/to/bo
 - Don't skip async variants of public methods
 - Don't push code without running `./scripts/format.sh` and `./scripts/validate.sh`
 - Don't submit a PR without a detailed PR description. Always follow the PR template provided in `.github/pull_request_template.md`.
+
+---
+
+## CI: Review Intent Detection
+
+When running in GitHub Actions (CI) and a user mentions `@claude` with review intent, automatically invoke the `/code-review` plugin command before responding.
+
+**Trigger phrases** (case-insensitive, partial matches count):
+- "review this PR", "review the changes", "review this"
+- "code review", "do a review", "run a review"
+- "check this PR", "check the code", "look at this PR"
+- "what do you think of this PR", "any issues with this PR"
+
+**Do NOT auto-invoke** `/code-review` when the request is clearly about something else:
+- "review my question", "review this error message"
+- Specific file/line questions ("what does line 42 do?")
+- Bug reports, feature requests, or general questions
+
+When in doubt, invoke `/code-review` — it's better to review and answer than to skip the review.

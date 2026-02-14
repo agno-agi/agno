@@ -9,7 +9,7 @@ import asyncio
 import os
 
 from agno.db.sqlite import AsyncSqliteDb
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.team import Team
 
 # ---------------------------------------------------------------------------
@@ -22,7 +22,7 @@ if os.path.exists("tmp/data.db"):
 # Create Team
 # ---------------------------------------------------------------------------
 team = Team(
-    model=OpenAIChat(id="gpt-5.2"),
+    model=OpenAIResponses(id="gpt-5.2"),
     members=[],
     db=AsyncSqliteDb(db_file="tmp/data.db"),
     search_session_history=True,

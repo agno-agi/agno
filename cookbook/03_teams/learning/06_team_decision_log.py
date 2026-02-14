@@ -20,26 +20,34 @@ from agno.learn import (
     LearningMachine,
     LearningMode,
 )
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.team import Team
 
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 
+
+# ---------------------------------------------------------------------------
+# Create Members
+# ---------------------------------------------------------------------------
 architect = Agent(
     name="Solutions Architect",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     role="Evaluate architecture options and trade-offs.",
 )
 
 cost_analyst = Agent(
     name="Cost Analyst",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     role="Analyze cost implications of technical decisions.",
 )
 
+
+# ---------------------------------------------------------------------------
+# Create Team
+# ---------------------------------------------------------------------------
 team = Team(
     name="Architecture Review Board",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     members=[architect, cost_analyst],
     db=db,
     learning=LearningMachine(
@@ -59,6 +67,10 @@ team = Team(
     show_members_responses=True,
 )
 
+
+# ---------------------------------------------------------------------------
+# Run Demo
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     user_id = "grace@example.com"
 

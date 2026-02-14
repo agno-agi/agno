@@ -1,8 +1,0 @@
-agno[openai,anthropic]
-duckduckgo-search
-duckdb
-yfinance
-exa-py
-pgvector
-psycopg[binary]
-sqlalchemy

@@ -8,7 +8,7 @@ Demonstrates sharing session state and member interactions across team members.
 from agno.agent import Agent
 from agno.db.in_memory import InMemoryDb
 from agno.db.sqlite import SqliteDb
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.team import Team
 from agno.tools.websearch import WebSearchTools
 
@@ -18,20 +18,20 @@ from agno.tools.websearch import WebSearchTools
 user_advisor = Agent(
     role="User Advisor",
     description="You answer questions related to the user.",
-    model=OpenAIChat(id="gpt-5.2"),
+    model=OpenAIResponses(id="gpt-5.2"),
     instructions="User's name is {user_name} and age is {age}",
 )
 
 web_research_agent = Agent(
     name="Web Research Agent",
-    model=OpenAIChat(id="o3-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     tools=[WebSearchTools()],
     instructions="You are a web research agent that can answer questions from the web.",
 )
 
 report_agent = Agent(
     name="Report Agent",
-    model=OpenAIChat(id="o3-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     instructions="You are a report agent that can write a report from the web research.",
 )
 
@@ -40,14 +40,14 @@ report_agent = Agent(
 # ---------------------------------------------------------------------------
 state_team = Team(
     db=InMemoryDb(),
-    model=OpenAIChat(id="gpt-5.2"),
+    model=OpenAIResponses(id="gpt-5.2"),
     instructions="You are a team that answers questions related to the user. Delegate to the member agent to address user requests or answer any questions about the user.",
     members=[user_advisor],
     respond_directly=True,
 )
 
 interaction_team = Team(
-    model=OpenAIChat(id="o3-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     db=SqliteDb(db_file="tmp/agents.db"),
     members=[web_research_agent, report_agent],
     share_member_interactions=True,

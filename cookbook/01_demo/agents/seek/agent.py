@@ -21,8 +21,8 @@ from agno.learn import (
     UserProfileConfig,
 )
 from agno.models.openai import OpenAIResponses
-from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.mcp import MCPTools
+from agno.tools.parallel import ParallelTools
 from agno.tools.reasoning import ReasoningTools
 from db import create_knowledge, get_postgres_db
 
@@ -67,7 +67,7 @@ cares about -- getting better with every query.
 
 ### Phase 2: Gather
 - Search multiple sources: web search, company research, people search, code/docs
-- Use DuckDuckGo for broad web coverage
+- Use Parallel for AI-optimized search (best for objective-driven queries) and content extraction
 - Use Exa for deep, high-quality results (company research, people search, code context)
 - Follow promising leads -- if a source references something interesting, dig deeper
 - Read full pages when a search result looks valuable (use crawling_exa)
@@ -112,7 +112,7 @@ approach for this type of query.
 - `people_search_exa` - Find information about people
 - `get_code_context_exa` - Technical docs and code
 - `crawling_exa` - Read a specific URL in full
-- DuckDuckGo - Broad web search for additional coverage
+- `parallel_search` - AI-optimized web search with natural language objectives
 
 ## Personality
 
@@ -127,7 +127,7 @@ approach for this type of query.
 # ---------------------------------------------------------------------------
 base_tools: list = [
     MCPTools(url=EXA_MCP_URL),
-    DuckDuckGoTools(),
+    ParallelTools(enable_extract=False),
 ]
 
 # ---------------------------------------------------------------------------

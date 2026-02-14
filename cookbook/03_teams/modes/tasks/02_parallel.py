@@ -11,7 +11,9 @@ from agno.models.openai import OpenAIResponses
 from agno.team.mode import TeamMode
 from agno.team.team import Team
 
-# -- Specialist agents -------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Create Members
+# ---------------------------------------------------------------------------
 
 frontend_reviewer = Agent(
     name="Frontend Reviewer",
@@ -46,7 +48,9 @@ devops_reviewer = Agent(
     ],
 )
 
-# -- Tasks team with parallel emphasis ---------------------------------------
+# ---------------------------------------------------------------------------
+# Create Team
+# ---------------------------------------------------------------------------
 
 team = Team(
     name="Architecture Review Team",
@@ -65,7 +69,9 @@ team = Team(
     max_iterations=10,
 )
 
-# -- Run ---------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Run Team
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     team.print_response(
