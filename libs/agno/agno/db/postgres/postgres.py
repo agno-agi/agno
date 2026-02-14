@@ -755,10 +755,6 @@ class PostgresDb(BaseDb):
                 if user_id is not None:
                     stmt = stmt.where(table.c.user_id == user_id)
 
-                # Filter by session_type to ensure we get the correct session type
-                session_type_value = session_type.value if isinstance(session_type, SessionType) else session_type
-                stmt = stmt.where(table.c.session_type == session_type_value)
-
                 result = sess.execute(stmt).fetchone()
                 if result is None:
                     return None
