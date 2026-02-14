@@ -36,7 +36,7 @@ jobs:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           use_sticky_comment: true
           track_progress: true
-          show_full_output: true  # TEMP: remove after validation
+          show_full_output: true  # TEMP: remove after validation (test trigger)
           prompt: |
             REPO: ${{ github.repository }}
             PR NUMBER: ${{ github.event.pull_request.number }}
