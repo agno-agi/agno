@@ -127,6 +127,8 @@ class Model(ABC):
     supports_native_structured_outputs: bool = False
     # True if the Model requires a json_schema for structured outputs (e.g. LMStudio)
     supports_json_schema_outputs: bool = False
+    # If True, only collect metrics on the final streaming chunk (for providers with cumulative token counts)
+    collect_metrics_on_completion: bool = False
 
     # Controls which (if any) function is called by the model.
     # "none" means the model will not call a function and instead generates a message.
@@ -1768,7 +1770,12 @@ class Model(ABC):
         if model_response_delta.response_usage is not None:
             if stream_data.response_metrics is None:
                 stream_data.response_metrics = Metrics()
-            stream_data.response_metrics += model_response_delta.response_usage
+            # For providers that report cumulative token counts (e.g., Gemini, Perplexity),
+            # use the latest metrics instead of summing them
+            if self.collect_metrics_on_completion:
+                stream_data.response_metrics = model_response_delta.response_usage
+            else:
+                stream_data.response_metrics += model_response_delta.response_usage
 
         # Update stream_data content
         if model_response_delta.content is not None:

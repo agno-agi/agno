@@ -77,6 +77,8 @@ class Gemini(Model):
     provider: str = "Google"
 
     supports_native_structured_outputs: bool = True
+    # Gemini returns cumulative token counts in each streaming chunk, so only collect on final chunk
+    collect_metrics_on_completion: bool = True
 
     # Request parameters
     function_declarations: Optional[List[Any]] = None
