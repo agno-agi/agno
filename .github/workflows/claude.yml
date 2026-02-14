@@ -36,6 +36,7 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_CI_API_KEY }}
+          github_token: ${{ github.token }}
           plugin_marketplaces: 'https://github.com/anthropics/claude-code.git'
           plugins: |
             code-review@claude-code-plugins
@@ -82,3 +83,4 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_CI_API_KEY }}
+          github_token: ${{ github.token }}
