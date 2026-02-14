@@ -185,7 +185,7 @@ markdown = ["unstructured<0.18.31", "markdown", "aiofiles"]
 chonkie = ["chonkie[semantic]", "chonkie[code]", "chonkie"]
 
 # Dependencies for AG-UI integration
-agui = ["ag-ui-protocol"]
+agui = ["ag-ui-protocol", "jsonpatch"]
 
 # Dependencies for A2A integration
 a2a = ["a2a-sdk"]
