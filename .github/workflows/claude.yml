@@ -32,6 +32,6 @@ jobs:
       - uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_CI_API_KEY }}
-          plugin_marketplaces: 'anthropics/claude-code'
+          plugin_marketplaces: 'https://github.com/anthropics/claude-code.git'
           plugins: 'code-review@anthropics-claude-code'
           show_full_output: true  # TEMP: remove after validation
