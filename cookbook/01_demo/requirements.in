@@ -1,7 +1,0 @@
-agno[openai,anthropic]
-parallel-web
-duckdb
-exa-py
-pgvector
-psycopg[binary]
-sqlalchemy

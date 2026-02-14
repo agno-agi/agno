@@ -10,7 +10,7 @@ from typing import Optional
 from agno.agent import Agent
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.run import RunContext
 from agno.team import Team
 from agno.vectordb.pgvector import PgVector
@@ -76,13 +76,13 @@ def knowledge_retriever(
 # ---------------------------------------------------------------------------
 researcher = Agent(
     name="Researcher",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     role="Research information from the knowledge base",
 )
 
 analyst = Agent(
     name="Analyst",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     role="Analyze and synthesize information",
 )
 
@@ -91,7 +91,7 @@ analyst = Agent(
 # ---------------------------------------------------------------------------
 research_team = Team(
     name="Research Team",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     members=[researcher, analyst],
     knowledge=knowledge,
     knowledge_retriever=knowledge_retriever,

@@ -11,7 +11,7 @@ import json
 from agno.exceptions import InputCheckError
 from agno.guardrails import OpenAIModerationGuardrail
 from agno.media import Image
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.team import Team
 
 # ---------------------------------------------------------------------------
@@ -20,7 +20,7 @@ from agno.team import Team
 basic_team = Team(
     name="Basic Moderated Team",
     members=[],
-    model=OpenAIChat(id="gpt-5.2"),
+    model=OpenAIResponses(id="gpt-5.2"),
     pre_hooks=[OpenAIModerationGuardrail()],
     description="A team with basic OpenAI content moderation.",
     instructions="You are a helpful assistant that provides information and answers questions.",
@@ -29,7 +29,7 @@ basic_team = Team(
 custom_team = Team(
     name="Custom Moderated Team",
     members=[],
-    model=OpenAIChat(id="gpt-5.2"),
+    model=OpenAIResponses(id="gpt-5.2"),
     pre_hooks=[
         OpenAIModerationGuardrail(
             raise_for_categories=[

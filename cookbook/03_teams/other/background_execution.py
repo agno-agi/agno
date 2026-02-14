@@ -17,16 +17,22 @@ import asyncio
 
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.run.base import RunStatus
 from agno.team import Team
 
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
 db = PostgresDb(
     db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
     session_table="team_bg_exec_sessions",
 )
 
 
+# ---------------------------------------------------------------------------
+# Create and Run Examples
+# ---------------------------------------------------------------------------
 async def example_team_background_run():
     """Start a team background run and poll until complete."""
     print("=" * 60)
@@ -35,19 +41,19 @@ async def example_team_background_run():
 
     researcher = Agent(
         name="Researcher",
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=OpenAIResponses(id="gpt-5.2-mini"),
         role="Research topics and provide factual information.",
     )
 
     writer = Agent(
         name="Writer",
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=OpenAIResponses(id="gpt-5.2-mini"),
         role="Write clear and concise summaries.",
     )
 
     team = Team(
         name="ResearchTeam",
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=OpenAIResponses(id="gpt-5.2-mini"),
         members=[researcher, writer],
         instructions=[
             "First, have the researcher gather key facts.",
@@ -102,19 +108,19 @@ async def example_cancel_team_background_run():
 
     researcher = Agent(
         name="Researcher",
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=OpenAIResponses(id="gpt-5.2-mini"),
         role="Research topics thoroughly.",
     )
 
     writer = Agent(
         name="Writer",
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=OpenAIResponses(id="gpt-5.2-mini"),
         role="Write detailed essays.",
     )
 
     team = Team(
         name="EssayTeam",
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=OpenAIResponses(id="gpt-5.2-mini"),
         members=[researcher, writer],
         instructions=[
             "Have the researcher gather comprehensive information.",
@@ -149,6 +155,9 @@ async def example_cancel_team_background_run():
         print(f"Final status: {result.status}")
 
 
+# ---------------------------------------------------------------------------
+# Run Demo
+# ---------------------------------------------------------------------------
 async def main():
     await example_team_background_run()
     await example_cancel_team_background_run()

@@ -7,7 +7,7 @@ Demonstrates PII detection guardrails for team input protection.
 
 from agno.exceptions import InputCheckError
 from agno.guardrails import PIIDetectionGuardrail
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.team import Team
 
 # ---------------------------------------------------------------------------
@@ -16,7 +16,7 @@ from agno.team import Team
 blocking_team = Team(
     name="Privacy-Protected Team",
     members=[],
-    model=OpenAIChat(id="gpt-5.2"),
+    model=OpenAIResponses(id="gpt-5.2"),
     pre_hooks=[PIIDetectionGuardrail()],
     description="A team that helps with customer service while protecting privacy.",
     instructions="You are a helpful customer service assistant. Always protect user privacy and handle sensitive information appropriately.",
@@ -25,7 +25,7 @@ blocking_team = Team(
 masked_team = Team(
     name="Privacy-Protected Team",
     members=[],
-    model=OpenAIChat(id="gpt-5.2"),
+    model=OpenAIResponses(id="gpt-5.2"),
     pre_hooks=[PIIDetectionGuardrail(mask_pii=True)],
     description="A team that helps with customer service while protecting privacy.",
     instructions="You are a helpful customer service assistant. Always protect user privacy and handle sensitive information appropriately.",

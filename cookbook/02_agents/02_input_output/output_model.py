@@ -16,7 +16,6 @@ from agno.agent import Agent, RunOutput
 from agno.models.openai import OpenAIResponses
 from rich.pretty import pprint
 
-
 # ---------------------------------------------------------------------------
 # Create Agent
 # ---------------------------------------------------------------------------

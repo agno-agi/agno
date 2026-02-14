@@ -9,7 +9,7 @@ from pathlib import Path
 
 from agno.agent import Agent
 from agno.media import Image
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.team import Team
 
 # ---------------------------------------------------------------------------
@@ -18,7 +18,7 @@ from agno.team import Team
 image_analyzer = Agent(
     name="Image Analyst",
     role="Analyze and describe images in detail",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     instructions=[
         "Analyze images carefully and provide detailed descriptions",
         "Focus on visual elements, composition, and key details",
@@ -28,7 +28,7 @@ image_analyzer = Agent(
 creative_writer = Agent(
     name="Creative Writer",
     role="Create engaging stories and narratives",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     instructions=[
         "Transform image descriptions into compelling fiction stories",
         "Use vivid language and creative storytelling techniques",
@@ -40,7 +40,7 @@ creative_writer = Agent(
 # ---------------------------------------------------------------------------
 image_team = Team(
     name="Image Story Team",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     members=[image_analyzer, creative_writer],
     instructions=[
         "Work together to create compelling fiction stories from images.",

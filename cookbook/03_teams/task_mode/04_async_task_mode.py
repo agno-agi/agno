@@ -10,16 +10,18 @@ Run: .venvs/demo/bin/python cookbook/03_teams/task_mode/04_async_task_mode.py
 import asyncio
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.team.mode import TeamMode
 from agno.team.team import Team
 
-# -- Member agents -----------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Create Members
+# ---------------------------------------------------------------------------
 
 planner = Agent(
     name="Planner",
     role="Creates structured plans and outlines",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     instructions=[
         "You are a planning specialist.",
         "Create clear, actionable plans with numbered steps.",
@@ -30,7 +32,7 @@ planner = Agent(
 executor = Agent(
     name="Executor",
     role="Implements plans and produces deliverables",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     instructions=[
         "You are an execution specialist.",
         "Take a plan and produce the requested deliverable.",
@@ -41,7 +43,7 @@ executor = Agent(
 reviewer = Agent(
     name="Reviewer",
     role="Reviews deliverables for quality and completeness",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     instructions=[
         "You are a quality reviewer.",
         "Check deliverables for completeness, accuracy, and quality.",
@@ -49,12 +51,14 @@ reviewer = Agent(
     ],
 )
 
-# -- Task-mode team ----------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Create Team
+# ---------------------------------------------------------------------------
 
 project_team = Team(
     name="Project Team",
     mode=TeamMode.tasks,
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     members=[planner, executor, reviewer],
     instructions=[
         "You are a project team leader.",
@@ -70,6 +74,9 @@ project_team = Team(
 )
 
 
+# ---------------------------------------------------------------------------
+# Run Team
+# ---------------------------------------------------------------------------
 async def main():
     """Run multiple task-mode requests concurrently."""
     # Single async call

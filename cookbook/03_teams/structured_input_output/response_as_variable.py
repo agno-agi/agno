@@ -6,7 +6,7 @@ Demonstrates capturing typed team responses as variables for downstream logic.
 """
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.team import Team
 from agno.tools.yfinance import YFinanceTools
 from agno.utils.pprint import pprint_run_response
@@ -33,7 +33,7 @@ class CompanyAnalysis(BaseModel):
 # ---------------------------------------------------------------------------
 stock_searcher = Agent(
     name="Stock Searcher",
-    model=OpenAIChat("o3-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     output_schema=StockAnalysis,
     role="Searches for stock price and analyst information",
     tools=[
@@ -49,7 +49,7 @@ stock_searcher = Agent(
 
 company_info_agent = Agent(
     name="Company Info Searcher",
-    model=OpenAIChat("o3-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     role="Searches for company news and information",
     output_schema=CompanyAnalysis,
     tools=[
@@ -68,7 +68,7 @@ company_info_agent = Agent(
 # ---------------------------------------------------------------------------
 team = Team(
     name="Stock Research Team",
-    model=OpenAIChat("o3-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     respond_directly=True,
     members=[stock_searcher, company_info_agent],
     markdown=True,

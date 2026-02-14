@@ -9,9 +9,8 @@ import asyncio
 from uuid import uuid4
 
 from agno.agent import Agent
-from agno.models.anthropic.claude import Claude
 from agno.models.mistral import MistralChat
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.team import Team
 from agno.tools.agentql import AgentQLTools
 from agno.tools.websearch import WebSearchTools
@@ -43,7 +42,7 @@ wikipedia_agent = Agent(
 website_agent = Agent(
     name="Website Agent",
     role="Search the website for information",
-    model=OpenAIChat(id="o3-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     tools=[WebSearchTools()],
     instructions=[
         "Search the website for information",
@@ -59,7 +58,7 @@ team_id = str(uuid4())
 company_info_team = Team(
     name="Company Info Team",
     id=team_id,
-    model=Claude(id="claude-3-7-sonnet-latest"),
+    model=OpenAIResponses(id="gpt-5.2"),
     tools=[AgentQLTools(agentql_query=custom_query)],
     members=[wikipedia_agent, website_agent],
     markdown=True,

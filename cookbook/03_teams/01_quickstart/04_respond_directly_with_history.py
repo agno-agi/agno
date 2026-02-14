@@ -7,7 +7,7 @@ Demonstrates direct member responses with team history persisted in SQLite.
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.team import Team
 
 
@@ -21,7 +21,7 @@ def get_weather(city: str) -> str:
 weather_agent = Agent(
     name="Weather Agent",
     role="You are a weather agent that can answer questions about the weather.",
-    model=OpenAIChat(id="o3-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     tools=[get_weather],
 )
 
@@ -33,7 +33,7 @@ def get_news(topic: str) -> str:
 news_agent = Agent(
     name="News Agent",
     role="You are a news agent that can answer questions about the news.",
-    model=OpenAIChat(id="o3-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     tools=[get_news],
 )
 
@@ -45,7 +45,7 @@ def get_activities(city: str) -> str:
 activities_agent = Agent(
     name="Activities Agent",
     role="You are a activities agent that can answer questions about the activities.",
-    model=OpenAIChat(id="o3-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     tools=[get_activities],
 )
 
@@ -54,7 +54,7 @@ activities_agent = Agent(
 # ---------------------------------------------------------------------------
 geo_search_team = Team(
     name="Geo Search Team",
-    model=OpenAIChat("o3-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     respond_directly=True,
     members=[
         weather_agent,

@@ -9,7 +9,7 @@ from agno.agent import Agent
 from agno.knowledge.embedder.cohere import CohereEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reranker.cohere import CohereReranker
-from agno.models.anthropic import Claude
+from agno.models.openai import OpenAIResponses
 from agno.team import Team
 from agno.vectordb.lancedb import LanceDb, SearchType
 
@@ -33,7 +33,7 @@ knowledge.insert_many(urls=["https://docs.agno.com/basics/agents/overview.md"])
 # ---------------------------------------------------------------------------
 knowledge_searcher = Agent(
     name="Knowledge Searcher",
-    model=Claude(id="claude-3-7-sonnet-latest"),
+    model=OpenAIResponses(id="gpt-5.2"),
     role="Search and retrieve relevant information from the knowledge base",
     knowledge=knowledge,
     search_knowledge=True,
@@ -48,7 +48,7 @@ knowledge_searcher = Agent(
 
 content_analyzer = Agent(
     name="Content Analyzer",
-    model=Claude(id="claude-3-7-sonnet-latest"),
+    model=OpenAIResponses(id="gpt-5.2"),
     role="Analyze and synthesize retrieved content",
     instructions=[
         "Analyze the content provided by the Knowledge Searcher.",
@@ -61,7 +61,7 @@ content_analyzer = Agent(
 
 response_synthesizer = Agent(
     name="Response Synthesizer",
-    model=Claude(id="claude-3-7-sonnet-latest"),
+    model=OpenAIResponses(id="gpt-5.2"),
     role="Create final comprehensive response with proper citations",
     instructions=[
         "Synthesize information from team members into a comprehensive response.",
@@ -77,7 +77,7 @@ response_synthesizer = Agent(
 # ---------------------------------------------------------------------------
 coordinated_rag_team = Team(
     name="Coordinated RAG Team",
-    model=Claude(id="claude-3-7-sonnet-latest"),
+    model=OpenAIResponses(id="gpt-5.2"),
     members=[knowledge_searcher, content_analyzer, response_synthesizer],
     instructions=[
         "Work together to provide comprehensive responses using the knowledge base.",

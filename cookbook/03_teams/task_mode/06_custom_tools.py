@@ -8,12 +8,14 @@ Run: .venvs/demo/bin/python cookbook/03_teams/task_mode/06_custom_tools.py
 """
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.team.mode import TeamMode
 from agno.team.team import Team
 from agno.tools import tool
 
-# -- Custom tools -------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Tools
+# ---------------------------------------------------------------------------
 
 
 @tool
@@ -120,12 +122,14 @@ def assess_risk_score(
     )
 
 
-# -- Agents with custom tools ------------------------------------------------
+# ---------------------------------------------------------------------------
+# Create Members
+# ---------------------------------------------------------------------------
 
 calculator = Agent(
     name="Financial Calculator",
     role="Performs financial calculations including interest, loans, and projections",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     tools=[calculate_compound_interest, calculate_monthly_payment],
     instructions=[
         "You are a financial calculator.",
@@ -137,7 +141,7 @@ calculator = Agent(
 risk_assessor = Agent(
     name="Risk Assessor",
     role="Evaluates financial risk based on client metrics",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     tools=[assess_risk_score],
     instructions=[
         "You are a financial risk assessor.",
@@ -149,7 +153,7 @@ risk_assessor = Agent(
 advisor = Agent(
     name="Financial Advisor",
     role="Provides financial advice and recommendations",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     instructions=[
         "You are a financial advisor.",
         "Based on calculations and risk assessments, provide actionable advice.",
@@ -157,12 +161,14 @@ advisor = Agent(
     ],
 )
 
-# -- Task-mode team -----------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Create Team
+# ---------------------------------------------------------------------------
 
 finance_team = Team(
     name="Financial Advisory Team",
     mode=TeamMode.tasks,
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     members=[calculator, risk_assessor, advisor],
     instructions=[
         "You are a financial advisory team leader.",
@@ -178,7 +184,9 @@ finance_team = Team(
     max_iterations=10,
 )
 
-# -- Run ---------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Run Team
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     finance_team.print_response(

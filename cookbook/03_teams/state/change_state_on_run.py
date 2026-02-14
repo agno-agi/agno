@@ -6,7 +6,7 @@ Demonstrates per-run session state overrides for different users/sessions.
 """
 
 from agno.db.in_memory import InMemoryDb
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.team import Team
 
 # ---------------------------------------------------------------------------
@@ -14,7 +14,7 @@ from agno.team import Team
 # ---------------------------------------------------------------------------
 team = Team(
     db=InMemoryDb(),
-    model=OpenAIChat(id="gpt-5.2"),
+    model=OpenAIResponses(id="gpt-5.2"),
     members=[],
     instructions="Users name is {user_name} and age is {age}",
 )

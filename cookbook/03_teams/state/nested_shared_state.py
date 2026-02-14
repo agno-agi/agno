@@ -7,7 +7,7 @@ Demonstrates hierarchical teams that coordinate over shared session state.
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.run import RunContext
 from agno.team import Team
 
@@ -110,7 +110,7 @@ shopping_list_agent = Agent(
     name="Shopping List Agent",
     role="Manage the shopping list",
     id="shopping_list_manager",
-    model=OpenAIChat(id="o3-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     tools=[add_item, remove_item, remove_all_items],
     instructions=[
         "Manage the shopping list by adding and removing items",
@@ -123,7 +123,7 @@ recipe_agent = Agent(
     name="Recipe Suggester",
     id="recipe_suggester",
     role="Suggest recipes based on available ingredients",
-    model=OpenAIChat(id="o3-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     tools=[get_ingredients],
     instructions=[
         "First, use the get_ingredients tool to get the current ingredients from the shopping list",
@@ -144,7 +144,7 @@ shopping_mgmt_team = Team(
     name="Shopping Management Team",
     role="Execute shopping list operations",
     id="shopping_management",
-    model=OpenAIChat(id="o3-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     members=[shopping_list_agent],
     instructions=[
         "Manage adding and removing items from the shopping list using the Shopping List Agent",
@@ -156,7 +156,7 @@ meal_planning_team = Team(
     name="Meal Planning Team",
     role="Plan meals based on shopping list items",
     id="meal_planning",
-    model=OpenAIChat(id="o3-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     members=[recipe_agent],
     instructions=[
         "You are a meal planning team that suggests recipes based on shopping list items.",
@@ -170,7 +170,7 @@ shopping_team = Team(
     id="shopping_list_team",
     name="Shopping List Team",
     role="Orchestrate shopping list management and meal planning",
-    model=OpenAIChat(id="o3-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     session_state={"shopping_list": [], "chores": []},
     tools=[list_items, add_chore],
     db=db,

@@ -8,7 +8,7 @@ Demonstrates passing dependencies at runtime and accessing them inside team tool
 from datetime import datetime
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.run import RunContext
 from agno.team import Team
 
@@ -87,7 +87,7 @@ def analyze_team_performance(team_id: str, run_context: RunContext) -> str:
 # Create Members
 # ---------------------------------------------------------------------------
 data_analyst = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     name="Data Analyst",
     description="Specialist in analyzing team metrics and performance data",
     instructions=[
@@ -98,7 +98,7 @@ data_analyst = Agent(
 )
 
 team_lead = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     name="Team Lead",
     description="Experienced team leader who provides strategic insights",
     instructions=[
@@ -114,7 +114,7 @@ team_lead = Agent(
 # ---------------------------------------------------------------------------
 personalization_team = Team(
     name="PersonalizationTeam",
-    model=OpenAIChat(id="gpt-5.2"),
+    model=OpenAIResponses(id="gpt-5.2"),
     members=[],
     instructions=[
         "Analyze the user profile and current context to provide a personalized summary of today's priorities."
@@ -123,7 +123,7 @@ personalization_team = Team(
 )
 
 performance_team = Team(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     members=[data_analyst, team_lead],
     tools=[analyze_team_performance],
     name="Team Performance Analysis Team",
