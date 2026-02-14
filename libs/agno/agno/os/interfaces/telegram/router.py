@@ -25,6 +25,12 @@ TG_CHUNK_SIZE = 4000
 TG_MAX_CAPTION_LENGTH = 1024
 TG_GROUP_CHAT_TYPES = {"group", "supergroup"}
 
+# --- Session ID scheme ---
+# Session IDs use a "tg:" prefix to namespace Telegram sessions.
+# Format variants:
+#   tg:{chat_id}                        — DMs / private chats (one session per chat)
+#   tg:{chat_id}:thread:{root_msg_id}   — Group chats (scoped by reply thread)
+
 
 class TelegramStatusResponse(BaseModel):
     status: str = Field(default="available")
@@ -187,22 +193,24 @@ def attach_routes(
             await bot.send_message(chat_id, f"[{i}/{len(chunks)}] {chunk}", reply_to_message_id=reply_id)
 
     def _resolve_media_data(item: Any) -> Optional[Any]:
+        """Extract sendable data from a media item. Checks url → content → filepath."""
         if item.url:
             return item.url
         if item.content:
             content = item.content
             if isinstance(content, bytes):
+                # Bytes might be base64-encoded UTF-8 (model outputs) or raw binary (audio/video)
                 try:
                     decoded = content.decode("utf-8")
                     return base64.b64decode(decoded, validate=True)
                 except (UnicodeDecodeError, binascii.Error):
                     return content
             elif isinstance(content, str):
+                # Try base64 first (image model outputs), fall back to UTF-8 for plain text files
                 try:
                     return base64.b64decode(content, validate=True)
                 except binascii.Error:
-                    log_warning("Invalid base64 media content")
-                    return None
+                    return content.encode("utf-8")
         if item.filepath:
             try:
                 with open(item.filepath, "rb") as f:
@@ -212,9 +220,11 @@ def attach_routes(
         return None
 
     async def _send_response_media(response: RunOutput, chat_id: int, reply_to: Optional[int]) -> bool:
+        """Send all media items from the response. Caption goes on the first item only."""
         any_media_sent = False
         caption = response.content[:TG_MAX_CAPTION_LENGTH] if response.content else None
 
+        # Data-driven dispatch: maps response attributes to Telegram sender methods
         media_senders = [
             ("images", bot.send_photo),
             ("audio", bot.send_audio),
@@ -231,6 +241,7 @@ def attach_routes(
                     try:
                         await sender(chat_id, data, caption=caption, reply_to_message_id=reply_to)
                         any_media_sent = True
+                        # Clear caption and reply_to after first successful send
                         caption = None
                         reply_to = None
                     except Exception as e:
@@ -326,6 +337,9 @@ def attach_routes(
                 message_text = _strip_bot_mention(message_text, bot_username)
 
             user_id = str(message.get("from", {}).get("id", chat_id))
+            # DMs: one session per chat. Groups: thread by the replied-to message ID.
+            # Note: Telegram has no stable thread_ts like Slack, so session may drift
+            # when users reply to different bot messages in the same conversation.
             if is_group:
                 reply_msg = message.get("reply_to_message")
                 root_msg_id = reply_msg.get("message_id", incoming_message_id) if reply_msg else incoming_message_id
@@ -376,8 +390,13 @@ def attach_routes(
 
             any_media_sent = await _send_response_media(response, chat_id, reply_to)
 
-            if not any_media_sent:
-                await _send_text_chunked(chat_id, response.content or "", reply_to_message_id=reply_to)
+            # Media captions are capped at 1024 chars. If text overflows the caption,
+            # send the full text as a follow-up message so nothing is lost.
+            if response.content:
+                if any_media_sent and len(response.content) > TG_MAX_CAPTION_LENGTH:
+                    await _send_text_chunked(chat_id, response.content)
+                elif not any_media_sent:
+                    await _send_text_chunked(chat_id, response.content, reply_to_message_id=reply_to)
 
         except Exception as e:
             log_error(f"Error processing message: {e}")

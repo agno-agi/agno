@@ -161,7 +161,7 @@ You're running in production mode without a webhook secret. Either set `APP_ENV=
 This happens when the bot receives a file_id from a different bot token or an expired file. File IDs are scoped to a specific bot token. Re-send the media to get a fresh file_id.
 
 **"Bad Request: message to be replied not found":**
-The bot tried to reply to a message that was deleted or is in a different chat. This can happen in group chats when messages are deleted before the bot responds. The bot will fall back to sending without a reply.
+The bot tried to reply to a message that was deleted or is in a different chat. This can happen in group chats when messages are deleted before the bot responds. The error is logged and the bot sends a generic error message instead.
 
 **No response from the bot:**
 1. Check that the server is running (`curl http://localhost:7777/telegram/status`)
