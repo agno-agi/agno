@@ -166,18 +166,36 @@ class Step:
 
         # --- Handle Agent reconstruction ---
         if "agent_id" in config and config["agent_id"]:
-            from agno.agent.agent import get_agent_by_id
-
             agent_id = config.get("agent_id")
-            if db is not None and agent_id is not None:
+
+            # First try registry (code-defined agents)
+            if registry and agent_id:
+                registry_agent = registry.get_agent(agent_id)
+                if registry_agent is not None:
+                    # Deep copy to isolate mutable state between concurrent requests
+                    agent = registry_agent.deep_copy()
+
+            # Fall back to database
+            if agent is None and db is not None and agent_id is not None:
+                from agno.agent.agent import get_agent_by_id
+
                 agent = get_agent_by_id(db=db, id=agent_id, registry=registry)
 
         # --- Handle Team reconstruction ---
-        if "team_id" in config and config["team_id"] and registry:
-            from agno.team.team import get_team_by_id
-
+        if "team_id" in config and config["team_id"]:
             team_id = config.get("team_id")
-            if db is not None and team_id is not None:
+
+            # First try registry (code-defined teams)
+            if registry and team_id:
+                registry_team = registry.get_team(team_id)
+                if registry_team is not None:
+                    # Deep copy to isolate mutable state between concurrent requests
+                    team = registry_team.deep_copy()
+
+            # Fall back to database
+            if team is None and db is not None and team_id is not None:
+                from agno.team.team import get_team_by_id
+
                 team = get_team_by_id(db=db, id=team_id, registry=registry)
 
         # --- Handle Executor reconstruction ---
