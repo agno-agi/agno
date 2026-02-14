@@ -13,12 +13,16 @@ Getting Started:
 2. Agent shows your deposit address
 3. Fund wallet with USDC on Base
 4. Run research/team examples to access paid APIs
+
+Configuration:
+- Wallet location: ~/.x402scan-mcp/wallet.json (auto-generated)
+- Environment variable: X402_PRIVATE_KEY (optional, use existing wallet)
 """
 
 import asyncio
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.anthropic import Claude
 from agno.team import Team
 from agno.tools.mcp import MCPTools
 
@@ -35,10 +39,12 @@ async def onboarding_example() -> None:
     - Wallet auto-generated at ~/.x402scan-mcp/wallet.json
     - Balance will be $0
     - Agent shows you how to fund it
+    
+    To use an existing wallet, set X402_PRIVATE_KEY environment variable.
     """
     async with MCPTools("npx -y @x402scan/mcp@latest") as x402:
         agent = Agent(
-            model=OpenAIChat(id="gpt-4o"),
+            model=Claude(id="claude-sonnet-4-20250514"),
             tools=[x402],
             instructions="""You help users get started with x402scan-mcp.
             
@@ -62,7 +68,7 @@ async def research_agent() -> None:
     """Agent that can autonomously access premium data sources."""
     async with MCPTools("npx -y @x402scan/mcp@latest") as x402:
         agent = Agent(
-            model=OpenAIChat(id="gpt-4o"),
+            model=Claude(id="claude-sonnet-4-20250514"),
             tools=[x402],
             name="ResearchAgent",
             instructions="""You are a research agent with paid API access.
@@ -94,7 +100,7 @@ async def team_example() -> None:
     """Team of agents sharing a wallet for research and analysis."""
     async with MCPTools("npx -y @x402scan/mcp@latest") as x402:
         researcher = Agent(
-            model=OpenAIChat(id="gpt-4o"),
+            model=Claude(id="claude-sonnet-4-20250514"),
             tools=[x402],
             name="Researcher",
             role="Data Researcher",
@@ -105,7 +111,7 @@ async def team_example() -> None:
         )
         
         analyst = Agent(
-            model=OpenAIChat(id="gpt-4o"),
+            model=Claude(id="claude-sonnet-4-20250514"),
             name="Analyst",
             role="Data Analyst",
             instructions="""Analyze data from the researcher.
