@@ -13,8 +13,12 @@ on:
     types: [submitted]
 
 jobs:
-  # Automated code review on all PRs
-  code-review:
+  # Automated deep code review on all non-draft PRs
+  # Uses Opus /review-pr (inline comments + summary) stacked with
+  # pr-review-toolkit (6 specialized agents: comment-analyzer,
+  # test-analyzer, silent-failure-hunter, type-design-analyzer,
+  # code-reviewer, code-simplifier)
+  review:
     if: |
       github.event_name == 'pull_request' &&
       !github.event.pull_request.draft
@@ -28,7 +32,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 1
+          fetch-depth: 0
 
       - name: Run Claude Code Review
         id: claude-review
@@ -36,12 +40,12 @@ jobs:
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_CI_API_KEY }}
           plugin_marketplaces: 'https://github.com/anthropics/claude-code.git'
-          plugins: 'code-review@claude-code-plugins'
+          plugins: 'pr-review-toolkit@claude-code-plugins'
           use_sticky_comment: true
-          show_full_output: true
-          prompt: '/code-review:code-review ${{ github.repository }}/pull/${{ github.event.pull_request.number }}'
-        env:
-          FORCE_AUTOUPDATE_PLUGINS: 'true'
+          show_full_output: true  # TEMP: remove after validation
+          prompt: '/review-pr REPO: ${{ github.repository }} PR_NUMBER: ${{ github.event.pull_request.number }}'
+          claude_args: |
+            --model "claude-opus-4-6"
 
   # Interactive assistant when @claude is mentioned
   assistant:

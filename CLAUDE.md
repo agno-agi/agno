@@ -242,19 +242,10 @@ gh api repos/agno-agi/agno/pulls/<PR_NUMBER> -X PATCH -f body="$(cat /path/to/bo
 
 ---
 
-## CI: Review Intent Detection
+## CI: Automated Code Review
 
-When running in GitHub Actions (CI) and a user mentions `@claude` with review intent, automatically invoke the `/code-review` plugin command before responding.
+Every non-draft PR automatically receives a deep review from Opus using `/review-pr` stacked with the `pr-review-toolkit` plugin (6 specialized agents). No manual trigger needed.
 
-**Trigger phrases** (case-insensitive, partial matches count):
-- "review this PR", "review the changes", "review this"
-- "code review", "do a review", "run a review"
-- "check this PR", "check the code", "look at this PR"
-- "what do you think of this PR", "any issues with this PR"
+When running in GitHub Actions (CI) and a user mentions `@claude` asking for a review, use `/review-pr` to run a fresh review pass.
 
-**Do NOT auto-invoke** `/code-review` when the request is clearly about something else:
-- "review my question", "review this error message"
-- Specific file/line questions ("what does line 42 do?")
-- Bug reports, feature requests, or general questions
-
-When in doubt, invoke `/code-review` — it's better to review and answer than to skip the review.
+**CI output rule:** When running as a CI reviewer, always end your response with a plain-text summary of findings. Never let the final action be a tool call — the GitHub Action uses the text output to post the sticky PR comment. If there are no issues, say so explicitly.
