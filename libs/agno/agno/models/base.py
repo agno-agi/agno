@@ -146,7 +146,7 @@ class Model(ABC):
     # The role of the assistant message.
     assistant_message_role: str = "assistant"
 
-    # If True, provider sends cumulative metrics in each streaming chunk. (for example: Gemini, Perplexity, Claude)
+    # If True, provider sends cumulative (not incremental) metrics per streaming chunk.
     is_cumulative_usage: bool = False
 
     # Cache model responses to avoid redundant API calls during development
