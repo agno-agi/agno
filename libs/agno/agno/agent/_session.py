@@ -18,8 +18,8 @@ if TYPE_CHECKING:
     from agno.agent.agent import Agent
 
 from agno.db.base import SessionType
+from agno.metrics import SessionMetrics
 from agno.models.message import Message
-from agno.models.metrics import Metrics
 from agno.run import RunStatus
 from agno.run.agent import RunOutput
 from agno.session import AgentSession, TeamSession, WorkflowSession
@@ -541,14 +541,14 @@ async def aupdate_session_state(
 # ---------------------------------------------------------------------------
 
 
-def get_session_metrics(agent: Agent, session_id: Optional[str] = None) -> Optional[Metrics]:
+def get_session_metrics(agent: Agent, session_id: Optional[str] = None) -> Optional[SessionMetrics]:
     """Get the session metrics for the given session ID.
 
     Args:
         agent: The Agent instance.
         session_id: The session ID to get the metrics for. If not provided, the current cached session ID is used.
     Returns:
-        Optional[Metrics]: The session metrics.
+        Optional[SessionMetrics]: The session metrics.
     """
     session_id = session_id or agent.session_id
     if session_id is None:
@@ -557,14 +557,14 @@ def get_session_metrics(agent: Agent, session_id: Optional[str] = None) -> Optio
     return get_session_metrics_util(agent, session_id=session_id)
 
 
-async def aget_session_metrics(agent: Agent, session_id: Optional[str] = None) -> Optional[Metrics]:
+async def aget_session_metrics(agent: Agent, session_id: Optional[str] = None) -> Optional[SessionMetrics]:
     """Get the session metrics for the given session ID.
 
     Args:
         agent: The Agent instance.
         session_id: The session ID to get the metrics for. If not provided, the current cached session ID is used.
     Returns:
-        Optional[Metrics]: The session metrics.
+        Optional[SessionMetrics]: The session metrics.
     """
     session_id = session_id or agent.session_id
     if session_id is None:
@@ -574,18 +574,10 @@ async def aget_session_metrics(agent: Agent, session_id: Optional[str] = None) -
 
 
 def update_session_metrics(agent: Agent, session: AgentSession, run_response: RunOutput) -> None:
-    """Calculate session metrics and write them to session_data."""
-    from agno.agent._storage import get_session_metrics_internal
+    """Calculate session metrics convert run Metrics to SessionMetrics."""
+    from agno.agent._storage import update_session_metrics as _update_session_metrics_storage
 
-    session_metrics = get_session_metrics_internal(agent, session=session)
-    # Add the metrics for the current run to the session metrics
-    if session_metrics is None:
-        return
-    if run_response.metrics is not None:
-        session_metrics += run_response.metrics
-    session_metrics.time_to_first_token = None
-    if session.session_data is not None:
-        session.session_data["session_metrics"] = session_metrics
+    _update_session_metrics_storage(agent, session=session, run_response=run_response)
 
 
 # ---------------------------------------------------------------------------

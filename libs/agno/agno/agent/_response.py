@@ -26,7 +26,6 @@ if TYPE_CHECKING:
 from agno.media import Audio
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse, ModelResponseEvent
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
 from agno.run import RunContext
@@ -62,27 +61,6 @@ from agno.utils.reasoning import (
     update_run_output_with_reasoning,
 )
 from agno.utils.string import parse_response_dict_str, parse_response_model_str
-
-
-def calculate_run_metrics(
-    agent: Agent, messages: List[Message], current_run_metrics: Optional[Metrics] = None
-) -> Metrics:
-    """Sum the metrics of the given messages into a Metrics object"""
-    metrics = current_run_metrics or Metrics()
-
-    assistant_message_role = agent.model.assistant_message_role if agent.model is not None else "assistant"
-    for m in messages:
-        if m.role == assistant_message_role and m.metrics is not None and m.from_history is False:
-            metrics += m.metrics
-
-    # If the run metrics were already initialized, keep the time related metrics
-    if current_run_metrics is not None:
-        metrics.timer = current_run_metrics.timer
-        metrics.duration = current_run_metrics.duration
-        metrics.time_to_first_token = current_run_metrics.time_to_first_token
-
-    return metrics
-
 
 ###########################################################################
 # Reasoning
@@ -643,8 +621,6 @@ def generate_response_with_output_model_stream(
     messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
     # Update the RunResponse messages
     run_response.messages = messages_for_run_response
-    # Update the RunResponse metrics
-    run_response.metrics = calculate_run_metrics(agent, messages_for_run_response)
 
 
 async def agenerate_response_with_output_model(
@@ -715,8 +691,6 @@ async def agenerate_response_with_output_model_stream(
     messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
     # Update the RunResponse messages
     run_response.messages = messages_for_run_response
-    # Update the RunResponse metrics
-    run_response.metrics = calculate_run_metrics(agent, messages_for_run_response)
 
 
 # ---------------------------------------------------------------------------
@@ -985,10 +959,6 @@ def update_run_response(
     messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
     # Update the RunOutput messages
     run_response.messages = messages_for_run_response
-    # Update the RunOutput metrics
-    run_response.metrics = calculate_run_metrics(
-        agent, messages=messages_for_run_response, current_run_metrics=run_response.metrics
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -1117,10 +1087,6 @@ def handle_model_response_stream(
     messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
     # Update the RunOutput messages
     run_response.messages = messages_for_run_response
-    # Update the RunOutput metrics
-    run_response.metrics = calculate_run_metrics(
-        agent, messages=messages_for_run_response, current_run_metrics=run_response.metrics
-    )
 
     # Determine reasoning completed
     if stream_events and reasoning_state["reasoning_started"]:
@@ -1273,10 +1239,6 @@ async def ahandle_model_response_stream(
     messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
     # Update the RunOutput messages
     run_response.messages = messages_for_run_response
-    # Update the RunOutput metrics
-    run_response.metrics = calculate_run_metrics(
-        agent, messages=messages_for_run_response, current_run_metrics=run_response.metrics
-    )
 
     if stream_events and reasoning_state["reasoning_started"]:
         all_reasoning_steps: List[ReasoningStep] = []

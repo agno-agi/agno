@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from dataclasses import fields as dc_fields
 from typing import (
     TYPE_CHECKING,
     Any,
     Dict,
     List,
     Optional,
+    Tuple,
     Type,
     Union,
     cast,
@@ -20,9 +22,9 @@ if TYPE_CHECKING:
 
 from agno.db.base import BaseDb, ComponentType, SessionType
 from agno.db.utils import db_from_dict
+from agno.metrics import Metrics, ModelMetrics, SessionMetrics
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.metrics import Metrics
 from agno.registry.registry import Registry
 from agno.run.agent import RunOutput
 from agno.session import AgentSession, TeamSession, WorkflowSession
@@ -238,17 +240,154 @@ def update_metadata(agent: Agent, session: AgentSession):
         agent.metadata = session.metadata
 
 
-def get_session_metrics_internal(agent: Agent, session: AgentSession):
+def get_session_metrics_internal(agent: Agent, session: AgentSession) -> SessionMetrics:
     # Get the session_metrics from the database
     if session.session_data is not None and "session_metrics" in session.session_data:
         session_metrics_from_db = session.session_data.get("session_metrics")
         if session_metrics_from_db is not None:
             if isinstance(session_metrics_from_db, dict):
-                return Metrics(**session_metrics_from_db)
-            elif isinstance(session_metrics_from_db, Metrics):
+                # Handle legacy Metrics dict - convert to SessionMetrics
+                metrics_dict = session_metrics_from_db.copy()
+                # Remove run-level timing fields that don't exist on SessionMetrics
+                metrics_dict.pop("duration", None)
+                metrics_dict.pop("time_to_first_token", None)
+                metrics_dict.pop("timer", None)
+                # Handle details field
+                if "details" in metrics_dict:
+                    if isinstance(metrics_dict["details"], list):
+                        # New format: list of ModelMetrics dicts
+                        details_list = []
+                        for detail_dict in metrics_dict["details"]:
+                            if isinstance(detail_dict, dict):
+                                details_list.append(ModelMetrics.from_dict(detail_dict))
+                            elif isinstance(detail_dict, ModelMetrics):
+                                details_list.append(detail_dict)
+                        metrics_dict["details"] = details_list if details_list else None
+                    elif isinstance(metrics_dict["details"], dict):
+                        # Old run-level format: Dict[str, List[ModelMetrics]]
+                        # Flatten into a single list for SessionMetrics
+                        details_list = []
+                        for model_type_details in metrics_dict["details"].values():
+                            if isinstance(model_type_details, list):
+                                for detail in model_type_details:
+                                    if isinstance(detail, dict):
+                                        details_list.append(ModelMetrics.from_dict(detail))
+                                    elif isinstance(detail, ModelMetrics):
+                                        details_list.append(detail)
+                        metrics_dict["details"] = details_list if details_list else None
+                    else:
+                        metrics_dict.pop("details", None)
+                # Remove any remaining fields not valid on SessionMetrics
+                valid_fields = {f.name for f in dc_fields(SessionMetrics)}
+                metrics_dict = {k: v for k, v in metrics_dict.items() if k in valid_fields}
+                return SessionMetrics(**metrics_dict)
+            elif isinstance(session_metrics_from_db, SessionMetrics):
+                # Ensure details are ModelMetrics objects, not dicts
+                if session_metrics_from_db.details:
+                    details_list = []
+                    for detail in session_metrics_from_db.details:
+                        if isinstance(detail, dict):
+                            details_list.append(ModelMetrics.from_dict(detail))
+                        elif isinstance(detail, ModelMetrics):
+                            details_list.append(detail)
+                    session_metrics_from_db.details = details_list if details_list else None
                 return session_metrics_from_db
-    else:
-        return Metrics()
+            elif isinstance(session_metrics_from_db, Metrics):
+                # Convert legacy Metrics to SessionMetrics
+                return SessionMetrics(
+                    input_tokens=session_metrics_from_db.input_tokens,
+                    output_tokens=session_metrics_from_db.output_tokens,
+                    total_tokens=session_metrics_from_db.total_tokens,
+                    audio_input_tokens=session_metrics_from_db.audio_input_tokens,
+                    audio_output_tokens=session_metrics_from_db.audio_output_tokens,
+                    audio_total_tokens=session_metrics_from_db.audio_total_tokens,
+                    cache_read_tokens=session_metrics_from_db.cache_read_tokens,
+                    cache_write_tokens=session_metrics_from_db.cache_write_tokens,
+                    reasoning_tokens=session_metrics_from_db.reasoning_tokens,
+                )
+    return SessionMetrics()
+
+
+def update_session_metrics(agent: Agent, session: AgentSession, run_response: RunOutput) -> None:
+    """Calculate session metrics - convert run Metrics to SessionMetrics."""
+    session_metrics = get_session_metrics_internal(agent, session=session)
+    # Add the metrics for the current run to the session metrics
+    if session_metrics is None:
+        return
+    if run_response.metrics is not None:
+        run_metrics = run_response.metrics
+        # Accumulate token metrics
+        session_metrics.input_tokens += run_metrics.input_tokens
+        session_metrics.output_tokens += run_metrics.output_tokens
+        session_metrics.total_tokens += run_metrics.total_tokens
+        session_metrics.audio_input_tokens += run_metrics.audio_input_tokens
+        session_metrics.audio_output_tokens += run_metrics.audio_output_tokens
+        session_metrics.audio_total_tokens += run_metrics.audio_total_tokens
+        session_metrics.cache_read_tokens += run_metrics.cache_read_tokens
+        session_metrics.cache_write_tokens += run_metrics.cache_write_tokens
+        session_metrics.reasoning_tokens += run_metrics.reasoning_tokens
+
+        # Accumulate cost
+        if run_metrics.cost is not None:
+            session_metrics.cost = (session_metrics.cost or 0) + run_metrics.cost
+
+        # Merge provider_metrics
+        if run_metrics.provider_metrics is not None:
+            if session_metrics.provider_metrics is None:
+                session_metrics.provider_metrics = {}
+            session_metrics.provider_metrics.update(run_metrics.provider_metrics)
+
+        # Merge additional_metrics
+        if run_metrics.additional_metrics is not None:
+            if session_metrics.additional_metrics is None:
+                session_metrics.additional_metrics = {}
+            session_metrics.additional_metrics.update(run_metrics.additional_metrics)
+
+        # Calculate average duration
+        session_metrics.total_runs += 1
+        if run_metrics.duration is not None:
+            if session_metrics.average_duration is None:
+                session_metrics.average_duration = run_metrics.duration
+            else:
+                total_duration = (
+                    session_metrics.average_duration * (session_metrics.total_runs - 1) + run_metrics.duration
+                )
+                session_metrics.average_duration = total_duration / session_metrics.total_runs
+
+        # Track per-model metrics from run_metrics.details
+        if run_metrics.details:
+            if session_metrics.details is None:
+                session_metrics.details = []
+
+            details_dict: Dict[Tuple[str, str], ModelMetrics] = {
+                (model_metric.provider, model_metric.id): model_metric for model_metric in session_metrics.details
+            }
+
+            for model_type, model_metrics_list in run_metrics.details.items():
+                for model_metrics in model_metrics_list:
+                    key = (model_metrics.provider, model_metrics.id)
+
+                    if key not in details_dict:
+                        details_dict[key] = ModelMetrics.for_session(
+                            model_metrics, duration=run_metrics.duration, total_runs=1
+                        )
+                    else:
+                        existing = details_dict[key]
+                        existing.accumulate(model_metrics)
+                        existing.total_runs += 1
+                        if run_metrics.duration is not None:
+                            if existing.average_duration is None:
+                                existing.average_duration = run_metrics.duration
+                            else:
+                                total_duration = (
+                                    existing.average_duration * (existing.total_runs - 1) + run_metrics.duration
+                                )
+                                existing.average_duration = total_duration / existing.total_runs
+
+            session_metrics.details = list(details_dict.values())
+
+    if session.session_data is not None:
+        session.session_data["session_metrics"] = session_metrics.to_dict()
 
 
 def read_or_create_session(

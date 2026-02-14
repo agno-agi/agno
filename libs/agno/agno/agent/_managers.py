@@ -6,6 +6,7 @@ from asyncio import CancelledError, Task, create_task
 from concurrent.futures import Future
 from typing import (
     TYPE_CHECKING,
+    Any,
     List,
     Optional,
 )
@@ -29,6 +30,7 @@ def make_memories(
     agent: Agent,
     run_messages: RunMessages,
     user_id: Optional[str] = None,
+    run_response: Optional[Any] = None,
 ):
     user_message_str = run_messages.user_message.get_content_string() if run_messages.user_message is not None else None
     if (
@@ -42,6 +44,7 @@ def make_memories(
             message=user_message_str,
             user_id=user_id,
             agent_id=agent.id,
+            run_response=run_response,
         )
 
     if run_messages.extra_messages is not None and len(run_messages.extra_messages) > 0:
@@ -67,7 +70,7 @@ def make_memories(
         if len(non_empty_messages) > 0:
             if agent.memory_manager is not None and agent.update_memory_on_run:
                 agent.memory_manager.create_user_memories(
-                    messages=non_empty_messages, user_id=user_id, agent_id=agent.id
+                    messages=non_empty_messages, user_id=user_id, agent_id=agent.id, run_response=run_response
                 )  # type: ignore
             else:
                 log_warning(
@@ -79,6 +82,7 @@ async def amake_memories(
     agent: Agent,
     run_messages: RunMessages,
     user_id: Optional[str] = None,
+    run_response: Optional[Any] = None,
 ):
     user_message_str = run_messages.user_message.get_content_string() if run_messages.user_message is not None else None
     if (
@@ -92,6 +96,7 @@ async def amake_memories(
             message=user_message_str,
             user_id=user_id,
             agent_id=agent.id,
+            run_response=run_response,
         )
 
     if run_messages.extra_messages is not None and len(run_messages.extra_messages) > 0:
@@ -117,7 +122,7 @@ async def amake_memories(
         if len(non_empty_messages) > 0:
             if agent.memory_manager is not None and agent.update_memory_on_run:
                 await agent.memory_manager.acreate_user_memories(  # type: ignore
-                    messages=non_empty_messages, user_id=user_id, agent_id=agent.id
+                    messages=non_empty_messages, user_id=user_id, agent_id=agent.id, run_response=run_response
                 )
             else:
                 log_warning(
@@ -130,6 +135,7 @@ async def astart_memory_task(
     run_messages: RunMessages,
     user_id: Optional[str],
     existing_task: Optional[Task[None]],
+    run_response: Optional[Any] = None,
 ) -> Optional[Task[None]]:
     """Cancel any existing memory task and start a new one if conditions are met.
 
@@ -138,6 +144,7 @@ async def astart_memory_task(
         run_messages: The run messages containing the user message.
         user_id: The user ID for memory creation.
         existing_task: An existing memory task to cancel before starting a new one.
+        run_response: The run response for tracking memory model metrics.
 
     Returns:
         A new memory task if conditions are met, None otherwise.
@@ -158,7 +165,7 @@ async def astart_memory_task(
         and not agent.enable_agentic_memory
     ):
         log_debug("Starting memory creation in background task.")
-        return create_task(amake_memories(agent, run_messages=run_messages, user_id=user_id))
+        return create_task(amake_memories(agent, run_messages=run_messages, user_id=user_id, run_response=run_response))
 
     return None
 
@@ -168,6 +175,7 @@ def start_memory_future(
     run_messages: RunMessages,
     user_id: Optional[str],
     existing_future: Optional[Future] = None,
+    run_response: Optional[Any] = None,
 ) -> Optional[Future]:
     """Cancel any existing memory future and start a new one if conditions are met.
 
@@ -176,6 +184,7 @@ def start_memory_future(
         run_messages: The run messages containing the user message.
         user_id: The user ID for memory creation.
         existing_future: An existing memory future to cancel before starting a new one.
+        run_response: The run response for tracking memory model metrics.
 
     Returns:
         A new memory future if conditions are met, None otherwise.
@@ -193,7 +202,9 @@ def start_memory_future(
         and not agent.enable_agentic_memory
     ):
         log_debug("Starting memory creation in background thread.")
-        return agent.background_executor.submit(make_memories, agent, run_messages=run_messages, user_id=user_id)
+        return agent.background_executor.submit(
+            make_memories, agent, run_messages=run_messages, user_id=user_id, run_response=run_response
+        )
 
     return None
 
