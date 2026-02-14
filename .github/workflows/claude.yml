@@ -33,7 +33,7 @@ jobs:
 
       - uses: anthropics/claude-code-action@v1
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          anthropic_api_key: ${{ secrets.ANTHROPIC_CI_API_KEY }}
           use_sticky_comment: true
           track_progress: true
           show_full_output: true  # TEMP: remove after validation
@@ -74,5 +74,5 @@ jobs:
 
       - uses: anthropics/claude-code-action@v1
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          anthropic_api_key: ${{ secrets.ANTHROPIC_CI_API_KEY }}
           show_full_output: true  # TEMP: remove after validation
