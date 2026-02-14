@@ -10,11 +10,9 @@ Documentation: https://x402scan.com/mcp
 
 Getting Started:
 1. Run the onboarding example (wallet auto-generated, balance will be $0)
-2. Agent shows your deposit address and funding options
-3. Fund wallet: Send USDC on Base OR redeem an invite code
+2. Agent shows your deposit address
+3. Fund wallet with USDC on Base
 4. Run research/team examples to access paid APIs
-
-Invite codes (free credits): https://x402scan.com/mcp
 """
 
 import asyncio
@@ -47,8 +45,7 @@ async def onboarding_example() -> None:
             Steps:
             1. Check wallet balance with get_wallet_info
             2. Show the deposit address (users can fund with USDC on Base)
-            3. Explain how to redeem invite codes for free credits
-            4. Discover available paid APIs with discover_api_endpoints
+            3. Discover available paid APIs with discover_api_endpoints
             
             Be helpful and encouraging - this is their first time.""",
             markdown=True,
@@ -60,32 +57,7 @@ async def onboarding_example() -> None:
         )
 
 
-# Example 2: Redeem invite code for free credits
-async def redeem_invite_example() -> None:
-    """
-    Redeem an invite code to get free USDC credits.
-    
-    Get invite codes at: https://x402scan.com/mcp
-    Replace YOUR_CODE below with your actual invite code.
-    """
-    async with MCPTools("npx -y @x402scan/mcp@latest") as x402:
-        agent = Agent(
-            model=OpenAIChat(id="gpt-4o"),
-            tools=[x402],
-            instructions="""Help user redeem invite code.
-            - Use redeem_invite tool with the provided code
-            - Check balance after redemption to confirm
-            - Explain what they can do with the credits""",
-            markdown=True,
-        )
-        
-        await agent.aprint_response(
-            "Redeem this invite code: YOUR_CODE",
-            stream=True,
-        )
-
-
-# Example 3: Research agent with spending limits
+# Example 2: Research agent with spending limits
 async def research_agent() -> None:
     """Agent that can autonomously access premium data sources."""
     async with MCPTools("npx -y @x402scan/mcp@latest") as x402:
@@ -117,7 +89,7 @@ async def research_agent() -> None:
         )
 
 
-# Example 4: Multi-agent team sharing a wallet
+# Example 3: Multi-agent team sharing a wallet
 async def team_example() -> None:
     """Team of agents sharing a wallet for research and analysis."""
     async with MCPTools("npx -y @x402scan/mcp@latest") as x402:
@@ -164,6 +136,5 @@ if __name__ == "__main__":
     asyncio.run(onboarding_example())
     
     # After funding, try these:
-    # asyncio.run(redeem_invite_example())
     # asyncio.run(research_agent())
     # asyncio.run(team_example())
