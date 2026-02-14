@@ -15,7 +15,10 @@ on:
 jobs:
   # ── Auto-review on every non-draft PR ──
   review:
-    if: github.event_name == 'pull_request' && !github.event.pull_request.draft
+    if: >-
+      github.event_name == 'pull_request' &&
+      !github.event.pull_request.draft &&
+      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     concurrency:
       group: claude-review-${{ github.event.pull_request.number }}
