@@ -1,6 +1,17 @@
+"""
+Groq Finance Agent
+==================
+
+Cookbook example for `groq/reasoning/finance_agent.py`.
+"""
+
 from agno.agent import Agent
 from agno.models.groq import Groq
 from agno.tools.yfinance import YFinanceTools
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 # Create an Agent with Groq and YFinanceTools
 finance_agent = Agent(
@@ -20,3 +31,10 @@ finance_agent.print_response(
     "Write a report on NVDA with stock price, analyst recommendations, and stock fundamentals.",
     stream=True,
 )
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

@@ -139,7 +139,13 @@ class MCPTools(Toolkit):
         self.transport = transport
 
         self.header_provider = None
-        if self._is_valid_header_provider(header_provider):
+        if header_provider is not None:
+            if self.transport not in ["sse", "streamable-http"]:
+                raise ValueError(
+                    f"header_provider is not supported with '{self.transport}' transport. "
+                    "Use 'sse' or 'streamable-http' transport instead."
+                )
+            log_debug("Dynamic header support enabled for MCP tools")
             self.header_provider = header_provider
 
         self.timeout_seconds = timeout_seconds
@@ -189,29 +195,6 @@ class MCPTools(Toolkit):
     @property
     def initialized(self) -> bool:
         return self._initialized
-
-    def _is_valid_header_provider(self, header_provider: Optional[Callable[..., dict[str, Any]]]) -> bool:
-        """Logic to validate a given header_provider function.
-
-        Args:
-            header_provider: The header_provider function to validate
-
-        Raises:
-            Exception: If there is an error validating the header_provider.
-        """
-        if not header_provider:
-            return False
-
-        if self.transport not in ["sse", "streamable-http"]:
-            log_warning(
-                f"header_provider specified but transport is '{self.transport}'. "
-                "Dynamic headers only work with 'sse' or 'streamable-http' transports. "
-                "The header_provider logic will be ignored."
-            )
-            return False
-
-        log_debug("Dynamic header support enabled for MCP tools")
-        return True
 
     def _call_header_provider(
         self,

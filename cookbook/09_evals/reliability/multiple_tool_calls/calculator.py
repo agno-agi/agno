@@ -1,3 +1,10 @@
+"""
+Multiple Tool Call Reliability Evaluation
+=========================================
+
+Demonstrates reliability checks for multiple expected tool calls.
+"""
+
 from typing import Optional
 
 from agno.agent import Agent
@@ -7,6 +14,9 @@ from agno.run.agent import RunOutput
 from agno.tools.calculator import CalculatorTools
 
 
+# ---------------------------------------------------------------------------
+# Create Evaluation Function
+# ---------------------------------------------------------------------------
 def multiply_and_exponentiate():
     agent = Agent(
         model=OpenAIChat(id="gpt-5.2"),
@@ -25,5 +35,8 @@ def multiply_and_exponentiate():
         result.assert_passed()
 
 
+# ---------------------------------------------------------------------------
+# Run Evaluation
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     multiply_and_exponentiate()

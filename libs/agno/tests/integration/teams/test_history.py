@@ -21,6 +21,7 @@ def team(shared_db):
         db=shared_db,
         instructions="Route a single question to the travel agent. Don't make multiple requests.",
         add_history_to_context=True,
+        store_history_messages=True,
     )
 
 
@@ -53,6 +54,7 @@ def team_with_members(shared_db):
         members=[weather_agent, time_agent],
         db=shared_db,
         instructions="Delegate weather questions to Weather Agent and time questions to Time Agent.",
+        store_history_messages=True,
         add_history_to_context=True,
     )
 
@@ -94,6 +96,7 @@ def test_num_history_runs(shared_db):
         db=shared_db,
         instructions="Use the simple_tool for each request.",
         add_history_to_context=True,
+        store_history_messages=True,
         num_history_runs=1,  # Only include the last run
     )
 
@@ -229,6 +232,7 @@ def test_member_history_independent(shared_db):
         model=OpenAIChat(id="gpt-5-mini"),
         db=shared_db,
         add_history_to_context=True,  # Agent A has its own history
+        store_history_messages=True,
     )
 
     team = Team(

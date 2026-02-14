@@ -31,6 +31,11 @@ from agno.agent import Agent
 from agno.tools.opencv import OpenCVTools
 from agno.utils.media import save_base64_data
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
+
 # Example 1: All functions enabled with live preview (default behavior)
 agent_full = Agent(
     name="Full OpenCV Agent",
@@ -104,22 +109,27 @@ agent_processor = Agent(
 agent = agent_full
 
 # Example 1: Interactive mode with live preview
-print("Example 1: Interactive mode with live preview using full agent")
 
-response = agent.run(
-    "Take a quick test of camera, capture the photo and tell me what you see in the photo."
-)
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    print("Example 1: Interactive mode with live preview using full agent")
 
-if response and response.images:
-    print("Agent response:", response.content)
-    image_base64 = base64.b64encode(response.images[0].content).decode("utf-8")
-    save_base64_data(image_base64, "tmp/test.png")
-
-# Example 2: Capture a video
-response = agent.run("Capture a 5 second webcam video.")
-
-if response and response.videos:
-    save_base64_data(
-        base64_data=str(response.videos[0].content),
-        output_path="tmp/captured_test_video.mp4",
+    response = agent.run(
+        "Take a quick test of camera, capture the photo and tell me what you see in the photo."
     )
+
+    if response and response.images:
+        print("Agent response:", response.content)
+        image_base64 = base64.b64encode(response.images[0].content).decode("utf-8")
+        save_base64_data(image_base64, "tmp/test.png")
+
+    # Example 2: Capture a video
+    response = agent.run("Capture a 5 second webcam video.")
+
+    if response and response.videos:
+        save_base64_data(
+            base64_data=str(response.videos[0].content),
+            output_path="tmp/captured_test_video.mp4",
+        )

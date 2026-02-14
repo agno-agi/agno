@@ -19,6 +19,10 @@ from agno.tools.mcp import MCPTools
 from fastapi import FastAPI
 from mcp import StdioServerParameters
 
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
+
 agent_storage_file: str = "tmp/agents.db"
 
 
@@ -77,6 +81,10 @@ agent_os = AgentOS(
 )
 app = agent_os.get_app()
 
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     agent_os.serve(app="mcp_demo:app", reload=True)

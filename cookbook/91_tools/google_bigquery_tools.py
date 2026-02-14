@@ -20,6 +20,11 @@ from agno.agent import Agent
 from agno.models.google import Gemini
 from agno.tools.google_bigquery import GoogleBigQueryTools
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
+
 agent = Agent(
     instructions=[
         "You are an expert Big query Writer",
@@ -29,7 +34,11 @@ agent = Agent(
     model=Gemini(id="gemini-3-flash-preview", vertexai=True),
 )
 
-agent.print_response(
-    "List the tables in the dataset. Tell me about contents of one of the tables",
-    markdown=True,
-)
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    agent.print_response(
+        "List the tables in the dataset. Tell me about contents of one of the tables",
+        markdown=True,
+    )

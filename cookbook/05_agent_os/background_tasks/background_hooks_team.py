@@ -15,6 +15,10 @@ from agno.os import AgentOS
 from agno.run.team import TeamRunOutput
 from agno.team import Team
 
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
+
 
 @hook(run_in_background=True)
 async def log_team_result(run_output: TeamRunOutput, team: Team) -> None:
@@ -67,6 +71,10 @@ app = agent_os.get_app()
 # curl -X POST http://localhost:7777/teams/content-team/runs \
 #   -F "message=Write a short paragraph about Python" \
 #   -F "stream=false"
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     agent_os.serve(app="background_hooks_team:app", port=7777, reload=True)

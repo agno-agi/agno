@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "2.4.8"
+version = "2.5.0"
 description = "Agno: a lightweight library for building Multi-Agent Systems"
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -64,9 +64,11 @@ dev = [
   "openai",
   "fakeredis",
   "xlwt",
+  "types-greenlet",
 ]
 
 os = ["fastapi", "uvicorn", "PyJWT"]
+scheduler = ["croniter>=1.3", "pytz>=2023.3"]
 
 # Dependencies for Telemetry
 opentelemetry = ["opentelemetry-sdk", "opentelemetry-exporter-otlp"]
@@ -353,9 +355,12 @@ integration-tests = [
 # Dependencies for demo application
 demo = [
     "agno[dev]",
+    "agno[scheduler]",
     "anthropic",
     "chromadb",
     "ddgs",
+    "duckdb",
+    "exa-py",
     "fastapi[standard]",
     "google-genai",
     "matplotlib",

@@ -1,9 +1,20 @@
+"""
+Openai Structured Output
+========================
+
+Cookbook example for `openai/responses/structured_output.py`.
+"""
+
 from typing import List
 
 from agno.agent import Agent, RunOutput  # noqa
 from agno.models.openai import OpenAIResponses
 from pydantic import BaseModel, Field
 from rich.pretty import pprint  # noqa
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 
 class MovieScript(BaseModel):
@@ -40,14 +51,12 @@ structured_output_agent = Agent(
     output_schema=MovieScript,
 )
 
-
 # Agent with strict_output=False (guided mode)
 guided_output_agent = Agent(
     model=OpenAIResponses(id="gpt-4o", strict_output=False),
     description="You write movie scripts.",
     output_schema=MovieScript,
 )
-
 
 # Get the response in a variable
 # json_mode_response: RunOutput = json_mode_agent.run("New York")
@@ -58,3 +67,10 @@ guided_output_agent = Agent(
 json_mode_agent.print_response("New York")
 structured_output_agent.print_response("New York")
 guided_output_agent.print_response("New York")
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

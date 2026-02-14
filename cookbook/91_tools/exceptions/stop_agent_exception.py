@@ -1,9 +1,20 @@
+"""
+Stop Agent Exception
+=============================
+
+Demonstrates stop agent exception.
+"""
+
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.exceptions import StopAgentRun
 from agno.models.openai import OpenAIChat
 from agno.run import RunContext
 from agno.utils.log import logger
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 
 def add_item(run_context: RunContext, item: str) -> str:
@@ -40,7 +51,12 @@ agent = Agent(
     tools=[add_item],
     markdown=True,
 )
-agent.print_response("Add milk", stream=True)
-print(
-    f"Final session state: {agent.get_session_state(session_id='stop_agent_exception_session')}"
-)
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    agent.print_response("Add milk", stream=True)
+    print(
+        f"Final session state: {agent.get_session_state(session_id='stop_agent_exception_session')}"
+    )
