@@ -13,18 +13,15 @@ on:
     types: [submitted]
 
 jobs:
-  # Automated deep code review on all non-draft PRs
-  # Uses Opus /review-pr (inline comments + summary) stacked with
-  # pr-review-toolkit (6 specialized agents: comment-analyzer,
-  # test-analyzer, silent-failure-hunter, type-design-analyzer,
-  # code-reviewer, code-simplifier)
+  # Automated code review on all non-draft PRs
+  # Uses both official plugins: code-review (4 agents) + pr-review-toolkit (6 agents)
   review:
     if: |
       github.event_name == 'pull_request' &&
       !github.event.pull_request.draft
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
       pull-requests: write
       issues: write
       id-token: write
@@ -39,13 +36,22 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_CI_API_KEY }}
-          plugin_marketplaces: 'https://github.com/anthropics/claude-code.git'
-          plugins: 'pr-review-toolkit@claude-code-plugins'
+          plugins: 'code-review,pr-review-toolkit'
           use_sticky_comment: true
+          max_turns: 30
           show_full_output: true  # TEMP: remove after validation
-          prompt: '/review-pr REPO: ${{ github.repository }} PR_NUMBER: ${{ github.event.pull_request.number }}'
           claude_args: |
             --model "claude-opus-4-6"
+          append_prompt: |
+            After completing the review, you MUST end with a plain-text markdown summary of findings.
+            Never let the final action be a tool call.
+            If there are no issues, explicitly say "No high-confidence findings."
+
+            Agno-specific checks (always verify):
+            - Both sync and async variants exist for all new public methods
+            - No agent creation inside loops (agents should be reused)
+            - CLAUDE.md coding patterns are followed
+            - No f-strings for print lines where there are no variables
 
   # Interactive assistant when @claude is mentioned
   assistant:
