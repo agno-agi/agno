@@ -5,10 +5,8 @@ Tests verify bugs found during the R9 audit of unaudited modules and high-churn 
 - approval/, eval/, tracing/
 """
 
-import ast
 import inspect
 import re
-import textwrap
 
 import pytest
 
@@ -159,7 +157,7 @@ class TestBUG028A2AMissingAwait:
         """Verify entity.arun() calls are not awaited in the deprecated non-stream path."""
         from pathlib import Path
 
-        router_path = Path(__file__).resolve().parents[3] / "agno" / "os" / "interfaces" / "a2a" / "router.py"
+        router_path = Path(__file__).resolve().parents[2] / "agno" / "os" / "interfaces" / "a2a" / "router.py"
         if not router_path.exists():
             pytest.skip("A2A router source not found")
 
@@ -310,21 +308,10 @@ class TestBUG032WorkflowSessionNameLost:
         """Verify SQLite adapter doesn't store workflow_name."""
         source = inspect.getsource(__import__("agno.db.sqlite.sqlite", fromlist=["sqlite"]).SqliteDb.upsert_session)
 
-        # Check that workflow_name is NOT in the insert values
-        # The upsert builds values dict — workflow_name should be there but isn't
-        lines = source.split("\n")
-        in_workflow_block = False
-        has_workflow_name = False
-        for line in lines:
-            if "isinstance(session, WorkflowSession)" in line:
-                in_workflow_block = True
-            if in_workflow_block and "workflow_name" in line:
-                has_workflow_name = True
-                break
-            if in_workflow_block and "stmt = stmt.on_conflict_do_update" in line:
-                break
-
-        assert not has_workflow_name, "Bug already fixed — workflow_name is now stored"
+        # The workflow branch is the else: block (after AgentSession and TeamSession isinstance checks).
+        # It stores workflow_id and workflow_data but NOT workflow_name.
+        assert "workflow_id" in source, "upsert_session should reference workflow_id"
+        assert "workflow_name" not in source, "Bug already fixed — workflow_name is now stored"
 
 
 class TestBUG033AgentSessionFieldsLost:
@@ -350,14 +337,15 @@ class TestBUG033AgentSessionFieldsLost:
         assert "workflow_id" in d
         assert d["workflow_id"] == "wf-1"
 
-    def test_sqlite_agent_upsert_omits_team_id(self):
-        """Verify SQLite adapter doesn't store AgentSession.team_id."""
+    def test_sqlite_agent_upsert_omits_team_id_and_workflow_id(self):
+        """Verify SQLite adapter doesn't store AgentSession.team_id or workflow_id."""
         source = inspect.getsource(__import__("agno.db.sqlite.sqlite", fromlist=["sqlite"]).SqliteDb.upsert_session)
 
-        # Find the AgentSession insert block and check for team_id
+        # Find the AgentSession insert block and check for team_id and workflow_id
         lines = source.split("\n")
         in_agent_block = False
         has_team_id = False
+        has_workflow_id = False
         for line in lines:
             if "isinstance(session, AgentSession)" in line:
                 in_agent_block = True
@@ -365,6 +353,8 @@ class TestBUG033AgentSessionFieldsLost:
                 break
             if in_agent_block and "team_id" in line and "serialized_session" in line:
                 has_team_id = True
-                break
+            if in_agent_block and "workflow_id" in line and "serialized_session" in line:
+                has_workflow_id = True
 
-        assert not has_team_id, "Bug already fixed — team_id is now stored"
+        assert not has_team_id, "Bug already fixed — team_id is now stored in AgentSession"
+        assert not has_workflow_id, "Bug already fixed — workflow_id is now stored in AgentSession"

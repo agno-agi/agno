@@ -1238,7 +1238,7 @@ Script calls `asyncio.run()` twice sequentially — once for database setup, onc
 | Modules audited | workflow, knowledge, agent hooks, team hooks, guardrails, PII, tools (MCP/browserbase/tavily/API/duckdb/csv/shell/python/file), DB migrations, memory, vectordb (mongodb/weaviate/redis/langchain/llamaindex/lightrag), API telemetry, reasoning, DB (sqlite/mysql/singlestore), culture, team delegation tools, models (watsonx/gemini/mistral/litellm/openai-responses/openai-chat/anthropic/aws/azure/cohere/groq/together/deepseek), compression, scheduler, session, agent core, team core, embedder, storage, knowledge readers, knowledge chunking, AgentOS (os/app + routers + interfaces), agent execution (_run.py), team execution (_run.py), approval, eval, tracing |
 | Confirmed bugs | 32 (BUG-001 through BUG-033, excluding retracted BUG-012) |
 | Bugs reproduced | 15 (R7: BUG-011/013/015/016/017/019/020, R9: BUG-026/027/028/029/030/031/032/033) — all confirmed with running tests |
-| Reproduction tests | 48 tests across 8 files in `tests/unit/` — all passing |
+| Reproduction tests | 52 tests across 8 files in `tests/unit/` — all passing |
 | Bugs fixed (other branch) | 5 (FIXED-001 through FIXED-005 on fix/hooks-guardrails) |
 | Bugs fixed (knowledge isolation) | 5 (BUG-006 through BUG-010, PR #6482) |
 | Suspected issues | 14 |
