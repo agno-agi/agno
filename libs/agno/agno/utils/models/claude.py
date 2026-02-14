@@ -39,6 +39,29 @@ ROLE_MAP = {
 }
 
 
+def _apply_cache_control(content: list, message: Message) -> list:
+    """Apply cache_control from message.provider_data to the last content block.
+
+    Anthropic's convention is to place a cache breakpoint on the last content
+    block of a message.  Content blocks may be plain dicts **or** Pydantic-style
+    SDK objects (``TextBlock``, ``ToolUseBlock``, etc.).  When the last block is
+    an SDK object we convert it to a dict via ``model_dump()`` so that the
+    ``cache_control`` key can be injected.
+    """
+    if not content or not message.provider_data or "cache_control" not in message.provider_data:
+        return content
+
+    last = content[-1]
+
+    # SDK Pydantic objects (TextBlock, ToolUseBlock, …) → dict
+    if hasattr(last, "model_dump"):
+        last = last.model_dump()
+
+    last["cache_control"] = message.provider_data["cache_control"]
+    content[-1] = last
+    return content
+
+
 def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
     """
     Add an image to a message by converting it to base64 encoded format.
@@ -264,7 +287,7 @@ def _format_file_for_message(file: File) -> Optional[Dict[str, Any]]:
 
 def format_messages(
     messages: List[Message], compress_tool_results: bool = False
-) -> Tuple[List[Dict[str, Union[str, list]]], str]:
+) -> Tuple[List[Dict[str, Union[str, list]]], Union[str, List[Dict[str, Any]]]]:
     """
     Process the list of messages and separate them into API messages and system messages.
 
@@ -273,17 +296,21 @@ def format_messages(
         compress_tool_results: Whether to compress tool results.
 
     Returns:
-        Tuple[List[Dict[str, Union[str, list]]], str]: A tuple containing the list of API messages and the concatenated system messages.
+        Tuple containing:
+        - List of API messages
+        - System messages as either:
+          - A concatenated string (default, backwards compatible)
+          - A list of structured blocks if any system message has provider_data.cache_control
     """
     chat_messages: List[Dict[str, Union[str, list]]] = []
-    system_messages: List[str] = []
+    system_messages: List[Message] = []
 
     for message in messages:
         content = message.content or ""
         # Both "system" and "developer" roles should be extracted as system messages
         if message.role in ("system", "developer"):
             if content is not None:
-                system_messages.append(content)  # type: ignore
+                system_messages.append(message)
             continue
         elif message.role == "user":
             if isinstance(content, str):
@@ -306,6 +333,8 @@ def format_messages(
 
             if message.videos is not None and len(message.videos) > 0:
                 log_warning("Video input is currently unsupported.")
+
+            content = _apply_cache_control(content, message)
 
         elif message.role == "assistant":
             content = []
@@ -343,6 +372,9 @@ def format_messages(
                             type="tool_use",
                         )
                     )
+
+            content = _apply_cache_control(content, message)
+
         elif message.role == "tool":
             content = []
 
@@ -357,12 +389,29 @@ def format_messages(
                 }
             )
 
+            content = _apply_cache_control(content, message)
+
         # Skip empty assistant responses
         if message.role == "assistant" and not content:
             continue
 
         chat_messages.append({"role": ROLE_MAP[message.role], "content": content})  # type: ignore
-    return chat_messages, " ".join(system_messages)
+
+    # Check if any system message has cache_control in provider_data
+    has_cache_control = any(m.provider_data and "cache_control" in m.provider_data for m in system_messages)
+
+    if has_cache_control:
+        # Return structured blocks with per-message cache_control
+        system_blocks: List[Dict[str, Any]] = []
+        for m in system_messages:
+            block: Dict[str, Any] = {"type": "text", "text": m.content}
+            if m.provider_data and "cache_control" in m.provider_data:
+                block["cache_control"] = m.provider_data["cache_control"]
+            system_blocks.append(block)
+        return chat_messages, system_blocks
+    else:
+        system_contents = [str(m.content) for m in system_messages if m.content]
+        return chat_messages, " ".join(system_contents)
 
 
 def format_tools_for_model(tools: Optional[List[Dict[str, Any]]] = None) -> Optional[List[Dict[str, Any]]]:
