@@ -30,6 +30,8 @@ from agno.agent import Agent
 from agno.models.anthropic import Claude
 from agno.skills import LocalSkills, Skills
 from agno.team import Team
+from agno.db.json import JsonDb
+from agno.learn import LearningMachine, LearningMode, UserMemoryConfig
 from agno.tools.mcp import MCPTools
 from agno.utils.log import logger
 from pydantic import BaseModel, Field
@@ -317,7 +319,102 @@ async def skills_example() -> None:
         )
 
 
-# Example 7: Production-ready with cost controls
+
+
+# Example 7: Learning Machine - agent learns cost optimization
+async def learning_example() -> None:
+    """
+    Agent that learns from experience and optimizes spending over time.
+    
+    Learning Machine tracks:
+    - User preferences (data quality vs cost)
+    - Provider performance (which APIs work best for what)
+    - Historical decisions (what worked, what didn't)
+    - Cost patterns (optimize future spending based on past success)
+    
+    After a few sessions, agent gets smarter about how it spends your money.
+    Storage: JSON files in ~/.x402_learning/ (no database server needed)
+    """
+    from pathlib import Path
+    
+    # Create filesystem-based storage
+    learning_db_path = Path.home() / ".x402_learning"
+    learning_db_path.mkdir(exist_ok=True)
+    
+    db = JsonDb(db_path=str(learning_db_path))
+    
+    async with MCPTools("npx -y @x402scan/mcp@latest") as x402:
+        agent = Agent(
+            model=Claude(id="claude-opus-4-5"),
+            tools=[x402],
+            db=db,
+            learning=LearningMachine(
+                user_memory=UserMemoryConfig(mode=LearningMode.AGENTIC)
+            ),
+            instructions="""Research agent with learning capabilities.
+            
+            Learn from experience and store observations:
+            - Which APIs provide better data quality
+            - Which providers are more cost-effective
+            - User preferences (speed vs quality vs cost)
+            - What worked well in past tasks
+            
+            Use memory to optimize spending:
+            "Last time Apollo had better CEO data than Clado, so using Apollo again"
+            "User prefers quality over cost, so choosing premium endpoints"
+            "Exa semantic search was more accurate than Firecrawl for company research"
+            
+            Store learnings with update_user_memory tool.""",
+            markdown=True,
+        )
+        
+        # Session 1: Agent learns preferences
+        print("\n" + "="*60)
+        print("SESSION 1: Agent learns your preferences")
+        print("="*60 + "\n")
+        
+        await agent.aprint_response(
+            "Research 3 AI infrastructure companies. "
+            "I care more about data quality than cost. "
+            "Use whatever sources give the best information.",
+            user_id="user@company.com",
+            session_id="research_1",
+            stream=True,
+        )
+        
+        # Show stored memories
+        if agent.learning_machine and agent.learning_machine.user_memory_store:
+            print("\n" + "="*60)
+            print("WHAT AGENT LEARNED (Session 1)")
+            print("="*60)
+            agent.learning_machine.user_memory_store.print(user_id="user@company.com")
+        
+        # Session 2: Agent applies learned preferences
+        print("\n" + "="*60)
+        print("SESSION 2: Agent remembers and optimizes")
+        print("="*60 + "\n")
+        
+        await agent.aprint_response(
+            "Research 3 more companies in the same space.",
+            user_id="user@company.com",
+            session_id="research_2",
+            stream=True,
+        )
+        
+        # Show updated memories
+        if agent.learning_machine and agent.learning_machine.user_memory_store:
+            print("\n" + "="*60)
+            print("WHAT AGENT LEARNED (Session 2)")
+            print("="*60)
+            agent.learning_machine.user_memory_store.print(user_id="user@company.com")
+        
+        print("\n" + "="*60)
+        print(f"Memories stored at: {learning_db_path}")
+        print("Agent will remember these preferences in future sessions.")
+        print("="*60 + "\n")
+
+
+# Example 8: Production-ready with cost controls
 async def production_example() -> None:
     """
     Production-ready agent with real cost controls and error handling.
@@ -442,9 +539,22 @@ if __name__ == "__main__":
     # After funding, try these:
     # asyncio.run(research_agent())
     # asyncio.run(team_example())
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    # Start here: Onboarding example shows how to get started
+    asyncio.run(onboarding_example())
+    
+    # After funding, try these:
+    # asyncio.run(research_agent())
+    # asyncio.run(team_example())
     
     # Advanced: Agno-specific features
     # asyncio.run(spending_tracker_example())  # Tool hooks for cost tracking
     # asyncio.run(structured_research_example())  # Structured outputs with cost attribution
     # asyncio.run(skills_example())  # Load x402 skills for structured workflows
+    # asyncio.run(learning_example())  # Learning Machine - agent optimizes spending over time
     # asyncio.run(production_example())  # Production-ready with hard cost limits
