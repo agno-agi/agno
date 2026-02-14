@@ -4,6 +4,7 @@ from typing import Optional, Union
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from fastapi.responses import PlainTextResponse
+from pydantic import BaseModel, Field
 
 from agno.agent.agent import Agent
 from agno.agent.remote import RemoteAgent
@@ -18,25 +19,38 @@ from agno.workflow import RemoteWorkflow, Workflow
 from .security import validate_webhook_signature
 
 
+class WhatsAppWebhookResponse(BaseModel):
+    status: str = Field(default="ok", description="Processing status")
+
+
+class WhatsAppVerifyResponse(BaseModel):
+    challenge: str = Field(description="Challenge string echoed back to Meta")
+
+
 def attach_routes(
     router: APIRouter,
     agent: Optional[Union[Agent, RemoteAgent]] = None,
     team: Optional[Union[Team, RemoteTeam]] = None,
     workflow: Optional[Union[Workflow, RemoteWorkflow]] = None,
+    show_reasoning: bool = False,
 ) -> APIRouter:
     if agent is None and team is None and workflow is None:
         raise ValueError("Either agent, team, or workflow must be provided.")
 
-    # Create WhatsApp tools instance once for reuse
-    whatsapp_tools = WhatsAppTools(async_mode=True)
+    entity_type = "agent" if agent else "team" if team else "workflow" if workflow else "unknown"
+    whatsapp_tools = WhatsAppTools()
 
     @router.get("/status")
     async def status():
         return {"status": "available"}
 
-    @router.get("/webhook")
+    @router.get(
+        "/webhook",
+        operation_id=f"whatsapp_verify_{entity_type}",
+        name="whatsapp_verify",
+        description="Handle WhatsApp webhook verification",
+    )
     async def verify_webhook(request: Request):
-        """Handle WhatsApp webhook verification"""
         mode = request.query_params.get("hub.mode")
         token = request.query_params.get("hub.verify_token")
         challenge = request.query_params.get("hub.challenge")
@@ -52,42 +66,43 @@ def attach_routes(
 
         raise HTTPException(status_code=403, detail="Invalid verify token or mode")
 
-    @router.post("/webhook")
+    @router.post(
+        "/webhook",
+        operation_id=f"whatsapp_webhook_{entity_type}",
+        name="whatsapp_webhook",
+        description="Process incoming WhatsApp messages",
+        response_model=WhatsAppWebhookResponse,
+        responses={
+            200: {"description": "Event processed successfully"},
+            403: {"description": "Invalid webhook signature"},
+        },
+    )
     async def webhook(request: Request, background_tasks: BackgroundTasks):
-        """Handle incoming WhatsApp messages"""
-        try:
-            # Get raw payload for signature validation
-            payload = await request.body()
-            signature = request.headers.get("X-Hub-Signature-256")
+        payload = await request.body()
+        signature = request.headers.get("X-Hub-Signature-256")
 
-            # Validate webhook signature
-            if not validate_webhook_signature(payload, signature):
-                log_warning("Invalid webhook signature")
-                raise HTTPException(status_code=403, detail="Invalid signature")
+        body = await request.json()
 
-            body = await request.json()
+        # Extract earliest message timestamp for replay protection
+        timestamp = _extract_earliest_timestamp(body)
 
-            # Validate webhook data
-            if body.get("object") != "whatsapp_business_account":
-                log_warning(f"Received non-WhatsApp webhook object: {body.get('object')}")
-                return {"status": "ignored"}
+        if not validate_webhook_signature(payload, signature, timestamp=timestamp):
+            log_warning("Invalid webhook signature")
+            raise HTTPException(status_code=403, detail="Invalid signature")
 
-            # Process messages in background
-            for entry in body.get("entry", []):
-                for change in entry.get("changes", []):
-                    messages = change.get("value", {}).get("messages", [])
+        if body.get("object") != "whatsapp_business_account":
+            log_warning(f"Received non-WhatsApp webhook object: {body.get('object')}")
+            return WhatsAppWebhookResponse(status="ignored")
 
-                    if not messages:
-                        continue
+        for entry in body.get("entry", []):
+            for change in entry.get("changes", []):
+                messages = change.get("value", {}).get("messages", [])
+                if not messages:
+                    continue
+                message = messages[0]
+                background_tasks.add_task(process_message, message, agent, team, workflow)
 
-                    message = messages[0]
-                    background_tasks.add_task(process_message, message, agent, team, workflow)
-
-            return {"status": "processing"}
-
-        except Exception as e:
-            log_error(f"Error processing webhook: {str(e)}")
-            raise HTTPException(status_code=500, detail=str(e))
+        return WhatsAppWebhookResponse(status="processing")
 
     async def process_message(
         message: dict,
@@ -95,7 +110,6 @@ def attach_routes(
         team: Optional[Union[Team, RemoteTeam]],
         workflow: Optional[Union[Workflow, RemoteWorkflow]] = None,
     ):
-        """Process a single WhatsApp message in the background"""
         try:
             message_image = None
             message_video = None
@@ -105,33 +119,65 @@ def attach_routes(
             message_id = message.get("id")
             await typing_indicator_async(message_id)
 
-            if message.get("type") == "text":
+            msg_type = message.get("type")
+
+            if msg_type == "text":
                 message_text = message["text"]["body"]
-            elif message.get("type") == "image":
-                try:
-                    message_text = message["image"]["caption"]
-                except Exception:
-                    message_text = "Describe the image"
+
+            elif msg_type == "image":
+                message_text = message.get("image", {}).get("caption", "Describe the image")
                 message_image = message["image"]["id"]
-            elif message.get("type") == "video":
-                try:
-                    message_text = message["video"]["caption"]
-                except Exception:
-                    message_text = "Describe the video"
+
+            elif msg_type == "video":
+                message_text = message.get("video", {}).get("caption", "Describe the video")
                 message_video = message["video"]["id"]
-            elif message.get("type") == "audio":
+
+            elif msg_type == "audio":
                 message_text = "Reply to audio"
                 message_audio = message["audio"]["id"]
-            elif message.get("type") == "document":
-                message_text = "Process the document"
+
+            elif msg_type == "document":
+                message_text = message.get("document", {}).get("caption", "Process the document")
                 message_doc = message["document"]["id"]
+
+            elif msg_type == "interactive":
+                interactive = message.get("interactive", {})
+                interactive_type = interactive.get("type")
+                if interactive_type == "button_reply":
+                    reply = interactive["button_reply"]
+                    message_text = f"[Button Selected] {reply['title']} (id: {reply['id']})"
+                elif interactive_type == "list_reply":
+                    reply = interactive["list_reply"]
+                    message_text = f"[List Selected] {reply['title']} (id: {reply['id']})"
+                else:
+                    log_warning(f"Unknown interactive type: {interactive_type}")
+                    return
+
+            elif msg_type == "location":
+                loc = message.get("location", {})
+                name = loc.get("name", "Unknown")
+                message_text = f"[Location] {name} ({loc.get('latitude')}, {loc.get('longitude')})"
+
+            elif msg_type == "reaction":
+                reaction = message.get("reaction", {})
+                message_text = f"[Reaction] {reaction.get('emoji', '')} on message {reaction.get('message_id', '')}"
+
+            elif msg_type == "contacts":
+                contacts = message.get("contacts", [])
+                names = [c.get("name", {}).get("formatted_name", "Unknown") for c in contacts]
+                message_text = f"[Contacts Shared] {', '.join(names)}"
+
+            elif msg_type == "sticker":
+                message_text = "Sticker received"
+                message_image = message.get("sticker", {}).get("id")
+
             else:
+                log_warning(f"Unknown message type: {msg_type}")
                 return
 
             phone_number = message["from"]
             log_info(f"Processing message from {phone_number}: {message_text}")
 
-            # Generate and send response
             if agent:
                 response = await agent.arun(  # type: ignore[misc]
                     message_text,
@@ -162,78 +208,88 @@ def attach_routes(
                     videos=[Video(content=await get_media_async(message_video))] if message_video else None,
                     audio=[Audio(content=await get_media_async(message_audio))] if message_audio else None,
                 )
+
             if response.status == "ERROR":
-                await _send_whatsapp_message(
-                    phone_number, "Sorry, there was an error processing your message. Please try again later."
+                _send_whatsapp_message(
+                    whatsapp_tools,
+                    phone_number,
+                    "Sorry, there was an error processing your message. Please try again later.",
                 )
                 log_error(response.content)
                 return
 
-            if response.reasoning_content:
-                await _send_whatsapp_message(phone_number, f"Reasoning: \n{response.reasoning_content}", italics=True)
+            if show_reasoning and hasattr(response, "reasoning_content") and response.reasoning_content:
+                _send_whatsapp_message(
+                    whatsapp_tools,
+                    phone_number,
+                    f"Reasoning: \n{response.reasoning_content}",
+                    italics=True,
+                )
 
             if response.images:
-                number_of_images = len(response.images)
-                log_info(f"images generated: f{number_of_images}")
-                for i in range(number_of_images):
-                    image_content = response.images[i].content
-                    image_bytes = None
-                    if isinstance(image_content, bytes):
-                        try:
-                            decoded_string = image_content.decode("utf-8")
-
-                            image_bytes = base64.b64decode(decoded_string)
-                        except UnicodeDecodeError:
-                            image_bytes = image_content
-                    elif isinstance(image_content, str):
-                        image_bytes = base64.b64decode(image_content)
-                    else:
-                        log_error(f"Unexpected image content type: {type(image_content)} for user {phone_number}")
-
-                    if image_bytes:
-                        media_id = await upload_media_async(
-                            media_data=image_bytes, mime_type="image/png", filename="image.png"
-                        )
-                        await send_image_message_async(media_id=media_id, recipient=phone_number, text=response.content)
-                    else:
-                        log_warning(
-                            f"Could not process image content for user {phone_number}. Type: {type(image_content)}"
-                        )
-                        await _send_whatsapp_message(phone_number, response.content)  # type: ignore
+                await _upload_response_images(response, phone_number)
             else:
-                await _send_whatsapp_message(phone_number, response.content)  # type: ignore
+                _send_whatsapp_message(whatsapp_tools, phone_number, response.content or "")
 
         except Exception as e:
             log_error(f"Error processing message: {str(e)}")
-
             try:
-                await _send_whatsapp_message(
-                    phone_number, "Sorry, there was an error processing your message. Please try again later."
+                _send_whatsapp_message(
+                    whatsapp_tools,
+                    phone_number,
+                    "Sorry, there was an error processing your message. Please try again later.",
                 )
             except Exception as send_error:
                 log_error(f"Error sending error message: {str(send_error)}")
 
-    async def _send_whatsapp_message(recipient: str, message: str, italics: bool = False):
-        if len(message) <= 4096:
-            if italics:
-                # Handle multi-line messages by making each line italic
-                formatted_message = "\n".join([f"_{line}_" for line in message.split("\n")])
-                await whatsapp_tools.send_text_message_async(recipient=recipient, text=formatted_message)
+    async def _upload_response_images(response, recipient: str):
+        for img in response.images:
+            image_content = img.content
+            image_bytes = None
+            if isinstance(image_content, bytes):
+                try:
+                    decoded_string = image_content.decode("utf-8")
+                    image_bytes = base64.b64decode(decoded_string)
+                except UnicodeDecodeError:
+                    image_bytes = image_content
+            elif isinstance(image_content, str):
+                image_bytes = base64.b64decode(image_content)
             else:
-                await whatsapp_tools.send_text_message_async(recipient=recipient, text=message)
+                log_error(f"Unexpected image content type: {type(image_content)} for user {recipient}")
+
+            if image_bytes:
+                media_id = await upload_media_async(media_data=image_bytes, mime_type="image/png", filename="image.png")
+                await send_image_message_async(media_id=media_id, recipient=recipient, text=response.content)
+            else:
+                log_warning(f"Could not process image content for user {recipient}. Type: {type(image_content)}")
+                _send_whatsapp_message(whatsapp_tools, recipient, response.content or "")
+
+    def _send_whatsapp_message(tools: WhatsAppTools, recipient: str, message: str, italics: bool = False):
+        def _format(text: str) -> str:
+            if italics:
+                return "\n".join([f"_{line}_" for line in text.split("\n")])
+            return text
+
+        if len(message) <= 4096:
+            tools.send_text_message(recipient=recipient, text=_format(message))
             return
 
-        # Split message into batches of 4000 characters (WhatsApp message limit is 4096)
         message_batches = [message[i : i + 4000] for i in range(0, len(message), 4000)]
-
-        # Add a prefix with the batch number
         for i, batch in enumerate(message_batches, 1):
             batch_message = f"[{i}/{len(message_batches)}] {batch}"
-            if italics:
-                # Handle multi-line messages by making each line italic
-                formatted_batch = "\n".join([f"_{line}_" for line in batch_message.split("\n")])
-                await whatsapp_tools.send_text_message_async(recipient=recipient, text=formatted_batch)
-            else:
-                await whatsapp_tools.send_text_message_async(recipient=recipient, text=batch_message)
+            tools.send_text_message(recipient=recipient, text=_format(batch_message))
+
+    def _extract_earliest_timestamp(body: dict) -> Optional[int]:
+        timestamps = []
+        for entry in body.get("entry", []):
+            for change in entry.get("changes", []):
+                for msg in change.get("value", {}).get("messages", []):
+                    ts = msg.get("timestamp")
+                    if ts:
+                        try:
+                            timestamps.append(int(ts))
+                        except (ValueError, TypeError):
+                            pass
+        return min(timestamps) if timestamps else None
 
     return router
