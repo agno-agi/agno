@@ -34,9 +34,10 @@ from agno.media import Audio, File, Image, Video
 from agno.models.message import Citations, Message
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
-from agno.run.agent import CustomEvent, RunContentEvent, RunOutput, RunOutputEvent
+from agno.run.agent import CustomEvent, RunContentEvent, RunErrorEvent, RunOutput, RunOutputEvent
 from agno.run.requirement import RunRequirement
 from agno.run.team import RunContentEvent as TeamRunContentEvent
+from agno.run.team import RunErrorEvent as TeamRunErrorEvent
 from agno.run.team import TeamRunOutput, TeamRunOutputEvent
 from agno.run.workflow import WorkflowRunOutputEvent
 from agno.tools.function import Function, FunctionCall, FunctionExecutionResult, UserInputField
@@ -2003,7 +2004,7 @@ class Model(ABC):
                         or isinstance(item, tuple(get_args(TeamRunOutputEvent)))
                         or isinstance(item, tuple(get_args(WorkflowRunOutputEvent)))
                     ):
-                        # We only capture content events for output accumulation
+                        # Capture content and error events for output accumulation
                         if isinstance(item, RunContentEvent) or isinstance(item, TeamRunContentEvent):
                             if item.content is not None and isinstance(item.content, BaseModel):
                                 function_call_output += item.content.model_dump_json()
@@ -2013,6 +2014,9 @@ class Model(ABC):
 
                             if function_call.function.show_result and item.content is not None:
                                 yield ModelResponse(content=item.content)
+
+                        elif isinstance(item, (RunErrorEvent, TeamRunErrorEvent)) and item.content:
+                            function_call_output += item.content
 
                         if isinstance(item, CustomEvent):
                             function_call_output += str(item)
@@ -2457,7 +2461,7 @@ class Model(ABC):
                         + tuple(get_args(TeamRunOutputEvent))
                         + tuple(get_args(WorkflowRunOutputEvent)),
                     ):
-                        # We only capture content events
+                        # Capture content and error events for output accumulation
                         if isinstance(item, RunContentEvent) or isinstance(item, TeamRunContentEvent):
                             if item.content is not None and isinstance(item.content, BaseModel):
                                 function_call_output += item.content.model_dump_json()
@@ -2468,6 +2472,9 @@ class Model(ABC):
                             if function_call.function.show_result and item.content is not None:
                                 await event_queue.put(ModelResponse(content=item.content))
                                 continue
+
+                        elif isinstance(item, (RunErrorEvent, TeamRunErrorEvent)) and item.content:
+                            function_call_output += item.content
 
                         if isinstance(item, CustomEvent):
                             function_call_output += str(item)
@@ -2589,7 +2596,7 @@ class Model(ABC):
                             + tuple(get_args(TeamRunOutputEvent))
                             + tuple(get_args(WorkflowRunOutputEvent)),
                         ):
-                            # We only capture content events
+                            # Capture content and error events for output accumulation
                             if isinstance(item, RunContentEvent) or isinstance(item, TeamRunContentEvent):
                                 if item.content is not None and isinstance(item.content, BaseModel):
                                     function_call_output += item.content.model_dump_json()
@@ -2600,6 +2607,9 @@ class Model(ABC):
                                 if function_call.function.show_result and item.content is not None:
                                     yield ModelResponse(content=item.content)
                                     continue
+
+                            elif isinstance(item, (RunErrorEvent, TeamRunErrorEvent)) and item.content:
+                                function_call_output += item.content
 
                             elif isinstance(item, CustomEvent):
                                 function_call_output += str(item)
