@@ -25,6 +25,7 @@ from typing import Any, Callable, Dict, List
 
 from agno.agent import Agent
 from agno.models.anthropic import Claude
+from agno.skills import LocalSkills, Skills
 from agno.team import Team
 from agno.tools.mcp import MCPTools
 from agno.utils.log import logger
@@ -259,6 +260,59 @@ async def structured_research_example() -> None:
             print("="*60 + "\n")
 
 
+# Example 6: Agent with x402 skills
+async def skills_example() -> None:
+    """
+    Load x402 skills for structured API guidance.
+    
+    Skills provide:
+    - Pre-built workflows for common tasks
+    - Endpoint discovery and documentation
+    - Pricing guidance and cost optimization
+    - Best practices for each API provider
+    
+    Install skills from: https://github.com/merit-systems/x402scan-skills
+    """
+    async with MCPTools("npx -y @x402scan/mcp@latest") as x402:
+        # Clone skills repo (in production, install locally first)
+        import subprocess
+        skills_dir = "/tmp/x402scan-skills/skills"
+        
+        try:
+            subprocess.run(
+                ["git", "clone", "https://github.com/merit-systems/x402scan-skills", "/tmp/x402scan-skills"],
+                capture_output=True,
+                check=False,
+            )
+        except:
+            pass  # Skills may already exist
+        
+        agent = Agent(
+            model=Claude(id="claude-sonnet-4-20250514"),
+            tools=[x402],
+            skills=Skills(loaders=[LocalSkills(skills_dir)]),
+            instructions="""You are a research agent with access to x402 skills.
+            
+            Available skills provide guidance for:
+            - data-enrichment: Person/company profiles (Apollo, Clado)
+            - web-research: Web scraping and semantic search (Exa, Firecrawl)
+            - local-search: Google Maps places and businesses
+            - social-intelligence: X/Twitter and Reddit data (Grok)
+            - media-generation: AI image/video generation (StableStudio)
+            - news-shopping: Google News and Shopping (Serper)
+            - people-property: People and property search (Whitepages)
+            - wallet: Balance, deposits, and wallet management
+            
+            Follow skill workflows for optimal results and cost efficiency.""",
+            markdown=True,
+        )
+        
+        await agent.aprint_response(
+            "Find the CEO of Anthropic and enrich their profile with recent activity. Use the data-enrichment skill.",
+            stream=True,
+        )
+
+
 # ---------------------------------------------------------------------------
 # Run Agent
 # ---------------------------------------------------------------------------
@@ -274,3 +328,4 @@ if __name__ == "__main__":
     # Advanced: Agno-specific features
     # asyncio.run(spending_tracker_example())  # Tool hooks for cost tracking
     # asyncio.run(structured_research_example())  # Structured outputs with cost attribution
+    # asyncio.run(skills_example())  # Load x402 skills for structured workflows
