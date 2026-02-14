@@ -1,20 +1,3 @@
-"""Basic Telegram bot agent with group chat support.
-
-Requires:
-    TELEGRAM_TOKEN — Bot token from @BotFather
-    GOOGLE_API_KEY — Google Gemini API key
-    APP_ENV=development — Skip webhook secret validation for local testing
-
-Run:
-    python cookbook/05_agent_os/interfaces/telegram/basic_agent.py
-
-Then expose via ngrok:
-    ngrok http 7777
-
-Set webhook:
-    curl "https://api.telegram.org/bot$TELEGRAM_TOKEN/setWebhook?url=https://<ngrok-url>/telegram/webhook"
-"""
-
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.google import Gemini

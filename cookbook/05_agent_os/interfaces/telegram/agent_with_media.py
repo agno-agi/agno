@@ -1,22 +1,3 @@
-"""Telegram bot with image generation (DALL-E) and text-to-speech (ElevenLabs).
-
-Requires:
-    TELEGRAM_TOKEN — Bot token from @BotFather
-    GOOGLE_API_KEY — Google Gemini API key
-    OPENAI_API_KEY — For DALL-E image generation
-    ELEVEN_LABS_API_KEY — For ElevenLabs text-to-speech
-    APP_ENV=development — Skip webhook secret validation for local testing
-
-Run:
-    python cookbook/05_agent_os/interfaces/telegram/agent_with_media.py
-
-Then expose via ngrok:
-    ngrok http 7777
-
-Set webhook:
-    curl "https://api.telegram.org/bot$TELEGRAM_TOKEN/setWebhook?url=https://<ngrok-url>/telegram/webhook"
-"""
-
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.google import Gemini
