@@ -7,7 +7,6 @@ Demonstrates retrieving team, session, and member-level execution metrics.
 
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
-from agno.db.surrealdb import SurrealDb
 from agno.models.openai import OpenAIResponses
 from agno.team import Team
 from agno.tools.yfinance import YFinanceTools
