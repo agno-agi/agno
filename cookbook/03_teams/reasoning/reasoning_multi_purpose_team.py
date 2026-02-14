@@ -139,7 +139,12 @@ local_python_agent = Agent(
         FileTools(base_dir=cwd),
         PythonTools(
             base_dir=Path(cwd),
-            include_tools=["list_files", "run_python_file_return_variable", "save_to_file_and_run", "uv_pip_install_package"],
+            include_tools=[
+                "list_files",
+                "run_python_file_return_variable",
+                "save_to_file_and_run",
+                "uv_pip_install_package",
+            ],
         ),
     ],
 )

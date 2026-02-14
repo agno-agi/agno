@@ -5,7 +5,7 @@ Tested: 2026-02-12 | Branch: cookbook/v25-merge-fixes
 | File | Status | Notes |
 |------|--------|-------|
 | agentic_rag.py | PASS | Agentic RAG with PgVector, Thai recipe knowledge base, returns Tom Kha Gai recipe |
-| agentic_rag_with_reasoning.py | PASS | RAG with reasoning model, returns Agno agent concepts from docs knowledge base |
+| agentic_rag_with_reasoning.py | PASS | RAG with reasoning model, returns Agno agent concepts from docs knowledge base. Re-verified 2026-02-14: URL path fix confirmed, reasoning agent searched KB and produced agent definition with citations. |
 | agentic_rag_with_reranking.py | PASS | RAG with CohereReranker, returns Agno key features |
 | custom_retriever.py | PASS | Custom retriever returns Python overview from hardcoded docs |
 | knowledge_filters.py | PASS | Knowledge filters with metadata, returns Thai dessert recipe (Kluay Buat Chi) |

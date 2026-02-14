@@ -13,4 +13,4 @@ Tested: 2026-02-12 | Branch: cookbook/v25-merge-fixes
 | image_to_structured_output.py | FAIL | Wikipedia image URL blocked by OpenAI (403 upstream) |
 | image_to_text.py | FAIL | sample.jpg not found, agent could not process image |
 | media_input_for_tool.py | PASS | PDF financial report analyzed with Gemini, extracts revenue data |
-| video_caption.py | PASS | Agent prompts for video file path (no video provided, expected behavior) |
+| video_caption.py | PASS | Agent prompts for video file path (no video provided, expected behavior). Re-verified 2026-02-14: MoviePy enable_ prefix fix confirmed, agent loaded tools and responded correctly. |

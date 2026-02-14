@@ -72,11 +72,12 @@
 
 ### pydantic_input.py
 
-**Status:** PASS
+**Status:** FAIL (pre-existing model issue)
 
 **Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/structured_input_output/pydantic_input.py`.
 
-**Result:** Executed successfully. Duration: 35.23s. Tail: ibuted systems             ┃ | ┃ implementations. Enjoy exploring these posts for deeper understanding and    ┃ | ┃ practical strategies!                                                        ┃ | ┃                                                                              ┃ | ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+**Result:** PR removed `pass_user_input_to_members` (deprecated param). However, fails with `gpt-5.2-mini` model not found error — pre-existing from V2.5 phase5 rebase. The param removal is correct; model ID needs separate fix.
+**Re-verified:** 2026-02-14 — `pass_user_input_to_members` removal verified correct. Model ID `gpt-5.2-mini` needs separate fix.
 
 ---
 

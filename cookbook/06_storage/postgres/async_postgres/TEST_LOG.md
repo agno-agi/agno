@@ -11,11 +11,12 @@
 
 ### async_postgres_for_agent.py
 
-**Status:** PASS (after fix)
-**Time:** ~19s
+**Status:** PASS
+**Time:** ~10s
 **Description:** AsyncPostgresDb for agent. Context preserved across two async calls (Canada population then national anthem).
-**Triage:** regression (fixed)
-**Fix:** Double `asyncio.run()` (lines 31-32) wrapped into single `async def main()` to avoid event loop closed error.
+**Triage:** regression (fixed in v25-fixes)
+**Fix:** Double `asyncio.run()` wrapped into single `async def main()`.
+**Re-verified:** 2026-02-14 — async refactor confirmed working, web search tool called, session context maintained across turns.
 
 ---
 

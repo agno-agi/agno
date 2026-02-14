@@ -4,10 +4,11 @@
 
 ### reasoning_multi_purpose_team.py
 
-**Status:** FAIL
+**Status:** FAIL (missing dep: e2b_code_interpreter)
 
-**Description:** Multi-purpose reasoning team with mixed Claude/OpenAI models, ReasoningTools, and many specialist agents (web, finance, medical, calculator, knowledge, github, python, code sandbox). Sync team uses local Python agent; async team uses E2B sandbox. Loads knowledge from docs.agno.com URL.
+**Description:** Multi-purpose reasoning team with mixed Claude/OpenAI models, ReasoningTools, and many specialist agents. PR scoped `include_tools` changes.
 
-**Result:** Import error — `e2b_code_interpreter` package not installed in demo venv. The E2B import is at module level (line 19: `from agno.tools.e2b import E2BTools`), so even the sync team path cannot execute. The sync team doesn't use E2BTools (only the async team does via `code_agent`), but the import blocks both.
+**Result:** Import error — `e2b_code_interpreter` package not installed in demo venv. Module-level E2B import blocks both sync and async paths. The PR's `include_tools` scoping change compiles correctly (verified via py_compile). The E2B dep issue is pre-existing.
+**Re-verified:** 2026-02-14 — py_compile PASS. Runtime blocked by missing e2b dep (pre-existing).
 
 ---

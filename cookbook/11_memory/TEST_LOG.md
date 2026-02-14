@@ -86,12 +86,13 @@
 
 ### 08_memory_tools.py
 
-**Status:** PASS (after fix)
-**Time:** ~160s (needs 180s timeout)
-**Description:** MemoryTools + WebSearchTools integration. Agent stores user info and plans an Africa trip using web search.
-**Output:** Agent stored memories via MemoryTools, performed multiple web searches, generated comprehensive travel plans.
-**Triage:** regression (fixed)
-**Fix:** Wrapped two separate `asyncio.run()` calls into a single `async def main()` to avoid "Event loop is closed" error. Note: needs 180s timeout due to reasoning model + extensive web searches.
+**Status:** PASS
+**Time:** ~120s
+**Description:** MemoryTools + WebSearchTools integration. Agent stores user info and plans a trip using web search.
+**Output:** Agent stored memories via MemoryTools, performed multiple web searches, generated comprehensive travel plan for Lisbon.
+**Triage:** regression (fixed in v25-fixes)
+**Fix:** Wrapped two separate `asyncio.run()` calls into a single `async def main()`.
+**Re-verified:** 2026-02-14 — async refactor confirmed working, memory stored, web searches completed.
 
 ---
 

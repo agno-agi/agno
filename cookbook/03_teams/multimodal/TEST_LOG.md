@@ -76,8 +76,9 @@
 
 **Status:** PASS
 
-**Description:** Video caption generation pipeline using team coordination. Caption Generator and Video Editor agents.
+**Description:** Video caption generation pipeline using team coordination. Caption Generator and Video Editor agents. PR fixed MoviePy enable_ prefix.
 
-**Result:** Team coordination worked. Requested video file path from user (expected behavior for no-input run).
+**Result:** Team coordination worked. Delegated to audio-extractor and caption-generator. Requested video file path from user (expected behavior for no-input run).
+**Re-verified:** 2026-02-14 — MoviePy enable_ prefix fix confirmed working, team loaded and delegated correctly.
 
 ---

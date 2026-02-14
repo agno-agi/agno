@@ -12,9 +12,12 @@
 
 ### _teams.py
 
-**Status:** PENDING
+**Status:** PASS
 
-**Description:** Teams.
+**Description:** Module defining team configurations for AgentOS. PR fixed YFinanceTools to use bare constructor (removed dead boolean params).
+
+**Result:** Module imports successfully, prints "This module is intended to be imported." YFinanceTools bare constructor works correctly.
+**Tested:** 2026-02-14
 
 ---
 
@@ -68,8 +71,11 @@
 
 ### teams_demo.py
 
-**Status:** PENDING
+**Status:** PASS
 
-**Description:** Teams Demo.
+**Description:** AgentOS teams demo server. PR removed `pass_user_input_to_members` (deprecated param).
+
+**Result:** Server started on http://localhost:7777, clean startup and shutdown. Security key enabled, uvicorn reloader working.
+**Tested:** 2026-02-14
 
 ---

@@ -36,12 +36,13 @@
 
 ### 03_custom_memory_instructions.py
 
-**Status:** PASS (after fix)
+**Status:** PASS
 **Time:** ~35s
 **Description:** Custom memory capture instructions with two different models. First manager uses OpenAI with academic-only instructions, second uses Claude for default capture.
-**Output:** Both memory managers created memories correctly. Custom instructions filtered to academic interests only.
-**Triage:** regression (fixed)
-**Fix:** Changed `claude-3-5-sonnet-latest` to `claude-sonnet-4-5-20250929` -- the older model does not support structured outputs required by MemoryManager.
+**Output:** Both memory managers created memories correctly. John Doe and Jane Doe memories stored and retrieved with proper topic tagging.
+**Triage:** regression (fixed in v25-fixes)
+**Fix:** Changed `claude-3-5-sonnet-latest` to `claude-sonnet-4-5-20250929`.
+**Re-verified:** 2026-02-14 — model ID update confirmed working, both OpenAI and Claude memory managers produce correct results.
 
 ---
 

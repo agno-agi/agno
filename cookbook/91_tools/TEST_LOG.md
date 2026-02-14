@@ -9,9 +9,11 @@
 
 ### agentql_tools.py — SKIP (missing package: agentql)
 ### airflow_tools.py — PASS
+**Re-verified:** 2026-02-14 — Airflow param rename applied. Agent generated Airflow DAG code correctly using `schedule` instead of deprecated `schedule_interval`.
 ### apify_tools.py — SKIP (missing package: apify-client)
 ### arxiv_tools.py — PASS
 ### aws_lambda_tools.py — PASS
+**Re-verified:** 2026-02-14 — Dead params removed. Agent loaded, invoked Lambda tools correctly (no functions in AWS env, expected). Both invocation and management examples ran cleanly.
 ### aws_ses_tools.py — PASS
 ### baidusearch_tools.py — SKIP (missing package: baidusearch)
 ### bitbucket_tools.py — PASS
@@ -26,6 +28,7 @@
 ### composio_tools.py — SKIP (missing package: composio_agno)
 ### confluence_tools.py — SKIP (missing package: atlassian-python-api)
 ### crawl4ai_tools.py — SKIP (missing package: crawl4ai)
+**Re-verified:** 2026-02-14 — Simplified to `enable_crawl`. Compiles OK but crawl4ai not installed in demo venv.
 ### csv_tools.py — PASS
 ### custom_api_tools.py — PASS
 ### custom_tool_events.py — PASS
@@ -116,7 +119,8 @@
 ### website_tools.py — PASS
 ### website_tools_knowledge.py — PASS
 ### whatsapp_tools.py — PASS
-### wikipedia_tools.py — SKIP (missing package: wikipedia)
+### wikipedia_tools.py — PASS
+**Re-verified:** 2026-02-14 — Dead boolean params removed (`enable_search=True` etc.). First Wikipedia search (AI) succeeded, second (machine learning) returned "Page not found" (Wikipedia API issue, not framework bug). Agent handled gracefully.
 ### x_tools.py — SKIP (missing package: tweepy)
 ### yfinance_tools.py — PASS
 ### youtube_tools.py — PASS

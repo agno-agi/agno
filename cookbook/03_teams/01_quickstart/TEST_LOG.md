@@ -44,11 +44,12 @@
 
 ### 05_team_history.py
 
-**Status:** PASS
+**Status:** FAIL (pre-existing model issue)
 
 **Description:** Shared team history via `add_team_history_to_members=True` with SqliteDb. Multi-turn cross-language conversation.
 
-**Result:** Completed successfully. Team history shared with all members. Second request built on prior context.
+**Result:** PR removed `pass_user_input_to_members` (deprecated param). However, fails with `gpt-5.2-mini` model not found error — pre-existing issue from V2.5 phase5 rebase, not related to this PR's changes.
+**Re-verified:** 2026-02-14 — `pass_user_input_to_members` removal verified. Model ID `gpt-5.2-mini` needs separate fix.
 
 ---
 

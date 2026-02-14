@@ -10,11 +10,12 @@
 
 ### async_sqlite_for_agent.py
 
-**Status:** PASS (after fix)
-**Time:** ~20s
+**Status:** PASS
+**Time:** ~10s
 **Description:** AsyncSqliteDb for agent. Context preserved across two async calls (Canada population then national anthem).
-**Triage:** regression (fixed)
-**Fix:** Double `asyncio.run()` (lines 30-31) wrapped into single `async def main()` to avoid event loop closed error. Also required `aiosqlite` and `greenlet` pip installs in demo venv.
+**Triage:** regression (fixed in v25-fixes)
+**Fix:** Double `asyncio.run()` wrapped into single `async def main()`.
+**Re-verified:** 2026-02-14 — async refactor confirmed working, web search tool called, session context maintained.
 
 ---
 
