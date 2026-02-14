@@ -9,17 +9,19 @@ Run: .venvs/demo/bin/python cookbook/03_teams/task_mode/03_task_mode_with_tools.
 """
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.team.mode import TeamMode
 from agno.team.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 
-# -- Tool-equipped agents -----------------------------------------------------
+# ---------------------------------------------------------------------------
+# Create Members
+# ---------------------------------------------------------------------------
 
 web_researcher = Agent(
     name="Web Researcher",
     role="Searches the web for current information",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     tools=[DuckDuckGoTools()],
     instructions=[
         "You are a web researcher.",
@@ -31,7 +33,7 @@ web_researcher = Agent(
 summarizer = Agent(
     name="Summarizer",
     role="Synthesizes information into clear summaries",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     instructions=[
         "You are an expert summarizer.",
         "Take detailed information and distill it into a clear, structured summary.",
@@ -39,12 +41,14 @@ summarizer = Agent(
     ],
 )
 
-# -- Task-mode team -----------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Create Team
+# ---------------------------------------------------------------------------
 
 research_team = Team(
     name="Research Team",
     mode=TeamMode.tasks,
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     members=[web_researcher, summarizer],
     instructions=[
         "You are a research team leader.",
@@ -58,7 +62,9 @@ research_team = Team(
     max_iterations=10,
 )
 
-# -- Run ---------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Run Team
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     research_team.print_response(

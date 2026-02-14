@@ -8,7 +8,7 @@ Demonstrates collaborative prompt optimization and DALL-E image generation.
 from typing import Iterator
 
 from agno.agent import Agent, RunOutputEvent
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.team import Team
 from agno.tools.dalle import DalleTools
 from agno.utils.common import dataclass_to_dict
@@ -20,7 +20,7 @@ from rich.pretty import pprint
 image_generator = Agent(
     name="Image Creator",
     role="Generate images using DALL-E",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     tools=[DalleTools()],
     instructions=[
         "Use the DALL-E tool to create high-quality images",
@@ -31,7 +31,7 @@ image_generator = Agent(
 prompt_engineer = Agent(
     name="Prompt Engineer",
     role="Optimize and enhance image generation prompts",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     instructions=[
         "Enhance user prompts for better image generation results",
         "Consider artistic style, composition, and technical details",
@@ -43,7 +43,7 @@ prompt_engineer = Agent(
 # ---------------------------------------------------------------------------
 image_team = Team(
     name="Image Generation Team",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     members=[prompt_engineer, image_generator],
     instructions=[
         "Generate high-quality images from user prompts.",

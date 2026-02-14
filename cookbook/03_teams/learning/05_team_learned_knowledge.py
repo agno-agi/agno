@@ -21,7 +21,7 @@ from agno.learn import (
     LearningMachine,
     LearningMode,
 )
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.team import Team
 from agno.vectordb.pgvector import PgVector, SearchType
 
@@ -37,21 +37,29 @@ knowledge = Knowledge(
     ),
 )
 
+
+# ---------------------------------------------------------------------------
+# Create Members
+# ---------------------------------------------------------------------------
 sre_engineer = Agent(
     name="SRE Engineer",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     role="Provide guidance on reliability, monitoring, and incident response.",
 )
 
 platform_engineer = Agent(
     name="Platform Engineer",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     role="Advise on infrastructure, scaling, and platform architecture.",
 )
 
+
+# ---------------------------------------------------------------------------
+# Create Team
+# ---------------------------------------------------------------------------
 team = Team(
     name="Platform Team",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     members=[sre_engineer, platform_engineer],
     db=db,
     learning=LearningMachine(
@@ -64,6 +72,10 @@ team = Team(
     show_members_responses=True,
 )
 
+
+# ---------------------------------------------------------------------------
+# Run Demo
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     user_id = "erik@example.com"
 

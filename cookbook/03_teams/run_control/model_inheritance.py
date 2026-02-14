@@ -6,7 +6,7 @@ Demonstrates how member models inherit from parent team models.
 """
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.team import Team
 
 # ---------------------------------------------------------------------------
@@ -27,7 +27,7 @@ writer = Agent(
 editor = Agent(
     name="Editor",
     role="Edit and refine content",
-    model=OpenAIChat(id="gpt-5.2"),
+    model=OpenAIResponses(id="gpt-5.2"),
     instructions=["Ensure clarity and correctness"],
 )
 
@@ -38,7 +38,7 @@ analyst = Agent(
 
 sub_team = Team(
     name="Analysis Team",
-    model=OpenAIChat(id="gpt-5.2"),
+    model=OpenAIResponses(id="gpt-5.2"),
     members=[analyst],
 )
 
@@ -47,7 +47,7 @@ sub_team = Team(
 # ---------------------------------------------------------------------------
 team = Team(
     name="Content Production Team",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     members=[researcher, writer, editor, sub_team],
     instructions=[
         "Research the topic thoroughly",

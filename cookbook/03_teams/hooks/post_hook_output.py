@@ -10,7 +10,7 @@ from datetime import datetime
 
 from agno.agent import Agent
 from agno.exceptions import CheckTrigger, OutputCheckError
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.run.team import TeamRunOutput
 from agno.team import Team
 from pydantic import BaseModel
@@ -57,7 +57,7 @@ def validate_team_response_quality(run_output: TeamRunOutput, team: Team) -> Non
 
     validator_agent = Agent(
         name="Team Output Validator",
-        model=OpenAIChat(id="gpt-5.2"),
+        model=OpenAIResponses(id="gpt-5.2"),
         instructions=[
             "You are a team output quality validator. Analyze team responses for:",
             "1. COMPREHENSIVENESS: Response covers multiple areas of expertise relevant to the question",
@@ -214,7 +214,7 @@ def structure_team_response(run_output: TeamRunOutput, team: Team) -> None:
     """Reformat output into a structured, action-oriented summary."""
     formatter_agent = Agent(
         name="Team Response Formatter",
-        model=OpenAIChat(id="gpt-5.2"),
+        model=OpenAIResponses(id="gpt-5.2"),
         instructions=[
             "You are a team response formatting specialist.",
             "Transform team responses into well-structured formats that highlight:",
@@ -289,17 +289,17 @@ team_with_validation = Team(
     members=[
         Agent(
             name="Corporate Lawyer",
-            model=OpenAIChat(id="gpt-5.2"),
+            model=OpenAIResponses(id="gpt-5.2"),
             description="Expert in corporate law, contracts, and compliance",
         ),
         Agent(
             name="Tax Attorney",
-            model=OpenAIChat(id="gpt-5.2"),
+            model=OpenAIResponses(id="gpt-5.2"),
             description="Specialist in tax law, regulations, and planning",
         ),
         Agent(
             name="Risk Analyst",
-            model=OpenAIChat(id="gpt-5.2"),
+            model=OpenAIResponses(id="gpt-5.2"),
             description="Expert in legal risk assessment and mitigation",
         ),
     ],
@@ -317,8 +317,8 @@ team_with_validation = Team(
 team_simple = Team(
     name="Content Creation Team",
     members=[
-        Agent(name="Writer", model=OpenAIChat(id="gpt-5.2")),
-        Agent(name="Editor", model=OpenAIChat(id="gpt-5.2")),
+        Agent(name="Writer", model=OpenAIResponses(id="gpt-5.2")),
+        Agent(name="Editor", model=OpenAIResponses(id="gpt-5.2")),
     ],
     post_hooks=[simple_team_coordination_check],
     instructions=[
@@ -328,16 +328,16 @@ team_simple = Team(
 
 metadata_team = Team(
     name="Business Intelligence Team",
-    model=OpenAIChat(id="gpt-5.2"),
+    model=OpenAIResponses(id="gpt-5.2"),
     members=[
         Agent(
             name="Market Analyst",
-            model=OpenAIChat(id="gpt-5.2"),
+            model=OpenAIResponses(id="gpt-5.2"),
             description="Expert in market trends and competitive analysis",
         ),
         Agent(
             name="Business Advisor",
-            model=OpenAIChat(id="gpt-5.2"),
+            model=OpenAIResponses(id="gpt-5.2"),
             description="Specialist in business strategy and operations",
         ),
     ],
@@ -352,17 +352,17 @@ collab_team = Team(
     members=[
         Agent(
             name="UX Designer",
-            model=OpenAIChat(id="gpt-5.2"),
+            model=OpenAIResponses(id="gpt-5.2"),
             description="User experience and interface design expert",
         ),
         Agent(
             name="Product Manager",
-            model=OpenAIChat(id="gpt-5.2"),
+            model=OpenAIResponses(id="gpt-5.2"),
             description="Product strategy and roadmap specialist",
         ),
         Agent(
             name="Engineer",
-            model=OpenAIChat(id="gpt-5.2"),
+            model=OpenAIResponses(id="gpt-5.2"),
             description="Technical implementation and architecture expert",
         ),
     ],
@@ -380,17 +380,17 @@ consulting_team = Team(
     members=[
         Agent(
             name="Strategy Consultant",
-            model=OpenAIChat(id="gpt-5.2"),
+            model=OpenAIResponses(id="gpt-5.2"),
             description="Business strategy and planning expert",
         ),
         Agent(
             name="Operations Specialist",
-            model=OpenAIChat(id="gpt-5.2"),
+            model=OpenAIResponses(id="gpt-5.2"),
             description="Process optimization and efficiency expert",
         ),
         Agent(
             name="Change Management Expert",
-            model=OpenAIChat(id="gpt-5.2"),
+            model=OpenAIResponses(id="gpt-5.2"),
             description="Organizational change and transformation specialist",
         ),
     ],
@@ -438,14 +438,14 @@ async def main() -> None:
         members=[
             Agent(
                 name="Agent1",
-                model=OpenAIChat(id="gpt-5.2"),
+                model=OpenAIResponses(id="gpt-5.2"),
                 instructions=[
                     "Give brief, individual responses without considering teammates."
                 ],
             ),
             Agent(
                 name="Agent2",
-                model=OpenAIChat(id="gpt-5.2"),
+                model=OpenAIResponses(id="gpt-5.2"),
                 instructions=["Provide minimal responses without team coordination."],
             ),
         ],

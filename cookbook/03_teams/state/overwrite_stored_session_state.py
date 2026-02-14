@@ -6,14 +6,14 @@ Demonstrates replacing persisted session_state with run-time session_state.
 """
 
 from agno.db.sqlite import SqliteDb
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.team import Team
 
 # ---------------------------------------------------------------------------
 # Create Team
 # ---------------------------------------------------------------------------
 team = Team(
-    model=OpenAIChat(id="gpt-5.2"),
+    model=OpenAIResponses(id="gpt-5.2"),
     db=SqliteDb(db_file="tmp/agents.db"),
     members=[],
     markdown=True,

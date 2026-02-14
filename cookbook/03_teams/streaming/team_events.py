@@ -9,8 +9,7 @@ import asyncio
 from uuid import uuid4
 
 from agno.agent import Agent, RunEvent
-from agno.models.anthropic.claude import Claude
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.team import Team, TeamRunEvent
 from agno.tools.hackernews import HackerNewsTools
 from agno.tools.websearch import WebSearchTools
@@ -32,7 +31,7 @@ website_agent = Agent(
     id="website-agent",
     name="Website Agent",
     role="Search the website for information",
-    model=OpenAIChat(id="o3-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     tools=[WebSearchTools()],
     instructions=[
         "Search the website for information",
@@ -49,7 +48,7 @@ company_info_team = Team(
     name="Company Info Team",
     id=team_id,
     user_id=user_id,
-    model=Claude(id="claude-3-7-sonnet-latest"),
+    model=OpenAIResponses(id="gpt-5.2"),
     members=[hacker_news_agent, website_agent],
     markdown=True,
     instructions=[

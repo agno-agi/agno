@@ -7,7 +7,7 @@ Demonstrates team-level pause/continue flow for confirmation-required member too
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.team import Team
 from agno.tools import tool
 from agno.utils import pprint
@@ -33,7 +33,7 @@ def get_the_weather(city: str) -> str:
 # ---------------------------------------------------------------------------
 weather_agent = Agent(
     name="WeatherAgent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     tools=[get_the_weather],
     db=db,
     telemetry=False,
@@ -44,7 +44,7 @@ weather_agent = Agent(
 # ---------------------------------------------------------------------------
 team = Team(
     name="WeatherTeam",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     members=[weather_agent],
     db=db,
     telemetry=False,

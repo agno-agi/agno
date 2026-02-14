@@ -6,7 +6,7 @@ Demonstrates provider-native JSON schema output for team responses.
 """
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.team import Team
 from agno.tools.websearch import WebSearchTools
 from agno.utils.pprint import pprint_run_response
@@ -36,14 +36,14 @@ stock_schema = {
 # ---------------------------------------------------------------------------
 stock_searcher = Agent(
     name="Stock Searcher",
-    model=OpenAIChat("gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     role="Searches for information on stocks and provides price analysis.",
     tools=[WebSearchTools()],
 )
 
 company_info_agent = Agent(
     name="Company Info Searcher",
-    model=OpenAIChat("gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     role="Searches for information about companies and recent news.",
     tools=[WebSearchTools()],
 )
@@ -53,7 +53,7 @@ company_info_agent = Agent(
 # ---------------------------------------------------------------------------
 team = Team(
     name="Stock Research Team",
-    model=OpenAIChat("gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     respond_directly=True,
     members=[stock_searcher, company_info_agent],
     output_schema=stock_schema,

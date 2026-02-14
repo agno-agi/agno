@@ -1218,9 +1218,7 @@ class Workflow:
                     session_id=session_id, session_type=SessionType.WORKFLOW, user_id=user_id
                 )  # type: ignore
             else:
-                session = self.db.get_session(
-                    session_id=session_id, session_type=SessionType.WORKFLOW, user_id=user_id
-                )
+                session = self.db.get_session(session_id=session_id, session_type=SessionType.WORKFLOW, user_id=user_id)
             return session if isinstance(session, (WorkflowSession, type(None))) else None
         except Exception as e:
             log_warning(f"Error getting session from db: {e}")

@@ -11,7 +11,7 @@ from agno.agent import Agent
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reranker.cohere import CohereReranker
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.team import Team
 from agno.utils.print_response.team import aprint_response, print_response
 from agno.vectordb.lancedb import LanceDb, SearchType
@@ -43,7 +43,7 @@ validation_knowledge = Knowledge(
 # ---------------------------------------------------------------------------
 initial_retriever = Agent(
     name="Initial Retriever",
-    model=OpenAIChat(id="o3-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     role="Perform broad initial retrieval to gather candidate information",
     knowledge=reranked_knowledge,
     search_knowledge=True,
@@ -58,7 +58,7 @@ initial_retriever = Agent(
 
 reranking_specialist = Agent(
     name="Reranking Specialist",
-    model=OpenAIChat(id="o3-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     role="Apply advanced reranking to optimize retrieval results",
     knowledge=reranked_knowledge,
     search_knowledge=True,
@@ -73,7 +73,7 @@ reranking_specialist = Agent(
 
 context_analyzer = Agent(
     name="Context Analyzer",
-    model=OpenAIChat(id="o3-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     role="Analyze context and relevance of reranked results",
     knowledge=validation_knowledge,
     search_knowledge=True,
@@ -88,7 +88,7 @@ context_analyzer = Agent(
 
 final_synthesizer = Agent(
     name="Final Synthesizer",
-    model=OpenAIChat(id="o3-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     role="Synthesize reranked results into optimal comprehensive responses",
     instructions=[
         "Synthesize information from all team members into optimal responses.",
@@ -105,7 +105,7 @@ final_synthesizer = Agent(
 # ---------------------------------------------------------------------------
 distributed_reranking_team = Team(
     name="Distributed Reranking RAG Team",
-    model=OpenAIChat(id="o3-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     members=[
         initial_retriever,
         reranking_specialist,

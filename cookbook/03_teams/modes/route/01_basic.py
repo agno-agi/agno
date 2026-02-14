@@ -14,7 +14,9 @@ from agno.models.openai import OpenAIResponses
 from agno.team.mode import TeamMode
 from agno.team.team import Team
 
-# -- Language-specific agents ------------------------------------------------
+# ---------------------------------------------------------------------------
+# Create Members
+# ---------------------------------------------------------------------------
 
 english_agent = Agent(
     name="English Agent",
@@ -37,7 +39,9 @@ french_agent = Agent(
     instructions=["Always respond in French, regardless of the input language."],
 )
 
-# -- Route team --------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Create Team
+# ---------------------------------------------------------------------------
 
 team = Team(
     name="Language Router",
@@ -53,7 +57,9 @@ team = Team(
     markdown=True,
 )
 
-# -- Run ---------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Run Team
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     # English

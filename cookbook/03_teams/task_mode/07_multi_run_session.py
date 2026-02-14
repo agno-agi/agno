@@ -9,32 +9,36 @@ Run: .venvs/demo/bin/python cookbook/03_teams/task_mode/07_multi_run_session.py
 """
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.team.mode import TeamMode
 from agno.team.team import Team
 
-# -- Member agents -----------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Create Members
+# ---------------------------------------------------------------------------
 
 researcher = Agent(
     name="Researcher",
     role="Research specialist",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     instructions=["Provide concise, factual research summaries."],
 )
 
 analyst = Agent(
     name="Analyst",
     role="Data analyst who draws conclusions from research",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     instructions=["Analyze data and draw actionable conclusions."],
 )
 
-# -- Task-mode team with a fixed session_id ----------------------------------
+# ---------------------------------------------------------------------------
+# Create Team
+# ---------------------------------------------------------------------------
 
 team = Team(
     name="Research Analysis Team",
     mode=TeamMode.tasks,
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     members=[researcher, analyst],
     session_id="task-mode-demo-session",
     instructions=[
@@ -46,7 +50,9 @@ team = Team(
     max_iterations=8,
 )
 
-# -- Run multiple times -------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Run Team
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     print("=" * 60)

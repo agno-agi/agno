@@ -9,7 +9,7 @@ import asyncio
 from typing import List
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.team import Team
 from agno.tools.hackernews import HackerNewsTools
 from agno.tools.newspaper4k import Newspaper4kTools
@@ -30,28 +30,28 @@ class Article(BaseModel):
 # ---------------------------------------------------------------------------
 sync_hn_researcher = Agent(
     name="HackerNews Researcher",
-    model=OpenAIChat("gpt-5.2"),
+    model=OpenAIResponses(id="gpt-5.2"),
     role="Gets top stories from hackernews.",
     tools=[HackerNewsTools()],
 )
 
 sync_article_reader = Agent(
     name="Article Reader",
-    model=OpenAIChat("gpt-5.2"),
+    model=OpenAIResponses(id="gpt-5.2"),
     role="Reads articles from URLs.",
     tools=[Newspaper4kTools()],
 )
 
 async_hn_researcher = Agent(
     name="HackerNews Researcher",
-    model=OpenAIChat("o3-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     role="Gets top stories from hackernews.",
     tools=[HackerNewsTools()],
 )
 
 async_web_searcher = Agent(
     name="Web Searcher",
-    model=OpenAIChat("o3-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     role="Searches the web for information on a topic",
     tools=[WebSearchTools()],
     add_datetime_to_context=True,
@@ -68,7 +68,7 @@ async_article_reader = Agent(
 # ---------------------------------------------------------------------------
 sync_hn_team = Team(
     name="HackerNews Team",
-    model=OpenAIChat("gpt-5.2"),
+    model=OpenAIResponses(id="gpt-5.2"),
     members=[sync_hn_researcher, sync_article_reader],
     instructions=[
         "First, search hackernews for what the user is asking about.",
@@ -85,7 +85,7 @@ sync_hn_team = Team(
 
 async_hn_team = Team(
     name="HackerNews Team",
-    model=OpenAIChat("o3"),
+    model=OpenAIResponses(id="gpt-5.2"),
     members=[async_hn_researcher, async_web_searcher, async_article_reader],
     instructions=[
         "First, search hackernews for what the user is asking about.",

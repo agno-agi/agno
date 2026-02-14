@@ -9,7 +9,7 @@ import asyncio
 
 from agno.agent import Agent
 from agno.db.postgres import AsyncPostgresDb, PostgresDb
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.team import Team
 
 # ---------------------------------------------------------------------------
@@ -24,21 +24,21 @@ async_db = AsyncPostgresDb(db_url=async_db_url, session_table="sessions")
 # ---------------------------------------------------------------------------
 # Create Members
 # ---------------------------------------------------------------------------
-sync_agent = Agent(model=OpenAIChat(id="o3-mini"))
-async_agent = Agent(model=OpenAIChat(id="gpt-5.2"))
+sync_agent = Agent(model=OpenAIResponses(id="gpt-5.2-mini"))
+async_agent = Agent(model=OpenAIResponses(id="gpt-5.2"))
 
 # ---------------------------------------------------------------------------
 # Create Team
 # ---------------------------------------------------------------------------
 summary_team = Team(
-    model=OpenAIChat(id="o3-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     members=[sync_agent],
     db=sync_db,
     enable_session_summaries=True,
 )
 
 context_summary_team = Team(
-    model=OpenAIChat(id="o3-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     db=sync_db,
     session_id="session_summary",
     add_session_summary_to_context=True,
@@ -46,7 +46,7 @@ context_summary_team = Team(
 )
 
 async_summary_team = Team(
-    model=OpenAIChat(id="gpt-5.2"),
+    model=OpenAIResponses(id="gpt-5.2"),
     members=[async_agent],
     db=async_db,
     session_id="async_team_session_summary",

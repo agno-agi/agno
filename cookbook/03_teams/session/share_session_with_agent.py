@@ -9,7 +9,7 @@ import uuid
 
 from agno.agent import Agent
 from agno.db.in_memory import InMemoryDb
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.team import Team
 
 # ---------------------------------------------------------------------------
@@ -34,7 +34,7 @@ def get_activities(city: str) -> str:
 agent = Agent(
     name="City Planner Agent",
     id="city-planner-agent-id",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     db=db,
     tools=[get_weather, get_activities],
     add_history_to_context=True,
@@ -43,14 +43,14 @@ agent = Agent(
 weather_agent = Agent(
     name="Weather Agent",
     id="weather-agent-id",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     tools=[get_weather],
 )
 
 activities_agent = Agent(
     name="Activities Agent",
     id="activities-agent-id",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     tools=[get_activities],
 )
 
@@ -60,7 +60,7 @@ activities_agent = Agent(
 team = Team(
     name="City Planner Team",
     id="city-planner-team-id",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     db=db,
     members=[weather_agent, activities_agent],
     add_history_to_context=True,

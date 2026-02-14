@@ -9,16 +9,18 @@ Run: .venvs/demo/bin/python cookbook/03_teams/task_mode/05_dependency_chain.py
 """
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.team.mode import TeamMode
 from agno.team.team import Team
 
-# -- Specialized agents for a product launch pipeline -------------------------
+# ---------------------------------------------------------------------------
+# Create Members
+# ---------------------------------------------------------------------------
 
 market_researcher = Agent(
     name="Market Researcher",
     role="Conducts market research and competitive analysis",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     instructions=[
         "You are a market researcher.",
         "Analyze target markets, customer segments, and competitive landscape.",
@@ -29,7 +31,7 @@ market_researcher = Agent(
 product_strategist = Agent(
     name="Product Strategist",
     role="Develops product positioning and go-to-market strategy",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     instructions=[
         "You are a product strategist.",
         "Based on market research, develop product positioning and strategy.",
@@ -40,7 +42,7 @@ product_strategist = Agent(
 content_creator = Agent(
     name="Content Creator",
     role="Creates marketing content and messaging",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     instructions=[
         "You are a content creator.",
         "Create compelling marketing copy based on the product strategy.",
@@ -51,7 +53,7 @@ content_creator = Agent(
 launch_coordinator = Agent(
     name="Launch Coordinator",
     role="Creates launch timelines and action plans",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     instructions=[
         "You are a launch coordinator.",
         "Create detailed launch timelines with milestones.",
@@ -59,12 +61,14 @@ launch_coordinator = Agent(
     ],
 )
 
-# -- Task-mode team with dependency-heavy workflow ----------------------------
+# ---------------------------------------------------------------------------
+# Create Team
+# ---------------------------------------------------------------------------
 
 launch_team = Team(
     name="Product Launch Team",
     mode=TeamMode.tasks,
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     members=[
         market_researcher,
         product_strategist,
@@ -86,7 +90,9 @@ launch_team = Team(
     max_iterations=15,
 )
 
-# -- Run ---------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Run Team
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     launch_team.print_response(

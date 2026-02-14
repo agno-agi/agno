@@ -7,7 +7,7 @@ Demonstrates prompt-injection guardrails for team input validation.
 
 from agno.exceptions import InputCheckError
 from agno.guardrails import PromptInjectionGuardrail
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.team import Team
 
 # ---------------------------------------------------------------------------
@@ -15,7 +15,7 @@ from agno.team import Team
 # ---------------------------------------------------------------------------
 team = Team(
     name="Guardrails Demo Team",
-    model=OpenAIChat(id="gpt-5.2"),
+    model=OpenAIResponses(id="gpt-5.2"),
     pre_hooks=[PromptInjectionGuardrail()],
     members=[],
     description="A team that tells jokes and provides helpful information.",

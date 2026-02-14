@@ -9,7 +9,7 @@ import threading
 import time
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.run.agent import RunEvent
 from agno.run.base import RunStatus
 from agno.run.team import TeamRunEvent
@@ -121,13 +121,13 @@ def cancel_after_delay(
 # ---------------------------------------------------------------------------
 storyteller_agent = Agent(
     name="StorytellerAgent",
-    model=OpenAIChat(id="o3-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     description="An agent that writes creative stories",
 )
 
 editor_agent = Agent(
     name="EditorAgent",
-    model=OpenAIChat(id="o3-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     description="An agent that reviews and improves stories",
 )
 
@@ -137,7 +137,7 @@ editor_agent = Agent(
 team = Team(
     name="Storytelling Team",
     members=[storyteller_agent, editor_agent],
-    model=OpenAIChat(id="o3-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     description="A team that collaborates to write detailed stories",
 )
 

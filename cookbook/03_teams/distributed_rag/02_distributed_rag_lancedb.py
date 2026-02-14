@@ -10,7 +10,7 @@ import asyncio
 from agno.agent import Agent
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.team import Team
 from agno.vectordb.lancedb import LanceDb, SearchType
 
@@ -40,7 +40,7 @@ context_knowledge = Knowledge(
 # ---------------------------------------------------------------------------
 primary_retriever = Agent(
     name="Primary Retriever",
-    model=OpenAIChat(id="o3-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     role="Retrieve primary documents and core information from knowledge base",
     knowledge=primary_knowledge,
     search_knowledge=True,
@@ -55,7 +55,7 @@ primary_retriever = Agent(
 
 context_expander = Agent(
     name="Context Expander",
-    model=OpenAIChat(id="o3-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     role="Expand context by finding related and supplementary information",
     knowledge=context_knowledge,
     search_knowledge=True,
@@ -70,7 +70,7 @@ context_expander = Agent(
 
 answer_synthesizer = Agent(
     name="Answer Synthesizer",
-    model=OpenAIChat(id="o3-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     role="Synthesize retrieved information into comprehensive answers",
     instructions=[
         "Combine information from the Primary Retriever and Context Expander.",
@@ -84,7 +84,7 @@ answer_synthesizer = Agent(
 
 quality_validator = Agent(
     name="Quality Validator",
-    model=OpenAIChat(id="o3-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     role="Validate answer quality and suggest improvements",
     instructions=[
         "Review the synthesized answer for accuracy and completeness.",
@@ -101,7 +101,7 @@ quality_validator = Agent(
 # ---------------------------------------------------------------------------
 distributed_rag_team = Team(
     name="Distributed RAG Team",
-    model=OpenAIChat(id="o3-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     members=[
         primary_retriever,
         context_expander,

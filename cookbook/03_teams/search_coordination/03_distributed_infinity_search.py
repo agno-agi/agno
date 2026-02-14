@@ -9,7 +9,7 @@ from agno.agent import Agent
 from agno.knowledge.embedder.cohere import CohereEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reranker.infinity import InfinityReranker
-from agno.models.anthropic import Claude
+from agno.models.openai import OpenAIResponses
 from agno.team import Team
 from agno.vectordb.lancedb import LanceDb, SearchType
 
@@ -45,7 +45,7 @@ knowledge_secondary = Knowledge(
 # ---------------------------------------------------------------------------
 primary_searcher = Agent(
     name="Primary Searcher",
-    model=Claude(id="claude-3-7-sonnet-latest"),
+    model=OpenAIResponses(id="gpt-5.2"),
     role="Perform comprehensive primary search with high-performance reranking",
     knowledge=knowledge_primary,
     search_knowledge=True,
@@ -60,7 +60,7 @@ primary_searcher = Agent(
 
 secondary_searcher = Agent(
     name="Secondary Searcher",
-    model=Claude(id="claude-3-7-sonnet-latest"),
+    model=OpenAIResponses(id="gpt-5.2"),
     role="Perform targeted searches on specific topics and edge cases",
     knowledge=knowledge_secondary,
     search_knowledge=True,
@@ -75,7 +75,7 @@ secondary_searcher = Agent(
 
 cross_reference_validator = Agent(
     name="Cross-Reference Validator",
-    model=Claude(id="claude-3-7-sonnet-latest"),
+    model=OpenAIResponses(id="gpt-5.2"),
     role="Validate information consistency across different search results",
     instructions=[
         "Compare and validate information from both searchers.",
@@ -88,7 +88,7 @@ cross_reference_validator = Agent(
 
 result_synthesizer = Agent(
     name="Result Synthesizer",
-    model=Claude(id="claude-3-7-sonnet-latest"),
+    model=OpenAIResponses(id="gpt-5.2"),
     role="Synthesize and rank all search results into comprehensive response",
     instructions=[
         "Combine results from all team members into a unified response.",
@@ -104,7 +104,7 @@ result_synthesizer = Agent(
 # ---------------------------------------------------------------------------
 distributed_search_team = Team(
     name="Distributed Search Team with Infinity Reranker",
-    model=Claude(id="claude-3-7-sonnet-latest"),
+    model=OpenAIResponses(id="gpt-5.2"),
     members=[
         primary_searcher,
         secondary_searcher,
