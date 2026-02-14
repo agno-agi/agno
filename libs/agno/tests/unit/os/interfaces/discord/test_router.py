@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from agno.os.interfaces.discord.discord import Discord
 
 
+# Generate an Ed25519 keypair for signing test payloads
 def _make_signing_helpers():
     from nacl.signing import SigningKey
 
@@ -31,10 +32,10 @@ SIGNING_KEY, PUBLIC_KEY_HEX = _make_signing_helpers()
 def mock_agent():
     agent = MagicMock()
     agent.arun = AsyncMock()
-    agent.acontinue_run = AsyncMock()
     return agent
 
 
+# Build a FastAPI TestClient with a Discord-wired router
 def _make_app(mock_agent, prefix="/discord", **kwargs):
     discord = Discord(agent=mock_agent, prefix=prefix, **kwargs)
     app = FastAPI()
@@ -42,6 +43,7 @@ def _make_app(mock_agent, prefix="/discord", **kwargs):
     return app
 
 
+# Sign a payload and POST to the interactions endpoint
 def _post_interaction(client, payload: dict, path="/discord/interactions"):
     body = json.dumps(payload).encode()
     timestamp = str(int(time.time()))
@@ -64,6 +66,7 @@ def patch_public_key():
         yield
 
 
+# Discord PING/PONG verification handshake
 class TestPingPong:
     def test_ping_returns_pong(self, mock_agent):
         app = _make_app(mock_agent)
@@ -73,6 +76,7 @@ class TestPingPong:
         assert resp.json()["type"] == 1
 
 
+# Ed25519 signature validation: missing headers, bad signature
 class TestSignatureValidation:
     def test_missing_headers_returns_401(self, mock_agent):
         app = _make_app(mock_agent)
@@ -99,6 +103,7 @@ class TestSignatureValidation:
         assert resp.status_code == 401
 
 
+# Slash command returns deferred ACK (type 5)
 class TestApplicationCommand:
     def test_slash_command_returns_deferred_ack(self, mock_agent):
         app = _make_app(mock_agent)
@@ -123,6 +128,7 @@ class TestApplicationCommand:
         assert resp.json()["type"] == 5
 
 
+# Guild and channel allowlist enforcement (ephemeral rejection)
 class TestAllowlists:
     def test_disallowed_guild_returns_ephemeral(self, mock_agent):
         app = _make_app(mock_agent, allowed_guild_ids=["allowed_guild"])
@@ -165,58 +171,45 @@ class TestAllowlists:
         assert resp.json()["type"] == 5
 
 
+# Session ID construction via _build_session_id: DM, guild channel, thread
 class TestSessionId:
     def test_dm_session_id(self):
+        from agno.os.interfaces.discord.router import _build_session_id
+
         data = {"channel_id": "ch123", "user": {"id": "user1"}}
-        channel_id = data.get("channel_id", "")
-        guild_id = data.get("guild_id")
-
-        if not guild_id:
-            session_id = f"dc:dm:{channel_id}"
-        else:
-            user_id = data.get("user", {}).get("id", "")
-            session_id = f"dc:channel:{channel_id}:user:{user_id}"
-
-        assert session_id == "dc:dm:ch123"
+        assert _build_session_id(data) == "dc:dm:ch123"
 
     def test_guild_channel_session_id(self):
-        channel_id = "ch456"
-        user_id = "user1"
-        session_id = f"dc:channel:{channel_id}:user:{user_id}"
-        assert session_id == "dc:channel:ch456:user:user1"
+        from agno.os.interfaces.discord.router import _build_session_id
+
+        data = {"channel_id": "ch456", "guild_id": "g1", "member": {"user": {"id": "user1"}}}
+        assert _build_session_id(data) == "dc:channel:ch456:user:user1"
 
     def test_thread_session_id(self):
-        channel_id = "thread789"
-        session_id = f"dc:thread:{channel_id}"
-        assert session_id == "dc:thread:thread789"
+        from agno.os.interfaces.discord.router import _build_session_id
+
+        data = {"channel_id": "thread789", "guild_id": "g1", "channel": {"type": 11}}
+        assert _build_session_id(data) == "dc:thread:thread789"
 
 
+# Message splitting via split_message() with [1/N] prefixes
 class TestMessageBatching:
     def test_short_message_no_split(self):
-        msg = "Hello world"
-        max_chars = 1900
-        if len(msg) <= max_chars:
-            result = [msg]
-        else:
-            batches = [msg[i : i + max_chars] for i in range(0, len(msg), max_chars)]
-            result = [f"[{i}/{len(batches)}] {batch}" for i, batch in enumerate(batches, 1)]
-        assert result == ["Hello world"]
+        from agno.os.interfaces.discord.processing import split_message
+
+        assert split_message("Hello world") == ["Hello world"]
 
     def test_long_message_splits(self):
-        msg = "x" * 4000
-        max_chars = 1900
-        if len(msg) <= max_chars:
-            result = [msg]
-        else:
-            batches = [msg[i : i + max_chars] for i in range(0, len(msg), max_chars)]
-            result = [f"[{i}/{len(batches)}] {batch}" for i, batch in enumerate(batches, 1)]
+        from agno.os.interfaces.discord.processing import split_message
 
+        result = split_message("x" * 4000)
         assert len(result) == 3
         assert result[0].startswith("[1/3]")
         assert result[1].startswith("[2/3]")
         assert result[2].startswith("[3/3]")
 
 
+# Discord class instantiation and configuration
 class TestDiscordClass:
     def test_requires_agent_team_or_workflow(self):
         with pytest.raises(ValueError, match="Discord requires an agent, team or workflow"):
@@ -251,12 +244,12 @@ class TestDiscordClass:
         assert "/discord/interactions" in route_paths
 
 
+# Construct a mock arun() response with sensible defaults
 def _make_agent_response(**overrides):
     defaults = dict(
         status="OK",
         content="Hello from agent",
         reasoning_content=None,
-        is_paused=False,
         images=None,
         files=None,
         videos=None,
@@ -267,7 +260,6 @@ def _make_agent_response(**overrides):
 
 
 def _make_mock_aiohttp_session(content_length=1024, chunk_data=b"file-bytes"):
-    """Create a mock aiohttp.ClientSession that supports async context managers."""
     mock_session = MagicMock()
     mock_session.closed = False
 
@@ -307,6 +299,7 @@ def _make_mock_aiohttp_session(content_length=1024, chunk_data=b"file-bytes"):
     return mock_session
 
 
+# Build a minimal slash command interaction payload with overridable fields
 def _slash_command_payload(**overrides):
     payload = {
         "type": 2,
@@ -326,7 +319,6 @@ def _slash_command_payload(**overrides):
 
 
 class TestBackgroundDelegation:
-    """Verify router performs webhook I/O via aiohttp (no DiscordTools)."""
 
     def test_command_edits_original_with_response(self, mock_agent):
         mock_agent.arun = AsyncMock(return_value=_make_agent_response())
@@ -363,31 +355,6 @@ class TestBackgroundDelegation:
 
         mock_session.patch.assert_called_once()
         assert mock_session.post.call_count >= 1
-
-    def test_hitl_sends_buttons_via_edit(self, mock_agent):
-        mock_tool = MagicMock()
-        mock_tool.tool_name = "dangerous_tool"
-        response = _make_agent_response(
-            is_paused=True,
-            run_id="run123",
-            tools_requiring_confirmation=[mock_tool],
-        )
-        mock_agent.arun = AsyncMock(return_value=response)
-        mock_session = _make_mock_aiohttp_session()
-
-        with patch("agno.os.interfaces.discord.router.aiohttp") as mock_aiohttp:
-            mock_aiohttp.ClientSession.return_value = mock_session
-            mock_aiohttp.ClientTimeout = MagicMock()
-            mock_aiohttp.FormData = MagicMock()
-
-            app = _make_app(mock_agent)
-            client = TestClient(app, raise_server_exceptions=False)
-            _post_interaction(client, _slash_command_payload())
-
-        mock_session.patch.assert_called_once()
-        call_payload = mock_session.patch.call_args[1]["json"]
-        assert "components" in call_payload
-        assert "dangerous_tool" in call_payload["content"]
 
     def test_attachment_download_via_aiohttp(self, mock_agent):
         mock_agent.arun = AsyncMock(return_value=_make_agent_response())
@@ -480,137 +447,7 @@ class TestBackgroundDelegation:
         assert mock_session.post.call_count >= 1
 
 
-def _component_payload(custom_id: str, user_id: str = "user1", **overrides):
-    payload = {
-        "type": 3,  # MESSAGE_COMPONENT
-        "id": "5678",
-        "application_id": "app123",
-        "token": "component_token",
-        "guild_id": "guild1",
-        "channel_id": "channel1",
-        "member": {"user": {"id": user_id}},
-        "data": {"custom_id": custom_id},
-    }
-    payload.update(overrides)
-    return payload
-
-
-def _make_paused_response(run_id="run123", tool_name="dangerous_tool"):
-    mock_tool = MagicMock()
-    mock_tool.tool_name = tool_name
-    return _make_agent_response(
-        is_paused=True,
-        run_id=run_id,
-        tools_requiring_confirmation=[mock_tool],
-    )
-
-
-def _setup_mocks():
-    return _make_mock_aiohttp_session()
-
-
-class TestHITLSecurity:
-    """C1: HITL authorization bypass — only the original requester can confirm/cancel."""
-
-    def test_unauthorized_user_rejected(self, mock_agent):
-        mock_agent.arun = AsyncMock(return_value=_make_paused_response(run_id="run_auth"))
-        mock_session = _setup_mocks()
-
-        with patch("agno.os.interfaces.discord.router.aiohttp") as mock_aiohttp:
-            mock_aiohttp.ClientSession.return_value = mock_session
-            mock_aiohttp.ClientTimeout = MagicMock()
-            mock_aiohttp.FormData = MagicMock()
-
-            app = _make_app(mock_agent)
-            client = TestClient(app, raise_server_exceptions=False)
-
-            _post_interaction(client, _slash_command_payload())
-            resp = _post_interaction(client, _component_payload("hitl:run_auth:confirm", user_id="user2"))
-
-        assert resp.status_code == 200
-        mock_agent.acontinue_run.assert_not_called()
-        post_calls = mock_session.post.call_args_list
-        ephemeral_calls = [c for c in post_calls if c[1].get("json", {}).get("flags") == 64]
-        assert len(ephemeral_calls) >= 1
-
-    def test_authorized_user_continues_run(self, mock_agent):
-        mock_agent.arun = AsyncMock(return_value=_make_paused_response(run_id="run_auth2"))
-        continued = _make_agent_response(content="Tool executed successfully")
-        mock_agent.acontinue_run = AsyncMock(return_value=continued)
-        mock_session = _setup_mocks()
-
-        with patch("agno.os.interfaces.discord.router.aiohttp") as mock_aiohttp:
-            mock_aiohttp.ClientSession.return_value = mock_session
-            mock_aiohttp.ClientTimeout = MagicMock()
-            mock_aiohttp.FormData = MagicMock()
-
-            app = _make_app(mock_agent)
-            client = TestClient(app, raise_server_exceptions=False)
-
-            _post_interaction(client, _slash_command_payload())
-            _post_interaction(client, _component_payload("hitl:run_auth2:confirm", user_id="user1"))
-
-        mock_agent.acontinue_run.assert_called_once()
-
-
-class TestHITLCleanup:
-    """H2: Stale HITL entries are cleaned up after 15-minute TTL."""
-
-    def test_stale_entries_cleaned_on_access(self, mock_agent):
-        mock_agent.arun = AsyncMock(return_value=_make_paused_response(run_id="run_stale"))
-        mock_session = _setup_mocks()
-
-        with (
-            patch("agno.os.interfaces.discord.router.aiohttp") as mock_aiohttp,
-            patch("agno.os.interfaces.discord.router.time") as mock_time,
-        ):
-            mock_aiohttp.ClientSession.return_value = mock_session
-            mock_aiohttp.ClientTimeout = MagicMock()
-            mock_aiohttp.FormData = MagicMock()
-
-            mock_time.time.return_value = 1000.0
-
-            app = _make_app(mock_agent)
-            client = TestClient(app, raise_server_exceptions=False)
-
-            _post_interaction(client, _slash_command_payload())
-
-            mock_time.time.return_value = 1000.0 + 16 * 60
-
-            _post_interaction(client, _component_payload("hitl:run_stale:confirm", user_id="user1"))
-
-        mock_agent.acontinue_run.assert_not_called()
-        post_calls = mock_session.post.call_args_list
-        expired_calls = [c for c in post_calls if "expired" in str(c).lower() or "handled" in str(c).lower()]
-        assert len(expired_calls) >= 1
-
-
-class TestTokenHandling:
-    """H4: Component callback uses its own interaction token, not the stored original."""
-
-    def test_component_uses_own_token(self, mock_agent):
-        mock_agent.arun = AsyncMock(return_value=_make_paused_response(run_id="run_token"))
-        continued = _make_agent_response(content="Done")
-        mock_agent.acontinue_run = AsyncMock(return_value=continued)
-        mock_session = _setup_mocks()
-
-        with patch("agno.os.interfaces.discord.router.aiohttp") as mock_aiohttp:
-            mock_aiohttp.ClientSession.return_value = mock_session
-            mock_aiohttp.ClientTimeout = MagicMock()
-            mock_aiohttp.FormData = MagicMock()
-
-            app = _make_app(mock_agent)
-            client = TestClient(app, raise_server_exceptions=False)
-
-            _post_interaction(client, _slash_command_payload())
-            _post_interaction(client, _component_payload("hitl:run_token:confirm", user_id="user1"))
-
-        all_calls = [str(c) for c in mock_session.post.call_args_list + mock_session.patch.call_args_list]
-        assert any("component_token" in url for url in all_calls)
-
-
 class TestProtocolHandling:
-    """M4/M2: Interaction type handling and session ID robustness."""
 
     def test_unknown_interaction_type_returns_400(self, mock_agent):
         app = _make_app(mock_agent)
@@ -620,7 +457,7 @@ class TestProtocolHandling:
 
     def test_command_without_channel_object(self, mock_agent):
         mock_agent.arun = AsyncMock(return_value=_make_agent_response())
-        mock_session = _setup_mocks()
+        mock_session = _make_mock_aiohttp_session()
 
         with patch("agno.os.interfaces.discord.router.aiohttp") as mock_aiohttp:
             mock_aiohttp.ClientSession.return_value = mock_session
@@ -642,7 +479,6 @@ class TestProtocolHandling:
 
 
 class TestAttachmentSafety:
-    """M5: Attachment download size enforcement via Content-Length pre-check."""
 
     def test_oversized_content_length_skips_download(self, mock_agent):
         mock_agent.arun = AsyncMock(return_value=_make_agent_response())

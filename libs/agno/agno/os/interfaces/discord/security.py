@@ -3,15 +3,11 @@ from os import getenv
 
 from fastapi import HTTPException
 
-from agno.utils.log import log_error
-
-try:
-    DISCORD_PUBLIC_KEY = getenv("DISCORD_PUBLIC_KEY")
-except Exception as e:
-    log_error(f"Discord public key missing: {e}")
-    DISCORD_PUBLIC_KEY = None
+DISCORD_PUBLIC_KEY = getenv("DISCORD_PUBLIC_KEY")
 
 
+# Raises HTTPException on configuration errors to match the framework convention
+# used across all interface security modules (see also: slack/security.py).
 def verify_discord_signature(body: bytes, timestamp: str, signature: str) -> bool:
     if not DISCORD_PUBLIC_KEY:
         raise HTTPException(status_code=500, detail="DISCORD_PUBLIC_KEY is not set")
@@ -34,6 +30,8 @@ def verify_discord_signature(body: bytes, timestamp: str, signature: str) -> boo
         verify_key.verify(timestamp.encode() + body, bytes.fromhex(signature))
         return True
     except BadSignatureError:
+        # Cryptographic verification failed — signature doesn't match body+timestamp
         return False
     except (ValueError, TypeError):
+        # Malformed hex in public key or signature string
         return False

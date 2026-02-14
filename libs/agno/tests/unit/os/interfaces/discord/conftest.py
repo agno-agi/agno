@@ -4,7 +4,6 @@ from unittest.mock import MagicMock
 
 
 def _install_fake_aiohttp():
-    """Stub aiohttp so the router can be imported without the real package."""
     if "aiohttp" not in sys.modules:
         aiohttp_mod = types.ModuleType("aiohttp")
         aiohttp_mod.ClientSession = MagicMock()
