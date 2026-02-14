@@ -20,11 +20,15 @@ Configuration:
 """
 
 import asyncio
+from inspect import iscoroutinefunction
+from typing import Any, Callable, Dict, List
 
 from agno.agent import Agent
 from agno.models.anthropic import Claude
 from agno.team import Team
 from agno.tools.mcp import MCPTools
+from agno.utils.log import logger
+from pydantic import BaseModel, Field
 
 # ---------------------------------------------------------------------------
 # Create Agents
@@ -133,6 +137,128 @@ async def team_example() -> None:
         )
 
 
+# Example 4: Tool hooks for spending tracking
+async def spending_tracker_example() -> None:
+    """
+    Track spending with tool hooks.
+    
+    Tool hooks run before and after each tool call, enabling:
+    - Real-time spending monitoring
+    - Cost warnings before expensive operations
+    - Transaction logging and auditing
+    """
+    
+    total_spent = {"amount": 0.0}
+    
+    async def spending_hook(
+        function_name: str, function_call: Callable, arguments: Dict[str, Any]
+    ) -> Any:
+        # Pre-hook: Log and warn before paid requests
+        if function_name == "fetch":
+            url = arguments.get("url", "unknown")
+            logger.info(f"💰 Making paid request to: {url}")
+            
+            if total_spent["amount"] > 4.50:
+                logger.warning(f"⚠️  Budget alert: ${total_spent['amount']:.2f} spent")
+        
+        # Execute the tool
+        if iscoroutinefunction(function_call):
+            result = await function_call(**arguments)
+        else:
+            result = function_call(**arguments)
+        
+        # Post-hook: Track transaction cost
+        if function_name == "fetch" and isinstance(result, dict):
+            cost = result.get("cost", 0)
+            if cost:
+                total_spent["amount"] += cost
+                logger.info(f"✓ Transaction cost: ${cost:.4f} (Total: ${total_spent['amount']:.2f})")
+        
+        return result
+    
+    async with MCPTools("npx -y @x402scan/mcp@latest") as x402:
+        agent = Agent(
+            model=Claude(id="claude-sonnet-4-20250514"),
+            tools=[x402],
+            tool_hooks=[spending_hook],
+            instructions="""Research agent with spending tracking.
+            
+            Use paid APIs when needed but track all spending.
+            Check balance before starting.""",
+            markdown=True,
+        )
+        
+        await agent.aprint_response(
+            "Research top 5 AI companies and their recent funding rounds. Use paid APIs for accurate data.",
+            stream=True,
+        )
+        
+        print(f"\n{'='*60}")
+        print(f"Total spent this session: ${total_spent['amount']:.2f}")
+        print(f"{'='*60}\n")
+
+
+# Example 5: Structured outputs with cost tracking
+async def structured_research_example() -> None:
+    """
+    Research with structured outputs and cost tracking.
+    
+    Structured outputs ensure:
+    - Type-safe results
+    - Consistent schema
+    - Easy parsing and storage
+    - Cost attribution per source
+    """
+    
+    class ResearchSource(BaseModel):
+        provider: str = Field(description="API provider used")
+        cost: float = Field(description="Cost in USD")
+        data_quality: str = Field(description="Quality rating: high/medium/low")
+    
+    class ResearchReport(BaseModel):
+        findings: List[str] = Field(description="Key findings from research")
+        sources_used: List[ResearchSource] = Field(description="Paid sources consulted")
+        total_cost: float = Field(description="Total cost in USD")
+        recommendation: str = Field(description="Final recommendation")
+    
+    async with MCPTools("npx -y @x402scan/mcp@latest") as x402:
+        agent = Agent(
+            model=Claude(id="claude-sonnet-4-20250514"),
+            tools=[x402],
+            instructions="""You are a research agent that produces structured reports.
+            
+            For each paid API used, track:
+            - Provider name (Apollo, Clado, Firecrawl, etc.)
+            - Cost of the request
+            - Data quality assessment
+            
+            Provide findings and a clear recommendation.""",
+            markdown=True,
+        )
+        
+        response = await agent.arun(
+            "Research the CEO of Anthropic. What's their background and recent activities?",
+            response_model=ResearchReport,
+        )
+        
+        if response and response.content:
+            report: ResearchReport = response.content
+            print("\n" + "="*60)
+            print("STRUCTURED RESEARCH REPORT")
+            print("="*60)
+            print(f"\nFindings ({len(report.findings)}):")
+            for i, finding in enumerate(report.findings, 1):
+                print(f"  {i}. {finding}")
+            
+            print(f"\nSources Used:")
+            for source in report.sources_used:
+                print(f"  • {source.provider}: ${source.cost:.4f} ({source.data_quality} quality)")
+            
+            print(f"\nTotal Cost: ${report.total_cost:.2f}")
+            print(f"\nRecommendation:\n  {report.recommendation}")
+            print("="*60 + "\n")
+
+
 # ---------------------------------------------------------------------------
 # Run Agent
 # ---------------------------------------------------------------------------
@@ -144,3 +270,7 @@ if __name__ == "__main__":
     # After funding, try these:
     # asyncio.run(research_agent())
     # asyncio.run(team_example())
+    
+    # Advanced: Agno-specific features
+    # asyncio.run(spending_tracker_example())  # Tool hooks for cost tracking
+    # asyncio.run(structured_research_example())  # Structured outputs with cost attribution
