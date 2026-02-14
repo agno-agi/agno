@@ -38,11 +38,12 @@ jobs:
           anthropic_api_key: ${{ secrets.ANTHROPIC_CI_API_KEY }}
           plugins: 'code-review,pr-review-toolkit'
           use_sticky_comment: true
-          max_turns: 30
           show_full_output: true  # TEMP: remove after validation
           claude_args: |
             --model "claude-opus-4-6"
-          append_prompt: |
+          prompt: |
+            Review this PR: ${{ github.repository }}/pull/${{ github.event.pull_request.number }}
+
             After completing the review, you MUST end with a plain-text markdown summary of findings.
             Never let the final action be a tool call.
             If there are no issues, explicitly say "No high-confidence findings."
