@@ -9,16 +9,18 @@ Run: .venvs/demo/bin/python cookbook/03_teams/task_mode/02_parallel_tasks.py
 """
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.team.mode import TeamMode
 from agno.team.team import Team
 
-# -- Specialized analyst agents -----------------------------------------------
+# ---------------------------------------------------------------------------
+# Create Members
+# ---------------------------------------------------------------------------
 
 market_analyst = Agent(
     name="Market Analyst",
     role="Analyzes market trends and competitive landscape",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     instructions=[
         "You are a market analyst.",
         "Provide concise analysis of market trends, key players, and outlook.",
@@ -28,7 +30,7 @@ market_analyst = Agent(
 tech_analyst = Agent(
     name="Tech Analyst",
     role="Evaluates technical feasibility and innovation",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     instructions=[
         "You are a technology analyst.",
         "Evaluate technical aspects, innovation potential, and feasibility.",
@@ -38,19 +40,21 @@ tech_analyst = Agent(
 financial_analyst = Agent(
     name="Financial Analyst",
     role="Assesses financial viability and investment potential",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     instructions=[
         "You are a financial analyst.",
         "Assess financial viability, revenue potential, and investment outlook.",
     ],
 )
 
-# -- Task-mode team with parallel emphasis ------------------------------------
+# ---------------------------------------------------------------------------
+# Create Team
+# ---------------------------------------------------------------------------
 
 analysis_team = Team(
     name="Industry Analysis Team",
     mode=TeamMode.tasks,
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     members=[market_analyst, tech_analyst, financial_analyst],
     instructions=[
         "You are an industry analysis team leader.",
@@ -65,7 +69,9 @@ analysis_team = Team(
     max_iterations=10,
 )
 
-# -- Run ---------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Run Team
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     analysis_team.print_response(

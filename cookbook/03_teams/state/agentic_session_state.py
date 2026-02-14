@@ -7,7 +7,7 @@ Demonstrates team and member agentic state updates on shared session state.
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.team import Team
 
 # ---------------------------------------------------------------------------
@@ -21,7 +21,7 @@ db = SqliteDb(db_file="tmp/agents.db")
 shopping_agent = Agent(
     name="Shopping List Agent",
     role="Manage the shopping list",
-    model=OpenAIChat(id="o3-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     db=db,
     add_session_state_to_context=True,
     enable_agentic_state=True,

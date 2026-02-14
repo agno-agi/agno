@@ -8,7 +8,7 @@ Demonstrates permission-aware tool hooks that gate member delegation.
 from typing import Any, Callable
 
 from agno.agent import Agent
-from agno.models.anthropic.claude import Claude
+from agno.models.openai import OpenAIResponses
 from agno.run import RunContext
 from agno.team import Team
 
@@ -99,7 +99,7 @@ medical_reader_agent = Agent(
     name="Medical Reader Agent",
     id="medical-reader-agent",
     role="Read medical data",
-    model=Claude(id="claude-sonnet-4-5-20250929"),
+    model=OpenAIResponses(id="gpt-5.2"),
     tools=[get_medical_data],
     instructions=[
         "Read medical data",
@@ -110,7 +110,7 @@ medical_writer_agent = Agent(
     name="Medical Writer Agent",
     id="medical-writer-agent",
     role="Write medical data",
-    model=Claude(id="claude-sonnet-4-5-20250929"),
+    model=OpenAIResponses(id="gpt-5.2"),
     tools=[set_current_medications, set_family_history],
     instructions=[
         "Write medical data",
@@ -122,7 +122,7 @@ medical_writer_agent = Agent(
 # ---------------------------------------------------------------------------
 medical_team = Team(
     name="Company Info Team",
-    model=Claude(id="claude-sonnet-4-5-20250929"),
+    model=OpenAIResponses(id="gpt-5.2"),
     members=[medical_reader_agent, medical_writer_agent],
     markdown=True,
     instructions=[

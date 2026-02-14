@@ -11,7 +11,7 @@ from textwrap import dedent
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.aws import AwsBedrock
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.team import Team
 from agno.tools.websearch import WebSearchTools
 
@@ -45,7 +45,7 @@ sync_business_analyst = Agent(
 async_tech_specialist = Agent(
     name="Tech Specialist",
     role="Technology Researcher",
-    model=OpenAIChat(id="gpt-5.2"),
+    model=OpenAIResponses(id="gpt-5.2"),
     instructions=dedent("""
         You specialize in technology and AI research.
         - Focus on latest developments, trends, and breakthroughs
@@ -57,7 +57,7 @@ async_tech_specialist = Agent(
 async_business_analyst = Agent(
     name="Sarah",
     role="Business Analyst",
-    model=OpenAIChat(id="gpt-4.1"),
+    model=OpenAIResponses(id="gpt-5.2"),
     instructions=dedent("""
         You specialize in business and market analysis.
         - Focus on companies, markets, and economic trends
@@ -96,7 +96,7 @@ sync_research_team = Team(
 
 async_research_team = Team(
     name="Research Team",
-    model=OpenAIChat(id="gpt-5.2"),
+    model=OpenAIResponses(id="gpt-5.2"),
     members=[async_tech_specialist, async_business_analyst],
     tools=[WebSearchTools()],  # Team uses DuckDuckGo for research
     description="Research team that investigates topics and provides analysis.",

@@ -7,11 +7,14 @@ human confirms.
 """
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.team.team import Team
 from agno.tools import tool
 
 
+# ---------------------------------------------------------------------------
+# Tools
+# ---------------------------------------------------------------------------
 @tool(requires_confirmation=True)
 def approve_deployment(environment: str, service: str) -> str:
     """Approve and execute a deployment to an environment.
@@ -23,30 +26,42 @@ def approve_deployment(environment: str, service: str) -> str:
     return f"Deployment of {service} to {environment} approved and executed"
 
 
+# ---------------------------------------------------------------------------
+# Create Members
+# ---------------------------------------------------------------------------
 research_agent = Agent(
     name="Research Agent",
     role="Researches deployment readiness",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
 )
 
+
+# ---------------------------------------------------------------------------
+# Create Team
+# ---------------------------------------------------------------------------
 team = Team(
     name="Release Team",
     members=[research_agent],
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     tools=[approve_deployment],
 )
 
-response = team.run("Check if the auth service is ready and deploy it to staging")
 
-if response.is_paused:
-    print("Team paused - requires confirmation for team-level tool")
-    for req in response.requirements:
-        if req.needs_confirmation:
-            print(f"  Tool: {req.tool_execution.tool_name}")
-            print(f"  Args: {req.tool_execution.tool_args}")
-            req.confirm()
+# ---------------------------------------------------------------------------
+# Run Team
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    response = team.run("Check if the auth service is ready and deploy it to staging")
 
-    response = team.continue_run(response)
-    print(f"Result: {response.content}")
-else:
-    print(f"Result: {response.content}")
+    if response.is_paused:
+        print("Team paused - requires confirmation for team-level tool")
+        for req in response.requirements:
+            if req.needs_confirmation:
+                print(f"  Tool: {req.tool_execution.tool_name}")
+                print(f"  Args: {req.tool_execution.tool_args}")
+                req.confirm()
+
+        response = team.continue_run(response)
+        print(f"Result: {response.content}")
+    else:
+        print(f"Result: {response.content}")

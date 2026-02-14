@@ -11,16 +11,18 @@ Run: .venvs/demo/bin/python cookbook/03_teams/task_mode/01_basic_task_mode.py
 """
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.team.mode import TeamMode
 from agno.team.team import Team
 
-# -- Member agents -----------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Create Members
+# ---------------------------------------------------------------------------
 
 researcher = Agent(
     name="Researcher",
     role="Research specialist who finds information on topics",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     instructions=[
         "You are a research specialist.",
         "When given a topic, provide a clear, concise summary of key facts.",
@@ -31,7 +33,7 @@ researcher = Agent(
 writer = Agent(
     name="Writer",
     role="Content writer who creates well-structured text",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     instructions=[
         "You are a skilled content writer.",
         "Take provided information and craft it into polished, engaging text.",
@@ -42,7 +44,7 @@ writer = Agent(
 critic = Agent(
     name="Critic",
     role="Quality reviewer who provides constructive feedback",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     instructions=[
         "You are a constructive critic.",
         "Review content for accuracy, clarity, and completeness.",
@@ -50,12 +52,14 @@ critic = Agent(
     ],
 )
 
-# -- Task-mode team ----------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Create Team
+# ---------------------------------------------------------------------------
 
 content_team = Team(
     name="Content Creation Team",
     mode=TeamMode.tasks,
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     members=[researcher, writer, critic],
     instructions=[
         "You are a content creation team leader.",
@@ -69,7 +73,9 @@ content_team = Team(
     debug_mode=True,
 )
 
-# -- Run ---------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Run Team
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     content_team.print_response(

@@ -11,7 +11,7 @@ from agno.agent import Agent
 from agno.compression.manager import CompressionManager
 from agno.db.sqlite import SqliteDb
 from agno.models.aws import AwsBedrock
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.team import Team
 from agno.tools.websearch import WebSearchTools
 
@@ -49,7 +49,7 @@ compression_prompt = """
 """
 
 compression_manager = CompressionManager(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     compress_tool_results_limit=2,  # Keep only last 2 tool call results uncompressed
     compress_tool_call_instructions=compression_prompt,
 )

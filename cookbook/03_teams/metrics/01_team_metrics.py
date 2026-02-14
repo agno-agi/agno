@@ -8,7 +8,7 @@ Demonstrates retrieving team, session, and member-level execution metrics.
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.db.surrealdb import SurrealDb
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.team import Team
 from agno.tools.yfinance import YFinanceTools
 from agno.utils.pprint import pprint_run_response
@@ -34,7 +34,7 @@ db = SurrealDb(None, SURREALDB_URL, creds, SURREALDB_NAMESPACE, SURREALDB_DATABA
 # ---------------------------------------------------------------------------
 stock_searcher = Agent(
     name="Stock Searcher",
-    model=OpenAIChat("o3-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     role="Searches the web for information on a stock.",
     tools=[YFinanceTools()],
 )
@@ -44,7 +44,7 @@ stock_searcher = Agent(
 # ---------------------------------------------------------------------------
 team = Team(
     name="Stock Research Team",
-    model=OpenAIChat("o3-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     members=[stock_searcher],
     db=db,
     session_id="team_metrics_demo",

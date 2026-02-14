@@ -7,7 +7,7 @@ Demonstrates collecting required user input during paused team tool execution.
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.team import Team
 from agno.tools import tool
 from agno.utils import pprint
@@ -36,7 +36,7 @@ def plan_trip(destination: str = "", budget: str = "") -> str:
 # ---------------------------------------------------------------------------
 travel_agent = Agent(
     name="TravelAgent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     tools=[plan_trip],
     db=db,
     telemetry=False,
@@ -47,7 +47,7 @@ travel_agent = Agent(
 # ---------------------------------------------------------------------------
 team = Team(
     name="TravelTeam",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     members=[travel_agent],
     db=db,
     telemetry=False,

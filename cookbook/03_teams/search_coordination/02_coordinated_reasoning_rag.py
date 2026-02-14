@@ -9,7 +9,7 @@ from agno.agent import Agent
 from agno.knowledge.embedder.cohere import CohereEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reranker.cohere import CohereReranker
-from agno.models.anthropic import Claude
+from agno.models.openai import OpenAIResponses
 from agno.team import Team
 from agno.tools.reasoning import ReasoningTools
 from agno.vectordb.lancedb import LanceDb, SearchType
@@ -32,7 +32,7 @@ knowledge = Knowledge(
 # ---------------------------------------------------------------------------
 information_gatherer = Agent(
     name="Information Gatherer",
-    model=Claude(id="claude-sonnet-4-20250514"),
+    model=OpenAIResponses(id="gpt-5.2"),
     role="Gather comprehensive information from knowledge sources",
     knowledge=knowledge,
     search_knowledge=True,
@@ -48,7 +48,7 @@ information_gatherer = Agent(
 
 reasoning_analyst = Agent(
     name="Reasoning Analyst",
-    model=Claude(id="claude-sonnet-4-20250514"),
+    model=OpenAIResponses(id="gpt-5.2"),
     role="Apply logical reasoning to analyze gathered information",
     tools=[ReasoningTools(add_instructions=True)],
     instructions=[
@@ -63,7 +63,7 @@ reasoning_analyst = Agent(
 
 evidence_evaluator = Agent(
     name="Evidence Evaluator",
-    model=Claude(id="claude-sonnet-4-20250514"),
+    model=OpenAIResponses(id="gpt-5.2"),
     role="Evaluate evidence quality and identify information gaps",
     tools=[ReasoningTools(add_instructions=True)],
     instructions=[
@@ -78,7 +78,7 @@ evidence_evaluator = Agent(
 
 response_coordinator = Agent(
     name="Response Coordinator",
-    model=Claude(id="claude-sonnet-4-20250514"),
+    model=OpenAIResponses(id="gpt-5.2"),
     role="Coordinate team findings into comprehensive reasoned response",
     tools=[ReasoningTools(add_instructions=True)],
     instructions=[
@@ -96,7 +96,7 @@ response_coordinator = Agent(
 # ---------------------------------------------------------------------------
 coordinated_reasoning_team = Team(
     name="Coordinated Reasoning RAG Team",
-    model=Claude(id="claude-sonnet-4-20250514"),
+    model=OpenAIResponses(id="gpt-5.2"),
     members=[
         information_gatherer,
         reasoning_analyst,
