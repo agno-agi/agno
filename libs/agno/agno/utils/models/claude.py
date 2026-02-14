@@ -264,7 +264,7 @@ def _format_file_for_message(file: File) -> Optional[Dict[str, Any]]:
 
 def format_messages(
     messages: List[Message], compress_tool_results: bool = False
-) -> Tuple[List[Dict[str, Union[str, list]]], str]:
+) -> Tuple[List[Dict[str, Union[str, list]]], Union[str, List[Dict[str, Any]]]]:
     """
     Process the list of messages and separate them into API messages and system messages.
 
@@ -273,17 +273,21 @@ def format_messages(
         compress_tool_results: Whether to compress tool results.
 
     Returns:
-        Tuple[List[Dict[str, Union[str, list]]], str]: A tuple containing the list of API messages and the concatenated system messages.
+        Tuple containing:
+        - List of API messages
+        - System messages as either:
+          - A concatenated string (default, backwards compatible)
+          - A list of structured blocks if any system message has provider_data.cache_control
     """
     chat_messages: List[Dict[str, Union[str, list]]] = []
-    system_messages: List[str] = []
+    system_messages: List[Message] = []
 
     for message in messages:
         content = message.content or ""
         # Both "system" and "developer" roles should be extracted as system messages
         if message.role in ("system", "developer"):
             if content is not None:
-                system_messages.append(content)  # type: ignore
+                system_messages.append(message)
             continue
         elif message.role == "user":
             if isinstance(content, str):
@@ -362,7 +366,22 @@ def format_messages(
             continue
 
         chat_messages.append({"role": ROLE_MAP[message.role], "content": content})  # type: ignore
-    return chat_messages, " ".join(system_messages)
+
+    # Check if any system message has cache_control in provider_data
+    has_cache_control = any(m.provider_data and "cache_control" in m.provider_data for m in system_messages)
+
+    if has_cache_control:
+        # Return structured blocks with per-message cache_control
+        system_blocks: List[Dict[str, Any]] = []
+        for m in system_messages:
+            block: Dict[str, Any] = {"type": "text", "text": m.content}
+            if m.provider_data and "cache_control" in m.provider_data:
+                block["cache_control"] = m.provider_data["cache_control"]
+            system_blocks.append(block)
+        return chat_messages, system_blocks
+    else:
+        system_contents = [str(m.content) for m in system_messages if m.content]
+        return chat_messages, " ".join(system_contents)
 
 
 def format_tools_for_model(tools: Optional[List[Dict[str, Any]]] = None) -> Optional[List[Dict[str, Any]]]:
