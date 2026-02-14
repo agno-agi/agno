@@ -54,7 +54,7 @@ async def onboarding_example() -> None:
     """
     async with MCPTools("npx -y @x402scan/mcp@latest") as x402:
         agent = Agent(
-            model=Claude(id="claude-opus-4-20250514"),
+            model=Claude(id="claude-opus-4-6"),
             tools=[x402],
             instructions="""You help users get started with x402scan-mcp.
             
@@ -80,7 +80,7 @@ async def research_agent() -> None:
     """Agent that can autonomously access premium data sources."""
     async with MCPTools("npx -y @x402scan/mcp@latest") as x402:
         agent = Agent(
-            model=Claude(id="claude-opus-4-20250514"),
+            model=Claude(id="claude-opus-4-6"),
             tools=[x402],
             name="ResearchAgent",
             instructions="""You are a research agent with paid API access.
@@ -112,7 +112,7 @@ async def team_example() -> None:
     """Team of agents sharing a wallet for research and analysis."""
     async with MCPTools("npx -y @x402scan/mcp@latest") as x402:
         researcher = Agent(
-            model=Claude(id="claude-opus-4-20250514"),
+            model=Claude(id="claude-opus-4-6"),
             tools=[x402],
             name="Researcher",
             role="Data Researcher",
@@ -123,7 +123,7 @@ async def team_example() -> None:
         )
         
         analyst = Agent(
-            model=Claude(id="claude-opus-4-20250514"),
+            model=Claude(id="claude-opus-4-6"),
             name="Analyst",
             role="Data Analyst",
             instructions="""Analyze data from the researcher.
@@ -186,7 +186,7 @@ async def spending_tracker_example() -> None:
     
     async with MCPTools("npx -y @x402scan/mcp@latest") as x402:
         agent = Agent(
-            model=Claude(id="claude-opus-4-20250514"),
+            model=Claude(id="claude-opus-4-6"),
             tools=[x402],
             tool_hooks=[spending_hook],
             instructions="""Research agent with spending tracking.
@@ -231,7 +231,7 @@ async def structured_research_example() -> None:
     
     async with MCPTools("npx -y @x402scan/mcp@latest") as x402:
         agent = Agent(
-            model=Claude(id="claude-opus-4-20250514"),
+            model=Claude(id="claude-opus-4-6"),
             tools=[x402],
             instructions="""You are a research agent that produces structured reports.
             
@@ -292,7 +292,7 @@ async def skills_example() -> None:
     
     async with MCPTools("npx -y @x402scan/mcp@latest") as x402:
         agent = Agent(
-            model=Claude(id="claude-opus-4-20250514"),
+            model=Claude(id="claude-opus-4-6"),
             tools=[x402],
             skills=Skills(loaders=[LocalSkills(str(skills_dir))]),
             instructions="""You are a research agent with access to x402 skills.
@@ -399,7 +399,7 @@ async def production_example() -> None:
     
     async with MCPTools("npx -y @x402scan/mcp@latest") as x402:
         agent = Agent(
-            model=Claude(id="claude-opus-4-20250514"),
+            model=Claude(id="claude-opus-4-6"),
             tools=[x402],
             tool_hooks=[production_hook],
             instructions="""Production research agent with strict cost controls.
