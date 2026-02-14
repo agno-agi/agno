@@ -1,39 +1,37 @@
 """
-This example demonstrates how to use knowledge filters with teams.
+Team With Knowledge Filters
+===========================
 
-Knowledge filters allow you to restrict knowledge searches to specific documents
-or metadata criteria, enabling personalized and contextual responses.
+Demonstrates static metadata-based knowledge filtering in team retrieval.
 """
 
 from agno.agent import Agent
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader.pdf_reader import PDFReader
-from agno.models.openai import OpenAIChat
-from agno.team.team import Team
+from agno.models.openai import OpenAIResponses
+from agno.team import Team
 from agno.utils.media import (
     SampleDataFileExtension,
     download_knowledge_filters_sample_data,
 )
 from agno.vectordb.lancedb import LanceDb
 
-# Download all sample CVs and get their paths
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
 downloaded_cv_paths = download_knowledge_filters_sample_data(
     num_files=5, file_extension=SampleDataFileExtension.PDF
 )
 
-# Initialize LanceDB vector database
-# By default, it stores data in /tmp/lancedb
 vector_db = LanceDb(
     table_name="recipes",
-    uri="tmp/lancedb",  # You can change this path to store data elsewhere
+    uri="tmp/lancedb",
 )
 
-# Create knowledge base
 knowledge_base = Knowledge(
     vector_db=vector_db,
 )
 
-# Add documents with metadata for filtering
 knowledge_base.insert_many(
     [
         {
@@ -80,30 +78,33 @@ knowledge_base.insert_many(
     reader=PDFReader(chunk=True),
 )
 
-# Create knowledge search agent
+# ---------------------------------------------------------------------------
+# Create Members
+# ---------------------------------------------------------------------------
 web_agent = Agent(
     name="Knowledge Search Agent",
     role="Handle knowledge search",
     knowledge=knowledge_base,
-    model=OpenAIChat(id="o3-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
 )
 
-# Create team with knowledge filters
+# ---------------------------------------------------------------------------
+# Create Team
+# ---------------------------------------------------------------------------
 team_with_knowledge = Team(
     name="Team with Knowledge",
-    members=[
-        web_agent
-    ],  # If you omit the member, the leader will search the knowledge base itself.
-    model=OpenAIChat(id="o3-mini"),
+    members=[web_agent],
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     knowledge=knowledge_base,
     show_members_responses=True,
     markdown=True,
-    knowledge_filters={
-        "user_id": "jordan_mitchell"
-    },  # Filter to specific user's documents
+    knowledge_filters={"user_id": "jordan_mitchell"},
 )
 
-# Test knowledge filtering
-team_with_knowledge.print_response(
-    "Tell me about Jordan Mitchell's work and experience"
-)
+# ---------------------------------------------------------------------------
+# Run Team
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    team_with_knowledge.print_response(
+        "Tell me about Jordan Mitchell's work and experience"
+    )

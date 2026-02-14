@@ -17,6 +17,7 @@ from typing import (
 
 from pydantic import BaseModel
 
+from agno.db.base import AsyncBaseDb
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Message
 from agno.models.metrics import Metrics
@@ -39,6 +40,11 @@ from agno.utils.log import log_debug, log_warning
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
     from agno.team.team import Team
+
+
+def _has_async_db(entity: Union["Agent", "Team"]) -> bool:
+    """Return True if the entity's db is an async implementation."""
+    return entity.db is not None and isinstance(entity.db, AsyncBaseDb)
 
 
 async def await_for_open_threads(
@@ -541,7 +547,7 @@ def get_run_output_util(
         session_id (Optional[str]): The session_id to load from storage.
     """
     if session_id is not None:
-        if entity._has_async_db():
+        if _has_async_db(entity):
             raise ValueError("Async database not supported for sync functions")
 
         session = entity.get_session(session_id=session_id)
@@ -602,7 +608,7 @@ def get_last_run_output_util(
         RunOutput: The last run response from the database.
     """
     if session_id is not None:
-        if entity._has_async_db():
+        if _has_async_db(entity):
             raise ValueError("Async database not supported for sync functions")
 
         session = entity.get_session(session_id=session_id)
@@ -676,7 +682,7 @@ def set_session_name_util(
     entity: Union["Agent", "Team"], session_id: str, autogenerate: bool = False, session_name: Optional[str] = None
 ) -> Union[AgentSession, TeamSession, WorkflowSession]:
     """Set the session name and save to storage"""
-    if entity._has_async_db():
+    if _has_async_db(entity):
         raise ValueError("Async database not supported for sync functions")
 
     session = entity.get_session(session_id=session_id)  # type: ignore
@@ -733,7 +739,7 @@ async def aset_session_name_util(
 def get_session_name_util(entity: Union["Agent", "Team"], session_id: str) -> str:
     """Get the session name for the given session ID and user ID."""
 
-    if entity._has_async_db():
+    if _has_async_db(entity):
         raise ValueError("Async database not supported for sync functions")
 
     session = entity.get_session(session_id=session_id)  # type: ignore
@@ -752,7 +758,7 @@ async def aget_session_name_util(entity: Union["Agent", "Team"], session_id: str
 
 def get_session_state_util(entity: Union["Agent", "Team"], session_id: str) -> Dict[str, Any]:
     """Get the session state for the given session ID and user ID."""
-    if entity._has_async_db():
+    if _has_async_db(entity):
         raise ValueError("Async database not supported for sync functions")
 
     session = entity.get_session(session_id=session_id)  # type: ignore
@@ -780,7 +786,7 @@ def update_session_state_util(
     Returns:
         dict: The updated session state.
     """
-    if entity._has_async_db():
+    if _has_async_db(entity):
         raise ValueError("Async database not supported for sync functions")
 
     session = entity.get_session(session_id=session_id)  # type: ignore
@@ -826,7 +832,7 @@ async def aupdate_session_state_util(
 
 def get_session_metrics_util(entity: Union["Agent", "Team"], session_id: str) -> Optional[Metrics]:
     """Get the session metrics for the given session ID and user ID."""
-    if entity._has_async_db():
+    if _has_async_db(entity):
         raise ValueError("Async database not supported for sync functions")
 
     session = entity.get_session(session_id=session_id)  # type: ignore
@@ -863,7 +869,7 @@ def get_chat_history_util(entity: Union["Agent", "Team"], session_id: str) -> Li
     Returns:
         List[Message]: The chat history from the session.
     """
-    if entity._has_async_db():
+    if _has_async_db(entity):
         raise ValueError("Async database not supported for sync functions")
 
     session = entity.get_session(session_id=session_id)  # type: ignore

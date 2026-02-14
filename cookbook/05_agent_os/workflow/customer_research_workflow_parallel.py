@@ -1,3 +1,10 @@
+"""
+Customer Research Workflow Parallel
+===================================
+
+Demonstrates customer research workflow parallel.
+"""
+
 import json
 from datetime import datetime
 from typing import AsyncIterator, List, Union
@@ -16,6 +23,10 @@ from agno.workflow.parallel import Parallel
 from agno.workflow.step import Step, StepInput, StepOutput
 from agno.workflow.workflow import Workflow
 from pydantic import BaseModel, Field
+
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
 
 
 # Define structured output models for each research phase
@@ -757,12 +768,16 @@ agent_os = AgentOS(
 )
 app = agent_os.get_app()
 
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
+
 if __name__ == "__main__":
     agent_os.serve(app="customer_research_workflow_parallel:app", reload=True)
 
 # # Example usage
 # async def main():
-#     print("🔍 Starting Comprehensive Customer Research Workflow...")
+#     print(" Starting Comprehensive Customer Research Workflow...")
 #     print("=" * 70)
 
 #     # Example customer research query

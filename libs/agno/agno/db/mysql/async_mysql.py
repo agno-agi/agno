@@ -282,86 +282,78 @@ class AsyncMySQLDb(AsyncBaseDb):
 
     async def _get_table(self, table_type: str, create_table_if_not_found: Optional[bool] = False) -> Table:
         if table_type == "sessions":
-            if not hasattr(self, "session_table"):
-                self.session_table = await self._get_or_create_table(
-                    table_name=self.session_table_name,
-                    table_type="sessions",
-                    create_table_if_not_found=create_table_if_not_found,
-                )
+            self.session_table = await self._get_or_create_table(
+                table_name=self.session_table_name,
+                table_type="sessions",
+                create_table_if_not_found=create_table_if_not_found,
+            )
             return self.session_table
 
         if table_type == "memories":
-            if not hasattr(self, "memory_table"):
-                self.memory_table = await self._get_or_create_table(
-                    table_name=self.memory_table_name,
-                    table_type="memories",
-                    create_table_if_not_found=create_table_if_not_found,
-                )
+            self.memory_table = await self._get_or_create_table(
+                table_name=self.memory_table_name,
+                table_type="memories",
+                create_table_if_not_found=create_table_if_not_found,
+            )
             return self.memory_table
 
         if table_type == "metrics":
-            if not hasattr(self, "metrics_table"):
-                self.metrics_table = await self._get_or_create_table(
-                    table_name=self.metrics_table_name,
-                    table_type="metrics",
-                    create_table_if_not_found=create_table_if_not_found,
-                )
+            self.metrics_table = await self._get_or_create_table(
+                table_name=self.metrics_table_name,
+                table_type="metrics",
+                create_table_if_not_found=create_table_if_not_found,
+            )
             return self.metrics_table
 
         if table_type == "evals":
-            if not hasattr(self, "eval_table"):
-                self.eval_table = await self._get_or_create_table(
-                    table_name=self.eval_table_name,
-                    table_type="evals",
-                    create_table_if_not_found=create_table_if_not_found,
-                )
+            self.eval_table = await self._get_or_create_table(
+                table_name=self.eval_table_name,
+                table_type="evals",
+                create_table_if_not_found=create_table_if_not_found,
+            )
             return self.eval_table
 
         if table_type == "knowledge":
-            if not hasattr(self, "knowledge_table"):
-                self.knowledge_table = await self._get_or_create_table(
-                    table_name=self.knowledge_table_name,
-                    table_type="knowledge",
-                    create_table_if_not_found=create_table_if_not_found,
-                )
+            self.knowledge_table = await self._get_or_create_table(
+                table_name=self.knowledge_table_name,
+                table_type="knowledge",
+                create_table_if_not_found=create_table_if_not_found,
+            )
             return self.knowledge_table
 
         if table_type == "culture":
-            if not hasattr(self, "culture_table"):
-                self.culture_table = await self._get_or_create_table(
-                    table_name=self.culture_table_name,
-                    table_type="culture",
-                    create_table_if_not_found=create_table_if_not_found,
-                )
+            self.culture_table = await self._get_or_create_table(
+                table_name=self.culture_table_name,
+                table_type="culture",
+                create_table_if_not_found=create_table_if_not_found,
+            )
             return self.culture_table
 
         if table_type == "versions":
-            if not hasattr(self, "versions_table"):
-                self.versions_table = await self._get_or_create_table(
-                    table_name=self.versions_table_name,
-                    table_type="versions",
-                    create_table_if_not_found=create_table_if_not_found,
-                )
+            self.versions_table = await self._get_or_create_table(
+                table_name=self.versions_table_name,
+                table_type="versions",
+                create_table_if_not_found=create_table_if_not_found,
+            )
             return self.versions_table
 
         if table_type == "traces":
-            if not hasattr(self, "traces_table"):
-                self.traces_table = await self._get_or_create_table(
-                    table_name=self.trace_table_name,
-                    table_type="traces",
-                    create_table_if_not_found=create_table_if_not_found,
-                )
+            self.traces_table = await self._get_or_create_table(
+                table_name=self.trace_table_name,
+                table_type="traces",
+                create_table_if_not_found=create_table_if_not_found,
+            )
             return self.traces_table
 
         if table_type == "spans":
-            if not hasattr(self, "spans_table"):
-                # Ensure traces table exists first (spans has FK to traces)
+            # Ensure traces table exists first (spans has FK to traces)
+            if create_table_if_not_found:
                 await self._get_table(table_type="traces", create_table_if_not_found=True)
-                self.spans_table = await self._get_or_create_table(
-                    table_name=self.span_table_name,
-                    table_type="spans",
-                    create_table_if_not_found=create_table_if_not_found,
-                )
+            self.spans_table = await self._get_or_create_table(
+                table_name=self.span_table_name,
+                table_type="spans",
+                create_table_if_not_found=create_table_if_not_found,
+            )
             return self.spans_table
 
         raise ValueError(f"Unknown table type: {table_type}")
@@ -442,12 +434,13 @@ class AsyncMySQLDb(AsyncBaseDb):
             await sess.execute(stmt)
 
     # -- Session methods --
-    async def delete_session(self, session_id: str) -> bool:
+    async def delete_session(self, session_id: str, user_id: Optional[str] = None) -> bool:
         """
         Delete a session from the database.
 
         Args:
             session_id (str): ID of the session to delete
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
 
         Returns:
             bool: True if the session was deleted, False otherwise.
@@ -460,6 +453,8 @@ class AsyncMySQLDb(AsyncBaseDb):
 
             async with self.async_session_factory() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.session_id == session_id)
+                if user_id is not None:
+                    delete_stmt = delete_stmt.where(table.c.user_id == user_id)
                 result = await sess.execute(delete_stmt)
 
                 if result.rowcount == 0:  # type: ignore
@@ -474,12 +469,13 @@ class AsyncMySQLDb(AsyncBaseDb):
             log_error(f"Error deleting session: {e}")
             return False
 
-    async def delete_sessions(self, session_ids: List[str]) -> None:
+    async def delete_sessions(self, session_ids: List[str], user_id: Optional[str] = None) -> None:
         """Delete all given sessions from the database.
         Can handle multiple session types in the same run.
 
         Args:
             session_ids (List[str]): The IDs of the sessions to delete.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
 
         Raises:
             Exception: If an error occurs during deletion.
@@ -489,6 +485,8 @@ class AsyncMySQLDb(AsyncBaseDb):
 
             async with self.async_session_factory() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.session_id.in_(session_ids))
+                if user_id is not None:
+                    delete_stmt = delete_stmt.where(table.c.user_id == user_id)
                 result = await sess.execute(delete_stmt)
 
             log_debug(f"Successfully deleted {result.rowcount} sessions")  # type: ignore
@@ -654,7 +652,12 @@ class AsyncMySQLDb(AsyncBaseDb):
             return [] if deserialize else ([], 0)
 
     async def rename_session(
-        self, session_id: str, session_type: SessionType, session_name: str, deserialize: Optional[bool] = True
+        self,
+        session_id: str,
+        session_type: SessionType,
+        session_name: str,
+        user_id: Optional[str] = None,
+        deserialize: Optional[bool] = True,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         """
         Rename a session in the database.
@@ -663,6 +666,7 @@ class AsyncMySQLDb(AsyncBaseDb):
             session_id (str): The ID of the session to rename.
             session_type (SessionType): The type of session to rename.
             session_name (str): The new name for the session.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
             deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
 
         Returns:
@@ -684,10 +688,14 @@ class AsyncMySQLDb(AsyncBaseDb):
                     .where(table.c.session_type == session_type.value)
                     .values(session_data=func.json_set(table.c.session_data, "$.session_name", session_name))
                 )
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
                 await sess.execute(stmt)
 
                 # Fetch the updated row
                 select_stmt = select(table).where(table.c.session_id == session_id)
+                if user_id is not None:
+                    select_stmt = select_stmt.where(table.c.user_id == user_id)
                 result = await sess.execute(select_stmt)
                 row = result.fetchone()
                 if not row:
@@ -737,6 +745,17 @@ class AsyncMySQLDb(AsyncBaseDb):
 
             if isinstance(session, AgentSession):
                 async with self.async_session_factory() as sess, sess.begin():
+                    existing_result = await sess.execute(
+                        select(table.c.user_id)
+                        .where(table.c.session_id == session_dict.get("session_id"))
+                        .with_for_update()
+                    )
+                    existing_row = existing_result.fetchone()
+                    if existing_row is not None:
+                        existing_uid = existing_row[0]
+                        if existing_uid is not None and existing_uid != session_dict.get("user_id"):
+                            return None
+
                     current_time = int(time.time())
                     stmt = mysql.insert(table).values(
                         session_id=session_dict.get("session_id"),
@@ -779,6 +798,17 @@ class AsyncMySQLDb(AsyncBaseDb):
 
             elif isinstance(session, TeamSession):
                 async with self.async_session_factory() as sess, sess.begin():
+                    existing_result = await sess.execute(
+                        select(table.c.user_id)
+                        .where(table.c.session_id == session_dict.get("session_id"))
+                        .with_for_update()
+                    )
+                    existing_row = existing_result.fetchone()
+                    if existing_row is not None:
+                        existing_uid = existing_row[0]
+                        if existing_uid is not None and existing_uid != session_dict.get("user_id"):
+                            return None
+
                     current_time = int(time.time())
                     stmt = mysql.insert(table).values(
                         session_id=session_dict.get("session_id"),
@@ -821,6 +851,17 @@ class AsyncMySQLDb(AsyncBaseDb):
 
             elif isinstance(session, WorkflowSession):
                 async with self.async_session_factory() as sess, sess.begin():
+                    existing_result = await sess.execute(
+                        select(table.c.user_id)
+                        .where(table.c.session_id == session_dict.get("session_id"))
+                        .with_for_update()
+                    )
+                    existing_row = existing_result.fetchone()
+                    if existing_row is not None:
+                        existing_uid = existing_row[0]
+                        if existing_uid is not None and existing_uid != session_dict.get("user_id"):
+                            return None
+
                     current_time = int(time.time())
                     stmt = mysql.insert(table).values(
                         session_id=session_dict.get("session_id"),
@@ -1999,6 +2040,7 @@ class AsyncMySQLDb(AsyncBaseDb):
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
+        linked_to: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
         """Get all knowledge contents from the database.
 
@@ -2007,6 +2049,7 @@ class AsyncMySQLDb(AsyncBaseDb):
             page (Optional[int]): The page number.
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
+            linked_to (Optional[str]): Filter by linked_to value (knowledge instance name).
 
         Returns:
             List[KnowledgeRow]: The knowledge contents.
@@ -2019,6 +2062,10 @@ class AsyncMySQLDb(AsyncBaseDb):
         try:
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = select(table)
+
+                # Apply linked_to filter if provided
+                if linked_to is not None:
+                    stmt = stmt.where(table.c.linked_to == linked_to)
 
                 # Apply sorting
                 if sort_by is not None:
@@ -2659,7 +2706,7 @@ class AsyncMySQLDb(AsyncBaseDb):
                     base_stmt = base_stmt.where(table.c.run_id == run_id)
                 if session_id:
                     base_stmt = base_stmt.where(table.c.session_id == session_id)
-                if user_id:
+                if user_id is not None:
                     base_stmt = base_stmt.where(table.c.user_id == user_id)
                 if agent_id:
                     base_stmt = base_stmt.where(table.c.agent_id == agent_id)
@@ -2749,7 +2796,7 @@ class AsyncMySQLDb(AsyncBaseDb):
                 )
 
                 # Apply filters
-                if user_id:
+                if user_id is not None:
                     base_stmt = base_stmt.where(table.c.user_id == user_id)
                 if workflow_id:
                     base_stmt = base_stmt.where(table.c.workflow_id == workflow_id)

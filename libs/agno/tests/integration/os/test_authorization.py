@@ -2168,13 +2168,13 @@ def test_agent_cancel_with_run_scope(test_agent):
     # Token with run scope
     token = create_jwt_token(scopes=["agents:test-agent:run"])
 
-    # Should be able to cancel (will return 500 since no run exists, but auth passes)
+    # Should be able to cancel (returns 200, cancel stores intent even for nonexistent runs)
     response = client.post(
         "/agents/test-agent/runs/nonexistent-run-id/cancel",
         headers={"Authorization": f"Bearer {token}"},
     )
-    # 500 means auth passed but run doesn't exist, 403 would mean auth failed
-    assert response.status_code == 500
+    # 200 means auth passed and cancel intent stored, 403 would mean auth failed
+    assert response.status_code == 200
 
 
 def test_agent_cancel_blocked_without_run_scope(test_agent, second_agent):
@@ -2219,8 +2219,8 @@ def test_agent_cancel_with_global_scope(test_agent):
         "/agents/test-agent/runs/nonexistent-run-id/cancel",
         headers={"Authorization": f"Bearer {token}"},
     )
-    # 500 means auth passed but run doesn't exist
-    assert response.status_code == 500
+    # 200 means auth passed and cancel intent stored
+    assert response.status_code == 200
 
 
 def test_agent_continue_with_run_scope(test_agent):
@@ -2287,13 +2287,13 @@ def test_team_cancel_with_run_scope(test_team):
     # Token with run scope
     token = create_jwt_token(scopes=["teams:test-team:run"])
 
-    # Should be able to cancel (will return 500 since no run exists, but auth passes)
+    # Should be able to cancel (returns 200, cancel stores intent even for nonexistent runs)
     response = client.post(
         "/teams/test-team/runs/nonexistent-run-id/cancel",
         headers={"Authorization": f"Bearer {token}"},
     )
-    # 500 means auth passed but run doesn't exist, 403 would mean auth failed
-    assert response.status_code == 500
+    # 200 means auth passed and cancel intent stored, 403 would mean auth failed
+    assert response.status_code == 200
 
 
 def test_team_cancel_blocked_without_run_scope(test_team, second_team):
@@ -2338,8 +2338,8 @@ def test_team_cancel_with_global_scope(test_team):
         "/teams/test-team/runs/nonexistent-run-id/cancel",
         headers={"Authorization": f"Bearer {token}"},
     )
-    # 500 means auth passed but run doesn't exist
-    assert response.status_code == 500
+    # 200 means auth passed and cancel intent stored
+    assert response.status_code == 200
 
 
 def test_workflow_cancel_with_run_scope(test_workflow):
@@ -2357,13 +2357,13 @@ def test_workflow_cancel_with_run_scope(test_workflow):
     # Token with run scope
     token = create_jwt_token(scopes=["workflows:test-workflow:run"])
 
-    # Should be able to cancel (will return 500 since no run exists, but auth passes)
+    # Should be able to cancel (returns 200, cancel stores intent even for nonexistent runs)
     response = client.post(
         "/workflows/test-workflow/runs/nonexistent-run-id/cancel",
         headers={"Authorization": f"Bearer {token}"},
     )
-    # 500 means auth passed but run doesn't exist, 403 would mean auth failed
-    assert response.status_code == 500
+    # 200 means auth passed and cancel intent stored, 403 would mean auth failed
+    assert response.status_code == 200
 
 
 def test_workflow_cancel_blocked_without_run_scope(test_workflow, second_workflow):
@@ -2408,8 +2408,8 @@ def test_workflow_cancel_with_global_scope(test_workflow):
         "/workflows/test-workflow/runs/nonexistent-run-id/cancel",
         headers={"Authorization": f"Bearer {token}"},
     )
-    # 500 means auth passed but run doesn't exist
-    assert response.status_code == 500
+    # 200 means auth passed and cancel intent stored
+    assert response.status_code == 200
 
 
 def test_cancel_with_wildcard_scope(test_agent, second_agent):
@@ -2432,14 +2432,14 @@ def test_cancel_with_wildcard_scope(test_agent, second_agent):
         "/agents/test-agent/runs/nonexistent-run-id/cancel",
         headers={"Authorization": f"Bearer {token}"},
     )
-    assert response.status_code == 500  # Auth passed
+    assert response.status_code == 200  # Auth passed
 
     # Should also be able to cancel second-agent
     response = client.post(
         "/agents/second-agent/runs/nonexistent-run-id/cancel",
         headers={"Authorization": f"Bearer {token}"},
     )
-    assert response.status_code == 500  # Auth passed
+    assert response.status_code == 200  # Auth passed
 
 
 def test_cancel_with_admin_scope(test_agent, test_team, test_workflow):
@@ -2464,21 +2464,21 @@ def test_cancel_with_admin_scope(test_agent, test_team, test_workflow):
         "/agents/test-agent/runs/nonexistent-run-id/cancel",
         headers={"Authorization": f"Bearer {token}"},
     )
-    assert response.status_code == 500  # Auth passed
+    assert response.status_code == 200  # Auth passed
 
     # Should be able to cancel team
     response = client.post(
         "/teams/test-team/runs/nonexistent-run-id/cancel",
         headers={"Authorization": f"Bearer {token}"},
     )
-    assert response.status_code == 500  # Auth passed
+    assert response.status_code == 200  # Auth passed
 
     # Should be able to cancel workflow
     response = client.post(
         "/workflows/test-workflow/runs/nonexistent-run-id/cancel",
         headers={"Authorization": f"Bearer {token}"},
     )
-    assert response.status_code == 500  # Auth passed
+    assert response.status_code == 200  # Auth passed
 
 
 # ============================================================================

@@ -7,13 +7,48 @@ Instructions for Claude Code when working on this codebase.
 ## Repository Structure
 
 ```
-agno/
+.
 ├── libs/agno/agno/          # Core framework code
 ├── cookbook/                # Examples, patterns and test cases (organized by topic)
 ├── scripts/                 # Development and build scripts
 ├── specs/                   # Design documents (symlinked, private)
+├── docs/                    # Documentation (symlinked, private)
 └── .cursorrules             # Coding patterns and conventions
 ```
+
+---
+
+## Conductor Notes
+
+When working in Conductor, you can use the `.context/` directory for scratch notes or agent-to-agent handoff artifacts. This directory is gitignored.
+
+---
+
+## Setting Up Symlinks
+
+The `specs/` and `docs/` directories are symlinked from external locations. For a fresh clone or new workspace, create these symlinks:
+
+```bash
+ln -s ~/code/specs specs
+ln -s ~/code/docs docs
+```
+
+These contain private design documents and documentation that are not checked into the repository.
+
+---
+
+## Virtual Environments
+
+This project uses two virtual environments:
+
+| Environment | Purpose | Setup |
+|-------------|---------|-------|
+| `.venv/` | Development: tests, formatting, validation | `./scripts/dev_setup.sh` |
+| `.venvs/demo/` | Cookbooks: has all demo dependencies | `./scripts/demo_setup.sh` |
+
+**Use `.venv`** for development tasks (`pytest`, `./scripts/format.sh`, `./scripts/validate.sh`).
+
+**Use `.venvs/demo`** for running cookbook examples.
 
 ---
 
@@ -21,7 +56,7 @@ agno/
 
 Apart from implementing features, your most important task will be to test and maintain the cookbooks in `cookbook/` directory.
 
-> See `cookbook/15_learning/` for the golden standard.
+> See `cookbook/08_learning/` for the golden standard.
 
 ### Quick Reference
 
@@ -47,10 +82,7 @@ Apart from implementing features, your most important task will be to test and m
 
 Each cookbook folder should have the following files:
 - `README.md` — The README for the cookbook.
-- `CLAUDE.md` — Project-specific instructions (most cookbooks won't have this yet).
 - `TEST_LOG.md` — Test results log.
-
-When testing a cookbook folder, first check for the `CLAUDE.md` file. If it doesn't exist, ask the user if they'd like you to create it. Use `cookbook/15_learning/CLAUDE.md` as a reference.
 
 ### Testing Workflow
 
@@ -90,32 +122,6 @@ Format:
 
 ---
 
-## Design Documents
-
-The `specs/` folder contains design documents for ongoing initiatives. If you're working on one of the following:
-- `specs/learning-machine/` — Unified learning system for agents
-
-**Always read the design document first**.
-
-Each spec follows this structure:
-```
-specs/<spec-name>/
-├── CLAUDE.md           # Spec-specific instructions (read this first)
-├── design.md           # The specification
-├── implementation.md   # Current status and what's done
-├── decisions.md        # Why decisions were made
-└── future-work.md      # What's deferred
-```
-
-**Workflow:**
-1. Read the spec's `CLAUDE.md` for specific instructions
-2. Read `design.md` to understand what we're building
-3. Check `implementation.md` for current status
-4. Find the relevant code in `libs/agno`
-5. Create/update cookbooks to test patterns
-
----
-
 ## Code Locations
 
 | What | Where |
@@ -148,11 +154,14 @@ See `.cursorrules` for detailed patterns. Key rules:
 
 ## Running Code
 
+**Running cookbooks:**
 ```bash
-# Run a cookbook example
-python cookbook/03_agents/basic.py
+.venvs/demo/bin/python cookbook/<folder>/<file>.py
+```
 
-# Run tests
+**Running tests:**
+```bash
+source .venv/bin/activate
 pytest libs/agno/tests/
 
 # Run a specific test file
@@ -187,6 +196,39 @@ source .venv/bin/activate
 
 Both scripts must pass with no errors before code review.
 
+**PR Title Format:**
+
+PR titles must follow one of these formats:
+- `type: description` — e.g., `feat: add workflow serialization`
+- `[type] description` — e.g., `[feat] add workflow serialization`
+- `type-kebab-case` — e.g., `feat-workflow-serialization`
+
+Valid types: `feat`, `fix`, `cookbook`, `test`, `refactor`, `chore`, `style`, `revert`, `release`
+
+**PR Description:**
+
+Always follow the PR template in `.github/pull_request_template.md`. Include:
+- Summary of changes
+- Type of change (bug fix, new feature, etc.)
+- Completed checklist items
+- Any additional context
+
+---
+
+## GitHub Operations
+
+**Updating PR descriptions:**
+
+The `gh pr edit` command may fail with GraphQL errors related to classic projects. Use the API directly instead:
+
+```bash
+# Update PR body
+gh api repos/agno-agi/agno/pulls/<PR_NUMBER> -X PATCH -f body="<PR_BODY>"
+
+# Or with a file
+gh api repos/agno-agi/agno/pulls/<PR_NUMBER> -X PATCH -f body="$(cat /path/to/body.md)"
+```
+
 ---
 
 ## Don't
@@ -196,3 +238,4 @@ Both scripts must pass with no errors before code review.
 - Don't use emojis in examples and print lines
 - Don't skip async variants of public methods
 - Don't push code without running `./scripts/format.sh` and `./scripts/validate.sh`
+- Don't submit a PR without a detailed PR description. Always follow the PR template provided in `.github/pull_request_template.md`.

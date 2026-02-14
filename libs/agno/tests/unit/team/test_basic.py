@@ -1,4 +1,9 @@
+from unittest.mock import MagicMock
+
 import pytest
+
+pytest.importorskip("duckduckgo_search")
+pytest.importorskip("yfinance")
 
 from agno.agent import Agent
 from agno.models.message import Message
@@ -7,6 +12,7 @@ from agno.models.openai import OpenAIChat
 from agno.run import RunContext
 from agno.run.team import TeamRunOutput
 from agno.session.team import TeamSession
+from agno.team._run import _asetup_session
 from agno.team.team import Team
 from agno.tools.websearch import WebSearchTools
 from agno.tools.yfinance import YFinanceTools
@@ -153,3 +159,65 @@ def test_team_update_session_metrics_accumulates(team):
 
     assert metrics2.duration == 5.0  # 2.0 + 3.0
     assert metrics2.input_tokens == 150  # 100 + 50
+
+
+@pytest.mark.asyncio
+async def test_asetup_session_resolves_deps_after_state_loaded():
+    """Verify callable dependencies are resolved AFTER session state is loaded from DB.
+
+    This is a regression test: if dependency resolution runs before state loading,
+    the callable won't see DB-stored session state values.
+    """
+    from unittest.mock import patch
+
+    import agno.team._run as run_module
+
+    # Create a session with DB-stored state
+    db_session = TeamSession(session_id="test-session")
+    db_session.session_data = {"session_state": {"from_db": "loaded"}}
+
+    # Track the session_state snapshot at the time _aresolve_run_dependencies is called
+    captured_state = {}
+
+    async def capture_state_on_resolve(team, run_context):
+        """Capture session_state at dep resolution time, then do actual resolution."""
+        captured_state.update(run_context.session_state or {})
+
+    # Create a minimal Team mock (only used to pass to the functions)
+    team = MagicMock()
+
+    run_context = RunContext(
+        run_id="test-run",
+        session_id="test-session",
+        session_state={},
+        dependencies={"some_dep": lambda: "value"},
+    )
+
+    # Mock the submodule functions at their source modules (where they're imported FROM)
+    with (
+        patch("agno.team._init._has_async_db", return_value=False),
+        patch("agno.team._storage._read_or_create_session", return_value=db_session),
+        patch("agno.team._storage._update_metadata", return_value=None),
+        patch("agno.team._init._initialize_session_state", side_effect=lambda team, session_state, **kw: session_state),
+        patch(
+            "agno.team._storage._load_session_state",
+            side_effect=lambda team, session, session_state: {
+                **session_state,
+                **session.session_data.get("session_state", {}),
+            },
+        ),
+        patch.object(run_module, "_aresolve_run_dependencies", side_effect=capture_state_on_resolve),
+    ):
+        result_session = await _asetup_session(
+            team=team,
+            run_context=run_context,
+            session_id="test-session",
+            user_id=None,
+            run_id="test-run",
+        )
+
+    assert result_session == db_session
+    # At the time deps were resolved, session_state should already contain DB values
+    assert captured_state.get("from_db") == "loaded"
+    # And run_context.session_state should have the loaded value
+    assert run_context.session_state["from_db"] == "loaded"

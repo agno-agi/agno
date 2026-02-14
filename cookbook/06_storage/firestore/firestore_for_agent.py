@@ -14,18 +14,27 @@ from agno.tools.websearch import WebSearchTools
 
 PROJECT_ID = "agno-os-test"  # Use your project ID here
 
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
 # The only required argument is the collection name.
 # Firestore will connect automatically using your google cloud credentials.
 # The class uses the (default) database by default to allow free tier access to firestore.
 # You can specify a project_id if you'd like to connect to firestore in a different GCP project
-
-# Setup the Firestore database
 db = FirestoreDb(project_id=PROJECT_ID)
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 agent = Agent(
     db=db,
     tools=[WebSearchTools()],
     add_history_to_context=True,
 )
-agent.print_response("How many people live in Canada?")
-agent.print_response("What is their national anthem called?")
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    agent.print_response("How many people live in Canada?")
+    agent.print_response("What is their national anthem called?")

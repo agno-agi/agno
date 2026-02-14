@@ -1,17 +1,8 @@
 """
-This example demonstrates how multiple specialized agents coordinate to provide
-comprehensive RAG responses using distributed knowledge bases and specialized
-retrieval strategies with LanceDB.
+Distributed RAG With LanceDB
+============================
 
-Team Composition:
-- Primary Retriever: Handles primary document retrieval from main knowledge base
-- Context Expander: Expands context by finding related information
-- Answer Synthesizer: Synthesizes retrieved information into comprehensive answers
-- Quality Validator: Validates answer quality and suggests improvements
-
-Setup:
-1. Run: `uv pip install openai lancedb tantivy pypdf sqlalchemy agno`
-2. Run this script to see distributed RAG in action
+Demonstrates distributed team-based RAG with primary and context retrieval over LanceDB.
 """
 
 import asyncio
@@ -19,11 +10,13 @@ import asyncio
 from agno.agent import Agent
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
-from agno.models.openai import OpenAIChat
-from agno.team.team import Team
+from agno.models.openai import OpenAIResponses
+from agno.team import Team
 from agno.vectordb.lancedb import LanceDb, SearchType
 
-# Primary knowledge base for main retrieval
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
 primary_knowledge = Knowledge(
     vector_db=LanceDb(
         table_name="recipes_primary",
@@ -33,7 +26,6 @@ primary_knowledge = Knowledge(
     ),
 )
 
-# Secondary knowledge base for context expansion
 context_knowledge = Knowledge(
     vector_db=LanceDb(
         table_name="recipes_context",
@@ -43,10 +35,12 @@ context_knowledge = Knowledge(
     ),
 )
 
-# Primary Retriever Agent - Specialized in main document retrieval
+# ---------------------------------------------------------------------------
+# Create Members
+# ---------------------------------------------------------------------------
 primary_retriever = Agent(
     name="Primary Retriever",
-    model=OpenAIChat(id="o3-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     role="Retrieve primary documents and core information from knowledge base",
     knowledge=primary_knowledge,
     search_knowledge=True,
@@ -59,10 +53,9 @@ primary_retriever = Agent(
     markdown=True,
 )
 
-# Context Expander Agent - Specialized in expanding context
 context_expander = Agent(
     name="Context Expander",
-    model=OpenAIChat(id="o3-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     role="Expand context by finding related and supplementary information",
     knowledge=context_knowledge,
     search_knowledge=True,
@@ -75,10 +68,9 @@ context_expander = Agent(
     markdown=True,
 )
 
-# Answer Synthesizer Agent - Specialized in synthesis
 answer_synthesizer = Agent(
     name="Answer Synthesizer",
-    model=OpenAIChat(id="o3-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     role="Synthesize retrieved information into comprehensive answers",
     instructions=[
         "Combine information from the Primary Retriever and Context Expander.",
@@ -90,10 +82,9 @@ answer_synthesizer = Agent(
     markdown=True,
 )
 
-# Quality Validator Agent - Specialized in validation
 quality_validator = Agent(
     name="Quality Validator",
-    model=OpenAIChat(id="o3-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     role="Validate answer quality and suggest improvements",
     instructions=[
         "Review the synthesized answer for accuracy and completeness.",
@@ -105,10 +96,12 @@ quality_validator = Agent(
     markdown=True,
 )
 
-# Create distributed RAG team
+# ---------------------------------------------------------------------------
+# Create Team
+# ---------------------------------------------------------------------------
 distributed_rag_team = Team(
     name="Distributed RAG Team",
-    model=OpenAIChat(id="o3-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     members=[
         primary_retriever,
         context_expander,
@@ -128,14 +121,16 @@ distributed_rag_team = Team(
 )
 
 
-async def async_distributed_rag_demo():
+# ---------------------------------------------------------------------------
+# Run Team
+# ---------------------------------------------------------------------------
+async def async_distributed_rag_demo() -> None:
     """Demonstrate async distributed RAG processing."""
-    print("📚 Async Distributed RAG with LanceDB Demo")
+    print("Async Distributed RAG with LanceDB Demo")
     print("=" * 50)
 
     query = "How do I make chicken and galangal in coconut milk soup? Include cooking tips and variations."
 
-    # Add content to knowledge bases
     await primary_knowledge.ainsert_many(
         url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
     )
@@ -143,21 +138,16 @@ async def async_distributed_rag_demo():
         url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
     )
 
-    # # Run async distributed RAG
-    # await distributed_rag_team.aprint_response(
-    #     query, stream=True
-    # )
     await distributed_rag_team.aprint_response(input=query)
 
 
-def sync_distributed_rag_demo():
+def sync_distributed_rag_demo() -> None:
     """Demonstrate sync distributed RAG processing."""
-    print("📚 Distributed RAG with LanceDB Demo")
+    print("Distributed RAG with LanceDB Demo")
     print("=" * 40)
 
     query = "How do I make chicken and galangal in coconut milk soup? Include cooking tips and variations."
 
-    # Add content to knowledge bases
     primary_knowledge.insert_many(
         url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
     )
@@ -165,20 +155,18 @@ def sync_distributed_rag_demo():
         url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
     )
 
-    # Run distributed RAG
     distributed_rag_team.print_response(input=query)
 
 
-def multi_course_meal_demo():
+def multi_course_meal_demo() -> None:
     """Demonstrate distributed RAG for complex multi-part queries."""
-    print("🍽️ Multi-Course Meal Planning with Distributed RAG")
+    print("Multi-Course Meal Planning with Distributed RAG")
     print("=" * 55)
 
     query = """Hi, I want to make a 3 course Thai meal. Can you recommend some recipes?
     I'd like to start with a soup, then a thai curry for the main course and finish with a dessert.
     Please include cooking techniques and any special tips."""
 
-    # Add content to knowledge bases
     primary_knowledge.insert_many(
         url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
     )

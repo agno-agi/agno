@@ -1,3 +1,10 @@
+"""
+Teams Demo
+==========
+
+Demonstrates teams demo.
+"""
+
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.anthropic import Claude
@@ -8,6 +15,10 @@ from agno.team.team import Team
 from agno.tools.exa import ExaTools
 from agno.tools.websearch import WebSearchTools
 from agno.tools.yfinance import YFinanceTools
+
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 db = PostgresDb(db_url)
@@ -124,7 +135,7 @@ multimodal_team = Team(
     description="A team of agents that can handle multiple modalities",
     members=[file_agent, audio_agent, video_agent],
     model=OpenAIChat(id="gpt-4o"),
-    determine_input_for_members=False,
+    pass_user_input_to_members=True,
     respond_directly=True,
     id="multimodal_team",
     instructions=[
@@ -177,6 +188,10 @@ agent_os = AgentOS(
 )
 app = agent_os.get_app()
 
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     agent_os.serve(app="teams_demo:app", reload=True)

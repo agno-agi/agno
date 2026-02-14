@@ -13,6 +13,10 @@ from agno.os import AgentOS
 from agno.os.middleware import JWTMiddleware, TokenSource
 from fastapi import FastAPI, Response
 
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
+
 # JWT Secret (use environment variable in production)
 JWT_SECRET = "a-string-secret-at-least-256-bits-long"
 
@@ -122,6 +126,10 @@ agent_os = AgentOS(
 # Get the final app
 app = agent_os.get_app()
 
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     """

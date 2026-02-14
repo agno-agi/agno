@@ -1,12 +1,22 @@
+"""
+Image To Image Transformation
+=============================
+
+Demonstrates collaborative style planning and image transformation.
+"""
+
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.team import Team
 from agno.tools.fal import FalTools
 
+# ---------------------------------------------------------------------------
+# Create Members
+# ---------------------------------------------------------------------------
 style_advisor = Agent(
     name="Style Advisor",
     role="Analyze and recommend artistic styles and transformations",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     instructions=[
         "Analyze the input image and transformation request",
         "Provide style recommendations and enhancement suggestions",
@@ -17,7 +27,7 @@ style_advisor = Agent(
 image_transformer = Agent(
     name="Image Transformer",
     role="Transform images using AI tools",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     tools=[FalTools()],
     instructions=[
         "Use the `image_to_image` tool to generate transformed images",
@@ -26,10 +36,12 @@ image_transformer = Agent(
     ],
 )
 
-# Create a team for collaborative image transformation
+# ---------------------------------------------------------------------------
+# Create Team
+# ---------------------------------------------------------------------------
 transformation_team = Team(
     name="Image Transformation Team",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     members=[style_advisor, image_transformer],
     instructions=[
         "Transform images with artistic style and precision.",
@@ -39,7 +51,11 @@ transformation_team = Team(
     markdown=True,
 )
 
-transformation_team.print_response(
-    "a cat dressed as a wizard with a background of a mystic forest. Make it look like 'https://fal.media/files/koala/Chls9L2ZnvuipUTEwlnJC.png'",
-    stream=True,
-)
+# ---------------------------------------------------------------------------
+# Run Team
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    transformation_team.print_response(
+        "a cat dressed as a wizard with a background of a mystic forest. Make it look like 'https://fal.media/files/koala/Chls9L2ZnvuipUTEwlnJC.png'",
+        stream=True,
+    )

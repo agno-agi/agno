@@ -1,32 +1,36 @@
 """
-Example demonstrating how to use checks with Agno Team to implement guardrails.
+Prompt Injection
+=============================
 
-This example shows how to:
-1. An input validation check that checks for prompt injection
+Demonstrates prompt-injection guardrails for team input validation.
 """
 
 from agno.exceptions import InputCheckError
 from agno.guardrails import PromptInjectionGuardrail
-from agno.models.openai import OpenAIChat
-from agno.team.team import Team
+from agno.models.openai import OpenAIResponses
+from agno.team import Team
+
+# ---------------------------------------------------------------------------
+# Create Team
+# ---------------------------------------------------------------------------
+team = Team(
+    name="Guardrails Demo Team",
+    model=OpenAIResponses(id="gpt-5.2"),
+    pre_hooks=[PromptInjectionGuardrail()],
+    members=[],
+    description="A team that tells jokes and provides helpful information.",
+    instructions="You are a friendly assistant that tells jokes and provides helpful information. Always maintain a positive and helpful tone.",
+)
 
 
-def main():
+# ---------------------------------------------------------------------------
+# Run Team
+# ---------------------------------------------------------------------------
+def main() -> None:
     """Demonstrate the prompt injection guardrails functionality."""
     print("Prompt Injection Guardrails Demo")
     print("=" * 50)
 
-    # Create an team with prompt injection protection
-    team = Team(
-        name="Guardrails Demo Team",
-        model=OpenAIChat(id="gpt-5.2"),
-        pre_hooks=[PromptInjectionGuardrail()],
-        members=[],
-        description="A team that tells jokes and provides helpful information.",
-        instructions="You are a friendly assistant that tells jokes and provides helpful information. Always maintain a positive and helpful tone.",
-    )
-
-    # Test 1: Normal request (should work)
     print("\n[TEST 1] Normal request")
     print("-" * 30)
     try:
@@ -37,7 +41,6 @@ def main():
     except InputCheckError as e:
         print(f"[ERROR] Unexpected error: {e}")
 
-    # Test 2: Basic prompt injection (should be blocked)
     print("\n[TEST 2] Basic prompt injection")
     print("-" * 30)
     try:
@@ -49,7 +52,6 @@ def main():
         print(f"[BLOCKED] Prompt injection blocked: {e.message}")
         print(f"   Trigger: {e.check_trigger}")
 
-    # Test 3: Advanced prompt injection (should be blocked)
     print("\n[TEST 3] Advanced prompt injection")
     print("-" * 30)
     try:
@@ -61,7 +63,6 @@ def main():
         print(f"[BLOCKED] Advanced prompt injection blocked: {e.message}")
         print(f"   Trigger: {e.check_trigger}")
 
-    # Test 4: Jailbreak attempt (should be blocked)
     print("\n[TEST 4] Jailbreak attempt")
     print("-" * 30)
     try:
@@ -73,7 +74,6 @@ def main():
         print(f"[BLOCKED] Jailbreak attempt blocked: {e.message}")
         print(f"   Trigger: {e.check_trigger}")
 
-    # Test 5: Subtle injection (should be blocked)
     print("\n[TEST 5] Subtle injection attempt")
     print("-" * 30)
     try:

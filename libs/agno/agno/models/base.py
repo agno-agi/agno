@@ -790,6 +790,13 @@ class Model(ABC):
                     if any(tc.requires_user_input for tc in model_response.tool_executions or []):
                         break
 
+                    # Check if run_response has requirements (e.g., from member agent HITL)
+                    # This handles cases where a tool (like delegate_task_to_member) propagates
+                    # HITL requirements from a member agent to the team's run_response
+                    if run_response is not None and run_response.requirements:
+                        if any(not req.is_resolved() for req in run_response.requirements):
+                            break
+
                     # Continue loop to get next response
                     continue
 
@@ -993,6 +1000,13 @@ class Model(ABC):
                     # If we have any tool calls that require user input, break the loop
                     if any(tc.requires_user_input for tc in model_response.tool_executions or []):
                         break
+
+                    # Check if run_response has requirements (e.g., from member agent HITL)
+                    # This handles cases where a tool (like delegate_task_to_member) propagates
+                    # HITL requirements from a member agent to the team's run_response
+                    if run_response is not None and run_response.requirements:
+                        if any(not req.is_resolved() for req in run_response.requirements):
+                            break
 
                     # Continue loop to get next response
                     continue
@@ -1429,6 +1443,13 @@ class Model(ABC):
                     if any(fc.function.requires_user_input for fc in function_calls_to_run):
                         break
 
+                    # Check if run_response has requirements (e.g., from member agent HITL)
+                    # This handles cases where a tool (like delegate_task_to_member) propagates
+                    # HITL requirements from a member agent to the team's run_response
+                    if run_response is not None and run_response.requirements:
+                        if any(not req.is_resolved() for req in run_response.requirements):
+                            break
+
                     # Continue loop to get next response
                     continue
 
@@ -1672,6 +1693,13 @@ class Model(ABC):
                     # If we have any tool calls that require user input, break the loop
                     if any(fc.function.requires_user_input for fc in function_calls_to_run):
                         break
+
+                    # Check if run_response has requirements (e.g., from member agent HITL)
+                    # This handles cases where a tool (like delegate_task_to_member) propagates
+                    # HITL requirements from a member agent to the team's run_response
+                    if run_response is not None and run_response.requirements:
+                        if any(not req.is_resolved() for req in run_response.requirements):
+                            break
 
                     # Continue loop to get next response
                     continue
@@ -1988,6 +2016,7 @@ class Model(ABC):
 
                         if isinstance(item, CustomEvent):
                             function_call_output += str(item)
+                            item.tool_call_id = function_call.call_id
 
                         # For WorkflowCompletedEvent, extract content for final output
                         from agno.run.workflow import WorkflowCompletedEvent
@@ -2108,6 +2137,8 @@ class Model(ABC):
                         tool_name=fc.function.name,
                         tool_args=fc.arguments,
                         requires_confirmation=True,
+                        approval_type=fc.function.approval_type,
+                        external_execution_silent=fc.function.external_execution_silent,
                     )
                 )
 
@@ -2126,7 +2157,9 @@ class Model(ABC):
                         tool_name=fc.function.name,
                         tool_args=fc.arguments,
                         requires_user_input=True,
+                        approval_type=fc.function.approval_type,
                         user_input_schema=user_input_schema,
+                        external_execution_silent=fc.function.external_execution_silent,
                     )
                 )
 
@@ -2175,6 +2208,8 @@ class Model(ABC):
                         tool_name=fc.function.name,
                         tool_args=fc.arguments,
                         external_execution_required=True,
+                        approval_type=fc.function.approval_type,
+                        external_execution_silent=fc.function.external_execution_silent,
                     )
                 )
 
@@ -2269,6 +2304,8 @@ class Model(ABC):
                         tool_name=fc.function.name,
                         tool_args=fc.arguments,
                         requires_confirmation=True,
+                        approval_type=fc.function.approval_type,
+                        external_execution_silent=fc.function.external_execution_silent,
                     )
                 )
             # If the function requires user input, we yield a message to the user
@@ -2286,7 +2323,9 @@ class Model(ABC):
                         tool_name=fc.function.name,
                         tool_args=fc.arguments,
                         requires_user_input=True,
+                        approval_type=fc.function.approval_type,
                         user_input_schema=user_input_schema,
+                        external_execution_silent=fc.function.external_execution_silent,
                     )
                 )
             # If the function is from the user control flow tools, we handle it here
@@ -2339,6 +2378,8 @@ class Model(ABC):
                         tool_name=fc.function.name,
                         tool_args=fc.arguments,
                         external_execution_required=True,
+                        approval_type=fc.function.approval_type,
+                        external_execution_silent=fc.function.external_execution_silent,
                     )
                 )
 
@@ -2430,6 +2471,7 @@ class Model(ABC):
 
                         if isinstance(item, CustomEvent):
                             function_call_output += str(item)
+                            item.tool_call_id = function_call.call_id
 
                             # For WorkflowCompletedEvent, extract content for final output
                             from agno.run.workflow import WorkflowCompletedEvent
@@ -2507,8 +2549,12 @@ class Model(ABC):
                                 if async_gen_index in async_generator_outputs:
                                     _, async_function_call_output, error = async_generator_outputs[async_gen_index]
                                     if error:
-                                        log_error(f"Error in async generator: {error}")
-                                        raise error
+                                        # Handle async generator exceptions gracefully like sync generators
+                                        log_error(
+                                            f"Error while iterating async generator for {function_call.function.name}: {error}"
+                                        )
+                                        function_call.error = str(error)
+                                        function_call_success = False
                                 break
                             async_gen_index += 1
 
@@ -2554,6 +2600,10 @@ class Model(ABC):
                                 if function_call.function.show_result and item.content is not None:
                                     yield ModelResponse(content=item.content)
                                     continue
+
+                            elif isinstance(item, CustomEvent):
+                                function_call_output += str(item)
+                                item.tool_call_id = function_call.call_id
 
                             # Yield the event itself to bubble it up
                             yield item

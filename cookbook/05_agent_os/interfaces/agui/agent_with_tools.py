@@ -1,3 +1,10 @@
+"""
+Agent With Tools
+================
+
+Demonstrates agent with tools.
+"""
+
 from typing import List
 
 from agno.agent.agent import Agent
@@ -6,6 +13,10 @@ from agno.os import AgentOS
 from agno.os.interfaces.agui import AGUI
 from agno.tools import tool
 from agno.tools.websearch import WebSearchTools
+
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
 
 
 # Frontend Tools
@@ -48,6 +59,10 @@ agent_os = AgentOS(
 )
 app = agent_os.get_app()
 
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     """Run your AgentOS.

@@ -1,8 +1,8 @@
 """
-This example demonstrates how to create a team with knowledge base integration.
+Team With Knowledge
+=============================
 
-The team has access to a knowledge base with Agno documentation and can combine
-this knowledge with web search capabilities.
+Demonstrates a team that combines knowledge-base retrieval with web search support.
 """
 
 from pathlib import Path
@@ -10,17 +10,18 @@ from pathlib import Path
 from agno.agent import Agent
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
-from agno.models.openai import OpenAIChat
-from agno.team.team import Team
+from agno.models.openai import OpenAIResponses
+from agno.team import Team
 from agno.tools.websearch import WebSearchTools
 from agno.vectordb.lancedb import LanceDb, SearchType
 
-# Setup paths for knowledge storage
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
 cwd = Path(__file__).parent
 tmp_dir = cwd.joinpath("tmp")
 tmp_dir.mkdir(parents=True, exist_ok=True)
 
-# Initialize knowledge base with vector database
 agno_docs_knowledge = Knowledge(
     vector_db=LanceDb(
         uri=str(tmp_dir.joinpath("lancedb")),
@@ -30,27 +31,33 @@ agno_docs_knowledge = Knowledge(
     ),
 )
 
-# Add content to knowledge base
 agno_docs_knowledge.insert(url="https://docs.agno.com/llms-full.txt")
 
-# Create web search agent for supplementary information
+# ---------------------------------------------------------------------------
+# Create Members
+# ---------------------------------------------------------------------------
 web_agent = Agent(
     name="Web Search Agent",
     role="Handle web search requests",
-    model=OpenAIChat(id="o3-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     tools=[WebSearchTools()],
     instructions=["Always include sources"],
 )
 
-# Create team with knowledge base integration
+# ---------------------------------------------------------------------------
+# Create Team
+# ---------------------------------------------------------------------------
 team_with_knowledge = Team(
     name="Team with Knowledge",
     members=[web_agent],
-    model=OpenAIChat(id="o3-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     knowledge=agno_docs_knowledge,
     show_members_responses=True,
     markdown=True,
 )
 
+# ---------------------------------------------------------------------------
+# Run Team
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     team_with_knowledge.print_response("Tell me about the Agno framework", stream=True)

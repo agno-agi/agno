@@ -1,21 +1,21 @@
 """
-Research Team with Context Management.
+Filter Tool Calls From History
+==============================
 
-This example demonstrates a research team that uses DuckDuckGo to search the web and accumulate tool calls. The older research results
-are automatically filtered out to keep the context focused on recent research results.
-
-When max_tool_calls_from_history is set to 3, the team will keep only the last 3 tool call results.
+Demonstrates limiting historical tool call results in team context.
 """
 
 from textwrap import dedent
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
-from agno.models.openai import OpenAIChat
-from agno.team.team import Team
+from agno.models.openai import OpenAIResponses
+from agno.team import Team
 from agno.tools.websearch import WebSearchTools
 
-# Create specialized research agents
+# ---------------------------------------------------------------------------
+# Create Members
+# ---------------------------------------------------------------------------
 tech_researcher = Agent(
     name="Alex",
     role="Technology Researcher",
@@ -38,21 +38,23 @@ business_analyst = Agent(
     """).strip(),
 )
 
-# Create research team with tools and context management
+# ---------------------------------------------------------------------------
+# Create Team
+# ---------------------------------------------------------------------------
 research_team = Team(
     name="Research Team",
-    model=OpenAIChat("gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     members=[tech_researcher, business_analyst],
     tools=[WebSearchTools()],  # Team uses DuckDuckGo for research
     description="Research team that investigates topics and provides analysis.",
     instructions=dedent("""
         You are a research coordinator that investigates topics comprehensively.
-        
+
         Your Process:
         1. Use DuckDuckGo to search for a lot of information on the topic.
         2. Delegate detailed analysis to the appropriate specialist
         3. Synthesize research findings with specialist insights
-        
+
         Guidelines:
         - Always start with web research using your DuckDuckGo tools. Try to get as much information as possible.
         - Choose the right specialist based on the topic (tech vs business)
@@ -62,12 +64,15 @@ research_team = Team(
     db=SqliteDb(db_file="tmp/research_team.db"),
     session_id="research_session",
     add_history_to_context=True,
-    num_history_runs=6,  # Load last 6 research queries
-    max_tool_calls_from_history=3,  # Keep only last 3 research results
+    num_history_runs=6,
+    max_tool_calls_from_history=3,
     markdown=True,
     show_members_responses=True,
 )
 
+# ---------------------------------------------------------------------------
+# Run Team
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     research_team.print_response(
         "What are the latest developments in AI agents? Which companies dominate the market? Find the latest news and reports on the companies.",

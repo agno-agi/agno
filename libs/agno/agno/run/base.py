@@ -27,6 +27,11 @@ class RunContext:
     session_state: Optional[Dict[str, Any]] = None
     output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None
 
+    # Runtime-resolved callable factory results
+    tools: Optional[List[Any]] = None
+    knowledge: Optional[Any] = None
+    members: Optional[List[Any]] = None
+
 
 @dataclass
 class BaseRunOutputEvent:
@@ -175,6 +180,12 @@ class BaseRunOutputEvent:
 
             data["tool"] = ToolExecution.from_dict(tool)
 
+        tools = data.pop("tools", None)
+        if tools:
+            from agno.models.response import ToolExecution
+
+            data["tools"] = [ToolExecution.from_dict(t) for t in tools]
+
         images = data.pop("images", None)
         if images:
             data["images"] = [Image.model_validate(image) for image in images]
@@ -230,8 +241,6 @@ class BaseRunOutputEvent:
 
                 data["run_input"] = RunInput.from_dict(run_input)
 
-                # Handle requirements
-
         # Handle requirements
         requirements_data = data.pop("requirements", None)
         if requirements_data is not None:
@@ -246,6 +255,10 @@ class BaseRunOutputEvent:
             data["requirements"] = requirements_list if requirements_list else None
 
         # Filter data to only include fields that are actually defined in the target class
+        # CustomEvent accepts arbitrary fields, so skip filtering for it
+        if cls.__name__ == "CustomEvent":
+            return cls(**data)
+
         from dataclasses import fields
 
         supported_fields = {f.name for f in fields(cls)}

@@ -7,7 +7,7 @@ from urllib.parse import urljoin, urlparse
 
 import httpx
 
-from agno.knowledge.chunking.semantic import SemanticChunking
+from agno.knowledge.chunking.fixed import FixedSizeChunking
 from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyType
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
@@ -32,7 +32,7 @@ class WebsiteReader(Reader):
 
     def __init__(
         self,
-        chunking_strategy: Optional[ChunkingStrategy] = SemanticChunking(),
+        chunking_strategy: Optional[ChunkingStrategy] = FixedSizeChunking(),
         max_depth: int = 3,
         max_links: int = 10,
         timeout: int = 10,
@@ -164,8 +164,10 @@ class WebsiteReader(Reader):
         num_links = 0
         crawler_result: Dict[str, str] = {}
         primary_domain = self._get_primary_domain(url)
-        # Add starting URL with its depth to the global list
-        self._urls_to_crawl.append((url, starting_depth))
+
+        # Clear state so URLs from previous crawls aren't incorrectly skipped (matches async_crawl)
+        self._visited = set()
+        self._urls_to_crawl = [(url, starting_depth)]
         while self._urls_to_crawl:
             # Unpack URL and depth from the global list
             current_url, current_depth = self._urls_to_crawl.pop(0)

@@ -74,6 +74,13 @@ class MCPTools(Toolkit):
                 Only relevant with HTTP transports (Streamable HTTP or SSE).
                 Creates a new session per agent run with dynamic headers merged into connection config.
         """
+        # Extract these before super().__init__() to bypass early validation
+        # (tools aren't available until build_tools() is called)
+        requires_confirmation_tools = kwargs.pop("requires_confirmation_tools", None)
+        external_execution_required_tools = kwargs.pop("external_execution_required_tools", None)
+        stop_after_tool_call_tools = kwargs.pop("stop_after_tool_call_tools", None)
+        show_result_tools = kwargs.pop("show_result_tools", None)
+
         super().__init__(name="MCPTools", **kwargs)
 
         if url is not None:
@@ -92,6 +99,10 @@ class MCPTools(Toolkit):
         # because tools are not available until `initialize()` is called.
         self.include_tools = include_tools
         self.exclude_tools = exclude_tools
+        self.requires_confirmation_tools = requires_confirmation_tools or []
+        self.external_execution_required_tools = external_execution_required_tools or []
+        self.stop_after_tool_call_tools = stop_after_tool_call_tools or []
+        self.show_result_tools = show_result_tools or []
         self.refresh_connection = refresh_connection
         self.tool_name_prefix = tool_name_prefix
 
@@ -128,7 +139,13 @@ class MCPTools(Toolkit):
         self.transport = transport
 
         self.header_provider = None
-        if self._is_valid_header_provider(header_provider):
+        if header_provider is not None:
+            if self.transport not in ["sse", "streamable-http"]:
+                raise ValueError(
+                    f"header_provider is not supported with '{self.transport}' transport. "
+                    "Use 'sse' or 'streamable-http' transport instead."
+                )
+            log_debug("Dynamic header support enabled for MCP tools")
             self.header_provider = header_provider
 
         self.timeout_seconds = timeout_seconds
@@ -178,29 +195,6 @@ class MCPTools(Toolkit):
     @property
     def initialized(self) -> bool:
         return self._initialized
-
-    def _is_valid_header_provider(self, header_provider: Optional[Callable[..., dict[str, Any]]]) -> bool:
-        """Logic to validate a given header_provider function.
-
-        Args:
-            header_provider: The header_provider function to validate
-
-        Raises:
-            Exception: If there is an error validating the header_provider.
-        """
-        if not header_provider:
-            return False
-
-        if self.transport not in ["sse", "streamable-http"]:
-            log_warning(
-                f"header_provider specified but transport is '{self.transport}'. "
-                "Dynamic headers only work with 'sse' or 'streamable-http' transports. "
-                "The header_provider logic will be ignored."
-            )
-            return False
-
-        log_debug("Dynamic header support enabled for MCP tools")
-        return True
 
     def _call_header_provider(
         self,
@@ -575,13 +569,27 @@ class MCPTools(Toolkit):
                         mcp_tools_instance=self,
                     )
                     # Create a Function for the tool
+                    # Apply toolkit-level settings
+                    tool_name = tool.name
+                    stop_after = tool_name in self.stop_after_tool_call_tools
+                    show_result = tool_name in self.show_result_tools or stop_after
+
                     f = Function(
-                        name=tool_name_prefix + tool.name,
+                        name=tool_name_prefix + tool_name,
                         description=tool.description,
                         parameters=tool.inputSchema,
                         entrypoint=entrypoint,
                         # Set skip_entrypoint_processing to True to avoid processing the entrypoint
                         skip_entrypoint_processing=True,
+                        # Apply toolkit-level settings for HITL and control flow
+                        requires_confirmation=tool_name in self.requires_confirmation_tools,
+                        external_execution=tool_name in self.external_execution_required_tools,
+                        stop_after_tool_call=stop_after,
+                        show_result=show_result,
+                        # Apply toolkit-level cache settings
+                        cache_results=self.cache_results,
+                        cache_dir=self.cache_dir,
+                        cache_ttl=self.cache_ttl,
                     )
 
                     # Register the Function with the toolkit

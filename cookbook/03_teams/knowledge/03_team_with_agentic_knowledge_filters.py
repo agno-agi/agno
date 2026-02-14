@@ -1,38 +1,36 @@
 """
-This example demonstrates how to use agentic knowledge filters with teams.
+Team With Agentic Knowledge Filters
+===================================
 
-Agentic knowledge filters allow the AI to dynamically determine which documents
-to search based on the query context, rather than using predefined filters.
+Demonstrates AI-driven dynamic knowledge filtering for team retrieval.
 """
 
 from agno.agent import Agent
 from agno.knowledge.knowledge import Knowledge
-from agno.models.openai import OpenAIChat
-from agno.team.team import Team
+from agno.models.openai import OpenAIResponses
+from agno.team import Team
 from agno.utils.media import (
     SampleDataFileExtension,
     download_knowledge_filters_sample_data,
 )
 from agno.vectordb.lancedb import LanceDb
 
-# Download all sample CVs and get their paths
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
 downloaded_cv_paths = download_knowledge_filters_sample_data(
     num_files=5, file_extension=SampleDataFileExtension.PDF
 )
 
-# Initialize LanceDB vector database
-# By default, it stores data in /tmp/lancedb
 vector_db = LanceDb(
     table_name="recipes",
-    uri="tmp/lancedb",  # You can change this path to store data elsewhere
+    uri="tmp/lancedb",
 )
 
-# Create knowledge base
 knowledge = Knowledge(
     vector_db=vector_db,
 )
 
-# Add documents with metadata for agentic filtering
 knowledge.insert_many(
     [
         {
@@ -78,29 +76,34 @@ knowledge.insert_many(
     ]
 )
 
-# Create knowledge search agent with filter awareness
+# ---------------------------------------------------------------------------
+# Create Members
+# ---------------------------------------------------------------------------
 web_agent = Agent(
     name="Knowledge Search Agent",
     role="Handle knowledge search",
     knowledge=knowledge,
-    model=OpenAIChat(id="o3-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     instructions=["Always take into account filters"],
 )
 
-# Create team with agentic knowledge filters enabled
+# ---------------------------------------------------------------------------
+# Create Team
+# ---------------------------------------------------------------------------
 team_with_knowledge = Team(
     name="Team with Knowledge",
-    members=[
-        web_agent
-    ],  # If you omit the member, the leader will search the knowledge base itself.
-    model=OpenAIChat(id="o3-mini"),
+    members=[web_agent],
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     knowledge=knowledge,
     show_members_responses=True,
     markdown=True,
-    enable_agentic_knowledge_filters=True,  # Allow AI to determine filters
+    enable_agentic_knowledge_filters=True,
 )
 
-# Test agentic knowledge filtering
-team_with_knowledge.print_response(
-    "Tell me about Jordan Mitchell's work and experience with user_id as jordan_mitchell"
-)
+# ---------------------------------------------------------------------------
+# Run Team
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    team_with_knowledge.print_response(
+        "Tell me about Jordan Mitchell's work and experience with user_id as jordan_mitchell"
+    )

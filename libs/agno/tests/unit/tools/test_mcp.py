@@ -108,10 +108,10 @@ def test_is_valid_header_provider_with_http_transport():
     assert tools.header_provider is not None
 
 
-def test_is_valid_header_provider_ignored_for_stdio():
-    """Test that header_provider is ignored for stdio transport."""
-    tools = MCPTools(command="npx foo", header_provider=lambda: {})
-    assert tools.header_provider is None
+def test_header_provider_with_stdio_transport_raises_error():
+    """Test that ValueError is raised when header_provider is used with stdio transport."""
+    with pytest.raises(ValueError, match="header_provider is not supported with 'stdio' transport"):
+        MCPTools(command="npx foo", transport="stdio", header_provider=lambda: {})
 
 
 def test_call_header_provider_no_params():
@@ -337,3 +337,126 @@ async def test_stale_sessions_cleaned_up_on_new_run():
             # New session should exist
             assert "new-run-id" in tools._run_sessions
             assert session == mock_new_session
+
+
+# =============================================================================
+# HITL (Human-in-the-Loop) and control flow tests
+# =============================================================================
+
+
+def test_hitl_params_accepted_in_constructor():
+    """Test that HITL parameters can be passed to MCPTools constructor."""
+    tools = MCPTools(
+        url="https://example.com/mcp",
+        requires_confirmation_tools=["tool1", "tool2"],
+        external_execution_required_tools=["tool3"],
+        stop_after_tool_call_tools=["tool4"],
+        show_result_tools=["tool5"],
+    )
+
+    assert tools.requires_confirmation_tools == ["tool1", "tool2"]
+    assert tools.external_execution_required_tools == ["tool3"]
+    assert tools.stop_after_tool_call_tools == ["tool4"]
+    assert tools.show_result_tools == ["tool5"]
+
+
+def test_hitl_params_default_to_empty_lists():
+    """Test that HITL parameters default to empty lists when not provided."""
+    tools = MCPTools(url="https://example.com/mcp")
+
+    assert tools.requires_confirmation_tools == []
+    assert tools.external_execution_required_tools == []
+    assert tools.stop_after_tool_call_tools == []
+    assert tools.show_result_tools == []
+
+
+@pytest.mark.asyncio
+async def test_hitl_params_applied_to_functions():
+    """Test that HITL parameters are applied to Function objects during build_tools."""
+    tools = MCPTools(
+        url="https://example.com/mcp",
+        requires_confirmation_tools=["SearchTool"],
+        external_execution_required_tools=["ExternalTool"],
+        stop_after_tool_call_tools=["StopTool"],
+        show_result_tools=["ShowTool"],
+    )
+
+    # Create mock tools from MCP server
+    def create_mock_tool(name, description):
+        mock_tool = MagicMock()
+        mock_tool.name = name
+        mock_tool.description = description
+        mock_tool.inputSchema = {"type": "object", "properties": {}}
+        return mock_tool
+
+    mock_tools_result = MagicMock()
+    mock_tools_result.tools = [
+        create_mock_tool("SearchTool", "Search for things"),
+        create_mock_tool("ExternalTool", "External execution"),
+        create_mock_tool("StopTool", "Stop after call"),
+        create_mock_tool("ShowTool", "Show result"),
+        create_mock_tool("NormalTool", "Normal tool without HITL"),
+    ]
+
+    mock_session = AsyncMock()
+    mock_session.list_tools = AsyncMock(return_value=mock_tools_result)
+
+    tools.session = mock_session
+    tools._initialized = False
+
+    with patch("agno.tools.mcp.mcp.get_entrypoint_for_tool", return_value=lambda: "result"):
+        await tools.build_tools()
+
+    # Verify requires_confirmation is applied
+    assert tools.functions["SearchTool"].requires_confirmation is True
+    assert tools.functions["SearchTool"].external_execution is False
+
+    # Verify external_execution is applied
+    assert tools.functions["ExternalTool"].external_execution is True
+    assert tools.functions["ExternalTool"].requires_confirmation is False
+
+    # Verify stop_after_tool_call is applied (and show_result auto-set)
+    assert tools.functions["StopTool"].stop_after_tool_call is True
+    assert tools.functions["StopTool"].show_result is True
+
+    # Verify show_result is applied independently
+    assert tools.functions["ShowTool"].show_result is True
+    assert tools.functions["ShowTool"].stop_after_tool_call is False
+
+    # Verify normal tool has no HITL settings
+    assert tools.functions["NormalTool"].requires_confirmation is False
+    assert tools.functions["NormalTool"].external_execution is False
+    assert tools.functions["NormalTool"].stop_after_tool_call is False
+    assert tools.functions["NormalTool"].show_result is False
+
+
+@pytest.mark.asyncio
+async def test_hitl_params_with_tool_name_prefix():
+    """Test that HITL params work correctly with tool_name_prefix."""
+    tools = MCPTools(
+        url="https://example.com/mcp",
+        tool_name_prefix="myprefix",
+        requires_confirmation_tools=["SearchTool"],
+    )
+
+    mock_tool = MagicMock()
+    mock_tool.name = "SearchTool"
+    mock_tool.description = "Search"
+    mock_tool.inputSchema = {"type": "object", "properties": {}}
+
+    mock_tools_result = MagicMock()
+    mock_tools_result.tools = [mock_tool]
+
+    mock_session = AsyncMock()
+    mock_session.list_tools = AsyncMock(return_value=mock_tools_result)
+
+    tools.session = mock_session
+    tools._initialized = False
+
+    with patch("agno.tools.mcp.mcp.get_entrypoint_for_tool", return_value=lambda: "result"):
+        await tools.build_tools()
+
+    # Function should be registered with prefix
+    assert "myprefix_SearchTool" in tools.functions
+    # HITL setting should still be applied (matched by original name)
+    assert tools.functions["myprefix_SearchTool"].requires_confirmation is True
