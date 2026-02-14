@@ -1,5 +1,3 @@
-import base64
-import binascii
 import os
 import re
 from typing import Any, List, NamedTuple, Optional, Union
@@ -193,31 +191,12 @@ def attach_routes(
             await bot.send_message(chat_id, f"[{i}/{len(chunks)}] {chunk}", reply_to_message_id=reply_id)
 
     def _resolve_media_data(item: Any) -> Optional[Any]:
-        """Extract sendable data from a media item. Checks url → content → filepath."""
+        """Extract sendable data from a media item.
+        Returns URL directly (Telegram handles download) or raw bytes via get_content_bytes().
+        """
         if item.url:
             return item.url
-        if item.content:
-            content = item.content
-            if isinstance(content, bytes):
-                # Bytes might be base64-encoded UTF-8 (model outputs) or raw binary (audio/video)
-                try:
-                    decoded = content.decode("utf-8")
-                    return base64.b64decode(decoded, validate=True)
-                except (UnicodeDecodeError, binascii.Error):
-                    return content
-            elif isinstance(content, str):
-                # Try base64 first (image model outputs), fall back to UTF-8 for plain text files
-                try:
-                    return base64.b64decode(content, validate=True)
-                except binascii.Error:
-                    return content.encode("utf-8")
-        if item.filepath:
-            try:
-                with open(item.filepath, "rb") as f:
-                    return f.read()
-            except Exception as e:
-                log_warning(f"Failed to read media file: {e}")
-        return None
+        return item.get_content_bytes()
 
     async def _send_response_media(response: RunOutput, chat_id: int, reply_to: Optional[int]) -> bool:
         """Send all media items from the response. Caption goes on the first item only."""

@@ -529,6 +529,7 @@ class TestOutboundImages:
         mock_image.url = None
         mock_image.filepath = None
         mock_image.content = b64_str
+        mock_image.get_content_bytes = MagicMock(return_value=raw_image)
 
         mock_response = MagicMock()
         mock_response.status = "COMPLETED"
@@ -572,6 +573,7 @@ class TestOutboundImages:
         mock_image.url = None
         mock_image.filepath = None
         mock_image.content = raw_image
+        mock_image.get_content_bytes = MagicMock(return_value=raw_image)
 
         mock_response = MagicMock()
         mock_response.status = "COMPLETED"
@@ -929,6 +931,7 @@ class TestOutboundAudioVideoFiles:
         mock_file.url = None
         mock_file.content = b"fake-doc-bytes"
         mock_file.filepath = None
+        mock_file.get_content_bytes = MagicMock(return_value=b"fake-doc-bytes")
 
         mock_response = self._make_response(files=[mock_file])
         agent = AsyncMock()
@@ -1856,6 +1859,7 @@ class TestCodexReviewFixes:
         mock_file.url = None
         mock_file.content = csv_content
         mock_file.filepath = None
+        mock_file.get_content_bytes = MagicMock(return_value=csv_content.encode("utf-8"))
 
         mock_response = MagicMock()
         mock_response.status = "COMPLETED"
