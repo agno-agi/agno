@@ -41,6 +41,7 @@ jobs:
           plugins: |
             code-review@claude-code-plugins
             pr-review-toolkit@claude-code-plugins
+          track_progress: true
           use_sticky_comment: true
           show_full_output: true  # TEMP: remove after validation
           claude_args: |
