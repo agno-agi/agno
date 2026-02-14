@@ -7,8 +7,6 @@ When stream_events=False (explicit), Python `or` evaluates to self.stream_events
 import inspect
 import re
 
-import pytest
-
 
 class TestBUG013StreamEventsOrPattern:
     def test_python_or_semantics_with_false(self):

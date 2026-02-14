@@ -6,8 +6,6 @@ NOT the intended `a or (b if c else d)`.
 When db_engine=None (common), the entire chain is skipped.
 """
 
-import pytest
-
 
 class TestBUG016DbIdCollisions:
     def test_sqlite_same_id_different_urls(self):

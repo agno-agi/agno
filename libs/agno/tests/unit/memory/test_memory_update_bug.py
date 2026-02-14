@@ -17,11 +17,6 @@ class TestBUG011MemoryUpdateMissingFields:
         source = inspect.getsource(__import__("agno.memory.manager", fromlist=["manager"]))
         return source
 
-    def _extract_function_source(self, full_source, func_name):
-        pattern = rf"((?:async )?def {func_name}\(.*?\n)(?=\s+(?:async )?def |\Z)"
-        match = re.search(pattern, full_source, re.DOTALL)
-        return match.group(0) if match else ""
-
     def test_sync_add_memory_has_all_fields(self, manager_source):
         """Control: sync add_memory correctly passes all 3 fields."""
         functions = self._get_db_tool_functions(manager_source)
@@ -52,6 +47,8 @@ class TestBUG011MemoryUpdateMissingFields:
         assert len(user_memory_calls) >= 1
         for call in user_memory_calls:
             assert "agent_id=" not in call, "Bug already fixed — agent_id now in async update_memory"
+            assert "team_id=" not in call, "Bug already fixed — team_id now in async update_memory"
+            assert "user_id=" not in call, "Bug already fixed — user_id now in async update_memory"
 
     def test_async_delete_memory_missing_user_id(self, manager_source):
         """BUG: async delete_memory doesn't pass user_id to delete_user_memory()."""
