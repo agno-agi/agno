@@ -203,6 +203,9 @@ class Agent:
     send_media_to_model: bool = True
     # If True, store media in run output
     store_media: bool = True
+    # If set, media content is uploaded to this storage backend before DB persistence.
+    # Only references (URLs) are stored in the database. Requires store_media=True.
+    media_storage: Optional[Any] = None  # MediaStorage or AsyncMediaStorage
     # If True, store tool results in run output
     store_tool_messages: bool = True
     # If True, store history messages in run output.
@@ -388,6 +391,7 @@ class Agent:
         num_history_messages: Optional[int] = None,
         max_tool_calls_from_history: Optional[int] = None,
         store_media: bool = True,
+        media_storage: Optional[Any] = None,
         store_tool_messages: bool = True,
         store_history_messages: bool = False,
         knowledge: Optional[KnowledgeProtocol] = None,
@@ -522,6 +526,7 @@ class Agent:
         self.max_tool_calls_from_history = max_tool_calls_from_history
 
         self.store_media = store_media
+        self.media_storage = media_storage
         self.store_tool_messages = store_tool_messages
         self.store_history_messages = store_history_messages
 

@@ -448,34 +448,38 @@ def extract_input_media(run_dict: Dict[str, Any]) -> Dict[str, Any]:
     return input_media
 
 
-def process_image(file: UploadFile) -> Image:
+def process_image(file: UploadFile, metadata: Optional[Dict[str, Any]] = None) -> Image:
     content = file.file.read()
     if not content:
         raise HTTPException(status_code=400, detail="Empty file")
-    return Image(content=content, format=extract_format(file), mime_type=file.content_type)
+    return Image(content=content, format=extract_format(file), mime_type=file.content_type, metadata=metadata)
 
 
-def process_audio(file: UploadFile) -> Audio:
+def process_audio(file: UploadFile, metadata: Optional[Dict[str, Any]] = None) -> Audio:
     content = file.file.read()
     if not content:
         raise HTTPException(status_code=400, detail="Empty file")
-    return Audio(content=content, format=extract_format(file), mime_type=file.content_type)
+    return Audio(content=content, format=extract_format(file), mime_type=file.content_type, metadata=metadata)
 
 
-def process_video(file: UploadFile) -> Video:
+def process_video(file: UploadFile, metadata: Optional[Dict[str, Any]] = None) -> Video:
     content = file.file.read()
     if not content:
         raise HTTPException(status_code=400, detail="Empty file")
-    return Video(content=content, format=extract_format(file), mime_type=file.content_type)
+    return Video(content=content, format=extract_format(file), mime_type=file.content_type, metadata=metadata)
 
 
-def process_document(file: UploadFile) -> Optional[FileMedia]:
+def process_document(file: UploadFile, metadata: Optional[Dict[str, Any]] = None) -> Optional[FileMedia]:
     try:
         content = file.file.read()
         if not content:
             raise HTTPException(status_code=400, detail="Empty file")
         return FileMedia(
-            content=content, filename=file.filename, format=extract_format(file), mime_type=file.content_type
+            content=content,
+            filename=file.filename,
+            format=extract_format(file),
+            mime_type=file.content_type,
+            metadata=metadata,
         )
     except Exception as e:
         logger.error(f"Error processing document {file.filename}: {e}")

@@ -223,6 +223,9 @@ class Team:
     send_media_to_model: bool = True
     # If True, store media in run output
     store_media: bool = True
+    # If set, media content is uploaded to this storage backend before DB persistence.
+    # Only references (URLs) are stored in the database. Requires store_media=True.
+    media_storage: Optional[Any] = None  # MediaStorage or AsyncMediaStorage
     # If True, store tool results in run output
     store_tool_messages: bool = True
     # If True, store history messages in run output
@@ -457,6 +460,7 @@ class Team:
         add_search_knowledge_instructions: bool = True,
         read_chat_history: bool = False,
         store_media: bool = True,
+        media_storage: Optional[Any] = None,
         store_tool_messages: bool = True,
         store_history_messages: bool = False,
         send_media_to_model: bool = True,
@@ -569,6 +573,7 @@ class Team:
             add_search_knowledge_instructions=add_search_knowledge_instructions,
             read_chat_history=read_chat_history,
             store_media=store_media,
+            media_storage=media_storage,
             store_tool_messages=store_tool_messages,
             store_history_messages=store_history_messages,
             send_media_to_model=send_media_to_model,

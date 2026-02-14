@@ -2885,6 +2885,20 @@ def _cleanup_and_store(team: "Team", run_response: TeamRunOutput, session: TeamS
     #  Scrub the stored run based on storage flags
     from agno.team._session import update_session_metrics
 
+    # Offload media to external storage before scrubbing
+    if team.media_storage is not None and team.store_media:
+        from agno.media_storage.base import AsyncMediaStorage
+
+        if isinstance(team.media_storage, AsyncMediaStorage):
+            log_warning("AsyncMediaStorage provided but sync run() called. Skipping media offload.")
+        else:
+            try:
+                from agno.utils.media_offload import offload_run_media
+
+                offload_run_media(run_response, team.media_storage, session.session_id, run_response.run_id or "")
+            except Exception as e:
+                log_warning(f"Media offload failed, falling back to inline storage: {e}")
+
     scrub_run_output_for_storage(team, run_response)
 
     # Stop the timer for the Run duration
@@ -2904,6 +2918,30 @@ def _cleanup_and_store(team: "Team", run_response: TeamRunOutput, session: TeamS
 async def _acleanup_and_store(team: "Team", run_response: TeamRunOutput, session: TeamSession) -> None:
     #  Scrub the stored run based on storage flags
     from agno.team._session import update_session_metrics
+
+    # Offload media to external storage before scrubbing
+    if team.media_storage is not None and team.store_media:
+        from agno.media_storage.base import AsyncMediaStorage, MediaStorage
+
+        if not isinstance(team.media_storage, AsyncMediaStorage):
+            if isinstance(team.media_storage, MediaStorage):
+                try:
+                    from agno.utils.media_offload import offload_run_media
+
+                    offload_run_media(run_response, team.media_storage, session.session_id, run_response.run_id or "")
+                except Exception as e:
+                    log_warning(f"Media offload failed, falling back to inline storage: {e}")
+            else:
+                log_warning("Sync MediaStorage provided but async arun() called. Skipping media offload.")
+        else:
+            try:
+                from agno.utils.media_offload import aoffload_run_media
+
+                await aoffload_run_media(
+                    run_response, team.media_storage, session.session_id, run_response.run_id or ""
+                )
+            except Exception as e:
+                log_warning(f"Media offload failed, falling back to inline storage: {e}")
 
     scrub_run_output_for_storage(team, run_response)
 

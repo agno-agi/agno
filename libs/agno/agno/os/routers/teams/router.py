@@ -1,4 +1,5 @@
-from typing import TYPE_CHECKING, Any, AsyncGenerator, List, Optional, Union
+import json
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, List, Optional, Union
 from uuid import uuid4
 
 from fastapi import (
@@ -174,6 +175,17 @@ def get_team_router(
     ):
         kwargs = await get_request_kwargs(request, create_team_run)
 
+        # Parse per-file metadata (JSON array matching files[] by position)
+        files_metadata_raw = kwargs.pop("files_metadata", None)
+        files_metadata_list: List[Optional[Dict[str, Any]]] = []
+        if files_metadata_raw and isinstance(files_metadata_raw, str):
+            try:
+                parsed = json.loads(files_metadata_raw)
+                if isinstance(parsed, list):
+                    files_metadata_list = parsed
+            except json.JSONDecodeError:
+                log_warning(f"Invalid files_metadata JSON: {files_metadata_raw}")
+
         if hasattr(request.state, "user_id") and request.state.user_id is not None:
             if user_id and user_id != request.state.user_id:
                 log_warning("User ID parameter passed in both request state and kwargs, using request state")
@@ -218,17 +230,18 @@ def get_team_router(
         document_files: List[FileMedia] = []
 
         if files:
-            for file in files:
+            for idx, file in enumerate(files):
+                file_meta = files_metadata_list[idx] if idx < len(files_metadata_list) else None
                 if file.content_type in ["image/png", "image/jpeg", "image/jpg", "image/webp"]:
                     try:
-                        base64_image = process_image(file)
+                        base64_image = process_image(file, metadata=file_meta)
                         base64_images.append(base64_image)
                     except Exception as e:
                         logger.error(f"Error processing image {file.filename}: {e}")
                         continue
                 elif file.content_type in ["audio/wav", "audio/mp3", "audio/mpeg"]:
                     try:
-                        base64_audio = process_audio(file)
+                        base64_audio = process_audio(file, metadata=file_meta)
                         base64_audios.append(base64_audio)
                     except Exception as e:
                         logger.error(f"Error processing audio {file.filename}: {e}")
@@ -247,7 +260,7 @@ def get_team_router(
                     "video/3gpp",
                 ]:
                     try:
-                        base64_video = process_video(file)
+                        base64_video = process_video(file, metadata=file_meta)
                         base64_videos.append(base64_video)
                     except Exception as e:
                         logger.error(f"Error processing video {file.filename}: {e}")
@@ -259,7 +272,7 @@ def get_team_router(
                     "text/plain",
                     "application/json",
                 ]:
-                    document_file = process_document(file)
+                    document_file = process_document(file, metadata=file_meta)
                     if document_file is not None:
                         document_files.append(document_file)
                 else:

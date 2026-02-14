@@ -30,10 +30,21 @@ class Image(BaseModel):
     revised_prompt: Optional[str] = None  # Revised generation prompt
     alt_text: Optional[str] = None  # Alt text description
 
+    # External media storage reference (set when media is offloaded to object storage)
+    media_reference: Optional[Any] = None  # MediaReference when offloaded
+    # User-facing custom metadata
+    metadata: Optional[Dict[str, Any]] = None
+
     @model_validator(mode="before")
     def validate_and_normalize_content(cls, data: Any):
         """Ensure exactly one content source and normalize to bytes"""
         if isinstance(data, dict):
+            # media_reference is a valid source — skip normal validation
+            if data.get("media_reference") is not None:
+                if data.get("id") is None:
+                    data["id"] = str(uuid4())
+                return data
+
             url = data.get("url")
             filepath = data.get("filepath")
             content = data.get("content")
@@ -59,6 +70,10 @@ class Image(BaseModel):
             import httpx
 
             return httpx.get(self.url).content
+        elif self.media_reference and self.media_reference.url:
+            import httpx
+
+            return httpx.get(self.media_reference.url).content
         elif self.filepath:
             with open(self.filepath, "rb") as f:
                 return f.read()
@@ -94,7 +109,7 @@ class Image(BaseModel):
 
     def to_dict(self, include_base64_content: bool = True) -> Dict[str, Any]:
         """Convert to dict, optionally including base64-encoded content"""
-        result = {
+        result: Dict[str, Any] = {
             "id": self.id,
             "url": self.url,
             "filepath": str(self.filepath) if self.filepath else None,
@@ -106,8 +121,14 @@ class Image(BaseModel):
             "alt_text": self.alt_text,
         }
 
-        if include_base64_content and self.content:
+        if self.media_reference is not None:
+            result["media_reference"] = self.media_reference.to_dict()
+            result.pop("content", None)
+        elif include_base64_content and self.content:
             result["content"] = self.to_base64()
+
+        if self.metadata:
+            result["metadata"] = self.metadata
 
         return {k: v for k, v in result.items() if v is not None}
 
@@ -134,10 +155,21 @@ class Audio(BaseModel):
     transcript: Optional[str] = None  # Text transcript of audio
     expires_at: Optional[int] = None  # Expiration timestamp for temporary URLs
 
+    # External media storage reference (set when media is offloaded to object storage)
+    media_reference: Optional[Any] = None  # MediaReference when offloaded
+    # User-facing custom metadata
+    metadata: Optional[Dict[str, Any]] = None
+
     @model_validator(mode="before")
     def validate_and_normalize_content(cls, data: Any):
         """Ensure exactly one content source and normalize to bytes"""
         if isinstance(data, dict):
+            # media_reference is a valid source — skip normal validation
+            if data.get("media_reference") is not None:
+                if data.get("id") is None:
+                    data["id"] = str(uuid4())
+                return data
+
             url = data.get("url")
             filepath = data.get("filepath")
             content = data.get("content")
@@ -161,6 +193,10 @@ class Audio(BaseModel):
             import httpx
 
             return httpx.get(self.url).content
+        elif self.media_reference and self.media_reference.url:
+            import httpx
+
+            return httpx.get(self.media_reference.url).content
         elif self.filepath:
             with open(self.filepath, "rb") as f:
                 return f.read()
@@ -209,7 +245,7 @@ class Audio(BaseModel):
 
     def to_dict(self, include_base64_content: bool = True) -> Dict[str, Any]:
         """Convert to dict, optionally including base64-encoded content"""
-        result = {
+        result: Dict[str, Any] = {
             "id": self.id,
             "url": self.url,
             "filepath": str(self.filepath) if self.filepath else None,
@@ -222,8 +258,14 @@ class Audio(BaseModel):
             "expires_at": self.expires_at,
         }
 
-        if include_base64_content and self.content:
+        if self.media_reference is not None:
+            result["media_reference"] = self.media_reference.to_dict()
+            result.pop("content", None)
+        elif include_base64_content and self.content:
             result["content"] = self.to_base64()
+
+        if self.metadata:
+            result["metadata"] = self.metadata
 
         return {k: v for k, v in result.items() if v is not None}
 
@@ -252,10 +294,21 @@ class Video(BaseModel):
     original_prompt: Optional[str] = None
     revised_prompt: Optional[str] = None
 
+    # External media storage reference (set when media is offloaded to object storage)
+    media_reference: Optional[Any] = None  # MediaReference when offloaded
+    # User-facing custom metadata
+    metadata: Optional[Dict[str, Any]] = None
+
     @model_validator(mode="before")
     def validate_and_normalize_content(cls, data: Any):
         """Ensure exactly one content source and normalize to bytes"""
         if isinstance(data, dict):
+            # media_reference is a valid source — skip normal validation
+            if data.get("media_reference") is not None:
+                if data.get("id") is None:
+                    data["id"] = str(uuid4())
+                return data
+
             url = data.get("url")
             filepath = data.get("filepath")
             content = data.get("content")
@@ -279,6 +332,10 @@ class Video(BaseModel):
             import httpx
 
             return httpx.get(self.url).content
+        elif self.media_reference and self.media_reference.url:
+            import httpx
+
+            return httpx.get(self.media_reference.url).content
         elif self.filepath:
             with open(self.filepath, "rb") as f:
                 return f.read()
@@ -314,7 +371,7 @@ class Video(BaseModel):
 
     def to_dict(self, include_base64_content: bool = True) -> Dict[str, Any]:
         """Convert to dict, optionally including base64-encoded content"""
-        result = {
+        result: Dict[str, Any] = {
             "id": self.id,
             "url": self.url,
             "filepath": str(self.filepath) if self.filepath else None,
@@ -329,8 +386,14 @@ class Video(BaseModel):
             "revised_prompt": self.revised_prompt,
         }
 
-        if include_base64_content and self.content:
+        if self.media_reference is not None:
+            result["media_reference"] = self.media_reference.to_dict()
+            result.pop("content", None)
+        elif include_base64_content and self.content:
             result["content"] = self.to_base64()
+
+        if self.metadata:
+            result["metadata"] = self.metadata
 
         return {k: v for k, v in result.items() if v is not None}
 
@@ -351,12 +414,19 @@ class File(BaseModel):
     format: Optional[str] = None  # E.g. `pdf`, `txt`, `csv`, `xml`, etc.
     name: Optional[str] = None  # Name of the file, mandatory for AWS Bedrock document input
 
+    # External media storage reference (set when media is offloaded to object storage)
+    media_reference: Optional[Any] = None  # MediaReference when offloaded
+    # User-facing custom metadata
+    metadata: Optional[Dict[str, Any]] = None
+
     @model_validator(mode="before")
     @classmethod
     def check_at_least_one_source(cls, data):
-        """Ensure at least one of url, filepath, or content is provided."""
-        if isinstance(data, dict) and not any(data.get(field) for field in ["url", "filepath", "content", "external"]):
-            raise ValueError("At least one of url, filepath, content or external must be provided")
+        """Ensure at least one of url, filepath, content, external, or media_reference is provided."""
+        if isinstance(data, dict) and not any(
+            data.get(field) for field in ["url", "filepath", "content", "external", "media_reference"]
+        ):
+            raise ValueError("At least one of url, filepath, content, external, or media_reference must be provided")
         return data
 
     @field_validator("mime_type")
@@ -447,6 +517,10 @@ class File(BaseModel):
             import httpx
 
             return httpx.get(self.url).content
+        elif self.media_reference and self.media_reference.url:
+            import httpx
+
+            return httpx.get(self.media_reference.url).content
         elif self.filepath:
             with open(self.filepath, "rb") as f:
                 return f.read()
@@ -475,14 +549,11 @@ class File(BaseModel):
                     pass
         return content_normalised
 
-    def to_dict(self) -> Dict[str, Any]:
-        content_normalised = self._normalise_content()
-
-        response_dict = {
+    def to_dict(self, include_base64_content: bool = True) -> Dict[str, Any]:
+        response_dict: Dict[str, Any] = {
             "id": self.id,
             "url": self.url,
             "filepath": str(self.filepath) if self.filepath else None,
-            "content": content_normalised,
             "mime_type": self.mime_type,
             "file_type": self.file_type,
             "filename": self.filename,
@@ -491,4 +562,15 @@ class File(BaseModel):
             "format": self.format,
             "name": self.name,
         }
+
+        if self.media_reference is not None:
+            response_dict["media_reference"] = self.media_reference.to_dict()
+        elif include_base64_content:
+            content_normalised = self._normalise_content()
+            if content_normalised is not None:
+                response_dict["content"] = content_normalised
+
+        if self.metadata:
+            response_dict["metadata"] = self.metadata
+
         return {k: v for k, v in response_dict.items() if v is not None}
