@@ -14,7 +14,9 @@ from agno.team.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
 
-# -- Source-specific researchers ---------------------------------------------
+# ---------------------------------------------------------------------------
+# Create Members
+# ---------------------------------------------------------------------------
 
 web_researcher = Agent(
     name="Web Researcher",
@@ -51,7 +53,9 @@ trend_analyst = Agent(
     ],
 )
 
-# -- Broadcast team for research sweep --------------------------------------
+# ---------------------------------------------------------------------------
+# Create Team
+# ---------------------------------------------------------------------------
 
 team = Team(
     name="Research Sweep Team",
@@ -70,7 +74,9 @@ team = Team(
     markdown=True,
 )
 
-# -- Run ---------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Run Team
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     team.print_response(

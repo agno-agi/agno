@@ -9,7 +9,7 @@ import asyncio
 from textwrap import dedent
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.team import Team
 from agno.tools.hackernews import HackerNewsTools
 from agno.tools.websearch import WebSearchTools
@@ -20,7 +20,7 @@ from agno.tools.websearch import WebSearchTools
 reddit_researcher = Agent(
     name="Reddit Researcher",
     role="Research a topic on Reddit",
-    model=OpenAIChat(id="o3-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     tools=[WebSearchTools()],
     add_name_to_context=True,
     instructions=dedent("""
@@ -32,7 +32,7 @@ reddit_researcher = Agent(
 
 hackernews_researcher = Agent(
     name="HackerNews Researcher",
-    model=OpenAIChat("o3-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     role="Research a topic on HackerNews.",
     tools=[HackerNewsTools()],
     add_name_to_context=True,
@@ -48,7 +48,7 @@ hackernews_researcher = Agent(
 # ---------------------------------------------------------------------------
 agent_team = Team(
     name="Discussion Team",
-    model=OpenAIChat("o3-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     members=[
         reddit_researcher,
         hackernews_researcher,

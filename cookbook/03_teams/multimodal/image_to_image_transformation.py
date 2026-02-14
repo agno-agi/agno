@@ -6,7 +6,7 @@ Demonstrates collaborative style planning and image transformation.
 """
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.team import Team
 from agno.tools.fal import FalTools
 
@@ -16,7 +16,7 @@ from agno.tools.fal import FalTools
 style_advisor = Agent(
     name="Style Advisor",
     role="Analyze and recommend artistic styles and transformations",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     instructions=[
         "Analyze the input image and transformation request",
         "Provide style recommendations and enhancement suggestions",
@@ -27,7 +27,7 @@ style_advisor = Agent(
 image_transformer = Agent(
     name="Image Transformer",
     role="Transform images using AI tools",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     tools=[FalTools()],
     instructions=[
         "Use the `image_to_image` tool to generate transformed images",
@@ -41,7 +41,7 @@ image_transformer = Agent(
 # ---------------------------------------------------------------------------
 transformation_team = Team(
     name="Image Transformation Team",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     members=[style_advisor, image_transformer],
     instructions=[
         "Transform images with artistic style and precision.",

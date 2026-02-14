@@ -7,7 +7,7 @@ Demonstrates retrieving chat history and limiting included history messages.
 
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.team import Team
 
 # ---------------------------------------------------------------------------
@@ -19,20 +19,20 @@ db = PostgresDb(db_url=db_url, session_table="sessions")
 # ---------------------------------------------------------------------------
 # Create Members
 # ---------------------------------------------------------------------------
-agent = Agent(model=OpenAIChat(id="o3-mini"))
+agent = Agent(model=OpenAIResponses(id="gpt-5.2-mini"))
 
 # ---------------------------------------------------------------------------
 # Create Team
 # ---------------------------------------------------------------------------
 history_team = Team(
-    model=OpenAIChat(id="o3-mini"),
+    model=OpenAIResponses(id="gpt-5.2-mini"),
     members=[agent],
     db=db,
 )
 
 limited_history_team = Team(
-    model=OpenAIChat(id="gpt-5.2"),
-    members=[Agent(model=OpenAIChat(id="gpt-5.2"))],
+    model=OpenAIResponses(id="gpt-5.2"),
+    members=[Agent(model=OpenAIResponses(id="gpt-5.2"))],
     db=db,
     add_history_to_context=True,
     num_history_messages=1,

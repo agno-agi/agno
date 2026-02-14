@@ -9,7 +9,7 @@ from textwrap import dedent
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.team import Team
 from agno.tools.websearch import WebSearchTools
 
@@ -43,7 +43,7 @@ business_analyst = Agent(
 # ---------------------------------------------------------------------------
 research_team = Team(
     name="Research Team",
-    model=OpenAIChat("gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     members=[tech_researcher, business_analyst],
     tools=[WebSearchTools()],  # Team uses DuckDuckGo for research
     description="Research team that investigates topics and provides analysis.",
