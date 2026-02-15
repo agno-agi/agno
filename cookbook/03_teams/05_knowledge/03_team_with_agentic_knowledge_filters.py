@@ -83,7 +83,7 @@ web_agent = Agent(
     name="Knowledge Search Agent",
     role="Handle knowledge search",
     knowledge=knowledge,
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     instructions=["Always take into account filters"],
 )
 
@@ -93,7 +93,7 @@ web_agent = Agent(
 team_with_knowledge = Team(
     name="Team with Knowledge",
     members=[web_agent],
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     knowledge=knowledge,
     show_members_responses=True,
     markdown=True,

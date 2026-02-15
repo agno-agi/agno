@@ -24,14 +24,14 @@ user_advisor = Agent(
 
 web_research_agent = Agent(
     name="Web Research Agent",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     tools=[WebSearchTools()],
     instructions="You are a web research agent that can answer questions from the web.",
 )
 
 report_agent = Agent(
     name="Report Agent",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     instructions="You are a report agent that can write a report from the web research.",
 )
 
@@ -47,7 +47,7 @@ state_team = Team(
 )
 
 interaction_team = Team(
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     db=SqliteDb(db_file="tmp/agents.db"),
     members=[web_research_agent, report_agent],
     share_member_interactions=True,

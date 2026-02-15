@@ -40,7 +40,7 @@ hybrid_knowledge = Knowledge(
 # ---------------------------------------------------------------------------
 vector_retriever = Agent(
     name="Vector Retriever",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     role="Retrieve information using vector similarity search in PostgreSQL",
     knowledge=vector_knowledge,
     search_knowledge=True,
@@ -55,7 +55,7 @@ vector_retriever = Agent(
 
 hybrid_searcher = Agent(
     name="Hybrid Searcher",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     role="Perform hybrid search combining vector and text search",
     knowledge=hybrid_knowledge,
     search_knowledge=True,
@@ -70,7 +70,7 @@ hybrid_searcher = Agent(
 
 data_validator = Agent(
     name="Data Validator",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     role="Validate retrieved data quality and relevance",
     instructions=[
         "Assess the quality and relevance of retrieved information.",
@@ -84,7 +84,7 @@ data_validator = Agent(
 
 response_composer = Agent(
     name="Response Composer",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     role="Compose comprehensive responses with proper source attribution",
     instructions=[
         "Combine validated information from all team members.",
@@ -101,7 +101,7 @@ response_composer = Agent(
 # ---------------------------------------------------------------------------
 distributed_pgvector_team = Team(
     name="Distributed PgVector RAG Team",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     members=[vector_retriever, hybrid_searcher, data_validator, response_composer],
     instructions=[
         "Work together to provide comprehensive RAG responses using PostgreSQL pgvector.",

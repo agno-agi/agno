@@ -38,7 +38,7 @@ def lookup_shipping_time(country: str) -> str:
 # ---------------------------------------------------------------------------
 order_agent = Agent(
     name="Order Planner",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     instructions=[
         "Create accurate order summaries for the requested products.",
         "If info is missing, ask for clarification.",
@@ -50,7 +50,7 @@ order_agent = Agent(
 # ---------------------------------------------------------------------------
 orders_team = Team(
     name="Order Team",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     members=[order_agent],
     tools=[lookup_product_price, lookup_shipping_time],
     tool_call_limit=1,

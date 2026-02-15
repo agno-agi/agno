@@ -18,13 +18,13 @@ from agno.team import Team, TeamMode
 german_agent = Agent(
     name="German Agent",
     role="You answer German questions.",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
 )
 
 spanish_agent = Agent(
     name="Spanish Agent",
     role="You answer Spanish questions.",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
 )
 
 # ---------------------------------------------------------------------------
@@ -32,7 +32,7 @@ spanish_agent = Agent(
 # ---------------------------------------------------------------------------
 multi_lingual_q_and_a_team = Team(
     name="Multi Lingual Q and A Team",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     members=[german_agent, spanish_agent],
     instructions=[
         "You are a multi lingual Q and A team that can answer questions in English and Spanish. You MUST delegate the task to the appropriate member based on the language of the question.",

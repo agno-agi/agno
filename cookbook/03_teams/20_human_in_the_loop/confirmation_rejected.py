@@ -30,7 +30,7 @@ def delete_user_account(username: str) -> str:
 admin_agent = Agent(
     name="Admin Agent",
     role="Handles account administration tasks",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     tools=[delete_user_account],
 )
 
@@ -40,7 +40,7 @@ admin_agent = Agent(
 team = Team(
     name="Admin Team",
     members=[admin_agent],
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
 )
 
 # ---------------------------------------------------------------------------

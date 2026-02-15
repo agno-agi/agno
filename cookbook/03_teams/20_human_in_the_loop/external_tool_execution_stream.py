@@ -44,7 +44,7 @@ def run_shell_command(command: str) -> str:
 ops_agent = Agent(
     name="Ops Agent",
     role="Handles server operations",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     tools=[run_shell_command],
     db=db,
 )
@@ -56,7 +56,7 @@ ops_agent = Agent(
 team = Team(
     name="SRE Team",
     members=[ops_agent],
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     db=db,
 )
 

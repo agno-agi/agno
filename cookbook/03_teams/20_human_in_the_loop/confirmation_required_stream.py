@@ -44,7 +44,7 @@ def deploy_to_production(app_name: str, version: str) -> str:
 deploy_agent = Agent(
     name="Deploy Agent",
     role="Handles deployments to production",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     tools=[deploy_to_production],
     db=db,
 )
@@ -56,7 +56,7 @@ deploy_agent = Agent(
 team = Team(
     name="DevOps Team",
     members=[deploy_agent],
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     db=db,
 )
 

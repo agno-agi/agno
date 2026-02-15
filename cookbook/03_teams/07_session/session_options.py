@@ -23,9 +23,9 @@ in_memory_db = InMemoryDb()
 # ---------------------------------------------------------------------------
 # Create Members
 # ---------------------------------------------------------------------------
-agent = Agent(model=OpenAIResponses(id="gpt-5.2-mini"))
+agent = Agent(model=OpenAIResponses(id="gpt-5-mini"))
 research_agent = Agent(
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     name="Research Assistant",
 )
 
@@ -33,13 +33,13 @@ research_agent = Agent(
 # Create Team
 # ---------------------------------------------------------------------------
 renamable_team = Team(
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     members=[agent],
     db=postgres_db,
 )
 
 in_memory_team = Team(
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     members=[research_agent],
     db=in_memory_db,
     add_history_to_context=True,
@@ -48,7 +48,7 @@ in_memory_team = Team(
 )
 
 cached_team = Team(
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     members=[research_agent],
     db=sessions_db,
     session_id="team_session_cache",

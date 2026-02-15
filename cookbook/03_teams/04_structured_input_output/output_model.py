@@ -24,9 +24,9 @@ itinerary_planner = Agent(
 # Create Team
 # ---------------------------------------------------------------------------
 travel_expert = Team(
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     members=[itinerary_planner],
-    output_model=OpenAIResponses(id="gpt-5.2-mini"),
+    output_model=OpenAIResponses(id="gpt-5-mini"),
 )
 
 # ---------------------------------------------------------------------------

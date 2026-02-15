@@ -15,7 +15,7 @@ from agno.team import Team
 # ---------------------------------------------------------------------------
 coach = Agent(
     name="Coaching Agent",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     instructions=[
         "Offer practical, concise improvements.",
         "Keep advice actionable and realistic.",
@@ -28,7 +28,7 @@ coach = Agent(
 # ---------------------------------------------------------------------------
 coaching_team = Team(
     name="Team Coach",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     members=[coach],
     instructions=["Focus on high-leverage behavior changes."],
     system_message=(

@@ -43,7 +43,7 @@ def book_flight(destination: str, date: str, passenger_name: str) -> str:
 booking_agent = Agent(
     name="Booking Agent",
     role="Books travel arrangements",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     tools=[book_flight],
     db=db,
 )
@@ -55,7 +55,7 @@ booking_agent = Agent(
 team = Team(
     name="Travel Team",
     members=[booking_agent],
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     db=db,
 )
 

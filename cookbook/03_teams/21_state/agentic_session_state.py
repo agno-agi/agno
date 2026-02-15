@@ -21,7 +21,7 @@ db = SqliteDb(db_file="tmp/agents.db")
 shopping_agent = Agent(
     name="Shopping List Agent",
     role="Manage the shopping list",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     db=db,
     add_session_state_to_context=True,
     enable_agentic_state=True,

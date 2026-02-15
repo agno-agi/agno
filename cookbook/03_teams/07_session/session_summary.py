@@ -24,21 +24,21 @@ async_db = AsyncPostgresDb(db_url=async_db_url, session_table="sessions")
 # ---------------------------------------------------------------------------
 # Create Members
 # ---------------------------------------------------------------------------
-sync_agent = Agent(model=OpenAIResponses(id="gpt-5.2-mini"))
+sync_agent = Agent(model=OpenAIResponses(id="gpt-5-mini"))
 async_agent = Agent(model=OpenAIResponses(id="gpt-5.2"))
 
 # ---------------------------------------------------------------------------
 # Create Team
 # ---------------------------------------------------------------------------
 summary_team = Team(
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     members=[sync_agent],
     db=sync_db,
     enable_session_summaries=True,
 )
 
 context_summary_team = Team(
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     db=sync_db,
     session_id="session_summary",
     add_session_summary_to_context=True,

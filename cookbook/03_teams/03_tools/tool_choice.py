@@ -28,7 +28,7 @@ def get_city_timezone(city: str) -> str:
 # ---------------------------------------------------------------------------
 agent = Agent(
     name="Operations Analyst",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     instructions=[
         "Use the tool output to answer timezone questions.",
         "Do not invent values that are not in the tool output.",
@@ -40,7 +40,7 @@ agent = Agent(
 # ---------------------------------------------------------------------------
 teams_timezone = Team(
     name="Tool Choice Team",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     members=[agent],
     tools=[get_city_timezone],
     tool_choice={

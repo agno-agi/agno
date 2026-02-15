@@ -33,7 +33,7 @@ team_knowledge.insert(
 # ---------------------------------------------------------------------------
 ops_agent = Agent(
     name="Operations Team Member",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     instructions=[
         "Store reliable facts when users ask to remember them.",
         "When asked, retrieve from knowledge first, then answer succinctly.",
@@ -46,7 +46,7 @@ ops_agent = Agent(
 # ---------------------------------------------------------------------------
 operations_team = Team(
     name="Knowledge Ops Team",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     members=[ops_agent],
     knowledge=team_knowledge,
     update_knowledge=True,

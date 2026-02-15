@@ -96,7 +96,7 @@ calculator_agent = Agent(
 agno_assist = Agent(
     name="Agno Assist",
     role="You help answer questions about the Agno framework.",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     instructions="Search your knowledge before answering the question. Help me to write working code for Agno Agents.",
     tools=[
         KnowledgeTools(
@@ -112,7 +112,7 @@ agno_assist = Agent(
 github_agent = Agent(
     name="Github Agent",
     role="Do analysis on Github repositories",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     instructions=[
         "Use your tools to answer questions about the repo: agno-agi/agno",
         "Do not create any issues or pull requests unless explicitly asked to do so",
@@ -131,7 +131,7 @@ github_agent = Agent(
 local_python_agent = Agent(
     name="Local Python Agent",
     role="Run Python code locally",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     instructions=["Use your tools to run Python code locally"],
     tools=[
         FileTools(base_dir=cwd),

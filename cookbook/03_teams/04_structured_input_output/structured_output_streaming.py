@@ -37,7 +37,7 @@ class StockReport(BaseModel):
 # ---------------------------------------------------------------------------
 stock_searcher = Agent(
     name="Stock Searcher",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     output_schema=StockAnalysis,
     role="Searches the web for information on a stock.",
     tools=[
@@ -49,7 +49,7 @@ stock_searcher = Agent(
 
 company_info_agent = Agent(
     name="Company Info Searcher",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     role="Searches the web for information on a stock.",
     output_schema=CompanyAnalysis,
     tools=[
@@ -64,7 +64,7 @@ company_info_agent = Agent(
 # ---------------------------------------------------------------------------
 team = Team(
     name="Stock Research Team",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     members=[stock_searcher, company_info_agent],
     output_schema=StockReport,
     markdown=True,

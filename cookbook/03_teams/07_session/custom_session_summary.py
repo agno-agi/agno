@@ -19,7 +19,7 @@ db = SqliteDb(
     db_file="tmp/team_session_summary.db",
     session_table="team_summary_sessions",
 )
-summary_manager = SessionSummaryManager(model=OpenAIResponses(id="gpt-5.2-mini"))
+summary_manager = SessionSummaryManager(model=OpenAIResponses(id="gpt-5-mini"))
 
 
 # ---------------------------------------------------------------------------
@@ -27,7 +27,7 @@ summary_manager = SessionSummaryManager(model=OpenAIResponses(id="gpt-5.2-mini")
 # ---------------------------------------------------------------------------
 planner = Agent(
     name="Sprint Planner",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     instructions=[
         "Build concise, sequenced plan summaries.",
         "Keep recommendations practical.",
@@ -40,7 +40,7 @@ planner = Agent(
 # ---------------------------------------------------------------------------
 sprint_team = Team(
     name="Sprint Team",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     members=[planner],
     db=db,
     session_summary_manager=summary_manager,

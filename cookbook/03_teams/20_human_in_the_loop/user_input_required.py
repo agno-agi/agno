@@ -36,7 +36,7 @@ def plan_trip(destination: str = "", budget: str = "") -> str:
 # ---------------------------------------------------------------------------
 travel_agent = Agent(
     name="TravelAgent",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     tools=[plan_trip],
     db=db,
     telemetry=False,
@@ -47,7 +47,7 @@ travel_agent = Agent(
 # ---------------------------------------------------------------------------
 team = Team(
     name="TravelTeam",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     members=[travel_agent],
     db=db,
     telemetry=False,

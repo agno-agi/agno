@@ -22,7 +22,7 @@ from agno.team.team import Team
 researcher = Agent(
     name="Researcher",
     role="Research specialist who finds information on topics",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     instructions=[
         "You are a research specialist.",
         "When given a topic, provide a clear, concise summary of key facts.",
@@ -33,7 +33,7 @@ researcher = Agent(
 writer = Agent(
     name="Writer",
     role="Content writer who creates well-structured text",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     instructions=[
         "You are a skilled content writer.",
         "Take provided information and craft it into polished, engaging text.",
@@ -44,7 +44,7 @@ writer = Agent(
 critic = Agent(
     name="Critic",
     role="Quality reviewer who provides constructive feedback",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     instructions=[
         "You are a constructive critic.",
         "Review content for accuracy, clarity, and completeness.",

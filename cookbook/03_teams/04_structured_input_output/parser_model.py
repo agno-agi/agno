@@ -82,10 +82,10 @@ weather_expert = Agent(
 # Create Team
 # ---------------------------------------------------------------------------
 national_park_expert = Team(
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     members=[itinerary_planner, weather_expert],
     output_schema=NationalParkAdventure,
-    parser_model=OpenAIResponses(id="gpt-5.2-mini"),
+    parser_model=OpenAIResponses(id="gpt-5-mini"),
 )
 
 # ---------------------------------------------------------------------------

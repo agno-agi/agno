@@ -28,7 +28,7 @@ class ResearchTopic(BaseModel):
 # ---------------------------------------------------------------------------
 hackernews_agent = Agent(
     name="Hackernews Agent",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     tools=[HackerNewsTools()],
     role="Extract key insights and content from Hackernews posts",
     instructions=[
@@ -43,7 +43,7 @@ hackernews_agent = Agent(
 # ---------------------------------------------------------------------------
 team = Team(
     name="Hackernews Research Team",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     members=[hackernews_agent],
     determine_input_for_members=False,
     instructions=[

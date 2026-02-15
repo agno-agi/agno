@@ -23,21 +23,21 @@ db = PostgresDb(db_url=db_url)
 session_id = str(uuid4())
 john_doe_id = "john_doe@example.com"
 
-memory_manager = MemoryManager(model=OpenAIResponses(id="gpt-5.2-mini"))
+memory_manager = MemoryManager(model=OpenAIResponses(id="gpt-5-mini"))
 memory_manager.clear()
 
 # ---------------------------------------------------------------------------
 # Create Members
 # ---------------------------------------------------------------------------
 agent = Agent(
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
 )
 
 # ---------------------------------------------------------------------------
 # Create Team
 # ---------------------------------------------------------------------------
 team = Team(
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     memory_manager=memory_manager,
     members=[agent],
     db=db,

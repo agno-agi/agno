@@ -14,7 +14,7 @@ from agno.team import Team
 # ---------------------------------------------------------------------------
 planner = Agent(
     name="Travel Planner",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     instructions=[
         "Use location context in recommendations.",
         "Keep suggestions concise and practical.",
@@ -27,7 +27,7 @@ planner = Agent(
 # ---------------------------------------------------------------------------
 trip_planner_team = Team(
     name="Trip Planner",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     members=[planner],
     add_location_to_context=True,
     timezone_identifier="America/Chicago",

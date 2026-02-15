@@ -51,7 +51,7 @@ website_agent = Agent(
     name="Website Agent",
     id="website-agent",
     role="Search the website for information",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     tools=[WebSearchTools()],
     instructions=[
         "Search the website for information",

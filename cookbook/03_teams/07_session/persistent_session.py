@@ -19,19 +19,19 @@ db = PostgresDb(db_url=db_url, session_table="sessions")
 # ---------------------------------------------------------------------------
 # Create Members
 # ---------------------------------------------------------------------------
-agent = Agent(model=OpenAIResponses(id="gpt-5.2-mini"))
+agent = Agent(model=OpenAIResponses(id="gpt-5-mini"))
 
 # ---------------------------------------------------------------------------
 # Create Team
 # ---------------------------------------------------------------------------
 basic_team = Team(
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     members=[agent],
     db=db,
 )
 
 history_team = Team(
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     members=[agent],
     db=db,
     add_history_to_context=True,

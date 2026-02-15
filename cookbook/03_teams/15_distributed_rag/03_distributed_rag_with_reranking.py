@@ -43,7 +43,7 @@ validation_knowledge = Knowledge(
 # ---------------------------------------------------------------------------
 initial_retriever = Agent(
     name="Initial Retriever",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     role="Perform broad initial retrieval to gather candidate information",
     knowledge=reranked_knowledge,
     search_knowledge=True,
@@ -58,7 +58,7 @@ initial_retriever = Agent(
 
 reranking_specialist = Agent(
     name="Reranking Specialist",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     role="Apply advanced reranking to optimize retrieval results",
     knowledge=reranked_knowledge,
     search_knowledge=True,
@@ -73,7 +73,7 @@ reranking_specialist = Agent(
 
 context_analyzer = Agent(
     name="Context Analyzer",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     role="Analyze context and relevance of reranked results",
     knowledge=validation_knowledge,
     search_knowledge=True,
@@ -88,7 +88,7 @@ context_analyzer = Agent(
 
 final_synthesizer = Agent(
     name="Final Synthesizer",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     role="Synthesize reranked results into optimal comprehensive responses",
     instructions=[
         "Synthesize information from all team members into optimal responses.",
@@ -105,7 +105,7 @@ final_synthesizer = Agent(
 # ---------------------------------------------------------------------------
 distributed_reranking_team = Team(
     name="Distributed Reranking RAG Team",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     members=[
         initial_retriever,
         reranking_specialist,

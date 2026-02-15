@@ -20,14 +20,14 @@ from agno.team.team import Team
 researcher = Agent(
     name="Researcher",
     role="Research specialist",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     instructions=["Provide concise, factual research summaries."],
 )
 
 analyst = Agent(
     name="Analyst",
     role="Data analyst who draws conclusions from research",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     instructions=["Analyze data and draw actionable conclusions."],
 )
 

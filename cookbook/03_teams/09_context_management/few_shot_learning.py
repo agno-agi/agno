@@ -70,7 +70,7 @@ support_examples = [
 support_agent = Agent(
     name="Support Specialist",
     role="Handle customer inquiries",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     instructions=[
         "You are a helpful customer support specialist.",
         "Always be polite, professional, and solution-oriented.",
@@ -80,7 +80,7 @@ support_agent = Agent(
 escalation_agent = Agent(
     name="Escalation Manager",
     role="Handle complex issues",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     instructions=[
         "You handle escalated customer issues that require management attention.",
         "Focus on customer satisfaction and finding solutions.",
@@ -93,7 +93,7 @@ escalation_agent = Agent(
 team = Team(
     name="Customer Support Team",
     members=[support_agent, escalation_agent],
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     add_name_to_context=True,
     additional_input=support_examples,
     instructions=[

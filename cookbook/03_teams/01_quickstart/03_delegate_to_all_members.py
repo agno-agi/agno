@@ -20,7 +20,7 @@ from agno.tools.websearch import WebSearchTools
 reddit_researcher = Agent(
     name="Reddit Researcher",
     role="Research a topic on Reddit",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     tools=[WebSearchTools()],
     add_name_to_context=True,
     instructions=dedent("""
@@ -32,7 +32,7 @@ reddit_researcher = Agent(
 
 hackernews_researcher = Agent(
     name="HackerNews Researcher",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     role="Research a topic on HackerNews.",
     tools=[HackerNewsTools()],
     add_name_to_context=True,
@@ -48,7 +48,7 @@ hackernews_researcher = Agent(
 # ---------------------------------------------------------------------------
 agent_team = Team(
     name="Discussion Team",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     members=[
         reddit_researcher,
         hackernews_researcher,

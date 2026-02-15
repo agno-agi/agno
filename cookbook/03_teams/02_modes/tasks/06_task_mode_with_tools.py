@@ -21,7 +21,7 @@ from agno.tools.duckduckgo import DuckDuckGoTools
 web_researcher = Agent(
     name="Web Researcher",
     role="Searches the web for current information",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     tools=[DuckDuckGoTools()],
     instructions=[
         "You are a web researcher.",
@@ -33,7 +33,7 @@ web_researcher = Agent(
 summarizer = Agent(
     name="Summarizer",
     role="Synthesizes information into clear summaries",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     instructions=[
         "You are an expert summarizer.",
         "Take detailed information and distill it into a clear, structured summary.",

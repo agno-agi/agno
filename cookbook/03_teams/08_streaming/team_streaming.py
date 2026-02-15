@@ -18,7 +18,7 @@ from agno.utils.pprint import apprint_run_response
 # ---------------------------------------------------------------------------
 stock_searcher = Agent(
     name="Stock Searcher",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     role="Searches the web for information on a stock.",
     tools=[
         YFinanceTools(
@@ -29,7 +29,7 @@ stock_searcher = Agent(
 
 company_info_agent = Agent(
     name="Company Info Searcher",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     role="Searches the web for information on a company.",
     tools=[
         YFinanceTools(
@@ -43,7 +43,7 @@ company_info_agent = Agent(
 # ---------------------------------------------------------------------------
 team = Team(
     name="Stock Research Team",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     members=[stock_searcher, company_info_agent],
     markdown=True,
     show_members_responses=True,

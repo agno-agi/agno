@@ -41,19 +41,19 @@ async def example_team_background_run():
 
     researcher = Agent(
         name="Researcher",
-        model=OpenAIResponses(id="gpt-5.2-mini"),
+        model=OpenAIResponses(id="gpt-5-mini"),
         role="Research topics and provide factual information.",
     )
 
     writer = Agent(
         name="Writer",
-        model=OpenAIResponses(id="gpt-5.2-mini"),
+        model=OpenAIResponses(id="gpt-5-mini"),
         role="Write clear and concise summaries.",
     )
 
     team = Team(
         name="ResearchTeam",
-        model=OpenAIResponses(id="gpt-5.2-mini"),
+        model=OpenAIResponses(id="gpt-5-mini"),
         members=[researcher, writer],
         instructions=[
             "First, have the researcher gather key facts.",
@@ -108,19 +108,19 @@ async def example_cancel_team_background_run():
 
     researcher = Agent(
         name="Researcher",
-        model=OpenAIResponses(id="gpt-5.2-mini"),
+        model=OpenAIResponses(id="gpt-5-mini"),
         role="Research topics thoroughly.",
     )
 
     writer = Agent(
         name="Writer",
-        model=OpenAIResponses(id="gpt-5.2-mini"),
+        model=OpenAIResponses(id="gpt-5-mini"),
         role="Write detailed essays.",
     )
 
     team = Team(
         name="EssayTeam",
-        model=OpenAIResponses(id="gpt-5.2-mini"),
+        model=OpenAIResponses(id="gpt-5-mini"),
         members=[researcher, writer],
         instructions=[
             "Have the researcher gather comprehensive information.",

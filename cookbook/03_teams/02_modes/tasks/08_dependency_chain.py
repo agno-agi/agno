@@ -20,7 +20,7 @@ from agno.team.team import Team
 market_researcher = Agent(
     name="Market Researcher",
     role="Conducts market research and competitive analysis",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     instructions=[
         "You are a market researcher.",
         "Analyze target markets, customer segments, and competitive landscape.",
@@ -31,7 +31,7 @@ market_researcher = Agent(
 product_strategist = Agent(
     name="Product Strategist",
     role="Develops product positioning and go-to-market strategy",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     instructions=[
         "You are a product strategist.",
         "Based on market research, develop product positioning and strategy.",
@@ -42,7 +42,7 @@ product_strategist = Agent(
 content_creator = Agent(
     name="Content Creator",
     role="Creates marketing content and messaging",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     instructions=[
         "You are a content creator.",
         "Create compelling marketing copy based on the product strategy.",
@@ -53,7 +53,7 @@ content_creator = Agent(
 launch_coordinator = Agent(
     name="Launch Coordinator",
     role="Creates launch timelines and action plans",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     instructions=[
         "You are a launch coordinator.",
         "Create detailed launch timelines with milestones.",

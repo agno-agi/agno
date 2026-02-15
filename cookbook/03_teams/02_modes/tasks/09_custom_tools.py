@@ -129,7 +129,7 @@ def assess_risk_score(
 calculator = Agent(
     name="Financial Calculator",
     role="Performs financial calculations including interest, loans, and projections",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     tools=[calculate_compound_interest, calculate_monthly_payment],
     instructions=[
         "You are a financial calculator.",
@@ -141,7 +141,7 @@ calculator = Agent(
 risk_assessor = Agent(
     name="Risk Assessor",
     role="Evaluates financial risk based on client metrics",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     tools=[assess_risk_score],
     instructions=[
         "You are a financial risk assessor.",
@@ -153,7 +153,7 @@ risk_assessor = Agent(
 advisor = Agent(
     name="Financial Advisor",
     role="Provides financial advice and recommendations",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     instructions=[
         "You are a financial advisor.",
         "Based on calculations and risk assessments, provide actionable advice.",

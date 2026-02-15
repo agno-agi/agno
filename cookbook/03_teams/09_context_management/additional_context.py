@@ -15,7 +15,7 @@ from agno.team import Team
 # ---------------------------------------------------------------------------
 ops_agent = Agent(
     name="Ops Copilot",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     instructions=[
         "Follow operational policy and include ownership guidance.",
     ],
@@ -27,7 +27,7 @@ ops_agent = Agent(
 # ---------------------------------------------------------------------------
 policy_team = Team(
     name="Policy Team",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     members=[ops_agent],
     additional_context=(
         "The requester is a {role} in the {region}. Use language suitable for an "

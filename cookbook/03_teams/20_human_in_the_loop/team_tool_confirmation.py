@@ -32,7 +32,7 @@ def approve_deployment(environment: str, service: str) -> str:
 research_agent = Agent(
     name="Research Agent",
     role="Researches deployment readiness",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
 )
 
 
@@ -42,7 +42,7 @@ research_agent = Agent(
 team = Team(
     name="Release Team",
     members=[research_agent],
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     tools=[approve_deployment],
 )
 

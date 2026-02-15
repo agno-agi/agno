@@ -24,7 +24,7 @@ db = PostgresDb(db_url=db_url, session_table="team_metrics_sessions")
 # ---------------------------------------------------------------------------
 stock_searcher = Agent(
     name="Stock Searcher",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     role="Searches the web for information on a stock.",
     tools=[YFinanceTools()],
 )
@@ -34,7 +34,7 @@ stock_searcher = Agent(
 # ---------------------------------------------------------------------------
 team = Team(
     name="Stock Research Team",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     members=[stock_searcher],
     db=db,
     session_id="team_metrics_demo",

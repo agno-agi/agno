@@ -39,7 +39,7 @@ class ResearchProject(BaseModel):
 # ---------------------------------------------------------------------------
 hackernews_agent = Agent(
     name="HackerNews Researcher",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     tools=[HackerNewsTools()],
     role="Research trending topics and discussions on HackerNews",
     instructions=[
@@ -51,7 +51,7 @@ hackernews_agent = Agent(
 
 web_researcher = Agent(
     name="Web Researcher",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     tools=[WebSearchTools()],
     role="Conduct comprehensive web research",
     instructions=[
@@ -66,7 +66,7 @@ web_researcher = Agent(
 # ---------------------------------------------------------------------------
 research_team = Team(
     name="Research Team with Input Validation",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     members=[hackernews_agent, web_researcher],
     mode=TeamMode.broadcast,
     input_schema=ResearchProject,

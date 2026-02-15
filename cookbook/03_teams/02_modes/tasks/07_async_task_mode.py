@@ -21,7 +21,7 @@ from agno.team.team import Team
 planner = Agent(
     name="Planner",
     role="Creates structured plans and outlines",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     instructions=[
         "You are a planning specialist.",
         "Create clear, actionable plans with numbered steps.",
@@ -32,7 +32,7 @@ planner = Agent(
 executor = Agent(
     name="Executor",
     role="Implements plans and produces deliverables",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     instructions=[
         "You are an execution specialist.",
         "Take a plan and produce the requested deliverable.",
@@ -43,7 +43,7 @@ executor = Agent(
 reviewer = Agent(
     name="Reviewer",
     role="Reviews deliverables for quality and completeness",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     instructions=[
         "You are a quality reviewer.",
         "Check deliverables for completeness, accuracy, and quality.",

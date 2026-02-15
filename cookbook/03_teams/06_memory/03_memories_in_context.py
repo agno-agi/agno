@@ -21,7 +21,7 @@ team_db = SqliteDb(
     db_file=db_file, session_table="team_sessions", memory_table="team_memories"
 )
 memory_manager = MemoryManager(
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     db=team_db,
 )
 
@@ -31,7 +31,7 @@ memory_manager = MemoryManager(
 # ---------------------------------------------------------------------------
 assistant_agent = Agent(
     name="Personal Assistant",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     instructions=[
         "Use recent memories to personalize responses.",
         "When unsure, ask for clarification.",
@@ -44,7 +44,7 @@ assistant_agent = Agent(
 # ---------------------------------------------------------------------------
 personal_team = Team(
     name="Personal Memory Team",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     members=[assistant_agent],
     db=team_db,
     memory_manager=memory_manager,

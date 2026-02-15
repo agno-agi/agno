@@ -31,7 +31,7 @@ custom_query = """
 wikipedia_agent = Agent(
     name="Wikipedia Agent",
     role="Search wikipedia for information",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     tools=[WikipediaTools()],
     instructions=[
         "Find information about the company in the wikipedia",
@@ -41,7 +41,7 @@ wikipedia_agent = Agent(
 website_agent = Agent(
     name="Website Agent",
     role="Search the website for information",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     tools=[WebSearchTools()],
     instructions=[
         "Search the website for information",

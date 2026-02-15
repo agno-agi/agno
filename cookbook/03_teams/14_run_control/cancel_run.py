@@ -121,13 +121,13 @@ def cancel_after_delay(
 # ---------------------------------------------------------------------------
 storyteller_agent = Agent(
     name="StorytellerAgent",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     description="An agent that writes creative stories",
 )
 
 editor_agent = Agent(
     name="EditorAgent",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     description="An agent that reviews and improves stories",
 )
 
@@ -137,7 +137,7 @@ editor_agent = Agent(
 team = Team(
     name="Storytelling Team",
     members=[storyteller_agent, editor_agent],
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     description="A team that collaborates to write detailed stories",
 )
 

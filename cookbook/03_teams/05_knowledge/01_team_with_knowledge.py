@@ -39,7 +39,7 @@ agno_docs_knowledge.insert(url="https://docs.agno.com/llms-full.txt")
 web_agent = Agent(
     name="Web Search Agent",
     role="Handle web search requests",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     tools=[WebSearchTools()],
     instructions=["Always include sources"],
 )
@@ -50,7 +50,7 @@ web_agent = Agent(
 team_with_knowledge = Team(
     name="Team with Knowledge",
     members=[web_agent],
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     knowledge=agno_docs_knowledge,
     show_members_responses=True,
     markdown=True,

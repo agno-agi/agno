@@ -15,7 +15,7 @@ from agno.team import Team
 technical_agent = Agent(
     name="Technical Analyst",
     role="Technical investigations",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     instructions=[
         "Handle technical implementation questions.",
         "Keep responses grounded and testable.",
@@ -25,7 +25,7 @@ technical_agent = Agent(
 billing_agent = Agent(
     name="Billing Specialist",
     role="Billing and invoicing",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     instructions=[
         "Handle billing disputes and payment-related questions.",
         "Return clear next steps for account resolution.",
@@ -38,7 +38,7 @@ billing_agent = Agent(
 # ---------------------------------------------------------------------------
 support_team = Team(
     name="Support Coordination Team",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     members=[technical_agent, billing_agent],
     get_member_information_tool=True,
     instructions=[

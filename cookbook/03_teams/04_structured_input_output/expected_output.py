@@ -15,7 +15,7 @@ from agno.team import Team
 # ---------------------------------------------------------------------------
 incident_analyst = Agent(
     name="Incident Analyst",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     instructions=[
         "Extract outcomes and risks clearly.",
         "Avoid unnecessary speculation.",
@@ -28,7 +28,7 @@ incident_analyst = Agent(
 # ---------------------------------------------------------------------------
 incident_team = Team(
     name="Incident Reporting Team",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     members=[incident_analyst],
     expected_output=(
         "Three sections: Summary, Impact, and Next Step. "

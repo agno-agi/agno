@@ -20,7 +20,7 @@ from agno.team.team import Team
 market_analyst = Agent(
     name="Market Analyst",
     role="Analyzes market trends and competitive landscape",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     instructions=[
         "You are a market analyst.",
         "Provide concise analysis of market trends, key players, and outlook.",
@@ -30,7 +30,7 @@ market_analyst = Agent(
 tech_analyst = Agent(
     name="Tech Analyst",
     role="Evaluates technical feasibility and innovation",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     instructions=[
         "You are a technology analyst.",
         "Evaluate technical aspects, innovation potential, and feasibility.",
@@ -40,7 +40,7 @@ tech_analyst = Agent(
 financial_analyst = Agent(
     name="Financial Analyst",
     role="Assesses financial viability and investment potential",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     instructions=[
         "You are a financial analyst.",
         "Assess financial viability, revenue potential, and investment outlook.",
