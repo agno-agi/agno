@@ -1,30 +1,31 @@
-# Test Log: cookbook/03_teams/08_streaming
-
+# Validation run 2026-02-15T00:38:25
 
 ## Pattern Check
-
 **Status:** PASS
+**Notes:** Passed.
 
-**Result:** Checked 2 file(s). Violations: 0
+## OpenAIChat references
+- TEST_LOG.md
 
 ---
 
 ### team_events.py
 
-**Status:** PASS
+**Status:** FAIL
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/08_streaming/team_events.py`.
+**Description:** Cookbook execution attempt
 
-**Result:** Executed successfully.
+**Result:** Timeout after 30s
 
 ---
 
 ### team_streaming.py
 
-**Status:** PASS
+**Status:** FAIL
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/08_streaming/team_streaming.py`.
+**Description:** Cookbook execution attempt
 
-**Result:** Executed successfully.
+**Result:** Timeout after 30s
 
 ---
+

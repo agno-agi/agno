@@ -1,11 +1,15 @@
-# Test Log: cookbook/03_teams/03_tools
+# Validation run 2026-02-15T00:43:27
 
-
-## Pattern Check
+### Pattern Check
 
 **Status:** PASS
 
-**Result:** Checked 7 file(s). Violations: 0
+**Notes:** No pattern violations detected.
+
+### OpenAIChat references
+
+**Found in:**
+- TEST_LOG.md
 
 ---
 
@@ -13,9 +17,9 @@
 
 **Status:** FAIL
 
-**Description:** Validation issue: runtime
+**Description:** Example execution attempt
 
-**Result:** Run: Traceback (most recent call last):
+**Result:** FAIL. Traceback (most recent call last):
   File "/Users/ab/conductor/workspaces/agno/tallinn/libs/agno/agno/tools/agentql.py", line 8, in <module>
     import agentql
 ModuleNotFoundError: No module named 'agentql'
@@ -33,11 +37,11 @@ ImportError: `agentql` not installed. Please install using `pip install agentql`
 
 ### custom_tools.py
 
-**Status:** FAIL
+**Status:** PASS
 
-**Description:** Validation issue: style
+**Description:** Example executed (demo run)
 
-**Result:** Style: code_before_first_section_banner | Run: completed
+**Result:** PASS
 
 ---
 
@@ -45,9 +49,9 @@ ImportError: `agentql` not installed. Please install using `pip install agentql`
 
 **Status:** PASS
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/03_tools/member_information.py`.
+**Description:** Example executed (demo run)
 
-**Result:** Executed successfully.
+**Result:** PASS
 
 ---
 
@@ -55,38 +59,39 @@ ImportError: `agentql` not installed. Please install using `pip install agentql`
 
 **Status:** PASS
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/03_tools/member_tool_hooks.py`.
+**Description:** Example executed (demo run)
 
-**Result:** Executed successfully.
+**Result:** PASS
 
 ---
 
 ### tool_call_limit.py
 
-**Status:** FAIL
+**Status:** PASS
 
-**Description:** Validation issue: style
+**Description:** Example executed (demo run)
 
-**Result:** Style: code_before_first_section_banner | Run: completed
+**Result:** PASS
 
 ---
 
 ### tool_choice.py
 
-**Status:** FAIL
+**Status:** PASS
 
-**Description:** Validation issue: style
+**Description:** Example executed (demo run)
 
-**Result:** Style: code_before_first_section_banner | Run: completed
+**Result:** PASS
 
 ---
 
 ### tool_hooks.py
 
-**Status:** PASS
+**Status:** FAIL
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/03_tools/tool_hooks.py`.
+**Description:** Example execution attempt
 
-**Result:** Executed successfully.
+**Result:** FAIL. Timeout after 120s
 
 ---
+

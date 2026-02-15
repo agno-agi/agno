@@ -1,11 +1,15 @@
-# Test Log: cookbook/03_teams/05_knowledge
+# Validation run 2026-02-15T00:58:04
 
-
-## Pattern Check
+### Pattern Check
 
 **Status:** PASS
 
-**Result:** Checked 5 file(s). Violations: 0
+**Notes:** No pattern violations detected.
+
+### OpenAIChat references
+
+**Found in:**
+- TEST_LOG.md
 
 ---
 
@@ -13,23 +17,23 @@
 
 **Status:** FAIL
 
-**Description:** Validation issue: runtime
+**Description:** Example execution attempt
 
-**Result:** Run: Traceback (most recent call last):
-  File "/Users/ab/conductor/workspaces/agno/tallinn/libs/agno/agno/vectordb/lancedb/lance_db.py", line 168, in __init__
-    import tantivy  # noqa: F401
-    ^^^^^^^^^^^^^^
-ModuleNotFoundError: No module named 'tantivy'
+**Result:** FAIL. Traceback (most recent call last):
+  File "/Users/ab/conductor/workspaces/agno/tallinn/libs/agno/agno/vectordb/lancedb/lance_db.py", line 8, in <module>
+    import lancedb
+ModuleNotFoundError: No module named 'lancedb'
 
 During handling of the above exception, another exception occurred:
 
 Traceback (most recent call last):
-  File "/Users/ab/conductor/workspaces/agno/tallinn/cookbook/03_teams/05_knowledge/01_team_with_knowledge.py", line 26, in <module>
-    vector_db=LanceDb(
-              ^^^^^^^^
-  File "/Users/ab/conductor/workspaces/agno/tallinn/libs/agno/agno/vectordb/lancedb/lance_db.py", line 170, in __init__
-    raise ImportError(
-ImportError: Please install tantivy-py `pip install tantivy` to use the full text search feature.
+  File "/Users/ab/conductor/workspaces/agno/tallinn/cookbook/03_teams/05_knowledge/01_team_with_knowledge.py", line 16, in <module>
+    from agno.vectordb.lancedb import LanceDb, SearchType
+  File "/Users/ab/conductor/workspaces/agno/tallinn/libs/agno/agno/vectordb/lancedb/__init__.py", line 1, in <module>
+    from agno.vectordb.lancedb.lance_db import LanceDb, SearchType
+  File "/Users/ab/conductor/workspaces/agno/tallinn/libs/agno/agno/vectordb/lancedb/lance_db.py", line 11, in <module>
+    raise ImportError("`lancedb` not installed. Please install using `pip install lancedb`")
+ImportError: `lancedb` not installed. Please install using `pip install lancedb`
 
 ---
 
@@ -37,9 +41,23 @@ ImportError: Please install tantivy-py `pip install tantivy` to use the full tex
 
 **Status:** FAIL
 
-**Description:** Validation issue: style
+**Description:** Example execution attempt
 
-**Result:** Style: code_before_first_section_banner | Run: completed
+**Result:** FAIL. Traceback (most recent call last):
+  File "/Users/ab/conductor/workspaces/agno/tallinn/libs/agno/agno/vectordb/lancedb/lance_db.py", line 8, in <module>
+    import lancedb
+ModuleNotFoundError: No module named 'lancedb'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/ab/conductor/workspaces/agno/tallinn/cookbook/03_teams/05_knowledge/02_team_with_knowledge_filters.py", line 17, in <module>
+    from agno.vectordb.lancedb import LanceDb
+  File "/Users/ab/conductor/workspaces/agno/tallinn/libs/agno/agno/vectordb/lancedb/__init__.py", line 1, in <module>
+    from agno.vectordb.lancedb.lance_db import LanceDb, SearchType
+  File "/Users/ab/conductor/workspaces/agno/tallinn/libs/agno/agno/vectordb/lancedb/lance_db.py", line 11, in <module>
+    raise ImportError("`lancedb` not installed. Please install using `pip install lancedb`")
+ImportError: `lancedb` not installed. Please install using `pip install lancedb`
 
 ---
 
@@ -47,28 +65,57 @@ ImportError: Please install tantivy-py `pip install tantivy` to use the full tex
 
 **Status:** FAIL
 
-**Description:** Validation issue: style
+**Description:** Example execution attempt
 
-**Result:** Style: code_before_first_section_banner | Run: completed
+**Result:** FAIL. Traceback (most recent call last):
+  File "/Users/ab/conductor/workspaces/agno/tallinn/libs/agno/agno/vectordb/lancedb/lance_db.py", line 8, in <module>
+    import lancedb
+ModuleNotFoundError: No module named 'lancedb'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/ab/conductor/workspaces/agno/tallinn/cookbook/03_teams/05_knowledge/03_team_with_agentic_knowledge_filters.py", line 16, in <module>
+    from agno.vectordb.lancedb import LanceDb
+  File "/Users/ab/conductor/workspaces/agno/tallinn/libs/agno/agno/vectordb/lancedb/__init__.py", line 1, in <module>
+    from agno.vectordb.lancedb.lance_db import LanceDb, SearchType
+  File "/Users/ab/conductor/workspaces/agno/tallinn/libs/agno/agno/vectordb/lancedb/lance_db.py", line 11, in <module>
+    raise ImportError("`lancedb` not installed. Please install using `pip install lancedb`")
+ImportError: `lancedb` not installed. Please install using `pip install lancedb`
 
 ---
 
 ### 04_team_with_custom_retriever.py
 
-**Status:** PASS
+**Status:** FAIL
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/05_knowledge/04_team_with_custom_retriever.py`.
+**Description:** Example execution attempt
 
-**Result:** Executed successfully.
+**Result:** FAIL. Timeout after 120s
 
 ---
 
 ### 05_team_update_knowledge.py
 
-**Status:** PASS
+**Status:** FAIL
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/05_knowledge/05_team_update_knowledge.py`.
+**Description:** Example execution attempt
 
-**Result:** Executed successfully.
+**Result:** FAIL. Traceback (most recent call last):
+  File "/Users/ab/conductor/workspaces/agno/tallinn/libs/agno/agno/vectordb/lancedb/lance_db.py", line 8, in <module>
+    import lancedb
+ModuleNotFoundError: No module named 'lancedb'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/ab/conductor/workspaces/agno/tallinn/cookbook/03_teams/05_knowledge/05_team_update_knowledge.py", line 12, in <module>
+    from agno.vectordb.lancedb import LanceDb
+  File "/Users/ab/conductor/workspaces/agno/tallinn/libs/agno/agno/vectordb/lancedb/__init__.py", line 1, in <module>
+    from agno.vectordb.lancedb.lance_db import LanceDb, SearchType
+  File "/Users/ab/conductor/workspaces/agno/tallinn/libs/agno/agno/vectordb/lancedb/lance_db.py", line 11, in <module>
+    raise ImportError("`lancedb` not installed. Please install using `pip install lancedb`")
+ImportError: `lancedb` not installed. Please install using `pip install lancedb`
 
 ---
+

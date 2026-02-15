@@ -1,30 +1,31 @@
-# Test Log: cookbook/03_teams/10_context_compression
-
+# Validation run 2026-02-15T00:39:42
 
 ## Pattern Check
-
 **Status:** PASS
+**Notes:** Passed.
 
-**Result:** Checked 2 file(s). Violations: 0
+## OpenAIChat references
+- TEST_LOG.md
 
 ---
 
 ### tool_call_compression.py
 
-**Status:** PASS
+**Status:** FAIL
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/10_context_compression/tool_call_compression.py`.
+**Description:** Cookbook execution attempt
 
-**Result:** Executed successfully.
+**Result:** Timeout after 30s
 
 ---
 
 ### tool_call_compression_with_manager.py
 
-**Status:** PASS
+**Status:** FAIL
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/10_context_compression/tool_call_compression_with_manager.py`.
+**Description:** Cookbook execution attempt
 
-**Result:** Executed successfully.
+**Result:** Timeout after 30s
 
 ---
+

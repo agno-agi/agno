@@ -1,21 +1,11 @@
-# Test Log: cookbook/03_teams/12_learning
-
+# Validation run 2026-02-15T00:40:43
 
 ## Pattern Check
-
 **Status:** PASS
+**Notes:** Passed.
 
-**Result:** Checked 6 file(s). Violations: 0
-
----
-
-### 01_team_always_learn.py
-
-**Status:** FAIL
-
-**Description:** Validation issue: style
-
-**Result:** Style: code_before_first_section_banner | Run: completed
+## OpenAIChat references
+- TEST_LOG.md
 
 ---
 
@@ -23,9 +13,19 @@
 
 **Status:** FAIL
 
-**Description:** Validation issue: style
+**Description:** Cookbook execution attempt
 
-**Result:** Style: code_before_first_section_banner | Run: completed
+**Result:** Timeout after 30s
+
+---
+
+### 01_team_always_learn.py
+
+**Status:** FAIL
+
+**Description:** Cookbook execution attempt
+
+**Result:** Timeout after 30s
 
 ---
 
@@ -33,9 +33,9 @@
 
 **Status:** FAIL
 
-**Description:** Validation issue: style
+**Description:** Cookbook execution attempt
 
-**Result:** Style: code_before_first_section_banner | Run: completed
+**Result:** Timeout after 30s
 
 ---
 
@@ -43,19 +43,9 @@
 
 **Status:** FAIL
 
-**Description:** Validation issue: style
+**Description:** Cookbook execution attempt
 
-**Result:** Style: code_before_first_section_banner | Run: completed
-
----
-
-### 05_team_learned_knowledge.py
-
-**Status:** FAIL
-
-**Description:** Validation issue: style
-
-**Result:** Style: code_before_first_section_banner | Run: completed
+**Result:** Timeout after 30s
 
 ---
 
@@ -63,8 +53,19 @@
 
 **Status:** FAIL
 
-**Description:** Validation issue: style
+**Description:** Cookbook execution attempt
 
-**Result:** Style: code_before_first_section_banner | Run: completed
+**Result:** Timeout after 30s
 
 ---
+
+### 05_team_learned_knowledge.py
+
+**Status:** FAIL
+
+**Description:** Cookbook execution attempt
+
+**Result:** Timeout after 30s
+
+---
+

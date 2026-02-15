@@ -1,40 +1,41 @@
-# Test Log: cookbook/03_teams/17_dependencies
-
+# Validation run 2026-02-15T00:42:30
 
 ## Pattern Check
-
 **Status:** PASS
+**Notes:** Passed.
 
-**Result:** Checked 3 file(s). Violations: 0
-
----
-
-### dependencies_in_context.py
-
-**Status:** PASS
-
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/17_dependencies/dependencies_in_context.py`.
-
-**Result:** Executed successfully.
+## OpenAIChat references
+- TEST_LOG.md
 
 ---
 
 ### dependencies_in_tools.py
 
-**Status:** PASS
+**Status:** FAIL
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/17_dependencies/dependencies_in_tools.py`.
+**Description:** Cookbook execution attempt
 
-**Result:** Executed successfully.
+**Result:** Timeout after 30s
 
 ---
 
 ### dependencies_to_members.py
 
-**Status:** PASS
+**Status:** FAIL
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/17_dependencies/dependencies_to_members.py`.
+**Description:** Cookbook execution attempt
 
-**Result:** Executed successfully.
+**Result:** Timeout after 30s
 
 ---
+
+### dependencies_in_context.py
+
+**Status:** FAIL
+
+**Description:** Cookbook execution attempt
+
+**Result:** Timeout after 30s
+
+---
+
