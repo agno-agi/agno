@@ -833,6 +833,27 @@ class OpenAIChat(Model):
             except Exception as e:
                 log_warning(f"Error processing audio: {e}")
 
+        # Extract images from model_extra (for providers like OpenRouter that return images this way)
+        if hasattr(response_message, "model_extra") and response_message.model_extra:
+            try:
+                extra_data = response_message.model_extra
+                if isinstance(extra_data, dict) and "images" in extra_data:
+                    images_data = extra_data["images"]
+                    if images_data and isinstance(images_data, list):
+                        # Initialize images list if not exists
+                        if model_response.images is None:
+                            model_response.images = []
+                        
+                        # Process each image
+                        for img_item in images_data:
+                            if isinstance(img_item, dict) and img_item.get("type") == "image_url":
+                                image_url = img_item.get("image_url", {}).get("url")
+                                if image_url:
+                                    # Store the data URL or base64 content
+                                    model_response.images.append(image_url)
+            except Exception:
+                pass
+
         if hasattr(response_message, "reasoning_content") and response_message.reasoning_content is not None:  # type: ignore
             model_response.reasoning_content = response_message.reasoning_content  # type: ignore
         elif hasattr(response_message, "reasoning") and response_message.reasoning is not None:  # type: ignore
