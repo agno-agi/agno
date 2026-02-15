@@ -52,7 +52,7 @@ billing_agent = Agent(
 # ---------------------------------------------------------------------------
 support_team = Team(
     name="Technical Support Team",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     members=[user_profile_agent, technical_support_agent, billing_agent],
     instructions=[
         "You are a technical support team for a Facebook account that can answer questions about the technical support and billing for Facebook.",
