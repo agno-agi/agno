@@ -9,7 +9,7 @@ import asyncio
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIResponses
-from agno.team import Team
+from agno.team import Team, TeamMode
 
 # ---------------------------------------------------------------------------
 # Create Members
@@ -51,7 +51,7 @@ german_agent = Agent(
 multi_language_team = Team(
     name="Multi Language Team",
     model=OpenAIResponses(id="gpt-5.2-mini"),
-    respond_directly=True,
+    mode=TeamMode.route,
     members=[
         english_agent,
         spanish_agent,

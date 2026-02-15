@@ -10,7 +10,7 @@ from textwrap import dedent
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIResponses
-from agno.team import Team
+from agno.team import Team, TeamMode
 from agno.tools.hackernews import HackerNewsTools
 from agno.tools.websearch import WebSearchTools
 
@@ -58,7 +58,7 @@ agent_team = Team(
         "You have to stop the discussion when you think the team has reached a consensus.",
     ],
     markdown=True,
-    delegate_to_all_members=True,
+    mode=TeamMode.broadcast,
     show_members_responses=True,
 )
 

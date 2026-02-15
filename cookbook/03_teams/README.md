@@ -24,13 +24,11 @@ Cookbooks for building multi-agent teams in Agno.
 - `metrics/` - Team/session/member metrics inspection.
 - `modes/` - Team execution modes (coordinate, route, broadcast, tasks) with examples for each.
 - `multimodal/` - Audio, image, and video workflows.
-- `other/` - Additional patterns (background execution).
 - `reasoning/` - Multi-purpose reasoning team patterns.
-- `run_control/` - Cancellation, retries, model inheritance, and remote teams.
+- `run_control/` - Cancellation, retries, model inheritance, remote teams, and background execution.
 - `search_coordination/` - Coordinated RAG/search patterns across members.
 - `session/` - Session persistence, options, summaries, and history search.
 - `state/` - Shared session state across members and nested teams.
 - `streaming/` - Response streaming and event monitoring.
 - `structured_input_output/` - Structured input/output schemas, overrides, and streaming.
-- `task_mode/` - Task mode examples (basic, parallel, tools, async, dependencies, custom tools, multi-run).
 - `tools/` - Custom tools and tool hook patterns.

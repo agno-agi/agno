@@ -8,7 +8,7 @@ Demonstrates direct member responses with team history persisted in SQLite.
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
-from agno.team import Team
+from agno.team import Team, TeamMode
 
 
 # ---------------------------------------------------------------------------
@@ -55,13 +55,14 @@ activities_agent = Agent(
 geo_search_team = Team(
     name="Geo Search Team",
     model=OpenAIResponses(id="gpt-5.2-mini"),
-    respond_directly=True,
+    mode=TeamMode.route,
     members=[
         weather_agent,
         news_agent,
         activities_agent,
     ],
     instructions="You are a geo search agent that can answer questions about the weather, news and activities in a city.",
+    use_instruction_tags=True,
     db=SqliteDb(
         db_file="tmp/geo_search_team.db"
     ),  # Add a database to store the conversation history
