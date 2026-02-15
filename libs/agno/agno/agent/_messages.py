@@ -1321,21 +1321,64 @@ def get_run_messages(
         and len(input) > 0
         and (isinstance(input[0], Message) or (isinstance(input[0], dict) and "role" in input[0]))
     ):
+        # Convert all messages first
+        converted_messages: List[Message] = []
         for _m in input:
             if isinstance(_m, Message):
-                run_messages.messages.append(_m)
-                if run_messages.extra_messages is None:
-                    run_messages.extra_messages = []
-                run_messages.extra_messages.append(_m)
+                converted_messages.append(_m)
             elif isinstance(_m, dict):
                 try:
                     msg = Message.model_validate(_m)
-                    run_messages.messages.append(msg)
-                    if run_messages.extra_messages is None:
-                        run_messages.extra_messages = []
-                    run_messages.extra_messages.append(msg)
+                    converted_messages.append(msg)
                 except Exception as e:
                     log_warning(f"Failed to validate message: {e}")
+
+        # Inject dependencies into the last user message if enabled
+        dependencies = run_context.dependencies if run_context else None
+        if add_dependencies_to_context and dependencies is not None:
+            dependencies_block = (
+                "\n\n<additional context>\n"
+                + convert_dependencies_to_string(agent, dependencies)
+                + "\n</additional context>"
+            )
+            for i in range(len(converted_messages) - 1, -1, -1):
+                msg = converted_messages[i]
+                if msg.role == "user":
+                    if isinstance(msg.content, str):
+                        msg.content = msg.content + dependencies_block
+                        break
+                    elif (
+                        isinstance(msg.content, list) and len(msg.content) > 0 and isinstance(msg.content[0], dict)
+                    ):
+                        # Multimodal with "type" key (OpenAI format)
+                        if "type" in msg.content[0]:
+                            for part in reversed(msg.content):
+                                if (
+                                    isinstance(part, dict)
+                                    and part.get("type") == "text"
+                                    and isinstance(part.get("text"), str)
+                                ):
+                                    part["text"] += dependencies_block
+                                    break
+                            else:
+                                msg.content.append({"type": "text", "text": dependencies_block.lstrip("\n")})
+                            break
+                        # Dicts with "text" but no "type" key (some providers)
+                        if "text" in msg.content[0]:
+                            for part in reversed(msg.content):
+                                if isinstance(part, dict) and isinstance(part.get("text"), str):
+                                    part["text"] += dependencies_block
+                                    break
+                            else:
+                                msg.content.append({"text": dependencies_block.lstrip("\n")})
+                            break
+
+        # Add all messages to run_messages
+        for msg in converted_messages:
+            run_messages.messages.append(msg)
+            if run_messages.extra_messages is None:
+                run_messages.extra_messages = []
+            run_messages.extra_messages.append(msg)
 
     # Add user message to run_messages
     if user_message is not None:
@@ -1523,21 +1566,64 @@ async def aget_run_messages(
         and len(input) > 0
         and (isinstance(input[0], Message) or (isinstance(input[0], dict) and "role" in input[0]))
     ):
+        # Convert all messages first
+        converted_messages: List[Message] = []
         for _m in input:
             if isinstance(_m, Message):
-                run_messages.messages.append(_m)
-                if run_messages.extra_messages is None:
-                    run_messages.extra_messages = []
-                run_messages.extra_messages.append(_m)
+                converted_messages.append(_m)
             elif isinstance(_m, dict):
                 try:
                     msg = Message.model_validate(_m)
-                    run_messages.messages.append(msg)
-                    if run_messages.extra_messages is None:
-                        run_messages.extra_messages = []
-                    run_messages.extra_messages.append(msg)
+                    converted_messages.append(msg)
                 except Exception as e:
                     log_warning(f"Failed to validate message: {e}")
+
+        # Inject dependencies into the last user message if enabled
+        dependencies = run_context.dependencies if run_context else None
+        if add_dependencies_to_context and dependencies is not None:
+            dependencies_block = (
+                "\n\n<additional context>\n"
+                + convert_dependencies_to_string(agent, dependencies)
+                + "\n</additional context>"
+            )
+            for i in range(len(converted_messages) - 1, -1, -1):
+                msg = converted_messages[i]
+                if msg.role == "user":
+                    if isinstance(msg.content, str):
+                        msg.content = msg.content + dependencies_block
+                        break
+                    elif (
+                        isinstance(msg.content, list) and len(msg.content) > 0 and isinstance(msg.content[0], dict)
+                    ):
+                        # Multimodal with "type" key (OpenAI format)
+                        if "type" in msg.content[0]:
+                            for part in reversed(msg.content):
+                                if (
+                                    isinstance(part, dict)
+                                    and part.get("type") == "text"
+                                    and isinstance(part.get("text"), str)
+                                ):
+                                    part["text"] += dependencies_block
+                                    break
+                            else:
+                                msg.content.append({"type": "text", "text": dependencies_block.lstrip("\n")})
+                            break
+                        # Dicts with "text" but no "type" key (some providers)
+                        if "text" in msg.content[0]:
+                            for part in reversed(msg.content):
+                                if isinstance(part, dict) and isinstance(part.get("text"), str):
+                                    part["text"] += dependencies_block
+                                    break
+                            else:
+                                msg.content.append({"text": dependencies_block.lstrip("\n")})
+                            break
+
+        # Add all messages to run_messages
+        for msg in converted_messages:
+            run_messages.messages.append(msg)
+            if run_messages.extra_messages is None:
+                run_messages.extra_messages = []
+            run_messages.extra_messages.append(msg)
 
     # Add user message to run_messages
     if user_message is not None:

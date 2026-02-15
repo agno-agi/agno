@@ -1068,10 +1068,40 @@ def _get_user_message(
             input_content: Union[str, List[Any], List[Message]]
             if len(input_message) > 0 and isinstance(input_message[0], dict) and "type" in input_message[0]:
                 # This is multimodal content (text + images/audio/video), preserve the structure
+                # Inject dependencies into the last text part if enabled
+                if add_dependencies_to_context and run_context and run_context.dependencies:
+                    dependencies_block = (
+                        "\n\n<additional context>\n"
+                        + _convert_dependencies_to_string(team, run_context.dependencies)
+                        + "\n</additional context>"
+                    )
+                    for part in reversed(input_message):
+                        if (
+                            isinstance(part, dict)
+                            and part.get("type") == "text"
+                            and isinstance(part.get("text"), str)
+                        ):
+                            part["text"] += dependencies_block
+                            break
+                    else:
+                        input_message.append(
+                            {"type": "text", "text": dependencies_block.lstrip("\n")}  # type: ignore[arg-type]
+                        )
                 input_content = input_message
             elif len(input_message) > 0 and isinstance(input_message[0], Message):
                 # This is a list of Message objects, extract text content from them
                 input_content = get_text_from_message(input_message)
+                # Inject dependencies into the extracted content if enabled
+                if (
+                    add_dependencies_to_context
+                    and run_context
+                    and run_context.dependencies
+                    and isinstance(input_content, str)
+                ):
+                    dependencies_str = _convert_dependencies_to_string(team, run_context.dependencies)
+                    input_content = (
+                        input_content + "\n\n<additional context>\n" + dependencies_str + "\n</additional context>"
+                    )
             elif all(isinstance(item, str) for item in input_message):
                 input_content = "\n".join([str(item) for item in input_message])
             else:
@@ -1089,6 +1119,40 @@ def _get_user_message(
 
         # If message is provided as a Message, use it directly
         elif isinstance(input_message, Message):
+            # Inject dependencies if enabled
+            if add_dependencies_to_context and run_context and run_context.dependencies:
+                dependencies_block = (
+                    "\n\n<additional context>\n"
+                    + _convert_dependencies_to_string(team, run_context.dependencies)
+                    + "\n</additional context>"
+                )
+                if isinstance(input_message.content, str):
+                    input_message.content = input_message.content + dependencies_block
+                elif (
+                    isinstance(input_message.content, list)
+                    and len(input_message.content) > 0
+                    and isinstance(input_message.content[0], dict)
+                ):
+                    # Multimodal with "type" key (OpenAI format)
+                    if "type" in input_message.content[0]:
+                        for part in reversed(input_message.content):
+                            if (
+                                isinstance(part, dict)
+                                and part.get("type") == "text"
+                                and isinstance(part.get("text"), str)
+                            ):
+                                part["text"] += dependencies_block
+                                break
+                        else:
+                            input_message.content.append({"type": "text", "text": dependencies_block.lstrip("\n")})
+                    # Dicts with "text" but no "type" key (some providers)
+                    elif "text" in input_message.content[0]:
+                        for part in reversed(input_message.content):
+                            if isinstance(part, dict) and isinstance(part.get("text"), str):
+                                part["text"] += dependencies_block
+                                break
+                        else:
+                            input_message.content.append({"text": dependencies_block.lstrip("\n")})
             return input_message
         # If message is provided as a dict, try to validate it as a Message
         elif isinstance(input_message, dict):
@@ -1226,10 +1290,40 @@ async def _aget_user_message(
             input_content: Union[str, List[Any], List[Message]]
             if len(input_message) > 0 and isinstance(input_message[0], dict) and "type" in input_message[0]:
                 # This is multimodal content (text + images/audio/video), preserve the structure
+                # Inject dependencies into the last text part if enabled
+                if add_dependencies_to_context and run_context and run_context.dependencies:
+                    dependencies_block = (
+                        "\n\n<additional context>\n"
+                        + _convert_dependencies_to_string(team, run_context.dependencies)
+                        + "\n</additional context>"
+                    )
+                    for part in reversed(input_message):
+                        if (
+                            isinstance(part, dict)
+                            and part.get("type") == "text"
+                            and isinstance(part.get("text"), str)
+                        ):
+                            part["text"] += dependencies_block
+                            break
+                    else:
+                        input_message.append(
+                            {"type": "text", "text": dependencies_block.lstrip("\n")}  # type: ignore[arg-type]
+                        )
                 input_content = input_message
             elif len(input_message) > 0 and isinstance(input_message[0], Message):
                 # This is a list of Message objects, extract text content from them
                 input_content = get_text_from_message(input_message)
+                # Inject dependencies into the extracted content if enabled
+                if (
+                    add_dependencies_to_context
+                    and run_context
+                    and run_context.dependencies
+                    and isinstance(input_content, str)
+                ):
+                    dependencies_str = _convert_dependencies_to_string(team, run_context.dependencies)
+                    input_content = (
+                        input_content + "\n\n<additional context>\n" + dependencies_str + "\n</additional context>"
+                    )
             elif all(isinstance(item, str) for item in input_message):
                 input_content = "\n".join([str(item) for item in input_message])
             else:
@@ -1247,6 +1341,40 @@ async def _aget_user_message(
 
         # If message is provided as a Message, use it directly
         elif isinstance(input_message, Message):
+            # Inject dependencies if enabled
+            if add_dependencies_to_context and run_context and run_context.dependencies:
+                dependencies_block = (
+                    "\n\n<additional context>\n"
+                    + _convert_dependencies_to_string(team, run_context.dependencies)
+                    + "\n</additional context>"
+                )
+                if isinstance(input_message.content, str):
+                    input_message.content = input_message.content + dependencies_block
+                elif (
+                    isinstance(input_message.content, list)
+                    and len(input_message.content) > 0
+                    and isinstance(input_message.content[0], dict)
+                ):
+                    # Multimodal with "type" key (OpenAI format)
+                    if "type" in input_message.content[0]:
+                        for part in reversed(input_message.content):
+                            if (
+                                isinstance(part, dict)
+                                and part.get("type") == "text"
+                                and isinstance(part.get("text"), str)
+                            ):
+                                part["text"] += dependencies_block
+                                break
+                        else:
+                            input_message.content.append({"type": "text", "text": dependencies_block.lstrip("\n")})
+                    # Dicts with "text" but no "type" key (some providers)
+                    elif "text" in input_message.content[0]:
+                        for part in reversed(input_message.content):
+                            if isinstance(part, dict) and isinstance(part.get("text"), str):
+                                part["text"] += dependencies_block
+                                break
+                        else:
+                            input_message.content.append({"text": dependencies_block.lstrip("\n")})
             return input_message
         # If message is provided as a dict, try to validate it as a Message
         elif isinstance(input_message, dict):
