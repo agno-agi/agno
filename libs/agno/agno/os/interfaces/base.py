@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import List, Optional, Union
+from typing import Any, List, Optional, Union
 
 from fastapi import APIRouter
 
@@ -23,3 +23,11 @@ class BaseInterface(ABC):
     @abstractmethod
     def get_router(self, use_async: bool = True, **kwargs) -> APIRouter:
         pass
+
+    def get_lifespan(self) -> Optional[Any]:
+        """Return a FastAPI-compatible lifespan context manager for background services, or None.
+
+        The return value must be a callable ``(app) -> AsyncContextManager`` matching the
+        FastAPI lifespan signature used by ``_combine_app_lifespans`` in ``app.py``.
+        """
+        return None

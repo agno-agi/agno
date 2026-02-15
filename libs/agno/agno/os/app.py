@@ -622,6 +622,12 @@ class AgentOS:
             if self._scheduler_enabled and self.db is not None:
                 lifespans.append(partial(scheduler_lifespan, agent_os=self))
 
+            # Interface lifespans (e.g., Discord Gateway) — after db so storage is ready
+            for interface in self.interfaces:
+                iface_lifespan = interface.get_lifespan()
+                if iface_lifespan is not None:
+                    lifespans.append(iface_lifespan)
+
             # The httpx client cleanup lifespan (should be last to close after other lifespans)
             lifespans.append(http_client_lifespan)
 
@@ -653,6 +659,12 @@ class AgentOS:
             # The scheduler lifespan (after db so tables exist)
             if self._scheduler_enabled and self.db is not None:
                 lifespans.append(partial(scheduler_lifespan, agent_os=self))
+
+            # Interface lifespans (e.g., Discord Gateway) — after db so storage is ready
+            for interface in self.interfaces:
+                iface_lifespan = interface.get_lifespan()
+                if iface_lifespan is not None:
+                    lifespans.append(iface_lifespan)
 
             # The httpx client cleanup lifespan (should be last to close after other lifespans)
             lifespans.append(http_client_lifespan)
