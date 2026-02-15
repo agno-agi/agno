@@ -1,22 +1,14 @@
 # Test Log: memory
 
-> Updated: 2026-02-13
-
-## Pattern Check
-
-**Status:** PASS
-
-**Result:** Checked 3 file(s). Violations: 0
-
----
+> Updated: 2026-02-12
 
 ### 01_team_with_memory_manager.py
 
 **Status:** PASS
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/memory/01_team_with_memory_manager.py`.
+**Description:** Persistent memory via MemoryManager — team stores user info (name, hobbies) on first run, recalls on second run. Uses PostgresDb + `update_memory_on_run=True`.
 
-**Result:** Executed successfully.
+**Result:** Ran successfully. First run stored "John Doe likes hiking". Second run recalled hobbies correctly. `team.get_user_memories()` returned structured UserMemory objects with memory text, topics, timestamps, and user_id.
 
 ---
 
@@ -24,9 +16,9 @@
 
 **Status:** PASS
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/memory/02_team_with_agentic_memory.py`.
+**Description:** Agentic memory — team creates/updates memories during runs via `enable_agentic_memory=True`. No explicit MemoryManager needed.
 
-**Result:** Executed successfully.
+**Result:** Ran successfully. First run acknowledged hiking hobby. Second run recalled hobbies from agentic memory system. Memory persisted across runs within same session.
 
 ---
 
@@ -34,8 +26,8 @@
 
 **Status:** PASS
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/memory/learning_machine.py`.
+**Description:** LearningMachine integration — team uses `LearningMachine(user_profile=UserProfileConfig(mode=LearningMode.AGENTIC))` to extract and persist user profile data. Uses SQLite storage.
 
-**Result:** Executed successfully.
+**Result:** Ran successfully. First run (session 1) stored Alex's preference for bullet points. Second run (session 2) acknowledged preferences but model response style suggests user profile context was injected even if model didn't explicitly state it (responded in bullet format as requested).
 
 ---

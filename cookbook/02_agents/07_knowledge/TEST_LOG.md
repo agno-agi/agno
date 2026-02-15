@@ -1,78 +1,14 @@
-# Test Log -- 07_knowledge
+# Test Log — 07_knowledge
 
-**Tested:** 2026-02-13
-**Environment:** .venvs/demo/bin/python, pgvector: running
+Tested: 2026-02-12 | Branch: cookbook/v25-merge-fixes
 
----
-
-### agentic_rag.py
-
-**Status:** PASS
-**Tier:** untagged
-**Description:** Demonstrates agentic rag. Ran successfully and produced expected output.
-**Result:** Completed successfully in 18s.
-
----
-
-### agentic_rag_with_reasoning.py
-
-**Status:** FAIL
-**Tier:** untagged
-**Description:** Demonstrates agentic rag with reasoning. Failed due to missing dependency: ModuleNotFoundError: No module named 'cohere'
-**Result:** Missing dependency - should be reclassified as SKIP or dependency added to demo env.
-
----
-
-### agentic_rag_with_reranking.py
-
-**Status:** FAIL
-**Tier:** untagged
-**Description:** Demonstrates agentic rag with reranking. Failed due to missing dependency: ModuleNotFoundError: No module named 'cohere'
-**Result:** Missing dependency - should be reclassified as SKIP or dependency added to demo env.
-
----
-
-### custom_retriever.py
-
-**Status:** PASS
-**Tier:** untagged
-**Description:** Demonstrates custom retriever. Ran successfully and produced expected output.
-**Result:** Completed successfully in 10s.
-
----
-
-### knowledge_filters.py
-
-**Status:** PASS
-**Tier:** untagged
-**Description:** Demonstrates knowledge filters. Ran successfully and produced expected output.
-**Result:** Completed successfully in 14s.
-
----
-
-### rag_custom_embeddings.py
-
-**Status:** FAIL
-**Tier:** untagged
-**Description:** Demonstrates rag custom embeddings. Failed due to missing dependency: ModuleNotFoundError: No module named 'sentence_transformers'
-**Result:** Missing dependency - should be reclassified as SKIP or dependency added to demo env.
-
----
-
-### references_format.py
-
-**Status:** PASS
-**Tier:** untagged
-**Description:** Demonstrates references format. Ran successfully and produced expected output.
-**Result:** Completed successfully in 13s.
-
----
-
-### traditional_rag.py
-
-**Status:** PASS
-**Tier:** untagged
-**Description:** Demonstrates traditional rag. Ran successfully and produced expected output.
-**Result:** Completed successfully in 12s.
-
----
+| File | Status | Notes |
+|------|--------|-------|
+| agentic_rag.py | PASS | Agentic RAG with PgVector, Thai recipe knowledge base, returns Tom Kha Gai recipe |
+| agentic_rag_with_reasoning.py | PASS | RAG with reasoning model, returns Agno agent concepts from docs knowledge base. Re-verified 2026-02-14: URL path fix confirmed, reasoning agent searched KB and produced agent definition with citations. |
+| agentic_rag_with_reranking.py | PASS | RAG with CohereReranker, returns Agno key features |
+| custom_retriever.py | PASS | Custom retriever returns Python overview from hardcoded docs |
+| knowledge_filters.py | PASS | Knowledge filters with metadata, returns Thai dessert recipe (Kluay Buat Chi) |
+| rag_custom_embeddings.py | SKIP | Missing: sentence-transformers (huggingface_hub version conflict) |
+| references_format.py | PASS | References format with PgVector, returns Tom Kha Gai recipe with source references |
+| traditional_rag.py | PASS | Traditional RAG (always_search), returns Tom Kha Gai recipe from PgVector |

@@ -1,24 +1,8 @@
-# Test Log -- 06_memory_and_learning
+# Test Log — 06_memory_and_learning
 
-**Tested:** 2026-02-13
-**Environment:** .venvs/demo/bin/python, pgvector: running
+Tested: 2026-02-12 | Branch: cookbook/v25-merge-fixes
 
----
-
-### learning_machine.py
-
-**Status:** PASS
-**Tier:** untagged
-**Description:** Demonstrates learning machine. Ran successfully and produced expected output.
-**Result:** Completed successfully in 5s.
-
----
-
-### memory_manager.py
-
-**Status:** PASS
-**Tier:** untagged
-**Description:** Demonstrates memory manager. Ran successfully and produced expected output.
-**Result:** Completed successfully in 9s.
-
----
+| File | Status | Notes |
+|------|--------|-------|
+| learning_machine.py | PASS | Profile update tool stores name, second run recalls "Alex" from memory |
+| memory_manager.py | PASS | Memory manager stores Alice's Python preference, recalls it in second interaction |

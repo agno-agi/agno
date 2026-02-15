@@ -1,7 +1,13 @@
-# TEST_LOG
+# Test Log — protocol
 
-## protocol
+Tested: 2026-02-12 | Branch: cookbook/v25-merge-fixes
 
-No tests recorded yet.
+| File | Status | Notes |
+|------|--------|-------|
+| file_system.py | PASS | FileSystemKnowledge protocol with tool-based file search, answered coffee question |
 
----
+## Summary
+
+| Status | Count |
+|--------|-------|
+| PASS   | 1     |

@@ -45,7 +45,6 @@ team = Team(
     name="Hackernews Research Team",
     model=OpenAIResponses(id="gpt-5.2-mini"),
     members=[hackernews_agent],
-    pass_user_input_to_members=True,  # The member gets input directly (replaces determine_input_for_members=False).
     instructions=[
         "Conduct thorough research based on the structured input",
         "Address all focus areas mentioned in the research topic",

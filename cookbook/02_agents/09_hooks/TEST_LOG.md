@@ -1,51 +1,11 @@
-# Test Log -- 09_hooks
+# Test Log — 09_hooks
 
-**Tested:** 2026-02-13
-**Environment:** .venvs/demo/bin/python, pgvector: running
+Tested: 2026-02-12 | Branch: cookbook/v25-merge-fixes
 
----
-
-### post_hook_output.py
-
-**Status:** PASS
-**Tier:** untagged
-**Description:** Demonstrates post hook output. Ran successfully and produced expected output.
-**Result:** Completed successfully in 22s.
-
----
-
-### pre_hook_input.py
-
-**Status:** PASS
-**Tier:** untagged
-**Description:** Demonstrates pre hook input. Ran successfully and produced expected output.
-**Result:** Completed successfully in 65s.
-
----
-
-### session_state_hooks.py
-
-**Status:** PASS
-**Tier:** untagged
-**Description:** Demonstrates session state hooks. Ran successfully and produced expected output.
-**Result:** Completed successfully in 43s.
-
----
-
-### stream_hook.py
-
-**Status:** PASS
-**Tier:** untagged
-**Description:** Demonstrates stream hook. Ran successfully and produced expected output.
-**Result:** Completed successfully in 19s.
-
----
-
-### tool_hooks.py
-
-**Status:** PASS
-**Tier:** untagged
-**Description:** Demonstrates tool hooks. Ran successfully and produced expected output.
-**Result:** Completed successfully in 6s.
-
----
+| File | Status | Notes |
+|------|--------|-------|
+| post_hook_output.py | PASS | Post-hook validates output length and quality, blocks short/empty and passes normal |
+| pre_hook_input.py | PASS | Pre-hook validates financial advisor input, blocks vague/off-topic/unsafe content |
+| session_state_hooks.py | PASS | Session state hooks track topics across runs, state persists |
+| stream_hook.py | PASS | Stream hook logs tool calls with timing, Apple stock analysis streamed |
+| tool_hooks.py | PASS | Tool hooks log and time web_search calls, Tokyo population query |

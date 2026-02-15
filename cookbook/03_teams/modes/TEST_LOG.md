@@ -1,131 +1,131 @@
 # Test Log: modes
 
-> Updated: 2026-02-13
+> Updated: 2026-02-12
 
-## Pattern Check
+## coordinate/
+
+### 01_basic.py
 
 **Status:** PASS
 
-**Result:** Checked 12 file(s). Violations: 0
+**Description:** Basic coordinate mode — Researcher + Writer team. Leader analyzes request, selects members, crafts tasks, synthesizes responses.
+
+**Result:** Ran successfully. Team delegated to Researcher for facts on LLM training, then Writer to polish. Final response covered pre-training, fine-tuning, and RLHF clearly.
 
 ---
 
-### broadcast/01_basic.py
+### 02_with_tools.py
 
-**Status:** PASS
+**Status:** FAIL
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/modes/broadcast/01_basic.py`.
+**Description:** Coordinate mode with DuckDuckGo and HackerNews tools. Team delegates to tool-equipped members based on question type.
 
-**Result:** Executed successfully.
-
----
-
-### broadcast/02_debate.py
-
-**Status:** PASS
-
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/modes/broadcast/02_debate.py`.
-
-**Result:** Executed successfully.
+**Result:** DuckDuckGo SSL error: `CERTIFICATE_VERIFY_FAILED: self-signed certificate in certificate chain`. Network/proxy issue, not a code defect. HackerNews tools likely work independently.
 
 ---
 
-### broadcast/03_research_sweep.py
+### 03_structured_output.py
 
 **Status:** PASS
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/modes/broadcast/03_research_sweep.py`.
+**Description:** Coordinate mode with `output_schema=CompanyBrief` (Pydantic model). Market Analyst + Risk Analyst → structured JSON output.
 
-**Result:** Executed successfully.
+**Result:** Ran successfully. Tesla analysis returned well-structured CompanyBrief with company_name, industry, strengths (5 items), risks (6 items), and outlook. Pydantic validation passed.
 
 ---
 
-### coordinate/01_basic.py
+## route/
+
+### 01_basic.py
 
 **Status:** PASS
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/modes/coordinate/01_basic.py`.
+**Description:** Language-based routing — routes English/Spanish/French queries to matching language agent. Demonstrates `mode=TeamMode.route`.
 
-**Result:** Executed successfully.
+**Result:** All three queries routed correctly. English → English Agent ("Paris"), Spanish → Spanish Agent ("Paris"), French → French Agent ("Paris").
 
 ---
 
-### coordinate/02_with_tools.py
+### 02_specialist_router.py
 
 **Status:** PASS
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/modes/coordinate/02_with_tools.py`.
+**Description:** Domain specialist routing — Math/Code/Science specialists. Routes merge sort question to appropriate expert.
 
-**Result:** Executed successfully.
+**Result:** Question routed to Math Specialist who provided detailed O(n log n) analysis with Master Theorem proof.
 
 ---
 
-### coordinate/03_structured_output.py
+### 03_with_fallback.py
 
 **Status:** PASS
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/modes/coordinate/03_structured_output.py`.
+**Description:** Route mode with fallback — SQL/Python specialists + General Assistant. Routes unknown topics to fallback agent.
 
-**Result:** Executed successfully.
+**Result:** SQL question routed correctly to SQL Expert. General question ("code review practices") routed to General Assistant as fallback. Both responses were appropriate.
 
 ---
 
-### route/01_basic.py
+## broadcast/
+
+### 01_basic.py
 
 **Status:** PASS
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/modes/route/01_basic.py`.
+**Description:** Basic broadcast — Optimist/Pessimist/Realist all receive same query, leader synthesizes perspectives on B2C→B2B pivot.
 
-**Result:** Executed successfully.
+**Result:** All three agents responded with distinct perspectives. Leader synthesized balanced summary.
 
 ---
 
-### route/02_specialist_router.py
+### 02_debate.py
 
 **Status:** PASS
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/modes/route/02_specialist_router.py`.
+**Description:** Structured debate — Proponent vs Opponent on remote work. Leader acts as moderator synthesizing arguments.
 
-**Result:** Executed successfully.
+**Result:** Both debaters provided structured arguments. Moderator summarized key points, areas of agreement, and assessment.
 
 ---
 
-### route/03_with_fallback.py
+### 03_research_sweep.py
 
-**Status:** PASS
+**Status:** FAIL
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/modes/route/03_with_fallback.py`.
+**Description:** Parallel research sweep with DuckDuckGo + HackerNews tools + Trend Analyst.
 
-**Result:** Executed successfully.
-
----
-
-### tasks/01_basic.py
-
-**Status:** PASS
-
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/modes/tasks/01_basic.py`.
-
-**Result:** Executed successfully.
+**Result:** Same DuckDuckGo SSL error as coordinate/02_with_tools.py. Network/proxy issue, not a code defect.
 
 ---
 
-### tasks/02_parallel.py
+## tasks/
+
+### 01_basic.py
 
 **Status:** PASS
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/modes/tasks/02_parallel.py`.
+**Description:** Basic tasks mode — Planner → Writer → Editor pipeline. Leader decomposes goal into sequential tasks.
 
-**Result:** Executed successfully.
+**Result:** Content pipeline executed correctly: outline created, draft written, then polished. Final blog post on microservices vs monolith produced.
 
 ---
 
-### tasks/03_dependencies.py
+### 02_parallel.py
 
 **Status:** PASS
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/modes/tasks/03_dependencies.py`.
+**Description:** Parallel task execution — Frontend/Backend/DevOps reviewers run concurrently on architecture review.
 
-**Result:** Executed successfully.
+**Result:** All three reviews completed. Leader synthesized unified architecture assessment of SaaS app.
+
+---
+
+### 03_dependencies.py
+
+**Status:** PASS
+
+**Description:** Task dependency chains — Data Collection → Analysis → Report Writing. Dependencies enforce execution order.
+
+**Result:** Pipeline executed in order. Final executive report on renewable energy market produced with proper dependency resolution.
 
 ---

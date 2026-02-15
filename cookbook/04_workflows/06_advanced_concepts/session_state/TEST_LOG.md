@@ -4,11 +4,12 @@ Generated: 2026-02-08 16:39:09
 
 ### rename_session.py
 
-**Status:** FAIL
+**Status:** PASS
 
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
+**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 120s).
 
-**Result:** Exited with code 1. AttributeError: 'NoneType' object has no attribute 'session_data'
+**Result:** Completed successfully. Workflow ran research team + content planner, generated article, then renamed session. SqliteDb added, method renamed from `rename_session` to correct API.
+**Re-verified:** 2026-02-14 — v25-fixes applied (SqliteDb + method rename), runs cleanly in ~29s.
 
 ---
 

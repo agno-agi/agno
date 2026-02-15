@@ -1,43 +1,16 @@
-# TEST_LOG for cookbook/04_workflows/02_conditional_execution
+# Test Log — 02_conditional_execution
 
-Generated: 2026-02-08 16:39:09
+Tested: 2026-02-12 | Branch: cookbook/v25-merge-fixes
 
-### condition_basic.py
+| File | Status | Notes |
+|------|--------|-------|
+| condition_basic.py | PASS | Completed in ~41s, quantum computing research article with conditional step |
+| condition_with_else.py | PASS | Completed in ~15s, customer support routing with if/else branches |
+| condition_with_list.py | PASS | Completed in ~57s, climate change research with conditional list of steps |
+| condition_with_parallel.py | FAIL | First workflow completed (27s), second workflow failed: "Event loop is closed" + NoneType parent_run_id |
 
-**Status:** FAIL
+## Summary
 
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
-
-**Result:** Timed out after 35s. computers. Innovations include continuous error correction techniques that
-
----
-
-### condition_with_else.py
-
-**Status:** FAIL
-
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
-
-**Result:** Timed out after 35s. errors.
-
----
-
-### condition_with_list.py
-
-**Status:** FAIL
-
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
-
-**Result:** Exited with code 1. ImportError: `exa_py` not installed. Please install using `pip install exa_py`
-
----
-
-### condition_with_parallel.py
-
-**Status:** FAIL
-
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
-
-**Result:** Exited with code 1. ImportError: `exa_py` not installed. Please install using `pip install exa_py`
-
----
+- **PASS:** 3
+- **FAIL:** 1 (event loop closed during parallel conditional execution)
+- **SKIP:** 0

@@ -1,24 +1,8 @@
-# Test Log -- 13_reasoning
+# Test Log — 13_reasoning
 
-**Tested:** 2026-02-13
-**Environment:** .venvs/demo/bin/python, pgvector: running
+Tested: 2026-02-12 | Branch: cookbook/v25-merge-fixes
 
----
-
-### basic_reasoning.py
-
-**Status:** PASS
-**Tier:** untagged
-**Description:** Demonstrates basic reasoning. Ran successfully and produced expected output.
-**Result:** Completed successfully in 5s.
-
----
-
-### reasoning_with_model.py
-
-**Status:** PASS
-**Tier:** untagged
-**Description:** Demonstrates reasoning with model. Ran successfully and produced expected output.
-**Result:** Completed successfully in 18s.
-
----
+| File | Status | Notes |
+|------|--------|-------|
+| basic_reasoning.py | PASS | Reasoning agent solves bat-and-ball problem correctly ($0.05) |
+| reasoning_with_model.py | PASS | Reasoning model with structured steps solves sheep problem (9 left) |

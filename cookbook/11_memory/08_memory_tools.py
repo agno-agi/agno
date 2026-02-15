@@ -39,24 +39,25 @@ agent = Agent(
     markdown=True,
 )
 
+
 # ---------------------------------------------------------------------------
 # Run Agent
 # ---------------------------------------------------------------------------
-if __name__ == "__main__":
-    asyncio.run(
-        agent.aprint_response(
-            "My name is John Doe and I like to hike in the mountains on weekends. "
-            "I like to travel to new places and experience different cultures. "
-            "I am planning to travel to Africa in December. ",
-            stream=True,
-            user_id=john_doe_id,
-        )
+async def main() -> None:
+    await agent.aprint_response(
+        "My name is John Doe and I like to hike in the mountains on weekends. "
+        "I like to travel to new places and experience different cultures. "
+        "I am planning to travel to Africa in December. ",
+        stream=True,
+        user_id=john_doe_id,
     )
 
-    asyncio.run(
-        agent.aprint_response(
-            "Make me a travel itinerary for my trip, and propose where I should go, how much I should budget, etc.",
-            stream=True,
-            user_id=john_doe_id,
-        )
+    await agent.aprint_response(
+        "Make me a travel itinerary for my trip, and propose where I should go, how much I should budget, etc.",
+        stream=True,
+        user_id=john_doe_id,
     )
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

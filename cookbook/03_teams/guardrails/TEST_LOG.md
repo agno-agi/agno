@@ -1,22 +1,14 @@
 # Test Log: guardrails
 
-> Updated: 2026-02-13
-
-## Pattern Check
-
-**Status:** PASS
-
-**Result:** Checked 3 file(s). Violations: 0
-
----
+> Updated: 2026-02-12
 
 ### openai_moderation.py
 
 **Status:** PASS
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/guardrails/openai_moderation.py`.
+**Description:** Demonstrates `OpenAIModerationGuardrail` as a pre-hook on a team with 4 test cases: safe input, borderline, hate speech, and custom moderation categories (violence only).
 
-**Result:** Executed successfully.
+**Result:** All 4 test cases completed. Safe input passed through, borderline processed normally, hate speech and custom-category violations correctly detected and blocked. Duration ~17s.
 
 ---
 
@@ -24,9 +16,9 @@
 
 **Status:** PASS
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/guardrails/pii_detection.py`.
+**Description:** Demonstrates `PIIDetectionGuardrail` in both blocking and masking modes with 8 test cases covering email addresses, credit card numbers, phone numbers, and SSNs.
 
-**Result:** Executed successfully.
+**Result:** All 8 tests completed. Blocking mode correctly raised errors for PII-containing inputs. Masking mode replaced sensitive data with asterisks while allowing the request through. Duration ~15s.
 
 ---
 
@@ -34,8 +26,8 @@
 
 **Status:** PASS
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/guardrails/prompt_injection.py`.
+**Description:** Demonstrates `PromptInjectionGuardrail` as a pre-hook with 5 test cases: normal, system prompt override, role-play exploit, jailbreak attempt, and subtle injection.
 
-**Result:** Executed successfully.
+**Result:** All 5 tests completed. Normal input passed through. All 4 injection attempts were correctly detected and blocked. Duration ~2s.
 
 ---

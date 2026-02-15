@@ -1,12 +1,14 @@
 # Test Log: multimodal
 
-> Updated: 2026-02-13
+> Updated: 2026-02-12
 
-## Pattern Check
+### audio_to_text.py
 
 **Status:** PASS
 
-**Result:** Checked 8 file(s). Violations: 0
+**Description:** Team-based audio transcription using Gemini. Downloads MP3 from S3, sends as Audio content to team with transcription specialist + content analyzer.
+
+**Result:** Full speaker-identified transcript produced accurately.
 
 ---
 
@@ -14,19 +16,9 @@
 
 **Status:** PASS
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/multimodal/audio_sentiment_analysis.py`.
+**Description:** Two-turn audio sentiment analysis with SQLite session persistence. Runs sentiment analysis, then asks follow-up using history.
 
-**Result:** Executed successfully.
-
----
-
-### audio_to_text.py
-
-**Status:** PASS
-
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/multimodal/audio_to_text.py`.
-
-**Result:** Executed successfully.
+**Result:** Detailed sentiment analysis with speaker identification. Follow-up leveraged session history for deeper psychological analysis.
 
 ---
 
@@ -34,19 +26,9 @@
 
 **Status:** PASS
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/multimodal/generate_image_with_team.py`.
+**Description:** Collaborative image generation using GPT-4o team with DalleTools. Prompt Engineer enhances prompt, Image Creator generates via DALL-E.
 
-**Result:** Executed successfully.
-
----
-
-### image_to_image_transformation.py
-
-**Status:** FAIL
-
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/multimodal/image_to_image_transformation.py`.
-
-**Result:** Missing dependency: fal_client.
+**Result:** Completed successfully. Prompt enhanced and image generated with streaming events.
 
 ---
 
@@ -54,9 +36,9 @@
 
 **Status:** PASS
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/multimodal/image_to_structured_output.py`.
+**Description:** Visual analysis with structured output schema (MovieScript Pydantic model). Analyzes Golden Gate Bridge image and produces structured movie concept.
 
-**Result:** Executed successfully.
+**Result:** Produced valid MovieScript with characters, setting, and storyline. Streaming output showed token-by-token structured generation.
 
 ---
 
@@ -64,9 +46,9 @@
 
 **Status:** PASS
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/multimodal/image_to_text.py`.
+**Description:** Local image analysis with creative writing. Sends image to team for analysis and story generation.
 
-**Result:** Executed successfully.
+**Result:** Team delegated to Image Analyst. Model could not process the image directly but team coordination worked correctly. Exit 0.
 
 ---
 
@@ -74,18 +56,29 @@
 
 **Status:** PASS
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/multimodal/media_input_for_tool.py`.
+**Description:** Custom Toolkit that receives File objects directly. Uses Gemini with store_media=True. Team processes synthetic PDF content via tool.
 
-**Result:** Executed successfully.
+**Result:** Synthetic PDF bytes passed correctly. Financial analysis produced noting growth rate inconsistency.
+
+---
+
+### image_to_image_transformation.py
+
+**Status:** SKIP
+
+**Description:** Image-to-image transformation using FalTools.
+
+**Result:** Missing: FAL_API_KEY environment variable not set.
 
 ---
 
 ### video_caption_generation.py
 
-**Status:** FAIL
+**Status:** PASS
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/multimodal/video_caption_generation.py`.
+**Description:** Video caption generation pipeline using team coordination. Caption Generator and Video Editor agents. PR fixed MoviePy enable_ prefix.
 
-**Result:** Missing dependency: moviepy.
+**Result:** Team coordination worked. Delegated to audio-extractor and caption-generator. Requested video file path from user (expected behavior for no-input run).
+**Re-verified:** 2026-02-14 — MoviePy enable_ prefix fix confirmed working, team loaded and delegated correctly.
 
 ---

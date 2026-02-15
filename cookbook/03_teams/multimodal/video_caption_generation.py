@@ -18,7 +18,7 @@ video_processor = Agent(
     name="Video Processor",
     role="Handle video processing and audio extraction",
     model=OpenAIResponses(id="gpt-5.2"),
-    tools=[MoviePyVideoTools(process_video=True, generate_captions=True)],
+    tools=[MoviePyVideoTools(enable_process_video=True, enable_generate_captions=True)],
     instructions=[
         "Extract audio from videos for processing",
         "Handle video file operations efficiently",
@@ -29,7 +29,7 @@ caption_generator = Agent(
     name="Caption Generator",
     role="Generate and embed captions in videos",
     model=OpenAIResponses(id="gpt-5.2"),
-    tools=[MoviePyVideoTools(embed_captions=True), OpenAITools()],
+    tools=[MoviePyVideoTools(enable_embed_captions=True), OpenAITools()],
     instructions=[
         "Transcribe audio to create accurate captions",
         "Generate SRT format captions with proper timing",

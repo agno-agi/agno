@@ -1,14 +1,14 @@
 # Test Log: 09_decision_logs
 
-> Tests not yet run. Run each file and update this log.
+> Updated: 2026-02-14
 
 ### 01_basic_decision_log.py
 
-**Status:** PENDING
+**Status:** PASS
 
-**Description:** Run and validate `01_basic_decision_log.py` example behavior.
+**Description:** Agent with DecisionLogTool logs decisions when asked for recommendations. Tests `.learning_machine` property access (changed from `.get_learning_machine()` method).
 
-**Result:** Not run yet.
+**Result:** Agent logged a decision recommending Python for web scraping with reasoning and alternatives. Decision log displayed correctly via rich Panel. Runs in ~5s.
 
 ---
 
