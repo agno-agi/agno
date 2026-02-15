@@ -136,6 +136,9 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         # Get database using db_id or default to first available
         db = await get_db(dbs, db_id)
 
+        if hasattr(request.state, "user_id") and request.state.user_id is not None:
+            user_id = request.state.user_id
+
         if isinstance(db, RemoteDb):
             auth_token = get_auth_token_from_request(request)
             headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
@@ -328,11 +331,15 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         trace_id: str,
         span_id: Optional[str] = Query(default=None, description="Optional: Span ID to retrieve specific span"),
         run_id: Optional[str] = Query(default=None, description="Optional: Run ID to retrieve trace for"),
+        user_id: Optional[str] = Query(default=None, description="Filter by user ID"),
         db_id: Optional[str] = Query(default=None, description="Database ID to query trace from"),
     ):
         """Get detailed trace with hierarchical span tree, or a specific span within the trace"""
         # Get database using db_id or default to first available
         db = await get_db(dbs, db_id)
+
+        if hasattr(request.state, "user_id") and request.state.user_id is not None:
+            user_id = request.state.user_id
 
         if isinstance(db, RemoteDb):
             auth_token = get_auth_token_from_request(request)
@@ -341,6 +348,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 trace_id=trace_id,
                 span_id=span_id,
                 run_id=run_id,
+                user_id=user_id,
                 db_id=db_id,
                 headers=headers,
             )
@@ -366,9 +374,9 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             # Otherwise, return full trace with hierarchy
             # Get trace
             if isinstance(db, AsyncBaseDb):
-                trace = await db.get_trace(trace_id=trace_id, run_id=run_id)
+                trace = await db.get_trace(trace_id=trace_id, run_id=run_id, user_id=user_id)
             else:
-                trace = db.get_trace(trace_id=trace_id, run_id=run_id)
+                trace = db.get_trace(trace_id=trace_id, run_id=run_id, user_id=user_id)
 
             if trace is None:
                 raise HTTPException(status_code=404, detail="Trace not found")
@@ -463,6 +471,9 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
 
         # Get database using db_id or default to first available
         db = await get_db(dbs, db_id)
+
+        if hasattr(request.state, "user_id") and request.state.user_id is not None:
+            user_id = request.state.user_id
 
         if isinstance(db, RemoteDb):
             auth_token = get_auth_token_from_request(request)
