@@ -1,7 +1,7 @@
 [project]
 name = "agno-infra"
-version = "1.0.8"
-description = "A lightweight framework and CLI for managing Agentic Infrastructure"
+version = "1.1.0"
+description = "The programming language for agentic infrastructure"
 requires-python = ">=3.7,<4"
 readme = "README.md"
 license-files = ["LICENSE"]
@@ -9,10 +9,9 @@ authors = [
   {name = "Ashpreet Bedi", email = "ashpreet@agno.com"}
 ]
 keywords = [
-  "infrastructure",
   "aws",
   "docker",
-  "framework",
+  "infrastructure",
 ]
 classifiers = [
     "Development Status :: 5 - Production/Stable",

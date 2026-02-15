@@ -1,7 +1,7 @@
 [project]
 name = "agno"
-version = "2.5.0"
-description = "Agno: a lightweight library for building Multi-Agent Systems"
+version = "2.5.1"
+description = "The programming language for agentic software."
 requires-python = ">=3.7,<4"
 readme = "README.md"
 license-files = ["LICENSE"]
@@ -9,11 +9,7 @@ authors = [
   {name = "Ashpreet Bedi", email = "ashpreet@agno.com"}
 ]
 keywords = [
-  "agent",
-  "reasoning",
-  "llm",
-  "large-language-model",
-  "framework",
+  "agent"
 ]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
