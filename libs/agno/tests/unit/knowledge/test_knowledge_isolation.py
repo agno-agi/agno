@@ -4,9 +4,12 @@ Tests that knowledge instances with isolate_vector_search=True filter by linked_
 """
 
 from typing import Any, Dict, List
+from unittest.mock import MagicMock
 
 import pytest
 
+from agno.db.schemas.knowledge import KnowledgeRow
+from agno.knowledge.content import Content
 from agno.knowledge.document import Document
 from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.base import VectorDb
@@ -152,8 +155,8 @@ class TestKnowledgeIsolation:
         assert len(mock_db.search_calls) == 1
         assert mock_db.search_calls[0]["filters"] == {"category": "docs", "linked_to": "Test KB"}
 
-    def test_search_with_isolation_list_filters_passed_through(self):
-        """Test that list filters are passed through without modification."""
+    def test_search_with_isolation_list_filters_gets_linked_to(self):
+        """Test that list filters also get linked_to injected automatically."""
         from agno.filters import EQ
 
         mock_db = MockVectorDb()
@@ -163,14 +166,15 @@ class TestKnowledgeIsolation:
             isolate_vector_search=True,
         )
 
-        # Use list-based filters (user must add linked_to manually)
         list_filters = [EQ("category", "docs")]
 
         knowledge.search("test query", filters=list_filters)
 
-        # List filters passed through unchanged (user responsibility to add linked_to)
         assert len(mock_db.search_calls) == 1
-        assert mock_db.search_calls[0]["filters"] == list_filters
+        result_filters = mock_db.search_calls[0]["filters"]
+        assert len(result_filters) == 2
+        assert result_filters[0].key == "category" and result_filters[0].value == "docs"
+        assert result_filters[1].key == "linked_to" and result_filters[1].value == "Test KB"
 
     @pytest.mark.asyncio
     async def test_async_search_with_isolation_injects_filter(self):
@@ -262,3 +266,163 @@ class TestLinkedToMetadata:
 
         # The knowledge's name should override since we set it after metadata merge
         assert result[0].meta_data["linked_to"] == "New KB"
+
+
+class TestContentByIdIsolation:
+    """Tests for IDOR protection in content-by-ID methods."""
+
+    def _make_mock_db(self, linked_to: str = "KB-A"):
+        mock_db = MagicMock()
+        mock_db.get_knowledge_content.return_value = KnowledgeRow(
+            name="test-content",
+            description="desc",
+            linked_to=linked_to,
+            status="completed",
+            status_message="ok",
+        )
+        return mock_db
+
+    def test_get_content_by_id_blocks_cross_instance(self):
+        mock_contents_db = self._make_mock_db(linked_to="KB-A")
+        knowledge = Knowledge(
+            name="KB-B",
+            vector_db=MockVectorDb(),
+            contents_db=mock_contents_db,
+            isolate_vector_search=True,
+        )
+        result = knowledge.get_content_by_id("some-id")
+        assert result is None
+
+    def test_get_content_by_id_allows_same_instance(self):
+        mock_contents_db = self._make_mock_db(linked_to="KB-A")
+        knowledge = Knowledge(
+            name="KB-A",
+            vector_db=MockVectorDb(),
+            contents_db=mock_contents_db,
+            isolate_vector_search=True,
+        )
+        result = knowledge.get_content_by_id("some-id")
+        assert result is not None
+
+    def test_get_content_by_id_no_isolation_allows_cross_instance(self):
+        mock_contents_db = self._make_mock_db(linked_to="KB-A")
+        knowledge = Knowledge(
+            name="KB-B",
+            vector_db=MockVectorDb(),
+            contents_db=mock_contents_db,
+            isolate_vector_search=False,
+        )
+        result = knowledge.get_content_by_id("some-id")
+        assert result is not None
+
+    def test_get_content_status_blocks_cross_instance(self):
+        mock_contents_db = self._make_mock_db(linked_to="KB-A")
+        knowledge = Knowledge(
+            name="KB-B",
+            vector_db=MockVectorDb(),
+            contents_db=mock_contents_db,
+            isolate_vector_search=True,
+        )
+        status, msg = knowledge.get_content_status("some-id")
+        assert status is None
+        assert msg == "Content not found"
+
+    @pytest.mark.asyncio
+    async def test_aget_content_by_id_blocks_cross_instance(self):
+        mock_contents_db = self._make_mock_db(linked_to="KB-A")
+        knowledge = Knowledge(
+            name="KB-B",
+            vector_db=MockVectorDb(),
+            contents_db=mock_contents_db,
+            isolate_vector_search=True,
+        )
+        result = await knowledge.aget_content_by_id("some-id")
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_aget_content_status_blocks_cross_instance(self):
+        mock_contents_db = self._make_mock_db(linked_to="KB-A")
+        knowledge = Knowledge(
+            name="KB-B",
+            vector_db=MockVectorDb(),
+            contents_db=mock_contents_db,
+            isolate_vector_search=True,
+        )
+        status, msg = await knowledge.aget_content_status("some-id")
+        assert status is None
+        assert msg == "Content not found"
+
+
+class TestContentHashIsolation:
+    """Tests that knowledge name is included in content hash when isolation is enabled."""
+
+    def test_hash_includes_name_with_isolation(self):
+        knowledge = Knowledge(
+            name="KB-A",
+            vector_db=MockVectorDb(),
+            isolate_vector_search=True,
+        )
+        content = Content(name="doc", url="https://example.com")
+        hash_a = knowledge._build_content_hash(content)
+
+        knowledge_b = Knowledge(
+            name="KB-B",
+            vector_db=MockVectorDb(),
+            isolate_vector_search=True,
+        )
+        hash_b = knowledge_b._build_content_hash(content)
+
+        assert hash_a != hash_b
+
+    def test_hash_same_without_isolation(self):
+        knowledge_a = Knowledge(
+            name="KB-A",
+            vector_db=MockVectorDb(),
+            isolate_vector_search=False,
+        )
+        knowledge_b = Knowledge(
+            name="KB-B",
+            vector_db=MockVectorDb(),
+            isolate_vector_search=False,
+        )
+        content = Content(name="doc", url="https://example.com")
+        assert knowledge_a._build_content_hash(content) == knowledge_b._build_content_hash(content)
+
+    def test_document_hash_includes_name_with_isolation(self):
+        knowledge_a = Knowledge(
+            name="KB-A",
+            vector_db=MockVectorDb(),
+            isolate_vector_search=True,
+        )
+        knowledge_b = Knowledge(
+            name="KB-B",
+            vector_db=MockVectorDb(),
+            isolate_vector_search=True,
+        )
+        content = Content(name="doc", url="https://example.com")
+        document = Document(name="page", content="content", meta_data={"url": "https://example.com/page"})
+        hash_a = knowledge_a._build_document_content_hash(document, content)
+        hash_b = knowledge_b._build_document_content_hash(document, content)
+        assert hash_a != hash_b
+
+
+class TestAsyncSearchFallback:
+    """Tests that async search sync fallback uses asyncio.to_thread."""
+
+    @pytest.mark.asyncio
+    async def test_async_fallback_uses_to_thread(self):
+        mock_db = MockVectorDb()
+
+        async def raise_not_implemented(*args, **kwargs):
+            raise NotImplementedError
+
+        mock_db.async_search = raise_not_implemented
+
+        knowledge = Knowledge(
+            name="Test KB",
+            vector_db=mock_db,
+        )
+
+        results = await knowledge.asearch("test query")
+        assert len(mock_db.search_calls) == 1
+        assert results[0].name == "test"

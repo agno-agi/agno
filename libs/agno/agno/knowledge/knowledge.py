@@ -13,7 +13,7 @@ from httpx import AsyncClient
 
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.schemas.knowledge import KnowledgeRow
-from agno.filters import FilterExpr
+from agno.filters import EQ, FilterExpr
 from agno.knowledge.content import Content, ContentAuth, ContentStatus, FileData
 from agno.knowledge.document import Document
 from agno.knowledge.reader import Reader, ReaderFactory
@@ -530,7 +530,8 @@ class Knowledge(RemoteKnowledge):
                     search_filters = {"linked_to": self.name}
                 elif isinstance(search_filters, dict):
                     search_filters = {**search_filters, "linked_to": self.name}
-                # List-based filters: user must add linked_to filter manually
+                elif isinstance(search_filters, list):
+                    search_filters = [*search_filters, EQ("linked_to", self.name)]
 
             _max_results = max_results or self.max_results
             log_debug(f"Getting {_max_results} relevant documents for query: {query}")
@@ -569,7 +570,8 @@ class Knowledge(RemoteKnowledge):
                     search_filters = {"linked_to": self.name}
                 elif isinstance(search_filters, dict):
                     search_filters = {**search_filters, "linked_to": self.name}
-                # List-based filters: user must add linked_to filter manually
+                elif isinstance(search_filters, list):
+                    search_filters = [*search_filters, EQ("linked_to", self.name)]
 
             _max_results = max_results or self.max_results
             log_debug(f"Getting {_max_results} relevant documents for query: {query}")
@@ -577,7 +579,9 @@ class Knowledge(RemoteKnowledge):
                 return await self.vector_db.async_search(query=query, limit=_max_results, filters=search_filters)
             except NotImplementedError:
                 log_info("Vector db does not support async search")
-                return self.vector_db.search(query=query, limit=_max_results, filters=search_filters)
+                return await asyncio.to_thread(
+                    self.vector_db.search, query=query, limit=_max_results, filters=search_filters
+                )
         except Exception as e:
             log_error(f"Error searching for documents: {e}")
             return []
@@ -638,6 +642,8 @@ class Knowledge(RemoteKnowledge):
         content_row = self.contents_db.get_knowledge_content(content_id)
         if content_row is None:
             return None
+        if self.isolate_vector_search and self.name and getattr(content_row, "linked_to", None) != self.name:
+            return None
         return self._content_row_to_content(content_row)
 
     async def aget_content_by_id(self, content_id: str) -> Optional[Content]:
@@ -650,6 +656,8 @@ class Knowledge(RemoteKnowledge):
             content_row = self.contents_db.get_knowledge_content(content_id)
 
         if content_row is None:
+            return None
+        if self.isolate_vector_search and self.name and getattr(content_row, "linked_to", None) != self.name:
             return None
         return self._content_row_to_content(content_row)
 
@@ -665,6 +673,8 @@ class Knowledge(RemoteKnowledge):
         content_row = self.contents_db.get_knowledge_content(content_id)
         if content_row is None:
             return None, "Content not found"
+        if self.isolate_vector_search and self.name and getattr(content_row, "linked_to", None) != self.name:
+            return None, "Content not found"
 
         return self._parse_content_status(content_row.status), content_row.status_message
 
@@ -678,6 +688,8 @@ class Knowledge(RemoteKnowledge):
             content_row = self.contents_db.get_knowledge_content(content_id)
 
         if content_row is None:
+            return None, "Content not found"
+        if self.isolate_vector_search and self.name and getattr(content_row, "linked_to", None) != self.name:
             return None, "Content not found"
 
         return self._parse_content_status(content_row.status), content_row.status_message
@@ -1545,7 +1557,7 @@ class Knowledge(RemoteKnowledge):
 
         bytes_content = None
         if file_extension:
-            async with AsyncClient() as client:
+            async with AsyncClient(follow_redirects=True) as client:
                 response = await async_fetch_with_retry(content.url, client=client)
             bytes_content = BytesIO(response.content)
 
@@ -2129,6 +2141,8 @@ class Knowledge(RemoteKnowledge):
         - Same logic applies to paths
         """
         hash_parts = []
+        if self.isolate_vector_search and self.name:
+            hash_parts.append(self.name)
         if content.name:
             hash_parts.append(content.name)
         if content.description:
@@ -2191,6 +2205,8 @@ class Knowledge(RemoteKnowledge):
             A unique hash string for this specific document
         """
         hash_parts = []
+        if self.isolate_vector_search and self.name:
+            hash_parts.append(self.name)
 
         if content.name:
             hash_parts.append(content.name)
