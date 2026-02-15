@@ -68,11 +68,6 @@ def filter_tool_calls(messages: List[Message], max_tool_calls: int) -> None:
 def inject_dependencies_block(content: Any, dependencies_block: str) -> Any:
     """Inject a dependencies block into message content, handling both string and multimodal formats.
 
-    Warning:
-        This function mutates `content` in-place when it is a list (multimodal format).
-        It modifies dict entries directly (part["text"] += ...) and may append new items.
-        Callers should deepcopy the content before calling if the original must be preserved.
-
     Args:
         content: The message content (str or list of multimodal parts).
         dependencies_block: The formatted dependencies string to inject.
