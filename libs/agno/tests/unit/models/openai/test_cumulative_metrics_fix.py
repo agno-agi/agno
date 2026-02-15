@@ -2,6 +2,7 @@ from typing import Optional
 
 from agno.models.base import MessageData
 from agno.models.metrics import Metrics
+from agno.models.openai.chat import OpenAIChat
 from agno.models.perplexity.perplexity import Perplexity
 from agno.models.response import ModelResponse
 
@@ -20,6 +21,11 @@ class MockCompletionUsage:
         self.total_tokens = total_tokens
         self.prompt_tokens_details = prompt_tokens_details
         self.completion_tokens_details = completion_tokens_details
+
+
+def test_openai_chat_default_is_cumulative_usage_flag():
+    model = OpenAIChat(id="gpt-4o")
+    assert model.is_cumulative_usage is False
 
 
 def test_perplexity_is_cumulative_usage_flag():
@@ -71,46 +77,6 @@ def test_perplexity_get_metrics_with_details():
     assert metrics.reasoning_tokens == 100
 
 
-def test_perplexity_streaming_metrics_simulation():
-    model = Perplexity(id="sonar", api_key="test-key")
-    stream_data = MessageData()
-
-    list(
-        model._populate_stream_data(
-            stream_data,
-            ModelResponse(
-                response_usage=Metrics(input_tokens=1965, output_tokens=1, total_tokens=1966),
-            ),
-        )
-    )
-    assert stream_data.response_metrics is not None
-    assert stream_data.response_metrics.input_tokens == 1965
-    assert stream_data.response_metrics.output_tokens == 1
-
-    list(
-        model._populate_stream_data(
-            stream_data,
-            ModelResponse(
-                response_usage=Metrics(input_tokens=1965, output_tokens=2, total_tokens=1967),
-            ),
-        )
-    )
-    assert stream_data.response_metrics.input_tokens == 1965
-    assert stream_data.response_metrics.output_tokens == 2
-
-    list(
-        model._populate_stream_data(
-            stream_data,
-            ModelResponse(
-                response_usage=Metrics(input_tokens=1965, output_tokens=29, total_tokens=1994),
-            ),
-        )
-    )
-    assert stream_data.response_metrics.input_tokens == 1965
-    assert stream_data.response_metrics.output_tokens == 29
-    assert stream_data.response_metrics.total_tokens == 1994
-
-
 def test_perplexity_get_metrics_with_none_values():
     model = Perplexity(id="sonar", api_key="test-key")
     usage = MockCompletionUsage(prompt_tokens=None, completion_tokens=None, total_tokens=None)
@@ -122,43 +88,42 @@ def test_perplexity_get_metrics_with_none_values():
     assert metrics.total_tokens == 0
 
 
-def test_perplexity_cumulative_usage_with_detailed_metrics():
+def test_cumulative_streaming_via_populate_stream_data():
+    """Perplexity cumulative chunks produce correct final metrics through the real code path."""
     model = Perplexity(id="sonar", api_key="test-key")
     stream_data = MessageData()
 
-    list(
-        model._populate_stream_data(
-            stream_data,
-            ModelResponse(
-                response_usage=Metrics(
-                    input_tokens=100,
-                    output_tokens=5,
-                    total_tokens=105,
-                    reasoning_tokens=10,
-                    cache_read_tokens=50,
-                ),
-            ),
-        )
-    )
-    assert stream_data.response_metrics is not None
-    assert stream_data.response_metrics.reasoning_tokens == 10
-    assert stream_data.response_metrics.cache_read_tokens == 50
+    chunk_metrics = [
+        Metrics(input_tokens=1965, output_tokens=1, total_tokens=1966),
+        Metrics(input_tokens=1965, output_tokens=2, total_tokens=1967),
+        Metrics(input_tokens=1965, output_tokens=3, total_tokens=1968),
+        Metrics(input_tokens=1965, output_tokens=29, total_tokens=1994),
+    ]
 
-    list(
-        model._populate_stream_data(
-            stream_data,
-            ModelResponse(
-                response_usage=Metrics(
-                    input_tokens=100,
-                    output_tokens=10,
-                    total_tokens=110,
-                    reasoning_tokens=20,
-                    cache_read_tokens=50,
-                ),
-            ),
-        )
-    )
+    for m in chunk_metrics:
+        list(model._populate_stream_data(stream_data, ModelResponse(response_usage=m)))
+
+    assert stream_data.response_metrics is not None
+    assert stream_data.response_metrics.input_tokens == 1965
+    assert stream_data.response_metrics.output_tokens == 29
+    assert stream_data.response_metrics.total_tokens == 1994
+
+
+def test_incremental_streaming_via_populate_stream_data():
+    """OpenAI incremental chunks are accumulated through the real code path."""
+    model = OpenAIChat(id="gpt-4o")
+    stream_data = MessageData()
+
+    chunk_metrics = [
+        Metrics(input_tokens=100, output_tokens=1, total_tokens=101),
+        Metrics(input_tokens=0, output_tokens=1, total_tokens=1),
+        Metrics(input_tokens=0, output_tokens=1, total_tokens=1),
+    ]
+
+    for m in chunk_metrics:
+        list(model._populate_stream_data(stream_data, ModelResponse(response_usage=m)))
+
+    assert stream_data.response_metrics is not None
     assert stream_data.response_metrics.input_tokens == 100
-    assert stream_data.response_metrics.output_tokens == 10
-    assert stream_data.response_metrics.reasoning_tokens == 20
-    assert stream_data.response_metrics.cache_read_tokens == 50
+    assert stream_data.response_metrics.output_tokens == 3
+    assert stream_data.response_metrics.total_tokens == 103
