@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from agno.exceptions import ModelAuthenticationError, ModelProviderError
 from agno.media import Audio
 from agno.models.base import Model
-from agno.models.message import Message
+from agno.models.message import Citations, Message, UrlCitation
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
@@ -807,6 +807,15 @@ class OpenAIChat(Model):
             except Exception as e:
                 log_warning(f"Error processing tool calls: {e}")
 
+        # Add citations
+        response_citations = response_message.annotations
+        if response_citations is not None and len(response_citations) > 0:
+            citations: List[UrlCitation] = [
+                UrlCitation(title=cite.url_citation.title, url=cite.url_citation.url)
+                for cite in response_citations
+                if cite.url_citation is not None
+            ]
+            model_response.citations = Citations(urls=citations)
         # Add audio transcript to content if available
         response_audio: Optional[ChatCompletionAudio] = response_message.audio
         if response_audio and response_audio.transcript and not model_response.content:
