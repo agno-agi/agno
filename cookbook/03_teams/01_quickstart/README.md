@@ -10,7 +10,7 @@ Examples for team workflows in 01_quickstart.
 
 ## Files
 
-- 01_basic_coordination.py - Demonstrates basic coordination.
+- 01_basic_coordination.py - Minimal starter example showing two members coordinating on a simple planning task.
 - 02_respond_directly_router_team.py - Demonstrates respond directly router team.
 - 03_delegate_to_all_members.py - Demonstrates delegate to all members.
 - 04_respond_directly_with_history.py - Demonstrates respond directly with history.
