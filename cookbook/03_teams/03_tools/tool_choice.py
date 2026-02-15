@@ -43,7 +43,10 @@ teams_timezone = Team(
     model=OpenAIResponses(id="gpt-5.2-mini"),
     members=[agent],
     tools=[get_city_timezone],
-    tool_choice={"type": "function", "function": {"name": "get_city_timezone"},},
+    tool_choice={
+        "type": "function",
+        "function": {"name": "get_city_timezone"},
+    },
     instructions=[
         "You are a logistics assistant.",
         "For every request, resolve the city timezone using the available tool.",

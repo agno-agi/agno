@@ -12,7 +12,6 @@ from agno.models.openai import OpenAIResponses
 from agno.session import SessionSummaryManager
 from agno.team import Team
 
-
 # ---------------------------------------------------------------------------
 # Setup
 # ---------------------------------------------------------------------------

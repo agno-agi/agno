@@ -11,7 +11,6 @@ from agno.models.openai import OpenAIResponses
 from agno.team import Team
 from agno.vectordb.lancedb import LanceDb
 
-
 # ---------------------------------------------------------------------------
 # Setup
 # ---------------------------------------------------------------------------

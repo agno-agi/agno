@@ -13,12 +13,13 @@ from agno.memory import MemoryManager
 from agno.models.openai import OpenAIResponses
 from agno.team import Team
 
-
 # ---------------------------------------------------------------------------
 # Setup
 # ---------------------------------------------------------------------------
 db_file = "tmp/team_memories.db"
-team_db = SqliteDb(db_file=db_file, session_table="team_sessions", memory_table="team_memories")
+team_db = SqliteDb(
+    db_file=db_file, session_table="team_sessions", memory_table="team_memories"
+)
 memory_manager = MemoryManager(
     model=OpenAIResponses(id="gpt-5.2-mini"),
     db=team_db,
