@@ -45,45 +45,11 @@ from agno.utils.log import (
     log_debug,
     log_warning,
 )
-from agno.utils.message import filter_tool_calls, get_text_from_message
+from agno.utils.message import filter_tool_calls, get_text_from_message, inject_dependencies_block
 from agno.utils.team import (
     get_member_id,
 )
 from agno.utils.timer import Timer
-
-
-def _inject_dependencies_block(content: Any, dependencies_block: str) -> Any:
-    """Inject a dependencies block into message content, handling both string and multimodal formats.
-
-    Args:
-        content: The message content (str or list of multimodal parts).
-        dependencies_block: The formatted dependencies string to inject.
-
-    Returns:
-        The modified content with dependencies injected.
-    """
-    if isinstance(content, str):
-        return content + dependencies_block
-    elif isinstance(content, list) and len(content) > 0 and isinstance(content[0], dict):
-        # Multimodal with "type" key (OpenAI format)
-        if "type" in content[0]:
-            for part in reversed(content):
-                if isinstance(part, dict) and part.get("type") == "text" and isinstance(part.get("text"), str):
-                    part["text"] += dependencies_block
-                    return content
-            # No text part found, append one
-            content.append({"type": "text", "text": dependencies_block.lstrip("\n")})
-            return content
-        # Dicts with "text" but no "type" key (some providers)
-        if "text" in content[0]:
-            for part in reversed(content):
-                if isinstance(part, dict) and isinstance(part.get("text"), str):
-                    part["text"] += dependencies_block
-                    return content
-            content.append({"text": dependencies_block.lstrip("\n")})
-            return content
-    # Fallback: convert to string
-    return (get_text_from_message(content) if content is not None else "") + dependencies_block
 
 
 def _get_tool_names(member: Any) -> List[str]:
@@ -1118,7 +1084,7 @@ def _get_user_message(
                     + _convert_dependencies_to_string(team, run_context.dependencies)
                     + "\n</additional context>"
                 )
-                input_content = _inject_dependencies_block(input_content, dependencies_block)
+                input_content = inject_dependencies_block(input_content, dependencies_block)
 
             return Message(
                 role="user",
@@ -1142,7 +1108,7 @@ def _get_user_message(
                     + _convert_dependencies_to_string(team, run_context.dependencies)
                     + "\n</additional context>"
                 )
-                msg_copy.content = _inject_dependencies_block(msg_copy.content, dependencies_block)
+                msg_copy.content = inject_dependencies_block(msg_copy.content, dependencies_block)
             return msg_copy
         # If message is provided as a dict, try to validate it as a Message
         elif isinstance(input_message, dict):
@@ -1296,7 +1262,7 @@ async def _aget_user_message(
                     + _convert_dependencies_to_string(team, run_context.dependencies)
                     + "\n</additional context>"
                 )
-                input_content = _inject_dependencies_block(input_content, dependencies_block)
+                input_content = inject_dependencies_block(input_content, dependencies_block)
 
             return Message(
                 role="user",
@@ -1320,7 +1286,7 @@ async def _aget_user_message(
                     + _convert_dependencies_to_string(team, run_context.dependencies)
                     + "\n</additional context>"
                 )
-                msg_copy.content = _inject_dependencies_block(msg_copy.content, dependencies_block)
+                msg_copy.content = inject_dependencies_block(msg_copy.content, dependencies_block)
             return msg_copy
         # If message is provided as a dict, try to validate it as a Message
         elif isinstance(input_message, dict):
