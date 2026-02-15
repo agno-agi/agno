@@ -94,6 +94,7 @@ mistral = ["mistralai"]
 ollama = ["ollama"]
 openai = ["openai"]
 portkey = ["portkey-ai"]
+gpustack = ["httpx"]
 
 # Dependencies for Token Counting
 tokenizers = ["tiktoken", "tokenizers"]
