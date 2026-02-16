@@ -1,8 +1,8 @@
 from agno.knowledge.remote_content.config import (
     AzureBlobConfig,
+    BaseStorageConfig,
     GcsConfig,
     GitHubConfig,
-    RemoteContentConfig,
     S3Config,
     SharePointConfig,
 )
@@ -17,7 +17,7 @@ from agno.knowledge.remote_content.remote_content import (
 
 __all__ = [
     # Config classes
-    "RemoteContentConfig",
+    "BaseStorageConfig",
     "S3Config",
     "GcsConfig",
     "SharePointConfig",
