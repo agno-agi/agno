@@ -2,12 +2,12 @@ import asyncio
 import hashlib
 import io
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from io import BytesIO
 from os.path import basename
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple, Union, cast, overload
+from typing import Any, ClassVar, Dict, List, Optional, Set, Tuple, Union, cast, overload
 
 from httpx import AsyncClient
 
@@ -17,12 +17,8 @@ from agno.filters import FilterExpr
 from agno.knowledge.content import Content, ContentAuth, ContentStatus, FileData
 from agno.knowledge.document import Document
 from agno.knowledge.reader import Reader, ReaderFactory
-from agno.knowledge.remote_content.config import (
-    RemoteContentConfig,
-)
-from agno.knowledge.remote_content.remote_content import (
-    RemoteContent,
-)
+from agno.knowledge.remote_content.config import BaseStorageConfig
+from agno.knowledge.remote_content.remote_content import RemoteContent
 from agno.knowledge.remote_knowledge import RemoteKnowledge
 from agno.utils.http import async_fetch_with_retry
 from agno.utils.log import log_debug, log_error, log_info, log_warning
@@ -48,12 +44,17 @@ class Knowledge(RemoteKnowledge):
     contents_db: Optional[Union[BaseDb, AsyncBaseDb]] = None
     max_results: int = 10
     readers: Optional[Dict[str, Reader]] = None
-    content_sources: Optional[List[RemoteContentConfig]] = None
+    content_sources: Optional[List[BaseStorageConfig]] = None
+    # S3Config or LocalStorageConfig used for backup file storage (does not need to be in content_sources)
+    backup_storage_config: Optional[BaseStorageConfig] = None
     # When True, adds linked_to metadata during insert and filters by it during search.
     # This enables isolation when multiple Knowledge instances share the same vector database.
     # Requires re-indexing existing data to add linked_to metadata.
     # Default is False for backwards compatibility with existing data.
     isolate_vector_search: bool = False
+
+    # Internal: lazily initialized BackupStorage instance
+    _backup_storage: Optional[Any] = field(init=False, default=None, repr=False)
 
     def __post_init__(self):
         from agno.vectordb import VectorDb
@@ -63,6 +64,40 @@ class Knowledge(RemoteKnowledge):
             self.vector_db.create()
 
         self.construct_readers()
+
+    @property
+    def knowledge_id(self) -> str:
+        """Generate a deterministic ID for this knowledge instance.
+
+        Must match _generate_knowledge_id() in agno.os.utils so that
+        backup storage paths and API routes resolve to the same ID.
+        """
+        import hashlib
+
+        name = self.name or "knowledge"
+        db_id = self.contents_db.id if self.contents_db else "default"
+        table_name = self.contents_db.knowledge_table_name if self.contents_db else "unknown"
+        id_seed = f"{db_id}:{table_name}:{name}"
+        hash_hex = hashlib.sha256(id_seed.encode()).hexdigest()
+        return f"{hash_hex[:8]}-{hash_hex[8:12]}-{hash_hex[12:16]}-{hash_hex[16:20]}-{hash_hex[20:32]}"
+
+    @property
+    def backup_storage(self):
+        """Lazily initialize BackupStorage from backup_storage_config."""
+        if self._backup_storage is not None:
+            return self._backup_storage
+
+        if not self.backup_storage_config:
+            return None
+
+        from agno.knowledge.backup_storage import BackupStorage
+
+        self._backup_storage = BackupStorage(
+            storage_config=self.backup_storage_config,
+            knowledge_id=self.knowledge_id,
+            content_sources=self.content_sources,
+        )
+        return self._backup_storage
 
     # ==========================================
     # PUBLIC API - INSERT METHODS
@@ -104,6 +139,7 @@ class Knowledge(RemoteKnowledge):
         upsert: bool = True,
         skip_if_exists: bool = False,
         auth: Optional[ContentAuth] = None,
+        backup: Optional[bool] = None,
     ) -> None:
         """
         Synchronously insert content into the knowledge base.
@@ -122,6 +158,8 @@ class Knowledge(RemoteKnowledge):
             exclude: Optional list of file patterns to exclude
             upsert: Whether to update existing content if it already exists (only used when skip_if_exists=False)
             skip_if_exists: Whether to skip inserting content if it already exists (default: False)
+            backup: Whether to store backup content. None=auto (store if backup_storage_config set),
+                True=force store, False=skip backup storage.
         """
         # Validation: At least one of the parameters must be provided
         if all(argument is None for argument in [path, url, text_content, topics, remote_content]):
@@ -135,13 +173,16 @@ class Knowledge(RemoteKnowledge):
         if text_content:
             file_data = FileData(content=text_content, type="Text")
 
+        # Strip reserved _agno key from user-provided metadata
+        safe_metadata = {k: v for k, v in metadata.items() if k != self.RESERVED_METADATA_KEY} if metadata else None
+
         content = Content(
             name=name,
             description=description,
             path=path,
             url=url,
             file_data=file_data if file_data else None,
-            metadata=metadata,
+            metadata=safe_metadata,
             topics=topics,
             remote_content=remote_content,
             reader=reader,
@@ -150,7 +191,7 @@ class Knowledge(RemoteKnowledge):
         content.content_hash = self._build_content_hash(content)
         content.id = generate_id(content.content_hash)
 
-        self._load_content(content, upsert, skip_if_exists, include, exclude)
+        self._load_content(content, upsert, skip_if_exists, include, exclude, backup=backup)
 
     @overload
     async def ainsert(
@@ -187,6 +228,7 @@ class Knowledge(RemoteKnowledge):
         upsert: bool = True,
         skip_if_exists: bool = False,
         auth: Optional[ContentAuth] = None,
+        backup: Optional[bool] = None,
     ) -> None:
         # Validation: At least one of the parameters must be provided
         if all(argument is None for argument in [path, url, text_content, topics, remote_content]):
@@ -200,13 +242,16 @@ class Knowledge(RemoteKnowledge):
         if text_content:
             file_data = FileData(content=text_content, type="Text")
 
+        # Strip reserved _agno key from user-provided metadata
+        safe_metadata = {k: v for k, v in metadata.items() if k != self.RESERVED_METADATA_KEY} if metadata else None
+
         content = Content(
             name=name,
             description=description,
             path=path,
             url=url,
             file_data=file_data if file_data else None,
-            metadata=metadata,
+            metadata=safe_metadata,
             topics=topics,
             remote_content=remote_content,
             reader=reader,
@@ -215,7 +260,7 @@ class Knowledge(RemoteKnowledge):
         content.content_hash = self._build_content_hash(content)
         content.id = generate_id(content.content_hash)
 
-        await self._aload_content(content, upsert, skip_if_exists, include, exclude)
+        await self._aload_content(content, upsert, skip_if_exists, include, exclude, backup=backup)
 
     # --- Insert Many ---
     @overload
@@ -764,6 +809,249 @@ class Knowledge(RemoteKnowledge):
         return self.vector_db.delete_by_metadata(metadata)
 
     # ==========================================
+    # PUBLIC API - REFRESH METHODS
+    # ==========================================
+
+    def refresh_content(self, content_id: str) -> Content:
+        """Refresh content by re-fetching from source and re-embedding.
+
+        Priority:
+        1. Original source (if _agno.source_type exists)
+        2. Backup storage (if _agno.backup_storage_type exists)
+
+        Args:
+            content_id: ID of the content to refresh
+
+        Returns:
+            Updated Content object
+
+        Raises:
+            ValueError: If content not found or no source available
+        """
+        content = self.get_content_by_id(content_id)
+        if content is None:
+            raise ValueError(f"Content {content_id} not found")
+
+        file_bytes, filename = self._resolve_refresh_source(content)
+
+        # Reconstruct the reader from stored processing config
+        content.reader = self._reconstruct_reader_from_processing(content)
+
+        # Create new Content with the fetched file data
+        file_data = FileData(
+            content=file_bytes,
+            filename=filename,
+            type=content.file_type,
+        )
+        content.file_data = file_data
+
+        # Compute content_hash for the refreshed content (not stored in KnowledgeRow)
+        content.content_hash = self._build_content_hash(content)
+
+        # Delete old vector records for this content before re-inserting.
+        # The content_hash may have changed, so deleting by content_id ensures
+        # stale embeddings are removed regardless of hash changes.
+        self._delete_vector_records_for_content(content_id)
+
+        # Re-process: load content with upsert=True, skip_if_exists=False
+        self._load_content(content, upsert=True, skip_if_exists=False, backup=False)
+        return content
+
+    async def arefresh_content(self, content_id: str) -> Content:
+        """Async version of refresh_content."""
+        content = await self.aget_content_by_id(content_id)
+        if content is None:
+            raise ValueError(f"Content {content_id} not found")
+
+        file_bytes, filename = await self._aresolve_refresh_source(content)
+
+        # Reconstruct the reader from stored processing config
+        content.reader = self._reconstruct_reader_from_processing(content)
+
+        # Create new Content with the fetched file data
+        file_data = FileData(
+            content=file_bytes,
+            filename=filename,
+            type=content.file_type,
+        )
+        content.file_data = file_data
+
+        # Compute content_hash for the refreshed content (not stored in KnowledgeRow)
+        content.content_hash = self._build_content_hash(content)
+
+        # Delete old vector records for this content before re-inserting
+        self._delete_vector_records_for_content(content_id)
+
+        # Re-process: load content with upsert=True, skip_if_exists=False
+        await self._aload_content(content, upsert=True, skip_if_exists=False, backup=False)
+        return content
+
+    def _delete_vector_records_for_content(self, content_id: str) -> None:
+        """Delete all vector DB records associated with a content_id.
+
+        Used during refresh to remove stale embeddings before re-inserting.
+        Deletes by content_id (not content_hash) so it works even when the
+        content hash changes between the original ingest and the refresh.
+
+        Raises on failure so callers abort instead of re-inserting duplicates.
+
+        Note: uses the sync vector DB call even from async callers, matching
+        the existing pattern (e.g. pgvector.async_upsert calls sync
+        content_hash_exists and _delete_by_content_hash directly).
+        """
+        if self.vector_db and hasattr(self.vector_db, "delete_by_content_id"):
+            self.vector_db.delete_by_content_id(content_id)
+
+    def _resolve_refresh_source(self, content: Content) -> tuple:
+        """Determine the best source to refresh content from and fetch it.
+
+        Priority:
+        1. Original cloud source (if _agno.source_type exists) — try first
+        2. Backup storage (if _agno.backup_storage_type exists) — fallback
+
+        Returns:
+            Tuple of (file_bytes, filename)
+        """
+        agno_meta = (content.metadata or {}).get(self.RESERVED_METADATA_KEY, {})
+        if not isinstance(agno_meta, dict):
+            agno_meta = {}
+
+        filename = content.name or "content"
+
+        # Priority 1: Original source
+        source_type = agno_meta.get("source_type")
+        if source_type:
+            try:
+                if source_type == "url":
+                    file_bytes = self._fetch_url_for_refresh(agno_meta)
+                    return file_bytes, filename
+                storage = self._get_backup_storage_for_refresh(agno_meta)
+                file_bytes = storage.fetch_from_source(agno_meta)
+                return file_bytes, filename
+            except Exception as e:
+                log_warning(f"Failed to fetch from original source, trying backup storage: {e}")
+
+        # Priority 2: Backup storage
+        backup_storage_type = agno_meta.get("backup_storage_type")
+        if backup_storage_type:
+            storage = self._get_backup_storage_for_refresh(agno_meta)
+            file_bytes = storage.fetch(agno_meta)
+            return file_bytes, filename
+
+        # Also check top-level metadata for backward compatibility
+        if content.metadata:
+            source_type = content.metadata.get("source_type")
+            if source_type:
+                try:
+                    if source_type == "url":
+                        file_bytes = self._fetch_url_for_refresh(content.metadata)
+                        return file_bytes, filename
+                    storage = self._get_backup_storage_for_refresh(content.metadata)
+                    file_bytes = storage.fetch_from_source(content.metadata)
+                    return file_bytes, filename
+                except Exception as e:
+                    log_warning(f"Failed to fetch from original source (compat): {e}")
+
+        raise ValueError("Cannot refresh: no backup storage or original source available")
+
+    def _get_backup_storage_for_refresh(self, metadata: Dict[str, Any]) -> Any:
+        """Get or create a BackupStorage instance for refresh operations."""
+        from agno.knowledge.backup_storage import BackupStorage
+
+        if self.backup_storage is not None:
+            return self.backup_storage
+
+        # Create a temporary BackupStorage with content_sources for config resolution
+        config_id = metadata.get("backup_storage_config_id") or metadata.get("source_config_id")
+        storage_config = None
+        if config_id and self.content_sources:
+            storage_config = self._get_remote_config_by_id(config_id)
+
+        if storage_config is None:
+            # Use a dummy config - the fetch methods will use metadata directly
+            from agno.knowledge.remote_content.config import BaseStorageConfig
+
+            storage_config = BaseStorageConfig(id="__refresh__", name="refresh")
+
+        return BackupStorage(
+            storage_config=storage_config,
+            knowledge_id=self.knowledge_id,
+            content_sources=self.content_sources,
+        )
+
+    def _fetch_url_for_refresh(self, metadata: Dict[str, Any]) -> bytes:
+        """Re-fetch content from a URL for refresh."""
+        from agno.utils.http import fetch_with_retry
+
+        source_url = metadata.get("source_url")
+        if not source_url:
+            raise ValueError("Cannot refresh URL content: no source_url in metadata")
+
+        response = fetch_with_retry(source_url)
+        return response.content
+
+    async def _aresolve_refresh_source(self, content: Content) -> tuple:
+        """Async version of _resolve_refresh_source.
+
+        Priority:
+        1. Original cloud source (if _agno.source_type exists) — try first
+        2. Backup storage (if _agno.backup_storage_type exists) — fallback
+
+        Returns:
+            Tuple of (file_bytes, filename)
+        """
+        agno_meta = (content.metadata or {}).get(self.RESERVED_METADATA_KEY, {})
+        if not isinstance(agno_meta, dict):
+            agno_meta = {}
+
+        filename = content.name or "content"
+
+        # Priority 1: Original source
+        source_type = agno_meta.get("source_type")
+        if source_type:
+            try:
+                if source_type == "url":
+                    file_bytes = await self._afetch_url_for_refresh(agno_meta)
+                    return file_bytes, filename
+                storage = self._get_backup_storage_for_refresh(agno_meta)
+                file_bytes = await storage.afetch_from_source(agno_meta)
+                return file_bytes, filename
+            except Exception as e:
+                log_warning(f"Failed to fetch from original source, trying backup storage: {e}")
+
+        # Priority 2: Backup storage
+        backup_storage_type = agno_meta.get("backup_storage_type")
+        if backup_storage_type:
+            storage = self._get_backup_storage_for_refresh(agno_meta)
+            file_bytes = await storage.afetch(agno_meta)
+            return file_bytes, filename
+
+        # Also check top-level metadata for backward compatibility
+        if content.metadata:
+            source_type = content.metadata.get("source_type")
+            if source_type:
+                try:
+                    if source_type == "url":
+                        file_bytes = await self._afetch_url_for_refresh(content.metadata)
+                        return file_bytes, filename
+                    storage = self._get_backup_storage_for_refresh(content.metadata)
+                    file_bytes = await storage.afetch_from_source(content.metadata)
+                    return file_bytes, filename
+                except Exception as e:
+                    log_warning(f"Failed to fetch from original source (compat): {e}")
+
+        raise ValueError("Cannot refresh: no backup storage or original source available")
+
+    async def _afetch_url_for_refresh(self, metadata: Dict[str, Any]) -> bytes:
+        """Async version of _fetch_url_for_refresh. Uses httpx AsyncClient."""
+        source_url = metadata.get("source_url")
+        if not source_url:
+            raise ValueError("Cannot refresh URL content: no source_url in metadata")
+
+        response = await async_fetch_with_retry(source_url)
+        return response.content
+
+    # ==========================================
     # PUBLIC API - FILTER METHODS
     # ==========================================
 
@@ -1074,8 +1362,14 @@ class Knowledge(RemoteKnowledge):
         skip_if_exists: bool,
         include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
+        backup: Optional[bool] = None,
     ) -> None:
         """Synchronously load content."""
+        # Store backup content if applicable
+        self._determine_backup(content, backup)
+        # Capture reader and chunking config in _agno metadata
+        self._store_processing_config(content)
+
         if content.path:
             self._load_from_path(content, upsert, skip_if_exists, include, exclude)
 
@@ -1089,7 +1383,7 @@ class Knowledge(RemoteKnowledge):
             self._load_from_topics(content, upsert, skip_if_exists)
 
         if content.remote_content:
-            self._load_from_remote_content(content, upsert, skip_if_exists)
+            self._load_from_remote_content(content, upsert, skip_if_exists, backup=backup)
 
     async def _aload_content(
         self,
@@ -1098,7 +1392,13 @@ class Knowledge(RemoteKnowledge):
         skip_if_exists: bool,
         include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
+        backup: Optional[bool] = None,
     ) -> None:
+        # Store backup content if applicable
+        await self._adetermine_backup(content, backup)
+        # Capture reader and chunking config in _agno metadata
+        self._store_processing_config(content)
+
         if content.path:
             await self._aload_from_path(content, upsert, skip_if_exists, include, exclude)
 
@@ -1112,7 +1412,240 @@ class Knowledge(RemoteKnowledge):
             await self._aload_from_topics(content, upsert, skip_if_exists)
 
         if content.remote_content:
-            await self._aload_from_remote_content(content, upsert, skip_if_exists)
+            await self._aload_from_remote_content(content, upsert, skip_if_exists, backup=backup)
+
+    def _determine_backup(self, content: Content, backup: Optional[bool] = None) -> None:
+        """Store backup content to the configured backup storage backend if applicable.
+
+        Args:
+            content: Content with file_data to store
+            backup: None=auto (store if backup_storage_config set), True=force, False=skip
+        """
+        # Determine if we should store
+        should_store = backup if backup is not None else (self.backup_storage is not None)
+        if not should_store:
+            return
+
+        if backup is True and self.backup_storage is None:
+            log_warning("backup=True but no backup_storage_config set on Knowledge")
+            return
+
+        if self.backup_storage is None:
+            return
+
+        # Extract file bytes from content
+        file_bytes = self._extract_file_bytes(content)
+        if file_bytes is None:
+            return
+
+        # Determine filename
+        filename = "content"
+        if content.file_data and isinstance(content.file_data, FileData) and content.file_data.filename:
+            filename = content.file_data.filename
+        elif content.name:
+            filename = content.name
+        elif content.path:
+            filename = basename(content.path)
+
+        content_id = content.id or generate_id(content.content_hash or "")
+
+        try:
+            storage_meta = self.backup_storage.store(content_id, filename, file_bytes)
+            # Store backup storage info under _agno metadata
+            if content.metadata is None:
+                content.metadata = {}
+            for key, value in storage_meta.items():
+                content.metadata = self._set_agno_metadata(content.metadata, key, value)
+        except Exception as e:
+            log_error(f"Failed to store backup content: {e}")
+
+    def _backup_bytes(self, content: Content, file_bytes: bytes, filename: str, backup: Optional[bool] = None) -> None:
+        """Store backup copy of fetched remote content bytes.
+
+        Called by remote content loaders after fetching bytes from cloud sources.
+        """
+        should_store = backup if backup is not None else (self.backup_storage is not None)
+        if not should_store or self.backup_storage is None:
+            return
+
+        content_id = content.id or generate_id(content.content_hash or "")
+        try:
+            storage_meta = self.backup_storage.store(content_id, filename, file_bytes)
+            if content.metadata is None:
+                content.metadata = {}
+            for key, value in storage_meta.items():
+                content.metadata = self._set_agno_metadata(content.metadata, key, value)
+        except Exception as e:
+            log_error(f"Failed to store backup content: {e}")
+
+    async def _adetermine_backup(self, content: Content, backup: Optional[bool] = None) -> None:
+        """Async version of _determine_backup.
+
+        Args:
+            content: Content with file_data to store
+            backup: None=auto (store if backup_storage_config set), True=force, False=skip
+        """
+        should_store = backup if backup is not None else (self.backup_storage is not None)
+        if not should_store:
+            return
+
+        if backup is True and self.backup_storage is None:
+            log_warning("backup=True but no backup_storage_config set on Knowledge")
+            return
+
+        if self.backup_storage is None:
+            return
+
+        file_bytes = self._extract_file_bytes(content)
+        if file_bytes is None:
+            return
+
+        filename = "content"
+        if content.file_data and isinstance(content.file_data, FileData) and content.file_data.filename:
+            filename = content.file_data.filename
+        elif content.name:
+            filename = content.name
+        elif content.path:
+            filename = basename(content.path)
+
+        content_id = content.id or generate_id(content.content_hash or "")
+
+        try:
+            storage_meta = await self.backup_storage.astore(content_id, filename, file_bytes)
+            if content.metadata is None:
+                content.metadata = {}
+            for key, value in storage_meta.items():
+                content.metadata = self._set_agno_metadata(content.metadata, key, value)
+        except Exception as e:
+            log_error(f"Failed to store backup content: {e}")
+
+    async def _abackup_bytes(
+        self, content: Content, file_bytes: bytes, filename: str, backup: Optional[bool] = None
+    ) -> None:
+        """Async version of _backup_bytes.
+
+        Called by async remote content loaders after fetching bytes from cloud sources.
+        """
+        should_store = backup if backup is not None else (self.backup_storage is not None)
+        if not should_store or self.backup_storage is None:
+            return
+
+        content_id = content.id or generate_id(content.content_hash or "")
+        try:
+            storage_meta = await self.backup_storage.astore(content_id, filename, file_bytes)
+            if content.metadata is None:
+                content.metadata = {}
+            for key, value in storage_meta.items():
+                content.metadata = self._set_agno_metadata(content.metadata, key, value)
+        except Exception as e:
+            log_error(f"Failed to store backup content: {e}")
+
+    def _store_processing_config(self, content: Content) -> None:
+        """Capture reader and chunking configuration in _agno metadata.
+
+        Stores the reader class name, chunk settings, and chunking strategy so that
+        content can be re-processed with identical parameters during refresh.
+        """
+        if content.metadata is None:
+            content.metadata = {}
+
+        processing: Dict[str, Any] = {}
+
+        reader = content.reader
+        if reader:
+            processing["reader_id"] = type(reader).__name__
+            processing["chunk"] = reader.chunk
+            processing["chunk_size"] = reader.chunk_size
+
+            if reader.chunking_strategy:
+                strategy = reader.chunking_strategy
+                # Store the ChunkingStrategyType enum value (e.g., "FixedSizeChunker")
+                # so it can be resolved via ChunkingStrategyType.from_string() on refresh
+                strategy_name = self._CHUNKING_CLASS_TO_TYPE.get(type(strategy).__name__)
+                processing["chunking_strategy"] = strategy_name or type(strategy).__name__
+                # Capture common chunking params
+                if hasattr(strategy, "chunk_size"):
+                    processing["chunking_chunk_size"] = strategy.chunk_size
+                if hasattr(strategy, "overlap"):
+                    processing["chunking_overlap"] = strategy.overlap
+
+        content.metadata = self._set_agno_metadata(content.metadata, "processing", processing)
+
+    # Mapping from chunking implementation class names to ChunkingStrategyType enum values
+    _CHUNKING_CLASS_TO_TYPE: ClassVar[Dict[str, str]] = {
+        "AgenticChunking": "AgenticChunker",
+        "CodeChunking": "CodeChunker",
+        "DocumentChunking": "DocumentChunker",
+        "RecursiveChunking": "RecursiveChunker",
+        "SemanticChunking": "SemanticChunker",
+        "FixedSizeChunking": "FixedSizeChunker",
+        "RowChunking": "RowChunker",
+        "MarkdownChunking": "MarkdownChunker",
+    }
+
+    def _is_refresh_available(self, content: Content) -> bool:
+        """Check if content has a source available for refresh."""
+        has_raw = bool(self._get_agno_metadata(content.metadata, "backup_storage_type"))
+        has_source = bool(self._get_agno_metadata(content.metadata, "source_type"))
+        return has_raw or has_source
+
+    def _reconstruct_reader_from_processing(self, content: Content) -> Optional[Reader]:
+        """Reconstruct a Reader from stored _agno.processing metadata.
+
+        Used during content refresh to reproduce the same reader and chunking
+        settings that were used during the original ingest.
+        """
+        processing = self._get_agno_metadata(content.metadata, "processing")
+        if not processing or not isinstance(processing, dict):
+            return None
+
+        reader_id = processing.get("reader_id")
+        if not reader_id:
+            return None
+
+        reader_key = ReaderFactory.get_reader_key_for_class_name(reader_id)
+        if not reader_key:
+            log_warning(f"Cannot reconstruct reader: unknown class name '{reader_id}'")
+            return None
+
+        reader = ReaderFactory.create_reader(reader_key)
+
+        # Restore chunk settings
+        if "chunk" in processing:
+            reader.chunk = processing["chunk"]
+        if "chunk_size" in processing:
+            reader.chunk_size = processing["chunk_size"]
+
+        # Restore chunking strategy
+        chunking_strategy_name = processing.get("chunking_strategy")
+        if chunking_strategy_name:
+            try:
+                reader.set_chunking_strategy_from_string(
+                    chunking_strategy_name,
+                    chunk_size=processing.get("chunking_chunk_size"),
+                    overlap=processing.get("chunking_overlap"),
+                )
+            except ValueError:
+                log_warning(f"Cannot reconstruct chunking strategy: '{chunking_strategy_name}'")
+
+        return reader
+
+    @staticmethod
+    def _extract_file_bytes(content: Content) -> Optional[bytes]:
+        """Extract file bytes from Content for backup storage."""
+        if content.file_data:
+            if isinstance(content.file_data, FileData):
+                if isinstance(content.file_data.content, bytes):
+                    return content.file_data.content
+                elif isinstance(content.file_data.content, str):
+                    return content.file_data.content.encode("utf-8")
+            elif isinstance(content.file_data, str):
+                return content.file_data.encode("utf-8")
+        elif content.path:
+            path = Path(content.path)
+            if path.exists():
+                return path.read_bytes()
+        return None
 
     def _should_skip(self, content_hash: str, skip_if_exists: bool) -> bool:
         """
@@ -1513,6 +2046,16 @@ class Knowledge(RemoteKnowledge):
             url_path = Path(parsed.path)
             content.name = url_path.name if url_path.name else content.url
 
+        # Store URL source metadata in _agno for refresh support
+        if content.metadata is None:
+            content.metadata = {}
+        agno_meta = content.metadata.get(self.RESERVED_METADATA_KEY, {})
+        if not isinstance(agno_meta, dict):
+            agno_meta = {}
+        agno_meta["source_type"] = "url"
+        agno_meta["source_url"] = content.url
+        content.metadata[self.RESERVED_METADATA_KEY] = agno_meta
+
         # 1. Add content to contents database
         await self._ainsert_contents_db(content)
         if self._should_skip(content.content_hash, skip_if_exists):  # type: ignore[arg-type]
@@ -1659,6 +2202,16 @@ class Knowledge(RemoteKnowledge):
             parsed = urlparse(content.url)
             url_path = Path(parsed.path)
             content.name = url_path.name if url_path.name else content.url
+
+        # Store URL source metadata in _agno for refresh support
+        if content.metadata is None:
+            content.metadata = {}
+        agno_meta = content.metadata.get(self.RESERVED_METADATA_KEY, {})
+        if not isinstance(agno_meta, dict):
+            agno_meta = {}
+        agno_meta["source_type"] = "url"
+        agno_meta["source_url"] = content.url
+        content.metadata[self.RESERVED_METADATA_KEY] = agno_meta
 
         # 1. Add content to contents database
         self._insert_contents_db(content)
@@ -2254,6 +2807,67 @@ class Knowledge(RemoteKnowledge):
         # Already a string, return as-is
         return value
 
+    # --- Metadata Helpers ---
+    # RESERVED_METADATA_KEY inherited from BaseLoader
+
+    @staticmethod
+    def _merge_user_metadata(
+        existing_metadata: Optional[Dict[str, Any]],
+        new_metadata: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Merge metadata while deep-merging the reserved _agno key.
+
+        The _agno key contains system-managed fields (source tracking, backup storage info).
+        Both existing and new _agno values are merged so that system code can add keys
+        (e.g. backup_storage_type added after initial insert) without losing earlier keys.
+        """
+        existing_agno: Optional[Dict[str, Any]] = None
+        if existing_metadata and Knowledge.RESERVED_METADATA_KEY in existing_metadata:
+            existing_agno = existing_metadata[Knowledge.RESERVED_METADATA_KEY]
+
+        new_agno: Optional[Dict[str, Any]] = None
+        if Knowledge.RESERVED_METADATA_KEY in new_metadata:
+            val = new_metadata[Knowledge.RESERVED_METADATA_KEY]
+            if isinstance(val, dict):
+                new_agno = val
+
+        # Start with new metadata, strip _agno (will be re-added after merge)
+        merged = {k: v for k, v in new_metadata.items() if k != Knowledge.RESERVED_METADATA_KEY}
+
+        # Deep-merge _agno: existing keys preserved, new keys added/updated
+        if existing_agno is not None or new_agno is not None:
+            merged_agno = dict(existing_agno) if existing_agno else {}
+            if new_agno:
+                merged_agno.update(new_agno)
+            merged[Knowledge.RESERVED_METADATA_KEY] = merged_agno
+
+        return merged
+
+    @staticmethod
+    def _set_agno_metadata(metadata: Optional[Dict[str, Any]], key: str, value: Any) -> Dict[str, Any]:
+        """Set a value under the reserved _agno metadata namespace.
+
+        Creates the metadata dict and _agno sub-dict if they don't exist.
+        """
+        if metadata is None:
+            metadata = {}
+        agno = metadata.get(Knowledge.RESERVED_METADATA_KEY, {})
+        if not isinstance(agno, dict):
+            agno = {}
+        agno[key] = value
+        metadata[Knowledge.RESERVED_METADATA_KEY] = agno
+        return metadata
+
+    @staticmethod
+    def _get_agno_metadata(metadata: Optional[Dict[str, Any]], key: str, default: Any = None) -> Any:
+        """Get a value from the reserved _agno metadata namespace."""
+        if not metadata:
+            return default
+        agno = metadata.get(Knowledge.RESERVED_METADATA_KEY, {})
+        if not isinstance(agno, dict):
+            return default
+        return agno.get(key, default)
+
     def _content_row_to_content(self, content_row: KnowledgeRow) -> Content:
         """Convert a KnowledgeRow to a Content object."""
         return Content(
@@ -2371,6 +2985,8 @@ class Knowledge(RemoteKnowledge):
                 return
 
         content.status = ContentStatus.COMPLETED
+        if self._is_refresh_available(content):
+            content.status_message = "refresh_available"
         await self._aupdate_content(content)
 
     def _handle_vector_db_insert(self, content: Content, read_documents, upsert):
@@ -2410,6 +3026,8 @@ class Knowledge(RemoteKnowledge):
                 return
 
         content.status = ContentStatus.COMPLETED
+        if self._is_refresh_available(content):
+            content.status_message = "refresh_available"
         self._update_content(content)
 
     # --- Content Update ---
@@ -2442,7 +3060,7 @@ class Knowledge(RemoteKnowledge):
                     content.description, "content.description", default=""
                 )
             if content.metadata is not None:
-                content_row.metadata = content.metadata
+                content_row.metadata = self._merge_user_metadata(content_row.metadata, content.metadata)
             if content.status is not None:
                 content_row.status = content.status
             if content.status_message is not None:
@@ -2457,7 +3075,9 @@ class Knowledge(RemoteKnowledge):
             self.contents_db.upsert_knowledge_content(knowledge_row=content_row)
 
             if self.vector_db:
-                self.vector_db.update_metadata(content_id=content.id, metadata=content.metadata or {})
+                # Strip _agno from metadata sent to vector_db — only user fields should be searchable
+                user_metadata = {k: v for k, v in (content.metadata or {}).items() if k != self.RESERVED_METADATA_KEY}
+                self.vector_db.update_metadata(content_id=content.id, metadata=user_metadata)
 
             return content_row.to_dict()
 
@@ -2487,7 +3107,7 @@ class Knowledge(RemoteKnowledge):
                     content.description, "content.description", default=""
                 )
             if content.metadata is not None:
-                content_row.metadata = content.metadata
+                content_row.metadata = self._merge_user_metadata(content_row.metadata, content.metadata)
             if content.status is not None:
                 content_row.status = content.status
             if content.status_message is not None:
@@ -2506,7 +3126,9 @@ class Knowledge(RemoteKnowledge):
                 self.contents_db.upsert_knowledge_content(knowledge_row=content_row)
 
             if self.vector_db:
-                self.vector_db.update_metadata(content_id=content.id, metadata=content.metadata or {})
+                # Strip _agno from metadata sent to vector_db — only user fields should be searchable
+                user_metadata = {k: v for k, v in (content.metadata or {}).items() if k != self.RESERVED_METADATA_KEY}
+                self.vector_db.update_metadata(content_id=content.id, metadata=user_metadata)
 
             return content_row.to_dict()
 

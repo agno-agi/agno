@@ -16,7 +16,7 @@ from agno.knowledge.loaders.gcs import GCSLoader
 from agno.knowledge.loaders.github import GitHubLoader
 from agno.knowledge.loaders.s3 import S3Loader
 from agno.knowledge.loaders.sharepoint import SharePointLoader
-from agno.knowledge.remote_content.config import RemoteContentConfig
+from agno.knowledge.remote_content.config import BaseStorageConfig
 from agno.knowledge.remote_content.remote_content import (
     AzureBlobContent,
     GCSContent,
@@ -38,7 +38,7 @@ class RemoteKnowledge(S3Loader, GCSLoader, SharePointLoader, GitHubLoader, Azure
     - AzureBlobLoader: Azure Blob Storage content loading
 
     Knowledge inherits from this class and provides:
-    - content_sources: List[RemoteContentConfig]
+    - content_sources: List[BaseStorageConfig]
     - vector_db, contents_db attributes
     - _should_skip(), _select_reader_by_uri(), _prepare_documents_for_insert() methods
     - _ahandle_vector_db_insert(), _handle_vector_db_insert() methods
@@ -48,7 +48,7 @@ class RemoteKnowledge(S3Loader, GCSLoader, SharePointLoader, GitHubLoader, Azure
     """
 
     # These attributes are provided by the Knowledge subclass
-    content_sources: Optional[List[RemoteContentConfig]]
+    content_sources: Optional[List[BaseStorageConfig]]
 
     # ==========================================
     # REMOTE CONTENT DISPATCHERS
@@ -59,6 +59,7 @@ class RemoteKnowledge(S3Loader, GCSLoader, SharePointLoader, GitHubLoader, Azure
         content: Content,
         upsert: bool,
         skip_if_exists: bool,
+        backup: "Optional[bool]" = None,
     ):
         """Async dispatcher for remote content loading.
 
@@ -78,19 +79,19 @@ class RemoteKnowledge(S3Loader, GCSLoader, SharePointLoader, GitHubLoader, Azure
                 log_warning(f"No config found for config_id: {remote_content.config_id}")
 
         if isinstance(remote_content, S3Content):
-            await self._aload_from_s3(content, upsert, skip_if_exists, config)
+            await self._aload_from_s3(content, upsert, skip_if_exists, config, backup=backup)
 
         elif isinstance(remote_content, GCSContent):
-            await self._aload_from_gcs(content, upsert, skip_if_exists, config)
+            await self._aload_from_gcs(content, upsert, skip_if_exists, config, backup=backup)
 
         elif isinstance(remote_content, SharePointContent):
-            await self._aload_from_sharepoint(content, upsert, skip_if_exists, config)
+            await self._aload_from_sharepoint(content, upsert, skip_if_exists, config, backup=backup)
 
         elif isinstance(remote_content, GitHubContent):
-            await self._aload_from_github(content, upsert, skip_if_exists, config)
+            await self._aload_from_github(content, upsert, skip_if_exists, config, backup=backup)
 
         elif isinstance(remote_content, AzureBlobContent):
-            await self._aload_from_azure_blob(content, upsert, skip_if_exists, config)
+            await self._aload_from_azure_blob(content, upsert, skip_if_exists, config, backup=backup)
 
         else:
             log_warning(f"Unsupported remote content type: {type(remote_content)}")
@@ -100,6 +101,7 @@ class RemoteKnowledge(S3Loader, GCSLoader, SharePointLoader, GitHubLoader, Azure
         content: Content,
         upsert: bool,
         skip_if_exists: bool,
+        backup: "Optional[bool]" = None,
     ):
         """Sync dispatcher for remote content loading.
 
@@ -119,19 +121,19 @@ class RemoteKnowledge(S3Loader, GCSLoader, SharePointLoader, GitHubLoader, Azure
                 log_warning(f"No config found for config_id: {remote_content.config_id}")
 
         if isinstance(remote_content, S3Content):
-            self._load_from_s3(content, upsert, skip_if_exists, config)
+            self._load_from_s3(content, upsert, skip_if_exists, config, backup=backup)
 
         elif isinstance(remote_content, GCSContent):
-            self._load_from_gcs(content, upsert, skip_if_exists, config)
+            self._load_from_gcs(content, upsert, skip_if_exists, config, backup=backup)
 
         elif isinstance(remote_content, SharePointContent):
-            self._load_from_sharepoint(content, upsert, skip_if_exists, config)
+            self._load_from_sharepoint(content, upsert, skip_if_exists, config, backup=backup)
 
         elif isinstance(remote_content, GitHubContent):
-            self._load_from_github(content, upsert, skip_if_exists, config)
+            self._load_from_github(content, upsert, skip_if_exists, config, backup=backup)
 
         elif isinstance(remote_content, AzureBlobContent):
-            self._load_from_azure_blob(content, upsert, skip_if_exists, config)
+            self._load_from_azure_blob(content, upsert, skip_if_exists, config, backup=backup)
 
         else:
             log_warning(f"Unsupported remote content type: {type(remote_content)}")
@@ -140,11 +142,11 @@ class RemoteKnowledge(S3Loader, GCSLoader, SharePointLoader, GitHubLoader, Azure
     # REMOTE CONFIG HELPERS
     # ==========================================
 
-    def _get_remote_configs(self) -> List[RemoteContentConfig]:
+    def _get_remote_configs(self) -> List[BaseStorageConfig]:
         """Return configured remote content sources."""
         return self.content_sources or []
 
-    def _get_remote_config_by_id(self, config_id: str) -> Optional[RemoteContentConfig]:
+    def _get_remote_config_by_id(self, config_id: str) -> Optional[BaseStorageConfig]:
         """Get a remote content config by its ID."""
         if not self.content_sources:
             return None

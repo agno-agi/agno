@@ -10,6 +10,7 @@ from agno.knowledge.content import Content, FileData
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader import ReaderFactory
 from agno.knowledge.reader.base import Reader
+from agno.knowledge.remote_content.config import S3Config
 from agno.knowledge.utils import get_all_chunkers_info, get_all_readers_info, get_content_types_to_readers_mapping
 from agno.os.auth import get_auth_token_from_request, get_authentication_dependency
 from agno.os.routers.knowledge.schemas import (
@@ -20,6 +21,10 @@ from agno.os.routers.knowledge.schemas import (
     ContentStatusResponse,
     ContentUpdateSchema,
     ReaderSchema,
+    RemoteContentSourceSchema,
+    SourceFileSchema,
+    SourceFilesResponseSchema,
+    SourceFolderSchema,
     VectorDbSchema,
     VectorSearchRequestSchema,
     VectorSearchResult,
@@ -107,6 +112,9 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
         chunker: Optional[str] = Form(None, description="Chunking strategy to apply during processing"),
         chunk_size: Optional[int] = Form(None, description="Chunk size to use for processing"),
         chunk_overlap: Optional[int] = Form(None, description="Chunk overlap to use for processing"),
+        backup: Optional[bool] = Form(
+            None, description="Store backup content copy. None=auto (store if configured), True=force, False=skip"
+        ),
         db_id: Optional[str] = Query(default=None, description="Database ID to use for content storage"),
         knowledge_id: Optional[str] = Query(default=None, description="Knowledge base ID to upload to"),
     ):
@@ -195,7 +203,9 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
         content.content_hash = content_hash
         content.id = generate_id(content_hash)
 
-        background_tasks.add_task(process_content, knowledge, content, reader_id, chunker, chunk_size, chunk_overlap)
+        background_tasks.add_task(
+            process_content, knowledge, content, reader_id, chunker, chunk_size, chunk_overlap, backup
+        )
 
         response = ContentResponseSchema(
             id=content.id,
@@ -250,6 +260,9 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
         chunker: Optional[str] = Form(None, description="Chunking strategy to apply"),
         chunk_size: Optional[int] = Form(None, description="Chunk size for processing"),
         chunk_overlap: Optional[int] = Form(None, description="Chunk overlap for processing"),
+        backup: Optional[bool] = Form(
+            None, description="Store backup content copy. None=auto (store if configured), True=force, False=skip"
+        ),
         db_id: Optional[str] = Query(default=None, description="Database ID to use for content storage"),
         knowledge_id: Optional[str] = Query(default=None, description="Knowledge base ID to upload to"),
     ):
@@ -302,7 +315,9 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
         content.content_hash = content_hash
         content.id = generate_id(content_hash)
 
-        background_tasks.add_task(process_content, knowledge, content, reader_id, chunker, chunk_size, chunk_overlap)
+        background_tasks.add_task(
+            process_content, knowledge, content, reader_id, chunker, chunk_size, chunk_overlap, backup
+        )
 
         response = ContentResponseSchema(
             id=content.id,
@@ -681,7 +696,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
         # Handle the case where content is not found
         if knowledge_status is None:
             return ContentStatusResponse(
-                status=ContentStatus.FAILED, status_message=status_message or "Content not found"
+                id=content_id, status=ContentStatus.FAILED, status_message=status_message or "Content not found"
             )
 
         # Convert knowledge ContentStatus to schema ContentStatus (they have same values)
@@ -705,7 +720,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
         else:
             status = ContentStatus.PROCESSING
 
-        return ContentStatusResponse(status=status, status_message=status_message or "")
+        return ContentStatusResponse(id=content_id, status=status, status_message=status_message or "")
 
     @router.post(
         "/knowledge/search",
@@ -1187,7 +1202,271 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
             remote_content_sources=remote_content_sources,
         )
 
+    @router.get(
+        "/knowledge/{knowledge_id}/sources",
+        response_model=List[RemoteContentSourceSchema],
+        status_code=200,
+        operation_id="list_content_sources",
+        summary="List Content Sources",
+        description="List all registered content sources (S3, GCS, SharePoint, GitHub) for the knowledge base.",
+        responses={
+            200: {
+                "description": "Content sources retrieved successfully",
+                "content": {
+                    "application/json": {
+                        "example": [
+                            {
+                                "id": "company-s3",
+                                "name": "Company Documents",
+                                "type": "s3",
+                                "prefix": "documents/",
+                            }
+                        ]
+                    }
+                },
+            },
+            404: {"description": "Knowledge base not found", "model": NotFoundResponse},
+        },
+    )
+    async def list_sources(
+        request: Request,
+        knowledge_id: str = Path(..., description="ID of the knowledge base"),
+        db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
+    ) -> List[RemoteContentSourceSchema]:
+        knowledge = get_knowledge_instance(knowledge_instances, db_id, knowledge_id)
+
+        if isinstance(knowledge, RemoteKnowledge):
+            raise HTTPException(status_code=501, detail="Source listing not yet supported for RemoteKnowledge")
+
+        if not hasattr(knowledge, "_get_remote_configs") or not callable(knowledge._get_remote_configs):
+            return []
+
+        remote_configs = knowledge._get_remote_configs()
+        if not remote_configs:
+            return []
+
+        return [
+            RemoteContentSourceSchema(
+                id=config.id,
+                name=config.name,
+                type=config.__class__.__name__.replace("Config", "").lower(),
+                prefix=getattr(config, "prefix", None),
+            )
+            for config in remote_configs
+        ]
+
+    @router.get(
+        "/knowledge/{knowledge_id}/sources/{source_id}/files",
+        response_model=SourceFilesResponseSchema,
+        status_code=200,
+        operation_id="list_source_files",
+        summary="List Files in Source",
+        description=(
+            "List available files and folders in a specific content source. Supports pagination and folder navigation."
+        ),
+        responses={
+            200: {
+                "description": "Files listed successfully",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "source_id": "company-s3",
+                            "source_name": "Company Documents",
+                            "prefix": "reports/",
+                            "folders": [{"prefix": "reports/2024/", "name": "2024", "is_empty": False}],
+                            "files": [
+                                {
+                                    "key": "reports/annual-summary.pdf",
+                                    "name": "annual-summary.pdf",
+                                    "size": 102400,
+                                    "last_modified": "2024-01-15T10:30:00Z",
+                                    "content_type": "application/pdf",
+                                }
+                            ],
+                            "meta": {"page": 1, "limit": 100, "total_pages": 1, "total_count": 1},
+                        }
+                    }
+                },
+            },
+            404: {"description": "Knowledge base or content source not found", "model": NotFoundResponse},
+            400: {"description": "Unsupported source type", "model": BadRequestResponse},
+        },
+    )
+    async def list_source_files(
+        request: Request,
+        knowledge_id: str = Path(..., description="ID of the knowledge base"),
+        source_id: str = Path(..., description="ID of the content source"),
+        prefix: Optional[str] = Query(default=None, description="Path prefix to filter files"),
+        limit: int = Query(default=100, ge=1, le=1000, description="Number of files per page"),
+        page: int = Query(default=1, ge=1, description="Page number (1-indexed)"),
+        delimiter: str = Query(default="/", description="Folder delimiter (enables folder grouping)"),
+        db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
+    ) -> SourceFilesResponseSchema:
+        knowledge = get_knowledge_instance(knowledge_instances, db_id, knowledge_id)
+
+        if isinstance(knowledge, RemoteKnowledge):
+            raise HTTPException(status_code=501, detail="Source file listing not yet supported for RemoteKnowledge")
+
+        # Get the config for this source
+        config = knowledge._get_remote_config_by_id(source_id)
+        if config is None:
+            raise HTTPException(status_code=404, detail=f"Content source not found: {source_id}")
+
+        # Only S3 sources support file listing
+        if not isinstance(config, S3Config):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Source type '{type(config).__name__}' does not support file listing.",
+            )
+
+        try:
+            result = config.list_files(
+                prefix=prefix,
+                delimiter=delimiter,
+                limit=limit,
+                page=page,
+            )
+        except ImportError as e:
+            raise HTTPException(status_code=500, detail=str(e))
+        except Exception as e:
+            error_str = str(e)
+            if "NoSuchBucket" in error_str:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Bucket '{config.bucket_name}' does not exist",
+                )
+            if "NoCredentials" in error_str or "InvalidAccessKeyId" in error_str:
+                raise HTTPException(
+                    status_code=401,
+                    detail="Invalid or missing AWS credentials for this source",
+                )
+            log_error(f"Error listing files from {type(config).__name__}: {e}")
+            raise HTTPException(status_code=500, detail=f"Failed to list files: {error_str}")
+
+        return SourceFilesResponseSchema(
+            source_id=source_id,
+            source_name=config.name,
+            prefix=prefix or "",
+            folders=[
+                SourceFolderSchema(
+                    prefix=folder["prefix"],
+                    name=folder["name"],
+                    is_empty=folder["is_empty"],
+                )
+                for folder in result.folders
+            ],
+            files=[
+                SourceFileSchema(
+                    key=file["key"],
+                    name=file["name"],
+                    size=file["size"],
+                    last_modified=file["last_modified"],
+                    content_type=file["content_type"],
+                )
+                for file in result.files
+            ],
+            meta=PaginationInfo(
+                page=result.page,
+                limit=result.limit,
+                total_count=result.total_count,
+                total_pages=result.total_pages,
+            ),
+        )
+
+    @router.post(
+        "/knowledge/content/{content_id}/refresh",
+        response_model=ContentStatusResponse,
+        status_code=202,
+        operation_id="refresh_content",
+        summary="Refresh Content",
+        description=(
+            "Refresh content by re-fetching from its original source and re-embedding. "
+            "Sources are resolved in priority order: original cloud source first, then backup storage as fallback. "
+            "Use cases: embeddings lost, switching embedding model, or source content updated."
+        ),
+        responses={
+            202: {
+                "description": "Content refresh accepted for processing",
+            },
+            400: {
+                "description": "Cannot refresh - no source available",
+                "model": BadRequestResponse,
+            },
+            404: {"description": "Content not found", "model": NotFoundResponse},
+        },
+    )
+    async def refresh_content(
+        request: Request,
+        background_tasks: BackgroundTasks,
+        content_id: str = Path(..., description="Content ID to refresh"),
+        knowledge_id: Optional[str] = Query(default=None, description="Knowledge base ID (name)"),
+    ) -> ContentStatusResponse:
+        knowledge = get_knowledge_instance(knowledge_instances, knowledge_id=knowledge_id)
+
+        if isinstance(knowledge, RemoteKnowledge):
+            raise HTTPException(status_code=501, detail="Content refresh not yet supported for RemoteKnowledge")
+
+        # Verify content exists
+        content = await knowledge.aget_content_by_id(content_id=content_id)
+        if not content:
+            raise HTTPException(status_code=404, detail=f"Content not found: {content_id}")
+
+        # Verify there is a source to refresh from
+        agno_meta = (content.metadata or {}).get(Knowledge.RESERVED_METADATA_KEY, {})
+        if not isinstance(agno_meta, dict):
+            agno_meta = {}
+
+        has_raw = bool(agno_meta.get("backup_storage_type"))
+        has_source = bool(agno_meta.get("source_type"))
+        # Also check top-level metadata for backward compatibility
+        has_legacy_source = bool(content.metadata and content.metadata.get("source_type"))
+
+        if not has_raw and not has_source and not has_legacy_source:
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot refresh: no backup storage or original source available",
+            )
+
+        # Mark as processing
+        from agno.knowledge.content import ContentStatus as KnowledgeContentStatus
+
+        content.status = KnowledgeContentStatus.PROCESSING
+        content.status_message = "refreshing"
+        await knowledge.apatch_content(content)
+
+        background_tasks.add_task(process_refresh, knowledge, content_id)
+
+        return ContentStatusResponse(
+            id=content_id,
+            status=ContentStatus.PROCESSING,
+            status_message="refreshing",
+        )
+
     return router
+
+
+async def process_refresh(knowledge: Knowledge, content_id: str):
+    """Background task to refresh content by re-fetching and re-embedding."""
+    try:
+        await knowledge.arefresh_content(content_id)
+        log_info(f"Content {content_id} refreshed successfully")
+    except Exception as e:
+        log_error(f"Error refreshing content {content_id}: {e}")
+        try:
+            from agno.knowledge.content import ContentStatus as KnowledgeContentStatus
+
+            content = await knowledge.aget_content_by_id(content_id)
+            if content:
+                # Content still has valid vectors — keep COMPLETED status
+                # but remove refresh_available since the source is no longer accessible
+                content.status = KnowledgeContentStatus.COMPLETED
+                content.status_message = f"refresh_failed: {e}"
+                if knowledge.contents_db is not None and isinstance(knowledge.contents_db, AsyncBaseDb):
+                    await knowledge.apatch_content(content)
+                else:
+                    knowledge.patch_content(content)
+        except Exception:
+            pass
 
 
 async def process_content(
@@ -1197,6 +1476,7 @@ async def process_content(
     chunker: Optional[str] = None,
     chunk_size: Optional[int] = None,
     chunk_overlap: Optional[int] = None,
+    backup: Optional[bool] = None,
 ):
     """Background task to process the content"""
 
@@ -1229,7 +1509,7 @@ async def process_content(
             log_debug(f"Set chunking strategy: {chunker}")
 
         log_debug(f"Using reader: {content.reader.__class__.__name__}")
-        await knowledge._aload_content(content, upsert=False, skip_if_exists=True)
+        await knowledge._aload_content(content, upsert=False, skip_if_exists=True, backup=backup)
         log_info(f"Content {content.id} processed successfully")
     except Exception as e:
         log_info(f"Error processing content: {e}")

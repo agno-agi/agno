@@ -14,7 +14,7 @@ from httpx import AsyncClient
 from agno.knowledge.content import Content, ContentStatus
 from agno.knowledge.loaders.base import BaseLoader
 from agno.knowledge.reader import Reader
-from agno.knowledge.remote_content.config import GitHubConfig, RemoteContentConfig
+from agno.knowledge.remote_content.config import BaseStorageConfig, GitHubConfig
 from agno.knowledge.remote_content.remote_content import GitHubContent
 from agno.utils.log import log_error, log_info, log_warning
 from agno.utils.string import generate_id
@@ -30,7 +30,7 @@ class GitHubLoader(BaseLoader):
     def _validate_github_config(
         self,
         content: Content,
-        config: Optional[RemoteContentConfig],
+        config: Optional[BaseStorageConfig],
     ) -> Optional[GitHubConfig]:
         """Validate and extract GitHub config.
 
@@ -135,7 +135,8 @@ class GitHubLoader(BaseLoader):
         content: Content,
         upsert: bool,
         skip_if_exists: bool,
-        config: Optional[RemoteContentConfig] = None,
+        config: Optional[BaseStorageConfig] = None,
+        backup: Optional[bool] = None,
     ):
         """Load content from GitHub (async).
 
@@ -253,6 +254,9 @@ class GitHubLoader(BaseLoader):
                     await self._aupdate_content(content_entry)
                     continue
 
+                # Store backup copy if configured
+                await self._abackup_bytes(content_entry, file_content, file_name, backup)
+
                 # Select reader and read content
                 reader = self._select_reader_by_uri(file_name, content.reader)
                 if reader is None:
@@ -277,7 +281,8 @@ class GitHubLoader(BaseLoader):
         content: Content,
         upsert: bool,
         skip_if_exists: bool,
-        config: Optional[RemoteContentConfig] = None,
+        config: Optional[BaseStorageConfig] = None,
+        backup: Optional[bool] = None,
     ):
         """Load content from GitHub (sync).
 
@@ -394,6 +399,9 @@ class GitHubLoader(BaseLoader):
                     content_entry.status_message = str(e)
                     self._update_content(content_entry)
                     continue
+
+                # Store backup copy if configured
+                self._backup_bytes(content_entry, file_content, file_name, backup)
 
                 # Select reader and read content
                 reader = self._select_reader_by_uri(file_name, content.reader)

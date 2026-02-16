@@ -11,7 +11,7 @@ from typing import Any, Dict, Optional, cast
 from agno.knowledge.content import Content, ContentStatus
 from agno.knowledge.loaders.base import BaseLoader
 from agno.knowledge.reader import Reader
-from agno.knowledge.remote_content.config import GcsConfig, RemoteContentConfig
+from agno.knowledge.remote_content.config import BaseStorageConfig, GcsConfig
 from agno.knowledge.remote_content.remote_content import GCSContent
 from agno.utils.log import log_info, log_warning
 from agno.utils.string import generate_id
@@ -27,7 +27,7 @@ class GCSLoader(BaseLoader):
     def _validate_gcs_config(
         self,
         content: Content,
-        config: Optional[RemoteContentConfig],
+        config: Optional[BaseStorageConfig],
     ) -> Optional[GcsConfig]:
         """Validate and extract GCS config.
 
@@ -86,7 +86,8 @@ class GCSLoader(BaseLoader):
         content: Content,
         upsert: bool,
         skip_if_exists: bool,
-        config: Optional[RemoteContentConfig] = None,
+        config: Optional[BaseStorageConfig] = None,
+        backup: Optional[bool] = None,
     ):
         """Load content from Google Cloud Storage (async).
 
@@ -165,8 +166,12 @@ class GCSLoader(BaseLoader):
             reader = self._select_reader_by_uri(gcs_object.name, content.reader)
             reader = cast(Reader, reader)
 
-            # Fetch and load the content
-            readable_content = BytesIO(gcs_object.download_as_bytes())
+            # Fetch the content bytes
+            file_bytes = gcs_object.download_as_bytes()
+            readable_content = BytesIO(file_bytes)
+
+            # Store backup copy if configured
+            await self._abackup_bytes(content_entry, file_bytes, file_name, backup)
 
             # Read the content
             read_documents = await reader.async_read(readable_content, name=file_name)
@@ -180,7 +185,8 @@ class GCSLoader(BaseLoader):
         content: Content,
         upsert: bool,
         skip_if_exists: bool,
-        config: Optional[RemoteContentConfig] = None,
+        config: Optional[BaseStorageConfig] = None,
+        backup: Optional[bool] = None,
     ):
         """Load content from Google Cloud Storage (sync)."""
         try:
@@ -256,8 +262,12 @@ class GCSLoader(BaseLoader):
             reader = self._select_reader_by_uri(gcs_object.name, content.reader)
             reader = cast(Reader, reader)
 
-            # Fetch and load the content
-            readable_content = BytesIO(gcs_object.download_as_bytes())
+            # Fetch the content bytes
+            file_bytes = gcs_object.download_as_bytes()
+            readable_content = BytesIO(file_bytes)
+
+            # Store backup copy if configured
+            self._backup_bytes(content_entry, file_bytes, file_name, backup)
 
             # Read the content
             read_documents = reader.read(readable_content, name=file_name)

@@ -14,7 +14,7 @@ from httpx import AsyncClient
 from agno.knowledge.content import Content, ContentStatus
 from agno.knowledge.loaders.base import BaseLoader
 from agno.knowledge.reader import Reader
-from agno.knowledge.remote_content.config import RemoteContentConfig, SharePointConfig
+from agno.knowledge.remote_content.config import BaseStorageConfig, SharePointConfig
 from agno.knowledge.remote_content.remote_content import SharePointContent
 from agno.utils.log import log_error, log_info, log_warning
 
@@ -29,7 +29,7 @@ class SharePointLoader(BaseLoader):
     def _validate_sharepoint_config(
         self,
         content: Content,
-        config: Optional[RemoteContentConfig],
+        config: Optional[BaseStorageConfig],
     ) -> Optional[SharePointConfig]:
         """Validate and extract SharePoint config.
 
@@ -211,7 +211,8 @@ class SharePointLoader(BaseLoader):
         content: Content,
         upsert: bool,
         skip_if_exists: bool,
-        config: Optional[RemoteContentConfig] = None,
+        config: Optional[BaseStorageConfig] = None,
+        backup: Optional[bool] = None,
     ):
         """Load content from SharePoint (async).
 
@@ -315,6 +316,9 @@ class SharePointLoader(BaseLoader):
                 await self._aupdate_content(content_entry)
                 continue
 
+            # Store backup copy if configured
+            await self._abackup_bytes(content_entry, file_content.getvalue(), file_name, backup)
+
             # Read the content
             read_documents = await reader.async_read(file_content, name=file_name)
 
@@ -327,7 +331,8 @@ class SharePointLoader(BaseLoader):
         content: Content,
         upsert: bool,
         skip_if_exists: bool,
-        config: Optional[RemoteContentConfig] = None,
+        config: Optional[BaseStorageConfig] = None,
+        backup: Optional[bool] = None,
     ):
         """Load content from SharePoint (sync).
 
@@ -430,6 +435,9 @@ class SharePointLoader(BaseLoader):
                 content_entry.status = ContentStatus.FAILED
                 self._update_content(content_entry)
                 continue
+
+            # Store backup copy if configured
+            self._backup_bytes(content_entry, file_content.getvalue(), file_name, backup)
 
             # Read the content
             read_documents = reader.read(file_content, name=file_name)
