@@ -22,6 +22,7 @@ from agno.knowledge.remote_content import (
     AzureBlobConfig,
     GitHubConfig,
     SharePointConfig,
+    S3Config,
 )
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
@@ -67,13 +68,22 @@ azure_blob = AzureBlobConfig(
     container=getenv("AZURE_CONTAINER_NAME"),
 )
 
+s3_docs = S3Config(
+    id="s3-docs",
+    name="S3 Documents",
+    bucket_name=getenv("S3_BUCKET_NAME", "my-docs"),
+    region=getenv("AWS_REGION", "us-east-1"),
+    aws_access_key_id=getenv("AWS_ACCESS_KEY_ID"),
+    aws_secret_access_key=getenv("AWS_SECRET_ACCESS_KEY"),
+    prefix="",
+)
 # Create Knowledge with content sources
 knowledge = Knowledge(
     name="Company Knowledge Base",
     description="Unified knowledge from multiple sources",
     contents_db=contents_db,
     vector_db=vector_db,
-    content_sources=[sharepoint, github_docs, azure_blob],
+    content_sources=[sharepoint, github_docs, azure_blob, s3_docs],
 )
 
 agent = Agent(
