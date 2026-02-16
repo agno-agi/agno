@@ -1,13 +1,18 @@
 """
-Content Sources for Knowledge — DX Design
+Cloud Content Sources with AgentOS
 ============================================================
 
-This cookbook demonstrates the API for adding content from various
-remote sources (S3, GCS, SharePoint, GitHub, etc.) to Knowledge.
+Sets up an AgentOS app with Knowledge connected to multiple cloud
+storage backends (S3, GCS, SharePoint, GitHub, Azure Blob).
+
+Once running, the AgentOS API lets you browse sources, upload
+content from any configured source, and search the knowledge base.
+
+Run:
+    python cookbook/07_knowledge/cloud/cloud_agentos.py
 
 Key Concepts:
-- RemoteContentConfig: Base class for configuring remote content sources
-- Each source type has its own config: S3Config, GcsConfig, SharePointConfig, GitHubConfig
+- Each source type has its own config: S3Config, GcsConfig, SharePointConfig, GitHubConfig, AzureBlobConfig
 - Configs are registered on Knowledge via `content_sources` parameter
 - Configs have factory methods (.file(), .folder()) to create content references
 - Content references are passed to knowledge.insert()
@@ -21,8 +26,8 @@ from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.remote_content import (
     AzureBlobConfig,
     GitHubConfig,
-    SharePointConfig,
     S3Config,
+    SharePointConfig,
 )
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
