@@ -14,8 +14,9 @@ from httpx import AsyncClient
 from agno.knowledge.content import Content, ContentStatus
 from agno.knowledge.loaders.base import BaseLoader
 from agno.knowledge.reader import Reader
-from agno.knowledge.remote_content.config import BaseStorageConfig, SharePointConfig
+from agno.knowledge.remote_content.base import BaseStorageConfig
 from agno.knowledge.remote_content.remote_content import SharePointContent
+from agno.knowledge.remote_content.sharepoint import SharePointConfig
 from agno.utils.log import log_error, log_info, log_warning
 
 

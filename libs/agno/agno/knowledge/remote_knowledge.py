@@ -16,7 +16,7 @@ from agno.knowledge.loaders.gcs import GCSLoader
 from agno.knowledge.loaders.github import GitHubLoader
 from agno.knowledge.loaders.s3 import S3Loader
 from agno.knowledge.loaders.sharepoint import SharePointLoader
-from agno.knowledge.remote_content.config import BaseStorageConfig
+from agno.knowledge.remote_content.base import BaseStorageConfig
 from agno.knowledge.remote_content.remote_content import (
     AzureBlobContent,
     GCSContent,

@@ -17,11 +17,12 @@ from agno.filters import FilterExpr
 from agno.knowledge.content import Content, ContentAuth, ContentStatus, FileData
 from agno.knowledge.document import Document
 from agno.knowledge.reader import Reader, ReaderFactory
-from agno.knowledge.remote_content.config import BaseStorageConfig
+from agno.knowledge.remote_content.base import BaseStorageConfig
 from agno.knowledge.remote_content.remote_content import (
     RemoteContent,
 )
 from agno.knowledge.remote_knowledge import RemoteKnowledge
+from agno.knowledge.utils import merge_user_metadata
 from agno.utils.http import async_fetch_with_retry
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
@@ -1066,63 +1067,6 @@ class Knowledge(RemoteKnowledge):
     def youtube_reader(self) -> Optional[Reader]:
         """YouTube reader - lazy loaded via factory."""
         return self._get_reader("youtube")
-
-    # ==========================================
-    # METADATA HELPERS
-    # ==========================================
-
-    @staticmethod
-    def _merge_user_metadata(
-        existing: Optional[Dict[str, Any]],
-        incoming: Optional[Dict[str, Any]],
-    ) -> Optional[Dict[str, Any]]:
-        """Deep-merge two metadata dicts, preserving the ``_agno`` sub-key from both sides.
-
-        Top-level keys from *incoming* overwrite those in *existing* (except ``_agno``).
-        Keys inside ``_agno`` are merged individually so that info added
-        after initial source info is not lost.
-        """
-        if not existing:
-            return incoming
-        if not incoming:
-            return existing
-
-        merged = dict(existing)
-        for key, value in incoming.items():
-            if key == "_agno":
-                old_agno = merged.get("_agno", {}) or {}
-                new_agno = value if isinstance(value, dict) else {}
-                merged["_agno"] = {**old_agno, **new_agno}
-            else:
-                merged[key] = value
-        return merged
-
-    @staticmethod
-    def _set_agno_metadata(
-        metadata: Optional[Dict[str, Any]],
-        key: str,
-        value: Any,
-    ) -> Dict[str, Any]:
-        """Set a key under the reserved ``_agno`` namespace in metadata."""
-        if metadata is None:
-            metadata = {}
-        agno_meta = metadata.get("_agno", {}) or {}
-        agno_meta[key] = value
-        metadata["_agno"] = agno_meta
-        return metadata
-
-    @staticmethod
-    def _get_agno_metadata(
-        metadata: Optional[Dict[str, Any]],
-        key: str,
-    ) -> Any:
-        """Get a key from the reserved ``_agno`` namespace in metadata."""
-        if not metadata:
-            return None
-        agno_meta = metadata.get("_agno")
-        if not isinstance(agno_meta, dict):
-            return None
-        return agno_meta.get(key)
 
     # ==========================================
     # PRIVATE - CONTENT LOADING METHODS
@@ -2519,7 +2463,7 @@ class Knowledge(RemoteKnowledge):
                     content.description, "content.description", default=""
                 )
             if content.metadata is not None:
-                content_row.metadata = self._merge_user_metadata(content_row.metadata, content.metadata)
+                content_row.metadata = merge_user_metadata(content_row.metadata, content.metadata)
             if content.status is not None:
                 content_row.status = content.status
             if content.status_message is not None:
@@ -2566,7 +2510,7 @@ class Knowledge(RemoteKnowledge):
                     content.description, "content.description", default=""
                 )
             if content.metadata is not None:
-                content_row.metadata = self._merge_user_metadata(content_row.metadata, content.metadata)
+                content_row.metadata = merge_user_metadata(content_row.metadata, content.metadata)
             if content.status is not None:
                 content_row.status = content.status
             if content.status_message is not None:

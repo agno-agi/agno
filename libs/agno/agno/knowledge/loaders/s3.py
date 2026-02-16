@@ -12,8 +12,9 @@ from typing import Any, Dict, List, Optional, Union, cast
 from agno.knowledge.content import Content, ContentStatus
 from agno.knowledge.loaders.base import BaseLoader
 from agno.knowledge.reader import Reader
-from agno.knowledge.remote_content.config import BaseStorageConfig, S3Config
+from agno.knowledge.remote_content.base import BaseStorageConfig
 from agno.knowledge.remote_content.remote_content import S3Content
+from agno.knowledge.remote_content.s3 import S3Config
 from agno.utils.log import log_error, log_info
 from agno.utils.string import generate_id
 

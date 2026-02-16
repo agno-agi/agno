@@ -11,7 +11,8 @@ from typing import Any, Dict, Optional, cast
 from agno.knowledge.content import Content, ContentStatus
 from agno.knowledge.loaders.base import BaseLoader
 from agno.knowledge.reader import Reader
-from agno.knowledge.remote_content.config import BaseStorageConfig, GcsConfig
+from agno.knowledge.remote_content.base import BaseStorageConfig
+from agno.knowledge.remote_content.gcs import GcsConfig
 from agno.knowledge.remote_content.remote_content import GCSContent
 from agno.utils.log import log_info, log_warning
 from agno.utils.string import generate_id
