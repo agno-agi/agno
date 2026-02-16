@@ -35,9 +35,6 @@ class ListFilesResult:
         self.total_pages = total_pages
 
 
-# Alias for backward compatibility
-S3ListFilesResult = ListFilesResult
-
 
 class BaseStorageConfig(BaseModel):
     """Base configuration for remote content sources."""
