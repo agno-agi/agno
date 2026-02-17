@@ -12,6 +12,11 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.crawl4ai import Crawl4aiTools
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
+
 # Example 1: All functions enabled with pruning (default behavior)
 agent_full = Agent(
     model=OpenAIChat(id="gpt-4o"),
@@ -87,40 +92,45 @@ agent_visual = Agent(
 )
 
 # Example usage
-print("=== Comprehensive Web Analysis Example ===")
-agent_full.print_response(
-    "Give me a detailed summary of the Agno project from https://github.com/agno-agi/agno and what are its main features?"
-)
 
-print("\n=== Basic Content Extraction Example ===")
-agent_basic.print_response(
-    "Extract the main content and history from https://en.wikipedia.org/wiki/Python_(programming_language)"
-)
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    print("=== Comprehensive Web Analysis Example ===")
+    agent_full.print_response(
+        "Give me a detailed summary of the Agno project from https://github.com/agno-agi/agno and what are its main features?"
+    )
 
-print("\n=== Advanced Web Intelligence Example ===")
-agent_comprehensive.print_response(
-    "Analyze the structure, content, and key links from https://docs.python.org/3/ and provide insights about the documentation organization"
-)
+    print("\n=== Basic Content Extraction Example ===")
+    agent_basic.print_response(
+        "Extract the main content and history from https://en.wikipedia.org/wiki/Python_(programming_language)"
+    )
 
-# Example 2: Extract main content only (remove navigation, ads, etc.)
-# agent_clean = Agent(tools=[Crawl4aiTools(use_pruning=True)])
-# agent_clean.print_response(
-#     "Get the History from https://en.wikipedia.org/wiki/Python_(programming_language)"
-# )
+    print("\n=== Advanced Web Intelligence Example ===")
+    agent_comprehensive.print_response(
+        "Analyze the structure, content, and key links from https://docs.python.org/3/ and provide insights about the documentation organization"
+    )
 
-# Example 3: Search for specific content on a page
-# agent_search = Agent(
-#     instructions="You are a helpful assistant that can crawl the web and extract information. Use have access to crawl4ai tools to extract information from the web.",
-#     tools=[Crawl4aiTools()],
-# )
-# agent_search.print_response(
-#     "What are the diferent Techniques used in AI? https://en.wikipedia.org/wiki/Artificial_intelligence"
-# )
+    # Example 2: Extract main content only (remove navigation, ads, etc.)
+    # agent_clean = Agent(tools=[Crawl4aiTools(use_pruning=True)])
+    # agent_clean.print_response(
+    #     "Get the History from https://en.wikipedia.org/wiki/Python_(programming_language)"
+    # )
 
-# Example 4: Multiple URLs with clean extraction
-# agent_multi = Agent(
-#     tools=[Crawl4aiTools(use_pruning=True, headless=False)]
-# )
-# agent_multi.print_response(
-#     "Compare the main content from https://en.wikipedia.org/wiki/Artificial_intelligence and https://en.wikipedia.org/wiki/Machine_learning"
-# )
+    # Example 3: Search for specific content on a page
+    # agent_search = Agent(
+    #     instructions="You are a helpful assistant that can crawl the web and extract information. Use have access to crawl4ai tools to extract information from the web.",
+    #     tools=[Crawl4aiTools()],
+    # )
+    # agent_search.print_response(
+    #     "What are the diferent Techniques used in AI? https://en.wikipedia.org/wiki/Artificial_intelligence"
+    # )
+
+    # Example 4: Multiple URLs with clean extraction
+    # agent_multi = Agent(
+    #     tools=[Crawl4aiTools(use_pruning=True, headless=False)]
+    # )
+    # agent_multi.print_response(
+    #     "Compare the main content from https://en.wikipedia.org/wiki/Artificial_intelligence and https://en.wikipedia.org/wiki/Machine_learning"
+    # )

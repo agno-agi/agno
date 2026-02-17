@@ -17,6 +17,10 @@ from google.adk import Agent
 from google.adk.a2a.utils.agent_to_a2a import to_a2a
 from google.adk.tools import google_search
 
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
+
 port = int(os.getenv("PORT", "7780"))
 
 agent = Agent(
@@ -42,6 +46,10 @@ agent_card = AgentCard(
 )
 
 app = to_a2a(agent, port=port, agent_card=agent_card)
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     import uvicorn
