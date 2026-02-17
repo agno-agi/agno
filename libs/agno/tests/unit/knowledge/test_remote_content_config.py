@@ -3,23 +3,23 @@
 import pytest
 from pydantic import ValidationError
 
-from agno.knowledge.remote_content.config import (
+from agno.knowledge.remote_content import (
     AzureBlobConfig,
+    BaseStorageConfig,
     GcsConfig,
     GitHubConfig,
-    RemoteContentConfig,
     S3Config,
     SharePointConfig,
 )
 
 # =============================================================================
-# Base RemoteContentConfig Tests
+# Base BaseStorageConfig Tests
 # =============================================================================
 
 
 def test_base_config_creation():
     """Test creating a base config with required fields."""
-    config = RemoteContentConfig(id="test-id", name="Test Config")
+    config = BaseStorageConfig(id="test-id", name="Test Config")
     assert config.id == "test-id"
     assert config.name == "Test Config"
     assert config.metadata is None
@@ -28,22 +28,22 @@ def test_base_config_creation():
 def test_base_config_with_metadata():
     """Test creating a base config with metadata."""
     metadata = {"key": "value", "nested": {"foo": "bar"}}
-    config = RemoteContentConfig(id="test-id", name="Test Config", metadata=metadata)
+    config = BaseStorageConfig(id="test-id", name="Test Config", metadata=metadata)
     assert config.metadata == metadata
 
 
 def test_base_config_missing_required_fields():
     """Test that missing required fields raise ValidationError."""
     with pytest.raises(ValidationError):
-        RemoteContentConfig(id="test-id")  # missing name
+        BaseStorageConfig(id="test-id")  # missing name
 
     with pytest.raises(ValidationError):
-        RemoteContentConfig(name="Test")  # missing id
+        BaseStorageConfig(name="Test")  # missing id
 
 
 def test_base_config_allows_extra_fields():
     """Test that extra fields are allowed (Config.extra = 'allow')."""
-    config = RemoteContentConfig(id="test-id", name="Test", custom_field="custom_value")
+    config = BaseStorageConfig(id="test-id", name="Test", custom_field="custom_value")
     assert config.custom_field == "custom_value"
 
 

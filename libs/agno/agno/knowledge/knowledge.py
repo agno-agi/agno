@@ -17,13 +17,12 @@ from agno.filters import FilterExpr
 from agno.knowledge.content import Content, ContentAuth, ContentStatus, FileData
 from agno.knowledge.document import Document
 from agno.knowledge.reader import Reader, ReaderFactory
-from agno.knowledge.remote_content.config import (
-    RemoteContentConfig,
-)
+from agno.knowledge.remote_content.base import BaseStorageConfig
 from agno.knowledge.remote_content.remote_content import (
     RemoteContent,
 )
 from agno.knowledge.remote_knowledge import RemoteKnowledge
+from agno.knowledge.utils import merge_user_metadata, set_agno_metadata, strip_agno_metadata
 from agno.utils.http import async_fetch_with_retry
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
@@ -48,7 +47,7 @@ class Knowledge(RemoteKnowledge):
     contents_db: Optional[Union[BaseDb, AsyncBaseDb]] = None
     max_results: int = 10
     readers: Optional[Dict[str, Reader]] = None
-    content_sources: Optional[List[RemoteContentConfig]] = None
+    content_sources: Optional[List[BaseStorageConfig]] = None
     # When True, adds linked_to metadata during insert and filters by it during search.
     # This enables isolation when multiple Knowledge instances share the same vector database.
     # Requires re-indexing existing data to add linked_to metadata.
@@ -130,6 +129,9 @@ class Knowledge(RemoteKnowledge):
             )
             return
 
+        # Strip reserved _agno key from user-provided metadata
+        safe_metadata = strip_agno_metadata(metadata)
+
         content = None
         file_data = None
         if text_content:
@@ -141,7 +143,7 @@ class Knowledge(RemoteKnowledge):
             path=path,
             url=url,
             file_data=file_data if file_data else None,
-            metadata=metadata,
+            metadata=safe_metadata,
             topics=topics,
             remote_content=remote_content,
             reader=reader,
@@ -195,6 +197,9 @@ class Knowledge(RemoteKnowledge):
             )
             return
 
+        # Strip reserved _agno key from user-provided metadata
+        safe_metadata = strip_agno_metadata(metadata)
+
         content = None
         file_data = None
         if text_content:
@@ -206,7 +211,7 @@ class Knowledge(RemoteKnowledge):
             path=path,
             url=url,
             file_data=file_data if file_data else None,
-            metadata=metadata,
+            metadata=safe_metadata,
             topics=topics,
             remote_content=remote_content,
             reader=reader,
@@ -1505,6 +1510,10 @@ class Knowledge(RemoteKnowledge):
         if not content.url:
             raise ValueError("No url provided")
 
+        # Store URL source metadata in _agno for source tracking
+        content.metadata = set_agno_metadata(content.metadata, "source_type", "url")
+        content.metadata = set_agno_metadata(content.metadata, "source_url", content.url)
+
         # Set name from URL if not provided
         if not content.name and content.url:
             from urllib.parse import urlparse
@@ -1651,6 +1660,10 @@ class Knowledge(RemoteKnowledge):
 
         if not content.url:
             raise ValueError("No url provided")
+
+        # Store URL source metadata in _agno for source tracking
+        content.metadata = set_agno_metadata(content.metadata, "source_type", "url")
+        content.metadata = set_agno_metadata(content.metadata, "source_url", content.url)
 
         # Set name from URL if not provided
         if not content.name and content.url:
@@ -2442,7 +2455,7 @@ class Knowledge(RemoteKnowledge):
                     content.description, "content.description", default=""
                 )
             if content.metadata is not None:
-                content_row.metadata = content.metadata
+                content_row.metadata = merge_user_metadata(content_row.metadata, content.metadata)
             if content.status is not None:
                 content_row.status = content.status
             if content.status_message is not None:
@@ -2457,7 +2470,9 @@ class Knowledge(RemoteKnowledge):
             self.contents_db.upsert_knowledge_content(knowledge_row=content_row)
 
             if self.vector_db:
-                self.vector_db.update_metadata(content_id=content.id, metadata=content.metadata or {})
+                # Strip _agno from metadata sent to vector_db — only user fields should be searchable
+                user_metadata = strip_agno_metadata(content.metadata) or {}
+                self.vector_db.update_metadata(content_id=content.id, metadata=user_metadata)
 
             return content_row.to_dict()
 
@@ -2487,7 +2502,7 @@ class Knowledge(RemoteKnowledge):
                     content.description, "content.description", default=""
                 )
             if content.metadata is not None:
-                content_row.metadata = content.metadata
+                content_row.metadata = merge_user_metadata(content_row.metadata, content.metadata)
             if content.status is not None:
                 content_row.status = content.status
             if content.status_message is not None:
@@ -2506,7 +2521,9 @@ class Knowledge(RemoteKnowledge):
                 self.contents_db.upsert_knowledge_content(knowledge_row=content_row)
 
             if self.vector_db:
-                self.vector_db.update_metadata(content_id=content.id, metadata=content.metadata or {})
+                # Strip _agno from metadata sent to vector_db — only user fields should be searchable
+                user_metadata = strip_agno_metadata(content.metadata) or {}
+                self.vector_db.update_metadata(content_id=content.id, metadata=user_metadata)
 
             return content_row.to_dict()
 
