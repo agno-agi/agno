@@ -14,6 +14,7 @@ class MigrationManager:
     available_versions: list[tuple[str, Version]] = [
         ("v2_0_0", packaging_version.parse("2.0.0")),
         ("v2_3_0", packaging_version.parse("2.3.0")),
+        ("v2_5_0", packaging_version.parse("2.5.0")),
     ]
 
     def __init__(self, db: Union[AsyncBaseDb, BaseDb]):
@@ -40,23 +41,24 @@ class MigrationManager:
         else:
             _target_version = packaging_version.parse(target_version)
 
+        # Mapping from table_type to db attribute name
+        _table_type_to_attr = {
+            "memories": "memory_table_name",
+            "sessions": "session_table_name",
+            "metrics": "metrics_table_name",
+            "evals": "eval_table_name",
+            "knowledge": "knowledge_table_name",
+            "culture": "culture_table_name",
+        }
+
         # Select tables to migrate
         if table_type:
-            if table_type not in ["memory", "session", "metrics", "eval", "knowledge", "culture"]:
-                log_warning(
-                    f"Invalid table type: {table_type}. Use one of: memory, session, metrics, eval, knowledge, culture"
-                )
+            if table_type not in _table_type_to_attr:
+                log_warning(f"Invalid table type: {table_type}. Use one of: {', '.join(_table_type_to_attr.keys())}")
                 return
-            tables = [(table_type, getattr(self.db, f"{table_type}_table_name"))]
+            tables = [(table_type, getattr(self.db, _table_type_to_attr[table_type]))]
         else:
-            tables = [
-                ("memories", self.db.memory_table_name),
-                ("sessions", self.db.session_table_name),
-                ("metrics", self.db.metrics_table_name),
-                ("evals", self.db.eval_table_name),
-                ("knowledge", self.db.knowledge_table_name),
-                ("culture", self.db.culture_table_name),
-            ]
+            tables = [(tt, getattr(self.db, attr)) for tt, attr in _table_type_to_attr.items()]
 
         # Handle migrations for each table separately (extend in future if needed):
         for table_type, table_name in tables:
@@ -82,7 +84,6 @@ class MigrationManager:
 
             # Find files after the current version
             latest_version = None
-            migration_executed = False
             for version, normalised_version in self.available_versions:
                 if normalised_version > current_version:
                     if target_version and normalised_version > _target_version:
@@ -90,14 +91,14 @@ class MigrationManager:
 
                     log_info(f"Applying migration {normalised_version} on {table_name}")
                     migration_executed = await self._up_migration(version, table_type, table_name)
+                    latest_version = normalised_version.public
                     if migration_executed:
+                        latest_version = normalised_version.public
                         log_info(f"Successfully applied migration {normalised_version} on table {table_name}")
                     else:
                         log_info(f"Skipping application of migration {normalised_version} on table {table_name}")
 
-                    latest_version = normalised_version.public
-
-            if migration_executed and latest_version:
+            if latest_version:
                 log_info(f"Storing version {latest_version} in database for table {table_name}")
                 if isinstance(self.db, AsyncBaseDb):
                     await self.db.upsert_schema_version(table_name, latest_version)
@@ -132,23 +133,24 @@ class MigrationManager:
         """
         _target_version = packaging_version.parse(target_version)
 
+        # Mapping from table_type to db attribute name
+        _table_type_to_attr = {
+            "memories": "memory_table_name",
+            "sessions": "session_table_name",
+            "metrics": "metrics_table_name",
+            "evals": "eval_table_name",
+            "knowledge": "knowledge_table_name",
+            "culture": "culture_table_name",
+        }
+
         # Select tables to migrate
         if table_type:
-            if table_type not in ["memory", "session", "metrics", "eval", "knowledge", "culture"]:
-                log_warning(
-                    f"Invalid table type: {table_type}. Use one of: memory, session, metrics, eval, knowledge, culture"
-                )
+            if table_type not in _table_type_to_attr:
+                log_warning(f"Invalid table type: {table_type}. Use one of: {', '.join(_table_type_to_attr.keys())}")
                 return
-            tables = [(table_type, getattr(self.db, f"{table_type}_table_name"))]
+            tables = [(table_type, getattr(self.db, _table_type_to_attr[table_type]))]
         else:
-            tables = [
-                ("memories", self.db.memory_table_name),
-                ("sessions", self.db.session_table_name),
-                ("metrics", self.db.metrics_table_name),
-                ("evals", self.db.eval_table_name),
-                ("knowledge", self.db.knowledge_table_name),
-                ("culture", self.db.culture_table_name),
-            ]
+            tables = [(tt, getattr(self.db, attr)) for tt, attr in _table_type_to_attr.items()]
 
         for table_type, table_name in tables:
             if isinstance(self.db, AsyncBaseDb):
@@ -162,7 +164,7 @@ class MigrationManager:
                 )
                 continue
 
-            migration_executed = False
+            any_migration_executed = False
             # Run down migration for all versions between target and current (include down of current version)
             # Apply down migrations in reverse order to ensure dependencies are met
             for version, normalised_version in reversed(self.available_versions):
@@ -170,11 +172,12 @@ class MigrationManager:
                     log_info(f"Reverting migration {normalised_version} on table {table_name}")
                     migration_executed = await self._down_migration(version, table_type, table_name)
                     if migration_executed:
+                        any_migration_executed = True
                         log_info(f"Successfully reverted migration {normalised_version} on table {table_name}")
                     else:
                         log_info(f"Skipping revert of migration {normalised_version} on table {table_name}")
 
-            if migration_executed:
+            if any_migration_executed:
                 log_info(f"Storing version {_target_version} in database for table {table_name}")
                 if isinstance(self.db, AsyncBaseDb):
                     await self.db.upsert_schema_version(table_name, _target_version.public)

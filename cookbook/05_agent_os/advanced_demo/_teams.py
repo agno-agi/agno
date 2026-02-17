@@ -1,3 +1,10 @@
+"""
+ Teams
+======
+
+Demonstrates  teams.
+"""
+
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.anthropic import Claude
@@ -5,6 +12,10 @@ from agno.team.team import Team
 from agno.tools.reasoning import ReasoningTools
 from agno.tools.websearch import WebSearchTools
 from agno.tools.yfinance import YFinanceTools
+
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
@@ -40,3 +51,10 @@ finance_reasoning_team = Team(
     markdown=True,
     show_members_responses=True,
 )
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    raise SystemExit("This module is intended to be imported.")

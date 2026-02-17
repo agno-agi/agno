@@ -10,6 +10,11 @@ from agno.models.google import Gemini
 from agno.tools.eleven_labs import ElevenLabsTools
 from agno.utils.media import save_base64_data
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
+
 audio_agent = Agent(
     model=Gemini(id="gemini-2.5-pro"),
     tools=[
@@ -32,17 +37,21 @@ audio_agent = Agent(
     markdown=True,
 )
 
-response = audio_agent.run(
-    "Generate a very long audio of history of french revolution and tell me which subject it belongs to.",
-)
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    response = audio_agent.run(
+        "Generate a very long audio of history of french revolution and tell me which subject it belongs to.",
+    )
 
-if response.audio:
-    print("Agent response:", response.content)
-    base64_audio = base64.b64encode(response.audio[0].content).decode("utf-8")
-    save_base64_data(base64_audio, "tmp/french_revolution.mp3")
+    if response.audio:
+        print("Agent response:", response.content)
+        base64_audio = base64.b64encode(response.audio[0].content).decode("utf-8")
+        save_base64_data(base64_audio, "tmp/french_revolution.mp3")
 
-# response2 = audio_agent.run("Generate a glass breaking sound effect" , debug_mode=True)
-# if response2.audio:
-#     print("Agent response:", response2.content)
-#     base64_audio = base64.b64encode(response2.audio[0].content).decode("utf-8")
-#     save_base64_data(base64_audio, "tmp/glass_breaking_sound_effect.mp3")
+    # response2 = audio_agent.run("Generate a glass breaking sound effect" , debug_mode=True)
+    # if response2.audio:
+    #     print("Agent response:", response2.content)
+    #     base64_audio = base64.b64encode(response2.audio[0].content).decode("utf-8")
+    #     save_base64_data(base64_audio, "tmp/glass_breaking_sound_effect.mp3")

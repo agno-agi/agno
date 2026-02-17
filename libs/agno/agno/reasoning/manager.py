@@ -931,7 +931,7 @@ class ReasoningManager:
             log_debug(f"Step {step_count}", center=True, symbol="=")
             step_count += 1
             try:
-                reasoning_agent_response: RunOutput = await reasoning_agent.arun(
+                reasoning_agent_response: RunOutput = await reasoning_agent.arun(  # type: ignore[misc]
                     input=run_messages.get_input_messages()
                 )
 

@@ -24,9 +24,9 @@ from agno.learn import (
 )
 from agno.models.openai import OpenAIResponses
 
-# ============================================================================
-# Setup
-# ============================================================================
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 
@@ -59,9 +59,9 @@ def create_personal_assistant(user_id: str, session_id: str) -> Agent:
     )
 
 
-# ============================================================================
-# Demo
-# ============================================================================
+# ---------------------------------------------------------------------------
+# Run Demo
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     from rich.pretty import pprint
@@ -79,11 +79,9 @@ if __name__ == "__main__":
         "I prefer concise responses. My sister Sarah is visiting next month.",
         stream=True,
     )
-    agent.get_learning_machine().user_profile_store.print(user_id=user_id)
+    agent.learning_machine.user_profile_store.print(user_id=user_id)
     print("\n--- Entities ---")
-    pprint(
-        agent.get_learning_machine().entity_memory_store.search(query="sarah", limit=10)
-    )
+    pprint(agent.learning_machine.entity_memory_store.search(query="sarah", limit=10))
 
     # Conversation 2: New session (demonstrates memory)
     print("\n" + "=" * 60)
@@ -106,4 +104,4 @@ if __name__ == "__main__":
         "Help me plan activities for Sarah's visit. She likes hiking.",
         stream=True,
     )
-    agent.get_learning_machine().session_context_store.print(session_id="conv_3")
+    agent.learning_machine.session_context_store.print(session_id="conv_3")
