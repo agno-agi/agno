@@ -24,13 +24,24 @@ PAGE_NUMBERING_CORRECTNESS_RATIO_FOR_REMOVAL = 0.4
 
 
 def _sanitize_pdf_text(text: str) -> str:
-    """Collapse all whitespace sequences (newlines, spaces, tabs) into single spaces.
+    """Normalize fragmented PDF text while preserving paragraph boundaries.
 
-    PDF text extraction often produces fragmented output where each word appears
-    on its own line, especially for multi-column layouts or certain PDF generators.
-    This function normalizes such text into clean, readable content.
+    PDF text extraction via pypdf often produces fragmented output where each word
+    appears on its own line, especially for multi-column layouts or certain PDF
+    generators. This function joins those broken lines into flowing text while
+    keeping intentional paragraph breaks (double newlines) intact.
+
+    Note: Structured content like code blocks or tables with meaningful whitespace
+    may lose formatting. Use ``sanitize_content=False`` on the reader to disable.
     """
-    return re.sub(r"\s+", " ", text).strip()
+    # Collapse word-per-line PDF artifacts: \n<whitespace>\n is a typical extraction artifact,
+    # not an intentional paragraph break (which is \n\n with no whitespace between).
+    text = re.sub(r"\n[ \t]+\n", " ", text)
+    # Join single newlines (broken lines from PDF extraction), preserving true paragraph breaks (\n\n)
+    text = re.sub(r"(?<!\n)[ \t]*\n[ \t]*(?!\n)", " ", text)
+    # Collapse runs of spaces/tabs within lines
+    text = re.sub(r"[ \t]{2,}", " ", text)
+    return text.strip()
 
 
 def _ocr_reader(page: Any) -> str:

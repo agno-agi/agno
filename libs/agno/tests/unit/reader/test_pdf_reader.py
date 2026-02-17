@@ -389,7 +389,20 @@ def test_sanitize_pdf_text_collapses_newlines():
 def test_sanitize_pdf_text_collapses_mixed_whitespace():
     text = "hello\t\n  \n\tworld\n\nfoo   bar"
     result = _sanitize_pdf_text(text)
-    assert result == "hello world foo bar"
+    # Paragraph break (\n\n) is preserved; word-per-line artifacts (\n \n) are collapsed
+    assert result == "hello world\n\nfoo bar"
+
+
+def test_sanitize_pdf_text_preserves_paragraph_breaks():
+    text = "First paragraph ends here.\n\nSecond paragraph starts here."
+    result = _sanitize_pdf_text(text)
+    assert result == "First paragraph ends here.\n\nSecond paragraph starts here."
+
+
+def test_sanitize_pdf_text_joins_single_newlines():
+    text = "line one\nline two\nline three"
+    result = _sanitize_pdf_text(text)
+    assert result == "line one line two line three"
 
 
 def test_sanitize_pdf_text_strips_leading_trailing():
