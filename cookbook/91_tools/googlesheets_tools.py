@@ -18,6 +18,11 @@ e.g for Localhost and port 8080: http://localhost:8080/flowName=GeneralOAuthFlow
 from agno.agent import Agent
 from agno.tools.googlesheets import GoogleSheetsTools
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
+
 SAMPLE_SPREADSHEET_ID = "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms"
 SAMPLE_RANGE_NAME = "Class Data!A2:E"
 
@@ -34,4 +39,9 @@ agent = Agent(
         "Before asking for spreadsheet details, first attempt the operation as the user may have already configured the ID and range in the constructor",
     ],
 )
-agent.print_response("Please tell me about the contents of the spreadsheet")
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    agent.print_response("Please tell me about the contents of the spreadsheet")

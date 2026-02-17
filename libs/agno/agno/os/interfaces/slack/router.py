@@ -107,7 +107,7 @@ def attach_routes(
         files, images = _download_event_files(slack_tools, event)
 
         if agent:
-            response = await agent.arun(
+            response = await agent.arun(  # type: ignore[misc]
                 message_text,
                 user_id=user,
                 session_id=session_id,

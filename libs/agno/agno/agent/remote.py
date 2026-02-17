@@ -28,7 +28,7 @@ class RemoteAgent(BaseRemote):
     output_schema: Optional[Any] = None
     store_media: bool = True
     store_tool_messages: bool = True
-    store_history_messages: bool = True
+    store_history_messages: bool = False
     send_media_to_model: bool = True
     add_history_to_context: bool = False
     num_history_runs: Optional[int] = None

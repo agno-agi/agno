@@ -32,6 +32,10 @@ from agno.os import AgentOS
 from agno.os.config import AuthorizationConfig
 from agno.tools.websearch import WebSearchTools
 
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
+
 # JWT Secret (use environment variable in production)
 JWT_SECRET = os.getenv("JWT_VERIFICATION_KEY", "your-secret-key-at-least-256-bits-long")
 
@@ -94,6 +98,10 @@ def create_token(user_id: str, scopes: list[str], hours: int = 24) -> str:
     }
     return jwt.encode(payload, JWT_SECRET, algorithm="HS256")
 
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     """

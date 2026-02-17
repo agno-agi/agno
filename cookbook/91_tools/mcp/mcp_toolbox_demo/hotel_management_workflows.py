@@ -10,6 +10,11 @@ from agno.tools.mcp_toolbox import MCPToolbox
 from agno.workflow.condition import Step
 from agno.workflow.workflow import Workflow
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
+
 # Configuration
 url = "http://127.0.0.1:5001"
 
@@ -85,6 +90,10 @@ async def run_workflow_demo():
 
         return result
 
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     asyncio.run(run_workflow_demo())

@@ -18,9 +18,9 @@ from agno.db.postgres import PostgresDb
 from agno.learn import LearningMachine, LearningMode, UserProfileConfig
 from agno.models.anthropic import Claude
 
-# ============================================================================
-# Setup - Using Claude instead of OpenAI
-# ============================================================================
+# ---------------------------------------------------------------------------
+# Create Agent - Using Claude instead of OpenAI
+# ---------------------------------------------------------------------------
 
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 
@@ -35,9 +35,9 @@ agent = Agent(
     markdown=True,
 )
 
-# ============================================================================
-# Demo
-# ============================================================================
+# ---------------------------------------------------------------------------
+# Run Demo
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     user_id = "claude_test@example.com"
@@ -61,7 +61,7 @@ if __name__ == "__main__":
     )
 
     # Check if LearningMachine was initialized
-    lm = agent.get_learning_machine()
+    lm = agent.learning_machine
     print(f"\nLearningMachine exists: {lm is not None}")
 
     if lm and lm.user_profile_store:

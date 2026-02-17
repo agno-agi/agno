@@ -90,10 +90,18 @@ class MemoryConfig(MemoryDomainConfig):
     dbs: Optional[List[DatabaseConfig[MemoryDomainConfig]]] = None
 
 
+class KnowledgeDatabaseConfig(BaseModel):
+    """Configuration for a knowledge database with its tables"""
+
+    db_id: str
+    domain_config: Optional[KnowledgeDomainConfig] = None
+    tables: List[str] = []
+
+
 class KnowledgeConfig(KnowledgeDomainConfig):
     """Configuration for the Knowledge domain of the AgentOS"""
 
-    dbs: Optional[List[DatabaseConfig[KnowledgeDomainConfig]]] = None
+    dbs: Optional[List[KnowledgeDatabaseConfig]] = None
     knowledge_instances: Optional[List[KnowledgeInstanceConfig]] = None
 
 
