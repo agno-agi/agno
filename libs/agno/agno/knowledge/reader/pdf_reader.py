@@ -23,6 +23,16 @@ PAGE_END_NUMBERING_FORMAT_DEFAULT = "<end page {page_nr}>"
 PAGE_NUMBERING_CORRECTNESS_RATIO_FOR_REMOVAL = 0.4
 
 
+def _sanitize_pdf_text(text: str) -> str:
+    """Collapse all whitespace sequences (newlines, spaces, tabs) into single spaces.
+
+    PDF text extraction often produces fragmented output where each word appears
+    on its own line, especially for multi-column layouts or certain PDF generators.
+    This function normalizes such text into clean, readable content.
+    """
+    return re.sub(r"\s+", " ", text).strip()
+
+
 def _ocr_reader(page: Any) -> str:
     """A single PDF page object."""
     try:
@@ -184,6 +194,7 @@ class BasePDFReader(Reader):
         page_start_numbering_format: Optional[str] = None,
         page_end_numbering_format: Optional[str] = None,
         password: Optional[str] = None,
+        sanitize_content: bool = True,
         chunking_strategy: Optional[ChunkingStrategy] = DocumentChunking(chunk_size=5000),
         **kwargs,
     ):
@@ -196,6 +207,7 @@ class BasePDFReader(Reader):
         self.page_start_numbering_format = page_start_numbering_format
         self.page_end_numbering_format = page_end_numbering_format
         self.password = password
+        self.sanitize_content = sanitize_content
 
         super().__init__(chunking_strategy=chunking_strategy, **kwargs)
 
@@ -287,7 +299,10 @@ class BasePDFReader(Reader):
         pdf_content = []
         pdf_images_text = []
         for page in doc_reader.pages:
-            pdf_content.append(page.extract_text())
+            page_text = page.extract_text()
+            if self.sanitize_content:
+                page_text = _sanitize_pdf_text(page_text)
+            pdf_content.append(page_text)
             if read_images:
                 pdf_images_text.append(_ocr_reader(page))
 
@@ -309,6 +324,8 @@ class BasePDFReader(Reader):
         async def _read_pdf_page(page, read_images) -> Tuple[str, str]:
             # We tried "asyncio.to_thread(page.extract_text)", but it maintains state internally, which leads to issues.
             page_text = page.extract_text()
+            if self.sanitize_content:
+                page_text = _sanitize_pdf_text(page_text)
 
             if read_images:
                 pdf_images_text = await _async_ocr_reader(page)
