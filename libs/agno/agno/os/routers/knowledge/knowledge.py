@@ -1240,6 +1240,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
                 id=config.id,
                 name=config.name,
                 type=config.__class__.__name__.replace("Config", "").lower(),
+                metadata=config.metadata,
                 prefix=getattr(config, "prefix", None),
             )
             for config in remote_configs

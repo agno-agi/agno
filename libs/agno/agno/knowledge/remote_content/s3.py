@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import mimetypes
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, List, Optional, Tuple
 
 from agno.knowledge.remote_content.base import BaseStorageConfig, ListFilesResult
 
@@ -87,7 +87,7 @@ class S3Config(BaseStorageConfig):
 
         return self._build_result(collected, folders, page, limit, total_count, has_more)
 
-    def _build_session_and_client_kwargs(self) -> tuple:
+    def _build_session_and_client_kwargs(self) -> Tuple[dict, dict]:
         """Build boto3/aioboto3 session and client kwargs from config."""
         session_kwargs: dict = {}
         if self.region:
@@ -113,14 +113,14 @@ class S3Config(BaseStorageConfig):
     def _process_list_response(
         response: dict,
         effective_prefix: str,
-        folders: list,
+        folders: List[dict],
         folders_seen: bool,
-        collected: list,
+        collected: List[dict],
         limit: int,
         skip_count: int,
         skipped: int,
         total_count: int,
-    ) -> tuple:
+    ) -> Tuple[List[dict], bool, List[dict], int, int, bool]:
         """Process a single list_objects_v2 response page.
 
         Returns (folders, folders_seen, collected, skipped, total_count, has_more).

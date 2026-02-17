@@ -88,7 +88,10 @@ class SharePointConfig(BaseStorageConfig):
         else:
             url = f"https://graph.microsoft.com/v1.0/sites/{self.hostname}"
 
-        response = httpx.get(url, headers={"Authorization": f"Bearer {access_token}"})
-        if response.status_code == 200:
-            return response.json().get("id")
+        try:
+            response = httpx.get(url, headers={"Authorization": f"Bearer {access_token}"})
+            if response.status_code == 200:
+                return response.json().get("id")
+        except httpx.HTTPError:
+            pass
         return None
