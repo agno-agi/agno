@@ -1310,7 +1310,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
             )
 
         try:
-            result = config.list_files(
+            result = await config.alist_files(
                 prefix=prefix,
                 delimiter=delimiter,
                 limit=limit,

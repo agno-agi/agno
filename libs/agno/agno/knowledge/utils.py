@@ -61,6 +61,19 @@ def get_agno_metadata(
     return agno_meta.get(key)
 
 
+def strip_agno_metadata(
+    metadata: Optional[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    """Return a copy of *metadata* without the reserved ``_agno`` key.
+
+    Useful before sending metadata to the vector DB where only
+    user-defined fields should be searchable.
+    """
+    if not metadata:
+        return metadata
+    return {k: v for k, v in metadata.items() if k != RESERVED_AGNO_KEY}
+
+
 def _get_chunker_class(strategy_type):
     """Get the chunker class for a given strategy type without instantiation."""
     from agno.knowledge.chunking.strategy import ChunkingStrategyType

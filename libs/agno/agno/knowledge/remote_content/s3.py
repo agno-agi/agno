@@ -47,25 +47,8 @@ class S3Config(BaseStorageConfig):
             raise ImportError("The `boto3` package is not installed. Please install it via `pip install boto3`.")
 
         limit = max(1, min(limit, 1000))
-
-        # Build session kwargs
-        session_kwargs = {}
-        if self.region:
-            session_kwargs["region_name"] = self.region
-
-        # Build client kwargs for credentials
-        client_kwargs = {}
-        if self.aws_access_key_id and self.aws_secret_access_key:
-            client_kwargs["aws_access_key_id"] = self.aws_access_key_id
-            client_kwargs["aws_secret_access_key"] = self.aws_secret_access_key
-
-        session = boto3.Session(**session_kwargs)
-        s3_client = session.client("s3", **client_kwargs)
-
-        # Use provided prefix or fall back to config prefix
+        session_kwargs, client_kwargs = self._build_session_and_client_kwargs()
         effective_prefix = prefix if prefix is not None else (self.prefix or "")
-
-        # Number of file objects to skip for pages before the requested one
         skip_count = (page - 1) * limit
         skipped = 0
         collected: list = []
@@ -74,80 +57,135 @@ class S3Config(BaseStorageConfig):
         total_count = 0
         has_more = False
 
-        # Use list_objects_v2 directly with continuation tokens to avoid
-        # loading all objects into memory.
+        list_kwargs = self._build_list_kwargs(effective_prefix, delimiter)
+
+        session = boto3.Session(**session_kwargs)
+        s3_client = session.client("s3", **client_kwargs)
+
+        while True:
+            response = s3_client.list_objects_v2(**list_kwargs)
+
+            folders, folders_seen, collected, skipped, total_count, page_has_more = self._process_list_response(
+                response,
+                effective_prefix,
+                folders,
+                folders_seen,
+                collected,
+                limit,
+                skip_count,
+                skipped,
+                total_count,
+            )
+            if page_has_more:
+                has_more = True
+                break
+
+            if response.get("IsTruncated"):
+                list_kwargs["ContinuationToken"] = response["NextContinuationToken"]
+            else:
+                break
+
+        return self._build_result(collected, folders, page, limit, total_count, has_more)
+
+    def _build_session_and_client_kwargs(self) -> tuple:
+        """Build boto3/aioboto3 session and client kwargs from config."""
+        session_kwargs: dict = {}
+        if self.region:
+            session_kwargs["region_name"] = self.region
+
+        client_kwargs: dict = {}
+        if self.aws_access_key_id and self.aws_secret_access_key:
+            client_kwargs["aws_access_key_id"] = self.aws_access_key_id
+            client_kwargs["aws_secret_access_key"] = self.aws_secret_access_key
+
+        return session_kwargs, client_kwargs
+
+    def _build_list_kwargs(self, effective_prefix: str, delimiter: str) -> dict:
+        """Build kwargs for list_objects_v2."""
         list_kwargs: dict = {"Bucket": self.bucket_name, "MaxKeys": 1000}
         if effective_prefix:
             list_kwargs["Prefix"] = effective_prefix
         if delimiter:
             list_kwargs["Delimiter"] = delimiter
+        return list_kwargs
 
-        while True:
-            response = s3_client.list_objects_v2(**list_kwargs)
+    @staticmethod
+    def _process_list_response(
+        response: dict,
+        effective_prefix: str,
+        folders: list,
+        folders_seen: bool,
+        collected: list,
+        limit: int,
+        skip_count: int,
+        skipped: int,
+        total_count: int,
+    ) -> tuple:
+        """Process a single list_objects_v2 response page.
 
-            # Collect folders from first response only
-            if not folders_seen:
-                for prefix_obj in response.get("CommonPrefixes", []):
-                    folder_prefix = prefix_obj.get("Prefix", "")
-                    folder_name = folder_prefix.rstrip("/").rsplit("/", 1)[-1]
-                    if folder_name:
-                        folders.append(
-                            {
-                                "prefix": folder_prefix,
-                                "name": folder_name,
-                                "is_empty": False,
-                            }
-                        )
-                folders_seen = True
+        Returns (folders, folders_seen, collected, skipped, total_count, has_more).
+        """
+        has_more = False
 
-            # Process file objects
-            for obj in response.get("Contents", []):
-                key = obj.get("Key", "")
-                if key == effective_prefix:
-                    continue
-                name = key.rsplit("/", 1)[-1] if "/" in key else key
-                if not name:
-                    continue
-
-                total_count += 1
-
-                # Skip objects for earlier pages
-                if skipped < skip_count:
-                    skipped += 1
-                    continue
-
-                # Collect objects for the requested page
-                if len(collected) < limit:
-                    collected.append(
+        if not folders_seen:
+            for prefix_obj in response.get("CommonPrefixes", []):
+                folder_prefix = prefix_obj.get("Prefix", "")
+                folder_name = folder_prefix.rstrip("/").rsplit("/", 1)[-1]
+                if folder_name:
+                    folders.append(
                         {
-                            "key": key,
-                            "name": name,
-                            "size": obj.get("Size"),
-                            "last_modified": obj.get("LastModified"),
-                            "content_type": mimetypes.guess_type(name)[0],
+                            "prefix": folder_prefix,
+                            "name": folder_name,
+                            "is_empty": False,
                         }
                     )
+            folders_seen = True
 
-            # Check if there are more pages from S3
-            if response.get("IsTruncated"):
-                list_kwargs["ContinuationToken"] = response["NextContinuationToken"]
-                # If we already have enough items, count remaining for total_count
-                # but cap the counting to avoid iterating forever on huge buckets
-                if len(collected) >= limit:
-                    has_more = True
-                    break
-            else:
-                break
+        for obj in response.get("Contents", []):
+            key = obj.get("Key", "")
+            if key == effective_prefix:
+                continue
+            name = key.rsplit("/", 1)[-1] if "/" in key else key
+            if not name:
+                continue
 
-        # If we broke out early, we don't know the exact total —
-        # indicate there are more pages available
+            total_count += 1
+
+            if skipped < skip_count:
+                skipped += 1
+                continue
+
+            if len(collected) < limit:
+                collected.append(
+                    {
+                        "key": key,
+                        "name": name,
+                        "size": obj.get("Size"),
+                        "last_modified": obj.get("LastModified"),
+                        "content_type": mimetypes.guess_type(name)[0],
+                    }
+                )
+
+        if response.get("IsTruncated") and len(collected) >= limit:
+            has_more = True
+
+        return folders, folders_seen, collected, skipped, total_count, has_more
+
+    @staticmethod
+    def _build_result(
+        collected: list,
+        folders: list,
+        page: int,
+        limit: int,
+        total_count: int,
+        has_more: bool,
+    ) -> ListFilesResult:
+        """Build the final ListFilesResult from accumulated data."""
         if has_more:
-            # We know at least this many exist; signal "more available"
             total_pages = page + 1
         else:
             total_pages = (total_count + limit - 1) // limit if limit > 0 else 0
 
-        # Only include folders on first page
         if page > 1:
             folders = []
 
@@ -159,6 +197,70 @@ class S3Config(BaseStorageConfig):
             total_count=total_count,
             total_pages=total_pages,
         )
+
+    async def alist_files(
+        self,
+        prefix: Optional[str] = None,
+        delimiter: str = "/",
+        limit: int = 100,
+        page: int = 1,
+    ) -> ListFilesResult:
+        """Async version of list_files using aioboto3.
+
+        Args:
+            prefix: Path prefix to filter files (e.g., "reports/2024/").
+                    Overrides the config's prefix when provided.
+            delimiter: Folder delimiter (default "/")
+            limit: Max files to return per request (1-1000, clamped)
+            page: Page number (1-indexed)
+
+        Returns:
+            ListFilesResult with files, folders, and pagination info
+        """
+        try:
+            import aioboto3
+        except ImportError:
+            raise ImportError("The `aioboto3` package is not installed. Please install it via `pip install aioboto3`.")
+
+        limit = max(1, min(limit, 1000))
+        session_kwargs, client_kwargs = self._build_session_and_client_kwargs()
+        effective_prefix = prefix if prefix is not None else (self.prefix or "")
+        skip_count = (page - 1) * limit
+        skipped = 0
+        collected: list = []
+        folders: list = []
+        folders_seen = False
+        total_count = 0
+        has_more = False
+
+        list_kwargs = self._build_list_kwargs(effective_prefix, delimiter)
+
+        session = aioboto3.Session(**session_kwargs)
+        async with session.client("s3", **client_kwargs) as s3_client:
+            while True:
+                response = await s3_client.list_objects_v2(**list_kwargs)
+
+                folders, folders_seen, collected, skipped, total_count, page_has_more = self._process_list_response(
+                    response,
+                    effective_prefix,
+                    folders,
+                    folders_seen,
+                    collected,
+                    limit,
+                    skip_count,
+                    skipped,
+                    total_count,
+                )
+                if page_has_more:
+                    has_more = True
+                    break
+
+                if response.get("IsTruncated"):
+                    list_kwargs["ContinuationToken"] = response["NextContinuationToken"]
+                else:
+                    break
+
+        return self._build_result(collected, folders, page, limit, total_count, has_more)
 
     def file(self, key: str) -> "S3Content":
         """Create a content reference for a specific file.

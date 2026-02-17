@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 from agno.knowledge.content import Content, ContentStatus
+from agno.knowledge.utils import RESERVED_AGNO_KEY, strip_agno_metadata
 from agno.utils.string import generate_id
 
 
@@ -29,14 +30,11 @@ class BaseLoader:
     This class provides common methods used by all content loaders to reduce
     code duplication between sync and async implementations.
 
-    Attributes:
-        RESERVED_METADATA_KEY: Key used to store framework metadata in content metadata.
-
     Methods that call self._build_content_hash() assume they are mixed into
     a class that provides this method (e.g., Knowledge via RemoteKnowledge).
     """
 
-    RESERVED_METADATA_KEY = "_agno"
+    RESERVED_METADATA_KEY = RESERVED_AGNO_KEY
 
     def _compute_content_name(
         self,
@@ -173,9 +171,9 @@ class BaseLoader:
             Merged metadata dictionary with provider fields under ``_agno``
         """
         # Strip any user-provided _agno — this key is reserved for the framework
-        merged: Dict[str, Any] = {k: v for k, v in (user_metadata or {}).items() if k != self.RESERVED_METADATA_KEY}
+        merged: Dict[str, Any] = strip_agno_metadata(user_metadata) or {}
         # Store provider metadata under reserved _agno key
-        merged[self.RESERVED_METADATA_KEY] = dict(provider_metadata)
+        merged[RESERVED_AGNO_KEY] = dict(provider_metadata)
         return merged
 
     def _files_to_dict_list(self, files: List[FileToProcess]) -> List[Dict[str, Any]]:

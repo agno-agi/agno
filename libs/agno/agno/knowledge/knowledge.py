@@ -22,7 +22,7 @@ from agno.knowledge.remote_content.remote_content import (
     RemoteContent,
 )
 from agno.knowledge.remote_knowledge import RemoteKnowledge
-from agno.knowledge.utils import merge_user_metadata
+from agno.knowledge.utils import merge_user_metadata, set_agno_metadata, strip_agno_metadata
 from agno.utils.http import async_fetch_with_retry
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
@@ -130,7 +130,7 @@ class Knowledge(RemoteKnowledge):
             return
 
         # Strip reserved _agno key from user-provided metadata
-        safe_metadata = {k: v for k, v in metadata.items() if k != self.RESERVED_METADATA_KEY} if metadata else None
+        safe_metadata = strip_agno_metadata(metadata)
 
         content = None
         file_data = None
@@ -198,7 +198,7 @@ class Knowledge(RemoteKnowledge):
             return
 
         # Strip reserved _agno key from user-provided metadata
-        safe_metadata = {k: v for k, v in metadata.items() if k != self.RESERVED_METADATA_KEY} if metadata else None
+        safe_metadata = strip_agno_metadata(metadata)
 
         content = None
         file_data = None
@@ -1511,12 +1511,8 @@ class Knowledge(RemoteKnowledge):
             raise ValueError("No url provided")
 
         # Store URL source metadata in _agno for source tracking
-        agno_meta = (content.metadata or {}).get(self.RESERVED_METADATA_KEY, {}) or {}
-        agno_meta["source_type"] = "url"
-        agno_meta["source_url"] = content.url
-        if content.metadata is None:
-            content.metadata = {}
-        content.metadata[self.RESERVED_METADATA_KEY] = agno_meta
+        content.metadata = set_agno_metadata(content.metadata, "source_type", "url")
+        content.metadata = set_agno_metadata(content.metadata, "source_url", content.url)
 
         # Set name from URL if not provided
         if not content.name and content.url:
@@ -1666,12 +1662,8 @@ class Knowledge(RemoteKnowledge):
             raise ValueError("No url provided")
 
         # Store URL source metadata in _agno for source tracking
-        agno_meta = (content.metadata or {}).get(self.RESERVED_METADATA_KEY, {}) or {}
-        agno_meta["source_type"] = "url"
-        agno_meta["source_url"] = content.url
-        if content.metadata is None:
-            content.metadata = {}
-        content.metadata[self.RESERVED_METADATA_KEY] = agno_meta
+        content.metadata = set_agno_metadata(content.metadata, "source_type", "url")
+        content.metadata = set_agno_metadata(content.metadata, "source_url", content.url)
 
         # Set name from URL if not provided
         if not content.name and content.url:
@@ -2479,7 +2471,7 @@ class Knowledge(RemoteKnowledge):
 
             if self.vector_db:
                 # Strip _agno from metadata sent to vector_db — only user fields should be searchable
-                user_metadata = {k: v for k, v in (content.metadata or {}).items() if k != self.RESERVED_METADATA_KEY}
+                user_metadata = strip_agno_metadata(content.metadata) or {}
                 self.vector_db.update_metadata(content_id=content.id, metadata=user_metadata)
 
             return content_row.to_dict()
@@ -2530,7 +2522,7 @@ class Knowledge(RemoteKnowledge):
 
             if self.vector_db:
                 # Strip _agno from metadata sent to vector_db — only user fields should be searchable
-                user_metadata = {k: v for k, v in (content.metadata or {}).items() if k != self.RESERVED_METADATA_KEY}
+                user_metadata = strip_agno_metadata(content.metadata) or {}
                 self.vector_db.update_metadata(content_id=content.id, metadata=user_metadata)
 
             return content_row.to_dict()
