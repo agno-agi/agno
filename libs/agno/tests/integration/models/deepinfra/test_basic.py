@@ -114,6 +114,7 @@ def test_history():
         model=DeepInfra(id="meta-llama/Llama-2-70b-chat-hf"),
         db=SqliteDb(db_file="tmp/deepinfra/test_basic.db"),
         add_history_to_context=True,
+        store_history_messages=True,
         telemetry=False,
     )
     run_output = agent.run("Hello")

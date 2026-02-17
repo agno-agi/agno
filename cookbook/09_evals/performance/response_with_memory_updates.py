@@ -1,14 +1,24 @@
-"""Run `uv pip install openai agno memory_profiler` to install dependencies."""
+"""
+Memory Update Performance Evaluation
+====================================
+
+Demonstrates measuring performance when memory updates are enabled.
+"""
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.eval.performance import PerformanceEval
 from agno.models.openai import OpenAIChat
 
-# Memory creation requires a db to be provided
+# ---------------------------------------------------------------------------
+# Create Database
+# ---------------------------------------------------------------------------
 db = SqliteDb(db_file="tmp/memory.db")
 
 
+# ---------------------------------------------------------------------------
+# Create Benchmark Function
+# ---------------------------------------------------------------------------
 def run_agent():
     agent = Agent(
         model=OpenAIChat(id="gpt-5.2"),
@@ -23,6 +33,9 @@ def run_agent():
     return response
 
 
+# ---------------------------------------------------------------------------
+# Create Evaluation
+# ---------------------------------------------------------------------------
 response_with_memory_updates_perf = PerformanceEval(
     name="Memory Updates Performance",
     func=run_agent,
@@ -30,5 +43,8 @@ response_with_memory_updates_perf = PerformanceEval(
     warmup_runs=0,
 )
 
+# ---------------------------------------------------------------------------
+# Run Evaluation
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     response_with_memory_updates_perf.run(print_results=True, print_summary=True)

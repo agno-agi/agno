@@ -3,6 +3,11 @@
 from agno.agent import Agent
 from agno.tools.slack import SlackTools
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
+
 # Example 1: Enable all Slack tools
 agent_all = Agent(
     tools=[
@@ -42,17 +47,22 @@ agent_readonly = Agent(
 )
 
 # Run examples
-agent_all.print_response(
-    "Send 'Hello from Agno!' to #general",
-    stream=True,
-)
 
-agent_specific.print_response(
-    "List all channels in the workspace",
-    stream=True,
-)
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    agent_all.print_response(
+        "Send 'Hello from Agno!' to #general",
+        stream=True,
+    )
 
-agent_readonly.print_response(
-    "Get the last 5 messages from #general",
-    stream=True,
-)
+    agent_specific.print_response(
+        "List all channels in the workspace",
+        stream=True,
+    )
+
+    agent_readonly.print_response(
+        "Get the last 5 messages from #general",
+        stream=True,
+    )

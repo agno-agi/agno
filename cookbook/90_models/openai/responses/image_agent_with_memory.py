@@ -1,7 +1,18 @@
+"""
+Openai Image Agent With Memory
+==============================
+
+Cookbook example for `openai/responses/image_agent_with_memory.py`.
+"""
+
 from agno.agent import Agent
 from agno.media import Image
 from agno.models.openai import OpenAIResponses
 from agno.tools.websearch import WebSearchTools
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 agent = Agent(
     model=OpenAIResponses(id="gpt-4o"),
@@ -21,3 +32,10 @@ agent.print_response(
 )
 
 agent.print_response("Tell me where I can get more images?")
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

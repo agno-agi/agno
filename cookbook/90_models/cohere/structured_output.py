@@ -1,9 +1,21 @@
+"""
+Cohere Structured Output
+========================
+
+Cookbook example for `cohere/structured_output.py`.
+"""
+
+import asyncio
 from typing import List
 
 from agno.agent import Agent, RunOutput  # noqa
 from agno.models.cohere import Cohere
 from pydantic import BaseModel, Field
 from rich.pretty import pprint  # noqa
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 
 class MovieScript(BaseModel):
@@ -34,3 +46,14 @@ structured_output_agent = Agent(
 # Get the response in a variable
 response: RunOutput = structured_output_agent.run("New York")
 pprint(response.content)
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    # --- Async ---
+    asyncio.run(
+        structured_output_agent.aprint_response(
+            "Find a cool movie idea about London and write it."
+        )
+    )

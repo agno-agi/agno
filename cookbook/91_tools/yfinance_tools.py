@@ -12,6 +12,11 @@ from agno.agent import Agent
 from agno.tools.yfinance import YFinanceTools
 from curl_cffi.requests import Session
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
+
 # Example 1: All financial functions available (default behavior)
 agent_full = Agent(
     tools=[YFinanceTools()],  # All functions enabled by default
@@ -105,30 +110,35 @@ agent_ssl_disabled = Agent(
 )
 
 # Using the basic agent for the main example
-print("=== Basic Stock Analysis Example ===")
-agent_basic.print_response(
-    "Share the NVDA stock price and recent historical performance", markdown=True
-)
 
-print("\n=== Analyst Recommendations Example ===")
-agent_analyst.print_response(
-    "Get analyst recommendations and recent news for AAPL", markdown=True
-)
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    print("=== Basic Stock Analysis Example ===")
+    agent_basic.print_response(
+        "Share the NVDA stock price and recent historical performance", markdown=True
+    )
 
-print("\n=== Full Analysis Example ===")
-agent_full.print_response(
-    "Provide a comprehensive analysis of TSLA including price, fundamentals, and analyst views",
-    markdown=True,
-)
+    print("\n=== Analyst Recommendations Example ===")
+    agent_analyst.print_response(
+        "Get analyst recommendations and recent news for AAPL", markdown=True
+    )
 
-print("\n=== Full Analysis Example ===")
-agent_simple.print_response(
-    "Provide a comprehensive analysis of TSLA including price, fundamentals, and analyst views",
-    markdown=True,
-)
+    print("\n=== Full Analysis Example ===")
+    agent_full.print_response(
+        "Provide a comprehensive analysis of TSLA including price, fundamentals, and analyst views",
+        markdown=True,
+    )
 
-print("\n=== SSL Disabled Example ===")
-agent_ssl_disabled.print_response(
-    "What is the stock price of TSLA?",
-    markdown=True,
-)
+    print("\n=== Full Analysis Example ===")
+    agent_simple.print_response(
+        "Provide a comprehensive analysis of TSLA including price, fundamentals, and analyst views",
+        markdown=True,
+    )
+
+    print("\n=== SSL Disabled Example ===")
+    agent_ssl_disabled.print_response(
+        "What is the stock price of TSLA?",
+        markdown=True,
+    )

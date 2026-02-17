@@ -1,8 +1,19 @@
+"""
+Groq Agent Team
+===============
+
+Cookbook example for `groq/agent_team.py`.
+"""
+
 from agno.agent import Agent
 from agno.models.groq import Groq
 from agno.team.team import Team
 from agno.tools.websearch import WebSearchTools
 from agno.tools.yfinance import YFinanceTools
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 web_agent = Agent(
     name="Web Agent",
@@ -37,3 +48,10 @@ agent_team.print_response(
     input="Summarize the latest news about Nvidia and share its stock price?",
     stream=True,
 )
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

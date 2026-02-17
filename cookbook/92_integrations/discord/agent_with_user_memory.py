@@ -1,3 +1,10 @@
+"""
+Discord Agent With User Memory
+==============================
+
+Runs a Discord bot that combines web search with persistent user memory.
+"""
+
 from textwrap import dedent
 
 from agno.agent import Agent
@@ -6,8 +13,15 @@ from agno.integrations.discord import DiscordClient
 from agno.models.google import Gemini
 from agno.tools.websearch import WebSearchTools
 
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
 db = SqliteDb(db_file="tmp/discord_client_cookbook.db")
 
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 personal_agent = Agent(
     name="Basic Agent",
     model=Gemini(id="gemini-2.0-flash"),
@@ -28,5 +42,9 @@ personal_agent = Agent(
 
 discord_agent = DiscordClient(personal_agent)
 
+
+# ---------------------------------------------------------------------------
+# Run Discord Bot
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     discord_agent.serve()

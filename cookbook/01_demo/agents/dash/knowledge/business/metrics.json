@@ -1,0 +1,87 @@
+{
+  "metrics": [
+    {
+      "name": "Race Win",
+      "definition": "A driver finishing in first position in a race",
+      "table": "race_wins",
+      "calculation": "COUNT(*) from race_wins grouped by driver name"
+    },
+    {
+      "name": "World Championship",
+      "definition": "A driver finishing the season in first position in the drivers championship",
+      "table": "drivers_championship",
+      "calculation": "COUNT(*) from drivers_championship WHERE position = '1' (TEXT comparison)"
+    },
+    {
+      "name": "Constructors Championship",
+      "definition": "A team finishing the season in first position in the constructors championship",
+      "table": "constructors_championship",
+      "calculation": "COUNT(*) from constructors_championship WHERE position = 1 (INTEGER comparison)"
+    },
+    {
+      "name": "Podium Finish",
+      "definition": "A driver finishing in positions 1, 2, or 3 in a race",
+      "table": "race_results",
+      "calculation": "COUNT(*) from race_results WHERE position IN ('1', '2', '3')"
+    },
+    {
+      "name": "Fastest Lap",
+      "definition": "Recording the fastest lap time during a race",
+      "table": "fastest_laps",
+      "calculation": "COUNT(*) from fastest_laps grouped by driver name"
+    },
+    {
+      "name": "DNF (Did Not Finish)",
+      "definition": "A driver who retired from a race before completion",
+      "table": "race_results",
+      "calculation": "COUNT(*) from race_results WHERE position = 'Ret'"
+    },
+    {
+      "name": "Points Finish",
+      "definition": "A driver finishing in a points-scoring position",
+      "table": "race_results",
+      "calculation": "COUNT(*) from race_results WHERE points > 0"
+    },
+    {
+      "name": "Championship Points",
+      "definition": "Total points accumulated over a season",
+      "table": "drivers_championship or constructors_championship",
+      "calculation": "SUM(points) or direct points column value"
+    }
+  ],
+  "business_rules": [
+    "The Constructors Championship started in 1958 - no data before that year",
+    "Points systems have changed over the years - direct point comparisons across eras are misleading",
+    "Team names vary slightly across years (e.g., 'McLaren' vs 'McLaren-Mercedes')",
+    "Driver names should be compared case-insensitively where possible",
+    "The race_wins table only contains wins - use race_results for other finishing positions",
+    "A 'season' or 'year' refers to a Formula 1 championship year (typically March-November)"
+  ],
+  "common_gotchas": [
+    {
+      "issue": "position column type mismatch",
+      "tables_affected": ["drivers_championship", "constructors_championship", "race_results"],
+      "solution": "drivers_championship.position is TEXT (use '1'), constructors_championship.position is INTEGER (use 1), race_results.position is TEXT with special values"
+    },
+    {
+      "issue": "date parsing in race_wins",
+      "tables_affected": ["race_wins"],
+      "solution": "Use TO_DATE(date, 'DD Mon YYYY') to extract year: EXTRACT(YEAR FROM TO_DATE(date, 'DD Mon YYYY'))"
+    },
+    {
+      "issue": "inconsistent driver tag column names",
+      "tables_affected": ["all"],
+      "solution": "race_wins and race_results use name_tag; drivers_championship and fastest_laps use driver_tag"
+    },
+    {
+      "issue": "non-numeric position values",
+      "tables_affected": ["race_results"],
+      "solution": "position can be 'Ret', 'DSQ', 'DNS', 'NC' - filter with regex or explicit IN clause before casting"
+    },
+    {
+      "issue": "NULL values in race_results",
+      "tables_affected": ["race_results"],
+      "solution": "laps and points columns may be NULL for DNFs - use COALESCE or filter"
+    }
+  ]
+}

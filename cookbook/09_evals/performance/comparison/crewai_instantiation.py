@@ -1,4 +1,9 @@
-"""Run `uv pip install openai crewai` to install dependencies."""
+"""
+CrewAI Instantiation Performance Evaluation
+===========================================
+
+Demonstrates agent instantiation benchmarking with CrewAI.
+"""
 
 from typing import Literal
 
@@ -7,6 +12,9 @@ from crewai.agent import Agent
 from crewai.tools import tool
 
 
+# ---------------------------------------------------------------------------
+# Create Benchmark Tool
+# ---------------------------------------------------------------------------
 @tool("Tool Name")
 def get_weather(city: Literal["nyc", "sf"]):
     """Use this to get weather information."""
@@ -21,6 +29,9 @@ def get_weather(city: Literal["nyc", "sf"]):
 tools = [get_weather]
 
 
+# ---------------------------------------------------------------------------
+# Create Benchmark Function
+# ---------------------------------------------------------------------------
 def instantiate_agent():
     return Agent(
         llm="gpt-4o",
@@ -31,7 +42,13 @@ def instantiate_agent():
     )
 
 
+# ---------------------------------------------------------------------------
+# Create Evaluation
+# ---------------------------------------------------------------------------
 crew_instantiation = PerformanceEval(func=instantiate_agent, num_iterations=1000)
 
+# ---------------------------------------------------------------------------
+# Run Evaluation
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     crew_instantiation.run(print_results=True, print_summary=True)

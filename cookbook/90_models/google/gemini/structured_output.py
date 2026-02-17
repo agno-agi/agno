@@ -1,8 +1,19 @@
+"""
+Google Structured Output
+========================
+
+Cookbook example for `google/gemini/structured_output.py`.
+"""
+
 from typing import Optional, Union
 
 from agno.agent import Agent
 from agno.models.google import Gemini
 from pydantic import BaseModel, Field
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 
 class ContactInfo(BaseModel):
@@ -80,6 +91,14 @@ structured_output_agent = Agent(
     """,
 )
 
-structured_output_agent.print_response(
-    "Plan a corporate product launch event for 150 people next month"
-)
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    # --- Sync ---
+    structured_output_agent.print_response(
+        "Plan a corporate product launch event for 150 people next month"
+    )
+
+    # --- Sync + Streaming ---
+    structured_output_agent.print_response("New York", stream=True)
