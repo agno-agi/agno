@@ -1,9 +1,20 @@
+"""
+Vertexai Structured Output
+==========================
+
+Cookbook example for `vertexai/claude/structured_output.py`.
+"""
+
 from typing import List
 
 from agno.agent import Agent, RunOutput  # noqa
 from agno.models.vertexai.claude import Claude
 from pydantic import BaseModel, Field
 from rich.pretty import pprint  # noqa
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 
 class MovieScript(BaseModel):
@@ -34,3 +45,10 @@ movie_agent = Agent(
 # Get the response in a variable
 run: RunOutput = movie_agent.run("New York")
 pprint(run.content)
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    # --- Sync + Streaming ---
+    movie_agent.print_response("New York", stream=True)

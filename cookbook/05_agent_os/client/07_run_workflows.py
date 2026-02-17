@@ -13,6 +13,10 @@ import asyncio
 
 from agno.client import AgentOSClient
 
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
+
 
 async def run_workflow_non_streaming():
     """Execute a non-streaming workflow run."""
@@ -90,6 +94,10 @@ async def main():
     await run_workflow_non_streaming()
     await run_workflow_streaming()
 
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     asyncio.run(main())

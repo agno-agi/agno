@@ -11,6 +11,10 @@ from agno.db.postgres import PostgresDb
 from agno.models.perplexity import Perplexity
 from rich.pretty import pprint
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 agent = Agent(
     model=Perplexity(id="sonar-pro"),
@@ -51,3 +55,10 @@ if agent.db:
 agent.print_response(
     "What have we been talking about, do you know my name?", stream=True
 )
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

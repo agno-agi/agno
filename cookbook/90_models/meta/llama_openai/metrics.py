@@ -1,3 +1,10 @@
+"""
+Meta Metrics
+============
+
+Cookbook example for `meta/llama_openai/metrics.py`.
+"""
+
 from typing import Iterator
 
 from agno.agent import Agent, RunOutputEvent
@@ -5,6 +12,10 @@ from agno.models.meta import LlamaOpenAI
 from agno.tools.yfinance import YFinanceTools
 from agno.utils.pprint import pprint_run_response
 from rich.pretty import pprint
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 agent = Agent(
     model=LlamaOpenAI(id="Llama-4-Maverick-17B-128E-Instruct-FP8"),
@@ -37,3 +48,10 @@ pprint(run_response.metrics)
 # Print the session metrics
 print("---" * 5, "Session Metrics", "---" * 5)
 pprint(agent.get_session_metrics())
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

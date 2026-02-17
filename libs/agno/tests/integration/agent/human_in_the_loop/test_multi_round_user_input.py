@@ -192,13 +192,18 @@ def test_requirements_accumulate_across_rounds(shared_db):
         requirements_count_history.append(len(response.requirements or []))
         active_count_history.append(len(response.active_requirements))
 
-        # Each round should have exactly 1 active requirement
-        assert len(response.active_requirements) == 1, (
-            f"Round {round_num}: Should have exactly 1 active requirement, got {len(response.active_requirements)}"
+        # Each round should have at least 1 active requirement
+        # Note: The model may batch multiple tool calls in a single response
+        assert len(response.active_requirements) >= 1, (
+            f"Round {round_num}: Should have at least 1 active requirement, got {len(response.active_requirements)}"
         )
 
-        # Fill the value
-        response.active_requirements[0].user_input_schema[0].value = f"value{round_num}"
+        # Fill the values for all active requirements
+        for i, req in enumerate(response.active_requirements):
+            if req.user_input_schema:
+                for field in req.user_input_schema:
+                    if field.value is None:
+                        field.value = f"value{round_num}_{i}"
 
         response = agent.continue_run(
             run_id=response.run_id,
@@ -213,6 +218,6 @@ def test_requirements_accumulate_across_rounds(shared_db):
                 f"Requirements should accumulate: {requirements_count_history}"
             )
 
-    # Active requirements should always be 1 (or 0 when done)
+    # Active requirements should always be at least 1 (model may batch calls)
     for count in active_count_history:
-        assert count == 1, f"Active requirements per round should be 1: {active_count_history}"
+        assert count >= 1, f"Active requirements per round should be at least 1: {active_count_history}"

@@ -1,3 +1,10 @@
+"""
+Yaml Config
+===========
+
+Demonstrates yaml config.
+"""
+
 from pathlib import Path
 
 from agno.agent import Agent
@@ -9,6 +16,10 @@ from agno.os.interfaces.whatsapp import Whatsapp
 from agno.team import Team
 from agno.workflow.step import Step
 from agno.workflow.workflow import Workflow
+
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
 
 cwd = Path(__file__).parent
 os_config_path = str(cwd.joinpath("config.yaml"))
@@ -63,6 +74,10 @@ agent_os = AgentOS(
 )
 app = agent_os.get_app()
 
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     """Run your AgentOS.

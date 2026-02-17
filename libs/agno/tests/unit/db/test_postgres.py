@@ -373,7 +373,7 @@ def test_get_table_schema_definition_sessions():
     assert schema == SESSION_TABLE_SCHEMA
     assert "session_id" in schema
     assert schema["session_id"]["nullable"] is False
-    assert "_unique_constraints" in schema
+    assert schema["session_id"]["primary_key"] is True
 
 
 def test_get_table_schema_definition_memories():

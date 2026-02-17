@@ -1,11 +1,8 @@
 """
-This example shows how to instrument your agno agent with OpenInference and send traces to Langfuse.
+Langfuse Via OpenInference
+==========================
 
-1. Install dependencies: uv pip install openai langfuse opentelemetry-sdk opentelemetry-exporter-otlp openinference-instrumentation-agno
-2. Either self-host or sign up for an account at https://us.cloud.langfuse.com
-3. Set your Langfuse API key as an environment variables:
-  - export LANGFUSE_PUBLIC_KEY=<your-key>
-  - export LANGFUSE_SECRET_KEY=<your-key>
+Demonstrates instrumenting an Agno agent with OpenInference and sending traces to Langfuse.
 """
 
 import asyncio
@@ -20,19 +17,21 @@ from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExport
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
 LANGFUSE_AUTH = base64.b64encode(
     f"{os.getenv('LANGFUSE_PUBLIC_KEY')}:{os.getenv('LANGFUSE_SECRET_KEY')}".encode()
 ).decode()
 # os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = (
-#     "https://us.cloud.langfuse.com/api/public/otel"  # 🇺🇸 US data region
+#     "https://us.cloud.langfuse.com/api/public/otel"  # US data region
 # )
 os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = (
-    "https://cloud.langfuse.com/api/public/otel"  # 🇪🇺 EU data region
+    "https://cloud.langfuse.com/api/public/otel"  # EU data region
 )
-# os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"]="http://localhost:3000/api/public/otel" # 🏠 Local deployment (>= v3.22.0)
+# os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = "http://localhost:3000/api/public/otel"  # Local deployment (>= v3.22.0)
 
 os.environ["OTEL_EXPORTER_OTLP_HEADERS"] = f"Authorization=Basic {LANGFUSE_AUTH}"
-
 
 tracer_provider = TracerProvider()
 tracer_provider.add_span_processor(SimpleSpanProcessor(OTLPSpanExporter()))
@@ -41,6 +40,9 @@ tracer_provider.add_span_processor(SimpleSpanProcessor(OTLPSpanExporter()))
 AgnoInstrumentor().instrument(tracer_provider=tracer_provider)
 
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 agent = Agent(
     name="Stock Price Agent",
     model=OpenAIChat(id="gpt-5.2"),
@@ -48,9 +50,16 @@ agent = Agent(
     instructions="You are a stock price agent. Answer questions in the style of a stock analyst.",
 )
 
-asyncio.run(
-    agent.aprint_response(
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
+async def main() -> None:
+    await agent.aprint_response(
         "What is the current price of Tesla? Then find the current price of NVIDIA",
         stream=True,
     )
-)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

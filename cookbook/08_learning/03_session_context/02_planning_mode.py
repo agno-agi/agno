@@ -19,9 +19,9 @@ from agno.db.postgres import PostgresDb
 from agno.learn import LearningMachine, SessionContextConfig
 from agno.models.openai import OpenAIResponses
 
-# ============================================================================
-# Setup
-# ============================================================================
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 
@@ -36,9 +36,9 @@ agent = Agent(
     markdown=True,
 )
 
-# ============================================================================
-# Demo: Task Planning
-# ============================================================================
+# ---------------------------------------------------------------------------
+# Run: Task Planning
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     user_id = "deploy@example.com"
@@ -55,7 +55,7 @@ if __name__ == "__main__":
         session_id=session_id,
         stream=True,
     )
-    agent.get_learning_machine().session_context_store.print(session_id=session_id)
+    agent.learning_machine.session_context_store.print(session_id=session_id)
 
     # Step 2: Complete first task
     print("\n" + "=" * 60)
@@ -68,7 +68,7 @@ if __name__ == "__main__":
         session_id=session_id,
         stream=True,
     )
-    agent.get_learning_machine().session_context_store.print(session_id=session_id)
+    agent.learning_machine.session_context_store.print(session_id=session_id)
 
     # Step 3: More progress
     print("\n" + "=" * 60)
@@ -81,7 +81,7 @@ if __name__ == "__main__":
         session_id=session_id,
         stream=True,
     )
-    agent.get_learning_machine().session_context_store.print(session_id=session_id)
+    agent.learning_machine.session_context_store.print(session_id=session_id)
 
     # Step 4: What's next?
     print("\n" + "=" * 60)
@@ -94,4 +94,4 @@ if __name__ == "__main__":
         session_id=session_id,
         stream=True,
     )
-    agent.get_learning_machine().session_context_store.print(session_id=session_id)
+    agent.learning_machine.session_context_store.print(session_id=session_id)

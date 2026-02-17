@@ -5,7 +5,10 @@ on:
     branches:
       - "*release*" # Run on release-* format
       - "release/*" # Run on release/1.2.3 branch format
-      - "feat-workflow-step-serialization"
+      - "v2.5-phase1"
+      - "fix/ci-test-failures"
+      - "fix/team-hitl-streaming"
+      - "v2.5-phase2"
   workflow_dispatch: # Allows manual triggering
     inputs:
       branch:

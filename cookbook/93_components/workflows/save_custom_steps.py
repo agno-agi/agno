@@ -1,10 +1,9 @@
 """
-Example: Saving and Loading a Workflow with Custom Executor Steps
+Save Custom Executor Workflow Steps
+===================================
 
-This example demonstrates how to:
-1. Create a workflow with custom executor functions (not agents)
-2. Save the workflow to a database
-3. Load the workflow back using a registry to restore the executor function
+Demonstrates creating a workflow with custom executor steps, saving it to the
+database, and loading it back with a Registry.
 """
 
 from agno.agent import Agent
@@ -14,10 +13,16 @@ from agno.workflow.step import Step
 from agno.workflow.types import StepInput, StepOutput
 from agno.workflow.workflow import Workflow, get_workflow_by_id
 
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
 # Database
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 db = PostgresDb(db_url=db_url)
 
+# ---------------------------------------------------------------------------
+# Create Agents
+# ---------------------------------------------------------------------------
 # Agents
 content_agent = Agent(
     name="Content Creator",
@@ -25,6 +30,9 @@ content_agent = Agent(
 )
 
 
+# ---------------------------------------------------------------------------
+# Create Registry Components
+# ---------------------------------------------------------------------------
 # Custom executor function (will be serialized by name and restored via registry)
 def transform_content(step_input: StepInput) -> StepOutput:
     """Custom executor function that transforms content."""
@@ -44,6 +52,9 @@ registry = Registry(
     functions=[transform_content],
 )
 
+# ---------------------------------------------------------------------------
+# Create Workflow Steps
+# ---------------------------------------------------------------------------
 # Steps
 content_step = Step(
     name="CreateContent",
@@ -57,6 +68,9 @@ transform_step = Step(
     executor=transform_content,
 )
 
+# ---------------------------------------------------------------------------
+# Create Workflow
+# ---------------------------------------------------------------------------
 # Workflow
 workflow = Workflow(
     name="Custom Executor Workflow",
@@ -68,6 +82,9 @@ workflow = Workflow(
     db=db,
 )
 
+# ---------------------------------------------------------------------------
+# Run Workflow Example
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     # Save
     print("Saving workflow...")
