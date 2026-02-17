@@ -16,44 +16,60 @@ class InMemoryRunCancellationManager(BaseRunCancellationManager):
         self._async_lock = asyncio.Lock()
 
     def register_run(self, run_id: str) -> None:
-        """Register a new run as not cancelled."""
+        """Register a new run as not cancelled.
+
+        Uses setdefault to preserve any existing cancellation intent
+        (cancel-before-start support for background runs).
+        """
         with self._lock:
-            self._cancelled_runs[run_id] = False
+            self._cancelled_runs.setdefault(run_id, False)
 
     async def aregister_run(self, run_id: str) -> None:
-        """Register a new run as not cancelled (async version)."""
+        """Register a new run as not cancelled (async version).
+
+        Uses setdefault to preserve any existing cancellation intent
+        (cancel-before-start support for background runs).
+        """
         async with self._async_lock:
-            self._cancelled_runs[run_id] = False
+            self._cancelled_runs.setdefault(run_id, False)
 
     def cancel_run(self, run_id: str) -> bool:
         """Cancel a run by marking it as cancelled.
 
+        Always stores cancellation intent, even for runs not yet registered
+        (cancel-before-start support for background runs).
+
         Returns:
-            bool: True if run was found and cancelled, False if run not found.
+            bool: True if run was previously registered, False if storing
+            cancellation intent for an unregistered run.
         """
         with self._lock:
-            if run_id in self._cancelled_runs:
-                self._cancelled_runs[run_id] = True
+            was_registered = run_id in self._cancelled_runs
+            self._cancelled_runs[run_id] = True
+            if was_registered:
                 logger.info(f"Run {run_id} marked for cancellation")
-                return True
             else:
-                logger.warning(f"Attempted to cancel unknown run {run_id}")
-                return False
+                logger.info(f"Run {run_id} not yet registered, storing cancellation intent")
+            return was_registered
 
     async def acancel_run(self, run_id: str) -> bool:
         """Cancel a run by marking it as cancelled (async version).
 
+        Always stores cancellation intent, even for runs not yet registered
+        (cancel-before-start support for background runs).
+
         Returns:
-            bool: True if run was found and cancelled, False if run not found.
+            bool: True if run was previously registered, False if storing
+            cancellation intent for an unregistered run.
         """
         async with self._async_lock:
-            if run_id in self._cancelled_runs:
-                self._cancelled_runs[run_id] = True
+            was_registered = run_id in self._cancelled_runs
+            self._cancelled_runs[run_id] = True
+            if was_registered:
                 logger.info(f"Run {run_id} marked for cancellation")
-                return True
             else:
-                logger.warning(f"Attempted to cancel unknown run {run_id}")
-                return False
+                logger.info(f"Run {run_id} not yet registered, storing cancellation intent")
+            return was_registered
 
     def is_cancelled(self, run_id: str) -> bool:
         """Check if a run is cancelled."""

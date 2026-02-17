@@ -15,6 +15,10 @@ from agno.agent import Agent
 from agno.models.vertexai.claude import Claude
 from agno.utils.media import download_file
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 # Load an example large system message from S3. A large prompt like this would benefit from caching.
 txt_path = Path(__file__).parent.joinpath("system_prompt.txt")
 download_file(
@@ -45,3 +49,10 @@ response = agent.run(
 )
 if response and response.metrics:
     print(f"Second run cache read tokens = {response.metrics.cache_read_tokens}")
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

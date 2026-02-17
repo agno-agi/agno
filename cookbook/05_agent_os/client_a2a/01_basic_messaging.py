@@ -16,6 +16,10 @@ import asyncio
 
 from agno.client.a2a import A2AClient
 
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
+
 
 async def main():
     """Send message with user identification."""
@@ -39,6 +43,10 @@ async def main():
     elif result.is_failed:
         print("\nTask failed!")
 
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     asyncio.run(main())

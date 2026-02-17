@@ -14,6 +14,10 @@ import asyncio
 from agno.client import AgentOSClient
 from agno.db.schemas.evals import EvalType
 
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
+
 
 async def run_accuracy_eval():
     """Run an accuracy evaluation."""
@@ -150,6 +154,10 @@ async def main():
     await list_eval_runs()
     await get_eval_details()
 
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     asyncio.run(main())

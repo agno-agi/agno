@@ -5,6 +5,10 @@ import json
 import os
 import sys
 
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
+
 if len(sys.argv) < 2:
     path = "."
 else:
@@ -33,3 +37,10 @@ try:
 except Exception as e:
     print(json.dumps({"error": str(e)}))
     sys.exit(1)
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    raise SystemExit("This module is intended to be imported.")

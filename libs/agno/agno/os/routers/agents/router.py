@@ -9,6 +9,7 @@ from fastapi import (
     File,
     Form,
     HTTPException,
+    Query,
     Request,
     UploadFile,
 )
@@ -41,6 +42,7 @@ from agno.os.utils import (
 )
 from agno.registry import Registry
 from agno.run.agent import RunErrorEvent, RunOutput
+from agno.run.base import RunStatus
 from agno.utils.log import log_debug, log_error, log_warning
 
 if TYPE_CHECKING:
@@ -220,6 +222,7 @@ def get_agent_router(
         user_id: Optional[str] = Form(None),
         files: Optional[List[UploadFile]] = File(None),
         version: Optional[str] = Form(None),
+        background: bool = Form(False),
     ):
         kwargs = await get_request_kwargs(request, create_agent_run)
 
@@ -347,6 +350,39 @@ def get_agent_router(
         # Extract auth token for remote agents
         auth_token = get_auth_token_from_request(request)
 
+        # Background execution: return 202 immediately with run metadata
+        if background:
+            if isinstance(agent, RemoteAgent):
+                raise HTTPException(status_code=400, detail="Background execution is not supported for remote agents")
+            if not agent.db:
+                raise HTTPException(
+                    status_code=400, detail="Background execution requires a database to be configured on the agent"
+                )
+
+            run_response = cast(
+                RunOutput,
+                await agent.arun(  # type: ignore[misc]
+                    input=message,
+                    session_id=session_id,
+                    user_id=user_id,
+                    images=base64_images if base64_images else None,
+                    audio=base64_audios if base64_audios else None,
+                    videos=base64_videos if base64_videos else None,
+                    files=input_files if input_files else None,
+                    stream=False,
+                    background=True,
+                    **kwargs,
+                ),
+            )
+            return JSONResponse(
+                status_code=202,
+                content={
+                    "run_id": run_response.run_id,
+                    "session_id": run_response.session_id,
+                    "status": run_response.status.value if run_response.status else "PENDING",
+                },
+            )
+
         if stream:
             return StreamingResponse(
                 agent_response_streamer(
@@ -372,7 +408,7 @@ def get_agent_router(
             try:
                 run_response = cast(
                     RunOutput,
-                    await agent.arun(
+                    await agent.arun(  # type: ignore[misc]
                         input=message,
                         session_id=session_id,
                         user_id=user_id,
@@ -415,10 +451,9 @@ def get_agent_router(
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
 
-        cancelled = await agent.acancel_run(run_id=run_id)
-        if not cancelled:
-            raise HTTPException(status_code=500, detail="Failed to cancel run - run not found or already completed")
-
+        # cancel_run always stores cancellation intent (even for not-yet-registered runs
+        # in cancel-before-start scenarios), so we always return success.
+        await agent.acancel_run(run_id=run_id)
         return JSONResponse(content={}, status_code=200)
 
     @router.post(
@@ -446,6 +481,9 @@ def get_agent_router(
             },
             400: {"description": "Invalid JSON in tools field or invalid tool structure", "model": BadRequestResponse},
             404: {"description": "Agent not found", "model": NotFoundResponse},
+            409: {
+                "description": "Run is not paused (e.g. run is already running, continued, or errored). Only PAUSED runs can be continued.",
+            },
         },
         dependencies=[Depends(require_resource_access("agents", "run", "agent_id"))],
     )
@@ -478,6 +516,29 @@ def get_agent_router(
             log_warning(
                 "Continuing run without session_id. This might lead to unexpected behavior if session context is important."
             )
+
+        # Only allow /continue when the run is in a paused state. If running, continued, or errored, return 409.
+        if session_id and not isinstance(agent, RemoteAgent):
+            existing_run = await agent.aget_run_output(run_id=run_id, session_id=session_id)
+            if existing_run is not None:
+                is_paused = getattr(existing_run, "is_paused", False)
+                if not is_paused:
+                    status = getattr(existing_run, "status", None)
+                    _status_to_detail = {
+                        RunStatus.running: "run is already running",
+                        RunStatus.completed: "run is already continued",
+                        RunStatus.error: "run is already errored",
+                        RunStatus.cancelled: "run is already cancelled",
+                        RunStatus.pending: "run is already pending",
+                    }
+                    detail = _status_to_detail.get(
+                        status,  # type: ignore[arg-type]
+                        f"run is not paused (status={getattr(status, 'value', status)})",
+                    )
+                    raise HTTPException(
+                        status_code=409,
+                        detail=detail,
+                    )
 
         # Convert tools dict to ToolExecution objects if provided
         updated_tools = []
@@ -651,5 +712,81 @@ def get_agent_router(
             return await agent.get_agent_config()
         else:
             return await AgentResponse.from_agent(agent=agent)
+
+    @router.get(
+        "/agents/{agent_id}/runs/{run_id}",
+        tags=["Agents"],
+        operation_id="get_agent_run",
+        summary="Get Agent Run",
+        description=(
+            "Retrieve the status and output of an agent run. Use this to poll for background run completion.\n\n"
+            "Requires the `session_id` that was returned when the run was created."
+        ),
+        responses={
+            200: {"description": "Run output retrieved successfully"},
+            404: {"description": "Agent or run not found", "model": NotFoundResponse},
+        },
+        dependencies=[Depends(require_resource_access("agents", "run", "agent_id"))],
+    )
+    async def get_agent_run(
+        agent_id: str,
+        run_id: str,
+        session_id: str = Query(..., description="Session ID for the run"),
+    ):
+        agent = get_agent_by_id(agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True)
+        if agent is None:
+            raise HTTPException(status_code=404, detail="Agent not found")
+        if isinstance(agent, RemoteAgent):
+            raise HTTPException(status_code=400, detail="Run polling is not supported for remote agents")
+
+        run_output = await agent.aget_run_output(run_id=run_id, session_id=session_id)
+        if run_output is None:
+            raise HTTPException(status_code=404, detail="Run not found")
+
+        return run_output.to_dict()
+
+    @router.get(
+        "/agents/{agent_id}/runs",
+        tags=["Agents"],
+        operation_id="list_agent_runs",
+        summary="List Agent Runs",
+        description=(
+            "List runs for an agent within a session, optionally filtered by status.\n\n"
+            "Useful for monitoring background runs and viewing run history."
+        ),
+        responses={
+            200: {"description": "List of runs retrieved successfully"},
+            404: {"description": "Agent not found", "model": NotFoundResponse},
+        },
+        dependencies=[Depends(require_resource_access("agents", "run", "agent_id"))],
+    )
+    async def list_agent_runs(
+        agent_id: str,
+        session_id: str = Query(..., description="Session ID to list runs for"),
+        status: Optional[str] = Query(None, description="Filter by run status (PENDING, RUNNING, COMPLETED, ERROR)"),
+    ):
+        from agno.os.schema import RunSchema
+
+        agent = get_agent_by_id(agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True)
+        if agent is None:
+            raise HTTPException(status_code=404, detail="Agent not found")
+        if isinstance(agent, RemoteAgent):
+            raise HTTPException(status_code=400, detail="Run listing is not supported for remote agents")
+
+        # Load the session to get its runs
+        from agno.agent._storage import aread_or_create_session
+
+        session = await aread_or_create_session(agent, session_id=session_id)
+        runs = session.runs or []
+
+        # Convert to dicts and optionally filter by status
+        result = []
+        for run in runs:
+            run_dict = run.to_dict()
+            if status and run_dict.get("status") != status:
+                continue
+            result.append(RunSchema.from_dict(run_dict))
+
+        return result
 
     return router
