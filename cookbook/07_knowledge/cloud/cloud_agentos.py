@@ -43,52 +43,69 @@ vector_db = PgVector(
     db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
 )
 
-# Define content source configs (credentials can come from env vars)
+# Define content source configs (credentials come from env vars).
+# Only sources whose required env vars are set will be registered.
+content_sources = []
 
-sharepoint = SharePointConfig(
-    id="sharepoint",
-    name="Product Data",
-    tenant_id=getenv("SHAREPOINT_TENANT_ID"),  # or os.getenv("SHAREPOINT_TENANT_ID")
-    client_id=getenv("SHAREPOINT_CLIENT_ID"),
-    client_secret=getenv("SHAREPOINT_CLIENT_SECRET"),
-    hostname=getenv("SHAREPOINT_HOSTNAME"),
-    site_id=getenv("SHAREPOINT_SITE_ID"),
+# -- SharePoint (requires SHAREPOINT_TENANT_ID, CLIENT_ID, CLIENT_SECRET, HOSTNAME) --
+if getenv("SHAREPOINT_TENANT_ID"):
+    content_sources.append(
+        SharePointConfig(
+            id="sharepoint",
+            name="Product Data",
+            tenant_id=getenv("SHAREPOINT_TENANT_ID", ""),
+            client_id=getenv("SHAREPOINT_CLIENT_ID", ""),
+            client_secret=getenv("SHAREPOINT_CLIENT_SECRET", ""),
+            hostname=getenv("SHAREPOINT_HOSTNAME", ""),
+            site_id=getenv("SHAREPOINT_SITE_ID"),
+        )
+    )
+
+# -- GitHub (requires GITHUB_TOKEN for private repos) --
+content_sources.append(
+    GitHubConfig(
+        id="my-repo",
+        name="My Repository",
+        repo=getenv("GITHUB_REPO", "agno-agi/agno"),
+        token=getenv("GITHUB_TOKEN"),
+        branch="main",
+    )
 )
 
-github_docs = GitHubConfig(
-    id="my-repo",
-    name="My Repository",
-    repo="private/repo",
-    token=getenv("GITHUB_TOKEN"),  # Fine-grained PAT with Contents: read
-    branch="main",
+# -- Azure Blob (requires AZURE_TENANT_ID, CLIENT_ID, CLIENT_SECRET, STORAGE_ACCOUNT, CONTAINER) --
+if getenv("AZURE_TENANT_ID"):
+    content_sources.append(
+        AzureBlobConfig(
+            id="azure-blob",
+            name="Azure Blob",
+            tenant_id=getenv("AZURE_TENANT_ID", ""),
+            client_id=getenv("AZURE_CLIENT_ID", ""),
+            client_secret=getenv("AZURE_CLIENT_SECRET", ""),
+            storage_account=getenv("AZURE_STORAGE_ACCOUNT_NAME", ""),
+            container=getenv("AZURE_CONTAINER_NAME", ""),
+        )
+    )
+
+# -- S3 (uses default AWS credential chain if env vars are not set) --
+content_sources.append(
+    S3Config(
+        id="s3-docs",
+        name="S3 Documents",
+        bucket_name=getenv("S3_BUCKET_NAME", "my-docs"),
+        region=getenv("AWS_REGION", "us-east-1"),
+        aws_access_key_id=getenv("AWS_ACCESS_KEY_ID"),
+        aws_secret_access_key=getenv("AWS_SECRET_ACCESS_KEY"),
+        prefix="",
+    )
 )
 
-azure_blob = AzureBlobConfig(
-    id="azure-blob",
-    name="Azure Blob",
-    tenant_id=getenv("AZURE_TENANT_ID"),
-    client_id=getenv("AZURE_CLIENT_ID"),
-    client_secret=getenv("AZURE_CLIENT_SECRET"),
-    storage_account=getenv("AZURE_STORAGE_ACCOUNT_NAME"),
-    container=getenv("AZURE_CONTAINER_NAME"),
-)
-
-s3_docs = S3Config(
-    id="s3-docs",
-    name="S3 Documents",
-    bucket_name=getenv("S3_BUCKET_NAME", "my-docs"),
-    region=getenv("AWS_REGION", "us-east-1"),
-    aws_access_key_id=getenv("AWS_ACCESS_KEY_ID"),
-    aws_secret_access_key=getenv("AWS_SECRET_ACCESS_KEY"),
-    prefix="",
-)
 # Create Knowledge with content sources
 knowledge = Knowledge(
     name="Company Knowledge Base",
     description="Unified knowledge from multiple sources",
     contents_db=contents_db,
     vector_db=vector_db,
-    content_sources=[sharepoint, github_docs, azure_blob, s3_docs],
+    content_sources=content_sources,
 )
 
 agent = Agent(
