@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Citations
 from agno.models.metrics import Metrics
-from agno.tools.function import UserInputField
+from agno.tools.function import UserFeedbackQuestion, UserInputField
 
 
 class ModelResponseEvent(str, Enum):
@@ -48,6 +48,7 @@ class ToolExecution:
 
     requires_user_input: Optional[bool] = None
     user_input_schema: Optional[List[UserInputField]] = None
+    user_feedback_schema: Optional[List[UserFeedbackQuestion]] = None
     answered: Optional[bool] = None
 
     external_execution_required: Optional[bool] = None
@@ -70,6 +71,9 @@ class ToolExecution:
         if self.user_input_schema is not None:
             _dict["user_input_schema"] = [field.to_dict() for field in self.user_input_schema]
 
+        if self.user_feedback_schema is not None:
+            _dict["user_feedback_schema"] = [q.to_dict() for q in self.user_feedback_schema]
+
         return _dict
 
     @classmethod
@@ -88,6 +92,9 @@ class ToolExecution:
             requires_user_input=data.get("requires_user_input"),
             user_input_schema=[UserInputField.from_dict(field) for field in data.get("user_input_schema") or []]
             if "user_input_schema" in data
+            else None,
+            user_feedback_schema=[UserFeedbackQuestion.from_dict(q) for q in data.get("user_feedback_schema") or []]
+            if "user_feedback_schema" in data
             else None,
             external_execution_required=data.get("external_execution_required"),
             external_execution_silent=data.get("external_execution_silent"),
