@@ -1,3 +1,4 @@
+import hmac
 from os import getenv
 from typing import List, Optional, Set
 
@@ -9,6 +10,20 @@ from agno.os.settings import AgnoAPISettings
 
 # Create a global HTTPBearer instance
 security = HTTPBearer(auto_error=False)
+
+# Scopes granted to the internal service token (used by the scheduler executor).
+# Shared constant so auth.py and jwt.py stay in sync.
+INTERNAL_SERVICE_SCOPES: List[str] = [
+    "agents:read",
+    "agents:run",
+    "teams:read",
+    "teams:run",
+    "workflows:read",
+    "workflows:run",
+    "schedules:read",
+    "schedules:write",
+    "schedules:delete",
+]
 
 
 def get_auth_token_from_request(request: Request) -> Optional[str]:
@@ -82,7 +97,15 @@ def get_authentication_dependency(settings: AgnoAPISettings):
 
         token = credentials.credentials
 
-        # Verify the token
+        # Check internal service token (used by scheduler executor)
+        internal_token = getattr(request.app.state, "internal_service_token", None)
+        if internal_token and hmac.compare_digest(token, internal_token):
+            request.state.authenticated = True
+            request.state.user_id = "__scheduler__"
+            request.state.scopes = list(INTERNAL_SERVICE_SCOPES)
+            return True
+
+        # Verify the token against security key
         if token != settings.os_security_key:
             raise HTTPException(status_code=401, detail="Invalid authentication token")
 

@@ -1,5 +1,17 @@
+"""
+Spider Tools
+=============================
+
+Demonstrates spider tools.
+"""
+
 from agno.agent import Agent
 from agno.tools.spider import SpiderTools
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 
 # Example 1: All functions available (default behavior)
 agent_all = Agent(
@@ -21,6 +33,10 @@ agent_specific = Agent(
 # Use the default agent for examples
 agent = agent_all
 
-agent.print_response(
-    'Can you scrape the first search result from a search on "news in USA"?'
-)
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    agent.print_response(
+        'Can you scrape the first search result from a search on "news in USA"?'
+    )

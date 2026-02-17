@@ -10,6 +10,10 @@ from agno.models.anthropic import Claude
 from agno.os import AgentOS
 from agno.run.agent import RunEvent  # noqa
 
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
+
 # Create an agent with reasoning enabled
 agent = Agent(
     reasoning_model=Claude(
@@ -27,6 +31,10 @@ agent_os = AgentOS(
 )
 app = agent_os.get_app()
 
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     """Run your AgentOS.

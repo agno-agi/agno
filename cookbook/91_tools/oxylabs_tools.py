@@ -1,5 +1,17 @@
+"""
+Oxylabs Tools
+=============================
+
+Demonstrates oxylabs tools.
+"""
+
 from agno.agent import Agent
 from agno.tools.oxylabs import OxylabsTools
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 
 agent = Agent(
     tools=[OxylabsTools()],
@@ -7,19 +19,24 @@ agent = Agent(
 )
 
 # Example 1: Google Search
-agent.print_response(
-    "Let's search for 'latest iPhone reviews' and provide a summary of the top 3 results. ",
-)
 
-# Example 2: Amazon Product Search
-# agent.print_response(
-#     "Let's search for an Amazon product with ASIN 'B07FZ8S74R' (Echo Dot). ",
-# )
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    agent.print_response(
+        "Let's search for 'latest iPhone reviews' and provide a summary of the top 3 results. ",
+    )
 
-# Example 3: Multi-Domain Amazon Search
-# agent.print_response(
-#     "Use search_amazon_products to search for 'gaming keyboards' on both:\n"
-#     "1. Amazon US (domain='com')\n"
-#     "2. Amazon UK (domain='co.uk')\n"
-#     "Compare the top 3 results from each region including pricing and availability."
-# )
+    # Example 2: Amazon Product Search
+    # agent.print_response(
+    #     "Let's search for an Amazon product with ASIN 'B07FZ8S74R' (Echo Dot). ",
+    # )
+
+    # Example 3: Multi-Domain Amazon Search
+    # agent.print_response(
+    #     "Use search_amazon_products to search for 'gaming keyboards' on both:\n"
+    #     "1. Amazon US (domain='com')\n"
+    #     "2. Amazon UK (domain='co.uk')\n"
+    #     "Compare the top 3 results from each region including pricing and availability."
+    # )

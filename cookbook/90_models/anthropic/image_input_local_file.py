@@ -10,6 +10,10 @@ from agno.models.anthropic import Claude
 from agno.utils.media import download_file
 from anthropic import Anthropic
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 img_path = Path(__file__).parent.joinpath("agno-intro.png")
 
 # Download the file using the download_file function
@@ -21,7 +25,6 @@ download_file(
 # Initialize Anthropic client
 client = Anthropic()
 
-
 agent = Agent(
     model=Claude(id="claude-sonnet-4-20250514"),
     markdown=True,
@@ -31,3 +34,10 @@ agent.print_response(
     "What does the attached image say.",
     images=[Image(filepath=img_path)],
 )
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

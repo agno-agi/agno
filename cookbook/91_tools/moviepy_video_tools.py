@@ -1,7 +1,19 @@
+"""
+Moviepy Video Tools
+=============================
+
+Demonstrates moviepy video tools.
+"""
+
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.moviepy_video import MoviePyVideoTools
 from agno.tools.openai import OpenAITools
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 
 video_tools = MoviePyVideoTools(
     process_video=True, generate_captions=True, embed_captions=True
@@ -27,7 +39,10 @@ video_caption_agent = Agent(
     markdown=True,
 )
 
-
-video_caption_agent.print_response(
-    "Generate captions for {video with location} and embed them in the video"
-)
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    video_caption_agent.print_response(
+        "Generate captions for {video with location} and embed them in the video"
+    )

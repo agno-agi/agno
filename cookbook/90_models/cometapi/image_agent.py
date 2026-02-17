@@ -6,6 +6,10 @@ from agno.agent import Agent
 from agno.media import Image
 from agno.models.cometapi import CometAPI
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 # Use a vision-capable model from CometAPI
 agent = Agent(
     model=CometAPI(id="gpt-4o"),  # GPT-4o has vision capabilities
@@ -21,3 +25,10 @@ agent.print_response(
     ],
     stream=True,
 )
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

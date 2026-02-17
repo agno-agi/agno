@@ -1,92 +1,34 @@
 # Observability
 
-**Observability** enables monitoring, tracking, and analyzing your Agno agents in production. This directory contains cookbooks that demonstrate how to integrate various observability platforms with your agents.
+Observability examples for tracing and monitoring Agno agents, teams, and workflows.
 
-## Getting Started
+## Root Integrations
 
-### 1. Setup Environment
+- `agent_ops.py`
+- `arize_phoenix_moving_traces_to_different_projects.py`
+- `arize_phoenix_via_openinference.py`
+- `arize_phoenix_via_openinference_local.py`
+- `atla_op.py`
+- `langfuse_via_openinference.py`
+- `langfuse_via_openinference_response_model.py`
+- `langfuse_via_openlit.py`
+- `langsmith_via_openinference.py`
+- `langtrace_op.py`
+- `langwatch_op.py`
+- `logfire_via_openinference.py`
+- `maxim_ops.py`
+- `opik_via_openinference.py`
+- `trace_to_database.py`
+- `traceloop_op.py`
+- `weave_op.py`
 
-```bash
-uv pip install agno openai
-```
+## Subdirectories
 
-### 2. Choose Your Platform
+- [`teams`](./teams/): Multi-agent team tracing examples.
+- [`workflows`](./workflows/): Workflow tracing examples.
 
-Install platform-specific dependencies:
-
-```bash
-# AgentOps
-uv pip install agentops
-
-# Langfuse via OpenInference  
-uv pip install langfuse opentelemetry-sdk opentelemetry-exporter-otlp openinference-instrumentation-agno
-
-# Opik via OpenInference
-uv pip install opik opentelemetry-sdk opentelemetry-exporter-otlp openinference-instrumentation-agno
-
-# Weave
-uv pip install weave
-
-# Arize Phoenix
-uv pip install arize-phoenix openinference-instrumentation-agno
-
-# LangSmith
-uv pip install langsmith openinference-instrumentation-agno
-```
-
-### 3. Basic Agent Monitoring
-
-```python
-import agentops
-from agno.agent import Agent
-from agno.models.openai import OpenAIChat
-
-# Initialize monitoring
-agentops.init()
-
-# Create monitored agent
-agent = Agent(model=OpenAIChat(id="gpt-4o"))
-response = agent.run("Your query here")
-```
-
-## Available Platforms
-
-### OpenTelemetry via OpenInference
-
-OpenTelemetry provides standardized observability that works across multiple platforms. Install the base requirements:
+## Run
 
 ```bash
-uv pip install opentelemetry-sdk opentelemetry-exporter-otlp openinference-instrumentation-agno
+.venvs/demo/bin/python cookbook/92_integrations/observability/<file>.py
 ```
-
-| Platform | Description | Additional Dependencies |
-|----------|-------------|------------------------|
-| **Langfuse** | Comprehensive tracing and analytics | `uv pip install langfuse` |
-| **Opik** | Open-source tracing, evaluations, optimization and debugging for LLM/agent workflows | `uv pip install opik` |
-| **Arize Phoenix** | Open-source observability with real-time monitoring | `uv pip install arize-phoenix` |
-| **LangSmith** | LangChain's monitoring and debugging platform | `uv pip install langsmith` |
-
-**Files:**
-- **[Langfuse via OpenInference](./langfuse_via_openinference.py)** - Langfuse integration
-- **[Opik via OpenInference](./opik_via_openinference.py)** - Opik integration
-- **[Arize Phoenix via OpenInference](./arize_phoenix_via_openinference.py)** - Phoenix integration  
-- **[LangSmith via OpenInference](./langsmith_via_openinference.py)** - LangSmith integration
-
-### Platform-Specific Integrations
-
-Direct integrations with platform-specific SDKs:
-
-| Platform | Description | Installation | File |
-|----------|-------------|--------------|------|
-| **AgentOps** | Simple agent monitoring with automatic session tracking | `uv pip install agentops` | **[AgentOps](./agent_ops.py)** |
-| **Weave** | Weights & Biases experiment tracking and monitoring | `uv pip install weave` | **[Weave](./weave_op.py)** |
-
-### Teams Examples
-
-|  | Description | Files |
-|----------|-------------|-------|
-| **Teams** | Multi-agent observability examples | **[Langfuse Team](./teams/langfuse_via_openinference_team.py)**<br>**[Langfuse Async Team](./teams/langfuse_via_openinference_async_team.py)** |
-
-## Setup Instructions
-
-Each platform requires API keys and specific configuration. See individual files for detailed setup steps and authentication requirements.

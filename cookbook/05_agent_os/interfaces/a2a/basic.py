@@ -1,6 +1,17 @@
+"""
+Basic
+=====
+
+Demonstrates basic.
+"""
+
 from agno.agent.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
+
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
 
 chat_agent = Agent(
     name="basic-agent",
@@ -19,6 +30,10 @@ agent_os = AgentOS(
 )
 app = agent_os.get_app()
 
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     """Run your AgentOS with A2A interface.

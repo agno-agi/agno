@@ -13,6 +13,10 @@ import asyncio
 
 from agno.client import AgentOSClient
 
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
+
 
 async def run_team_non_streaming():
     """Execute a non-streaming team run."""
@@ -80,6 +84,10 @@ async def main():
     await run_team_non_streaming()
     await run_team_streaming()
 
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     asyncio.run(main())

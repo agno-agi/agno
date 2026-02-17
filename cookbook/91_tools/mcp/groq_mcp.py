@@ -1,4 +1,4 @@
-"""📁 Groq + MCP = Lightning Fast Agents
+"""Groq + MCP = Lightning Fast Agents
 
 This example demonstrates how to create a high-performance filesystem agent by combining
 Groq's fast LLM inference with the Model Context Protocol (MCP). This combination delivers
@@ -23,6 +23,10 @@ from agno.models.groq import Groq
 from agno.tools.mcp import MCPTools
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 
 async def create_filesystem_agent(session):
@@ -73,6 +77,10 @@ async def run_agent(message: str) -> None:
 
 
 # Example usage
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
 if __name__ == "__main__":
     # Basic example - exploring project license
     asyncio.run(run_agent("What is the license for this project?"))

@@ -227,8 +227,11 @@ class PgVector(VectorDb):
                 log_debug("Creating extension: vector")
                 sess.execute(text("CREATE EXTENSION IF NOT EXISTS vector;"))
                 if self.create_schema and self.schema is not None:
-                    log_debug(f"Creating schema: {self.schema}")
-                    sess.execute(text(f"CREATE SCHEMA IF NOT EXISTS {self.schema};"))
+                    try:
+                        log_debug(f"Creating schema: {self.schema}")
+                        sess.execute(text(f"CREATE SCHEMA IF NOT EXISTS {self.schema};"))
+                    except Exception as e:
+                        log_warning(f"Could not create schema {self.schema}: {e}")
             log_debug(f"Creating table: {self.table_name}")
             self.table.create(self.db_engine)
 
