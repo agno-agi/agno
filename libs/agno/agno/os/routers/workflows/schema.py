@@ -127,8 +127,6 @@ class WorkflowResponse(BaseModel):
         cls,
         workflow: Workflow,
         is_component: bool = False,
-        current_version: Optional[int] = None,
-        stage: Optional[str] = None,
     ) -> "WorkflowResponse":
         workflow_dict = workflow.to_dict_for_steps()
         steps = workflow_dict.get("steps")
@@ -146,6 +144,6 @@ class WorkflowResponse(BaseModel):
             metadata=workflow.metadata,
             workflow_agent=isinstance(workflow.agent, WorkflowAgent) if workflow.agent else False,
             is_component=is_component,
-            current_version=current_version,
-            stage=stage,
+            current_version=getattr(workflow, "_version", None),
+            stage=getattr(workflow, "_stage", None),
         )

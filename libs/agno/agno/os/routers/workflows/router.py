@@ -551,32 +551,15 @@ def get_workflow_router(
                 workflows.append(WorkflowSummaryResponse.from_workflow(workflow=workflow, is_component=False))
 
         if os.db and isinstance(os.db, BaseDb):
-            from agno.db.base import ComponentType
-            from agno.workflow.workflow import Workflow as WorkflowClass
+            from agno.workflow.workflow import get_workflows
 
-            components, _ = os.db.list_components(component_type=ComponentType.WORKFLOW)
-            for component in components:
-                config = os.db.get_config(component_id=component["component_id"])
-                if config is not None:
-                    workflow_config = config.get("config")
-                    if workflow_config is not None:
-                        component_id = component["component_id"]
-                        if "id" not in workflow_config:
-                            workflow_config["id"] = component_id
-                        db_workflow = WorkflowClass.from_dict(workflow_config, db=os.db, registry=os.registry)
-                        db_workflow.id = component_id
-                        try:
-                            workflows.append(
-                                WorkflowSummaryResponse.from_workflow(
-                                    workflow=db_workflow,
-                                    is_component=True,
-                                    current_version=component.get("current_version"),
-                                    stage=config.get("stage"),
-                                )
-                            )
-                        except Exception as e:
-                            logger.error(f"Error converting workflow {component_id} to response: {e}")
-                            continue
+            for db_workflow in get_workflows(db=os.db, registry=os.registry):
+                try:
+                    workflows.append(WorkflowSummaryResponse.from_workflow(workflow=db_workflow, is_component=True))
+                except Exception as e:
+                    workflow_id = getattr(db_workflow, "id", "unknown")
+                    logger.error(f"Error converting workflow {workflow_id} to response: {e}")
+                    continue
 
         return workflows
 

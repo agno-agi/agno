@@ -133,8 +133,6 @@ class WorkflowSummaryResponse(BaseModel):
         cls,
         workflow: Union[Workflow, RemoteWorkflow],
         is_component: bool = False,
-        current_version: Optional[int] = None,
-        stage: Optional[str] = None,
     ) -> "WorkflowSummaryResponse":
         db_id = workflow.db.id if workflow.db else None
         return cls(
@@ -143,8 +141,8 @@ class WorkflowSummaryResponse(BaseModel):
             description=workflow.description,
             db_id=db_id,
             is_component=is_component,
-            current_version=current_version,
-            stage=stage,
+            current_version=getattr(workflow, "_version", None),
+            stage=getattr(workflow, "_stage", None),
         )
 
 
