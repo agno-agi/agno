@@ -14,6 +14,10 @@ from agno.os import AgentOS
 from agno.tools.websearch import WebSearchTools
 from fastapi import FastAPI
 
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
+
 # Setup the database
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 
@@ -62,6 +66,10 @@ agent_os = AgentOS(
 
 app = agent_os.get_app()
 
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     """Run your AgentOS.

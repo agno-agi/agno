@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 
 from agno.knowledge.content import Content
 from agno.knowledge.knowledge import Knowledge
-from agno.knowledge.remote_content.config import (
+from agno.knowledge.remote_content import (
     AzureBlobConfig,
     GcsConfig,
     GitHubConfig,

@@ -1,10 +1,8 @@
 """
-Send traces from different agents to different Arize Phoenix projects.
+Arize Phoenix Project Routing
+=============================
 
-1. Install dependencies: pip install arize-phoenix openai openinference-instrumentation-agno opentelemetry-sdk opentelemetry-exporter-otlp
-2. Setup your Arize Phoenix account and get your API key: https://phoenix.arize.com/
-3. Set your Arize Phoenix API key as an environment variable:
-  - export PHOENIX_API_KEY=<your-key>
+Demonstrates sending traces from different agents to different Phoenix projects.
 """
 
 import asyncio
@@ -19,6 +17,9 @@ from openinference.instrumentation import dangerously_using_project
 from phoenix.otel import register
 from pydantic import BaseModel
 
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
 os.environ["PHOENIX_API_KEY"] = os.getenv("PHOENIX_API_KEY")
 os.environ["PHOENIX_COLLECTOR_ENDPOINT"] = (
     "https://app.phoenix.arize.com/"  # Add the suffix for your organization
@@ -40,6 +41,9 @@ class SearchResult(BaseModel):
     sources: list[str]
 
 
+# ---------------------------------------------------------------------------
+# Create Agents
+# ---------------------------------------------------------------------------
 # Agent 1 - Stock Price Agent
 stock_agent = Agent(
     name="Stock Price Agent",
@@ -63,7 +67,10 @@ search_agent = Agent(
 )
 
 
-async def main():
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
+async def main() -> None:
     # Run stock_agent and send traces to "default" project
     with dangerously_using_project("default"):
         await stock_agent.aprint_response(
@@ -77,4 +84,5 @@ async def main():
         )
 
 
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())

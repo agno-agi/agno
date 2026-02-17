@@ -1,5 +1,17 @@
+"""
+Browserbase Tools
+=============================
+
+Demonstrates browserbase tools.
+"""
+
 from agno.agent import Agent
 from agno.tools.browserbase import BrowserbaseTools
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 
 # Browserbase Configuration
 # -------------------------------
@@ -47,30 +59,33 @@ agent = Agent(
 #     2. Take a screenshot of the top stories section
 # """)
 
-agent.print_response("""
-    Visit https://quotes.toscrape.com and:
-    1. Extract the first 5 quotes and their authors
-    2. Navigate to page 2
-    3. Extract the first 5 quotes from page 2
-""")
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    agent.print_response("""
+        Visit https://quotes.toscrape.com and:
+        1. Extract the first 5 quotes and their authors
+        2. Navigate to page 2
+        3. Extract the first 5 quotes from page 2
+    """)
 
+    # ==================== Async Usage ====================
+    # Use this for FastAPI, async frameworks, or when using agent.arun()
+    # The same agent instance works for both sync and async - just use arun/aprint_response!
 
-# ==================== Async Usage ====================
-# Use this for FastAPI, async frameworks, or when using agent.arun()
-# The same agent instance works for both sync and async - just use arun/aprint_response!
-
-# import asyncio
-#
-#
-# async def main():
-#     # Same agent, just use async methods - it will automatically use async tools
-#     await agent.aprint_response("""
-#         Visit https://quotes.toscrape.com and:
-#         1. Extract the first 5 quotes and their authors
-#         2. Navigate to page 2
-#         3. Extract the first 5 quotes from page 2
-#     """)
-#
-#
-# if __name__ == "__main__":
-#     asyncio.run(main())
+    # import asyncio
+    #
+    #
+    # async def main():
+    #     # Same agent, just use async methods - it will automatically use async tools
+    #     await agent.aprint_response("""
+    #         Visit https://quotes.toscrape.com and:
+    #         1. Extract the first 5 quotes and their authors
+    #         2. Navigate to page 2
+    #         3. Extract the first 5 quotes from page 2
+    #     """)
+    #
+    #
+    # if __name__ == "__main__":
+    #     asyncio.run(main())

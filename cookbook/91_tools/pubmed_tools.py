@@ -1,5 +1,17 @@
+"""
+Pubmed Tools
+=============================
+
+Demonstrates pubmed tools.
+"""
+
 from agno.agent import Agent
 from agno.tools.pubmed import PubmedTools
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 
 # Example 1: Enable all PubMed functions
 agent_all = Agent(
@@ -32,17 +44,22 @@ agent = Agent(
 )
 
 # Example usage with all functions enabled
-print("=== Example 1: Using all PubMed functions ===")
-agent_all.print_response(
-    "Tell me about ulcerative colitis and find the latest research."
-)
 
-# Example usage with specific functions only
-print("\n=== Example 2: Using specific PubMed functions (search only) ===")
-agent_specific.print_response("Search for recent studies on diabetes treatment.")
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    print("=== Example 1: Using all PubMed functions ===")
+    agent_all.print_response(
+        "Tell me about ulcerative colitis and find the latest research."
+    )
 
-# Example usage with default configuration
-print("\n=== Example 3: Default PubMed agent usage ===")
-agent.print_response("Tell me about ulcerative colitis.")
+    # Example usage with specific functions only
+    print("\n=== Example 2: Using specific PubMed functions (search only) ===")
+    agent_specific.print_response("Search for recent studies on diabetes treatment.")
 
-agent.print_response("Find research papers on machine learning in healthcare.")
+    # Example usage with default configuration
+    print("\n=== Example 3: Default PubMed agent usage ===")
+    agent.print_response("Tell me about ulcerative colitis.")
+
+    agent.print_response("Find research papers on machine learning in healthcare.")

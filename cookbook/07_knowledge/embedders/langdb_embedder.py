@@ -1,16 +1,19 @@
+"""
+LangDB Embedder
+===============
+
+Demonstrates LangDB embeddings and knowledge insertion.
+"""
+
 import asyncio
 
 from agno.knowledge.embedder.langdb import LangDBEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.pgvector import PgVector
 
-embeddings = LangDBEmbedder().get_embedding("Embed me")
-
-# Print the embeddings and their dimensions
-print(f"Embeddings: {embeddings[:5]}")
-print(f"Dimensions: {len(embeddings)}")
-
-# Example usage:
+# ---------------------------------------------------------------------------
+# Create Knowledge Base
+# ---------------------------------------------------------------------------
 knowledge = Knowledge(
     vector_db=PgVector(
         db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
@@ -20,8 +23,17 @@ knowledge = Knowledge(
     max_results=2,
 )
 
-asyncio.run(
-    knowledge.ainsert(
-        path="cookbook/07_knowledge/testing_resources/cv_1.pdf",
-    )
-)
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+async def main() -> None:
+    embeddings = LangDBEmbedder().get_embedding("Embed me")
+    print(f"Embeddings: {embeddings[:5]}")
+    print(f"Dimensions: {len(embeddings)}")
+
+    await knowledge.ainsert(path="cookbook/07_knowledge/testing_resources/cv_1.pdf")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

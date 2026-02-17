@@ -4,6 +4,10 @@ from agno.agent import Agent, RunOutput  # noqa
 from agno.models.ollama import Ollama
 from ollama import Client as OllamaClient
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 agent = Agent(
     model=Ollama(id="llama3.1:8b", client=OllamaClient()),
     markdown=True,
@@ -11,3 +15,10 @@ agent = Agent(
 
 # Print the response in the terminal
 agent.print_response("Share a 2 sentence horror story")
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

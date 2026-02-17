@@ -1,7 +1,18 @@
+"""
+Lmstudio Image Agent
+====================
+
+Cookbook example for `lmstudio/image_agent.py`.
+"""
+
 import httpx
 from agno.agent import Agent
 from agno.media import Image
 from agno.models.lmstudio import LMStudio
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 agent = Agent(
     model=LMStudio(id="llama3.2-vision"),
@@ -17,3 +28,10 @@ agent.print_response(
     images=[Image(content=response.content)],
     stream=True,
 )
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass
