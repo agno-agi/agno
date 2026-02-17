@@ -314,14 +314,17 @@ class BasePDFReader(Reader):
             if read_images:
                 pdf_images_text.append(_ocr_reader(page))
 
+        # Sanitize before page number cleaning so that _clean_page_numbers can insert
+        # its markers without the sanitizer later collapsing their newline delimiters.
+        if self.sanitize_content:
+            pdf_content = [_sanitize_pdf_text(page) for page in pdf_content]
+
         pdf_content, shift = _clean_page_numbers(
             page_content_list=pdf_content,
             extra_content=pdf_images_text,
             page_start_numbering_format=self.page_start_numbering_format,
             page_end_numbering_format=self.page_end_numbering_format,
         )
-        if self.sanitize_content:
-            pdf_content = [_sanitize_pdf_text(page) for page in pdf_content]
         return self._create_documents(pdf_content, doc_name, use_uuid_for_id, shift)
 
     async def _async_pdf_reader_to_documents(
@@ -347,14 +350,16 @@ class BasePDFReader(Reader):
             *[_read_pdf_page(page, read_images) for page in doc_reader.pages]
         )
 
+        page_texts = [x[0] for x in pdf_content]
+        if self.sanitize_content:
+            page_texts = [_sanitize_pdf_text(page) for page in page_texts]
+
         pdf_content_clean, shift = _clean_page_numbers(
-            page_content_list=[x[0] for x in pdf_content],
+            page_content_list=page_texts,
             extra_content=[x[1] for x in pdf_content],
             page_start_numbering_format=self.page_start_numbering_format,
             page_end_numbering_format=self.page_end_numbering_format,
         )
-        if self.sanitize_content:
-            pdf_content_clean = [_sanitize_pdf_text(page) for page in pdf_content_clean]
 
         return self._create_documents(pdf_content_clean, doc_name, use_uuid_for_id, shift)
 
