@@ -1,5 +1,17 @@
+"""
+Notion Tools
+=============================
+
+Demonstrates notion tools.
+"""
+
 from agno.agent import Agent
 from agno.tools.notion import NotionTools
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 
 # Notion Tools Demonstration Script
 """
@@ -130,6 +142,10 @@ def demonstrate_tools():
     )
     print("Check your Notion workspace to see the results!")
 
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     demonstrate_tools()

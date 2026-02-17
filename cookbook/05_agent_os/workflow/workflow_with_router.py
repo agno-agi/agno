@@ -1,8 +1,18 @@
+"""
+Workflow With Router
+====================
+
+Demonstrates workflow with router.
+"""
+
 from typing import List
 
 from agno.agent.agent import Agent
 from agno.db.sqlite import SqliteDb
 
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
 # Import the workflows
 from agno.os import AgentOS
 from agno.tools.hackernews import HackerNewsTools
@@ -110,6 +120,10 @@ agent_os = AgentOS(
     workflows=[workflow],
 )
 app = agent_os.get_app()
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     agent_os.serve(app="workflow_with_router:app", reload=True)

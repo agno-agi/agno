@@ -1,3 +1,10 @@
+"""
+Anthropic Image Input Bytes
+===========================
+
+Cookbook example for `anthropic/image_input_bytes.py`.
+"""
+
 from pathlib import Path
 
 from agno.agent import Agent
@@ -5,6 +12,10 @@ from agno.media import Image
 from agno.models.anthropic.claude import Claude
 from agno.tools.websearch import WebSearchTools
 from agno.utils.media import download_image
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 agent = Agent(
     model=Claude(id="claude-sonnet-4-20250514"),
@@ -29,3 +40,10 @@ agent.print_response(
     ],
     stream=True,
 )
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

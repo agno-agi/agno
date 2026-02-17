@@ -158,6 +158,15 @@ class TestAgentToDict:
         assert "debug_mode" not in config  # defaults to False
         assert "retries" not in config  # defaults to 0
         assert "add_history_to_context" not in config  # defaults to False
+        assert "store_history_messages" not in config  # defaults to False
+
+    def test_to_dict_includes_store_history_messages_when_true(self):
+        """Test that store_history_messages=True is serialized."""
+        agent = Agent(id="history-agent", store_history_messages=True)
+        config = agent.to_dict()
+
+        assert "store_history_messages" in config
+        assert config["store_history_messages"] is True
 
     def test_to_dict_with_db(self, basic_agent, mock_db):
         """Test to_dict includes database configuration."""
@@ -344,6 +353,22 @@ class TestAgentFromDict:
         assert reconstructed.debug_mode == agent_with_settings.debug_mode
         assert reconstructed.retries == agent_with_settings.retries
 
+    def test_from_dict_roundtrip_store_history_messages_true(self):
+        """Test that store_history_messages=True survives to_dict/from_dict round-trip."""
+        agent = Agent(id="roundtrip-agent", store_history_messages=True)
+        config = agent.to_dict()
+        reconstructed = Agent.from_dict(config)
+
+        assert reconstructed.store_history_messages is True
+
+    def test_from_dict_roundtrip_store_history_messages_false(self):
+        """Test that store_history_messages=False (default) survives round-trip."""
+        agent = Agent(id="roundtrip-agent-default", store_history_messages=False)
+        config = agent.to_dict()
+        reconstructed = Agent.from_dict(config)
+
+        assert reconstructed.store_history_messages is False
+
 
 # =============================================================================
 # save() Tests
@@ -522,6 +547,29 @@ class TestAgentLoad:
 
         assert agent is not None
         assert agent.db == mock_db
+
+    def test_save_load_preserves_store_history_messages(self, mock_db):
+        """Test that store_history_messages=True survives save/load round-trip."""
+        agent = Agent(id="persist-agent", name="Persist Agent", store_history_messages=True, db=mock_db)
+
+        # Capture the config passed to upsert_config during save
+        saved_config = {}
+
+        def capture_config(**kwargs):
+            saved_config.update(kwargs.get("config", {}))
+            return {"version": 1}
+
+        mock_db.upsert_config.side_effect = capture_config
+        agent.save()
+
+        assert saved_config.get("store_history_messages") is True
+
+        # Simulate load returning the saved config
+        mock_db.get_config.return_value = {"config": saved_config}
+        loaded = Agent.load(id="persist-agent", db=mock_db)
+
+        assert loaded is not None
+        assert loaded.store_history_messages is True
 
 
 # =============================================================================

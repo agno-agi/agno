@@ -10,6 +10,10 @@ from agno.models.anthropic import Claude
 from agno.utils.media import download_file
 from anthropic import Anthropic
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 img_path = Path(__file__).parent.joinpath("agno-intro.png")
 
 # Download the file using the download_file function
@@ -39,3 +43,10 @@ if uploaded_file is not None:
         "What does the attached image say.",
         images=[Image(content=uploaded_file)],
     )
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

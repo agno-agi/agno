@@ -115,6 +115,7 @@ services:
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:-test-secret-key-for-system-tests-do-not-use-in-production}
       ENABLE_AUTHORIZATION: ${ENABLE_AUTHORIZATION:-true}
       SLACK_SIGNING_SECRET: ${SLACK_SIGNING_SECRET:-test-signing-secret}
+      SLACK_TOKEN: ${SLACK_TOKEN:-test-token}
     ports:
       - "7001:7001"
     volumes:

@@ -10,6 +10,10 @@ from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.tools.hackernews import HackerNewsTools
 
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
+
 # docker run -d -p 27017:27017 --name mongodb mongo:latest
 db_url = "mongodb://localhost:27017"
 
@@ -31,6 +35,10 @@ agent_os = AgentOS(
     tracing=True,
 )
 app = agent_os.get_app()
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     agent_os.serve(app="basic_agent_with_mongodb:app", reload=True)

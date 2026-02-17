@@ -14,6 +14,11 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.agentql import AgentQLTools
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
+
 # Example 1: Enable specific AgentQL functions
 agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
@@ -52,9 +57,15 @@ custom_agent = Agent(
 )
 
 # Test the agents
-agent.print_response(
-    "Scrape the main content from https://docs.agno.com/introduction", markdown=True
-)
-custom_agent.print_response(
-    "Extract title and content from https://docs.agno.com/introduction", markdown=True
-)
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    agent.print_response(
+        "Scrape the main content from https://docs.agno.com/introduction", markdown=True
+    )
+    custom_agent.print_response(
+        "Extract title and content from https://docs.agno.com/introduction",
+        markdown=True,
+    )
