@@ -299,10 +299,7 @@ class BasePDFReader(Reader):
         pdf_content = []
         pdf_images_text = []
         for page in doc_reader.pages:
-            page_text = page.extract_text()
-            if self.sanitize_content:
-                page_text = _sanitize_pdf_text(page_text)
-            pdf_content.append(page_text)
+            pdf_content.append(page.extract_text())
             if read_images:
                 pdf_images_text.append(_ocr_reader(page))
 
@@ -312,6 +309,8 @@ class BasePDFReader(Reader):
             page_start_numbering_format=self.page_start_numbering_format,
             page_end_numbering_format=self.page_end_numbering_format,
         )
+        if self.sanitize_content:
+            pdf_content = [_sanitize_pdf_text(page) for page in pdf_content]
         return self._create_documents(pdf_content, doc_name, use_uuid_for_id, shift)
 
     async def _async_pdf_reader_to_documents(
@@ -324,8 +323,6 @@ class BasePDFReader(Reader):
         async def _read_pdf_page(page, read_images) -> Tuple[str, str]:
             # We tried "asyncio.to_thread(page.extract_text)", but it maintains state internally, which leads to issues.
             page_text = page.extract_text()
-            if self.sanitize_content:
-                page_text = _sanitize_pdf_text(page_text)
 
             if read_images:
                 pdf_images_text = await _async_ocr_reader(page)
@@ -345,6 +342,8 @@ class BasePDFReader(Reader):
             page_start_numbering_format=self.page_start_numbering_format,
             page_end_numbering_format=self.page_end_numbering_format,
         )
+        if self.sanitize_content:
+            pdf_content_clean = [_sanitize_pdf_text(page) for page in pdf_content_clean]
 
         return self._create_documents(pdf_content_clean, doc_name, use_uuid_for_id, shift)
 
