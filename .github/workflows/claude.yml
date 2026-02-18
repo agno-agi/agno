@@ -63,6 +63,7 @@ jobs:
             code-review@claude-code-plugins
             pr-review-toolkit@claude-code-plugins
           use_sticky_comment: true
+          show_full_output: true
           claude_args: |
             --model "claude-opus-4-6"
 
