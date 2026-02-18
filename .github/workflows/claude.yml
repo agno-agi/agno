@@ -66,18 +66,6 @@ jobs:
           use_sticky_comment: true
           claude_args: |
             --model "claude-opus-4-6"
-          prompt: |
-            The user requested a code review via @claude mention.
-
-            After completing the review, you MUST end with a plain-text markdown summary of findings.
-            Never let the final action be a tool call.
-            If there are no issues, explicitly say "No high-confidence findings."
-
-            Agno-specific checks (always verify):
-            - Both sync and async variants exist for all new public methods
-            - No agent creation inside loops (agents should be reused)
-            - CLAUDE.md coding patterns are followed
-            - No f-strings for print lines where there are no variables
 
       - name: Claude Assistant
         if: steps.detect.outputs.mode == 'assistant'
