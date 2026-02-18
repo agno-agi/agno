@@ -189,10 +189,14 @@ class Claude(Model):
         # Check for legacy model patterns which don't support structured outputs
         if self.id.startswith("claude-3-"):
             return False
-        if self.id.startswith("claude-sonnet-4-") and not self.id.startswith("claude-sonnet-4-5"):
+        # claude-sonnet-4-x: only pre-4.5 models lack structured output support
+        if self.id.startswith("claude-sonnet-4-") and not any(
+            self.id.startswith(f"claude-sonnet-4-{v}") for v in ("5", "6", "7", "8", "9")
+        ):
             return False
-        if self.id.startswith("claude-opus-4-") and not (
-            self.id.startswith("claude-opus-4-1") or self.id.startswith("claude-opus-4-5")
+        # claude-opus-4-x: only pre-4.1 models lack structured output support
+        if self.id.startswith("claude-opus-4-") and not any(
+            self.id.startswith(f"claude-opus-4-{v}") for v in ("1", "5", "6", "7", "8", "9")
         ):
             return False
 
