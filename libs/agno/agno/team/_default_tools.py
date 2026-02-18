@@ -98,6 +98,39 @@ _MEMBER_TERMINAL_EVENT_TYPES = (
 )
 
 
+def _format_member_response_content(
+    member_run_response: Optional[Union[RunOutput, TeamRunOutput]],
+    *,
+    use_tool_results_as_fallback: bool,
+) -> str:
+    """Format a non-streaming delegated member response for this Team's leader."""
+    if member_run_response is None:
+        return "No response from the member agent."
+
+    content = member_run_response.content
+    tools = member_run_response.tools or []
+
+    if isinstance(content, str):
+        if content.strip():
+            return content
+    elif content is not None:
+        if isinstance(content, BaseModel):
+            return content.model_dump_json(indent=2)
+        return json.dumps(content, indent=2, ensure_ascii=False)
+    elif not tools:
+        return "No response from the member agent."
+
+    if not use_tool_results_as_fallback:
+        return "No response from the member agent."
+
+    tool_results = ",".join(
+        str(tool.result)
+        for tool in tools
+        if tool.result is not None and (not isinstance(tool.result, str) or tool.result.strip())
+    )
+    return tool_results or "No response from the member agent."
+
+
 def _cascading_cancel_run(run_id: str) -> bool:
     """Cancel a run and cascade through children if it's a sub-team.
 
@@ -742,29 +775,11 @@ def _get_delegate_task_function(
 
         if not stream:
             try:
-                if member_agent_run_response.content is None and (  # type: ignore
-                    member_agent_run_response.tools is None or len(member_agent_run_response.tools) == 0  # type: ignore
-                ):
-                    yield "No response from the member agent."
-                elif isinstance(member_agent_run_response.content, str):  # type: ignore
-                    content = member_agent_run_response.content.strip()  # type: ignore
-                    if len(content) > 0:
-                        yield content
-
-                    # If the content is empty but we have tool calls
-                    elif member_agent_run_response.tools is not None and len(member_agent_run_response.tools) > 0:  # type: ignore
-                        tool_str = ""
-                        for tool in member_agent_run_response.tools:  # type: ignore
-                            if tool.result:
-                                tool_str += f"{tool.result},"
-                        yield tool_str.rstrip(",")
-
-                elif issubclass(type(member_agent_run_response.content), BaseModel):  # type: ignore
-                    yield member_agent_run_response.content.model_dump_json(indent=2)  # type: ignore
-                else:
-                    import json
-
-                    yield json.dumps(member_agent_run_response.content, indent=2, ensure_ascii=False)  # type: ignore
+                response_content = _format_member_response_content(
+                    member_agent_run_response,
+                    use_tool_results_as_fallback=team.use_member_tool_results_as_fallback,
+                )
+                yield response_content
             except Exception as e:
                 yield str(e)
 
@@ -928,26 +943,11 @@ def _get_delegate_task_function(
 
         if not stream:
             try:
-                if member_agent_run_response.content is None and (  # type: ignore
-                    member_agent_run_response.tools is None or len(member_agent_run_response.tools) == 0  # type: ignore
-                ):
-                    yield "No response from the member agent."
-                elif isinstance(member_agent_run_response.content, str):  # type: ignore
-                    if len(member_agent_run_response.content.strip()) > 0:  # type: ignore
-                        yield member_agent_run_response.content  # type: ignore
-
-                    # If the content is empty but we have tool calls
-                    elif (
-                        member_agent_run_response.tools is not None  # type: ignore
-                        and len(member_agent_run_response.tools) > 0  # type: ignore
-                    ):
-                        yield ",".join([tool.result for tool in member_agent_run_response.tools if tool.result])  # type: ignore
-                elif issubclass(type(member_agent_run_response.content), BaseModel):  # type: ignore
-                    yield member_agent_run_response.content.model_dump_json(indent=2)  # type: ignore
-                else:
-                    import json
-
-                    yield json.dumps(member_agent_run_response.content, indent=2, ensure_ascii=False)  # type: ignore
+                response_content = _format_member_response_content(
+                    member_agent_run_response,
+                    use_tool_results_as_fallback=team.use_member_tool_results_as_fallback,
+                )
+                yield response_content
             except Exception as e:
                 yield str(e)
 
@@ -1100,23 +1100,11 @@ def _get_delegate_task_function(
 
             if not stream:
                 try:
-                    if member_agent_run_response.content is None and (  # type: ignore
-                        member_agent_run_response.tools is None or len(member_agent_run_response.tools) == 0  # type: ignore
-                    ):
-                        yield f"Agent {member_agent.name}: No response from the member agent."
-                    elif isinstance(member_agent_run_response.content, str):  # type: ignore
-                        if len(member_agent_run_response.content.strip()) > 0:  # type: ignore
-                            yield f"Agent {member_agent.name}: {member_agent_run_response.content}"  # type: ignore
-                        elif (
-                            member_agent_run_response.tools is not None and len(member_agent_run_response.tools) > 0  # type: ignore
-                        ):
-                            yield f"Agent {member_agent.name}: {','.join([tool.result for tool in member_agent_run_response.tools])}"  # type: ignore
-                    elif issubclass(type(member_agent_run_response.content), BaseModel):  # type: ignore
-                        yield f"Agent {member_agent.name}: {member_agent_run_response.content.model_dump_json(indent=2)}"  # type: ignore
-                    else:
-                        import json
-
-                        yield f"Agent {member_agent.name}: {json.dumps(member_agent_run_response.content, indent=2, ensure_ascii=False)}"  # type: ignore
+                    response_content = _format_member_response_content(
+                        member_agent_run_response,
+                        use_tool_results_as_fallback=team.use_member_tool_results_as_fallback,
+                    )
+                    yield f"Agent {member_agent.name}: {response_content}"
                 except Exception as e:
                     yield f"Agent {member_agent.name}: Error - {str(e)}"
 
@@ -1354,39 +1342,13 @@ def _get_delegate_task_function(
                     )
 
                     try:
-                        if member_agent_run_response.content is None and (
-                            member_agent_run_response.tools is None or len(member_agent_run_response.tools) == 0
-                        ):
-                            return (f"Agent {member_name}: No response from the member agent.", None, None)
-                        elif isinstance(member_agent_run_response.content, str):
-                            if len(member_agent_run_response.content.strip()) > 0:
-                                return (f"Agent {member_name}: {member_agent_run_response.content}", None, None)
-                            elif (
-                                member_agent_run_response.tools is not None and len(member_agent_run_response.tools) > 0
-                            ):
-                                return (
-                                    f"Agent {member_name}: {','.join([tool.result for tool in member_agent_run_response.tools])}",
-                                    None,
-                                    None,
-                                )
-                        elif issubclass(type(member_agent_run_response.content), BaseModel):
-                            return (
-                                f"Agent {member_name}: {member_agent_run_response.content.model_dump_json(indent=2)}",  # type: ignore
-                                None,
-                                None,
-                            )
-                        else:
-                            import json
-
-                            return (
-                                f"Agent {member_name}: {json.dumps(member_agent_run_response.content, indent=2, ensure_ascii=False)}",
-                                None,
-                                None,
-                            )
+                        response_content = _format_member_response_content(
+                            member_agent_run_response,
+                            use_tool_results_as_fallback=team.use_member_tool_results_as_fallback,
+                        )
+                        return (f"Agent {member_name}: {response_content}", None, None)
                     except Exception as e:
                         return (f"Agent {member_name}: Error - {str(e)}", None, None)
-
-                    return (f"Agent {member_name}: No Response", None, None)
 
                 tasks.append(run_member_agent)  # type: ignore
 

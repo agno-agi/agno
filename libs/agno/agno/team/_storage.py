@@ -526,6 +526,8 @@ def to_dict(team: "Team") -> Dict[str, Any]:
         config["delegate_to_all_members"] = team.delegate_to_all_members
     if not team.determine_input_for_members:  # default is True
         config["determine_input_for_members"] = team.determine_input_for_members
+    if not team.use_member_tool_results_as_fallback:  # default is True
+        config["use_member_tool_results_as_fallback"] = team.use_member_tool_results_as_fallback
 
     # --- User settings ---
     if team.user_id is not None:
@@ -1259,6 +1261,7 @@ def from_dict(
             respond_directly=config.get("respond_directly", False),
             delegate_to_all_members=config.get("delegate_to_all_members", False),
             determine_input_for_members=config.get("determine_input_for_members", True),
+            use_member_tool_results_as_fallback=config.get("use_member_tool_results_as_fallback", True),
             # --- User settings ---
             user_id=config.get("user_id"),
             # --- Session settings ---
