@@ -1196,6 +1196,52 @@ class PgVector(VectorDb):
         self._create_gin_index(force_recreate=force_recreate)
         log_debug("==== Optimized Vector DB ====")
 
+    def create_filters_index(
+        self,
+        fields: List[str],
+        force_recreate: bool = False,
+    ) -> None:
+        """
+        Create BTREE indexes on specific fields within the "filters" JSONB column.
+
+        For each field, creates a BTREE index on `filters->>'{field}'`
+        Skips fields that already have an index unless force_recreate is True.
+
+        Args:
+            fields (List[str]): JSONB field names to index (e.g. ["user_id", "category"]).
+            force_recreate (bool): If True, drop and recreate existing indexes.
+
+        Raises:
+            ValueError: If fields is empty.
+            Exception: If index creation fails.
+        """
+        if not fields:
+            raise ValueError("At least one field must be specified for filters index creation.")
+
+        for field in fields:
+            index_name = f"{self.table_name}_filters_{field}_index"
+
+            if self._index_exists(index_name):
+                log_info(f"Filters index '{index_name}' already exists.")
+                if force_recreate:
+                    log_info(f"Force recreating filters index '{index_name}'. Dropping existing index.")
+                    self._drop_index(index_name)
+                else:
+                    log_info(f"Skipping filters index creation as index '{index_name}' already exists.")
+                    continue
+
+            # Create BTREE index on the JSONB field
+            try:
+                with self.Session() as sess, sess.begin():
+                    log_debug(f"Creating BTREE index '{index_name}' on table '{self.table.fullname}'.")
+                    create_index_sql = text(
+                        f"CREATE INDEX \"{index_name}\" ON {self.table.fullname} USING BTREE ((filters->>'{field}'));"
+                    )
+                    sess.execute(create_index_sql)
+            except Exception as e:
+                log_error(f"Error creating filters index '{index_name}': {e}")
+                raise
+
     def _index_exists(self, index_name: str) -> bool:
         """
         Check if an index with the given name exists.
