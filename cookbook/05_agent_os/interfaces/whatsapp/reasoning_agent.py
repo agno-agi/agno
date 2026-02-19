@@ -25,12 +25,7 @@ reasoning_finance_agent = Agent(
     db=agent_db,
     tools=[
         ReasoningTools(add_instructions=True),
-        YFinanceTools(
-            stock_price=True,
-            analyst_recommendations=True,
-            company_info=True,
-            company_news=True,
-        ),
+        YFinanceTools(),
     ],
     instructions="Use tables to display data. When you use thinking tools, keep the thinking brief.",
     add_datetime_to_context=True,
