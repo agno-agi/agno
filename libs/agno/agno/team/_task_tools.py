@@ -233,15 +233,22 @@ def _get_task_management_tools(
         member_session_state_copy: Optional[Dict[str, Any]],
         tool_name: str = "execute_task",
         skip_session_merge: bool = False,
+        task_id: Optional[str] = None,
     ) -> None:
         """Post-process a member run: update parent IDs, interactions, session state."""
         if member_run_response is not None:
             member_run_response.parent_run_id = run_response.run_id
 
-        # Update tool child_run_id
+        # Update tool child_run_id.
+        # Match by both tool name and task_id from tool_args to avoid a race condition
+        # where concurrent child invocations overwrite each other's child_run_id.
         if run_response.tools is not None and member_run_response is not None:
             for tool in run_response.tools:
                 if tool.tool_name and tool.tool_name.lower() == tool_name and tool.child_run_id is None:
+                    if task_id is not None:
+                        tool_task_id = (tool.tool_args or {}).get("task_id")
+                        if tool_task_id != task_id:
+                            continue
                     tool.child_run_id = member_run_response.run_id
                     break
 
@@ -385,13 +392,17 @@ def _get_task_management_tools(
             task.status = TaskStatus.pending  # Reset to pending so it can be retried after HITL
             save_task_list(run_context.session_state, task_list)
             use_team_logger()
-            _post_process_member_run(member_run_response, member_agent, member_agent_task, member_session_state_copy)
+            _post_process_member_run(
+                member_run_response, member_agent, member_agent_task, member_session_state_copy, task_id=task.id
+            )
             yield f"Member '{member_agent.name}' requires human input before continuing. Task [{task.id}] paused."
             return
 
         # Process result
         use_team_logger()
-        _post_process_member_run(member_run_response, member_agent, member_agent_task, member_session_state_copy)
+        _post_process_member_run(
+            member_run_response, member_agent, member_agent_task, member_session_state_copy, task_id=task.id
+        )
 
         if member_run_response is not None and member_run_response.status == RunStatus.error:
             task.status = TaskStatus.failed
@@ -518,12 +529,16 @@ def _get_task_management_tools(
             task.status = TaskStatus.pending
             save_task_list(run_context.session_state, task_list)
             use_team_logger()
-            _post_process_member_run(member_run_response, member_agent, member_agent_task, member_session_state_copy)
+            _post_process_member_run(
+                member_run_response, member_agent, member_agent_task, member_session_state_copy, task_id=task.id
+            )
             yield f"Member '{member_agent.name}' requires human input before continuing. Task [{task.id}] paused."
             return
 
         use_team_logger()
-        _post_process_member_run(member_run_response, member_agent, member_agent_task, member_session_state_copy)
+        _post_process_member_run(
+            member_run_response, member_agent, member_agent_task, member_session_state_copy, task_id=task.id
+        )
 
         if member_run_response is not None and member_run_response.status == RunStatus.error:
             task.status = TaskStatus.failed

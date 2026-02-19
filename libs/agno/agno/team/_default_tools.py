@@ -426,11 +426,17 @@ def _get_delegate_task_function(
         if member_agent_run_response is not None:
             member_agent_run_response.parent_run_id = run_response.run_id  # type: ignore
 
-        # Update the top-level team run_response tool call to have the run_id of the member run
+        # Update the top-level team run_response tool call to have the run_id of the member run.
+        # Match by both tool name and member_id from tool_args to avoid a race condition
+        # where concurrent child invocations overwrite each other's child_run_id.
         if run_response.tools is not None and member_agent_run_response is not None:
+            member_id = member_agent.id if member_agent.id else member_agent.name
             for tool in run_response.tools:
                 if tool.tool_name and tool.tool_name.lower() == "delegate_task_to_member":
-                    tool.child_run_id = member_agent_run_response.run_id  # type: ignore
+                    tool_member_id = (tool.tool_args or {}).get("member_id")
+                    if tool_member_id == member_id and tool.child_run_id is None:
+                        tool.child_run_id = member_agent_run_response.run_id  # type: ignore
+                        break
 
         # Update the team run context
         member_name = member_agent.name if member_agent.name else member_agent.id if member_agent.id else "Unknown"
@@ -1309,7 +1315,6 @@ def create_knowledge_search_tool(
         if async_mode:
             return Function.from_callable(asearch_knowledge_base, name="search_knowledge_base")
         return Function.from_callable(search_knowledge_base, name="search_knowledge_base")
-
 
 
 def get_relevant_docs_from_knowledge(
