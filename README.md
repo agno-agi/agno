@@ -25,11 +25,7 @@
 
 ## What is Agno?
 
-Software is shifting from deterministic request–response to reasoning systems that plan, call tools, remember context, and make decisions.
-
-Agno is the language for building that software correctly.
-
-It provides:
+Software is shifting from deterministic request–response to reasoning systems that plan, call tools, remember context, and make decisions. Agno is the language for building that software correctly. It provides:
 
 | Layer | Responsibility |
 |-------|----------------|
@@ -80,7 +76,7 @@ In ~20 lines, you get:
 - A production API at http://localhost:8000
 - Native tracing
 
-Connect the [AgentOS UI](https://os.agno.com) to monitor, manage, and test your agents.
+Connect to the [AgentOS UI](https://os.agno.com) to monitor, manage, and test your agents.
 
 1. Open [os.agno.com](https://os.agno.com) and sign in.
 2. Click **"Add new OS"** in the top navigation.
@@ -89,11 +85,15 @@ Connect the [AgentOS UI](https://os.agno.com) to monitor, manage, and test your 
 5. Name it "Local AgentOS".
 6. Click **"Connect"**.
 
+https://github.com/user-attachments/assets/75258047-2471-4920-8874-30d68c492683
+
 Open Chat, select your agent, and ask:
 
 > What is Agno?
 
 The agent retrieves context from the Agno MCP server and responds with grounded answers.
+
+https://github.com/user-attachments/assets/24c28d28-1d17-492c-815d-810e992ea8d2
 
 You can use this exact same architecture for running multi-agent systems in production.
 
