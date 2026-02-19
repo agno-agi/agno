@@ -11,10 +11,10 @@ from agno.workflow.workflow import Workflow
 report_generator = Agent(
     name="Report Generator",
     model=OpenAIChat(id="gpt-4o-mini"),
-    tools=[FileGenerationTools(enable_json_generation=True)],
+    tools=[FileGenerationTools(enable_pdf_generation=True)],
     instructions=[
         "You are a data analyst that generates reports.",
-        "When asked to create a report, use the generate_json_file tool to create it.",
+        "When asked to create a report, use the generate_pdf_file tool to create it.",
         "Include meaningful data in the report.",
     ],
 )
@@ -22,7 +22,7 @@ report_generator = Agent(
 generate_report_step = Step(
     name="Generate Report",
     agent=report_generator,
-    description="Generate a JSON report with quarterly sales data",
+    description="Generate a PDF report with quarterly sales data",
 )
 
 # ---------------------------------------------------------------------------
@@ -33,7 +33,7 @@ report_analyzer = Agent(
     model=OpenAIChat(id="gpt-4o"),
     instructions=[
         "You are a business analyst.",
-        "Analyze the attached JSON report and provide insights.",
+        "Analyze the attached PDF report and provide insights.",
         "Focus on trends, anomalies, and recommendations.",
     ],
 )
@@ -66,7 +66,7 @@ if __name__ == "__main__":
     print("=" * 60)
     print()
     print("This workflow demonstrates file propagation between steps:")
-    print("1. Step 1 generates a JSON report using FileGenerationTools")
+    print("1. Step 1 generates a PDF report using FileGenerationTools")
     print("2. The file is automatically propagated to Step 2")
     print("3. Step 2 analyzes the report content")
     print()
