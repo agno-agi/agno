@@ -1311,9 +1311,6 @@ def create_knowledge_search_tool(
         return Function.from_callable(search_knowledge_base, name="search_knowledge_base")
 
 
-# Backward-compatible alias
-create_knowledge_retriever_search_tool = create_knowledge_search_tool
-
 
 def get_relevant_docs_from_knowledge(
     team: "Team",

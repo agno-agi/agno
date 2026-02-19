@@ -282,9 +282,6 @@ def create_knowledge_search_tool(
         return Function.from_callable(search_knowledge_base, name="search_knowledge_base")
 
 
-# Backward-compatible alias
-create_knowledge_retriever_search_tool = create_knowledge_search_tool
-
 
 def get_chat_history_function(agent: Agent, session: AgentSession) -> Callable:
     def get_chat_history(num_chats: Optional[int] = None) -> str:
