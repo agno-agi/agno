@@ -1,5 +1,6 @@
 """Logic shared across different database implementations"""
 
+import dataclasses
 import json
 from datetime import date, datetime
 from typing import TYPE_CHECKING, Any, Dict, Optional, Union
@@ -7,6 +8,7 @@ from uuid import UUID
 
 from agno.models.message import Message
 from agno.models.metrics import Metrics
+from agno.session.summary import SessionSummary
 from agno.utils.log import log_error, log_warning
 
 if TYPE_CHECKING:
@@ -42,12 +44,16 @@ class CustomJSONEncoder(json.JSONEncoder):
             return str(obj)
         elif isinstance(obj, (date, datetime)):
             return obj.isoformat()
+        elif isinstance(obj, SessionSummary):
+            return obj.to_dict()
         elif isinstance(obj, Message):
             return obj.to_dict()
         elif isinstance(obj, Metrics):
             return obj.to_dict()
         elif isinstance(obj, type):
             return str(obj)
+        elif dataclasses.is_dataclass(obj) and not isinstance(obj, type):
+            return dataclasses.asdict(obj)
 
         return super().default(obj)
 
@@ -93,7 +99,10 @@ def serialize_session_json_fields(session: dict) -> dict:
     if session.get("chat_history") is not None:
         session["chat_history"] = json.dumps(session["chat_history"], cls=CustomJSONEncoder)
     if session.get("summary") is not None:
-        session["summary"] = json.dumps(session["summary"], cls=CustomJSONEncoder)
+        summary = session["summary"]
+        if isinstance(summary, SessionSummary):
+            summary = summary.to_dict()
+        session["summary"] = json.dumps(summary, cls=CustomJSONEncoder)
     if session.get("runs") is not None:
         session["runs"] = json.dumps(session["runs"], cls=CustomJSONEncoder)
 
