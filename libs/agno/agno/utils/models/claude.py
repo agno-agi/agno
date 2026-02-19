@@ -349,13 +349,26 @@ def format_messages(
             # Use compressed content for tool messages if compression is active
             tool_result = message.get_content(use_compressed_content=compress_tool_results)
 
-            content.append(
-                {
-                    "type": "tool_result",
-                    "tool_use_id": message.tool_call_id,
-                    "content": str(tool_result),
-                }
-            )
+            tool_result_block = {
+                "type": "tool_result",
+                "tool_use_id": message.tool_call_id,
+                "content": str(tool_result),
+            }
+
+            # Batch consecutive tool results into a single user message
+            # Anthropic/Bedrock requires all parallel tool results in one message
+            if chat_messages and chat_messages[-1]["role"] == "user":
+                last_content = chat_messages[-1]["content"]
+                if (
+                    isinstance(last_content, list)
+                    and last_content
+                    and isinstance(last_content[0], dict)
+                    and last_content[0].get("type") == "tool_result"
+                ):
+                    chat_messages[-1]["content"].append(tool_result_block)  # type: ignore
+                    continue
+
+            content.append(tool_result_block)
 
         # Skip empty assistant responses
         if message.role == "assistant" and not content:

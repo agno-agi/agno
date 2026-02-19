@@ -264,6 +264,13 @@ class AwsBedrock(Model):
                     "toolUseId": message.tool_call_id,
                     "content": [{"json": {"result": content}}],
                 }
+                # Batch consecutive tool results into a single user message
+                # Bedrock requires all parallel tool results in one message
+                if formatted_messages and formatted_messages[-1]["role"] == "user":
+                    last_content = formatted_messages[-1]["content"]
+                    if isinstance(last_content, list) and last_content and "toolResult" in last_content[0]:
+                        formatted_messages[-1]["content"].append({"toolResult": tool_result})
+                        continue
                 formatted_message: Dict[str, Any] = {"role": "user", "content": [{"toolResult": tool_result}]}
                 formatted_messages.append(formatted_message)
             else:
