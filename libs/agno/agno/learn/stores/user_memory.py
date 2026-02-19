@@ -959,6 +959,8 @@ class UserMemoryStore(LearningStore):
         """Convert callables to Functions for model."""
         from agno.tools.function import Function
 
+        use_strict = getattr(self.model, "supports_native_structured_outputs", False)
+
         functions = []
         seen_names = set()
 
@@ -969,8 +971,9 @@ class UserMemoryStore(LearningStore):
                     continue
                 seen_names.add(name)
 
-                func = Function.from_callable(tool, strict=True)
-                func.strict = True
+                func = Function.from_callable(tool, strict=use_strict)
+                if use_strict:
+                    func.strict = True
                 functions.append(func)
                 log_debug(f"Added function {func.name}")
             except Exception as e:
