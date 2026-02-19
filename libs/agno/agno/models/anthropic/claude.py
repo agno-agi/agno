@@ -875,6 +875,8 @@ class Claude(Model):
                                 parsed_data = json.loads(text_content)
                                 # Validate against Pydantic model
                                 model_response.parsed = response_format.model_validate(parsed_data)
+                                # Transfer parsed structured output to content
+                                model_response.content = model_response.parsed
                                 log_debug(f"Successfully parsed structured output: {model_response.parsed}")
                             except json.JSONDecodeError as e:
                                 log_warning(f"Failed to parse JSON from structured output: {e}")
@@ -1069,6 +1071,8 @@ class Claude(Model):
                         parsed_data = json.loads(accumulated_text)
                         # Validate against Pydantic model
                         model_response.parsed = response_format.model_validate(parsed_data)
+                        # Transfer parsed structured output to content
+                        model_response.content = model_response.parsed
                         log_debug(f"Successfully parsed structured output from stream: {model_response.parsed}")
                     except json.JSONDecodeError as e:
                         log_warning(f"Failed to parse JSON from structured output in stream: {e}")
