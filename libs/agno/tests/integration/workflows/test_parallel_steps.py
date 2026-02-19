@@ -2,9 +2,13 @@
 
 from contextvars import ContextVar
 from secrets import token_hex
+from typing import List
 
 import pytest
+from pydantic import BaseModel
 
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
 from agno.run.workflow import (
     StepCompletedEvent,
     StepStartedEvent,
@@ -668,3 +672,143 @@ def test_parallel_name_first_streaming():
     assert len(step_outputs) == 1
     assert parallel.name == "Streaming Named Parallel"
     assert step_outputs[0].step_name == "Streaming Named Parallel"
+
+
+# ==================================
+# OUTPUT SCHEMA ISOLATION TESTS 
+
+# When parallel steps contain agents with different output_schema types, each
+# step must receive its own run_context copy so that apply_to_context() writes
+# do not clobber a sibling step's schema.
+# ==================================
+
+class ImageClassification(BaseModel):
+    """Output schema for image classifier agents."""
+
+    image_id: str
+    category: str
+    confidence: float
+    tags: List[str]
+
+
+class QualityAssessment(BaseModel):
+    """Output schema for quality assessor agents."""
+
+    image_id: str
+    quality_score: int
+    issues: List[str]
+    approved: bool
+
+
+def test_parallel_agents_with_different_output_schemas(shared_db):
+    """Regression test for #6590: agents with different output_schema types must each
+    produce output of their own schema type, not a sibling's.
+
+    Before the fix, all parallel steps shared the same run_context. Each agent's
+    apply_to_context() overwrites run_context.output_schema, so concurrent agents
+    would corrupt each other's schema, causing ValidationError or wrong output types.
+    """
+    classifier_agent = Agent(
+        name="classifier",
+        model=OpenAIChat(id="gpt-4o-mini"),
+        output_schema=ImageClassification,
+        instructions="Classify image img_001. Return an ImageClassification.",
+    )
+    qa_agent = Agent(
+        name="qa_assessor",
+        model=OpenAIChat(id="gpt-4o-mini"),
+        output_schema=QualityAssessment,
+        instructions="Assess quality of image img_001. Return a QualityAssessment.",
+    )
+
+    workflow = Workflow(
+        name="image_pipeline",
+        db=shared_db,
+        steps=[
+            Parallel(
+                Step(name="classify", agent=classifier_agent),
+                Step(name="assess", agent=qa_agent),
+                name="parallel_processing",
+            )
+        ],
+    )
+
+    result = workflow.run(input="Process img_001")
+
+    assert result is not None
+    parallel_output = result.step_results[0]
+    assert parallel_output.step_type == "Parallel"
+    assert len(parallel_output.steps) == 2
+
+    by_name = {s.step_name: s.content for s in parallel_output.steps}
+
+    assert isinstance(by_name["classify"], ImageClassification), (
+        f"classify step should produce ImageClassification, got {type(by_name['classify'])}"
+    )
+    assert isinstance(by_name["assess"], QualityAssessment), (
+        f"assess step should produce QualityAssessment, got {type(by_name['assess'])}"
+    )
+
+
+def test_parallel_loops_with_heterogeneous_agent_schemas(shared_db):
+    """Regression test for #6590 with the exact bug-report structure: Parallel of Loops,
+    each loop containing a classifier agent and a QA agent with different output schemas.
+
+    Three images processed in parallel, each through classifier → QA. Before the fix,
+    agents inside sibling loops would corrupt each other's output_schema.
+    """
+    from agno.workflow import Loop
+
+    image_ids = ["img_001", "img_002", "img_003"]
+
+    def make_loop(image_id: str) -> Loop:
+        classifier = Agent(
+            name=f"classifier_{image_id}",
+            model=OpenAIChat(id="gpt-4o-mini"),
+            output_schema=ImageClassification,
+            instructions=f"Classify image {image_id}. Return an ImageClassification.",
+        )
+        qa = Agent(
+            name=f"qa_{image_id}",
+            model=OpenAIChat(id="gpt-4o-mini"),
+            output_schema=QualityAssessment,
+            instructions=f"Assess quality of image {image_id}. Return a QualityAssessment.",
+        )
+        return Loop(
+            name=f"process_{image_id}",
+            steps=[
+                Step(name=f"classify_{image_id}", agent=classifier),
+                Step(name=f"assess_{image_id}", agent=qa),
+            ],
+            max_iterations=1,
+        )
+
+    workflow = Workflow(
+        name="image_pipeline",
+        db=shared_db,
+        steps=[
+            Parallel(
+                *[make_loop(img_id) for img_id in image_ids],
+                name="parallel_processing",
+            )
+        ],
+    )
+
+    result = workflow.run(input="Process all images")
+
+    assert result is not None
+    parallel_output = result.step_results[0]
+    assert parallel_output.step_type == "Parallel"
+
+    for loop_output in parallel_output.steps:
+        assert loop_output.steps, f"Loop {loop_output.step_name} has no nested steps"
+        for agent_step in loop_output.steps:
+            step_name = agent_step.step_name or ""
+            if step_name.startswith("classify_"):
+                assert isinstance(agent_step.content, ImageClassification), (
+                    f"{step_name} should produce ImageClassification, got {type(agent_step.content)}"
+                )
+            elif step_name.startswith("assess_"):
+                assert isinstance(agent_step.content, QualityAssessment), (
+                    f"{step_name} should produce QualityAssessment, got {type(agent_step.content)}"
+                )
