@@ -279,6 +279,11 @@ class Workflow:
         self.store_executor_outputs = store_executor_outputs
         self.input_schema = input_schema
         self.metadata = metadata
+
+        # Component metadata (set by get_workflows during DB loading)
+        self._version: Optional[int] = None
+        self._stage: Optional[str] = None
+
         self.cache_session = cache_session
         self.db = db
         self.telemetry = telemetry
@@ -5115,7 +5120,11 @@ def get_workflows(
     db: "BaseDb",
     registry: Optional["Registry"] = None,
 ) -> List["Workflow"]:
-    """Get all workflows from the database"""
+    """
+    Get all workflows from the database.
+
+    Sets _version and _stage on each workflow from the component metadata.
+    """
     workflows: List[Workflow] = []
     try:
         components, _ = db.list_components(component_type=ComponentType.WORKFLOW)
@@ -5129,13 +5138,13 @@ def get_workflows(
                         if "id" not in workflow_config:
                             workflow_config["id"] = component_id
                         workflow = Workflow.from_dict(workflow_config, db=db, registry=registry)
-                        # Ensure workflow.id is set to the component_id
                         workflow.id = component_id
+                        workflow._version = component.get("current_version")
+                        workflow._stage = config.get("stage")
                         workflows.append(workflow)
             except Exception as e:
                 component_id = component.get("component_id", "unknown")
                 log_error(f"Error loading Workflow {component_id} from database: {e}")
-                # Continue loading other workflows even if this one fails
                 continue
         return workflows
 
