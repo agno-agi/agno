@@ -59,6 +59,7 @@ from agno.utils.reasoning import (
     add_reasoning_metrics_to_metadata,
     add_reasoning_step_to_metadata,
     append_to_reasoning_content,
+    extract_thinking_content,
     update_run_output_with_reasoning,
 )
 from agno.utils.string import parse_response_dict_str, parse_response_model_str
@@ -1112,6 +1113,21 @@ def handle_model_response_stream(
             run_context=run_context,
         )
 
+    # Extract <think> tags from accumulated streaming content.
+    # In the streaming path, models that embed thinking in <think> tags (e.g., Ollama, vLLM with qwen3)
+    # accumulate raw content including <think>...</think> tags. We extract them here to match
+    # the non-streaming behavior where extract_thinking_content is called in _parse_provider_response.
+    if run_response.content and isinstance(run_response.content, str) and "</think>" in run_response.content:
+        reasoning_content, clean_content = extract_thinking_content(run_response.content)
+        if reasoning_content:
+            if not run_response.reasoning_content:
+                run_response.reasoning_content = reasoning_content
+            run_response.content = clean_content
+            # Also update model_response to keep them in sync
+            model_response.content = clean_content
+            if not model_response.reasoning_content:
+                model_response.reasoning_content = reasoning_content
+
     # Update RunOutput
     # Build a list of messages that should be added to the RunOutput
     messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
@@ -1267,6 +1283,17 @@ async def ahandle_model_response_stream(
             run_context=run_context,
         ):
             yield event
+
+    # Extract <think> tags from accumulated streaming content (async variant).
+    if run_response.content and isinstance(run_response.content, str) and "</think>" in run_response.content:
+        reasoning_content, clean_content = extract_thinking_content(run_response.content)
+        if reasoning_content:
+            if not run_response.reasoning_content:
+                run_response.reasoning_content = reasoning_content
+            run_response.content = clean_content
+            model_response.content = clean_content
+            if not model_response.reasoning_content:
+                model_response.reasoning_content = reasoning_content
 
     # Update RunOutput
     # Build a list of messages that should be added to the RunOutput
