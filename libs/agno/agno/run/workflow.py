@@ -5,12 +5,13 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
 from pydantic import BaseModel
 
-from agno.media import Audio, Image, Video
+from agno.media import Audio, File, Image, Video
 from agno.run.agent import RunEvent, RunOutput, run_output_event_from_dict
 from agno.run.base import BaseRunOutputEvent, RunStatus
 from agno.run.team import TeamRunEvent, TeamRunOutput, team_run_output_event_from_dict
 from agno.utils.media import (
     reconstruct_audio_list,
+    reconstruct_files,
     reconstruct_images,
     reconstruct_response_audio,
     reconstruct_videos,
@@ -509,6 +510,7 @@ class WorkflowRunOutput:
     images: Optional[List[Image]] = None
     videos: Optional[List[Video]] = None
     audio: Optional[List[Audio]] = None
+    files: Optional[List[File]] = None
     response_audio: Optional[Audio] = None
 
     # Store actual step execution results as StepOutput objects
@@ -547,6 +549,7 @@ class WorkflowRunOutput:
                 "images",
                 "videos",
                 "audio",
+                "files",
                 "response_audio",
                 "step_results",
                 "step_executor_runs",
@@ -570,6 +573,9 @@ class WorkflowRunOutput:
 
         if self.audio is not None:
             _dict["audio"] = [aud.to_dict() for aud in self.audio]
+
+        if self.files is not None:
+            _dict["files"] = [f.to_dict() for f in self.files]
 
         if self.response_audio is not None:
             _dict["response_audio"] = self.response_audio.to_dict()
@@ -651,6 +657,7 @@ class WorkflowRunOutput:
         images = reconstruct_images(data.pop("images", []))
         videos = reconstruct_videos(data.pop("videos", []))
         audio = reconstruct_audio_list(data.pop("audio", []))
+        files = reconstruct_files(data.pop("files", []))
         response_audio = reconstruct_response_audio(data.pop("response_audio", None))
 
         events_data = data.pop("events", [])
@@ -687,6 +694,7 @@ class WorkflowRunOutput:
             images=images,
             videos=videos,
             audio=audio,
+            files=files,
             response_audio=response_audio,
             events=events,
             metrics=workflow_metrics,
