@@ -36,7 +36,7 @@ from agno.utils.agent import (
 )
 from agno.utils.common import is_typed_dict
 from agno.utils.log import log_debug, log_warning
-from agno.utils.message import filter_tool_calls, get_text_from_message
+from agno.utils.message import filter_tool_calls, get_text_from_message, normalize_tool_messages
 from agno.utils.prompts import get_json_output_prompt, get_response_model_format_prompt
 from agno.utils.timer import Timer
 
@@ -1253,6 +1253,9 @@ def get_run_messages(
             for _msg in history_copy:
                 _msg.from_history = True
 
+            # Normalize provider-specific tool messages for cross-provider compatibility
+            history_copy = normalize_tool_messages(history_copy)
+
             # Filter tool calls from history if limit is set (before adding to run_messages)
             if agent.max_tool_calls_from_history is not None:
                 filter_tool_calls(history_copy, agent.max_tool_calls_from_history)
@@ -1454,6 +1457,9 @@ async def aget_run_messages(
             # Tag each message as coming from history
             for _msg in history_copy:
                 _msg.from_history = True
+
+            # Normalize provider-specific tool messages for cross-provider compatibility
+            history_copy = normalize_tool_messages(history_copy)
 
             # Filter tool calls from history if limit is set (before adding to run_messages)
             if agent.max_tool_calls_from_history is not None:

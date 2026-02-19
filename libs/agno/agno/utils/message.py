@@ -1,3 +1,4 @@
+import json
 from copy import deepcopy
 from typing import Dict, List, Union
 
@@ -5,6 +6,110 @@ from pydantic import BaseModel
 
 from agno.models.message import Message
 from agno.utils.log import log_debug
+
+
+def normalize_tool_messages(messages: List[Message]) -> List[Message]:
+    """Normalize provider-specific tool messages into a standard per-tool format.
+
+    Different model providers store tool call results differently:
+    - Standard (OpenAI, Claude, Bedrock): each tool result is a separate Message
+      with role="tool", content=string, tool_call_id=string at top level.
+    - Gemini: all tool results are combined into ONE Message with role="tool",
+      content=list, tool_calls=[{tool_call_id, tool_name, content}, ...].
+
+    This function detects Gemini-style combined tool messages and splits them into
+    individual per-tool messages so that any provider can consume them.
+
+    Args:
+        messages: List of messages to normalize.
+
+    Returns:
+        A new list of messages with combined tool messages expanded.
+    """
+    normalized: List[Message] = []
+
+    for msg in messages:
+        if msg.role == "tool" and _is_combined_tool_message(msg):
+            normalized.extend(_split_combined_tool_message(msg))
+        else:
+            normalized.append(msg)
+
+    return normalized
+
+
+def _is_combined_tool_message(msg: Message) -> bool:
+    """Detect if a message is a Gemini-style combined tool result message.
+
+    A combined tool message has:
+    - role="tool"
+    - tool_call_id is None (not set at top level)
+    - tool_calls is a non-empty list containing dicts with tool_name/tool_call_id
+    - content is typically a list
+    """
+    if msg.role != "tool":
+        return False
+
+    # Must have tool_calls list with tool result entries
+    if not msg.tool_calls or not isinstance(msg.tool_calls, list):
+        return False
+
+    # Must lack a top-level tool_call_id (standard messages have it)
+    if msg.tool_call_id is not None:
+        return False
+
+    # The tool_calls entries should have tool_name (Gemini format)
+    if len(msg.tool_calls) > 0:
+        first = msg.tool_calls[0]
+        if isinstance(first, dict) and "tool_name" in first:
+            return True
+
+    return False
+
+
+def _split_combined_tool_message(msg: Message) -> List[Message]:
+    """Split a Gemini-style combined tool message into individual tool messages.
+
+    Args:
+        msg: A combined tool message with tool_calls containing per-tool results.
+
+    Returns:
+        A list of individual tool messages in the standard format.
+    """
+    individual_messages: List[Message] = []
+    content_list = msg.content if isinstance(msg.content, list) else []
+
+    for idx, tool_call in enumerate(msg.tool_calls or []):
+        if not isinstance(tool_call, dict):
+            continue
+
+        tool_call_id = tool_call.get("tool_call_id")
+        tool_name = tool_call.get("tool_name")
+
+        # Get content: prefer tool_call's own content, fall back to content list
+        tc_content = tool_call.get("content")
+        if tc_content is None and idx < len(content_list):
+            tc_content = content_list[idx]
+
+        # Ensure content is a string for standard format
+        if tc_content is not None and not isinstance(tc_content, str):
+            try:
+                tc_content = json.dumps(tc_content) if not isinstance(tc_content, str) else tc_content
+            except (TypeError, ValueError):
+                tc_content = str(tc_content)
+
+        individual_messages.append(
+            Message(
+                role="tool",
+                content=tc_content,
+                tool_call_id=tool_call_id,
+                tool_name=tool_name,
+                metrics=msg.metrics,
+                from_history=msg.from_history,
+                created_at=msg.created_at,
+            )
+        )
+
+    return individual_messages
 
 
 def filter_tool_calls(messages: List[Message], max_tool_calls: int) -> None:
