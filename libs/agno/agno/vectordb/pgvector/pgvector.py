@@ -327,6 +327,9 @@ class PgVector(VectorDb):
                     batch_docs = documents[i : i + batch_size]
                     log_debug(f"Processing batch starting at index {i}, size: {len(batch_docs)}")
                     try:
+                        # Batch embed all documents in this batch before building records
+                        self._embed_documents(batch_docs)
+
                         # Prepare documents for insertion
                         batch_records = []
                         for doc in batch_docs:
@@ -458,6 +461,9 @@ class PgVector(VectorDb):
                     batch_docs = documents[i : i + batch_size]
                     log_info(f"Processing batch starting at index {i}, size: {len(batch_docs)}")
                     try:
+                        # Batch embed all documents in this batch before building records
+                        self._embed_documents(batch_docs)
+
                         # Prepare documents for upserting
                         batch_records_dict: Dict[str, Dict[str, Any]] = {}  # Use dict to deduplicate by ID
                         for doc in batch_docs:
@@ -503,7 +509,8 @@ class PgVector(VectorDb):
     def _get_document_record(
         self, doc: Document, filters: Optional[Dict[str, Any]] = None, content_hash: str = ""
     ) -> Dict[str, Any]:
-        doc.embed(embedder=self.embedder)
+        if doc.embedding is None:
+            doc.embed(embedder=self.embedder)
         cleaned_content = self._clean_content(doc.content)
         # Include content_hash in ID to ensure uniqueness across different content hashes
         # This allows the same URL/content to be inserted with different descriptions
@@ -525,6 +532,58 @@ class PgVector(VectorDb):
             "content_hash": content_hash,
             "content_id": doc.content_id,
         }
+
+    def _embed_documents(self, batch_docs: List[Document]) -> None:
+        """
+        Embed a batch of documents using either batch embedding or individual embedding (sync version).
+
+        Args:
+            batch_docs: List of documents to embed
+        """
+        if self.embedder.enable_batch and hasattr(self.embedder, "get_embeddings_batch_and_usage"):
+            # Use batch embedding when enabled and supported
+            try:
+                # Extract content from all documents
+                doc_contents = [doc.content for doc in batch_docs]
+
+                # Get batch embeddings and usage
+                embeddings, usages = self.embedder.get_embeddings_batch_and_usage(doc_contents)
+
+                # Process documents with pre-computed embeddings
+                for j, doc in enumerate(batch_docs):
+                    try:
+                        if j < len(embeddings):
+                            doc.embedding = embeddings[j]
+                            doc.usage = usages[j] if j < len(usages) else None
+                    except Exception as e:
+                        log_error(f"Error assigning batch embedding to document '{doc.name}': {e}")
+
+            except Exception as e:
+                # Check if this is a rate limit error - don't fall back as it would make things worse
+                error_str = str(e).lower()
+                is_rate_limit = any(
+                    phrase in error_str
+                    for phrase in ["rate limit", "too many requests", "429", "trial key", "api calls / minute"]
+                )
+
+                if is_rate_limit:
+                    log_error(f"Rate limit detected during batch embedding.  {e}")
+                    raise e
+                else:
+                    log_warning(f"Sync batch embedding failed, falling back to individual embeddings: {e}")
+                    # Fall back to individual embedding
+                    for doc in batch_docs:
+                        try:
+                            doc.embed(embedder=self.embedder)
+                        except Exception as e2:
+                            log_error(f"Error embedding document '{doc.name}': {e2}")
+        else:
+            # Use individual embedding
+            for doc in batch_docs:
+                try:
+                    doc.embed(embedder=self.embedder)
+                except Exception as e:
+                    log_error(f"Error embedding document '{doc.name}': {e}")
 
     async def _async_embed_documents(self, batch_docs: List[Document]) -> None:
         """
