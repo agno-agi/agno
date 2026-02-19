@@ -1,10 +1,15 @@
 """Integration tests for Parallel steps functionality."""
 
+import threading
 from contextvars import ContextVar
 from secrets import token_hex
+from typing import Any, Dict, List, Optional, Type
 
 import pytest
+from pydantic import BaseModel
 
+from agno.agent._run_options import ResolvedRunOptions
+from agno.run.base import RunContext
 from agno.run.workflow import (
     StepCompletedEvent,
     StepStartedEvent,
@@ -668,3 +673,225 @@ def test_parallel_name_first_streaming():
     assert len(step_outputs) == 1
     assert parallel.name == "Streaming Named Parallel"
     assert step_outputs[0].step_name == "Streaming Named Parallel"
+
+
+# ============================================================================
+# OUTPUT SCHEMA ISOLATION TESTS (Regression: issue #6590)
+# ============================================================================
+# When parallel steps contain agents with different output_schema types, each
+# step must receive its own run_context copy so that apply_to_context() writes
+# do not clobber a sibling step's schema.
+
+
+class ImageClassification(BaseModel):
+    """Output schema for image classifier steps."""
+
+    image_id: str
+    category: str
+    confidence: float
+    tags: List[str]
+
+
+class QualityAssessment(BaseModel):
+    """Output schema for quality assessor steps."""
+
+    image_id: str
+    quality_score: int
+    issues: List[str]
+    approved: bool
+
+
+def _make_schema_asserting_step(
+    name: str,
+    agent_output_schema: Type[BaseModel],
+    captured: Dict[str, Any],
+    barrier: threading.Barrier,
+) -> Step:
+    """Return a Step whose executor reproduces the apply_to_context race.
+
+    The executor mirrors what Agent.run() does:
+    1. Calls ResolvedRunOptions.apply_to_context() to write its schema onto the
+       run_context it received (this is the mutation that caused the race).
+    2. Waits at the barrier so all threads overlap at the mutation point —
+       maximising the chance of observing cross-contamination on unfixed code.
+    3. Reads back run_context.output_schema and records it.
+    """
+
+    def executor(
+        step_input: StepInput,
+        *,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        workflow_run_response: Any = None,
+        store_executor_outputs: bool = True,
+        workflow_session: Any = None,
+        add_workflow_history_to_steps: Optional[bool] = False,
+        num_history_runs: int = 3,
+        run_context: Optional[RunContext] = None,
+        session_state: Optional[Dict[str, Any]] = None,
+        background_tasks: Any = None,
+    ) -> StepOutput:
+        opts = ResolvedRunOptions(
+            stream=False,
+            stream_events=False,
+            yield_run_output=False,
+            add_history_to_context=False,
+            add_dependencies_to_context=False,
+            add_session_state_to_context=False,
+            dependencies=None,
+            knowledge_filters=None,
+            metadata=None,
+            output_schema=agent_output_schema,
+        )
+        if run_context is not None:
+            opts.apply_to_context(run_context)
+
+        # Force all threads to overlap here before reading back — this reliably
+        # triggers the race condition on unpatched code.
+        barrier.wait(timeout=5)
+
+        captured[name] = run_context.output_schema if run_context else None
+        return StepOutput(step_name=name, content=f"{name} done")
+
+    return Step(name=name, description=f"Schema isolation test: {name}", executor=executor)
+
+
+def test_parallel_output_schema_no_cross_contamination():
+    """Regression test for #6590: parallel steps with different output schemas must not interfere.
+
+    Before the fix (PR #6609), all steps shared the same run_context object.
+    Each step's apply_to_context() unconditionally overwrites run_context.output_schema,
+    so concurrent writes would corrupt each other. The fix shallow-copies run_context
+    per step so each step gets an isolated output_schema slot.
+    """
+    barrier = threading.Barrier(2)
+    captured: Dict[str, Any] = {}
+
+    classifier_step = _make_schema_asserting_step("classifier", ImageClassification, captured, barrier)
+    qa_step = _make_schema_asserting_step("qa_assessor", QualityAssessment, captured, barrier)
+
+    parallel = Parallel(classifier_step, qa_step, name="schema_isolation")
+    run_context = RunContext(run_id="test-run", session_id="test-session")
+
+    parallel.execute(StepInput(input="classify and assess img_001"), run_context=run_context)
+
+    assert captured["classifier"] is ImageClassification, (
+        f"classifier step got wrong schema: {captured['classifier']}"
+    )
+    assert captured["qa_assessor"] is QualityAssessment, (
+        f"qa_assessor step got wrong schema: {captured['qa_assessor']}"
+    )
+
+
+def test_parallel_output_schema_isolation_three_steps():
+    """Three concurrent steps with three distinct schemas — none must bleed into another."""
+
+    class SchemaA(BaseModel):
+        a: str
+
+    class SchemaB(BaseModel):
+        b: int
+
+    class SchemaC(BaseModel):
+        c: float
+
+    barrier = threading.Barrier(3)
+    captured: Dict[str, Any] = {}
+
+    steps = [
+        _make_schema_asserting_step("step_a", SchemaA, captured, barrier),
+        _make_schema_asserting_step("step_b", SchemaB, captured, barrier),
+        _make_schema_asserting_step("step_c", SchemaC, captured, barrier),
+    ]
+
+    parallel = Parallel(*steps, name="three_schema_isolation")
+    run_context = RunContext(run_id="test-run-3", session_id="test-session-3")
+
+    parallel.execute(StepInput(input="run all three"), run_context=run_context)
+
+    assert captured["step_a"] is SchemaA
+    assert captured["step_b"] is SchemaB
+    assert captured["step_c"] is SchemaC
+
+
+def test_parallel_does_not_mutate_caller_run_context():
+    """Parallel execution must not mutate the caller's run_context.output_schema.
+
+    Each step receives a shallow copy, so their apply_to_context() writes stay
+    local and the original run_context is unchanged after execute() returns.
+    """
+
+    class CallerSchema(BaseModel):
+        value: str
+
+    class StepSchema(BaseModel):
+        result: int
+
+    barrier = threading.Barrier(2)
+    captured: Dict[str, Any] = {}
+
+    steps = [
+        _make_schema_asserting_step("s1", StepSchema, captured, barrier),
+        _make_schema_asserting_step("s2", StepSchema, captured, barrier),
+    ]
+
+    parallel = Parallel(*steps, name="immutable_ctx_test")
+    run_context = RunContext(
+        run_id="test-orig",
+        session_id="test-orig-session",
+        output_schema=CallerSchema,
+    )
+
+    parallel.execute(StepInput(input="test"), run_context=run_context)
+
+    assert run_context.output_schema is CallerSchema, (
+        f"Caller's run_context.output_schema was mutated: {run_context.output_schema}"
+    )
+
+
+def test_parallel_session_state_shared_across_steps():
+    """session_state must remain shared (same dict object) after the shallow copy.
+
+    The shallow copy isolates output_schema but preserves the session_state
+    reference — mutations from one step are visible to all steps and to the caller.
+    """
+    shared_state: Dict[str, Any] = {"token": "shared_value"}
+    state_ids: Dict[str, int] = {}
+    barrier = threading.Barrier(2)
+
+    def make_state_step(name: str) -> Step:
+        def executor(
+            step_input: StepInput,
+            *,
+            session_id: Optional[str] = None,
+            user_id: Optional[str] = None,
+            workflow_run_response: Any = None,
+            store_executor_outputs: bool = True,
+            workflow_session: Any = None,
+            add_workflow_history_to_steps: Optional[bool] = False,
+            num_history_runs: int = 3,
+            run_context: Optional[RunContext] = None,
+            session_state: Optional[Dict[str, Any]] = None,
+            background_tasks: Any = None,
+        ) -> StepOutput:
+            if run_context is not None:
+                state_ids[name] = id(run_context.session_state)
+            barrier.wait(timeout=5)
+            return StepOutput(step_name=name, content=f"{name} done")
+
+        return Step(name=name, executor=executor)
+
+    parallel = Parallel(make_state_step("p1"), make_state_step("p2"), name="session_state_sharing")
+    run_context = RunContext(
+        run_id="test-state",
+        session_id="test-state-session",
+        session_state=shared_state,
+    )
+
+    parallel.execute(StepInput(input="test"), run_context=run_context)
+
+    assert state_ids["p1"] == state_ids["p2"], (
+        "session_state should be the same dict object across parallel steps "
+        f"(p1 id={state_ids['p1']}, p2 id={state_ids['p2']})"
+    )
+    assert state_ids["p1"] == id(shared_state), "session_state in steps should be the original shared dict"
