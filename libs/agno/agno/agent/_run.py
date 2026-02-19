@@ -460,6 +460,9 @@ def _run(
                 if len(run_messages.messages) == 0:
                     log_error("No messages to be sent to the model.")
 
+                # Set messages on run_context so tool pre/post hooks can access the current message history
+                run_context.messages = run_messages.messages
+
                 # Start memory creation in background thread
                 from agno.agent import _managers
 
@@ -832,6 +835,9 @@ def _run_stream(
                 )
                 if len(run_messages.messages) == 0:
                     log_error("No messages to be sent to the model.")
+
+                # Set messages on run_context so tool pre/post hooks can access the current message history
+                run_context.messages = run_messages.messages
 
                 # 7. Start memory creation in background thread
                 from agno.agent import _managers
@@ -1508,6 +1514,9 @@ async def _arun(
                 if len(run_messages.messages) == 0:
                     log_error("No messages to be sent to the model.")
 
+                # Set messages on run_context so tool pre/post hooks can access the current message history
+                run_context.messages = run_messages.messages
+
                 # 7. Start memory creation as a background task (runs concurrently with the main execution)
                 from agno.agent import _managers
 
@@ -1999,6 +2008,9 @@ async def _arun_stream(
                 )
                 if len(run_messages.messages) == 0:
                     log_error("No messages to be sent to the model.")
+
+                # Set messages on run_context so tool pre/post hooks can access the current message history
+                run_context.messages = run_messages.messages
 
                 # 7. Start memory creation as a background task (runs concurrently with the main execution)
                 from agno.agent import _managers
@@ -2836,6 +2848,9 @@ def _continue_run(
     # 1. Handle the updated tools
     handle_tool_call_updates(agent, run_response=run_response, run_messages=run_messages, tools=tools)
 
+    # Set messages on run_context so tool pre/post hooks can access the current message history
+    run_context.messages = run_messages.messages
+
     try:
         num_attempts = agent.retries + 1
         for attempt in range(num_attempts):
@@ -3055,6 +3070,9 @@ def _continue_run_stream(
                     tools=tools,
                     stream_events=stream_events,
                 )
+
+                # Set messages on run_context so tool pre/post hooks can access the current message history
+                run_context.messages = run_messages.messages
 
                 # 3. Process model response
                 for event in handle_model_response_stream(
@@ -3572,6 +3590,9 @@ async def _acontinue_run(
                     agent, run_response=run_response, run_messages=run_messages, tools=_tools
                 )
 
+                # Set messages on run_context so tool pre/post hooks can access the current message history
+                run_context.messages = run_messages.messages
+
                 # 8. Get model response
                 model_response: ModelResponse = await agent.model.aresponse(
                     messages=run_messages.messages,
@@ -3930,6 +3951,9 @@ async def _acontinue_run_stream(
                 ):
                     await araise_if_cancelled(run_response.run_id)  # type: ignore
                     yield event
+
+                # Set messages on run_context so tool pre/post hooks can access the current message history
+                run_context.messages = run_messages.messages
 
                 # 8. Process model response
                 if agent.output_model is None:

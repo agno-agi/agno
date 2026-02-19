@@ -27,6 +27,11 @@ class RunContext:
     session_state: Optional[Dict[str, Any]] = None
     output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None
 
+    # Current run's message history. This is a reference to the live messages list
+    # used during the agent run, so it reflects the current state of the conversation
+    # including messages added during tool call processing.
+    messages: Optional[List[Message]] = None
+
     # Runtime-resolved callable factory results
     tools: Optional[List[Any]] = None
     knowledge: Optional[Any] = None

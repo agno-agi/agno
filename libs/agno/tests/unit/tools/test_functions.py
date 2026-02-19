@@ -726,3 +726,179 @@ def test_tool_decorator_with_complex_types():
     assert complex_types_func.parameters["properties"]["param2"]["type"] == "object"
     assert complex_types_func.parameters["properties"]["param3"]["type"] == "boolean"
     assert "param3" not in complex_types_func.parameters["required"]
+
+
+def test_pre_hook_receives_messages_from_run_context():
+    """Test that pre-hook receives current run message history via the messages parameter."""
+    from typing import List, Optional
+
+    from agno.models.message import Message
+    from agno.run.base import RunContext
+
+    captured_messages: Optional[List[Message]] = None
+
+    def pre_hook(messages: Optional[List[Message]]):
+        nonlocal captured_messages
+        captured_messages = messages
+
+    def test_func(param1: str) -> str:
+        return f"processed-{param1}"
+
+    # Create a run context with a message history
+    run_context = RunContext(run_id="test-run", session_id="test-session")
+    run_context.messages = [
+        Message(role="system", content="You are a helpful assistant."),
+        Message(role="user", content="Hello"),
+        Message(role="assistant", content="Hi there!"),
+    ]
+
+    func = Function(name="test_func", entrypoint=test_func, pre_hook=pre_hook)
+    func._run_context = run_context
+
+    call = FunctionCall(function=func, arguments={"param1": "value1"})
+    result = call.execute()
+
+    assert result.status == "success"
+    assert result.result == "processed-value1"
+    assert captured_messages is not None
+    assert len(captured_messages) == 3
+    assert captured_messages[0].role == "system"
+    assert captured_messages[1].role == "user"
+    assert captured_messages[1].content == "Hello"
+    assert captured_messages[2].role == "assistant"
+    # Verify it's the same list reference (not a copy), so mutations during the run are visible
+    assert captured_messages is run_context.messages
+
+
+def test_pre_hook_messages_is_none_when_no_run_context():
+    """Test that pre-hook receives None for messages when no run context is set."""
+    from typing import List, Optional
+
+    from agno.models.message import Message
+
+    captured_messages = "sentinel"
+
+    def pre_hook(messages: Optional[List[Message]]):
+        nonlocal captured_messages
+        captured_messages = messages
+
+    def test_func(param1: str) -> str:
+        return f"processed-{param1}"
+
+    func = Function(name="test_func", entrypoint=test_func, pre_hook=pre_hook)
+    # No _run_context set
+
+    call = FunctionCall(function=func, arguments={"param1": "value1"})
+    result = call.execute()
+
+    assert result.status == "success"
+    assert captured_messages is None
+
+
+@pytest.mark.asyncio
+async def test_async_pre_hook_receives_messages_from_run_context():
+    """Test that async pre-hook receives current run message history via the messages parameter."""
+    from typing import List, Optional
+
+    from agno.models.message import Message
+    from agno.run.base import RunContext
+
+    captured_messages: Optional[List[Message]] = None
+
+    async def pre_hook(messages: Optional[List[Message]]):
+        nonlocal captured_messages
+        captured_messages = messages
+
+    async def test_func(param1: str) -> str:
+        return f"processed-{param1}"
+
+    run_context = RunContext(run_id="test-run", session_id="test-session")
+    run_context.messages = [
+        Message(role="user", content="What is the weather?"),
+        Message(role="assistant", content="Let me check that for you."),
+    ]
+
+    func = Function(name="test_func", entrypoint=test_func, pre_hook=pre_hook)
+    func._run_context = run_context
+
+    call = FunctionCall(function=func, arguments={"param1": "value1"})
+    result = await call.aexecute()
+
+    assert result.status == "success"
+    assert result.result == "processed-value1"
+    assert captured_messages is not None
+    assert len(captured_messages) == 2
+    assert captured_messages[0].content == "What is the weather?"
+    assert captured_messages is run_context.messages
+
+
+def test_post_hook_receives_messages_from_run_context():
+    """Test that post-hook also receives current run message history via the messages parameter."""
+    from typing import List, Optional
+
+    from agno.models.message import Message
+    from agno.run.base import RunContext
+
+    captured_messages: Optional[List[Message]] = None
+
+    def post_hook(messages: Optional[List[Message]]):
+        nonlocal captured_messages
+        captured_messages = messages
+
+    def test_func(param1: str) -> str:
+        return f"processed-{param1}"
+
+    run_context = RunContext(run_id="test-run", session_id="test-session")
+    run_context.messages = [
+        Message(role="user", content="Do something"),
+    ]
+
+    func = Function(name="test_func", entrypoint=test_func, post_hook=post_hook)
+    func._run_context = run_context
+
+    call = FunctionCall(function=func, arguments={"param1": "value1"})
+    result = call.execute()
+
+    assert result.status == "success"
+    assert captured_messages is not None
+    assert len(captured_messages) == 1
+    assert captured_messages[0].content == "Do something"
+
+
+def test_tool_hook_receives_messages_from_run_context():
+    """Test that tool hooks receive current run message history via the messages parameter."""
+    from typing import Dict, List, Optional
+
+    from agno.models.message import Message
+    from agno.run.base import RunContext
+
+    captured_messages: Optional[List[Message]] = None
+
+    def tool_hook(
+        function_name: str, function_call: Callable, arguments: Dict[str, Any], messages: Optional[List[Message]]
+    ):
+        nonlocal captured_messages
+        captured_messages = messages
+        return function_call(**arguments)
+
+    @tool(tool_hooks=[tool_hook])
+    def test_func(param1: str) -> str:
+        return f"processed-{param1}"
+
+    test_func.process_entrypoint()
+
+    run_context = RunContext(run_id="test-run", session_id="test-session")
+    run_context.messages = [
+        Message(role="user", content="Use the tool"),
+    ]
+
+    test_func._run_context = run_context
+
+    call = FunctionCall(function=test_func, arguments={"param1": "value1"})
+    result = call.execute()
+
+    assert result.status == "success"
+    assert result.result == "processed-value1"
+    assert captured_messages is not None
+    assert len(captured_messages) == 1
+    assert captured_messages[0].content == "Use the tool"
