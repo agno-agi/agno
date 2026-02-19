@@ -21,6 +21,7 @@ if TYPE_CHECKING:
 from agno.filters import FilterExpr
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Message
+from agno.run.agent import RunOutput
 from agno.utils.print_response.agent import (
     aprint_response,
     aprint_response_stream,
@@ -56,7 +57,7 @@ def agent_print_response(
     console: Optional[Any] = None,
     tags_to_include_in_markdown: Optional[Set[str]] = None,
     **kwargs: Any,
-) -> None:
+) -> Optional[RunOutput]:
     from agno.agent import _init
 
     if _init.has_async_db(agent):
@@ -106,9 +107,10 @@ def agent_print_response(
             metadata=metadata,
             **kwargs,
         )
+        return None
 
     else:
-        print_response(
+        return print_response(
             agent=agent,
             input=input,
             session_id=session_id,
@@ -163,7 +165,7 @@ async def agent_aprint_response(
     console: Optional[Any] = None,
     tags_to_include_in_markdown: Optional[Set[str]] = None,
     **kwargs: Any,
-) -> None:
+) -> Optional[RunOutput]:
     if not tags_to_include_in_markdown:
         tags_to_include_in_markdown = {"think", "thinking"}
 
@@ -207,8 +209,9 @@ async def agent_aprint_response(
             metadata=metadata,
             **kwargs,
         )
+        return None
     else:
-        await aprint_response(
+        return await aprint_response(
             agent=agent,
             input=input,
             session_id=session_id,

@@ -1077,7 +1077,7 @@ class Agent:
         console: Optional[Any] = None,
         tags_to_include_in_markdown: Optional[Set[str]] = None,
         **kwargs: Any,
-    ) -> None:
+    ) -> Optional[RunOutput]:
         return _cli.agent_print_response(
             self,
             input=input,
@@ -1133,7 +1133,7 @@ class Agent:
         console: Optional[Any] = None,
         tags_to_include_in_markdown: Optional[Set[str]] = None,
         **kwargs: Any,
-    ) -> None:
+    ) -> Optional[RunOutput]:
         return await _cli.agent_aprint_response(
             self,
             input=input,

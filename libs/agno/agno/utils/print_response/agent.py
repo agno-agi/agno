@@ -663,6 +663,8 @@ def print_response(
         panels = [p for p in panels if not isinstance(p, Status)]
         live_log.update(Group(*panels))
 
+    return run_response
+
 
 async def aprint_response(
     agent: "Agent",
@@ -782,6 +784,8 @@ async def aprint_response(
         # Final update to remove the "Working..." status
         panels = [p for p in panels if not isinstance(p, Status)]
         live_log.update(Group(*panels))
+
+    return run_response
 
 
 def build_panels(
