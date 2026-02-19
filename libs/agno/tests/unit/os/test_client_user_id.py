@@ -158,6 +158,71 @@ def test_app(mock_db, monkeypatch):
     return app
 
 
+@pytest.fixture
+def test_app_with_jwt(mock_db, monkeypatch):
+    """Test app with simulated JWT middleware that sets request.state.user_id."""
+    monkeypatch.delenv("OS_SECURITY_KEY", raising=False)
+
+    from starlette.middleware.base import BaseHTTPMiddleware
+
+    from agno.os.routers.session.session import get_session_router
+    from agno.os.settings import AgnoAPISettings
+
+    settings = AgnoAPISettings()
+    dbs = {"default": [mock_db]}
+    router = get_session_router(dbs, settings)
+
+    app = FastAPI()
+    app.include_router(router)
+
+    class FakeJWTMiddleware(BaseHTTPMiddleware):
+        async def dispatch(self, request, call_next):
+            request.state.user_id = "jwt_alice"
+            return await call_next(request)
+
+    app.add_middleware(FakeJWTMiddleware)
+    return app
+
+
+def test_router_delete_session_jwt_overrides_query_user_id(test_app_with_jwt, mock_db):
+    """JWT user_id must always override client-supplied ?user_id (IDOR protection)."""
+    client = TestClient(test_app_with_jwt)
+    resp = client.delete("/sessions/sess-1?user_id=attacker")
+    assert resp.status_code == 204
+
+    call_kwargs = mock_db.delete_session.call_args.kwargs
+    assert call_kwargs["user_id"] == "jwt_alice"
+    assert call_kwargs["session_id"] == "sess-1"
+
+
+def test_router_delete_sessions_jwt_overrides_query_user_id(test_app_with_jwt, mock_db):
+    """JWT user_id must override client-supplied ?user_id for bulk delete."""
+    client = TestClient(test_app_with_jwt)
+    resp = client.request(
+        "DELETE",
+        "/sessions?user_id=attacker",
+        json={"session_ids": ["s-1"], "session_types": ["agent"]},
+    )
+    assert resp.status_code == 204
+
+    call_kwargs = mock_db.delete_sessions.call_args.kwargs
+    assert call_kwargs["user_id"] == "jwt_alice"
+
+
+def test_router_rename_session_jwt_overrides_query_user_id(test_app_with_jwt, mock_db):
+    """JWT user_id must override client-supplied ?user_id for rename."""
+    client = TestClient(test_app_with_jwt)
+    resp = client.post(
+        "/sessions/sess-1/rename?user_id=attacker",
+        json={"session_name": "Hacked"},
+    )
+    assert resp.status_code == 200
+
+    call_kwargs = mock_db.rename_session.call_args.kwargs
+    assert call_kwargs["user_id"] == "jwt_alice"
+    assert call_kwargs["session_id"] == "sess-1"
+
+
 def test_router_delete_session_receives_user_id_from_query(test_app, mock_db):
     """Verify FastAPI binds user_id from ?user_id=alice to the endpoint param."""
     client = TestClient(test_app)
