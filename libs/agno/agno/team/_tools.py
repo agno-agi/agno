@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -81,15 +82,16 @@ async def _check_and_refresh_mcp_tools(team: "Team") -> None:
                     try:
                         is_alive = await tool.is_alive()  # type: ignore
                         if not is_alive:
+                            # connect(force=True) internally calls initialize() -> build_tools(),
+                            # so no separate build_tools() call is needed after reconnection.
                             await tool.connect(force=True)  # type: ignore
+                        else:
+                            # Connection is alive but we still want to refresh tool definitions
+                            await tool.build_tools()  # type: ignore
+                    except asyncio.CancelledError:
+                        raise
                     except (RuntimeError, BaseException) as e:
-                        log_warning(f"Failed to check if MCP tool is alive: {e}")
-                        continue
-
-                    try:
-                        await tool.build_tools()  # type: ignore
-                    except (RuntimeError, BaseException) as e:
-                        log_warning(f"Failed to build tools for {str(tool)}: {e}")
+                        log_warning(f"Failed to refresh MCP tools: {e}")
                         continue
 
 
