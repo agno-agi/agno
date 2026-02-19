@@ -100,59 +100,24 @@ def get_update_cultural_knowledge_function(agent: Agent, async_mode: bool = Fals
     )
 
 
-def create_knowledge_retriever_search_tool(
+def create_knowledge_search_tool(
     agent: Agent,
     run_response: Optional[RunOutput] = None,
     run_context: Optional[RunContext] = None,
+    knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+    enable_agentic_filters: Optional[bool] = False,
     async_mode: bool = False,
 ) -> Function:
-    """Create a search_knowledge_base tool using the custom knowledge_retriever.
+    """Create a unified search_knowledge_base tool.
 
-    This allows agents to use a custom retriever function without needing
-    a full Knowledge instance. The retriever is wrapped as a tool the agent can call.
+    Routes all knowledge searches through get_relevant_docs_from_knowledge(),
+    which checks knowledge_retriever first and falls back to knowledge.search().
+    This ensures the custom retriever is always respected when provided.
     """
 
-    def search_knowledge_base(query: str) -> str:
-        """Use this function to search the knowledge base for information about a query.
-
-        Args:
-            query: The query to search for.
-
-        Returns:
-            str: A string containing the response from the knowledge base.
-        """
-        retrieval_timer = Timer()
-        retrieval_timer.start()
-
-        try:
-            from agno.agent import _messages
-
-            docs = _messages.get_relevant_docs_from_knowledge(
-                agent,
-                query=query,
-                run_context=run_context,
-            )
-        except Exception as e:
-            log_warning(f"Knowledge retriever failed: {e}")
-            return f"Error searching knowledge base: {e}"
-
-        if run_response is not None and docs:
-            references = MessageReferences(
-                query=query,
-                references=docs,
-                time=round(retrieval_timer.elapsed, 4),
-            )
-            if run_response.references is None:
-                run_response.references = []
-            run_response.references.append(references)
-
-        retrieval_timer.stop()
-        log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
-
+    def _format_results(docs: Optional[List[Union[Dict[str, Any], str]]]) -> str:
         if not docs:
             return "No documents found"
-
-        # Format results for the agent
         if agent.references_format == "json":
             import json
 
@@ -162,59 +127,160 @@ def create_knowledge_retriever_search_tool(
 
             return yaml.dump(docs, default_flow_style=False)
 
-    async def asearch_knowledge_base(query: str) -> str:
-        """Use this function to search the knowledge base for information about a query.
-
-        Args:
-            query: The query to search for.
-
-        Returns:
-            str: A string containing the response from the knowledge base.
-        """
-        retrieval_timer = Timer()
-        retrieval_timer.start()
-
-        try:
-            from agno.agent import _messages
-
-            docs = await _messages.aget_relevant_docs_from_knowledge(
-                agent,
-                query=query,
-                run_context=run_context,
-            )
-        except Exception as e:
-            log_warning(f"Knowledge retriever failed: {e}")
-            return f"Error searching knowledge base: {e}"
-
+    def _track_references(docs: Optional[List[Union[Dict[str, Any], str]]], query: str, elapsed: float) -> None:
         if run_response is not None and docs:
             references = MessageReferences(
                 query=query,
                 references=docs,
-                time=round(retrieval_timer.elapsed, 4),
+                time=round(elapsed, 4),
             )
             if run_response.references is None:
                 run_response.references = []
             run_response.references.append(references)
 
-        retrieval_timer.stop()
-        log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
+    def _resolve_filters(
+        agentic_filters: Optional[List[Any]] = None,
+    ) -> Optional[Union[Dict[str, Any], List[FilterExpr]]]:
+        if agentic_filters:
+            filters_dict: Dict[str, Any] = {}
+            for filt in agentic_filters:
+                if isinstance(filt, dict):
+                    filters_dict.update(filt)
+                elif hasattr(filt, "key") and hasattr(filt, "value"):
+                    filters_dict[filt.key] = filt.value
+            return get_agentic_or_user_search_filters(filters_dict, knowledge_filters)
+        return knowledge_filters
 
-        if not docs:
-            return "No documents found"
+    if enable_agentic_filters:
 
-        # Format results for the agent
-        if agent.references_format == "json":
-            import json
+        def search_knowledge_base_with_filters(query: str, filters: Optional[List[KnowledgeFilter]] = None) -> str:
+            """Use this function to search the knowledge base for information about a query.
 
-            return json.dumps(docs, indent=2, default=str)
-        else:
-            import yaml
+            Args:
+                query: The query to search for.
+                filters (optional): The filters to apply to the search. This is a list of KnowledgeFilter objects.
 
-            return yaml.dump(docs, default_flow_style=False)
+            Returns:
+                str: A string containing the response from the knowledge base.
+            """
+            retrieval_timer = Timer()
+            retrieval_timer.start()
+            try:
+                from agno.agent import _messages
 
-    if async_mode:
-        return Function.from_callable(asearch_knowledge_base, name="search_knowledge_base")
-    return Function.from_callable(search_knowledge_base, name="search_knowledge_base")
+                docs = _messages.get_relevant_docs_from_knowledge(
+                    agent,
+                    query=query,
+                    filters=_resolve_filters(filters),
+                    validate_filters=True,
+                    run_context=run_context,
+                )
+            except Exception as e:
+                log_warning(f"Knowledge search failed: {e}")
+                return f"Error searching knowledge base: {type(e).__name__}"
+            _track_references(docs, query, retrieval_timer.elapsed)
+            retrieval_timer.stop()
+            log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
+            return _format_results(docs)
+
+        async def asearch_knowledge_base_with_filters(
+            query: str, filters: Optional[List[KnowledgeFilter]] = None
+        ) -> str:
+            """Use this function to search the knowledge base for information about a query.
+
+            Args:
+                query: The query to search for.
+                filters (optional): The filters to apply to the search. This is a list of KnowledgeFilter objects.
+
+            Returns:
+                str: A string containing the response from the knowledge base.
+            """
+            retrieval_timer = Timer()
+            retrieval_timer.start()
+            try:
+                from agno.agent import _messages
+
+                docs = await _messages.aget_relevant_docs_from_knowledge(
+                    agent,
+                    query=query,
+                    filters=_resolve_filters(filters),
+                    validate_filters=True,
+                    run_context=run_context,
+                )
+            except Exception as e:
+                log_warning(f"Knowledge search failed: {e}")
+                return f"Error searching knowledge base: {type(e).__name__}"
+            _track_references(docs, query, retrieval_timer.elapsed)
+            retrieval_timer.stop()
+            log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
+            return _format_results(docs)
+
+        if async_mode:
+            return Function.from_callable(asearch_knowledge_base_with_filters, name="search_knowledge_base")
+        return Function.from_callable(search_knowledge_base_with_filters, name="search_knowledge_base")
+
+    else:
+
+        def search_knowledge_base(query: str) -> str:
+            """Use this function to search the knowledge base for information about a query.
+
+            Args:
+                query: The query to search for.
+
+            Returns:
+                str: A string containing the response from the knowledge base.
+            """
+            retrieval_timer = Timer()
+            retrieval_timer.start()
+            try:
+                from agno.agent import _messages
+
+                docs = _messages.get_relevant_docs_from_knowledge(
+                    agent,
+                    query=query,
+                    filters=knowledge_filters,
+                    run_context=run_context,
+                )
+            except Exception as e:
+                log_warning(f"Knowledge search failed: {e}")
+                return f"Error searching knowledge base: {type(e).__name__}"
+            _track_references(docs, query, retrieval_timer.elapsed)
+            retrieval_timer.stop()
+            log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
+            return _format_results(docs)
+
+        async def asearch_knowledge_base(query: str) -> str:
+            """Use this function to search the knowledge base for information about a query.
+
+            Args:
+                query: The query to search for.
+
+            Returns:
+                str: A string containing the response from the knowledge base.
+            """
+            retrieval_timer = Timer()
+            retrieval_timer.start()
+            try:
+                from agno.agent import _messages
+
+                docs = await _messages.aget_relevant_docs_from_knowledge(
+                    agent,
+                    query=query,
+                    filters=knowledge_filters,
+                    run_context=run_context,
+                )
+            except Exception as e:
+                log_warning(f"Knowledge search failed: {e}")
+                return f"Error searching knowledge base: {type(e).__name__}"
+            _track_references(docs, query, retrieval_timer.elapsed)
+            retrieval_timer.stop()
+            log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
+            return _format_results(docs)
+
+        if async_mode:
+            return Function.from_callable(asearch_knowledge_base, name="search_knowledge_base")
+        return Function.from_callable(search_knowledge_base, name="search_knowledge_base")
+
 
 
 def get_chat_history_function(agent: Agent, session: AgentSession) -> Callable:
@@ -313,183 +379,6 @@ def make_update_session_state_entrypoint(agent: Agent) -> Callable:
         return update_session_state_tool(agent, run_context, session_state_updates)
 
     return _entrypoint
-
-
-def get_search_knowledge_base_function(
-    agent: Agent,
-    run_response: RunOutput,
-    knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
-    async_mode: bool = False,
-    run_context: Optional[RunContext] = None,
-) -> Function:
-    """Factory function to create a search_knowledge_base function with filters."""
-
-    def search_knowledge_base(query: str) -> str:
-        """Use this function to search the knowledge base for information about a query.
-
-        Args:
-            query: The query to search for.
-
-        Returns:
-            str: A string containing the response from the knowledge base.
-        """
-        from agno.agent import _messages
-
-        # Get the relevant documents from the knowledge base, passing filters
-        retrieval_timer = Timer()
-        retrieval_timer.start()
-        docs_from_knowledge = _messages.get_relevant_docs_from_knowledge(
-            agent, query=query, filters=knowledge_filters, run_context=run_context
-        )
-        if docs_from_knowledge is not None:
-            references = MessageReferences(
-                query=query,
-                references=docs_from_knowledge,
-                time=round(retrieval_timer.elapsed, 4),
-            )
-            # Add the references to the run_response
-            if run_response.references is None:
-                run_response.references = []
-            run_response.references.append(references)
-        retrieval_timer.stop()
-        log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
-
-        if docs_from_knowledge is None:
-            return "No documents found"
-        return _messages.convert_documents_to_string(agent, docs_from_knowledge)
-
-    async def asearch_knowledge_base(query: str) -> str:
-        """Use this function to search the knowledge base for information about a query asynchronously.
-
-        Args:
-            query: The query to search for.
-
-        Returns:
-            str: A string containing the response from the knowledge base.
-        """
-        from agno.agent import _messages
-
-        retrieval_timer = Timer()
-        retrieval_timer.start()
-        docs_from_knowledge = await _messages.aget_relevant_docs_from_knowledge(
-            agent, query=query, filters=knowledge_filters, run_context=run_context
-        )
-        if docs_from_knowledge is not None:
-            references = MessageReferences(
-                query=query,
-                references=docs_from_knowledge,
-                time=round(retrieval_timer.elapsed, 4),
-            )
-            if run_response.references is None:
-                run_response.references = []
-            run_response.references.append(references)
-        retrieval_timer.stop()
-        log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
-
-        if docs_from_knowledge is None:
-            return "No documents found"
-        return _messages.convert_documents_to_string(agent, docs_from_knowledge)
-
-    if async_mode:
-        search_knowledge_base_function = asearch_knowledge_base
-    else:
-        search_knowledge_base_function = search_knowledge_base  # type: ignore
-
-    return Function.from_callable(search_knowledge_base_function, name="search_knowledge_base")
-
-
-def search_knowledge_base_with_agentic_filters_function(
-    agent: Agent,
-    run_response: RunOutput,
-    knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
-    async_mode: bool = False,
-    run_context: Optional[RunContext] = None,
-) -> Function:
-    """Factory function to create a search_knowledge_base function with agentic filters."""
-
-    def search_knowledge_base(query: str, filters: Optional[List[KnowledgeFilter]] = None) -> str:
-        """Use this function to search the knowledge base for information about a query.
-
-        Args:
-            query: The query to search for.
-            filters (optional): The filters to apply to the search. This is a list of KnowledgeFilter objects.
-
-        Returns:
-            str: A string containing the response from the knowledge base.
-        """
-        from agno.agent import _messages
-
-        filters_dict = {filt.key: filt.value for filt in filters} if filters else None
-        search_filters = get_agentic_or_user_search_filters(filters_dict, knowledge_filters)
-
-        # Get the relevant documents from the knowledge base, passing filters
-        retrieval_timer = Timer()
-        retrieval_timer.start()
-        docs_from_knowledge = _messages.get_relevant_docs_from_knowledge(
-            agent, query=query, filters=search_filters, validate_filters=True, run_context=run_context
-        )
-        if docs_from_knowledge is not None:
-            references = MessageReferences(
-                query=query,
-                references=docs_from_knowledge,
-                time=round(retrieval_timer.elapsed, 4),
-            )
-            # Add the references to the run_response
-            if run_response.references is None:
-                run_response.references = []
-            run_response.references.append(references)
-        retrieval_timer.stop()
-        log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
-
-        if docs_from_knowledge is None:
-            return "No documents found"
-        return _messages.convert_documents_to_string(agent, docs_from_knowledge)
-
-    async def asearch_knowledge_base(query: str, filters: Optional[List[KnowledgeFilter]] = None) -> str:
-        """Use this function to search the knowledge base for information about a query asynchronously.
-
-        Args:
-            query: The query to search for.
-            filters (optional): The filters to apply to the search. This is a list of KnowledgeFilter objects.
-
-        Returns:
-            str: A string containing the response from the knowledge base.
-        """
-        from agno.agent import _messages
-
-        filters_dict = {filt.key: filt.value for filt in filters} if filters else None
-        search_filters = get_agentic_or_user_search_filters(filters_dict, knowledge_filters)
-
-        retrieval_timer = Timer()
-        retrieval_timer.start()
-        docs_from_knowledge = await _messages.aget_relevant_docs_from_knowledge(
-            agent, query=query, filters=search_filters, validate_filters=True, run_context=run_context
-        )
-        if docs_from_knowledge is not None:
-            references = MessageReferences(
-                query=query,
-                references=docs_from_knowledge,
-                time=round(retrieval_timer.elapsed, 4),
-            )
-            if run_response.references is None:
-                run_response.references = []
-            run_response.references.append(references)
-        retrieval_timer.stop()
-        log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
-
-        if docs_from_knowledge is None:
-            return "No documents found"
-        return _messages.convert_documents_to_string(agent, docs_from_knowledge)
-
-    if async_mode:
-        search_knowledge_base_function = asearch_knowledge_base
-    else:
-        search_knowledge_base_function = search_knowledge_base  # type: ignore
-
-    return Function.from_callable(
-        search_knowledge_base_function,
-        name="search_knowledge_base",
-    )
 
 
 def add_to_knowledge(agent: Agent, query: str, result: str) -> str:
