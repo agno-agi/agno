@@ -49,7 +49,11 @@ from agno.tools.function import (
 )
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.timer import Timer
-from agno.utils.tools import get_function_call_for_tool_call, get_function_call_for_tool_execution
+from agno.utils.tools import (
+    get_function_call_for_tool_call,
+    get_function_call_for_tool_execution,
+    sanitize_function_name,
+)
 
 
 @dataclass
@@ -579,7 +583,11 @@ class Model(ABC):
         _tool_dicts = []
         for tool in tools or []:
             if isinstance(tool, Function):
-                _tool_dicts.append({"type": "function", "function": tool.to_dict()})
+                tool_dict = tool.to_dict()
+                # Validate function name length for API compatibility (Azure OpenAI limit: 64 chars)
+                if "name" in tool_dict and isinstance(tool_dict["name"], str):
+                    tool_dict["name"] = sanitize_function_name(tool_dict["name"])
+                _tool_dicts.append({"type": "function", "function": tool_dict})
             else:
                 # If a dict is passed, it is a builtin tool
                 _tool_dicts.append(tool)

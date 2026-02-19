@@ -19,6 +19,7 @@ from agno.utils.http import get_default_async_client, get_default_sync_client
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.openai import _format_file_for_message, audio_to_message, images_to_message
 from agno.utils.reasoning import extract_thinking_content
+from agno.utils.tools import sanitize_tool_calls
 
 try:
     from openai import APIConnectionError, APIStatusError, RateLimitError
@@ -750,7 +751,7 @@ class OpenAIChat(Model):
                     tool_call_entry["id"] = _tool_call_id
                 if _tool_call_type:
                     tool_call_entry["type"] = _tool_call_type
-        return tool_calls
+        return sanitize_tool_calls(tool_calls)
 
     def _should_collect_metrics(self, response: ChatCompletionChunk) -> bool:
         """
@@ -803,7 +804,7 @@ class OpenAIChat(Model):
         # Add tool calls
         if response_message.tool_calls is not None and len(response_message.tool_calls) > 0:
             try:
-                model_response.tool_calls = [t.model_dump() for t in response_message.tool_calls]
+                model_response.tool_calls = sanitize_tool_calls([t.model_dump() for t in response_message.tool_calls])
             except Exception as e:
                 log_warning(f"Error processing tool calls: {e}")
 
