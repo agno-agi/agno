@@ -125,7 +125,6 @@ def _determine_tools_for_model(
         _get_update_user_memory_function,
         _update_session_state_tool,
         create_knowledge_search_tool,
-        create_knowledge_search_tool_with_agentic_filters,
     )
     from agno.team._init import _connect_connectable_tools
     from agno.team._messages import _get_user_message
@@ -193,29 +192,19 @@ def _determine_tools_for_model(
         )
 
     # Add tools for accessing knowledge
-    # Both tools route through get_relevant_docs_from_knowledge(),
+    # Single unified path through get_relevant_docs_from_knowledge(),
     # which checks knowledge_retriever first, then falls back to knowledge.search().
     if (resolved_knowledge is not None or team.knowledge_retriever is not None) and team.search_knowledge:
-        if team.enable_agentic_knowledge_filters:
-            _tools.append(
-                create_knowledge_search_tool_with_agentic_filters(
-                    team,
-                    run_response=run_response,
-                    run_context=run_context,
-                    knowledge_filters=run_context.knowledge_filters,
-                    async_mode=async_mode,
-                )
+        _tools.append(
+            create_knowledge_search_tool(
+                team,
+                run_response=run_response,
+                run_context=run_context,
+                knowledge_filters=run_context.knowledge_filters,
+                enable_agentic_filters=team.enable_agentic_knowledge_filters,
+                async_mode=async_mode,
             )
-        else:
-            _tools.append(
-                create_knowledge_search_tool(
-                    team,
-                    run_response=run_response,
-                    run_context=run_context,
-                    knowledge_filters=run_context.knowledge_filters,
-                    async_mode=async_mode,
-                )
-            )
+        )
 
     if resolved_knowledge is not None and team.update_knowledge:
         _tools.append(team.add_to_knowledge)

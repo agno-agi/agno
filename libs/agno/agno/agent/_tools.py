@@ -171,29 +171,19 @@ def get_tools(
         )
 
     # Add tools for accessing knowledge
-    # Both tools route through get_relevant_docs_from_knowledge(),
+    # Single unified path through get_relevant_docs_from_knowledge(),
     # which checks knowledge_retriever first, then falls back to knowledge.search().
     if (resolved_knowledge is not None or agent.knowledge_retriever is not None) and agent.search_knowledge:
-        if agent.enable_agentic_knowledge_filters:
-            agent_tools.append(
-                _default_tools.create_knowledge_search_tool_with_agentic_filters(
-                    agent,
-                    run_response=run_response,
-                    run_context=run_context,
-                    knowledge_filters=run_context.knowledge_filters,
-                    async_mode=False,
-                )
+        agent_tools.append(
+            _default_tools.create_knowledge_search_tool(
+                agent,
+                run_response=run_response,
+                run_context=run_context,
+                knowledge_filters=run_context.knowledge_filters,
+                enable_agentic_filters=agent.enable_agentic_knowledge_filters,
+                async_mode=False,
             )
-        else:
-            agent_tools.append(
-                _default_tools.create_knowledge_search_tool(
-                    agent,
-                    run_response=run_response,
-                    run_context=run_context,
-                    knowledge_filters=run_context.knowledge_filters,
-                    async_mode=False,
-                )
-            )
+        )
 
     if resolved_knowledge is not None and agent.update_knowledge:
         agent_tools.append(agent.add_to_knowledge)
@@ -303,29 +293,19 @@ async def aget_tools(
         )
 
     # Add tools for accessing knowledge
-    # Both tools route through aget_relevant_docs_from_knowledge(),
+    # Single unified path through aget_relevant_docs_from_knowledge(),
     # which checks knowledge_retriever first, then falls back to knowledge.search().
     if (resolved_knowledge is not None or agent.knowledge_retriever is not None) and agent.search_knowledge:
-        if agent.enable_agentic_knowledge_filters:
-            agent_tools.append(
-                _default_tools.create_knowledge_search_tool_with_agentic_filters(
-                    agent,
-                    run_response=run_response,
-                    run_context=run_context,
-                    knowledge_filters=run_context.knowledge_filters,
-                    async_mode=True,
-                )
+        agent_tools.append(
+            _default_tools.create_knowledge_search_tool(
+                agent,
+                run_response=run_response,
+                run_context=run_context,
+                knowledge_filters=run_context.knowledge_filters,
+                enable_agentic_filters=agent.enable_agentic_knowledge_filters,
+                async_mode=True,
             )
-        else:
-            agent_tools.append(
-                _default_tools.create_knowledge_search_tool(
-                    agent,
-                    run_response=run_response,
-                    run_context=run_context,
-                    knowledge_filters=run_context.knowledge_filters,
-                    async_mode=True,
-                )
-            )
+        )
 
     if resolved_knowledge is not None and agent.update_knowledge:
         agent_tools.append(agent.add_to_knowledge)
