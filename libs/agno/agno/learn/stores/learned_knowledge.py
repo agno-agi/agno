@@ -35,6 +35,7 @@ from agno.learn.config import LearnedKnowledgeConfig, LearningMode
 from agno.learn.schemas import LearnedKnowledge
 from agno.learn.stores.protocol import LearningStore
 from agno.learn.utils import to_dict_safe
+from agno.tools.function import Function
 from agno.utils.log import (
     log_debug,
     log_warning,
@@ -479,12 +480,14 @@ class LearnedKnowledgeStore(LearningStore):
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
         namespace: Optional[str] = None,
-    ) -> List[Callable]:
+    ) -> List[Any]:
         """Get the tools to expose to the agent.
 
         Returns TWO tools (based on config settings):
         1. search_learnings - Find relevant learnings
         2. save_learning - Save reusable insights
+
+        In PROPOSE mode, save_learning requires user confirmation before executing.
 
         Args:
             user_id: User context (for "user" namespace scoping).
@@ -493,9 +496,9 @@ class LearnedKnowledgeStore(LearningStore):
             namespace: Default namespace for saves (default: "global").
 
         Returns:
-            List of callable tools.
+            List of callable tools or Function objects.
         """
-        tools = []
+        tools: List[Any] = []
 
         if self.config.agent_can_search:
             tools.append(
@@ -503,14 +506,18 @@ class LearnedKnowledgeStore(LearningStore):
             )
 
         if self.config.agent_can_save:
-            tools.append(
-                self._create_save_learning_tool(
-                    namespace=namespace or self.config.namespace,
-                    user_id=user_id,
-                    agent_id=agent_id,
-                    team_id=team_id,
-                )
+            save_callable = self._create_save_learning_tool(
+                namespace=namespace or self.config.namespace,
+                user_id=user_id,
+                agent_id=agent_id,
+                team_id=team_id,
             )
+            if self.config.mode == LearningMode.PROPOSE:
+                save_func = Function.from_callable(save_callable)
+                save_func.requires_confirmation = True
+                tools.append(save_func)
+            else:
+                tools.append(save_callable)
 
         return tools
 
@@ -520,9 +527,9 @@ class LearnedKnowledgeStore(LearningStore):
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
         namespace: Optional[str] = None,
-    ) -> List[Callable]:
+    ) -> List[Any]:
         """Async version of get_agent_tools."""
-        tools = []
+        tools: List[Any] = []
 
         if self.config.agent_can_search:
             tools.append(
@@ -530,14 +537,18 @@ class LearnedKnowledgeStore(LearningStore):
             )
 
         if self.config.agent_can_save:
-            tools.append(
-                self._create_async_save_learning_tool(
-                    namespace=namespace or self.config.namespace,
-                    user_id=user_id,
-                    agent_id=agent_id,
-                    team_id=team_id,
-                )
+            save_callable = self._create_async_save_learning_tool(
+                namespace=namespace or self.config.namespace,
+                user_id=user_id,
+                agent_id=agent_id,
+                team_id=team_id,
             )
+            if self.config.mode == LearningMode.PROPOSE:
+                save_func = Function.from_callable(save_callable)
+                save_func.requires_confirmation = True
+                tools.append(save_func)
+            else:
+                tools.append(save_callable)
 
         return tools
 
