@@ -115,8 +115,21 @@ class LiteLLM(Model):
         return result
 
     def _format_messages(self, messages: List[Message], compress_tool_results: bool = False) -> List[Dict[str, Any]]:
-        """Format messages for LiteLLM API."""
-        formatted_messages = []
+        """Format messages for LiteLLM API.
+
+        Ensures that tool result messages always carry a tool_call_id that matches
+        the id emitted in the preceding assistant message's tool_calls list.  This is
+        critical for backends like AWS Bedrock where each toolResult must reference the
+        exact toolUseId of the corresponding toolUse block.
+        """
+        formatted_messages: List[Dict[str, Any]] = []
+
+        # Track the tool-call IDs produced by the most recent assistant message so
+        # that subsequent tool-result messages can be matched by position when their
+        # own tool_call_id is missing or was never set.
+        last_tool_call_ids: List[str] = []
+        tool_result_index: int = 0
+
         for m in messages:
             # Use compressed content for tool messages if compression is active
             if m.role == "tool":
@@ -124,7 +137,7 @@ class LiteLLM(Model):
             else:
                 content = m.content if m.content is not None else ""
 
-            msg = {"role": m.role, "content": content}
+            msg: Dict[str, Any] = {"role": m.role, "content": content}
 
             # Handle media
             if (m.images is not None and len(m.images) > 0) or (m.audio is not None and len(m.audio) > 0):
@@ -153,18 +166,34 @@ class LiteLLM(Model):
 
             # Handle tool calls in assistant messages
             if m.role == "assistant" and m.tool_calls:
-                msg["tool_calls"] = [
-                    {
-                        "id": tc.get("id", f"call_{i}"),
-                        "type": "function",
-                        "function": {"name": tc["function"]["name"], "arguments": tc["function"]["arguments"]},
-                    }
-                    for i, tc in enumerate(m.tool_calls)
-                ]
+                built_tool_calls = []
+                last_tool_call_ids = []
+                for i, tc in enumerate(m.tool_calls):
+                    tc_id = tc.get("id") or f"call_{i}"
+                    built_tool_calls.append(
+                        {
+                            "id": tc_id,
+                            "type": "function",
+                            "function": {"name": tc["function"]["name"], "arguments": tc["function"]["arguments"]},
+                        }
+                    )
+                    last_tool_call_ids.append(tc_id)
+                msg["tool_calls"] = built_tool_calls
+                # Reset the positional counter for the upcoming tool-result messages
+                tool_result_index = 0
 
             # Handle tool responses
             if m.role == "tool":
-                msg["tool_call_id"] = m.tool_call_id or ""
+                # Determine the correct tool_call_id.
+                # 1. Use the message's own tool_call_id if it is non-empty.
+                # 2. Otherwise fall back to the positional ID from the preceding
+                #    assistant message's tool_calls list.
+                resolved_tool_call_id = m.tool_call_id or ""
+                if not resolved_tool_call_id and tool_result_index < len(last_tool_call_ids):
+                    resolved_tool_call_id = last_tool_call_ids[tool_result_index]
+                tool_result_index += 1
+
+                msg["tool_call_id"] = resolved_tool_call_id
                 msg["name"] = m.name or ""
 
                 if m.audio is not None and len(m.audio) > 0:
@@ -178,6 +207,36 @@ class LiteLLM(Model):
             formatted_messages.append(msg)
 
         return formatted_messages
+
+    def format_function_call_results(
+        self,
+        messages: List[Message],
+        function_call_results: List[Message],
+        compress_tool_results: bool = False,
+        **kwargs,
+    ) -> None:
+        """Format function call results, ensuring each result carries the correct tool_call_id.
+
+        When LiteLLM routes to Bedrock-style backends the provider requires every
+        toolResult to reference the exact toolUseId of its corresponding toolUse
+        block.  This override mirrors the approach used by the AwsBedrock model:
+        it fills in missing tool_call_id values from the ``tool_ids`` list that the
+        model response may provide via ``extra``.
+
+        Args:
+            messages: The conversation message list to append results to.
+            function_call_results: Tool result messages produced by function execution.
+            compress_tool_results: Whether to use compressed content.
+            **kwargs: May contain ``tool_ids`` — a list of IDs in the same order as
+                the tool calls in the assistant message.
+        """
+        if function_call_results:
+            tool_ids: List[str] = kwargs.get("tool_ids", [])
+            for idx, fc_message in enumerate(function_call_results):
+                if not fc_message.tool_call_id:
+                    if idx < len(tool_ids):
+                        fc_message.tool_call_id = tool_ids[idx]
+                messages.append(fc_message)
 
     def get_request_params(self, tools: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
         """
@@ -350,14 +409,19 @@ class LiteLLM(Model):
 
         if hasattr(response_message, "tool_calls") and response_message.tool_calls:
             model_response.tool_calls = []
+            tool_ids: List[str] = []
             for tool_call in response_message.tool_calls:
+                tc_id = tool_call.id
                 model_response.tool_calls.append(
                     {
-                        "id": tool_call.id,
+                        "id": tc_id,
                         "type": "function",
                         "function": {"name": tool_call.function.name, "arguments": tool_call.function.arguments},
                     }
                 )
+                tool_ids.append(tc_id)
+            model_response.extra = model_response.extra or {}
+            model_response.extra["tool_ids"] = tool_ids
 
         if response.usage is not None:
             model_response.response_usage = self._get_metrics(response.usage)
@@ -380,19 +444,21 @@ class LiteLLM(Model):
 
                 if hasattr(choice_delta, "tool_calls") and choice_delta.tool_calls:
                     processed_tool_calls = []
+                    delta_tool_ids: List[str] = []
                     for tool_call in choice_delta.tool_calls:
                         # Get the actual index from the tool call, defaulting to 0 if not available
                         actual_index = getattr(tool_call, "index", 0) if hasattr(tool_call, "index") else 0
 
                         # Create a basic structure with the correct index
-                        tool_call_dict = {"index": actual_index, "type": "function"}
+                        tool_call_dict: Dict[str, Any] = {"index": actual_index, "type": "function"}
 
                         # Extract ID if available
                         if hasattr(tool_call, "id") and tool_call.id is not None:
                             tool_call_dict["id"] = tool_call.id
+                            delta_tool_ids.append(tool_call.id)
 
                         # Extract function data
-                        function_data = {}
+                        function_data: Dict[str, Any] = {}
                         if hasattr(tool_call, "function"):
                             if hasattr(tool_call.function, "name") and tool_call.function.name is not None:
                                 function_data["name"] = tool_call.function.name
@@ -403,6 +469,12 @@ class LiteLLM(Model):
                         processed_tool_calls.append(tool_call_dict)
 
                     model_response.tool_calls = processed_tool_calls
+
+                    # Propagate tool_ids through extra so that
+                    # format_function_call_results can use them as a fallback.
+                    if delta_tool_ids:
+                        model_response.extra = model_response.extra or {}
+                        model_response.extra["tool_ids"] = delta_tool_ids
 
         # Add usage metrics if present in streaming response
         if hasattr(response_delta, "usage") and response_delta.usage is not None:
