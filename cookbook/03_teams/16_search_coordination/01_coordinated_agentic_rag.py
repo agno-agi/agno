@@ -26,7 +26,7 @@ knowledge = Knowledge(
     ),
 )
 
-knowledge.insert_many(urls=["https://docs.agno.com/basics/agents/overview.md"])
+knowledge.insert_many(urls=["https://docs.agno.com/agents/overview.md"])
 
 # ---------------------------------------------------------------------------
 # Create Members

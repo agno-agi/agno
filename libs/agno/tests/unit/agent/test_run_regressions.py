@@ -3,7 +3,7 @@ from typing import Any, Optional
 
 import pytest
 
-from agno.agent import _init, _messages, _response, _run, _storage, _tools
+from agno.agent import _init, _messages, _response, _run, _session, _storage, _tools
 from agno.agent.agent import Agent
 from agno.db.base import SessionType
 from agno.run import RunContext
@@ -725,3 +725,310 @@ async def test_acontinue_run_dispatch_respects_run_context_precedence(monkeypatc
     assert empty_context.dependencies == {"agent_dep": "default"}
     assert empty_context.knowledge_filters == {"agent_filter": "default"}
     assert empty_context.metadata == {"agent_meta": "default"}
+
+
+def test_all_pause_handlers_accept_run_context():
+    for fn in [
+        _run.handle_agent_run_paused,
+        _run.handle_agent_run_paused_stream,
+        _run.ahandle_agent_run_paused,
+        _run.ahandle_agent_run_paused_stream,
+    ]:
+        params = inspect.signature(fn).parameters
+        assert "run_context" in params, f"{fn.__name__} missing run_context param"
+
+
+def test_handle_agent_run_paused_forwards_run_context_to_cleanup(monkeypatch: pytest.MonkeyPatch):
+    captured: dict[str, Any] = {}
+
+    def spy_cleanup_and_store(agent, run_response, session, run_context=None, user_id=None):
+        captured["run_context"] = run_context
+
+    monkeypatch.setattr(_run, "cleanup_and_store", spy_cleanup_and_store)
+    monkeypatch.setattr(_run, "create_approval_from_pause", lambda **kwargs: None)
+
+    agent = Agent(name="test-hitl")
+    run_context = RunContext(run_id="r1", session_id="s1", session_state={"key": "val"})
+
+    _run.handle_agent_run_paused(
+        agent=agent,
+        run_response=RunOutput(run_id="r1", session_id="s1", messages=[]),
+        session=AgentSession(session_id="s1"),
+        user_id="u1",
+        run_context=run_context,
+    )
+
+    assert captured["run_context"] is run_context
+
+
+@pytest.mark.asyncio
+async def test_ahandle_agent_run_paused_forwards_run_context_to_cleanup(monkeypatch: pytest.MonkeyPatch):
+    captured: dict[str, Any] = {}
+
+    async def spy_acleanup_and_store(agent, run_response, session, run_context=None, user_id=None):
+        captured["run_context"] = run_context
+
+    async def noop_acreate_approval(**kwargs):
+        return None
+
+    monkeypatch.setattr(_run, "acleanup_and_store", spy_acleanup_and_store)
+    monkeypatch.setattr(_run, "acreate_approval_from_pause", noop_acreate_approval)
+
+    agent = Agent(name="test-hitl-async")
+    run_context = RunContext(run_id="r1", session_id="s1", session_state={"key": "val"})
+
+    await _run.ahandle_agent_run_paused(
+        agent=agent,
+        run_response=RunOutput(run_id="r1", session_id="s1", messages=[]),
+        session=AgentSession(session_id="s1"),
+        user_id="u1",
+        run_context=run_context,
+    )
+
+    assert captured["run_context"] is run_context
+
+
+def test_handle_agent_run_paused_persists_session_state(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(_session, "save_session", lambda agent, session: None)
+    monkeypatch.setattr(_run, "create_approval_from_pause", lambda **kwargs: None)
+    monkeypatch.setattr(_run, "scrub_run_output_for_storage", lambda agent, run_response: None)
+    monkeypatch.setattr(_run, "save_run_response_to_file", lambda agent, **kwargs: None)
+    monkeypatch.setattr(_run, "update_session_metrics", lambda agent, session, run_response: None)
+
+    agent = Agent(name="test-hitl")
+    session = AgentSession(session_id="s1", session_data={})
+    run_response = RunOutput(run_id="r1", session_id="s1", messages=[])
+    run_context = RunContext(run_id="r1", session_id="s1", session_state={"watchlist": ["AAPL"]})
+
+    result = _run.handle_agent_run_paused(
+        agent=agent,
+        run_response=run_response,
+        session=session,
+        user_id="u1",
+        run_context=run_context,
+    )
+
+    assert result.status == RunStatus.paused
+    assert session.session_data["session_state"] == {"watchlist": ["AAPL"]}
+    assert result.session_state == {"watchlist": ["AAPL"]}
+
+
+def test_handle_agent_run_paused_without_run_context_does_not_set_state(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(_session, "save_session", lambda agent, session: None)
+    monkeypatch.setattr(_run, "create_approval_from_pause", lambda **kwargs: None)
+    monkeypatch.setattr(_run, "scrub_run_output_for_storage", lambda agent, run_response: None)
+    monkeypatch.setattr(_run, "save_run_response_to_file", lambda agent, **kwargs: None)
+    monkeypatch.setattr(_run, "update_session_metrics", lambda agent, session, run_response: None)
+
+    agent = Agent(name="test-hitl")
+    session = AgentSession(session_id="s1", session_data={})
+
+    result = _run.handle_agent_run_paused(
+        agent=agent,
+        run_response=RunOutput(run_id="r1", session_id="s1", messages=[]),
+        session=session,
+        user_id="u1",
+    )
+
+    assert result.status == RunStatus.paused
+    assert "session_state" not in session.session_data
+
+
+def test_handle_agent_run_paused_persists_state_when_session_data_is_none(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(_session, "save_session", lambda agent, session: None)
+    monkeypatch.setattr(_run, "create_approval_from_pause", lambda **kwargs: None)
+    monkeypatch.setattr(_run, "scrub_run_output_for_storage", lambda agent, run_response: None)
+    monkeypatch.setattr(_run, "save_run_response_to_file", lambda agent, **kwargs: None)
+    monkeypatch.setattr(_run, "update_session_metrics", lambda agent, session, run_response: None)
+
+    agent = Agent(name="test-hitl")
+    session = AgentSession(session_id="s1", session_data=None)
+    run_response = RunOutput(run_id="r1", session_id="s1", messages=[])
+    run_context = RunContext(run_id="r1", session_id="s1", session_state={"watchlist": ["AAPL"]})
+
+    result = _run.handle_agent_run_paused(
+        agent=agent,
+        run_response=run_response,
+        session=session,
+        user_id="u1",
+        run_context=run_context,
+    )
+
+    assert result.status == RunStatus.paused
+    assert result.session_state == {"watchlist": ["AAPL"]}
+    assert session.session_data == {"session_state": {"watchlist": ["AAPL"]}}
+
+
+@pytest.mark.asyncio
+async def test_ahandle_agent_run_paused_persists_state_when_session_data_is_none(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(_session, "save_session", lambda agent, session: None)
+    monkeypatch.setattr(_run, "scrub_run_output_for_storage", lambda agent, run_response: None)
+    monkeypatch.setattr(_run, "save_run_response_to_file", lambda agent, **kwargs: None)
+    monkeypatch.setattr(_run, "update_session_metrics", lambda agent, session, run_response: None)
+
+    async def noop_acreate_approval(**kwargs):
+        return None
+
+    monkeypatch.setattr(_run, "acreate_approval_from_pause", noop_acreate_approval)
+
+    agent = Agent(name="test-hitl-async")
+    session = AgentSession(session_id="s1", session_data=None)
+    run_response = RunOutput(run_id="r1", session_id="s1", messages=[])
+    run_context = RunContext(run_id="r1", session_id="s1", session_state={"cart": ["item-1"]})
+
+    result = await _run.ahandle_agent_run_paused(
+        agent=agent,
+        run_response=run_response,
+        session=session,
+        user_id="u1",
+        run_context=run_context,
+    )
+
+    assert result.status == RunStatus.paused
+    assert result.session_state == {"cart": ["item-1"]}
+    assert session.session_data == {"session_state": {"cart": ["item-1"]}}
+
+
+@pytest.mark.asyncio
+async def test_ahandle_agent_run_paused_persists_session_state(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(_session, "save_session", lambda agent, session: None)
+    monkeypatch.setattr(_run, "scrub_run_output_for_storage", lambda agent, run_response: None)
+    monkeypatch.setattr(_run, "save_run_response_to_file", lambda agent, **kwargs: None)
+    monkeypatch.setattr(_run, "update_session_metrics", lambda agent, session, run_response: None)
+
+    async def noop_acreate_approval(**kwargs):
+        return None
+
+    monkeypatch.setattr(_run, "acreate_approval_from_pause", noop_acreate_approval)
+
+    agent = Agent(name="test-hitl-async")
+    session = AgentSession(session_id="s1", session_data={})
+    run_response = RunOutput(run_id="r1", session_id="s1", messages=[])
+    run_context = RunContext(run_id="r1", session_id="s1", session_state={"cart": ["item-1"]})
+
+    result = await _run.ahandle_agent_run_paused(
+        agent=agent,
+        run_response=run_response,
+        session=session,
+        user_id="u1",
+        run_context=run_context,
+    )
+
+    assert result.status == RunStatus.paused
+    assert session.session_data["session_state"] == {"cart": ["item-1"]}
+    assert result.session_state == {"cart": ["item-1"]}
+
+
+def test_handle_agent_run_paused_stream_forwards_run_context_to_cleanup(monkeypatch: pytest.MonkeyPatch):
+    captured: dict[str, Any] = {}
+
+    def spy_cleanup_and_store(agent, run_response, session, run_context=None, user_id=None):
+        captured["run_context"] = run_context
+
+    monkeypatch.setattr(_run, "cleanup_and_store", spy_cleanup_and_store)
+    monkeypatch.setattr(_run, "create_approval_from_pause", lambda **kwargs: None)
+
+    agent = Agent(name="test-hitl-stream")
+    run_context = RunContext(run_id="r1", session_id="s1", session_state={"key": "val"})
+
+    events = list(
+        _run.handle_agent_run_paused_stream(
+            agent=agent,
+            run_response=RunOutput(run_id="r1", session_id="s1", messages=[]),
+            session=AgentSession(session_id="s1"),
+            user_id="u1",
+            run_context=run_context,
+        )
+    )
+
+    assert captured["run_context"] is run_context
+    assert len(events) >= 1
+
+
+@pytest.mark.asyncio
+async def test_ahandle_agent_run_paused_stream_forwards_run_context_to_cleanup(monkeypatch: pytest.MonkeyPatch):
+    captured: dict[str, Any] = {}
+
+    async def spy_acleanup_and_store(agent, run_response, session, run_context=None, user_id=None):
+        captured["run_context"] = run_context
+
+    async def noop_acreate_approval(**kwargs):
+        return None
+
+    monkeypatch.setattr(_run, "acleanup_and_store", spy_acleanup_and_store)
+    monkeypatch.setattr(_run, "acreate_approval_from_pause", noop_acreate_approval)
+
+    agent = Agent(name="test-hitl-stream-async")
+    run_context = RunContext(run_id="r1", session_id="s1", session_state={"key": "val"})
+
+    events = []
+    async for event in _run.ahandle_agent_run_paused_stream(
+        agent=agent,
+        run_response=RunOutput(run_id="r1", session_id="s1", messages=[]),
+        session=AgentSession(session_id="s1"),
+        user_id="u1",
+        run_context=run_context,
+    ):
+        events.append(event)
+
+    assert captured["run_context"] is run_context
+    assert len(events) >= 1
+
+
+def test_handle_agent_run_paused_stream_persists_session_state(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(_session, "save_session", lambda agent, session: None)
+    monkeypatch.setattr(_run, "create_approval_from_pause", lambda **kwargs: None)
+    monkeypatch.setattr(_run, "scrub_run_output_for_storage", lambda agent, run_response: None)
+    monkeypatch.setattr(_run, "save_run_response_to_file", lambda agent, **kwargs: None)
+    monkeypatch.setattr(_run, "update_session_metrics", lambda agent, session, run_response: None)
+
+    agent = Agent(name="test-hitl-stream")
+    session = AgentSession(session_id="s1", session_data={})
+    run_response = RunOutput(run_id="r1", session_id="s1", messages=[])
+    run_context = RunContext(run_id="r1", session_id="s1", session_state={"watchlist": ["AAPL"]})
+
+    events = list(
+        _run.handle_agent_run_paused_stream(
+            agent=agent,
+            run_response=run_response,
+            session=session,
+            user_id="u1",
+            run_context=run_context,
+        )
+    )
+
+    assert len(events) >= 1
+    assert session.session_data["session_state"] == {"watchlist": ["AAPL"]}
+    assert run_response.session_state == {"watchlist": ["AAPL"]}
+
+
+@pytest.mark.asyncio
+async def test_ahandle_agent_run_paused_stream_persists_session_state(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(_session, "save_session", lambda agent, session: None)
+    monkeypatch.setattr(_run, "scrub_run_output_for_storage", lambda agent, run_response: None)
+    monkeypatch.setattr(_run, "save_run_response_to_file", lambda agent, **kwargs: None)
+    monkeypatch.setattr(_run, "update_session_metrics", lambda agent, session, run_response: None)
+
+    async def noop_acreate_approval(**kwargs):
+        return None
+
+    monkeypatch.setattr(_run, "acreate_approval_from_pause", noop_acreate_approval)
+
+    agent = Agent(name="test-hitl-stream-async")
+    session = AgentSession(session_id="s1", session_data={})
+    run_response = RunOutput(run_id="r1", session_id="s1", messages=[])
+    run_context = RunContext(run_id="r1", session_id="s1", session_state={"cart": ["item-1"]})
+
+    events = []
+    async for event in _run.ahandle_agent_run_paused_stream(
+        agent=agent,
+        run_response=run_response,
+        session=session,
+        user_id="u1",
+        run_context=run_context,
+    ):
+        events.append(event)
+
+    assert len(events) >= 1
+    assert session.session_data["session_state"] == {"cart": ["item-1"]}
+    assert run_response.session_state == {"cart": ["item-1"]}
