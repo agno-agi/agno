@@ -13,7 +13,7 @@ from httpx import AsyncClient
 
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.schemas.knowledge import KnowledgeRow
-from agno.filters import FilterExpr
+from agno.filters import EQ, FilterExpr
 from agno.knowledge.content import Content, ContentAuth, ContentStatus, FileData
 from agno.knowledge.document import Document
 from agno.knowledge.reader import Reader, ReaderFactory
@@ -535,7 +535,8 @@ class Knowledge(RemoteKnowledge):
                     search_filters = {"linked_to": self.name}
                 elif isinstance(search_filters, dict):
                     search_filters = {**search_filters, "linked_to": self.name}
-                # List-based filters: user must add linked_to filter manually
+                elif isinstance(search_filters, list):
+                    search_filters = [EQ("linked_to", self.name), *search_filters]
 
             _max_results = max_results or self.max_results
             log_debug(f"Getting {_max_results} relevant documents for query: {query}")
@@ -574,7 +575,8 @@ class Knowledge(RemoteKnowledge):
                     search_filters = {"linked_to": self.name}
                 elif isinstance(search_filters, dict):
                     search_filters = {**search_filters, "linked_to": self.name}
-                # List-based filters: user must add linked_to filter manually
+                elif isinstance(search_filters, list):
+                    search_filters = [EQ("linked_to", self.name), *search_filters]
 
             _max_results = max_results or self.max_results
             log_debug(f"Getting {_max_results} relevant documents for query: {query}")
