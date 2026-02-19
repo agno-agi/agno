@@ -781,6 +781,8 @@ class RunOutput:
     def to_json(self, separators=(", ", ": "), indent: Optional[int] = 2) -> str:
         import json
 
+        from agno.db.utils import CustomJSONEncoder
+
         try:
             _dict = self.to_dict()
         except Exception:
@@ -788,9 +790,9 @@ class RunOutput:
             raise
 
         if indent is None:
-            return json.dumps(_dict, separators=separators)
+            return json.dumps(_dict, separators=separators, cls=CustomJSONEncoder)
         else:
-            return json.dumps(_dict, indent=indent, separators=separators)
+            return json.dumps(_dict, indent=indent, separators=separators, cls=CustomJSONEncoder)
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "RunOutput":
