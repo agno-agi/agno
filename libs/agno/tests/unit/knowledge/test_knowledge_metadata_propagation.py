@@ -141,15 +141,23 @@ def test_prepare_documents_for_insert_with_metadata():
     # Call _prepare_documents_for_insert with metadata
     result = knowledge._prepare_documents_for_insert(documents, "content-id-1", metadata=metadata)
 
-    # Verify metadata was merged
+    # Verify metadata was merged (linked_to is always added, empty string for unnamed knowledge)
     assert result[0].meta_data == {
         "existing": "value1",
         "document_id": "123",
         "knowledge_base_id": "456",
         "filename": "test.txt",
     }
-    assert result[1].meta_data == {"document_id": "123", "knowledge_base_id": "456", "filename": "test.txt"}
-    assert result[2].meta_data == {"document_id": "123", "knowledge_base_id": "456", "filename": "test.txt"}
+    assert result[1].meta_data == {
+        "document_id": "123",
+        "knowledge_base_id": "456",
+        "filename": "test.txt",
+    }
+    assert result[2].meta_data == {
+        "document_id": "123",
+        "knowledge_base_id": "456",
+        "filename": "test.txt",
+    }
 
     # Verify content_id was set
     for doc in result:
@@ -170,7 +178,7 @@ def test_prepare_documents_for_insert_without_metadata():
     # Call _prepare_documents_for_insert without metadata
     result = knowledge._prepare_documents_for_insert(documents, "content-id-1")
 
-    # Verify existing metadata is preserved
+    # Verify existing metadata is preserved (linked_to NOT added when isolate_vector_search=False)
     assert result[0].meta_data == {"existing": "value1"}
     assert result[1].meta_data == {}
 
@@ -192,7 +200,7 @@ def test_prepare_documents_for_insert_with_empty_metadata():
     # Call _prepare_documents_for_insert with empty metadata
     result = knowledge._prepare_documents_for_insert(documents, "content-id-1", metadata={})
 
-    # Verify existing metadata is preserved (empty dict doesn't add anything)
+    # Verify existing metadata is preserved (linked_to NOT added when isolate_vector_search=False)
     assert result[0].meta_data == {"existing": "value1"}
 
 
@@ -303,7 +311,7 @@ def test_load_from_path_without_metadata(temp_text_file, mock_vector_db):
     ):
         knowledge._load_from_path(content, upsert=False, skip_if_exists=False)
 
-    # Verify documents were inserted with original metadata preserved
+    # Verify documents were inserted with original metadata preserved (linked_to NOT added when isolate_vector_search=False)
     assert len(mock_vector_db.inserted_documents) == 1
     doc = mock_vector_db.inserted_documents[0]
     assert doc.meta_data == {"original": "data"}

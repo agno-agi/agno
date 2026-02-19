@@ -26,6 +26,7 @@ class Registry:
     dbs: List[BaseDb] = field(default_factory=list)
     vector_dbs: List[VectorDb] = field(default_factory=list)
     schemas: List[Type[BaseModel]] = field(default_factory=list)
+    functions: List[Callable] = field(default_factory=list)
 
     @cached_property
     def _entrypoint_lookup(self) -> Dict[str, Callable]:
@@ -66,3 +67,6 @@ class Registry:
         if self.dbs:
             return next((db for db in self.dbs if db.id == db_id), None)
         return None
+
+    def get_function(self, name: str) -> Optional[Callable]:
+        return next((f for f in self.functions if f.__name__ == name), None)

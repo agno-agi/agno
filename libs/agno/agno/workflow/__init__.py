@@ -1,4 +1,5 @@
 from agno.workflow.agent import WorkflowAgent
+from agno.workflow.cel import CEL_AVAILABLE, validate_cel_expression
 from agno.workflow.condition import Condition
 from agno.workflow.loop import Loop
 from agno.workflow.parallel import Parallel
@@ -24,4 +25,7 @@ __all__ = [
     "StepOutput",
     "get_workflow_by_id",
     "get_workflows",
+    # CEL utilities
+    "CEL_AVAILABLE",
+    "validate_cel_expression",
 ]

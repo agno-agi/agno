@@ -121,17 +121,19 @@ def print_response(
         team_markdown = False
         member_markdown = {}
         if markdown:
-            for member in team.members:
-                if member.id is not None:
-                    member_markdown[member.id] = True
+            if isinstance(team.members, list):
+                for member in team.members:
+                    if member.id is not None:
+                        member_markdown[member.id] = True
             team_markdown = True
 
         if team.output_schema is not None:
             team_markdown = False
 
-        for member in team.members:
-            if member.output_schema is not None and member.id is not None:
-                member_markdown[member.id] = False  # type: ignore
+        if isinstance(team.members, list):
+            for member in team.members:
+                if member.output_schema is not None and member.id is not None:
+                    member_markdown[member.id] = False  # type: ignore
 
         # Handle reasoning
         reasoning_steps = []
@@ -739,13 +741,15 @@ def print_response_stream(
         panels = [p for p in panels if not isinstance(p, Status)]
 
         if markdown:
-            for member in team.members:
-                if member.id is not None:
-                    member_markdown[member.id] = True
+            if isinstance(team.members, list):
+                for member in team.members:
+                    if member.id is not None:
+                        member_markdown[member.id] = True
 
-        for member in team.members:
-            if member.output_schema is not None and member.id is not None:
-                member_markdown[member.id] = False  # type: ignore
+        if isinstance(team.members, list):
+            for member in team.members:
+                if member.output_schema is not None and member.id is not None:
+                    member_markdown[member.id] = False  # type: ignore
 
         # Final panels assembly - we'll recreate the panels from scratch to ensure correct order
         final_panels = []
@@ -1052,17 +1056,19 @@ async def aprint_response(
         team_markdown = False
         member_markdown = {}
         if markdown:
-            for member in team.members:
-                if member.id is not None:
-                    member_markdown[member.id] = True
+            if isinstance(team.members, list):
+                for member in team.members:
+                    if member.id is not None:
+                        member_markdown[member.id] = True
             team_markdown = True
 
         if team.output_schema is not None:
             team_markdown = False
 
-        for member in team.members:
-            if member.output_schema is not None and member.id is not None:
-                member_markdown[member.id] = False  # type: ignore
+        if isinstance(team.members, list):
+            for member in team.members:
+                if member.output_schema is not None and member.id is not None:
+                    member_markdown[member.id] = False  # type: ignore
 
         # Handle reasoning
         reasoning_steps = []
@@ -1667,13 +1673,15 @@ async def aprint_response_stream(
         panels = [p for p in panels if not isinstance(p, Status)]
 
         if markdown:
-            for member in team.members:
-                if member.id is not None:
-                    member_markdown[member.id] = True  # type: ignore
+            if isinstance(team.members, list):
+                for member in team.members:
+                    if member.id is not None:
+                        member_markdown[member.id] = True  # type: ignore
 
-        for member in team.members:
-            if member.output_schema is not None and member.id is not None:
-                member_markdown[member.id] = False  # type: ignore
+        if isinstance(team.members, list):
+            for member in team.members:
+                if member.output_schema is not None and member.id is not None:
+                    member_markdown[member.id] = False  # type: ignore
 
         # Final panels assembly - we'll recreate the panels from scratch to ensure correct order
         final_panels = []

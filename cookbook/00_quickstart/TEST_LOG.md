@@ -1,43 +1,45 @@
 # TEST_LOG.md - Quick Start Cookbook
 
-Test results for `cookbook/00_quickstart/` cookbooks.
+Test results for `cookbook/00_quickstart/` examples.
 
-**Test Date:** 2026-01-19
-**Environment:** `.venvs/demo/bin/python`
-**Model:** Gemini (gemini-3-flash-preview)
-
----
-
-## Summary
-
-| Phase | Test | Status |
-|:------|:-----|:-------|
-| Phase 1: Basic | agent_with_tools.py | PASS |
-| Phase 1: Basic | agent_with_structured_output.py | PASS |
-| Phase 1: Basic | agent_with_typed_input_output.py | PASS |
-| Phase 2: Persistence | agent_with_storage.py | PASS |
-| Phase 2: Persistence | agent_with_memory.py | PASS |
-| Phase 2: Persistence | agent_with_state_management.py | PASS |
-| Phase 3: Knowledge | agent_search_over_knowledge.py | PASS |
-| Phase 3: Knowledge | custom_tool_for_self_learning.py | PASS |
-| Phase 4: Safety | agent_with_guardrails.py | PASS |
-| Phase 4: Safety | human_in_the_loop.py | SKIPPED (Interactive) |
-| Phase 5: Multi-Agent | multi_agent_team.py | PASS |
-| Phase 5: Multi-Agent | sequential_workflow.py | PASS |
-
-**Overall: 11 PASS, 1 SKIPPED**
+**Test Date:** 2026-02-10 (re-validated)
+**Environment:** `.venvs/demo/bin/python` with `direnv` exports loaded
+**Model:** `gemini-3-flash-preview` (Google Gemini)
+**Database:** SQLite (`tmp/agents.db`) and ChromaDB (`tmp/chromadb/`)
 
 ---
 
-## Phase 1: Basic (No DB)
+## Structure Validation
+
+### check_cookbook_pattern.py
+
+**Status:** PASS
+
+**Description:** Validates cookbook structure and formatting pattern for quickstart examples.
+
+**Result:** `.venvs/demo/bin/python cookbook/scripts/check_cookbook_pattern.py --base-dir cookbook/00_quickstart` reported `Checked 13 file(s) ... Violations: 0`.
+
+---
+
+### style_guide_compliance_scan
+
+**Status:** PASS
+
+**Description:** Validates module docstring with `=====` underline, section banners, import placement, `if __name__ == "__main__":` gate, and no emoji characters.
+
+**Result:** All 13 runnable files comply with `cookbook/STYLE_GUIDE.md`. No emoji characters found.
+
+---
+
+## Runtime Validation
 
 ### agent_with_tools.py
 
 **Status:** PASS
 
-**Description:** Finance agent with YFinanceTools that retrieves market data and produces investment briefs.
+**Description:** Finance Agent with YFinanceTools fetches real-time market data for NVIDIA.
 
-**Result:** Agent successfully used multiple YFinanceTools (get_current_stock_price, get_stock_fundamentals, get_key_financial_ratios, get_analyst_recommendations, get_company_info) to generate a comprehensive investment brief for NVIDIA including price, market cap, P/E ratio, key drivers, risks, and analyst sentiment.
+**Result:** Exited `0`; produced investment brief with price ($190.04), market cap ($4.63T), P/E, 52-week range, key drivers, and risks.
 
 ---
 
@@ -45,9 +47,9 @@ Test results for `cookbook/00_quickstart/` cookbooks.
 
 **Status:** PASS
 
-**Description:** Agent that returns structured Pydantic model (StockAnalysis) with typed fields.
+**Description:** Returns a typed `StockAnalysis` Pydantic model for NVIDIA.
 
-**Result:** Agent correctly returned a StockAnalysis model with all required fields populated: ticker, company_name, current_price, market_cap, pe_ratio, week_52_high/low, summary, key_drivers (list), key_risks (list), and recommendation.
+**Result:** Exited `0`; structured output parsed correctly with all fields (ticker, company_name, current_price, market_cap, pe_ratio, 52-week range, key_drivers, key_risks, recommendation).
 
 ---
 
@@ -55,30 +57,19 @@ Test results for `cookbook/00_quickstart/` cookbooks.
 
 **Status:** PASS
 
-**Description:** Agent with both input schema (AnalysisRequest) and output schema (StockAnalysis) for end-to-end type safety.
+**Description:** Full type safety with `AnalysisRequest` input and `StockAnalysis` output schemas. Tests both dict and Pydantic model input.
 
-**Result:** Successfully processed two analyses:
-1. NVDA with `analysis_type="deep"` - included key_drivers and key_risks
-2. AAPL with `analysis_type="quick"` - correctly omitted key_drivers/key_risks (null)
-
-Both input methods (dict and Pydantic model) worked correctly.
+**Result:** Exited `0`; both dict input (NVDA deep analysis) and Pydantic model input (AAPL quick analysis) returned correctly typed `StockAnalysis` responses.
 
 ---
-
-## Phase 2: Persistence (SQLite)
 
 ### agent_with_storage.py
 
 **Status:** PASS
 
-**Description:** Agent with persistent conversation history stored to SQLite (`tmp/agents.db`).
+**Description:** Finance Agent with SQLite storage persists conversation across three turns.
 
-**Result:** Agent maintained conversation context across 3 turns:
-1. "Give me a quick investment brief on NVIDIA" - Generated brief
-2. "Compare that to Tesla" - Remembered NVDA, fetched TSLA data, produced comparison table
-3. "Based on our discussion, which looks like the better investment?" - Synthesized full conversation into recommendation
-
-Session persistence via `session_id="finance-agent-session"` worked correctly.
+**Result:** Exited `0`; completed three-turn conversation (NVDA brief, TSLA comparison, investment recommendation). Agent correctly referenced prior turns.
 
 ---
 
@@ -86,13 +77,9 @@ Session persistence via `session_id="finance-agent-session"` worked correctly.
 
 **Status:** PASS
 
-**Description:** Agent with MemoryManager that extracts and stores user preferences across sessions.
+**Description:** Agent with MemoryManager extracts and recalls user preferences.
 
-**Result:** Agent successfully:
-1. Captured user preference: "interested in AI and semiconductor stocks" with "moderate risk tolerance"
-2. Used preferences to make personalized recommendations (AVGO, TSM, ASML, NVDA with beta/volatility considerations)
-3. Stored memory to SQLite with topics: `['interests', 'finance', 'risk tolerance']`
-4. Memory retrieval via `agent.get_user_memories(user_id=...)` returned the stored preference
+**Result:** Exited `0`; agent stored two memories ("interested in AI and semiconductor stocks", "moderate risk tolerance") and used them to personalize stock recommendations.
 
 ---
 
@@ -100,29 +87,19 @@ Session persistence via `session_id="finance-agent-session"` worked correctly.
 
 **Status:** PASS
 
-**Description:** Agent with session state for managing a stock watchlist using custom tools.
+**Description:** Agent manages a stock watchlist via custom state-modifying tools.
 
-**Result:** Agent successfully:
-1. Used `add_to_watchlist` tool to add NVDA, AAPL, GOOGL to watchlist
-2. Tracked watchlist state: `{'watchlist': ['NVDA', 'AAPL', 'GOOGL']}`
-3. Fetched current prices for watched stocks when asked "How are my watched stocks doing?"
-4. State persisted across runs and was accessible via `agent.get_session_state()`
+**Result:** Exited `0`; added NVDA, AAPL, GOOGL to watchlist, fetched prices for watched stocks, and confirmed session state `['NVDA', 'AAPL', 'GOOGL']`.
 
 ---
-
-## Phase 3: Knowledge (ChromaDb)
 
 ### agent_search_over_knowledge.py
 
 **Status:** PASS
 
-**Description:** Agent with searchable knowledge base using ChromaDb with hybrid search (vector + keyword).
+**Description:** Loads Agno introduction docs into ChromaDB knowledge base with hybrid search and answers questions.
 
-**Result:** Agent successfully:
-1. Loaded knowledge from URL (`https://docs.agno.com/introduction.md`)
-2. Stored in ChromaDb with hybrid search (RRF fusion, k=60)
-3. Used `search_knowledge_base(query="What is Agno?")` tool to retrieve relevant content
-4. Generated comprehensive response about Agno framework, AgentOS, and features based on knowledge base
+**Result:** Exited `0`; loaded knowledge from `https://docs.agno.com/introduction.md`, searched and synthesized answer about Agno features and components.
 
 ---
 
@@ -130,64 +107,39 @@ Session persistence via `session_id="finance-agent-session"` worked correctly.
 
 **Status:** PASS
 
-**Description:** Self-learning agent with custom `save_learning` tool to persist insights to knowledge base.
+**Description:** Agent with custom `save_learning` tool saves insights to a ChromaDB knowledge base and recalls them.
 
-**Result:** Agent successfully:
-1. Answered question about P/E ratios for tech stocks
-2. Proposed a learning: "Tech Valuation Tiering" with actionable insight
-3. Saved learning when user confirmed with "yes"
-4. Retrieved saved learnings from knowledge base showing multiple stored insights
+**Result:** Exited `0`; agent proposed and saved a learning about tech P/E benchmarks, then recalled it from the knowledge base.
 
 ---
-
-## Phase 4: Safety
 
 ### agent_with_guardrails.py
 
 **Status:** PASS
 
-**Description:** Agent with input validation guardrails: PIIDetectionGuardrail, PromptInjectionGuardrail, and custom SpamDetectionGuardrail.
+**Description:** Tests PII detection, prompt injection, and custom spam guardrails.
 
-**Result:** All guardrails worked correctly:
-1. **Normal request** ("What's a good P/E ratio?") - Processed successfully with detailed response
-2. **PII** ("My SSN is 123-45-6789") - Blocked with "Potential PII detected in input"
-3. **Prompt injection** ("Ignore previous instructions") - Blocked with "Potential jailbreaking or prompt injection detected"
-4. **Spam** ("URGENT!!! BUY NOW!!!!") - Blocked with "Input appears to be spam (excessive exclamation marks)"
+**Result:** Exited `0`; four test cases executed: normal request processed, PII (SSN) blocked, prompt injection blocked, spam (excessive exclamation marks) blocked.
 
 ---
 
 ### human_in_the_loop.py
 
-**Status:** SKIPPED (Interactive)
+**Status:** PASS
 
-**Description:** Agent with `@tool(requires_confirmation=True)` for human-in-the-loop approval workflow.
+**Description:** Confirmation-required tool execution with `@tool(requires_confirmation=True)`.
 
-**Result:** This test requires interactive user input (confirmation prompts via `rich.prompt.Prompt`) and cannot be fully automated. The code structure is valid and demonstrates:
-- `@tool(requires_confirmation=True)` decorator
-- Handling `run_response.active_requirements`
-- `requirement.confirm()` / `requirement.reject()` pattern
-- `agent.continue_run()` to resume after user decision
-
-**Note:** Manual testing required for full validation.
+**Result:** Exited `0`; agent proposed saving a learning, confirmation was approved via stdin `y`, tool executed and saved the learning.
 
 ---
-
-## Phase 5: Multi-Agent
 
 ### multi_agent_team.py
 
 **Status:** PASS
 
-**Description:** Investment research team with Bull Analyst, Bear Analyst, and Lead Analyst (team leader).
+**Description:** Bull/Bear analyst team with leader synthesis for NVIDIA and AMD comparison.
 
-**Result:** Team successfully:
-1. Delegated NVIDIA analysis to both Bull and Bear analysts
-2. **Bull Analyst**: Made case FOR investment (AI dominance, growth, margins)
-3. **Bear Analyst**: Made case AGAINST investment (valuation, geopolitical risks, concentration)
-4. **Team Leader**: Synthesized both views into balanced recommendation with confidence level
-5. Follow-up "How does AMD compare?" maintained context, delegated to both analysts, and produced comparison
-
-Team coordination via `delegate_task_to_member` worked correctly.
+**Result:** Exited `0`; both analysts provided independent perspectives, leader synthesized into balanced recommendation with comparison table.
 
 ---
 
@@ -195,20 +147,38 @@ Team coordination via `delegate_task_to_member` worked correctly.
 
 **Status:** PASS
 
-**Description:** Three-step research pipeline: Data Gathering -> Analysis -> Report Writing.
+**Description:** Three-step workflow: Data Gathering, Analysis, Report Writing for NVIDIA.
 
-**Result:** Workflow executed all 3 steps sequentially:
-1. **Step 1 (Data Gatherer)**: Fetched comprehensive market data for NVIDIA using YFinanceTools
-2. **Step 2 (Analyst)**: Interpreted key metrics, compared to benchmarks, identified strengths/weaknesses
-3. **Step 3 (Report Writer)**: Produced concise investment brief with BUY recommendation, rationale, risks, and key metrics table
-
-Completed in ~30 seconds. Debug messages about "Failed to broadcast through manager" are non-fatal event broadcasting warnings and don't affect workflow functionality.
+**Result:** Exited `0` in ~30.8s; all three steps completed, final report included recommendation (BUY), key metrics table, and rationale.
 
 ---
 
-## Notes
+### run.py
 
-1. **API Rate Limits**: Gemini API may require pauses between tests if hitting rate limits.
-2. **tmp/ Directory**: Tests create files in `tmp/` (agents.db, chromadb/) - this is expected behavior.
-3. **Network Dependency**: yfinance requires internet access for real-time stock data.
-4. **Interactive Tests**: human_in_the_loop.py requires manual testing with user input.
+**Status:** PASS
+
+**Description:** Startup-only validation for long-running AgentOS server.
+
+**Result:** Server started successfully on `http://localhost:7777` with all 10 agents, 1 team, and 1 workflow registered. Uvicorn startup complete. Process terminated cleanly after 15s.
+
+---
+
+## Summary
+
+| File | Status | Notes |
+|------|--------|-------|
+| `agent_with_tools.py` | PASS | Produced NVDA investment brief with real market data |
+| `agent_with_structured_output.py` | PASS | Typed `StockAnalysis` returned with all fields |
+| `agent_with_typed_input_output.py` | PASS | Both dict and Pydantic model inputs handled correctly |
+| `agent_with_storage.py` | PASS | Three-turn persisted conversation completed |
+| `agent_with_memory.py` | PASS | Memories stored and recalled for personalization |
+| `agent_with_state_management.py` | PASS | Watchlist state managed across turns |
+| `agent_search_over_knowledge.py` | PASS | Knowledge loaded, hybrid search, and answer generated |
+| `custom_tool_for_self_learning.py` | PASS | Custom tool saved and recalled learning |
+| `agent_with_guardrails.py` | PASS | All 4 guardrail test cases passed (normal, PII, injection, spam) |
+| `human_in_the_loop.py` | PASS | Confirmation flow exercised with stdin approval |
+| `multi_agent_team.py` | PASS | Bull/Bear team collaboration completed |
+| `sequential_workflow.py` | PASS | Three-step workflow completed in ~33.6s |
+| `run.py` | PASS | AgentOS server startup validated |
+
+**Overall:** 13 PASS, 0 FAIL

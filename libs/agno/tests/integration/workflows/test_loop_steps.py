@@ -11,6 +11,7 @@ from agno.run.workflow import (
     WorkflowRunOutput,
 )
 from agno.workflow import Loop, Parallel, Workflow
+from agno.workflow.cel import CEL_AVAILABLE
 from agno.workflow.types import StepInput, StepOutput
 
 
@@ -595,3 +596,188 @@ def test_loop_with_multiple_steps_propagates_stop():
     assert len(result.steps) == 2, "Loop should stop after step that returned stop=True"
     assert result.steps[0].content == "First step done"
     assert result.steps[1].content == "Second step stops"
+
+
+# ============================================================================
+# CEL EXPRESSION TESTS
+# ============================================================================
+
+
+@pytest.mark.skipif(not CEL_AVAILABLE, reason="cel-python not installed")
+def test_cel_loop_iteration_count():
+    """Test CEL loop with current_iteration end condition."""
+    loop = Loop(
+        name="CEL Iteration Loop",
+        steps=[research_step],
+        end_condition="current_iteration >= 2",
+        max_iterations=5,
+    )
+
+    result = loop.execute(StepInput(input="test"))
+
+    assert isinstance(result, StepOutput)
+    # current_iteration is incremented AFTER each iteration completes, THEN end_condition is checked
+    # So current_iteration >= 2 is True after iteration 1 completes (when current_iteration becomes 2)
+    assert len(result.steps) == 2
+
+
+@pytest.mark.skipif(not CEL_AVAILABLE, reason="cel-python not installed")
+def test_cel_loop_max_iterations_expression():
+    """Test CEL loop comparing current_iteration to max_iterations."""
+    loop = Loop(
+        name="CEL Max Iterations Loop",
+        steps=[research_step],
+        end_condition="current_iteration >= max_iterations - 1",
+        max_iterations=3,
+    )
+
+    result = loop.execute(StepInput(input="test"))
+
+    assert isinstance(result, StepOutput)
+    # max_iterations=3, so end_condition is "current_iteration >= 2"
+    assert len(result.steps) == 2
+
+
+@pytest.mark.skipif(not CEL_AVAILABLE, reason="cel-python not installed")
+def test_cel_loop_last_step_content():
+    """Test CEL loop checking last_step_content."""
+    iteration_counter = [0]
+
+    def counting_step(step_input: StepInput) -> StepOutput:
+        iteration_counter[0] += 1
+        content = "DONE" if iteration_counter[0] >= 3 else f"Iteration {iteration_counter[0]}"
+        return StepOutput(step_name="counting", content=content, success=True)
+
+    loop = Loop(
+        name="CEL Last Content Loop",
+        steps=[counting_step],
+        end_condition='last_step_content.contains("DONE")',
+        max_iterations=10,
+    )
+
+    result = loop.execute(StepInput(input="test"))
+
+    assert isinstance(result, StepOutput)
+    assert len(result.steps) == 3
+    assert "DONE" in result.steps[-1].content
+
+
+@pytest.mark.skipif(not CEL_AVAILABLE, reason="cel-python not installed")
+def test_cel_loop_all_success():
+    """Test CEL loop with all_success check."""
+
+    def always_success_step(step_input: StepInput) -> StepOutput:
+        return StepOutput(step_name="success", content="Success", success=True)
+
+    loop = Loop(
+        name="CEL All Success Loop",
+        steps=[always_success_step],
+        end_condition="all_success && current_iteration >= 2",
+        max_iterations=10,
+    )
+
+    result = loop.execute(StepInput(input="test"))
+
+    assert isinstance(result, StepOutput)
+    assert all(s.success for s in result.steps)
+    assert len(result.steps) == 2
+
+
+@pytest.mark.skipif(not CEL_AVAILABLE, reason="cel-python not installed")
+def test_cel_loop_step_outputs():
+    """Test CEL loop with step_outputs map variable."""
+    loop = Loop(
+        name="CEL Step Outputs Loop",
+        steps=[research_step, analysis_step],  # 2 steps per iteration
+        end_condition="step_outputs.size() >= 2 && all_success",
+        max_iterations=10,
+    )
+
+    result = loop.execute(StepInput(input="test"))
+
+    assert isinstance(result, StepOutput)
+    # step_outputs has 2 entries per iteration, so stops after first iteration
+    assert len(result.steps) == 2
+
+
+@pytest.mark.skipif(not CEL_AVAILABLE, reason="cel-python not installed")
+def test_cel_loop_in_workflow(shared_db):
+    """Test CEL loop within a workflow."""
+    workflow = Workflow(
+        name="CEL Loop Workflow",
+        db=shared_db,
+        steps=[
+            Loop(
+                name="cel_loop",
+                steps=[research_step],
+                end_condition="current_iteration >= 2",
+                max_iterations=5,
+            )
+        ],
+    )
+
+    response = workflow.run(input="test")
+
+    assert isinstance(response, WorkflowRunOutput)
+    assert len(response.step_results) == 1
+    loop_output = response.step_results[0]
+    assert len(loop_output.steps) == 2
+
+
+@pytest.mark.skipif(not CEL_AVAILABLE, reason="cel-python not installed")
+def test_cel_loop_streaming(shared_db):
+    """Test CEL loop with streaming."""
+    workflow = Workflow(
+        name="CEL Streaming Loop",
+        db=shared_db,
+        steps=[
+            Loop(
+                name="cel_stream_loop",
+                steps=[research_step],
+                end_condition="current_iteration >= 1",
+                max_iterations=5,
+            )
+        ],
+    )
+
+    events = list(workflow.run(input="test", stream=True, stream_events=True))
+
+    loop_started = [e for e in events if isinstance(e, LoopExecutionStartedEvent)]
+    loop_completed = [e for e in events if isinstance(e, LoopExecutionCompletedEvent)]
+
+    assert len(loop_started) == 1
+    assert len(loop_completed) == 1
+
+
+@pytest.mark.skipif(not CEL_AVAILABLE, reason="cel-python not installed")
+@pytest.mark.asyncio
+async def test_cel_loop_async():
+    """Test CEL loop with async execution."""
+    loop = Loop(
+        name="CEL Async Loop",
+        steps=[research_step],
+        end_condition="current_iteration >= 1",
+        max_iterations=5,
+    )
+
+    result = await loop.aexecute(StepInput(input="test"))
+
+    assert isinstance(result, StepOutput)
+    assert len(result.steps) == 1
+
+
+@pytest.mark.skipif(not CEL_AVAILABLE, reason="cel-python not installed")
+def test_cel_loop_compound_condition():
+    """Test CEL loop with compound end condition."""
+    loop = Loop(
+        name="CEL Compound Loop",
+        steps=[research_step],
+        end_condition="current_iteration >= 2 && all_success",
+        max_iterations=10,
+    )
+
+    result = loop.execute(StepInput(input="test"))
+
+    assert isinstance(result, StepOutput)
+    assert len(result.steps) == 2
+    assert all(s.success for s in result.steps)

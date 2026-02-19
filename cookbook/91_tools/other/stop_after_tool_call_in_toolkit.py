@@ -9,6 +9,10 @@ after execution.
 from agno.agent import Agent
 from agno.tools import Toolkit
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 
 class SimpleToolkit(Toolkit):
     """Simple toolkit demonstrating stop_after_tool_call_tools."""
@@ -55,6 +59,10 @@ class SimpleToolkit(Toolkit):
         """
         return f"Current counter value: {self.counter}"
 
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     toolkit = SimpleToolkit()

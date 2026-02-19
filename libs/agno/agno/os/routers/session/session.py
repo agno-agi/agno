@@ -793,17 +793,21 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
     ) -> None:
         db = await get_db(dbs, db_id, table)
 
+        user_id: Optional[str] = None
+        if hasattr(request.state, "user_id") and request.state.user_id is not None:
+            user_id = request.state.user_id
+
         if isinstance(db, RemoteDb):
             auth_token = get_auth_token_from_request(request)
             headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
-            await db.delete_session(session_id=session_id, db_id=db_id, table=table, headers=headers)
+            await db.delete_session(session_id=session_id, db_id=db_id, table=table, headers=headers, user_id=user_id)
             return
 
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
-            await db.delete_session(session_id=session_id)
+            await db.delete_session(session_id=session_id, user_id=user_id)
         else:
-            db.delete_session(session_id=session_id)
+            db.delete_session(session_id=session_id, user_id=user_id)
 
     @router.delete(
         "/sessions",
@@ -834,6 +838,10 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
 
         db = await get_db(dbs, db_id, table)
 
+        user_id: Optional[str] = None
+        if hasattr(http_request.state, "user_id") and http_request.state.user_id is not None:
+            user_id = http_request.state.user_id
+
         if isinstance(db, RemoteDb):
             auth_token = get_auth_token_from_request(http_request)
             headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
@@ -843,14 +851,15 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 db_id=db_id,
                 table=table,
                 headers=headers,
+                user_id=user_id,
             )
             return
 
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
-            await db.delete_sessions(session_ids=request.session_ids)
+            await db.delete_sessions(session_ids=request.session_ids, user_id=user_id)
         else:
-            db.delete_sessions(session_ids=request.session_ids)
+            db.delete_sessions(session_ids=request.session_ids, user_id=user_id)
 
     @router.post(
         "/sessions/{session_id}/rename",
@@ -952,6 +961,10 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
     ) -> Union[AgentSessionDetailSchema, TeamSessionDetailSchema, WorkflowSessionDetailSchema]:
         db = await get_db(dbs, db_id, table)
 
+        user_id: Optional[str] = None
+        if hasattr(request.state, "user_id") and request.state.user_id is not None:
+            user_id = request.state.user_id
+
         if isinstance(db, RemoteDb):
             auth_token = get_auth_token_from_request(request)
             headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
@@ -962,15 +975,18 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 db_id=db_id,
                 table=table,
                 headers=headers,
+                user_id=user_id,
             )
 
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
             session = await db.rename_session(
-                session_id=session_id, session_type=session_type, session_name=session_name
+                session_id=session_id, session_type=session_type, session_name=session_name, user_id=user_id
             )
         else:
-            session = db.rename_session(session_id=session_id, session_type=session_type, session_name=session_name)
+            session = db.rename_session(
+                session_id=session_id, session_type=session_type, session_name=session_name, user_id=user_id
+            )
         if not session:
             raise HTTPException(status_code=404, detail=f"Session with id '{session_id}' not found")
 

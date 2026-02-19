@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union
 from uuid import uuid4
 
+from agno.registry import Registry
 from agno.run.agent import RunOutputEvent
 from agno.run.base import RunContext
 from agno.run.team import TeamRunOutputEvent
@@ -14,6 +15,7 @@ from agno.run.workflow import (
 )
 from agno.session.workflow import WorkflowSession
 from agno.utils.log import log_debug, logger
+from agno.workflow.cel import CEL_AVAILABLE, evaluate_cel_condition_evaluator, is_cel_expression
 from agno.workflow.step import Step
 from agno.workflow.types import StepInput, StepOutput, StepType
 
@@ -43,13 +45,33 @@ class Condition:
     If the condition evaluates to True, the `steps` are executed.
     If the condition evaluates to False and `else_steps` is provided (and not empty),
     the `else_steps` are executed instead.
+
+    The evaluator can be:
+        - A callable function that returns bool
+        - A boolean literal (True/False)
+        - A CEL (Common Expression Language) expression string
+
+    CEL expressions have access to these variables:
+        - input: The workflow input as a string
+        - previous_step_content: Content from the previous step
+        - previous_step_outputs: Map of step name to content string from all previous steps
+        - additional_data: Map of additional data passed to the workflow
+        - session_state: Map of session state values
+
+    Example CEL expressions:
+        - 'input.contains("urgent")'
+        - 'session_state.retry_count < 3'
+        - 'additional_data.priority > 5'
+        - 'previous_step_outputs.research.contains("error")'
     """
 
     # Evaluator should only return boolean
+    # Can be a callable, a bool, or a CEL expression string
     evaluator: Union[
         Callable[[StepInput], bool],
         Callable[[StepInput], Awaitable[bool]],
         bool,
+        str,  # CEL expression
     ]
     steps: WorkflowSteps
 
@@ -58,6 +80,89 @@ class Condition:
 
     name: Optional[str] = None
     description: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        result: Dict[str, Any] = {
+            "type": "Condition",
+            "name": self.name,
+            "description": self.description,
+            "steps": [step.to_dict() for step in self.steps if hasattr(step, "to_dict")],
+            "else_steps": [step.to_dict() for step in (self.else_steps or []) if hasattr(step, "to_dict")],
+        }
+        if callable(self.evaluator):
+            result["evaluator"] = self.evaluator.__name__
+            result["evaluator_type"] = "function"
+        elif isinstance(self.evaluator, bool):
+            result["evaluator"] = self.evaluator
+            result["evaluator_type"] = "bool"
+        elif isinstance(self.evaluator, str):
+            # CEL expression string
+            result["evaluator"] = self.evaluator
+            result["evaluator_type"] = "cel"
+        else:
+            raise ValueError(f"Invalid evaluator type: {type(self.evaluator).__name__}")
+
+        return result
+
+    @classmethod
+    def from_dict(
+        cls,
+        data: Dict[str, Any],
+        registry: Optional["Registry"] = None,
+        db: Optional[Any] = None,
+        links: Optional[List[Dict[str, Any]]] = None,
+    ) -> "Condition":
+        from agno.workflow.loop import Loop
+        from agno.workflow.parallel import Parallel
+        from agno.workflow.router import Router
+        from agno.workflow.steps import Steps
+
+        def deserialize_step(step_data: Dict[str, Any]) -> Any:
+            step_type = step_data.get("type", "Step")
+            if step_type == "Loop":
+                return Loop.from_dict(step_data, registry=registry, db=db, links=links)
+            elif step_type == "Parallel":
+                return Parallel.from_dict(step_data, registry=registry, db=db, links=links)
+            elif step_type == "Steps":
+                return Steps.from_dict(step_data, registry=registry, db=db, links=links)
+            elif step_type == "Condition":
+                return cls.from_dict(step_data, registry=registry, db=db, links=links)
+            elif step_type == "Router":
+                return Router.from_dict(step_data, registry=registry, db=db, links=links)
+            else:
+                return Step.from_dict(step_data, registry=registry, db=db, links=links)
+
+        evaluator_data = data.get("evaluator", True)
+        evaluator_type = data.get("evaluator_type")
+        evaluator: Union[Callable[[StepInput], bool], Callable[[StepInput], Awaitable[bool]], bool, str]
+
+        if isinstance(evaluator_data, bool):
+            evaluator = evaluator_data
+        elif isinstance(evaluator_data, str):
+            # Determine if this is a CEL expression or a function name
+            # Use evaluator_type if provided, otherwise detect
+            if evaluator_type == "cel" or (evaluator_type is None and is_cel_expression(evaluator_data)):
+                # CEL expression - use as-is
+                evaluator = evaluator_data
+            else:
+                # Function name - look up in registry
+                if registry:
+                    func = registry.get_function(evaluator_data)
+                    if func is None:
+                        raise ValueError(f"Evaluator function '{evaluator_data}' not found in registry")
+                    evaluator = func
+                else:
+                    raise ValueError(f"Registry required to deserialize evaluator function '{evaluator_data}'")
+        else:
+            raise ValueError(f"Invalid evaluator type in data: {type(evaluator_data).__name__}")
+
+        return cls(
+            evaluator=evaluator,
+            steps=[deserialize_step(step) for step in data.get("steps", [])],
+            else_steps=[deserialize_step(step) for step in data.get("else_steps", [])],
+            name=data.get("name"),
+            description=data.get("description"),
+        )
 
     def _prepare_steps(self):
         """Prepare the steps for execution - mirrors workflow logic"""
@@ -132,9 +237,28 @@ class Condition:
         )
 
     def _evaluate_condition(self, step_input: StepInput, session_state: Optional[Dict[str, Any]] = None) -> bool:
-        """Evaluate the condition and return boolean result"""
+        """Evaluate the condition and return boolean result.
+
+        Supports:
+            - Boolean literals (True/False)
+            - Callable functions
+            - CEL expression strings
+        """
         if isinstance(self.evaluator, bool):
             return self.evaluator
+
+        if isinstance(self.evaluator, str):
+            # CEL expression
+            if not CEL_AVAILABLE:
+                logger.error(
+                    "CEL expression used but cel-python is not installed. Install with: pip install cel-python"
+                )
+                return False
+            try:
+                return evaluate_cel_condition_evaluator(self.evaluator, step_input, session_state)
+            except Exception as e:
+                logger.error(f"CEL expression evaluation failed: {e}")
+                return False
 
         if callable(self.evaluator):
             if session_state is not None and self._evaluator_has_session_state_param():
@@ -151,9 +275,28 @@ class Condition:
         return False
 
     async def _aevaluate_condition(self, step_input: StepInput, session_state: Optional[Dict[str, Any]] = None) -> bool:
-        """Async version of condition evaluation"""
+        """Async version of condition evaluation.
+
+        Supports:
+            - Boolean literals (True/False)
+            - Callable functions (sync and async)
+            - CEL expression strings
+        """
         if isinstance(self.evaluator, bool):
             return self.evaluator
+
+        if isinstance(self.evaluator, str):
+            # CEL expression - CEL evaluation is synchronous
+            if not CEL_AVAILABLE:
+                logger.error(
+                    "CEL expression used but cel-python is not installed. Install with: pip install cel-python"
+                )
+                return False
+            try:
+                return evaluate_cel_condition_evaluator(self.evaluator, step_input, session_state)
+            except Exception as e:
+                logger.error(f"CEL expression evaluation failed: {e}")
+                return False
 
         if callable(self.evaluator):
             has_session_state = session_state is not None and self._evaluator_has_session_state_param()

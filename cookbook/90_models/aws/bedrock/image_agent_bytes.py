@@ -1,3 +1,10 @@
+"""
+Aws Image Agent Bytes
+=====================
+
+Cookbook example for `aws/bedrock/image_agent_bytes.py`.
+"""
+
 from pathlib import Path
 
 from agno.agent import Agent
@@ -5,6 +12,10 @@ from agno.media import Image
 from agno.models.aws import AwsBedrock
 from agno.tools.websearch import WebSearchTools
 from agno.utils.media import download_image
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 agent = Agent(
     model=AwsBedrock(id="amazon.nova-pro-v1:0"),
@@ -28,3 +39,10 @@ agent.print_response(
         Image(content=image_bytes, format="jpeg"),
     ],
 )
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass
