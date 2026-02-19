@@ -15,6 +15,9 @@ class DuckDuckGoTools(WebSearchTools):
         proxy (Optional[str]): Proxy to be used for requests.
         timeout (Optional[int]): The maximum number of seconds to wait for a response.
         verify_ssl (bool): Whether to verify SSL certificates.
+        timelimit (Optional[str]): Time limit for search results (e.g., "d" for day, "w" for week, "m" for month, "y" for year).
+        region (Optional[str]): Region for search results (e.g., "us-en", "uk-en", "ru-ru").
+        backend (Optional[str]): Backend to use for searching (e.g., "api", "html", "lite"). Defaults to "duckduckgo".
     """
 
     def __init__(
@@ -26,17 +29,22 @@ class DuckDuckGoTools(WebSearchTools):
         proxy: Optional[str] = None,
         timeout: Optional[int] = 10,
         verify_ssl: bool = True,
+        timelimit: Optional[str] = None,
+        region: Optional[str] = None,
+        backend: Optional[str] = None,
         **kwargs,
     ):
         super().__init__(
             enable_search=enable_search,
             enable_news=enable_news,
-            backend="duckduckgo",
+            backend=backend or "duckduckgo",
             modifier=modifier,
             fixed_max_results=fixed_max_results,
             proxy=proxy,
             timeout=timeout,
             verify_ssl=verify_ssl,
+            timelimit=timelimit,
+            region=region,
             **kwargs,
         )
 

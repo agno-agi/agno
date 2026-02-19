@@ -26,6 +26,8 @@ class WebSearchTools(Toolkit):
         proxy (Optional[str]): Proxy to be used for requests.
         timeout (Optional[int]): The maximum number of seconds to wait for a response.
         verify_ssl (bool): Whether to verify SSL certificates.
+        timelimit (Optional[str]): Time limit for search results (e.g., "d" for day, "w" for week, "m" for month, "y" for year).
+        region (Optional[str]): Region for search results (e.g., "us-en", "uk-en", "ru-ru").
     """
 
     def __init__(
@@ -38,6 +40,8 @@ class WebSearchTools(Toolkit):
         proxy: Optional[str] = None,
         timeout: Optional[int] = 10,
         verify_ssl: bool = True,
+        timelimit: Optional[str] = None,
+        region: Optional[str] = None,
         **kwargs,
     ):
         self.proxy: Optional[str] = proxy
@@ -46,6 +50,8 @@ class WebSearchTools(Toolkit):
         self.modifier: Optional[str] = modifier
         self.verify_ssl: bool = verify_ssl
         self.backend: str = backend
+        self.timelimit: Optional[str] = timelimit
+        self.region: Optional[str] = region
 
         tools: List[Any] = []
         if enable_search:
@@ -69,8 +75,17 @@ class WebSearchTools(Toolkit):
         search_query = f"{self.modifier} {query}" if self.modifier else query
 
         log_debug(f"Searching web for: {search_query} using backend: {self.backend}")
+        search_kwargs: dict = {
+            "query": search_query,
+            "max_results": actual_max_results,
+            "backend": self.backend,
+        }
+        if self.timelimit is not None:
+            search_kwargs["timelimit"] = self.timelimit
+        if self.region is not None:
+            search_kwargs["region"] = self.region
         with DDGS(proxy=self.proxy, timeout=self.timeout, verify=self.verify_ssl) as ddgs:
-            results = ddgs.text(query=search_query, max_results=actual_max_results, backend=self.backend)
+            results = ddgs.text(**search_kwargs)
 
         return json.dumps(results, indent=2)
 
@@ -87,7 +102,16 @@ class WebSearchTools(Toolkit):
         actual_max_results = self.fixed_max_results or max_results
 
         log_debug(f"Searching web news for: {query} using backend: {self.backend}")
+        search_kwargs: dict = {
+            "query": query,
+            "max_results": actual_max_results,
+            "backend": self.backend,
+        }
+        if self.timelimit is not None:
+            search_kwargs["timelimit"] = self.timelimit
+        if self.region is not None:
+            search_kwargs["region"] = self.region
         with DDGS(proxy=self.proxy, timeout=self.timeout, verify=self.verify_ssl) as ddgs:
-            results = ddgs.news(query=query, max_results=actual_max_results, backend=self.backend)
+            results = ddgs.news(**search_kwargs)
 
         return json.dumps(results, indent=2)
