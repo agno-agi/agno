@@ -1,9 +1,15 @@
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
 from agno.client import AgentOSClient
 from agno.db.base import SessionType
+
+# ---------------------------------------------------------------------------
+# SDK Client tests — verify user_id is serialized into HTTP request params
+# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -30,6 +36,32 @@ async def test_run_agent_omits_none_user_id():
         form_data = mock_post.call_args[0][1]
         assert "user_id" not in form_data
         assert "session_id" not in form_data
+
+
+@pytest.mark.asyncio
+async def test_run_team_serializes_empty_string_user_id():
+    client = AgentOSClient(base_url="http://localhost:7777")
+    mock_data = {"run_id": "run-1", "team_id": "t-1", "content": "ok", "created_at": 0}
+    with patch.object(client, "_apost", new_callable=AsyncMock) as mock_post:
+        mock_post.return_value = mock_data
+        await client.run_team(team_id="t-1", message="hi", user_id="", session_id="")
+
+        form_data = mock_post.call_args[0][1]
+        assert form_data["user_id"] == ""
+        assert form_data["session_id"] == ""
+
+
+@pytest.mark.asyncio
+async def test_run_workflow_serializes_empty_string_user_id():
+    client = AgentOSClient(base_url="http://localhost:7777")
+    mock_data = {"run_id": "run-1", "workflow_id": "w-1", "content": "ok", "created_at": 0}
+    with patch.object(client, "_apost", new_callable=AsyncMock) as mock_post:
+        mock_post.return_value = mock_data
+        await client.run_workflow(workflow_id="w-1", message="hi", user_id="", session_id="")
+
+        form_data = mock_post.call_args[0][1]
+        assert form_data["user_id"] == ""
+        assert form_data["session_id"] == ""
 
 
 @pytest.mark.asyncio
@@ -82,3 +114,83 @@ async def test_rename_session_includes_user_id_in_params():
 
         params = mock_post.call_args.kwargs["params"]
         assert params["user_id"] == "alice"
+
+
+# ---------------------------------------------------------------------------
+# FastAPI Router tests — verify Query(user_id) actually binds from ?user_id=
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def mock_db():
+    db = AsyncMock()
+    db.delete_session = AsyncMock()
+    db.delete_sessions = AsyncMock()
+    db.rename_session = AsyncMock(
+        return_value=MagicMock(
+            session_id="sess-1",
+            session_name="Renamed",
+            agent_id="a-1",
+            user_id="alice",
+            session_data=None,
+            extra_data=None,
+            memory=None,
+            runs=[],
+            created_at=0,
+            updated_at=0,
+        )
+    )
+    return db
+
+
+@pytest.fixture
+def test_app(mock_db, monkeypatch):
+    monkeypatch.delenv("OS_SECURITY_KEY", raising=False)
+
+    from agno.os.routers.session.session import get_session_router
+    from agno.os.settings import AgnoAPISettings
+
+    settings = AgnoAPISettings()
+    dbs = {"default": [mock_db]}
+    router = get_session_router(dbs, settings)
+
+    app = FastAPI()
+    app.include_router(router)
+    return app
+
+
+def test_router_delete_session_receives_user_id_from_query(test_app, mock_db):
+    """Verify FastAPI binds user_id from ?user_id=alice to the endpoint param."""
+    client = TestClient(test_app)
+    resp = client.delete("/sessions/sess-1?user_id=alice")
+    assert resp.status_code == 204
+
+    mock_db.delete_session.assert_called_once()
+    call_kwargs = mock_db.delete_session.call_args.kwargs
+    assert call_kwargs["user_id"] == "alice"
+    assert call_kwargs["session_id"] == "sess-1"
+
+
+def test_router_delete_session_user_id_defaults_to_none(test_app, mock_db):
+    """Without ?user_id=, the param should be None (no user scoping)."""
+    client = TestClient(test_app)
+    resp = client.delete("/sessions/sess-1")
+    assert resp.status_code == 204
+
+    call_kwargs = mock_db.delete_session.call_args.kwargs
+    assert call_kwargs["user_id"] is None
+
+
+def test_router_delete_sessions_receives_user_id_from_query(test_app, mock_db):
+    """Verify bulk delete binds user_id from query string."""
+    client = TestClient(test_app)
+    resp = client.request(
+        "DELETE",
+        "/sessions?user_id=alice",
+        json={"session_ids": ["s-1"], "session_types": ["agent"]},
+    )
+    assert resp.status_code == 204
+
+    mock_db.delete_sessions.assert_called_once()
+    call_kwargs = mock_db.delete_sessions.call_args.kwargs
+    assert call_kwargs["user_id"] == "alice"
