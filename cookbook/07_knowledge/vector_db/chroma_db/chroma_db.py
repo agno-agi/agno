@@ -82,7 +82,7 @@ async def run_async(enable_batch: bool = False) -> None:
     if enable_batch:
         await knowledge.ainsert(path="cookbook/07_knowledge/testing_resources/cv_1.pdf")
     else:
-        await knowledge.ainsert(url="https://docs.agno.com/basics/agents/overview.md")
+        await knowledge.ainsert(url="https://docs.agno.com/agents/overview.md")
 
     await agent.aprint_response("What is the purpose of an Agno Agent?", markdown=True)
 

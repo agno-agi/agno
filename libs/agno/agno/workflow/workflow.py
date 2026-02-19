@@ -4867,15 +4867,19 @@ class Workflow:
         """
         from copy import copy, deepcopy
         from dataclasses import fields
+        from inspect import signature
 
         from agno.utils.log import log_debug, log_warning
+
+        # Get the set of valid __init__ parameter names
+        init_params = set(signature(self.__class__.__init__).parameters.keys()) - {"self"}
 
         # Extract the fields to set for the new Workflow
         fields_for_new_workflow: Dict[str, Any] = {}
 
         for f in fields(self):
-            # Skip private fields (not part of __init__ signature)
-            if f.name.startswith("_"):
+            # Skip private fields and fields not accepted by __init__
+            if f.name.startswith("_") or f.name not in init_params:
                 continue
 
             field_value = getattr(self, f.name)
