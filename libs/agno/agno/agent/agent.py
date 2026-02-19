@@ -320,6 +320,10 @@ class Agent:
     # Metadata stored with this agent
     metadata: Optional[Dict[str, Any]] = None
 
+    # Component metadata (set when loaded from DB via get_agents)
+    _version: Optional[int] = None
+    _stage: Optional[str] = None
+
     # --- Experimental Features ---
     # --- Agent Culture ---
     # Culture manager to use for this agent
@@ -1643,6 +1647,8 @@ def get_agents(
 ) -> List["Agent"]:
     """
     Get all agents from the database.
+
+    Sets _version and _stage on each agent from the component metadata.
     """
     from agno.utils.log import log_error
 
@@ -1658,9 +1664,9 @@ def get_agents(
                     if "id" not in agent_config:
                         agent_config["id"] = component_id
                     agent = Agent.from_dict(agent_config, registry=registry)
-                    # Ensure agent.id is set to the component_id (the id used to load the agent)
-                    # This ensures events use the correct agent_id
                     agent.id = component_id
+                    agent._version = component.get("current_version")
+                    agent._stage = config.get("stage")
                     agents.append(agent)
         return agents
 

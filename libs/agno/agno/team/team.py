@@ -317,8 +317,9 @@ class Team:
     # --- Team Storage ---
     # Metadata stored with this team
     metadata: Optional[Dict[str, Any]] = None
-    # Version of the team config (set when loaded from DB)
-    version: Optional[int] = None
+    # Component metadata (set when loaded from DB via get_teams)
+    _version: Optional[int] = None
+    _stage: Optional[str] = None
 
     # --- Team Reasoning ---
     reasoning: bool = False
@@ -1710,12 +1711,7 @@ def get_teams(
     """
     Get all teams from the database.
 
-    Args:
-        db: Database to load teams from
-        registry: Optional registry for rehydrating tools
-
-    Returns:
-        List of Team instances loaded from the database
+    Sets _version and _stage on each team from the component metadata.
     """
     teams: List[Team] = []
     try:
@@ -1729,8 +1725,9 @@ def get_teams(
                     if "id" not in team_config:
                         team_config["id"] = component_id
                     team = Team.from_dict(team_config, db=db, registry=registry)
-                    # Ensure team.id is set to the component_id
                     team.id = component_id
+                    team._version = component.get("current_version")
+                    team._stage = config.get("stage")
                     teams.append(team)
         return teams
 
