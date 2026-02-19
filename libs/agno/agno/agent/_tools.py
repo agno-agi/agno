@@ -171,26 +171,16 @@ def get_tools(
         )
 
     # Add tools for accessing knowledge
-    if resolved_knowledge is not None and agent.search_knowledge:
-        # Use knowledge protocol's get_tools method
-        get_tools_fn = getattr(resolved_knowledge, "get_tools", None)
-        if callable(get_tools_fn):
-            knowledge_tools = get_tools_fn(
-                run_response=run_response,
-                run_context=run_context,
-                knowledge_filters=run_context.knowledge_filters,
-                async_mode=False,
-                enable_agentic_filters=agent.enable_agentic_knowledge_filters,
-                agent=agent,
-            )
-            agent_tools.extend(knowledge_tools)
-    elif agent.knowledge_retriever is not None and agent.search_knowledge:
-        # Create search tool using custom knowledge_retriever
+    # Single unified path through get_relevant_docs_from_knowledge(),
+    # which checks knowledge_retriever first, then falls back to knowledge.search().
+    if (resolved_knowledge is not None or agent.knowledge_retriever is not None) and agent.search_knowledge:
         agent_tools.append(
-            _default_tools.create_knowledge_retriever_search_tool(
+            _default_tools.create_knowledge_search_tool(
                 agent,
                 run_response=run_response,
                 run_context=run_context,
+                knowledge_filters=run_context.knowledge_filters,
+                enable_agentic_filters=agent.enable_agentic_knowledge_filters,
                 async_mode=False,
             )
         )
@@ -303,38 +293,16 @@ async def aget_tools(
         )
 
     # Add tools for accessing knowledge
-    if resolved_knowledge is not None and agent.search_knowledge:
-        # Use knowledge protocol's get_tools method
-        aget_tools_fn = getattr(resolved_knowledge, "aget_tools", None)
-        get_tools_fn = getattr(resolved_knowledge, "get_tools", None)
-
-        if callable(aget_tools_fn):
-            knowledge_tools = await aget_tools_fn(
-                run_response=run_response,
-                run_context=run_context,
-                knowledge_filters=run_context.knowledge_filters,
-                async_mode=True,
-                enable_agentic_filters=agent.enable_agentic_knowledge_filters,
-                agent=agent,
-            )
-            agent_tools.extend(knowledge_tools)
-        elif callable(get_tools_fn):
-            knowledge_tools = get_tools_fn(
-                run_response=run_response,
-                run_context=run_context,
-                knowledge_filters=run_context.knowledge_filters,
-                async_mode=True,
-                enable_agentic_filters=agent.enable_agentic_knowledge_filters,
-                agent=agent,
-            )
-            agent_tools.extend(knowledge_tools)
-    elif agent.knowledge_retriever is not None and agent.search_knowledge:
-        # Create search tool using custom knowledge_retriever
+    # Single unified path through aget_relevant_docs_from_knowledge(),
+    # which checks knowledge_retriever first, then falls back to knowledge.search().
+    if (resolved_knowledge is not None or agent.knowledge_retriever is not None) and agent.search_knowledge:
         agent_tools.append(
-            _default_tools.create_knowledge_retriever_search_tool(
+            _default_tools.create_knowledge_search_tool(
                 agent,
                 run_response=run_response,
                 run_context=run_context,
+                knowledge_filters=run_context.knowledge_filters,
+                enable_agentic_filters=agent.enable_agentic_knowledge_filters,
                 async_mode=True,
             )
         )
@@ -570,6 +538,27 @@ def handle_get_user_input_tool_update(agent: Agent, run_messages: RunMessages, t
     )
 
 
+def handle_ask_user_tool_update(agent: Agent, run_messages: RunMessages, tool: ToolExecution):
+    import json
+
+    agent.model = cast(Model, agent.model)
+    if not hasattr(tool, "user_feedback_schema") or not tool.user_feedback_schema:
+        return
+    feedback_result = [
+        {"question": q.question, "selected": q.selected_options or []} for q in tool.user_feedback_schema
+    ]
+    run_messages.messages.append(
+        Message(
+            role=agent.model.tool_message_role,
+            content=f"User feedback received: {json.dumps(feedback_result)}",
+            tool_call_id=tool.tool_call_id,
+            tool_name=tool.tool_name,
+            tool_args=tool.tool_args,
+            metrics=Metrics(duration=0),
+        )
+    )
+
+
 def _maybe_create_audit_approval(
     agent: "Agent", tool_execution: ToolExecution, run_response: RunOutput, status: str
 ) -> None:
@@ -764,9 +753,15 @@ def handle_tool_call_updates(
             handle_external_execution_update(agent, run_messages=run_messages, tool=_t)
             _maybe_create_audit_approval(agent, _t, run_response, "approved")
 
-        # Case 3: Agentic user input required
+        # Case 3a: Agentic user input required
         elif _t.tool_name == "get_user_input" and _t.requires_user_input is not None and _t.requires_user_input is True:
             handle_get_user_input_tool_update(agent, run_messages=run_messages, tool=_t)
+            _t.requires_user_input = False
+            _t.answered = True
+
+        # Case 3b: User feedback (ask_user) required
+        elif _t.tool_name == "ask_user" and _t.requires_user_input is not None and _t.requires_user_input is True:
+            handle_ask_user_tool_update(agent, run_messages=run_messages, tool=_t)
             _t.requires_user_input = False
             _t.answered = True
 
@@ -811,9 +806,15 @@ def handle_tool_call_updates_stream(
             handle_external_execution_update(agent, run_messages=run_messages, tool=_t)
             _maybe_create_audit_approval(agent, _t, run_response, "approved")
 
-        # Case 3: Agentic user input required
+        # Case 3a: Agentic user input required
         elif _t.tool_name == "get_user_input" and _t.requires_user_input is not None and _t.requires_user_input is True:
             handle_get_user_input_tool_update(agent, run_messages=run_messages, tool=_t)
+            _t.requires_user_input = False
+            _t.answered = True
+
+        # Case 3b: User feedback (ask_user) required
+        elif _t.tool_name == "ask_user" and _t.requires_user_input is not None and _t.requires_user_input is True:
+            handle_ask_user_tool_update(agent, run_messages=run_messages, tool=_t)
             _t.requires_user_input = False
             _t.answered = True
 
@@ -855,9 +856,14 @@ async def ahandle_tool_call_updates(
         elif _t.external_execution_required is not None and _t.external_execution_required is True:
             handle_external_execution_update(agent, run_messages=run_messages, tool=_t)
             await _amaybe_create_audit_approval(agent, _t, run_response, "approved")
-        # Case 3: Agentic user input required
+        # Case 3a: Agentic user input required
         elif _t.tool_name == "get_user_input" and _t.requires_user_input is not None and _t.requires_user_input is True:
             handle_get_user_input_tool_update(agent, run_messages=run_messages, tool=_t)
+            _t.requires_user_input = False
+            _t.answered = True
+        # Case 3b: User feedback (ask_user) required
+        elif _t.tool_name == "ask_user" and _t.requires_user_input is not None and _t.requires_user_input is True:
+            handle_ask_user_tool_update(agent, run_messages=run_messages, tool=_t)
             _t.requires_user_input = False
             _t.answered = True
         # Case 4: Handle user input required tools
@@ -903,12 +909,17 @@ async def ahandle_tool_call_updates_stream(
         elif _t.external_execution_required is not None and _t.external_execution_required is True:
             handle_external_execution_update(agent, run_messages=run_messages, tool=_t)
             await _amaybe_create_audit_approval(agent, _t, run_response, "approved")
-        # Case 3: Agentic user input required
+        # Case 3a: Agentic user input required
         elif _t.tool_name == "get_user_input" and _t.requires_user_input is not None and _t.requires_user_input is True:
             handle_get_user_input_tool_update(agent, run_messages=run_messages, tool=_t)
             _t.requires_user_input = False
             _t.answered = True
-        # # Case 4: Handle user input required tools
+        # Case 3b: User feedback (ask_user) required
+        elif _t.tool_name == "ask_user" and _t.requires_user_input is not None and _t.requires_user_input is True:
+            handle_ask_user_tool_update(agent, run_messages=run_messages, tool=_t)
+            _t.requires_user_input = False
+            _t.answered = True
+        # Case 4: Handle user input required tools
         elif _t.requires_user_input is not None and _t.requires_user_input is True:
             handle_user_input_update(agent, tool=_t)
             async for event in arun_tool(

@@ -1,12 +1,11 @@
-# Test Log: 01_quickstart
-
-> Updated: 2026-02-08 15:49:52
+# Validation run 2026-02-15T00:34:21
 
 ## Pattern Check
-
 **Status:** PASS
+**Notes:** Passed.
 
-**Result:** Checked 11 file(s) in /Users/ab/conductor/workspaces/agno/colombo/cookbook/03_teams/01_quickstart. Violations: 0
+## OpenAIChat references
+- TEST_LOG.md
 
 ---
 
@@ -14,49 +13,39 @@
 
 **Status:** FAIL
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/01_quickstart/01_basic_coordination.py`.
+**Description:** Cookbook execution attempt
 
-**Result:** Exited with code 1. Tail: ols.newspaper4k import Newspaper4kTools |   File "/Users/ab/conductor/workspaces/agno/colombo/libs/agno/agno/tools/newspaper4k.py", line 10, in <module> |     raise ImportError("`newspaper4k` not installed. Please run `pip install newspaper4k lxml_html_clean`.") | ImportError: `newspaper4k` not installed. Please run `pip install newspaper4k lxml_html_clean`.
+**Result:** Timeout after 30s
 
 ---
 
 ### 02_respond_directly_router_team.py
 
-**Status:** PASS
+**Status:** FAIL
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/01_quickstart/02_respond_directly_router_team.py`.
+**Description:** Cookbook execution attempt
 
-**Result:** Executed successfully. Duration: 31.64s. Tail:                            ┃ | ┃ I can only answer in the following languages: English, Spanish, Japanese,    ┃ | ┃ French and German. Please ask your question in one of these languages.       ┃ | ┃                                                                              ┃ | ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
-
----
-
-### 03_delegate_to_all_members.py
-
-**Status:** PASS
-
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/01_quickstart/03_delegate_to_all_members.py`.
-
-**Result:** Executed successfully. Duration: 59.93s. Tail: you’re not only learning   ┃ | ┃ syntax but also developing the problem-solving abilities required in real    ┃ | ┃ coding scenarios. Happy coding!                                              ┃ | ┃                                                                              ┃ | ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+**Result:** Timeout after 30s
 
 ---
 
 ### 04_respond_directly_with_history.py
 
-**Status:** PASS
+**Status:** FAIL
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/01_quickstart/04_respond_directly_with_history.py`.
+**Description:** Cookbook execution attempt
 
-**Result:** Executed successfully. Duration: 16.79s. Tail: db/sqlite/sqlite.py", line 1039, in upsert_session |     raise e |   File "/Users/ab/conductor/workspaces/agno/colombo/libs/agno/agno/db/sqlite/sqlite.py", line 998, in upsert_session |     return TeamSession.from_dict(session_raw) |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ | NameError: name 'requirements' is not defined. Did you mean: 'RunRequirement'?
+**Result:** Timeout after 30s
 
 ---
 
-### 05_team_history.py
+### 03_delegate_to_all_members.py
 
-**Status:** PASS
+**Status:** FAIL
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/01_quickstart/05_team_history.py`.
+**Description:** Cookbook execution attempt
 
-**Result:** Executed successfully. Duration: 20.65s. Tail: db/sqlite/sqlite.py", line 1039, in upsert_session |     raise e |   File "/Users/ab/conductor/workspaces/agno/colombo/libs/agno/agno/db/sqlite/sqlite.py", line 998, in upsert_session |     return TeamSession.from_dict(session_raw) |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ | NameError: name 'requirements' is not defined. Did you mean: 'RunRequirement'?
+**Result:** Timeout after 30s
 
 ---
 
@@ -64,49 +53,101 @@
 
 **Status:** PASS
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/01_quickstart/06_history_of_members.py`.
+**Description:** Cookbook execution attempt
 
-**Result:** Executed successfully. Duration: 14.79s. Tail: db/sqlite/sqlite.py", line 1039, in upsert_session |     raise e |   File "/Users/ab/conductor/workspaces/agno/colombo/libs/agno/agno/db/sqlite/sqlite.py", line 998, in upsert_session |     return TeamSession.from_dict(session_raw) |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ | NameError: name 'requirements' is not defined. Did you mean: 'RunRequirement'?
+**Result:** DEBUG *********** Team ID: multi-lingual-q-and-a-team ************              
+DEBUG  Session ID: conversation_f43eb21b-84cb-49e7-90fb-56595df594e6            
+DEBUG Creating new TeamSession:                                                 
+      conversation_f43eb21b-84cb-49e7-90fb-56595df594e6                         
+DEBUG *** Team Run Start: b1bbdea8-d5cc-4434-9717-7adc882fa687 ***              
+DEBUG Processing tools for model                                                
+DEBUG Added tool delegate_task_to_member                                        
+DEBUG --------------- OpenAI Response Stream Start ---------------              
+DEBUG ---------------------- Model: gpt-5.2 ----------------------              
+DEBUG ========================== system ==========================              
+DEBUG You coordinate a team of specialized AI agents to fulfill the user's      
+      request. Delegate to members when their expertise or tools are needed. For
+      straightforward requests you can handle directly — including using your   
+      own tools — respond without delegating.                                   
+                                                                  
+
+---
+
+### 09_caching.py
+
+**Status:** PASS
+
+**Description:** Cookbook execution attempt
+
+**Result:** DEBUG ****** Team ID: 383e3b9c-1acb-4d95-abc8-521b12bce557 *******              
+DEBUG ***** Session ID: 3d473467-5739-4cda-ba00-986230573c74 *****              
+DEBUG Creating new TeamSession: 3d473467-5739-4cda-ba00-986230573c74            
+DEBUG *** Team Run Start: 6495ad93-b386-4a33-a46c-d2333cb9a568 ***              
+DEBUG Processing tools for model                                                
+DEBUG Added tool delegate_task_to_member                                        
+INFO Cache hit for model response                                               
+DEBUG Added RunOutput to Team Session                                           
+DEBUG **** Team Run End: 6495ad93-b386-4a33-a46c-d2333cb9a568 ****              
+┏━ Message ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃                                                                              ┃
+┃ Write a very very very explanation of caching in software                    ┃
+┃                                                                              ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+┏━ Response (0.5s) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+---
+
+### 05_team_history.py
+
+**Status:** PASS
+
+**Description:** Cookbook execution attempt
+
+**Result:** DEBUG *********** Team ID: multi-lingual-q-and-a-team ************              
+DEBUG  Session ID: conversation_5f6ff1a0-f107-49ec-b18e-4fcd8ad2850a            
+DEBUG Creating new TeamSession:                                                 
+      conversation_5f6ff1a0-f107-49ec-b18e-4fcd8ad2850a                         
+DEBUG *** Team Run Start: d7bb99ca-9dff-42f7-94f3-57ebd41c8d48 ***              
+DEBUG Processing tools for model                                                
+DEBUG Added tool delegate_task_to_member                                        
+DEBUG --------------- OpenAI Response Stream Start ---------------              
+DEBUG -------------------- Model: gpt-5-mini ---------------------              
+DEBUG ========================== system ==========================              
+DEBUG You coordinate a team of specialized AI agents to fulfill the user's      
+      request. Delegate to members when their expertise or tools are needed. For
+      straightforward requests you can handle directly — including using your   
+      own tools — respond without delegating.                                   
+                                                                  
 
 ---
 
 ### 07_share_member_interactions.py
 
-**Status:** PASS
+**Status:** FAIL
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/01_quickstart/07_share_member_interactions.py`.
+**Description:** Cookbook execution attempt
 
-**Result:** Executed successfully. Duration: 35.33s. Tail: db/sqlite/sqlite.py", line 1039, in upsert_session |     raise e |   File "/Users/ab/conductor/workspaces/agno/colombo/libs/agno/agno/db/sqlite/sqlite.py", line 998, in upsert_session |     return TeamSession.from_dict(session_raw) |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ | NameError: name 'requirements' is not defined. Did you mean: 'RunRequirement'?
+**Result:** Timeout after 30s
 
 ---
 
 ### 08_concurrent_member_agents.py
 
-**Status:** PASS
+**Status:** FAIL
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/01_quickstart/08_concurrent_member_agents.py`.
+**Description:** Cookbook execution attempt
 
-**Result:** Executed successfully. Duration: 44.32s. Tail: DEBUG ************************  METRICS  *************************               | DEBUG ------------- OpenAI Async Response Stream End -------------               | DEBUG Added RunOutput to Team Session                                            | DEBUG **** Team Run End: 963de671-a676-44d2-b910-a0e2200106d0 ****               | Total execution time: 43.94s
+**Result:** Timeout after 30s
 
 ---
 
 ### broadcast_mode.py
 
-**Status:** PASS
+**Status:** FAIL
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/01_quickstart/broadcast_mode.py`.
+**Description:** Cookbook execution attempt
 
-**Result:** Executed successfully. Duration: 111.75s. Tail: agement rates, takeover    ┃ | ┃ latency outliers). Otherwise, delay until those controls are proven in       ┃ | ┃ drills (including kill-switch and incident response).                        ┃ | ┃                                                                              ┃ | ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
-
----
-
-### caching/cache_team_response.py
-
-**Status:** PASS
-
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/01_quickstart/caching/cache_team_response.py`.
-
-**Result:** Executed successfully. Duration: 0.8s. Tail: Completed successfully with cached team response output.
+**Result:** Timeout after 30s
 
 ---
 
@@ -114,9 +155,99 @@
 
 **Status:** FAIL
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/01_quickstart/nested_teams.py`.
+**Description:** Cookbook execution attempt
 
-**Result:** Timed out before completion. Tail: e>                                                               | DEBUG =========================== user ===========================               | DEBUG Provide references/source material and best-practice bullets on startup    |       implications for adopting AI/tech initiative: benefits, risks, governance, |       metrics, rollout, security/compliance.
+**Result:** Timeout after 30s
+
+---
+
+### task_mode.py
+
+**Status:** FAIL
+
+**Description:** Cookbook execution attempt
+
+**Result:** Timeout after 30s
+
+---
+
+### 04_respond_directly_with_history.py
+
+**Status:** PASS
+
+**Description:** Example executed (demo run)
+
+**Result:** PASS
+
+---
+
+### 05_team_history.py
+
+**Status:** PASS
+
+**Description:** Example executed (demo run)
+
+**Result:** PASS
+
+---
+
+### 06_history_of_members.py
+
+**Status:** PASS
+
+**Description:** Example executed (demo run)
+
+**Result:** PASS
+
+---
+
+### 07_share_member_interactions.py
+
+**Status:** PASS
+
+**Description:** Example executed (demo run)
+
+**Result:** PASS
+
+---
+
+### 08_concurrent_member_agents.py
+
+**Status:** PASS
+
+**Description:** Example executed (demo run)
+
+**Result:** PASS
+
+---
+
+### 09_caching.py
+
+**Status:** PASS
+
+**Description:** Example executed (demo run)
+
+**Result:** PASS
+
+---
+
+### broadcast_mode.py
+
+**Status:** PASS
+
+**Description:** Example executed (demo run)
+
+**Result:** PASS
+
+---
+
+### nested_teams.py
+
+**Status:** FAIL
+
+**Description:** Example execution attempt
+
+**Result:** FAIL. Timeout after 120s
 
 ---
 
@@ -124,8 +255,9 @@
 
 **Status:** PASS
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/01_quickstart/task_mode.py`.
+**Description:** Example executed (demo run)
 
-**Result:** Executed successfully. Duration: 143.84s. Tail:                            ┃ | ┃     • Exit criteria: Outcome recorded (metrics, incidents, learnings);       ┃ | ┃       follow-up tickets created and prioritized.                             ┃ | ┃                                                                              ┃ | ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+**Result:** PASS
 
 ---
+

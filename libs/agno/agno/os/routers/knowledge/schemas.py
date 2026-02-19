@@ -4,6 +4,8 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
+from agno.os.schema import PaginationInfo
+
 
 class ContentStatus(str, Enum):
     """Enumeration of possible content processing statuses."""
@@ -16,6 +18,7 @@ class ContentStatus(str, Enum):
 class ContentStatusResponse(BaseModel):
     """Response model for content status endpoint."""
 
+    id: Optional[str] = Field(None, description="Content ID")
     status: ContentStatus = Field(..., description="Current processing status of the content")
     status_message: str = Field("", description="Status message or error details")
 
@@ -178,6 +181,36 @@ class RemoteContentSourceSchema(BaseModel):
     name: str = Field(..., description="Display name for the content source")
     type: str = Field(..., description="Type of content source (s3, gcs, sharepoint, github, azureblob)")
     metadata: Optional[Dict[str, Any]] = Field(None, description="Custom metadata for the content source")
+    prefix: Optional[str] = Field(None, description="Default path prefix for this source")
+
+
+class SourceFileSchema(BaseModel):
+    """Schema for a file in a content source."""
+
+    key: str = Field(..., description="Full path/key of the file")
+    name: str = Field(..., description="Display name (filename)")
+    size: Optional[int] = Field(None, description="File size in bytes")
+    last_modified: Optional[datetime] = Field(None, description="ISO 8601 timestamp of last modification")
+    content_type: Optional[str] = Field(None, description="MIME type of the file")
+
+
+class SourceFolderSchema(BaseModel):
+    """Schema for a folder in a content source."""
+
+    prefix: str = Field(..., description="Full prefix to use for navigating into this folder")
+    name: str = Field(..., description="Display name of the folder")
+    is_empty: bool = Field(False, description="Whether the folder contains any files")
+
+
+class SourceFilesResponseSchema(BaseModel):
+    """Response schema for listing files in a content source."""
+
+    source_id: str = Field(..., description="ID of the content source")
+    source_name: str = Field(..., description="Name of the content source")
+    prefix: Optional[str] = Field(None, description="Prefix filter that was applied")
+    folders: List[SourceFolderSchema] = Field(default_factory=list, description="Subfolders at this level")
+    files: List[SourceFileSchema] = Field(default_factory=list, description="List of files at this level")
+    meta: PaginationInfo = Field(..., description="Pagination metadata")
 
 
 class ConfigResponseSchema(BaseModel):

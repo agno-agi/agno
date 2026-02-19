@@ -1,24 +1,19 @@
 [project]
 name = "agno"
-version = "2.5.0"
-description = "Agno: a lightweight library for building Multi-Agent Systems"
+version = "2.5.2"
+description = "The programming language for agentic software."
 requires-python = ">=3.7,<4"
 readme = "README.md"
-license-files = ["LICENSE"]
+license = { file = "LICENSE" }
 authors = [
   {name = "Ashpreet Bedi", email = "ashpreet@agno.com"}
 ]
 keywords = [
-  "agent",
-  "reasoning",
-  "llm",
-  "large-language-model",
-  "framework",
+  "agent"
 ]
 classifiers = [
-    "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: Mozilla Public License 2.0 (MPL 2.0)",
+    "Development Status :: 5 - Production/Stable",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.7",
     "Programming Language :: Python :: 3.8",
@@ -27,6 +22,7 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Operating System :: OS Independent",
+    "License :: OSI Approved :: Apache Software License",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 
@@ -67,7 +63,7 @@ dev = [
   "types-greenlet",
 ]
 
-os = ["fastapi", "uvicorn", "PyJWT"]
+os = ["fastapi[standard]", "uvicorn", "sqlalchemy", "PyJWT"]
 scheduler = ["croniter>=1.3", "pytz>=2023.3"]
 
 # Dependencies for Telemetry
