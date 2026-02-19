@@ -10,7 +10,7 @@
 
 <p align="center">
   The programming language for agentic software.<br/>
-  Build multi-agent systems with streaming, memory, governance, and request isolation.
+  Build, run, and manage multi-agent systems at scale.
 </p>
 
 <div align="center">
@@ -23,11 +23,9 @@
 
 ## What is Agno?
 
-Agno is the open-source stack for building, deploying and managing multi-agent systems.
+Agno is the programming language for agentic software.
 
-Agentic software operates under a different contract than traditional software. Execution is dynamic. Decisions are contextual. Trust must be engineered.
-
-Agno gives you the primitives, execution engine, and production runtime to handle that natively.
+Agentic software operates under a different contract than traditional software. Execution is dynamic. Decisions are contextual. Trust must be engineered. Agno provides the primitives, execution engine, and production runtime to handle that natively.
 
 | Layer | What it does |
 |-------|--------------|
@@ -39,7 +37,7 @@ Agno gives you the primitives, execution engine, and production runtime to handl
 
 Agentic software introduces three fundamental shifts.
 
-### 1. A new interaction model
+### A new interaction model
 
 Traditional software receives a request and returns a response.
 
@@ -47,7 +45,7 @@ Agents stream reasoning, tool calls, and results in real time. They can pause mi
 
 Agno treats streaming and long-running execution as first-class behavior.
 
-### 2. A new governance model
+### A new governance model
 
 Traditional systems execute predefined decision logic written in advance.
 
@@ -60,7 +58,7 @@ Agno lets you define who decides what as part of the agent definition, with:
 - Audit logs
 - Enforcement at runtime
 
-### 3. A new trust model
+### A new trust model
 
 Traditional systems are designed to be predictable. Every execution path is defined in advance.
 
@@ -74,7 +72,7 @@ Agno builds trust into the engine itself:
 
 ## Built for Production
 
-Agno is not a hobby project. It is designed for real systems.
+Agno is built for real systems at scale.
 
 - 50+ APIs out of the box
 - Per-user session isolation
