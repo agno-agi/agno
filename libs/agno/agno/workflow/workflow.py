@@ -1803,6 +1803,7 @@ class Workflow:
                 workflow_run_response.images = output_images
                 workflow_run_response.videos = output_videos
                 workflow_run_response.audio = output_audio
+                workflow_run_response.files = output_files
                 workflow_run_response.status = RunStatus.completed
 
             except (InputCheckError, OutputCheckError) as e:
@@ -2047,6 +2048,7 @@ class Workflow:
                 workflow_run_response.images = output_images
                 workflow_run_response.videos = output_videos
                 workflow_run_response.audio = output_audio
+                workflow_run_response.files = output_files
                 workflow_run_response.status = RunStatus.completed
 
             except (InputCheckError, OutputCheckError) as e:
@@ -2387,6 +2389,7 @@ class Workflow:
                 workflow_run_response.images = output_images
                 workflow_run_response.videos = output_videos
                 workflow_run_response.audio = output_audio
+                workflow_run_response.files = output_files
                 workflow_run_response.status = RunStatus.completed
 
             except (InputCheckError, OutputCheckError) as e:
@@ -2649,6 +2652,7 @@ class Workflow:
                 workflow_run_response.images = output_images
                 workflow_run_response.videos = output_videos
                 workflow_run_response.audio = output_audio
+                workflow_run_response.files = output_files
                 workflow_run_response.status = RunStatus.completed
 
             except (InputCheckError, OutputCheckError) as e:
