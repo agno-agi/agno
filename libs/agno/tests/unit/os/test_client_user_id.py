@@ -123,18 +123,17 @@ async def test_rename_session_includes_user_id_in_params():
 
 @pytest.fixture
 def mock_db():
-    db = AsyncMock()
-    db.delete_session = AsyncMock()
-    db.delete_sessions = AsyncMock()
-    db.rename_session = AsyncMock(
-        return_value=MagicMock(
+    from agno.session.agent import AgentSession
+
+    db = MagicMock()
+    db.delete_session = MagicMock()
+    db.delete_sessions = MagicMock()
+    db.rename_session = MagicMock(
+        return_value=AgentSession(
             session_id="sess-1",
-            session_name="Renamed",
             agent_id="a-1",
             user_id="alice",
-            session_data=None,
-            extra_data=None,
-            memory=None,
+            session_data={"session_name": "Renamed"},
             runs=[],
             created_at=0,
             updated_at=0,
@@ -194,3 +193,19 @@ def test_router_delete_sessions_receives_user_id_from_query(test_app, mock_db):
     mock_db.delete_sessions.assert_called_once()
     call_kwargs = mock_db.delete_sessions.call_args.kwargs
     assert call_kwargs["user_id"] == "alice"
+
+
+def test_router_rename_session_receives_user_id_from_query(test_app, mock_db):
+    """Verify rename binds user_id from query string."""
+    client = TestClient(test_app)
+    resp = client.post(
+        "/sessions/sess-1/rename?user_id=alice",
+        json={"session_name": "Renamed"},
+    )
+    assert resp.status_code == 200
+
+    mock_db.rename_session.assert_called_once()
+    call_kwargs = mock_db.rename_session.call_args.kwargs
+    assert call_kwargs["user_id"] == "alice"
+    assert call_kwargs["session_id"] == "sess-1"
+    assert call_kwargs["session_name"] == "Renamed"
